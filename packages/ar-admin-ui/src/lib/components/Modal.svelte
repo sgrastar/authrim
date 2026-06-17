@@ -160,25 +160,25 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		width: var(--modal-close-size, 32px);
+		height: var(--modal-close-size, 32px);
 		padding: 0;
 		border: none;
-		border-radius: var(--radius-md, 6px);
-		background: transparent;
-		color: var(--text-secondary);
+		border-radius: var(--modal-close-radius, var(--radius-control, var(--radius-md, 6px)));
+		background: var(--modal-close-bg, transparent);
+		color: var(--modal-close-color, var(--color-text-muted));
 		cursor: pointer;
 		transition: all 0.15s ease;
 	}
 
 	.modal-close-btn:hover {
-		background: var(--bg-hover, rgba(0, 0, 0, 0.05));
-		color: var(--text-primary);
+		background: var(--modal-close-hover-bg, var(--color-surface-muted));
+		color: var(--modal-close-hover-color, var(--color-text));
 	}
 
 	.modal-close-btn:focus-visible {
-		outline: 2px solid var(--primary);
-		outline-offset: 2px;
+		outline: none;
+		box-shadow: var(--control-focus-shadow, 0 0 0 3px var(--color-accent-muted));
 	}
 
 	/* Ensure header has space-between for title and close button */

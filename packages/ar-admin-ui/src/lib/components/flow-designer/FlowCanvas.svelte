@@ -33,6 +33,7 @@
 	import CheckSessionNode from './nodes/CheckSessionNode.svelte';
 
 	import type { GraphNode, GraphEdge, GraphNodeType } from '$lib/api/admin-flows';
+	import { getFlowNodeColor, getFlowNodeMetadata } from './flow-node-metadata';
 
 	interface Props {
 		nodes: GraphNode[];
@@ -138,19 +139,24 @@
 
 	// Convert GraphNode to Svelte Flow Node format
 	function toFlowNodes(graphNodes: GraphNode[]): Node[] {
-		return graphNodes.map((node) => ({
-			id: node.id,
-			type: node.type,
-			position: node.position,
-			data: {
-				...node.data,
-				onConfigClick: onNodeConfig ? () => onNodeConfig(node.id) : undefined,
-				readonly
-			} as Record<string, unknown>,
-			draggable: !readonly,
-			connectable: !readonly,
-			selectable: true
-		}));
+		return graphNodes.map((node) => {
+			const metadata = getFlowNodeMetadata(node.type);
+			return {
+				id: node.id,
+				type: node.type,
+				position: node.position,
+				data: {
+					...node.data,
+					icon: metadata.icon,
+					color: metadata.color,
+					onConfigClick: onNodeConfig ? () => onNodeConfig(node.id) : undefined,
+					readonly
+				} as Record<string, unknown>,
+				draggable: !readonly,
+				connectable: !readonly,
+				selectable: true
+			};
+		});
 	}
 
 	// Convert GraphEdge to Svelte Flow Edge format
@@ -168,7 +174,7 @@
 				style: getEdgeStyle(edge.sourceHandle || edge.type),
 				label: edgeLabel,
 				labelStyle: getEdgeLabelStyle(edge.sourceHandle || edge.type),
-				labelBgStyle: 'fill: white; fill-opacity: 0.9;',
+				labelBgStyle: 'fill: var(--flow-edge-label-bg); fill-opacity: 0.94;',
 				labelBgPadding: [4, 2] as [number, number],
 				labelBgBorderRadius: 4,
 				deletable: !readonly
@@ -209,12 +215,12 @@
 
 	function getEdgeStyle(_edgeType: string): string {
 		// All edges use standard gray color - hover/selection handled by CSS
-		return 'stroke: #b1b1b7; stroke-width: 1.5px;';
+		return 'stroke: var(--flow-edge-color); stroke-width: 1.5px;';
 	}
 
 	function getEdgeLabelStyle(_edgeType: string): string {
 		// All labels use standard gray color
-		return 'fill: #6b7280; font-size: 10px; font-weight: 500;';
+		return 'fill: var(--flow-edge-label-color); font-size: 10px; font-weight: 500;';
 	}
 
 	// Convert back to GraphNode format
@@ -344,33 +350,7 @@
 
 	// Minimap node color based on type
 	function minimapNodeColor(node: Node): string {
-		const colors: Record<string, string> = {
-			// Core
-			start: '#22c55e',
-			end: '#10b981',
-			error: '#ef4444',
-			// Input
-			identifier: '#3b82f6',
-			auth_method: '#8b5cf6',
-			mfa: '#f59e0b',
-			consent: '#06b6d4',
-			user_input: '#0ea5e9',
-			wait_input: '#64748b',
-			// Process
-			register: '#10b981',
-			login: '#6366f1',
-			// Logic
-			condition: '#ec4899',
-			check_session: '#a855f7',
-			check_user: '#7c3aed',
-			risk_check: '#dc2626',
-			// Action
-			redirect: '#0891b2',
-			set_variable: '#059669',
-			call_api: '#0284c7',
-			send_notification: '#7c3aed'
-		};
-		return colors[node.type || ''] || '#6b7280';
+		return getFlowNodeColor(node.type);
 	}
 
 	// Drag and drop handling
@@ -440,25 +420,28 @@
 		width: 100%;
 		height: 100%;
 		min-height: 500px;
-		border-radius: 8px;
+		border-radius: var(--radius-panel, var(--radius-control, 8px));
 		overflow: hidden;
 	}
 
 	/* xyflow Official Theme Variables */
 	:global(.svelte-flow) {
-		--xy-background-color: #f7f9fb;
-		--xy-theme-selected: #ff4000;
-		--xy-theme-hover: #c5c5c5;
-		--xy-theme-edge-hover: black;
-		--xy-theme-color-focus: #e8e8e8;
-		--xy-node-border-default: 1px solid #ededed;
+		--flow-edge-color: color-mix(in srgb, var(--color-text-muted) 54%, transparent);
+		--flow-edge-label-bg: var(--color-surface);
+		--flow-edge-label-color: var(--color-text-muted);
+		--xy-background-color: color-mix(in srgb, var(--color-surface) 82%, var(--color-page-bg));
+		--xy-theme-selected: var(--color-accent);
+		--xy-theme-hover: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
+		--xy-theme-edge-hover: var(--color-text);
+		--xy-theme-color-focus: color-mix(in srgb, var(--color-accent) 18%, transparent);
+		--xy-node-border-default: 1px solid var(--color-border);
 		--xy-node-boxshadow-default:
-			0px 3.54px 4.55px 0px #00000005, 0px 3.54px 4.55px 0px #0000000d,
-			0px 0.51px 1.01px 0px #0000001a;
-		--xy-node-border-radius-default: 8px;
-		--xy-handle-background-color-default: #ffffff;
-		--xy-handle-border-color-default: #aaaaaa;
-		--xy-edge-label-color-default: #505050;
+			0 8px 22px color-mix(in srgb, var(--color-text) 10%, transparent),
+			0 1px 3px color-mix(in srgb, var(--color-text) 10%, transparent);
+		--xy-node-border-radius-default: var(--radius-control, 8px);
+		--xy-handle-background-color-default: var(--color-surface);
+		--xy-handle-border-color-default: var(--color-border);
+		--xy-edge-label-color-default: var(--color-text-muted);
 		background: var(--xy-background-color);
 	}
 
@@ -472,7 +455,7 @@
 
 	:global(.svelte-flow__node.selectable:focus) {
 		box-shadow: 0px 0px 0px 4px var(--xy-theme-color-focus);
-		border-color: #d9d9d9;
+		border-color: var(--xy-theme-hover);
 	}
 
 	:global(.svelte-flow__node.selectable:focus:active) {
@@ -500,12 +483,12 @@
 	:global(.svelte-flow__handle.connectionindicator:hover) {
 		pointer-events: all;
 		border-color: var(--xy-theme-edge-hover);
-		background-color: white;
+		background-color: var(--color-surface);
 	}
 
 	/* Edge styling */
 	:global(.svelte-flow__edge-path) {
-		stroke: #b1b1b7;
+		stroke: var(--flow-edge-color);
 		stroke-width: 1.5px;
 		transition:
 			stroke 0.15s,
@@ -513,44 +496,47 @@
 	}
 
 	:global(.svelte-flow__edge.selectable:hover .svelte-flow__edge-path) {
-		stroke: #6b7280;
+		stroke: var(--color-text-muted);
 		stroke-width: 2px;
 	}
 
 	:global(.svelte-flow__edge.selectable.selected .svelte-flow__edge-path) {
-		stroke: #2563eb;
+		stroke: var(--color-accent);
 		stroke-width: 2.5px;
 	}
 
 	:global(.svelte-flow__edge-label) {
-		background: white;
+		background: var(--flow-edge-label-bg);
 		font-size: 9px;
 		padding: 2px 6px;
-		border-radius: 4px;
-		border: 1px solid #e5e7eb;
-		color: #6b7280;
+		border-radius: var(--flow-edge-label-radius, var(--radius-xs, 4px));
+		border: 1px solid var(--color-border);
+		color: var(--flow-edge-label-color);
 	}
 
 	:global(.svelte-flow__edge.selectable.selected .svelte-flow__edge-label) {
-		border-color: #2563eb;
-		color: #2563eb;
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
 	/* Controls */
 	:global(.svelte-flow__controls) {
 		box-shadow: var(--xy-node-boxshadow-default);
-		border-radius: 6px;
-		border: 1px solid #e5e7eb;
+		border-radius: var(--flow-control-radius, var(--radius-control, 6px));
+		border: 1px solid var(--color-border);
 	}
 
 	:global(.svelte-flow__controls-button) {
-		border-bottom: 1px solid #e5e7eb;
+		border-bottom: 1px solid var(--color-border);
+		background: var(--color-surface);
+		color: var(--color-text);
 	}
 
 	/* MiniMap */
 	:global(.svelte-flow__minimap) {
-		border-radius: 6px;
-		border: 1px solid #e5e7eb;
+		border-radius: var(--flow-minimap-radius, var(--radius-control, 6px));
+		border: 1px solid var(--color-border);
 		box-shadow: var(--xy-node-boxshadow-default);
+		background: var(--color-surface);
 	}
 </style>

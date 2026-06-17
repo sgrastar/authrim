@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Alert from '$lib/components/Alert.svelte';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import {
 		adminStorageDestinationsAPI,
@@ -383,13 +389,11 @@
 	<title>{$LL.admin_dr_backup_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_dr_backup_title()}</h1>
-			<p class="page-description">{$LL.admin_dr_backup_description()}</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_dr_backup_title()}
+		description={$LL.admin_dr_backup_description()}
+	/>
 
 	{#if error}
 		<Alert variant="error" dismissible onDismiss={() => (error = '')}>
@@ -402,95 +406,93 @@
 		</Alert>
 	{/if}
 
-	<div class="panel">
-		<h2 class="panel-title">{$LL.admin_dr_backup_destination_title()}</h2>
-		{#if loading}
-			<div class="loading-state">
-				<i class="i-ph-spinner loading-spinner"></i>
-				<p>{$LL.admin_dr_backup_loading_settings()}</p>
-			</div>
-		{:else}
-			<div class="form-group">
-				<label for="storage-destination" class="form-label">
-					{$LL.admin_dr_backup_storage_destination()}
-				</label>
-				<select
-					id="storage-destination"
-					class="form-select"
-					value={selectedStorageDestinationId}
-					disabled={saving || !canEdit}
-					onchange={(event) =>
-						handleStorageDestinationChange((event.currentTarget as HTMLSelectElement).value)}
-				>
-					<option value="">{$LL.admin_dr_backup_not_configured()}</option>
-					{#each storageDestinations as destination (destination.id)}
-						<option value={destination.id}>
-							{destination.display_name || destination.name} ({providerLabel(destination)})
-						</option>
-					{/each}
-				</select>
-				{#if storageDestinationError}
-					<p class="form-error">{storageDestinationError}</p>
-				{/if}
-			</div>
-
-			{#if selectedStorageDestinationId}
-				<div class="selected-destination">
-					{#each storageDestinations.filter((d) => d.id === selectedStorageDestinationId) as destination (destination.id)}
-						<div class="destination-name">{destination.display_name || destination.name}</div>
-						<div class="destination-meta">
-							{providerLabel(destination)} · {destination.scope_type}
-						</div>
-					{/each}
-				</div>
-			{/if}
-		{/if}
-	</div>
-
-	<div class="panel">
-		<div class="panel-heading">
-			<div>
-				<h2 class="panel-title">{$LL.admin_dr_backup_saml_bundle_title()}</h2>
-				<p class="panel-description">
-					{$LL.admin_dr_backup_saml_bundle_desc()}
-				</p>
-			</div>
-			<span class="sensitive-badge">{$LL.admin_dr_backup_sensitive()}</span>
-		</div>
-
-		<div class="warning-box">
-			<i class="i-ph-warning-circle"></i>
-			<span>
-				{$LL.admin_dr_backup_saml_bundle_warning()}
-			</span>
-		</div>
-
-		<div class="certificate-export-preview">
-			<div class="certificate-export-header">
-				<div>
-					<h3>{$LL.admin_dr_backup_export_certificates_title()}</h3>
-					<p>{$LL.admin_dr_backup_export_certificates_desc()}</p>
-				</div>
-				<button
-					type="button"
-					class="btn btn-secondary btn-sm"
-					onclick={loadSAMLSettings}
-					disabled={certificatePreviewLoading}
-				>
-					<i class="i-ph-arrows-clockwise"></i>
-					{$LL.admin_dr_backup_refresh_certificates()}
-				</button>
-			</div>
-
-			{#if certificatePreviewError}
-				<div class="form-error">{certificatePreviewError}</div>
-			{:else if exportCertificateRows.length === 0}
-				<div class="empty-certificate-state">
-					{$LL.admin_dr_backup_no_export_certificates()}
+	<AdminSection title={$LL.admin_dr_backup_destination_title()}>
+		<div class="dr-panel">
+			{#if loading}
+				<div class="loading-state">
+					<i class="i-ph-spinner loading-spinner"></i>
+					<p>{$LL.admin_dr_backup_loading_settings()}</p>
 				</div>
 			{:else}
-				<div class="certificate-table-wrap">
-					<table class="certificate-table">
+				<div class="form-group">
+					<label for="storage-destination" class="form-label">
+						{$LL.admin_dr_backup_storage_destination()}
+					</label>
+					<select
+						id="storage-destination"
+						class="admin-select"
+						value={selectedStorageDestinationId}
+						disabled={saving || !canEdit}
+						onchange={(event) =>
+							handleStorageDestinationChange((event.currentTarget as HTMLSelectElement).value)}
+					>
+						<option value="">{$LL.admin_dr_backup_not_configured()}</option>
+						{#each storageDestinations as destination (destination.id)}
+							<option value={destination.id}>
+								{destination.display_name || destination.name} ({providerLabel(destination)})
+							</option>
+						{/each}
+					</select>
+					{#if storageDestinationError}
+						<p class="form-error">{storageDestinationError}</p>
+					{/if}
+				</div>
+
+				{#if selectedStorageDestinationId}
+					<div class="selected-destination">
+						{#each storageDestinations.filter((d) => d.id === selectedStorageDestinationId) as destination (destination.id)}
+							<div class="destination-name">{destination.display_name || destination.name}</div>
+							<div class="destination-meta">
+								{providerLabel(destination)} · {destination.scope_type}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			{/if}
+		</div>
+	</AdminSection>
+
+	<AdminSection
+		title={$LL.admin_dr_backup_saml_bundle_title()}
+		description={$LL.admin_dr_backup_saml_bundle_desc()}
+	>
+		{#snippet actions()}
+			<span class="sensitive-badge">{$LL.admin_dr_backup_sensitive()}</span>
+		{/snippet}
+
+		<div class="dr-panel">
+			<div class="warning-box">
+				<i class="i-ph-warning-circle"></i>
+				<span>
+					{$LL.admin_dr_backup_saml_bundle_warning()}
+				</span>
+			</div>
+
+			<div class="certificate-export-preview">
+				<div class="certificate-export-header">
+					<div>
+						<h3>{$LL.admin_dr_backup_export_certificates_title()}</h3>
+						<p>{$LL.admin_dr_backup_export_certificates_desc()}</p>
+					</div>
+					<button
+						type="button"
+						class="btn btn-secondary btn-sm"
+						onclick={loadSAMLSettings}
+						disabled={certificatePreviewLoading}
+					>
+						<i class="i-ph-arrows-clockwise"></i>
+						{$LL.admin_dr_backup_refresh_certificates()}
+					</button>
+				</div>
+
+				{#if certificatePreviewError}
+					<div class="form-error">{certificatePreviewError}</div>
+				{:else if exportCertificateRows.length === 0}
+					<div class="empty-certificate-state">
+						{$LL.admin_dr_backup_no_export_certificates()}
+					</div>
+				{:else}
+					<AdminDataTable compact>
 						<thead>
 							<tr>
 								<th>{$LL.admin_dr_backup_certificate_role()}</th>
@@ -505,14 +507,16 @@
 							{#each exportCertificateRows as row (row.id)}
 								<tr>
 									<td>{roleLabel(row.role)}</td>
-									<td>
+									<td class="certificate-slot-cell">
 										<strong>{row.label}</strong>
 										<span>{row.description}</span>
 									</td>
 									<td>{certificateStatus(row)}</td>
 									<td>
 										{#if row.reference.kid || row.reference.keyRef}
-											<code>{row.reference.kid ?? row.reference.keyRef}</code>
+											<code class="certificate-key-ref"
+												>{row.reference.kid ?? row.reference.keyRef}</code
+											>
 										{:else}
 											<span>-</span>
 										{/if}
@@ -531,67 +535,67 @@
 								</tr>
 							{/each}
 						</tbody>
-					</table>
-				</div>
-			{/if}
-		</div>
+					</AdminDataTable>
+				{/if}
+			</div>
 
-		<div class="dr-bundle-fields">
-			<label>
-				<span>{$LL.admin_dr_backup_passphrase()}</span>
-				<input
-					class="form-input"
-					type="password"
-					autocomplete="new-password"
-					bind:value={drBundlePassphrase}
-					placeholder={$LL.admin_dr_backup_passphrase_placeholder()}
-					disabled={!!drBundleAction || !canEdit}
-				/>
-			</label>
-			<label>
-				<span>{$LL.admin_dr_backup_confirm_passphrase()}</span>
-				<input
-					class="form-input"
-					type="password"
-					autocomplete="new-password"
-					bind:value={drBundlePassphraseConfirm}
-					placeholder={$LL.admin_dr_backup_confirm_passphrase_placeholder()}
-					disabled={!!drBundleAction || !canEdit}
-				/>
-			</label>
-		</div>
+			<div class="dr-bundle-fields">
+				<label>
+					<span>{$LL.admin_dr_backup_passphrase()}</span>
+					<input
+						class="admin-input"
+						type="password"
+						autocomplete="new-password"
+						bind:value={drBundlePassphrase}
+						placeholder={$LL.admin_dr_backup_passphrase_placeholder()}
+						disabled={!!drBundleAction || !canEdit}
+					/>
+				</label>
+				<label>
+					<span>{$LL.admin_dr_backup_confirm_passphrase()}</span>
+					<input
+						class="admin-input"
+						type="password"
+						autocomplete="new-password"
+						bind:value={drBundlePassphraseConfirm}
+						placeholder={$LL.admin_dr_backup_confirm_passphrase_placeholder()}
+						disabled={!!drBundleAction || !canEdit}
+					/>
+				</label>
+			</div>
 
-		<div class="form-actions">
-			<button
-				class="btn btn-secondary"
-				onclick={exportLocalSigningDRBundle}
-				disabled={!canExportDRBundle}
-			>
-				<i class="i-ph-download-simple"></i>
-				{drBundleAction === 'export'
-					? $LL.admin_dr_backup_exporting()
-					: $LL.admin_dr_backup_export_bundle()}
-			</button>
-			<button
-				class="btn btn-secondary"
-				onclick={() => drBundleFileInput?.click()}
-				disabled={!canImportDRBundle}
-			>
-				<i class="i-ph-upload-simple"></i>
-				{drBundleAction === 'import'
-					? $LL.admin_dr_backup_importing()
-					: $LL.admin_dr_backup_import_bundle()}
-			</button>
-			<input
-				bind:this={drBundleFileInput}
-				class="hidden-file-input"
-				type="file"
-				accept="application/json,.json"
-				onchange={importLocalSigningDRBundle}
-			/>
+			<div class="form-actions">
+				<button
+					class="btn btn-secondary"
+					onclick={exportLocalSigningDRBundle}
+					disabled={!canExportDRBundle}
+				>
+					<i class="i-ph-download-simple"></i>
+					{drBundleAction === 'export'
+						? $LL.admin_dr_backup_exporting()
+						: $LL.admin_dr_backup_export_bundle()}
+				</button>
+				<button
+					class="btn btn-secondary"
+					onclick={() => drBundleFileInput?.click()}
+					disabled={!canImportDRBundle}
+				>
+					<i class="i-ph-upload-simple"></i>
+					{drBundleAction === 'import'
+						? $LL.admin_dr_backup_importing()
+						: $LL.admin_dr_backup_import_bundle()}
+				</button>
+				<input
+					bind:this={drBundleFileInput}
+					class="hidden-file-input"
+					type="file"
+					accept="application/json,.json"
+					onchange={importLocalSigningDRBundle}
+				/>
+			</div>
 		</div>
-	</div>
-</div>
+	</AdminSection>
+</AdminPageShell>
 
 {#if selectedCertificateDetail}
 	<div class="modal-backdrop">
@@ -729,50 +733,39 @@
 {/if}
 
 <style>
-	.panel {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		padding: 1.5rem;
+	.dr-panel,
+	.certificate-export-preview,
+	.certificate-detail-modal,
+	.modal-header,
+	.modal-body,
+	.modal-footer,
+	.certificate-info-grid,
+	.fingerprint-grid,
+	.field-copy-row,
+	.selected-destination,
+	.certificate-textarea {
+		box-sizing: border-box;
+		min-width: 0;
 	}
 
-	.panel + .panel {
-		margin-top: 1rem;
-	}
-
-	.panel-heading {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-
-	.panel-title {
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 1rem;
-	}
-
-	.panel-heading .panel-title {
-		margin-bottom: 0.25rem;
-	}
-
-	.panel-description {
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-		line-height: 1.45;
-		margin: 0;
+	.dr-panel {
+		background: var(--settings-panel-bg, var(--color-surface));
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		padding: var(--settings-panel-padding, 1.5rem);
+		color: var(--color-text);
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
 	.sensitive-badge {
-		border-radius: 999px;
-		background: rgba(245, 158, 11, 0.14);
-		color: var(--warning);
-		font-size: 0.75rem;
+		border: var(--settings-badge-border, 1px solid transparent);
+		border-radius: var(--settings-badge-radius, 999px);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
+		font-size: var(--settings-badge-size, 0.75rem);
 		font-weight: 700;
-		padding: 0.25rem 0.625rem;
+		letter-spacing: var(--settings-badge-letter-spacing, 0);
+		padding: var(--settings-badge-padding, 0.25rem 0.625rem);
 		white-space: nowrap;
 	}
 
@@ -784,22 +777,12 @@
 		display: block;
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 0.5rem;
 	}
 
-	.form-select {
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-	}
-
 	.form-error {
-		color: var(--danger);
+		color: var(--color-danger);
 		font-size: 0.8125rem;
 		margin-top: 0.5rem;
 	}
@@ -808,26 +791,26 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.5rem;
-		border: 1px solid rgba(245, 158, 11, 0.28);
-		border-radius: var(--radius-md);
-		background: rgba(245, 158, 11, 0.08);
-		color: var(--text-secondary);
+		border: 1px solid color-mix(in srgb, var(--color-warning) 32%, var(--color-border));
+		border-radius: var(--radius-control);
+		background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 		padding: 0.75rem;
 	}
 
 	.warning-box i {
-		color: var(--warning);
+		color: var(--color-warning);
 		flex: 0 0 auto;
 		margin-top: 0.125rem;
 	}
 
 	.certificate-export-preview {
 		margin-top: 1rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-panel));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 		padding: 1rem;
 	}
 
@@ -841,7 +824,7 @@
 
 	.certificate-export-header h3 {
 		margin: 0 0 0.25rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.9375rem;
 		font-weight: 700;
 	}
@@ -849,50 +832,25 @@
 	.certificate-export-header p,
 	.empty-certificate-state {
 		margin: 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
 
-	.certificate-table-wrap {
-		overflow-x: auto;
-	}
-
-	.certificate-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.8125rem;
-	}
-
-	.certificate-table th,
-	.certificate-table td {
-		padding: 0.625rem;
-		border-bottom: 1px solid var(--border);
-		color: var(--text-secondary);
-		text-align: left;
-		vertical-align: top;
-	}
-
-	.certificate-table th {
-		color: var(--text-primary);
-		font-weight: 700;
-		white-space: nowrap;
-	}
-
-	.certificate-table td strong,
-	.certificate-table td span {
+	.certificate-slot-cell strong,
+	.certificate-slot-cell span {
 		display: block;
 	}
 
-	.certificate-table td strong {
-		color: var(--text-primary);
+	.certificate-slot-cell strong {
+		color: var(--color-text);
 	}
 
-	.certificate-table code {
+	.certificate-key-ref {
 		display: inline-block;
 		max-width: 220px;
 		overflow: hidden;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.75rem;
 		text-overflow: ellipsis;
 		vertical-align: top;
@@ -909,19 +867,9 @@
 	.dr-bundle-fields label {
 		display: grid;
 		gap: 0.375rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-weight: 600;
-	}
-
-	.form-input {
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font-size: 0.875rem;
 	}
 
 	.form-actions {
@@ -945,7 +893,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 1rem;
-		background: rgba(15, 23, 42, 0.54);
+		background: var(--color-overlay-scrim);
 	}
 
 	.certificate-detail-modal {
@@ -954,10 +902,10 @@
 		display: grid;
 		grid-template-rows: auto minmax(0, 1fr) auto;
 		overflow: hidden;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--modal-shadow, var(--shadow-panel));
 	}
 
 	.modal-header,
@@ -967,18 +915,18 @@
 		justify-content: space-between;
 		gap: 1rem;
 		padding: 1rem 1.25rem;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.modal-header h2 {
 		margin: 0 0 0.25rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 1rem;
 	}
 
 	.modal-header p {
 		margin: 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 	}
 
@@ -989,7 +937,7 @@
 
 	.modal-footer {
 		justify-content: flex-end;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 		border-bottom: 0;
 	}
 
@@ -999,37 +947,37 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		background: transparent;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		flex: 0 0 auto;
 	}
 
 	.icon-btn:hover {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.icon-btn.copied {
-		border-color: var(--success);
-		color: var(--success);
+		border-color: var(--color-success);
+		color: var(--color-success);
 	}
 
 	.modal-alert {
-		border: 1px solid rgba(59, 130, 246, 0.28);
-		border-radius: var(--radius-md);
-		background: rgba(59, 130, 246, 0.08);
-		color: var(--text-secondary);
+		border: 1px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+		border-radius: var(--radius-control);
+		background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		padding: 0.75rem;
 	}
 
 	.modal-alert.error {
-		border-color: rgba(239, 68, 68, 0.28);
-		background: rgba(239, 68, 68, 0.08);
-		color: var(--danger);
+		border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.certificate-info-grid {
@@ -1041,9 +989,9 @@
 	.certificate-info-grid div,
 	.fingerprint-grid div {
 		min-width: 0;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
 		padding: 0.75rem;
 	}
 
@@ -1051,14 +999,14 @@
 	.fingerprint-grid span {
 		display: block;
 		margin-bottom: 0.25rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 	}
 
 	.certificate-info-grid strong,
 	.fingerprint-grid code {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 		overflow-wrap: anywhere;
 	}
@@ -1079,7 +1027,7 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.375rem;
-		color: var(--warning);
+		color: var(--color-warning);
 		font-size: 0.8125rem;
 	}
 
@@ -1091,7 +1039,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		cursor: pointer;
 		font-size: 0.875rem;
 		font-weight: 700;
@@ -1109,10 +1057,10 @@
 		width: 100%;
 		min-height: 180px;
 		padding: 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+		color: var(--color-text);
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 		font-size: 0.75rem;
 		resize: vertical;
@@ -1123,25 +1071,24 @@
 	}
 
 	.selected-destination {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
-		background: var(--bg-subtle);
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.destination-name {
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.destination-meta {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-top: 0.25rem;
 	}
 
 	@media (max-width: 720px) {
-		.panel-heading,
 		.form-actions {
 			display: grid;
 			justify-content: stretch;

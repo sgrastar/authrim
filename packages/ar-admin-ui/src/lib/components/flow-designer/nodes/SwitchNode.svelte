@@ -154,11 +154,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 4px);
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -169,25 +169,26 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-shape {
 		position: relative;
 		min-width: 100px;
 		padding: 10px 16px;
-		background: white;
-		border: 2px solid #a855f7;
-		border-radius: 8px;
+		background: var(--flow-node-bg, var(--color-surface));
+		border: 2px solid var(--flow-switch-color, var(--color-accent));
+		border-radius: var(--radius-panel, 8px);
+		color: var(--color-text);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		box-shadow: 0 2px 4px rgba(168, 85, 247, 0.1);
+		box-shadow: var(--flow-node-shadow, var(--shadow-sm));
 	}
 
 	.switch-node.selected .node-shape {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -200,29 +201,33 @@
 
 	.icon {
 		font-size: 14px;
-		color: #a855f7;
+		color: var(--flow-switch-color, var(--color-accent));
 		font-weight: bold;
 	}
 
 	.label {
 		font-size: 11px;
-		font-weight: 600;
-		color: #374151;
+		font-weight: var(--font-weight-semibold, 600);
+		color: var(--color-text);
 		white-space: nowrap;
 	}
 
 	.switch-key {
 		font-size: 8px;
-		color: #7c3aed;
+		color: var(--flow-switch-color, var(--color-accent));
 		font-family: 'Courier New', monospace;
-		background: #faf5ff;
+		background: color-mix(
+			in srgb,
+			var(--flow-switch-color, var(--color-accent)) 10%,
+			var(--color-surface)
+		);
 		padding: 1px 4px;
-		border-radius: 2px;
+		border-radius: var(--radius-control, 4px);
 	}
 
 	.case-count {
 		font-size: 8px;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 		font-style: italic;
 	}
 
@@ -237,10 +242,14 @@
 		font-size: 8px;
 		font-weight: 600;
 		padding: 2px 5px;
-		border-radius: 3px;
+		border-radius: var(--radius-control, 4px);
 		pointer-events: none;
-		background: #f3e8ff;
-		color: #6b21a8;
+		background: color-mix(
+			in srgb,
+			var(--flow-switch-color, var(--color-accent)) 14%,
+			var(--color-surface)
+		);
+		color: var(--flow-switch-color, var(--color-accent));
 		margin-left: 10px;
 		white-space: nowrap;
 	}

@@ -5,7 +5,12 @@
 		type CategoryMeta,
 		PLATFORM_CATEGORIES
 	} from '$lib/api/admin-settings';
-	import { SettingsScopeSelector } from '$lib/components/admin';
+	import {
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		SettingsScopeSelector
+	} from '$lib/components/admin';
 	import { settingsContext, type SettingScopeLevel } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -53,38 +58,38 @@
 	// Get current scope from context
 	let currentScope = $derived(settingsContext.currentLevel);
 
-	// Category icons and colors for visual distinction
-	const categoryStyles: Record<string, { icon: string; color: string }> = {
-		oauth: { icon: '🔐', color: 'var(--primary)' },
-		session: { icon: '⏱️', color: 'var(--success)' },
-		security: { icon: '🛡️', color: 'var(--danger)' },
-		'rate-limit': { icon: '⚡', color: 'var(--warning)' },
-		tokens: { icon: '🎫', color: '#8b5cf6' },
-		federation: { icon: '🔗', color: '#06b6d4' },
-		credentials: { icon: '🔑', color: '#ec4899' },
-		consent: { icon: '✅', color: 'var(--success)' },
-		ciba: { icon: '📱', color: '#6366f1' },
-		'device-flow': { icon: '📺', color: '#14b8a6' },
-		'external-idp': { icon: '🌐', color: '#0ea5e9' },
-		client: { icon: '📦', color: '#a855f7' },
-		infrastructure: { icon: '🏗️', color: '#64748b' },
-		encryption: { icon: '🔒', color: '#71717a' },
-		discovery: { icon: '🔍', color: '#0891b2' },
-		plugin: { icon: '🧩', color: '#7c3aed' },
+	// Category icons for visual distinction.
+	const categoryStyles: Record<string, { icon: string }> = {
+		oauth: { icon: '🔐' },
+		session: { icon: '⏱️' },
+		security: { icon: '🛡️' },
+		'rate-limit': { icon: '⚡' },
+		tokens: { icon: '🎫' },
+		federation: { icon: '🔗' },
+		credentials: { icon: '🔑' },
+		consent: { icon: '✅' },
+		ciba: { icon: '📱' },
+		'device-flow': { icon: '📺' },
+		'external-idp': { icon: '🌐' },
+		client: { icon: '📦' },
+		infrastructure: { icon: '🏗️' },
+		encryption: { icon: '🔒' },
+		discovery: { icon: '🔍' },
+		plugin: { icon: '🧩' },
 		// Additional categories
-		cache: { icon: '💾', color: '#0d9488' },
-		'feature-flags': { icon: '🚩', color: 'var(--danger)' },
-		limits: { icon: '📊', color: '#ea580c' },
-		tenant: { icon: '🏢', color: '#4f46e5' },
-		vc: { icon: '📜', color: 'var(--success)' },
-		assurance: { icon: '🔰', color: '#7c3aed' },
-		'check-api-audit': { icon: '📋', color: '#6366f1' },
+		cache: { icon: '💾' },
+		'feature-flags': { icon: '🚩' },
+		limits: { icon: '📊' },
+		tenant: { icon: '🏢' },
+		vc: { icon: '📜' },
+		assurance: { icon: '🔰' },
+		'check-api-audit': { icon: '📋' },
 		// Dynamic Client Registration (RFC 7591)
-		dcr: { icon: '📝', color: '#059669' },
+		dcr: { icon: '📝' },
 		// Login UI Customization
-		'login-ui': { icon: '🎨', color: '#8b5cf6' },
-		'login-entry': { icon: '🧭', color: '#0f766e' },
-		'support-ops': { icon: '🛠️', color: '#475569' }
+		'login-ui': { icon: '🎨' },
+		'login-entry': { icon: '🧭' },
+		'support-ops': { icon: '🛠️' }
 	};
 
 	// Check if category is platform-level (read-only)
@@ -120,7 +125,7 @@
 
 	// Get style for category
 	function getStyle(category: string) {
-		return categoryStyles[category] || { icon: '⚙️', color: 'var(--text-secondary)' };
+		return categoryStyles[category] || { icon: '⚙️' };
 	}
 
 	onMount(async () => {
@@ -142,161 +147,169 @@
 	<title>{$LL.admin_settings_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_settings_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_settings_description()}
-			</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_settings_title()}
+		description={$LL.admin_settings_description()}
+	/>
 
-	<!-- Scope Selector -->
-	<div style="margin-bottom: 24px;">
+	<AdminSection>
 		<SettingsScopeSelector />
-	</div>
+	</AdminSection>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
 
 	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>{$LL.admin_settings_loading_categories()}</p>
-		</div>
+		<AdminSection>
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner"></i>
+				<p>{$LL.admin_settings_loading_categories()}</p>
+			</div>
+		</AdminSection>
 	{:else}
-		<!-- Category Grid -->
-		<div class="icon-grid">
-			<!-- Signing Keys (special card) - Tenant scope only -->
-			{#if showSigningKeys}
-				<a href="/admin/settings/signing-keys" class="icon-card">
-					<div class="icon-card-header">
-						<span class="icon-card-icon">🔏</span>
-						<div>
-							<h2 class="icon-card-title">{$LL.admin_settings_signing_keys()}</h2>
-							<span
-								class="icon-card-badge"
-								style="background: var(--warning-light); color: var(--warning);"
-							>
-								{$LL.admin_settings_special()}
-							</span>
-						</div>
-					</div>
-					<p class="icon-card-description">
-						{$LL.admin_settings_signing_keys_desc()}
-					</p>
-				</a>
-			{/if}
-
-			<!-- Sharding Configuration (special card) - Platform scope only -->
-			{#if showSharding}
-				<a href="/admin/settings/sharding" class="icon-card">
-					<div class="icon-card-header">
-						<span class="icon-card-icon">🗂️</span>
-						<div>
-							<h2 class="icon-card-title">{$LL.admin_settings_sharding()}</h2>
-							<span
-								class="icon-card-badge"
-								style="background: var(--warning-light); color: var(--warning);"
-							>
-								{$LL.admin_settings_special()}
-							</span>
-						</div>
-					</div>
-					<p class="icon-card-description">{$LL.admin_settings_sharding_desc()}</p>
-				</a>
-			{/if}
-
-			<!-- Cache Mode Configuration (special card) - Platform scope only -->
-			{#if showCacheMode}
-				<a href="/admin/settings/cache-mode" class="icon-card">
-					<div class="icon-card-header">
-						<span class="icon-card-icon">💾</span>
-						<div>
-							<h2 class="icon-card-title">{$LL.admin_settings_cache_mode()}</h2>
-							<span
-								class="icon-card-badge"
-								style="background: var(--warning-light); color: var(--warning);"
-							>
-								{$LL.admin_settings_special()}
-							</span>
-						</div>
-					</div>
-					<p class="icon-card-description">
-						{$LL.admin_settings_cache_mode_desc()}
-					</p>
-				</a>
-			{/if}
-
-			<!-- Runtime Profiles (special card) - Platform scope only -->
-			{#if showRuntimeProfiles}
-				<a href="/admin/settings/runtime-profiles" class="icon-card">
-					<div class="icon-card-header">
-						<span class="icon-card-icon">🧭</span>
-						<div>
-							<h2 class="icon-card-title">{$LL.admin_settings_runtime_profiles()}</h2>
-							<span
-								class="icon-card-badge"
-								style="background: var(--warning-light); color: var(--warning);"
-							>
-								{$LL.admin_settings_special()}
-							</span>
-						</div>
-					</div>
-					<p class="icon-card-description">
-						{$LL.admin_settings_runtime_profiles_desc()}
-					</p>
-				</a>
-			{/if}
-
-			<!-- Diagnostic Logging (special card) - Tenant scope only -->
-			{#if showDiagnosticLogging}
-				<a href="/admin/diagnostic-logging" class="icon-card">
-					<div class="icon-card-header">
-						<span class="icon-card-icon">🧪</span>
-						<div>
-							<h2 class="icon-card-title">{$LL.admin_settings_diagnostic_logging()}</h2>
-							<span
-								class="icon-card-badge"
-								style="background: var(--warning-light); color: var(--warning);"
-							>
-								{$LL.admin_settings_special()}
-							</span>
-						</div>
-					</div>
-					<p class="icon-card-description">
-						{$LL.admin_settings_diagnostic_logging_desc()}
-					</p>
-				</a>
-			{/if}
-
-			<!-- Category Cards (filtered by scope) -->
-			{#each filteredCategories as category (category.category)}
-				{@const style = getStyle(category.category)}
-				{@const isReadOnly = isPlatformCategory(category.category)}
-				<a href="/admin/settings/{category.category}" class="icon-card">
-					<div class="icon-card-header">
-						<span class="icon-card-icon">{style.icon}</span>
-						<div>
-							<h2 class="icon-card-title">{category.label}</h2>
-							{#if isReadOnly}
-								<span class="icon-card-badge">{$LL.admin_settings_readonly()}</span>
-							{:else}
-								<span
-									class="icon-card-badge"
-									style="background: transparent; color: var(--text-muted);"
-								>
-									{$LL.admin_settings_count({ count: category.settingsCount })}
+		<AdminSection>
+			<div class="icon-grid settings-grid">
+				{#if showSigningKeys}
+					<a href="/admin/settings/signing-keys" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">🔏</span>
+							<div>
+								<h2 class="icon-card-title">{$LL.admin_settings_signing_keys()}</h2>
+								<span class="icon-card-badge icon-card-badge--special">
+									{$LL.admin_settings_special()}
 								</span>
-							{/if}
+							</div>
 						</div>
-					</div>
-					<p class="icon-card-description">{category.description}</p>
-				</a>
-			{/each}
-		</div>
+						<p class="icon-card-description">
+							{$LL.admin_settings_signing_keys_desc()}
+						</p>
+					</a>
+				{/if}
+
+				{#if showSharding}
+					<a href="/admin/settings/sharding" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">🗂️</span>
+							<div>
+								<h2 class="icon-card-title">{$LL.admin_settings_sharding()}</h2>
+								<span class="icon-card-badge icon-card-badge--special">
+									{$LL.admin_settings_special()}
+								</span>
+							</div>
+						</div>
+						<p class="icon-card-description">{$LL.admin_settings_sharding_desc()}</p>
+					</a>
+				{/if}
+
+				{#if showCacheMode}
+					<a href="/admin/settings/cache-mode" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">💾</span>
+							<div>
+								<h2 class="icon-card-title">{$LL.admin_settings_cache_mode()}</h2>
+								<span class="icon-card-badge icon-card-badge--special">
+									{$LL.admin_settings_special()}
+								</span>
+							</div>
+						</div>
+						<p class="icon-card-description">
+							{$LL.admin_settings_cache_mode_desc()}
+						</p>
+					</a>
+				{/if}
+
+				{#if showRuntimeProfiles}
+					<a href="/admin/settings/runtime-profiles" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">🧭</span>
+							<div>
+								<h2 class="icon-card-title">{$LL.admin_settings_runtime_profiles()}</h2>
+								<span class="icon-card-badge icon-card-badge--special">
+									{$LL.admin_settings_special()}
+								</span>
+							</div>
+						</div>
+						<p class="icon-card-description">
+							{$LL.admin_settings_runtime_profiles_desc()}
+						</p>
+					</a>
+				{/if}
+
+				{#if showDiagnosticLogging}
+					<a href="/admin/diagnostic-logging" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">🧪</span>
+							<div>
+								<h2 class="icon-card-title">{$LL.admin_settings_diagnostic_logging()}</h2>
+								<span class="icon-card-badge icon-card-badge--special">
+									{$LL.admin_settings_special()}
+								</span>
+							</div>
+						</div>
+						<p class="icon-card-description">
+							{$LL.admin_settings_diagnostic_logging_desc()}
+						</p>
+					</a>
+				{/if}
+
+				{#each filteredCategories as category (category.category)}
+					{@const style = getStyle(category.category)}
+					{@const isReadOnly = isPlatformCategory(category.category)}
+					<a href="/admin/settings/{category.category}" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">{style.icon}</span>
+							<div>
+								<h2 class="icon-card-title">{category.label}</h2>
+								{#if isReadOnly}
+									<span class="icon-card-badge">{$LL.admin_settings_readonly()}</span>
+								{:else}
+									<span class="icon-card-badge icon-card-badge--count">
+										{$LL.admin_settings_count({ count: category.settingsCount })}
+									</span>
+								{/if}
+							</div>
+						</div>
+						<p class="icon-card-description">{category.description}</p>
+					</a>
+				{/each}
+			</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
+
+<style>
+	.settings-grid :global(.icon-card) {
+		background: var(--color-surface);
+		border-color: var(--color-border);
+		border-radius: var(--card-radius);
+	}
+
+	.settings-grid :global(.icon-card:hover) {
+		border-color: var(--color-accent);
+	}
+
+	.settings-grid :global(.icon-card-title) {
+		color: var(--color-text);
+	}
+
+	.settings-grid :global(.icon-card-description) {
+		color: var(--color-text-muted);
+	}
+
+	.settings-grid :global(.icon-card-badge) {
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
+	}
+
+	.settings-grid :global(.icon-card-badge--special) {
+		background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+		color: var(--color-warning);
+	}
+
+	.settings-grid :global(.icon-card-badge--count) {
+		background: transparent;
+		color: var(--color-text-subtle);
+	}
+</style>

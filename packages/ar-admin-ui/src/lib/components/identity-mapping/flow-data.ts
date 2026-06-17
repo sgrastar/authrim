@@ -7,6 +7,7 @@ import type {
 	IdentityMappingSchemaReadinessRow,
 	IdentityMappingSourceProfileSummary
 } from '$lib/api/admin-identity-mapping';
+import type { CustomClaimSchema } from '$lib/api/admin-custom-claims';
 import type {
 	MappingAdapter,
 	MappingEdge,
@@ -19,6 +20,7 @@ import type {
 interface IdentityMappingFlowInput {
 	policies: IdentityMappingFieldMappingSetSummary[];
 	catalogs: IdentityMappingCatalogSummary[];
+	identitySchemas?: CustomClaimSchema[];
 	sourceProfiles: IdentityMappingSourceProfileSummary[];
 	destinationProfiles: IdentityMappingDestinationProfileSummary[];
 	protocolSchemas: IdentityMappingProtocolSchemaSummary[];
@@ -52,57 +54,6 @@ interface ExtractedField {
 }
 
 const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
-const defaultCanonicalTargetDefinitions = [
-	['field.canonical.subject_id', 'Subject Identifier', 'string', 'single', 'internal'],
-	['field.canonical.name', 'Full Name', 'string', 'single', 'pii'],
-	['field.canonical.given_name', 'First Name', 'string', 'single', 'pii'],
-	['field.canonical.family_name', 'Last Name', 'string', 'single', 'pii'],
-	['field.canonical.middle_name', 'Middle Name', 'string', 'single', 'pii'],
-	['field.canonical.nickname', 'Nickname', 'string', 'single', 'pii'],
-	['field.canonical.preferred_username', 'Preferred Username', 'string', 'single', 'internal'],
-	['field.canonical.profile', 'Profile URL', 'string', 'single', 'internal'],
-	['field.canonical.picture', 'Picture URL', 'string', 'single', 'pii'],
-	['field.canonical.website', 'Website', 'string', 'single', 'internal'],
-	['field.canonical.birthdate', 'Birthdate', 'date', 'single', 'pii'],
-	['field.canonical.zoneinfo', 'Time Zone', 'string', 'single', 'internal'],
-	['field.canonical.locale', 'Locale', 'string', 'single', 'internal'],
-	['field.canonical.updated_at', 'Last Updated', 'number', 'single', 'internal'],
-	['field.canonical.email', 'Email', 'string', 'single', 'pii'],
-	['field.canonical.email_verified', 'Email Verified', 'boolean', 'single', 'internal'],
-	['field.canonical.phone_number', 'Phone Number', 'string', 'single', 'pii'],
-	[
-		'field.canonical.phone_number_verified',
-		'Phone Number Verified',
-		'boolean',
-		'single',
-		'internal'
-	],
-	['field.canonical.address', 'Address', 'json', 'multi', 'pii'],
-	['field.canonical.address_formatted', 'Address (Formatted)', 'string', 'single', 'pii'],
-	['field.canonical.address_street_address', 'Street Address', 'string', 'single', 'pii'],
-	['field.canonical.address_locality', 'City / Locality', 'string', 'single', 'pii'],
-	['field.canonical.address_region', 'Region', 'string', 'single', 'pii'],
-	['field.canonical.address_postal_code', 'Postal Code', 'string', 'single', 'pii'],
-	['field.canonical.address_country', 'Country', 'string', 'single', 'pii'],
-	['field.canonical.group_membership', 'Group Membership', 'array', 'multi', 'internal'],
-	['field.canonical.entitlements', 'Entitlements', 'array', 'multi', 'internal'],
-	['field.canonical.linked_identity', 'Linked Identity', 'string', 'single', 'internal'],
-	['field.canonical.lifecycle_state', 'Lifecycle State', 'string', 'single', 'internal']
-] as const;
-
-const defaultCanonicalTargets: MappingNode[] = defaultCanonicalTargetDefinitions.map(
-	([stableFieldId, label, valueType, cardinality, classification]) =>
-		canonicalTargetNode({
-			id: stableFieldId,
-			stableFieldId,
-			path: stableFieldId.replace(/^field\.canonical\./, ''),
-			label,
-			valueType,
-			cardinality,
-			classification,
-			storageTarget: friendlyStorageTarget(stableFieldId, valueType)
-		})
-);
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const sourceProfiles = [
@@ -116,7 +67,7 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		...input.destinationProfiles.map(destinationProfileToProfile),
 		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
 	];
-	const canonicalTargets = buildCanonicalTargets(input.catalogs);
+	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? [], input.catalogs);
 
 	if (
 		sourceProfiles.length === 0 &&
@@ -124,6 +75,15 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		destinationProfiles.length === 0
 	) {
 		return [];
+	}
+
+	if (sourceProfiles.length === 0) {
+		const destinationOnlySample = buildDestinationOnlySample(
+			destinationProfiles,
+			canonicalTargets,
+			input.policies.length
+		);
+		return destinationOnlySample ? [destinationOnlySample] : [];
 	}
 
 	return sourceProfiles.map((sourceProfile) =>
@@ -161,6 +121,48 @@ function buildSample(
 		metrics: [
 			`0 / ${sourceNodes.length}`,
 			`${Math.max(1, sourceNodes.length > 0 ? 2 : 1)} schemas`,
+			String(policyCount),
+			canonicalTargets.length > 0 ? `${canonicalTargets.length} targets` : 'no catalog'
+		],
+		nodes,
+		edges: [] satisfies MappingEdge[],
+		rules
+	};
+}
+
+function buildDestinationOnlySample(
+	destinationProfiles: ProfileSchema[],
+	canonicalTargets: MappingNode[],
+	policyCount: number
+): MappingSample | null {
+	const destinationNodes = destinationProfiles.flatMap((profile) =>
+		buildSchemaNodes(profile, 'destination')
+	);
+	if (destinationNodes.length === 0) return null;
+
+	const nodes = [...canonicalTargets, ...destinationNodes];
+	const rules = Object.fromEntries(nodes.map((node) => [node.ruleId, ruleForNode(node)]));
+	const activeDestinationProfile = destinationProfiles.find(
+		(profile) => profile.lifecycleState === 'active'
+	);
+	const displayProfile = activeDestinationProfile ?? destinationProfiles[0];
+	const destinationAdapter =
+		destinationProfiles.find((profile) => profile.adapter === 'OIDC')?.adapter ??
+		displayProfile?.adapter ??
+		'OIDC';
+
+	return {
+		id: 'destination-release-control-plane',
+		title: 'Destination release',
+		snapshot: displayProfile?.versionLabel ?? 'current',
+		status: displayProfile?.lifecycleState ?? 'active',
+		reviewGates: `${destinationNodes.length} destination fields`,
+		sourceAdapter: 'CSV',
+		destinationAdapter,
+		activeRuleId: nodes[0]?.ruleId ?? 'empty-flow',
+		metrics: [
+			`0 / ${destinationNodes.length}`,
+			`${Math.max(1, destinationProfiles.length)} schemas`,
 			String(policyCount),
 			canonicalTargets.length > 0 ? `${canonicalTargets.length} targets` : 'no catalog'
 		],
@@ -241,7 +243,49 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 	};
 }
 
-function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
+function buildIdentityTargets(
+	identitySchemas: CustomClaimSchema[],
+	catalogs: IdentityMappingCatalogSummary[]
+): MappingNode[] {
+	const schemaTargets = buildCustomClaimTargets(identitySchemas);
+	if (schemaTargets.length > 0) return schemaTargets;
+	return buildCatalogTargets(catalogs);
+}
+
+function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {
+	return schemas
+		.filter((schema) => schema.is_active !== 0 && schema.operation_status === 'active')
+		.sort(
+			(a, b) =>
+				(a.ui_group_order ?? 0) - (b.ui_group_order ?? 0) ||
+				(a.ui_field_order ?? a.display_order ?? 0) - (b.ui_field_order ?? b.display_order ?? 0) ||
+				a.field_key.localeCompare(b.field_key)
+		)
+		.map((schema) =>
+			canonicalTargetNode({
+				id: schema.id,
+				stableFieldId: `custom-claim.${schema.field_key}`,
+				path: schema.field_key,
+				label: schema.display_label || schema.field_key,
+				valueType: schema.field_type,
+				cardinality: 'single',
+				classification: schema.is_pii ? 'pii' : 'internal',
+				storageTarget: schema.is_pii ? 'PII attribute' : 'Profile attribute',
+				uiGroupKey: schema.ui_group_key ?? 'custom',
+				uiGroupLabel: schema.ui_group_label ?? 'Custom',
+				uiGroupOrder: schema.ui_group_order,
+				uiFieldOrder: schema.ui_field_order ?? schema.display_order,
+				examples: examplesFromCustomClaim(schema),
+				note: schema.description,
+				allowedValues: allowedValuesFromCustomClaim(schema),
+				valueMultiplicity: 'single',
+				nullable: schema.is_required ? false : null,
+				required: Boolean(schema.is_required)
+			})
+		);
+}
+
+function buildCatalogTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
 	const activeCatalog =
 		catalogs.find((catalog) => catalog.lifecycleState === 'active') ?? catalogs[0];
 	const catalogEntries = activeCatalog?.entries ?? [];
@@ -283,9 +327,33 @@ function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): Mappi
 			);
 	}
 
-	return defaultCanonicalTargets.map((target) => ({
-		...target
-	}));
+	return [];
+}
+
+function examplesFromCustomClaim(schema: CustomClaimSchema): unknown[] | undefined {
+	const parsed = parseJsonValue(schema.examples_json);
+	if (Array.isArray(parsed)) return parsed;
+	if (parsed !== undefined && parsed !== null) return [parsed];
+	return undefined;
+}
+
+function allowedValuesFromCustomClaim(schema: CustomClaimSchema): string[] | undefined {
+	if (schema.field_type !== 'enum') return undefined;
+	const validationRules = parseJsonValue(schema.validation_rules);
+	const values = isRecord(validationRules) ? validationRules.enum_values : undefined;
+	if (!Array.isArray(values)) return undefined;
+	const allowedValues = values.map(String).filter(Boolean);
+	return allowedValues.length > 0 ? allowedValues : undefined;
+}
+
+function parseJsonValue(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	if (!value.trim()) return undefined;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return undefined;
+	}
 }
 
 function canonicalTargetSortPriority(stableFieldId: string): number {
@@ -343,6 +411,7 @@ function canonicalTargetNode(input: {
 
 function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'): MappingNode[] {
 	const fields = extractSchemaFields(profile.schema, profile.source);
+	if (fields.length === 0 && !profile.schema) return [];
 	const extractedFields =
 		fields.length > 0
 			? fields

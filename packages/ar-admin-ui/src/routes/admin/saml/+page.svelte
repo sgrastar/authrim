@@ -6,6 +6,10 @@
 		type SAMLFederationTrustProfile,
 		type SAMLProvider
 	} from '$lib/api/admin-saml';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -129,29 +133,33 @@
 	<title>{$LL.admin_saml_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_saml_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_saml_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={navigateToLocalMetadata}>
-				<i class="i-ph-identification-card"></i>
-				{$LL.admin_saml_entity_info()}
-			</button>
-			<button class="btn btn-primary" onclick={navigateToNew}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_saml_add_provider_federation()}
-			</button>
-			<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
-				<i class="i-ph-arrow-clockwise"></i>
-				{$LL.admin_saml_refresh()}
-			</button>
-		</div>
+{#snippet pageActions()}
+	<div class="saml-page-actions">
+		<button class="btn btn-secondary" onclick={navigateToLocalMetadata}>
+			<i class="i-ph-identification-card"></i>
+			{$LL.admin_saml_entity_info()}
+		</button>
+		<button class="btn btn-primary" onclick={navigateToNew}>
+			<i class="i-ph-plus"></i>
+			{$LL.admin_saml_add_provider_federation()}
+		</button>
+		<button class="btn btn-secondary" onclick={loadSAML} disabled={loading}>
+			<i class="i-ph-arrow-clockwise"></i>
+			{$LL.admin_saml_refresh()}
+		</button>
 	</div>
+{/snippet}
+
+{#snippet trustProfileActions()}
+	<span class="badge badge-neutral">{federationTrustProfiles.length}</span>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_saml_title()}
+		description={$LL.admin_saml_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -168,7 +176,7 @@
 		</div>
 	{:else}
 		{#if providers.length === 0}
-			<div class="panel">
+			<AdminSection>
 				<div class="empty-state">
 					<p class="empty-state-description">{$LL.admin_saml_empty_providers()}</p>
 					<p class="empty-state-hint">
@@ -180,10 +188,10 @@
 						</button>
 					</div>
 				</div>
-			</div>
+			</AdminSection>
 		{:else}
-			<div class="data-table-container">
-				<table class="data-table">
+			<AdminSection>
+				<AdminDataTable width="wide">
 					<thead>
 						<tr>
 							<th>{$LL.admin_saml_name()}</th>
@@ -201,6 +209,7 @@
 								onkeydown={(event) => event.key === 'Enter' && navigateToProvider(provider.id)}
 								tabindex="0"
 								role="button"
+								data-clickable="true"
 							>
 								<td>
 									<div class="provider-cell">
@@ -228,7 +237,7 @@
 								<td>
 									<span class={metadataStatusBadge(provider)}>{metadataStatus(provider)}</span>
 								</td>
-								<td class="mono truncate" style="max-width: 280px;">
+								<td class="mono admin-data-table__truncate">
 									{provider.config.entityId || '-'}
 								</td>
 								<td>
@@ -243,77 +252,76 @@
 							</tr>
 						{/each}
 					</tbody>
-				</table>
-			</div>
+				</AdminDataTable>
+			</AdminSection>
 		{/if}
 
-		<div class="panel federation-trust-panel">
-			<div class="panel-header compact-panel-header">
-				<div>
-					<h2 class="panel-title">{$LL.admin_saml_federation_trust_profiles()}</h2>
-					<p class="form-hint">
-						{$LL.admin_saml_federation_trust_desc()}
-					</p>
-				</div>
-				<div class="panel-header-actions">
-					<span class="badge badge-neutral">{federationTrustProfiles.length}</span>
-				</div>
-			</div>
-
+		<AdminSection
+			title={$LL.admin_saml_federation_trust_profiles()}
+			description={$LL.admin_saml_federation_trust_desc()}
+			actions={trustProfileActions}
+		>
 			{#if federationTrustProfiles.length === 0}
 				<div class="empty-state compact-empty">
 					{$LL.admin_saml_empty_federation_trust_profiles()}
 				</div>
 			{:else}
-				<div class="data-table-container compact-table trust-profile-table">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th>{$LL.admin_saml_profile()}</th>
-								<th>{$LL.admin_saml_status()}</th>
-								<th>{$LL.admin_saml_policy()}</th>
-								<th>{$LL.admin_saml_metadata_url_pattern()}</th>
-								<th>{$LL.admin_saml_updated()}</th>
+				<AdminDataTable compact width="wide">
+					<thead>
+						<tr>
+							<th>{$LL.admin_saml_profile()}</th>
+							<th>{$LL.admin_saml_status()}</th>
+							<th>{$LL.admin_saml_policy()}</th>
+							<th>{$LL.admin_saml_metadata_url_pattern()}</th>
+							<th>{$LL.admin_saml_updated()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each federationTrustProfiles as profile (profile.id)}
+							<tr
+								onclick={() => navigateToTrustProfileEdit(profile.id)}
+								onkeydown={(event) =>
+									event.key === 'Enter' && navigateToTrustProfileEdit(profile.id)}
+								tabindex="0"
+								role="button"
+								data-clickable="true"
+							>
+								<td>
+									<div class="cell-primary">{profile.name}</div>
+									{#if profile.description}
+										<div class="cell-secondary">{profile.description}</div>
+									{/if}
+								</td>
+								<td>
+									<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+										{profile.enabled ? $LL.admin_saml_enabled() : $LL.admin_saml_disabled()}
+									</span>
+								</td>
+								<td>
+									<span class="badge badge-info">{trustProfilePolicy(profile)}</span>
+								</td>
+								<td class="mono admin-data-table__truncate trust-profile-url-cell">
+									{profile.metadataUrlPatterns.join(', ')}
+								</td>
+								<td>{formatDateTime(profile.updatedAt)}</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each federationTrustProfiles as profile (profile.id)}
-								<tr
-									onclick={() => navigateToTrustProfileEdit(profile.id)}
-									onkeydown={(event) =>
-										event.key === 'Enter' && navigateToTrustProfileEdit(profile.id)}
-									tabindex="0"
-									role="button"
-								>
-									<td>
-										<div class="cell-primary">{profile.name}</div>
-										{#if profile.description}
-											<div class="cell-secondary">{profile.description}</div>
-										{/if}
-									</td>
-									<td>
-										<span class={profile.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
-											{profile.enabled ? $LL.admin_saml_enabled() : $LL.admin_saml_disabled()}
-										</span>
-									</td>
-									<td>
-										<span class="badge badge-info">{trustProfilePolicy(profile)}</span>
-									</td>
-									<td class="mono truncate" style="max-width: 300px;">
-										{profile.metadataUrlPatterns.join(', ')}
-									</td>
-									<td>{formatDateTime(profile.updatedAt)}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
+	.saml-page-actions {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
 	.provider-cell {
 		display: flex;
 		align-items: center;
@@ -328,8 +336,8 @@
 		width: 36px;
 		height: 36px;
 		border-radius: var(--radius-md);
-		background: var(--primary-light);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 		font-size: 0.75rem;
 		font-weight: 700;
 		flex: 0 0 auto;
@@ -337,52 +345,32 @@
 
 	.cell-primary {
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.cell-secondary {
 		margin-top: 2px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
-		max-width: 420px;
+		max-width: min(420px, 42vw);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.row-actions,
-	.empty-actions,
-	.panel-header-actions {
+	.empty-actions {
 		display: inline-flex;
 		align-items: center;
-		justify-content: flex-end;
+		justify-content: center;
 		gap: 8px;
 		flex-wrap: wrap;
-	}
-
-	.federation-trust-panel {
-		margin-top: 16px;
-	}
-
-	.compact-panel-header {
-		align-items: flex-start;
-	}
-
-	.compact-table {
-		border-radius: var(--radius-md);
 	}
 
 	.compact-empty {
 		padding: 24px;
 	}
 
-	@media (max-width: 900px) {
-		.data-table-container {
-			overflow-x: auto;
-		}
-
-		.data-table {
-			min-width: 920px;
-		}
+	.trust-profile-url-cell {
+		--truncate-max-width: 300px;
 	}
 </style>

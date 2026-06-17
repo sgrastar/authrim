@@ -19,31 +19,31 @@ export const JOB_POLLING_INTERVAL = 10000; // 10 seconds
  */
 export const STATUS_COLORS = {
 	// Generic statuses
-	pending: '#6b7280',
-	running: '#3b82f6',
-	in_progress: '#3b82f6',
-	generating: '#3b82f6',
-	completed: '#22c55e',
-	success: '#22c55e',
-	failed: '#ef4444',
-	error: '#ef4444',
-	cancelled: '#9ca3af',
-	dismissed: '#9ca3af',
+	pending: 'var(--color-text-muted)',
+	running: 'var(--color-info)',
+	in_progress: 'var(--color-info)',
+	generating: 'var(--color-info)',
+	completed: 'var(--color-success)',
+	success: 'var(--color-success)',
+	failed: 'var(--color-danger)',
+	error: 'var(--color-danger)',
+	cancelled: 'var(--color-text-subtle)',
+	dismissed: 'var(--color-text-subtle)',
 
 	// Severity levels
-	critical: '#dc2626',
-	high: '#ea580c',
-	medium: '#d97706',
-	low: '#65a30d',
-	info: '#0284c7',
+	critical: 'var(--color-danger)',
+	high: 'var(--orange)',
+	medium: 'var(--color-warning)',
+	low: 'var(--color-success)',
+	info: 'var(--color-info)',
 
 	// Alert statuses
-	open: '#ef4444',
-	acknowledged: '#f59e0b',
-	resolved: '#22c55e',
+	open: 'var(--color-danger)',
+	acknowledged: 'var(--color-warning)',
+	resolved: 'var(--color-success)',
 
 	// Default
-	default: '#6b7280'
+	default: 'var(--color-text-muted)'
 } as const;
 
 /**

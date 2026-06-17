@@ -82,15 +82,15 @@
 <style>
 	.redirect-node {
 		position: relative;
-		background: white;
-		border: 1px solid #ededed;
-		border-left: 3px solid #0891b2;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-left: 3px solid var(--flow-node-color-side-effect);
+		border-radius: var(--flow-node-radius, var(--radius-control, 6px));
 		min-width: 100px;
 	}
 
 	.redirect-node.selected {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -103,11 +103,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--flow-node-control-radius, var(--radius-xs, 3px));
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -118,8 +118,8 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-header {
@@ -129,7 +129,7 @@
 		padding: 5px 8px;
 		font-weight: 500;
 		font-size: 10px;
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.icon {
@@ -144,11 +144,11 @@
 	.node-body {
 		padding: 4px 10px 6px;
 		font-size: 9px;
-		border-top: 1px solid #f3f4f6;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.destination {
-		color: #0891b2;
+		color: var(--flow-node-redirect-color, var(--flow-node-color-side-effect));
 		font-weight: 500;
 	}
 </style>

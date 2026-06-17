@@ -77,11 +77,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--flow-node-control-radius, var(--radius-xs, 3px));
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -92,24 +92,24 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-shape {
 		position: relative;
 		min-width: 80px;
 		padding: 8px 12px;
-		background: white;
-		border: 1px solid #ec4899;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--flow-node-condition-color, var(--flow-node-color-logic));
+		border-radius: var(--flow-node-radius, var(--radius-control, 6px));
 		display: flex;
 		align-items: center;
 		justify-content: center;
 	}
 
 	.condition-node.selected .node-shape {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -122,13 +122,13 @@
 
 	.icon {
 		font-size: 10px;
-		color: #ec4899;
+		color: var(--flow-node-condition-color, var(--flow-node-color-logic));
 	}
 
 	.label {
 		font-size: 10px;
 		font-weight: 500;
-		color: #374151;
+		color: var(--color-text);
 		white-space: nowrap;
 	}
 
@@ -143,8 +143,8 @@
 	}
 
 	.handle-yes .handle-label {
-		background: #dcfce7;
-		color: #166534;
+		background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+		color: var(--color-success);
 		margin-left: 10px;
 	}
 
@@ -160,8 +160,8 @@
 	}
 
 	.handle-no .handle-label {
-		background: #fef3c7;
-		color: #92400e;
+		background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+		color: var(--color-warning);
 		margin-top: 8px;
 	}
 
@@ -169,7 +169,7 @@
 		font-size: 8px;
 		font-weight: 600;
 		padding: 1px 4px;
-		border-radius: 2px;
+		border-radius: var(--flow-node-badge-radius, var(--radius-xs, 2px));
 		pointer-events: none;
 	}
 </style>

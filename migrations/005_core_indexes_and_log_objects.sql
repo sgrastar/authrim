@@ -500,10 +500,6 @@ CREATE INDEX idx_rtsc_generation
 CREATE INDEX idx_rtsc_tenant_client
   ON refresh_token_shard_configs(tenant_id, client_id);
 
-CREATE INDEX idx_schema_migrations_applied_at ON schema_migrations(applied_at DESC);
-
-CREATE INDEX idx_schema_migrations_checksum ON schema_migrations(checksum);
-
 CREATE INDEX idx_scope_mappings_scope ON scope_mappings(tenant_id, scope);
 
 CREATE INDEX idx_security_alerts_tenant_created

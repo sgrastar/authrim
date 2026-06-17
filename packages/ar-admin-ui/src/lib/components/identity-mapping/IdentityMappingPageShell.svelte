@@ -2,7 +2,9 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { adminCustomClaimsAPI } from '$lib/api/admin-custom-claims';
 	import { adminIdentityMappingAPI } from '$lib/api/admin-identity-mapping';
+	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import IdentityMappingFlowEditor from '$lib/components/identity-mapping/IdentityMappingFlowEditor.svelte';
 	import { buildIdentityMappingFlowSamples } from '$lib/components/identity-mapping/flow-data';
 	import { LL } from '$i18n/i18n-svelte';
@@ -13,12 +15,19 @@
 	} from '$lib/components/identity-mapping/types';
 	import type {
 		IdentityMappingCatalogSummary,
+		IdentityMappingDestinationProfileSummary,
 		IdentityMappingFieldMappingVersionSummary,
-		IdentityMappingFieldMappingSetSummary
+		IdentityMappingFieldMappingSetSummary,
+		IdentityMappingSourceProfileSummary
 	} from '$lib/api/admin-identity-mapping';
 
 	type ViewMode = 'overview' | 'source' | 'destination';
 	type MappingSide = Extract<ViewMode, 'source' | 'destination'>;
+	type ProfileSelectorOption = {
+		id: string;
+		title: string;
+		adapter?: MappingAdapter;
+	};
 
 	const {
 		pageTitle = 'Field Mapping',
@@ -87,6 +96,12 @@
 	let policyOperationStatus = $state<string | null>(null);
 	let confirmRollbackFieldMappingSetId = $state<string | null>(null);
 	let confirmDeleteFieldMappingSetId = $state<string | null>(null);
+	let sourceProfileCount = $state(0);
+	let sourceProfileSchemaCount = $state(0);
+	let destinationProfileCount = $state(0);
+	let destinationProfileSchemaCount = $state(0);
+	let registeredSourceProfileOptions = $state<ProfileSelectorOption[]>([]);
+	let registeredDestinationProfileOptions = $state<ProfileSelectorOption[]>([]);
 	let summary = $state({
 		policies: 0,
 		catalogs: 0,
@@ -94,12 +109,23 @@
 		federationTrustSources: 0
 	});
 	const sourceProfileOptions = $derived(
-		flowSamples.map((sample) => ({
-			id: sample.id,
-			title: sample.title
-		}))
+		mergeProfileOptions([
+			...flowSamples
+				.filter((sample) => sample.nodes.some((node) => node.role === 'source'))
+				.map((sample) => ({
+					id: sample.id,
+					title: sample.title,
+					adapter: sample.sourceAdapter
+				})),
+			...registeredSourceProfileOptions
+		])
 	);
-	const destinationProfileOptions = $derived(destinationProfileOptionsFromSamples(flowSamples));
+	const destinationProfileOptions = $derived(
+		mergeProfileOptions([
+			...destinationProfileOptionsFromSamples(flowSamples),
+			...registeredDestinationProfileOptions
+		])
+	);
 	const selectedEditorProfileId = $derived(
 		editSide === 'source' ? selectedSourceProfileId : selectedDestinationProfileId
 	);
@@ -175,6 +201,16 @@
 	const editorSamples = $derived(
 		editorLaneSelectorMode === 'policy' && policySelectorOptions.length === 0 ? [] : flowSamples
 	);
+	const showProfileSchemaSetupHint = $derived(
+		showProfileModeControl &&
+			!loading &&
+			!loadError &&
+			editorSamples.length === 0 &&
+			((editSide === 'source' && sourceProfileCount > 0 && sourceProfileSchemaCount === 0) ||
+				(editSide === 'destination' &&
+					destinationProfileCount > 0 &&
+					destinationProfileSchemaCount === 0))
+	);
 
 	$effect(() => {
 		if (!showProfileModeControl || !routePolicySide) return;
@@ -234,6 +270,43 @@
 					];
 				})
 		);
+	}
+
+	function mergeProfileOptions(options: ProfileSelectorOption[]): ProfileSelectorOption[] {
+		const seen = new Set<string>();
+		return options.filter((option) => {
+			if (seen.has(option.id)) return false;
+			seen.add(option.id);
+			return true;
+		});
+	}
+
+	function sourceProfileOption(
+		profile: IdentityMappingSourceProfileSummary
+	): ProfileSelectorOption {
+		return {
+			id: `source-profile-${profile.id}`,
+			title: profile.displayName,
+			adapter: profileAdapter(profile.sourceType)
+		};
+	}
+
+	function destinationProfileOption(
+		profile: IdentityMappingDestinationProfileSummary
+	): ProfileSelectorOption {
+		return {
+			id: `destination-profile-${profile.id}`,
+			title: profile.displayName,
+			adapter: profileAdapter(profile.destinationType)
+		};
+	}
+
+	function profileAdapter(value: string): MappingAdapter {
+		const normalized = value.toLowerCase();
+		if (normalized === 'saml') return 'SAML';
+		if (normalized === 'oidc') return 'OIDC';
+		if (normalized === 'scim') return 'SCIM';
+		return 'CSV';
 	}
 
 	function policyOptionAdapter(
@@ -590,6 +663,7 @@
 			const [
 				policies,
 				catalogs,
+				identitySchemas,
 				sourceProfiles,
 				destinationProfiles,
 				protocolSchemas,
@@ -599,6 +673,7 @@
 			] = await Promise.all([
 				adminIdentityMappingAPI.listFieldMappingSets(),
 				adminIdentityMappingAPI.listCatalogs(),
+				adminCustomClaimsAPI.listSchemas({ limit: 200, is_active: '1' }),
 				adminIdentityMappingAPI.listSourceProfiles(),
 				adminIdentityMappingAPI.listDestinationProfiles(),
 				adminIdentityMappingAPI.listProtocolSchemas(),
@@ -627,9 +702,20 @@
 				)
 			);
 			catalogSummaries = catalogs.catalogs;
+			sourceProfileCount = sourceProfiles.sourceProfiles.length;
+			sourceProfileSchemaCount =
+				sourceProfiles.sourceProfiles.filter(sourceProfileHasSchema).length;
+			destinationProfileCount = destinationProfiles.destinationProfiles.length;
+			destinationProfileSchemaCount = destinationProfiles.destinationProfiles.filter(
+				destinationProfileHasSchema
+			).length;
+			registeredSourceProfileOptions = sourceProfiles.sourceProfiles.map(sourceProfileOption);
+			registeredDestinationProfileOptions =
+				destinationProfiles.destinationProfiles.map(destinationProfileOption);
 			flowSamples = buildIdentityMappingFlowSamples({
 				policies: policies.fieldMappingSets,
 				catalogs: catalogs.catalogs,
+				identitySchemas: identitySchemas.schemas,
 				sourceProfiles: sourceProfiles.sourceProfiles,
 				destinationProfiles: destinationProfiles.destinationProfiles,
 				protocolSchemas: protocolSchemas.protocolSchemas,
@@ -643,239 +729,252 @@
 			loading = false;
 		}
 	});
+
+	function sourceProfileHasSchema(profile: IdentityMappingSourceProfileSummary): boolean {
+		return Boolean(profile.version?.schema);
+	}
+
+	function destinationProfileHasSchema(profile: IdentityMappingDestinationProfileSummary): boolean {
+		return Boolean(profile.version?.schema);
+	}
 </script>
 
 <svelte:head>
 	<title>{headTitle} - Authrim Admin</title>
 </svelte:head>
 
-<div class="identity-mapping-page">
-	<div class="page-heading">
-		<div>
-			{#if backHref && backLabel}
-				<a class="back-link" href={backHref}>{backLabel}</a>
-			{/if}
-			<h1>{pageTitle}</h1>
-			<p class="summary">
-				{pageDescription}
-			</p>
-			{#if showProfileModeControl}
-				<div
-					class="profile-mode-control"
-					aria-label={$LL.admin_identity_mapping_editor_profile_selector_aria()}
-				>
-					<div class="profile-mode-label">
-						<span>{$LL.admin_identity_mapping_editor_profile_side()}</span>
-						<strong>
-							{editSide === 'source'
-								? $LL.admin_identity_mapping_editor_source_mapping()
-								: $LL.admin_identity_mapping_editor_destination_release()}
-						</strong>
-					</div>
-					<select
-						aria-label={editSide === 'source'
-							? $LL.admin_identity_mapping_source_profile()
-							: $LL.admin_identity_mapping_destination_profile()}
-						value={selectedEditorProfileId ?? ''}
-						onchange={selectEditProfile}
-					>
-						<option value="" disabled>
-							{editSide === 'source'
-								? $LL.admin_identity_mapping_editor_select_source_profile()
-								: $LL.admin_identity_mapping_editor_select_destination_profile()}
-						</option>
-						{#if editSide === 'source'}
-							{#each sourceProfileOptions as option (option.id)}
-								<option value={option.id}>{option.title}</option>
+<AdminPageShell>
+	<div class="identity-mapping-page">
+		{#if backHref && backLabel}
+			<a class="back-link" href={backHref}>{backLabel}</a>
+		{/if}
+
+		<AdminPageHeader
+			eyebrow={$LL.admin_identity_mapping_title()}
+			title={pageTitle}
+			description={pageDescription}
+		>
+			{#snippet actions()}
+				{#if showProfileModeControl}
+					<div class="policy-version-panel">
+						<div class="policy-version-heading">
+							<span>{$LL.admin_identity_mapping_editor_policy_version()}</span>
+							<strong>
+								{selectedFieldMappingSetSummary?.displayName ??
+									$LL.admin_identity_mapping_editor_no_policy_selected()}
+							</strong>
+						</div>
+						<select
+							aria-label={$LL.admin_identity_mapping_editor_policy_version()}
+							value={selectedFieldMappingVersionId ?? ''}
+							onchange={selectFieldMappingVersion}
+							disabled={!selectedFieldMappingSetId ||
+								selectedFieldMappingVersions.length === 0 ||
+								policyOperationBusy}
+						>
+							<option value="" disabled
+								>{$LL.admin_identity_mapping_editor_no_version_selected()}</option
+							>
+							{#each selectedFieldMappingVersions as version (version.id)}
+								<option value={version.id}>{version.versionLabel} / {version.lifecycleState}</option
+								>
 							{/each}
-						{:else}
-							{#each destinationProfileOptions as option (option.id)}
-								<option value={option.id}>{option.title}</option>
-							{/each}
+						</select>
+						<div class="policy-version-actions">
+							<label class="activation-switch">
+								<input
+									type="checkbox"
+									checked={selectedFieldMappingActive}
+									onchange={toggleSelectedPolicyActivation}
+									disabled={!selectedFieldMappingVersion || policyOperationBusy}
+								/>
+								<span aria-hidden="true"></span>
+								<strong>{$LL.admin_identity_mapping_editor_activate()}</strong>
+							</label>
+							<button
+								type="button"
+								onclick={publishSelectedFieldMappingVersion}
+								disabled={!selectedFieldMappingVersion || policyOperationBusy}
+							>
+								{$LL.admin_identity_mapping_editor_publish()}
+							</button>
+							<button
+								type="button"
+								onclick={rollbackSelectedPolicy}
+								disabled={!selectedFieldMappingSetId || policyOperationBusy}
+							>
+								{confirmRollbackFieldMappingSetId === selectedFieldMappingSetId
+									? $LL.admin_identity_mapping_editor_confirm_rollback()
+									: $LL.admin_identity_mapping_editor_request_rollback()}
+							</button>
+							<button
+								type="button"
+								class="danger-action"
+								onclick={deleteSelectedPolicy}
+								disabled={!selectedFieldMappingSetId || policyOperationBusy}
+							>
+								{confirmDeleteFieldMappingSetId === selectedFieldMappingSetId
+									? $LL.admin_identity_mapping_editor_confirm_delete()
+									: $LL.admin_identity_mapping_editor_delete()}
+							</button>
+						</div>
+						<div class="policy-version-meta">
+							<span>
+								{selectedPolicySide === 'source'
+									? $LL.admin_identity_mapping_source()
+									: selectedPolicySide === 'destination'
+										? $LL.admin_identity_mapping_destination()
+										: $LL.admin_identity_mapping_editor_side_not_selected()}
+							</span>
+							<span>
+								{selectedFieldMappingSnapshotId
+									? $LL.admin_identity_mapping_editor_snapshot_ready()
+									: $LL.admin_identity_mapping_editor_no_snapshot()}
+							</span>
+						</div>
+						{#if policyOperationStatus}
+							<p class="policy-operation-status">{policyOperationStatus}</p>
 						{/if}
-					</select>
-				</div>
-			{/if}
-			{#if showPolicySaveControl}
-				<label class="policy-save-control">
-					<span>{$LL.admin_identity_mapping_editor_policy_name()}</span>
-					<input
-						type="text"
-						value={policyDisplayName}
-						placeholder={$LL.admin_identity_mapping_editor_policy_placeholder()}
-						oninput={updatePolicyDisplayName}
-					/>
-					{#if policyNameConflict}
-						<small class="policy-name-warning">
-							{$LL.admin_identity_mapping_editor_policy_exists({
-								name: policyNameConflict.displayName
-							})}
-						</small>
-					{/if}
-				</label>
-			{/if}
-		</div>
-		{#if showProfileModeControl}
-			<div class="policy-version-panel">
-				<div class="policy-version-heading">
-					<span>{$LL.admin_identity_mapping_editor_policy_version()}</span>
-					<strong>
-						{selectedFieldMappingSetSummary?.displayName ??
-							$LL.admin_identity_mapping_editor_no_policy_selected()}
-					</strong>
-				</div>
-				<select
-					aria-label={$LL.admin_identity_mapping_editor_policy_version()}
-					value={selectedFieldMappingVersionId ?? ''}
-					onchange={selectFieldMappingVersion}
-					disabled={!selectedFieldMappingSetId ||
-						selectedFieldMappingVersions.length === 0 ||
-						policyOperationBusy}
-				>
-					<option value="" disabled
-						>{$LL.admin_identity_mapping_editor_no_version_selected()}</option
+					</div>
+				{/if}
+				{#if showControlPlaneStatus && !showProfileModeControl}
+					<div class="status-panel">
+						<span class="status-dot"></span>
+						<div>
+							<strong
+								>{loading
+									? $LL.admin_identity_mapping_editor_loading_control_plane()
+									: loadError
+										? $LL.admin_identity_mapping_editor_preview_fallback()
+										: $LL.admin_identity_mapping_editor_control_plane_ready()}</strong
+							>
+							<small>
+								{#if loading}
+									{$LL.admin_identity_mapping_editor_loading_summaries()}
+								{:else if loadError}
+									{loadError}
+								{:else}
+									{$LL.admin_identity_mapping_editor_summary_counts({
+										policies: summary.policies,
+										catalogs: summary.catalogs,
+										profiles: summary.profiles
+									})}
+								{/if}
+							</small>
+						</div>
+					</div>
+				{/if}
+			{/snippet}
+		</AdminPageHeader>
+
+		{#if showProfileModeControl || showPolicySaveControl}
+			<div class="identity-mapping-controls">
+				{#if showProfileModeControl}
+					<div
+						class="profile-mode-control"
+						aria-label={$LL.admin_identity_mapping_editor_profile_selector_aria()}
 					>
-					{#each selectedFieldMappingVersions as version (version.id)}
-						<option value={version.id}>{version.versionLabel} / {version.lifecycleState}</option>
-					{/each}
-				</select>
-				<div class="policy-version-actions">
-					<label class="activation-switch">
+						<div class="profile-mode-label">
+							<span>{$LL.admin_identity_mapping_editor_profile_side()}</span>
+							<strong>
+								{editSide === 'source'
+									? $LL.admin_identity_mapping_editor_source_mapping()
+									: $LL.admin_identity_mapping_editor_destination_release()}
+							</strong>
+						</div>
+						<select
+							aria-label={editSide === 'source'
+								? $LL.admin_identity_mapping_source_profile()
+								: $LL.admin_identity_mapping_destination_profile()}
+							value={selectedEditorProfileId ?? ''}
+							onchange={selectEditProfile}
+						>
+							<option value="" disabled>
+								{editSide === 'source'
+									? $LL.admin_identity_mapping_editor_select_source_profile()
+									: $LL.admin_identity_mapping_editor_select_destination_profile()}
+							</option>
+							{#if editSide === 'source'}
+								{#each sourceProfileOptions as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							{:else}
+								{#each destinationProfileOptions as option (option.id)}
+									<option value={option.id}>{option.title}</option>
+								{/each}
+							{/if}
+						</select>
+					</div>
+				{/if}
+				{#if showPolicySaveControl}
+					<label class="policy-save-control">
+						<span>{$LL.admin_identity_mapping_editor_policy_name()}</span>
 						<input
-							type="checkbox"
-							checked={selectedFieldMappingActive}
-							onchange={toggleSelectedPolicyActivation}
-							disabled={!selectedFieldMappingVersion || policyOperationBusy}
+							type="text"
+							value={policyDisplayName}
+							placeholder={$LL.admin_identity_mapping_editor_policy_placeholder()}
+							oninput={updatePolicyDisplayName}
 						/>
-						<span aria-hidden="true"></span>
-						<strong>{$LL.admin_identity_mapping_editor_activate()}</strong>
+						{#if policyNameConflict}
+							<small class="policy-name-warning">
+								{$LL.admin_identity_mapping_editor_policy_exists({
+									name: policyNameConflict.displayName
+								})}
+							</small>
+						{/if}
 					</label>
-					<button
-						type="button"
-						onclick={publishSelectedFieldMappingVersion}
-						disabled={!selectedFieldMappingVersion || policyOperationBusy}
-					>
-						{$LL.admin_identity_mapping_editor_publish()}
-					</button>
-					<button
-						type="button"
-						onclick={rollbackSelectedPolicy}
-						disabled={!selectedFieldMappingSetId || policyOperationBusy}
-					>
-						{confirmRollbackFieldMappingSetId === selectedFieldMappingSetId
-							? $LL.admin_identity_mapping_editor_confirm_rollback()
-							: $LL.admin_identity_mapping_editor_request_rollback()}
-					</button>
-					<button
-						type="button"
-						class="danger-action"
-						onclick={deleteSelectedPolicy}
-						disabled={!selectedFieldMappingSetId || policyOperationBusy}
-					>
-						{confirmDeleteFieldMappingSetId === selectedFieldMappingSetId
-							? $LL.admin_identity_mapping_editor_confirm_delete()
-							: $LL.admin_identity_mapping_editor_delete()}
-					</button>
-				</div>
-				<div class="policy-version-meta">
-					<span>
-						{selectedPolicySide === 'source'
-							? $LL.admin_identity_mapping_source()
-							: selectedPolicySide === 'destination'
-								? $LL.admin_identity_mapping_destination()
-								: $LL.admin_identity_mapping_editor_side_not_selected()}
-					</span>
-					<span>
-						{selectedFieldMappingSnapshotId
-							? $LL.admin_identity_mapping_editor_snapshot_ready()
-							: $LL.admin_identity_mapping_editor_no_snapshot()}
-					</span>
-				</div>
-				{#if policyOperationStatus}
-					<p class="policy-operation-status">{policyOperationStatus}</p>
 				{/if}
 			</div>
 		{/if}
-		{#if showControlPlaneStatus && !showProfileModeControl}
-			<div class="status-panel">
-				<span class="status-dot"></span>
-				<div>
-					<strong
-						>{loading
-							? $LL.admin_identity_mapping_editor_loading_control_plane()
-							: loadError
-								? $LL.admin_identity_mapping_editor_preview_fallback()
-								: $LL.admin_identity_mapping_editor_control_plane_ready()}</strong
-					>
-					<small>
-						{#if loading}
-							{$LL.admin_identity_mapping_editor_loading_summaries()}
-						{:else if loadError}
-							{loadError}
-						{:else}
-							{$LL.admin_identity_mapping_editor_summary_counts({
-								policies: summary.policies,
-								catalogs: summary.catalogs,
-								profiles: summary.profiles
-							})}
-						{/if}
-					</small>
-				</div>
-			</div>
-		{/if}
-	</div>
 
-	<IdentityMappingFlowEditor
-		samples={editorSamples}
-		{loading}
-		{loadError}
-		allowedViewModes={editorAllowedViewModes}
-		initialViewMode={editorInitialViewMode}
-		editable={editorEditable}
-		showToolbarSourceProfile={showEditorToolbarSourceProfile}
-		showToolbarModeToggle={showEditorToolbarModeToggle}
-		showMetrics={showEditorMetrics}
-		showInspector={showEditorInspector}
-		showLaneProfileSelectors={!showProfileModeControl}
-		laneSelectorMode={editorLaneSelectorMode}
-		{policySelectorOptions}
-		{showGraphPolicyDraftLabel}
-		{showCompileDraftButton}
-		{primaryActionLabel}
-		{primaryActionBusyLabel}
-		initialPolicyOptionId={selectedFieldMappingOptionId}
-		selectedViewMode={showProfileModeControl ? editSide : null}
-		selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
-		draftResetKey={editorDraftResetKey}
-		onDraftDirtyChange={(dirty) => (editorHasUnsavedDraftChanges = dirty)}
-		onCompileDraft={compileEditorDraft}
-	/>
-</div>
+		<IdentityMappingFlowEditor
+			samples={editorSamples}
+			{loading}
+			{loadError}
+			allowedViewModes={editorAllowedViewModes}
+			initialViewMode={editorInitialViewMode}
+			editable={editorEditable}
+			showToolbarSourceProfile={showEditorToolbarSourceProfile}
+			showToolbarModeToggle={showEditorToolbarModeToggle}
+			showMetrics={showEditorMetrics}
+			showInspector={showEditorInspector}
+			showLaneProfileSelectors={!showProfileModeControl}
+			laneSelectorMode={editorLaneSelectorMode}
+			{policySelectorOptions}
+			{showGraphPolicyDraftLabel}
+			{showCompileDraftButton}
+			{primaryActionLabel}
+			{primaryActionBusyLabel}
+			initialPolicyOptionId={selectedFieldMappingOptionId}
+			selectedViewMode={showProfileModeControl ? editSide : null}
+			selectedProfileId={showProfileModeControl ? selectedEditorProfileId : null}
+			emptyStateTitle={showProfileSchemaSetupHint
+				? $LL.admin_identity_mapping_flow_schema_not_configured()
+				: null}
+			emptyStateDescription={showProfileSchemaSetupHint
+				? $LL.admin_identity_mapping_flow_schema_not_configured_desc()
+				: null}
+			emptyStateActionHref={showProfileSchemaSetupHint ? '/admin/field-mapping/profiles' : null}
+			emptyStateActionLabel={showProfileSchemaSetupHint
+				? $LL.admin_identity_mapping_flow_schema_not_configured_action()
+				: null}
+			draftResetKey={editorDraftResetKey}
+			onDraftDirtyChange={(dirty) => (editorHasUnsavedDraftChanges = dirty)}
+			onCompileDraft={compileEditorDraft}
+		/>
+	</div>
+</AdminPageShell>
 
 <style>
 	.identity-mapping-page {
 		display: grid;
-		gap: 18px;
-	}
-
-	.page-heading {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 18px;
-	}
-
-	h1 {
-		margin: 0;
-		color: var(--text-primary);
-		font-size: 28px;
-		line-height: 1.2;
+		gap: var(--identity-mapping-page-gap, 18px);
 	}
 
 	.back-link {
 		display: inline-flex;
-		margin-bottom: 12px;
-		color: var(--color-primary);
+		width: fit-content;
+		color: var(--color-accent);
 		font-size: 13px;
 		font-weight: 700;
 		text-decoration: none;
@@ -887,19 +986,18 @@
 		outline: none;
 	}
 
-	.summary {
-		max-width: 760px;
-		margin: 8px 0 0;
-		color: var(--text-secondary);
-		font-size: 14px;
-		line-height: 1.5;
+	.identity-mapping-controls {
+		display: flex;
+		align-items: flex-end;
+		gap: 14px;
+		flex-wrap: wrap;
 	}
 
 	.profile-mode-control {
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		margin-top: 14px;
+		flex-wrap: wrap;
 	}
 
 	.profile-mode-label {
@@ -907,32 +1005,34 @@
 		gap: 2px;
 		min-height: 40px;
 		padding: 6px 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.profile-mode-label span {
-		color: var(--text-secondary);
-		font-size: 10px;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 800;
-		letter-spacing: 0.08em;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
 	.profile-mode-label strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 13px;
 		line-height: 1.2;
 	}
 
 	.profile-mode-control select {
 		min-width: 260px;
-		height: 40px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 0 12px);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-size: 13px;
 		font-weight: 700;
 	}
@@ -940,22 +1040,23 @@
 	.policy-save-control {
 		display: grid;
 		gap: 6px;
-		max-width: 360px;
-		margin-top: 14px;
-		color: var(--text-secondary);
-		font-size: 11px;
+		flex: 1 1 320px;
+		max-width: 420px;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 800;
-		letter-spacing: 0.08em;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
 	.policy-save-control input {
-		height: 40px;
-		padding: 0 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 0 12px);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-size: 14px;
 		font-weight: 700;
 		letter-spacing: 0;
@@ -963,7 +1064,7 @@
 	}
 
 	.policy-name-warning {
-		color: #b45309;
+		color: var(--color-warning);
 		font-size: 12px;
 		font-weight: 700;
 		letter-spacing: 0;
@@ -976,9 +1077,9 @@
 		display: grid;
 		gap: 10px;
 		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.policy-version-heading {
@@ -989,27 +1090,29 @@
 	.policy-version-heading span,
 	.policy-version-meta,
 	.policy-operation-status {
-		color: var(--text-muted);
-		font-size: 11px;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 800;
-		letter-spacing: 0.08em;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
 	.policy-version-heading strong {
 		overflow: hidden;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 13px;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.policy-version-panel select {
-		height: 36px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-input);
+		min-height: var(--control-height, 36px);
+		padding: var(--control-padding, 0 12px);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-size: 13px;
 		font-weight: 700;
 	}
@@ -1022,12 +1125,12 @@
 	}
 
 	.policy-version-actions button {
-		min-height: 32px;
+		min-height: var(--control-height, 32px);
 		padding: 0 10px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-size: 12px;
 		font-weight: 800;
 	}
@@ -1039,19 +1142,19 @@
 	}
 
 	.policy-version-actions .danger-action {
-		border-color: color-mix(in srgb, #ef4444 62%, var(--border-color));
-		color: #ef4444;
+		border-color: color-mix(in srgb, var(--color-danger) 62%, var(--color-border));
+		color: var(--color-danger);
 	}
 
 	.policy-version-actions .danger-action:not(:disabled):hover {
-		background: color-mix(in srgb, #ef4444 12%, var(--bg-hover));
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface-muted));
 	}
 
 	.activation-switch {
 		display: inline-flex;
 		align-items: center;
 		gap: 7px;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 12px;
 		font-weight: 800;
 		cursor: pointer;
@@ -1067,9 +1170,9 @@
 		position: relative;
 		width: 34px;
 		height: 20px;
-		border: 1px solid var(--border-color);
+		border: 1px solid var(--color-border);
 		border-radius: 999px;
-		background: var(--bg-muted);
+		background: var(--color-surface-muted);
 		transition:
 			background 120ms ease,
 			border-color 120ms ease;
@@ -1082,7 +1185,7 @@
 		width: 14px;
 		height: 14px;
 		border-radius: 999px;
-		background: var(--text-muted);
+		background: var(--color-text-muted);
 		content: '';
 		transition:
 			background 120ms ease,
@@ -1090,17 +1193,17 @@
 	}
 
 	.activation-switch input:checked + span {
-		border-color: rgba(16, 185, 129, 0.65);
-		background: rgba(16, 185, 129, 0.2);
+		border-color: color-mix(in srgb, var(--color-success) 65%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 20%, transparent);
 	}
 
 	.activation-switch input:checked + span::after {
-		background: #10b981;
+		background: var(--color-success);
 		transform: translateX(14px);
 	}
 
 	.activation-switch input:focus-visible + span {
-		outline: 2px solid var(--color-primary);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -1112,7 +1215,7 @@
 
 	.policy-operation-status {
 		margin: 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-transform: none;
 		letter-spacing: 0;
 	}
@@ -1123,9 +1226,9 @@
 		align-items: center;
 		gap: 10px;
 		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.status-panel strong,
@@ -1134,13 +1237,13 @@
 	}
 
 	.status-panel strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 13px;
 	}
 
 	.status-panel small {
 		margin-top: 2px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 12px;
 		line-height: 1.35;
 	}
@@ -1149,21 +1252,24 @@
 		width: 10px;
 		height: 10px;
 		border-radius: 999px;
-		background: #f59e0b;
-		box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+		background: var(--color-warning);
+		box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-warning) 16%, transparent);
 	}
 
 	@media (max-width: 980px) {
-		.page-heading {
-			display: grid;
-		}
-
 		.status-panel {
 			min-width: 0;
 		}
 
 		.policy-version-panel {
 			min-width: 0;
+		}
+
+		.profile-mode-control,
+		.profile-mode-control select,
+		.policy-save-control {
+			width: 100%;
+			max-width: none;
 		}
 	}
 </style>

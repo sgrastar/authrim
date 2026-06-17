@@ -23,6 +23,12 @@
 		formatAdminRoleType
 	} from '$lib/admin/admin-admin-rbac-i18n';
 	import { Modal } from '$lib/components';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 
 	const roleId = $derived($page.params.id);
 
@@ -365,59 +371,57 @@
 	</title>
 </svelte:head>
 
-<div class="admin-page">
-	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-spinner loading-spinner"></i>
-			<p>{$LL.admin_admin_rbac_detail_loading()}</p>
-		</div>
-	{:else if error}
-		<div class="error-state">
-			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadRole}>
-				{$LL.admin_admin_rbac_retry()}
-			</button>
-			<button class="btn btn-secondary" onclick={handleBack}>
-				{$LL.admin_admin_rbac_back_to_list()}
-			</button>
-		</div>
-	{:else if role}
-		<!-- Page Header -->
-		<div class="page-header">
-			<div>
-				<div class="breadcrumb">
-					<button class="breadcrumb-link" onclick={handleBack}>
-						{$LL.admin_admin_rbac_admin_rbac()}
-					</button>
-					<span class="breadcrumb-separator">/</span>
-					<span>{role.display_name || role.name}</span>
-				</div>
-				<h1 class="page-title">{role.display_name || role.name}</h1>
-				{#if role.description}
-					<p class="page-description">{role.description}</p>
-				{/if}
-			</div>
-			<div class="page-actions">
-				{#if canEditAdminRole(role)}
-					<button class="btn btn-secondary" onclick={openEditDialog}>
-						<i class="i-ph-pencil"></i>
-						{$LL.admin_admin_rbac_edit()}
-					</button>
-				{/if}
-				{#if canDeleteAdminRole(role)}
-					<button class="btn btn-danger" onclick={handleDelete}>
-						<i class="i-ph-trash"></i>
-						{$LL.admin_admin_rbac_delete()}
-					</button>
-				{/if}
-			</div>
-		</div>
+{#snippet roleActions()}
+	{#if role && canEditAdminRole(role)}
+		<button class="btn btn-secondary" onclick={openEditDialog}>
+			<i class="i-ph-pencil"></i>
+			{$LL.admin_admin_rbac_edit()}
+		</button>
+	{/if}
+	{#if role && canDeleteAdminRole(role)}
+		<button class="btn btn-danger" onclick={handleDelete}>
+			<i class="i-ph-trash"></i>
+			{$LL.admin_admin_rbac_delete()}
+		</button>
+	{/if}
+{/snippet}
 
-		<!-- Content -->
+{#snippet assignmentActions()}
+	<button class="btn btn-sm btn-primary" onclick={openAssignDialog}>
+		<i class="i-ph-plus"></i>
+		{$LL.admin_admin_rbac_assign()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	{#if loading}
+		<AdminSection>
+			<div class="loading-state">
+				<i class="i-ph-spinner loading-spinner"></i>
+				<p>{$LL.admin_admin_rbac_detail_loading()}</p>
+			</div>
+		</AdminSection>
+	{:else if error}
+		<AdminSection>
+			<div class="error-state">
+				<p class="error-text">{error}</p>
+				<button class="btn btn-secondary" onclick={loadRole}>
+					{$LL.admin_admin_rbac_retry()}
+				</button>
+				<button class="btn btn-secondary" onclick={handleBack}>
+					{$LL.admin_admin_rbac_back_to_list()}
+				</button>
+			</div>
+		</AdminSection>
+	{:else if role}
+		<AdminPageHeader
+			title={role.display_name || role.name}
+			description={role.description || undefined}
+			actions={roleActions}
+		/>
+
 		<div class="detail-grid">
-			<!-- Basic Info Card -->
-			<div class="detail-card">
-				<h2 class="card-title">{$LL.admin_admin_rbac_role_information()}</h2>
+			<AdminSection title={$LL.admin_admin_rbac_role_information()}>
 				<div class="info-grid">
 					<div class="info-item">
 						<span class="info-label">{$LL.admin_admin_rbac_role_name()}</span>
@@ -448,21 +452,12 @@
 						<span class="info-value">{new Set(assignments.map((a) => a.scope_type)).size}</span>
 					</div>
 				</div>
-			</div>
+			</AdminSection>
 
-			<!-- Role Assignments Card -->
-			<div class="detail-card">
-				<div class="card-title-row">
-					<h2 class="card-title">
-						{$LL.admin_admin_rbac_role_assignments()}
-						<span class="badge">{assignments.length}</span>
-					</h2>
-					<button class="btn btn-sm btn-primary" onclick={openAssignDialog}>
-						<i class="i-ph-plus"></i>
-						{$LL.admin_admin_rbac_assign()}
-					</button>
-				</div>
-
+			<AdminSection
+				title={`${$LL.admin_admin_rbac_role_assignments()} (${assignments.length})`}
+				actions={assignmentActions}
+			>
 				{#if assignmentError}
 					<div class="inline-error">
 						<span>{assignmentError}</span>
@@ -473,74 +468,66 @@
 				{:else if assignments.length === 0}
 					<p class="empty-message">{$LL.admin_admin_rbac_no_active_assignments()}</p>
 				{:else}
-					<div class="table-container">
-						<table class="table">
-							<thead>
+					<AdminDataTable width="xwide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_admin_rbac_admin_user()}</th>
+								<th>{$LL.admin_admin_rbac_scope_binding()}</th>
+								<th>{$LL.admin_admin_rbac_status()}</th>
+								<th>{$LL.admin_admin_rbac_expires()}</th>
+								<th>{$LL.admin_admin_rbac_assigned_by()}</th>
+								<th>{$LL.admin_admin_rbac_created()}</th>
+								<th class="actions-cell">{$LL.admin_admin_rbac_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each assignments as assignment (assignment.id)}
 								<tr>
-									<th>{$LL.admin_admin_rbac_admin_user()}</th>
-									<th>{$LL.admin_admin_rbac_scope_binding()}</th>
-									<th>{$LL.admin_admin_rbac_status()}</th>
-									<th>{$LL.admin_admin_rbac_expires()}</th>
-									<th>{$LL.admin_admin_rbac_assigned_by()}</th>
-									<th>{$LL.admin_admin_rbac_created()}</th>
-									<th class="actions-cell">{$LL.admin_admin_rbac_actions()}</th>
+									<td>
+										<div class="user-cell">
+											<span>{formatAdminUser(assignment)}</span>
+											{#if assignment.user && !assignment.user.is_active}
+												<span class="badge badge-warning">
+													{$LL.admin_admin_rbac_inactive()}
+												</span>
+											{/if}
+										</div>
+									</td>
+									<td><span class="scope-chip">{formatScope(assignment)}</span></td>
+									<td>
+										<span
+											class={assignmentStatus(assignment) === 'active'
+												? 'badge badge-success'
+												: 'badge badge-neutral'}
+										>
+											{formatAdminRoleAssignmentStatus(assignmentStatus(assignment), $LL)}
+										</span>
+									</td>
+									<td>{formatDate(assignment.expires_at)}</td>
+									<td>{assignment.assigned_by || '-'}</td>
+									<td>{formatDate(assignment.created_at)}</td>
+									<td class="actions-cell">
+										<button
+											class="btn btn-sm btn-secondary"
+											onclick={() => openAssignmentEditDialog(assignment)}
+										>
+											{$LL.admin_admin_rbac_edit()}
+										</button>
+										<button
+											class="btn btn-sm btn-danger"
+											onclick={() => handleRemoveAssignment(assignment)}
+										>
+											{$LL.admin_admin_rbac_remove()}
+										</button>
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each assignments as assignment (assignment.id)}
-									<tr>
-										<td>
-											<div class="user-cell">
-												<span>{formatAdminUser(assignment)}</span>
-												{#if assignment.user && !assignment.user.is_active}
-													<span class="badge badge-warning">
-														{$LL.admin_admin_rbac_inactive()}
-													</span>
-												{/if}
-											</div>
-										</td>
-										<td><span class="scope-chip">{formatScope(assignment)}</span></td>
-										<td>
-											<span
-												class={assignmentStatus(assignment) === 'active'
-													? 'badge badge-success'
-													: 'badge badge-neutral'}
-											>
-												{formatAdminRoleAssignmentStatus(assignmentStatus(assignment), $LL)}
-											</span>
-										</td>
-										<td>{formatDate(assignment.expires_at)}</td>
-										<td>{assignment.assigned_by || '-'}</td>
-										<td>{formatDate(assignment.created_at)}</td>
-										<td class="actions-cell">
-											<button
-												class="btn btn-sm btn-secondary"
-												onclick={() => openAssignmentEditDialog(assignment)}
-											>
-												{$LL.admin_admin_rbac_edit()}
-											</button>
-											<button
-												class="btn btn-sm btn-danger"
-												onclick={() => handleRemoveAssignment(assignment)}
-											>
-												{$LL.admin_admin_rbac_remove()}
-											</button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				{/if}
-			</div>
+			</AdminSection>
 
-			<!-- Permissions Card -->
-			<div class="detail-card">
-				<h2 class="card-title">
-					{$LL.admin_admin_rbac_permissions()}
-					<span class="badge">{role.permissions.length}</span>
-				</h2>
-
+			<AdminSection title={`${$LL.admin_admin_rbac_permissions()} (${role.permissions.length})`}>
 				{#if role.permissions.length === 0}
 					<p class="empty-message">{$LL.admin_admin_rbac_no_permissions_assigned()}</p>
 				{:else}
@@ -581,10 +568,10 @@
 						{/each}
 					</div>
 				{/if}
-			</div>
+			</AdminSection>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Edit Dialog -->
 <Modal
@@ -593,29 +580,33 @@
 	title={$LL.admin_admin_rbac_edit_title({ role: role?.name || '' })}
 	size="lg"
 >
-	<div class="form-group">
-		<label for="editDisplayName">{$LL.admin_admin_rbac_display_name()}</label>
+	<div class="admin-field dialog-field">
+		<label class="admin-field__label" for="editDisplayName">
+			{$LL.admin_admin_rbac_display_name()}
+		</label>
 		<input
 			type="text"
 			id="editDisplayName"
-			class="input"
+			class="admin-input"
 			bind:value={editDisplayName}
 			placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
 		/>
 	</div>
-	<div class="form-group">
-		<label for="editDescription">{$LL.admin_admin_rbac_description_label()}</label>
+	<div class="admin-field dialog-field">
+		<label class="admin-field__label" for="editDescription">
+			{$LL.admin_admin_rbac_description_label()}
+		</label>
 		<textarea
 			id="editDescription"
-			class="input"
+			class="admin-input"
 			bind:value={editDescription}
 			placeholder={$LL.admin_admin_rbac_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label>{$LL.admin_admin_rbac_permissions()}</label>
+		<label class="admin-field__label">{$LL.admin_admin_rbac_permissions()}</label>
 		<div class="permission-editor-grid">
 			{#each ADMIN_PERMISSION_DEFINITIONS as category (category.category)}
 				<div class="permission-category-editor">
@@ -676,17 +667,19 @@
 		<div class="form-error">{assignmentEditError}</div>
 	{/if}
 	{#if editingAssignment}
-		<div class="form-group">
+		<div class="admin-field dialog-field">
 			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label>{$LL.admin_admin_rbac_admin_user()}</label>
+			<label class="admin-field__label">{$LL.admin_admin_rbac_admin_user()}</label>
 			<div class="readonly-value">{formatAdminUser(editingAssignment)}</div>
 		</div>
 		<div class="form-row">
-			<div class="form-group">
-				<label for="editAssignmentScopeType">{$LL.admin_admin_rbac_scope_type()}</label>
+			<div class="admin-field dialog-field">
+				<label class="admin-field__label" for="editAssignmentScopeType">
+					{$LL.admin_admin_rbac_scope_type()}
+				</label>
 				<select
 					id="editAssignmentScopeType"
-					class="input"
+					class="admin-input"
 					bind:value={editAssignmentScopeType}
 					onchange={handleEditAssignmentScopeTypeChange}
 				>
@@ -694,11 +687,13 @@
 					<option value="global">{$LL.admin_admin_rbac_scope_global()}</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<label for="editAssignmentScopeId">{$LL.admin_admin_rbac_scope_id()}</label>
+			<div class="admin-field dialog-field">
+				<label class="admin-field__label" for="editAssignmentScopeId">
+					{$LL.admin_admin_rbac_scope_id()}
+				</label>
 				<input
 					id="editAssignmentScopeId"
-					class="input"
+					class="admin-input"
 					type="text"
 					bind:value={editAssignmentScopeId}
 					placeholder={role?.tenant_id || 'tenant_id'}
@@ -706,11 +701,13 @@
 				/>
 			</div>
 		</div>
-		<div class="form-group">
-			<label for="editAssignmentExpiresAt">{$LL.admin_admin_rbac_expires_at()}</label>
+		<div class="admin-field dialog-field">
+			<label class="admin-field__label" for="editAssignmentExpiresAt">
+				{$LL.admin_admin_rbac_expires_at()}
+			</label>
 			<input
 				id="editAssignmentExpiresAt"
-				class="input"
+				class="admin-input"
 				type="datetime-local"
 				bind:value={editAssignmentExpiresAt}
 			/>
@@ -746,9 +743,11 @@
 		<div class="form-error">{assignError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="assignAdminUser">{$LL.admin_admin_rbac_admin_user()}</label>
-		<select id="assignAdminUser" class="input" bind:value={selectedAdminUserId}>
+	<div class="admin-field dialog-field">
+		<label class="admin-field__label" for="assignAdminUser">
+			{$LL.admin_admin_rbac_admin_user()}
+		</label>
+		<select id="assignAdminUser" class="admin-input" bind:value={selectedAdminUserId}>
 			<option value="">{$LL.admin_admin_rbac_select_admin_user()}</option>
 			{#each adminUsers as user (user.id)}
 				<option value={user.id}>{user.name ? `${user.name} <${user.email}>` : user.email}</option>
@@ -757,11 +756,13 @@
 	</div>
 
 	<div class="form-row">
-		<div class="form-group">
-			<label for="assignScopeType">{$LL.admin_admin_rbac_scope_type()}</label>
+		<div class="admin-field dialog-field">
+			<label class="admin-field__label" for="assignScopeType">
+				{$LL.admin_admin_rbac_scope_type()}
+			</label>
 			<select
 				id="assignScopeType"
-				class="input"
+				class="admin-input"
 				bind:value={assignScopeType}
 				onchange={handleScopeTypeChange}
 			>
@@ -769,11 +770,13 @@
 				<option value="global">{$LL.admin_admin_rbac_scope_global()}</option>
 			</select>
 		</div>
-		<div class="form-group">
-			<label for="assignScopeId">{$LL.admin_admin_rbac_scope_id()}</label>
+		<div class="admin-field dialog-field">
+			<label class="admin-field__label" for="assignScopeId">
+				{$LL.admin_admin_rbac_scope_id()}
+			</label>
 			<input
 				id="assignScopeId"
-				class="input"
+				class="admin-input"
 				type="text"
 				bind:value={assignScopeId}
 				placeholder={role?.tenant_id || 'tenant_id'}
@@ -782,9 +785,16 @@
 		</div>
 	</div>
 
-	<div class="form-group">
-		<label for="assignExpiresAt">{$LL.admin_admin_rbac_expires_at()}</label>
-		<input id="assignExpiresAt" class="input" type="datetime-local" bind:value={assignExpiresAt} />
+	<div class="admin-field dialog-field">
+		<label class="admin-field__label" for="assignExpiresAt">
+			{$LL.admin_admin_rbac_expires_at()}
+		</label>
+		<input
+			id="assignExpiresAt"
+			class="admin-input"
+			type="datetime-local"
+			bind:value={assignExpiresAt}
+		/>
 	</div>
 
 	{#snippet footer()}
@@ -798,65 +808,10 @@
 </Modal>
 
 <style>
-	.breadcrumb {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.875rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.breadcrumb-link {
-		color: var(--text-secondary);
-		text-decoration: none;
-		background: none;
-		border: none;
-		padding: 0;
-		cursor: pointer;
-		font-size: inherit;
-	}
-
-	.breadcrumb-link:hover {
-		color: var(--primary);
-	}
-
-	.breadcrumb-separator {
-		color: var(--text-tertiary);
-	}
-
 	.detail-grid {
 		display: grid;
 		grid-template-columns: 1fr;
 		gap: 1.5rem;
-	}
-
-	.detail-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		padding: 1.5rem;
-	}
-
-	.card-title {
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 1rem;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.card-title-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-
-	.card-title-row .card-title {
-		margin: 0;
 	}
 
 	.badge {
@@ -864,8 +819,8 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0.125rem 0.5rem;
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 500;
 		border-radius: var(--radius-full);
@@ -885,27 +840,27 @@
 
 	.info-label {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-weight: 500;
 	}
 
 	.info-value {
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.empty-message {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
 	.inline-error,
 	.form-error {
 		padding: 0.75rem;
-		border: 1px solid var(--danger);
-		border-radius: var(--radius-md);
-		color: var(--danger);
-		background: var(--danger-light);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--color-border));
+		border-radius: var(--radius-control);
+		color: var(--color-danger);
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
 		font-size: 0.875rem;
 	}
 
@@ -914,38 +869,6 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-	}
-
-	.table-container {
-		overflow-x: auto;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-	}
-
-	.table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
-	.table th,
-	.table td {
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--border);
-		text-align: left;
-		vertical-align: middle;
-	}
-
-	.table th {
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
-		font-size: 0.75rem;
-		font-weight: 600;
-		text-transform: uppercase;
-	}
-
-	.table tr:last-child td {
-		border-bottom: none;
 	}
 
 	.actions-cell {
@@ -968,11 +891,11 @@
 		display: inline-flex;
 		align-items: center;
 		padding: 0.125rem 0.5rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-full);
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		font-size: 0.75rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		white-space: nowrap;
 	}
 
@@ -984,10 +907,10 @@
 
 	.readonly-value {
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 		font-size: 0.875rem;
 	}
 
@@ -998,37 +921,39 @@
 		justify-content: center;
 		padding: 48px 24px;
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		gap: 1rem;
 	}
 
 	.error-text {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
-	/* Form input styling */
-	.input,
-	textarea.input,
-	select.input {
+	.dialog-field :global(.admin-field__label) {
+		display: block;
+		margin-bottom: 0.5rem;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+
+	.dialog-field :global(.admin-input) {
 		width: 100%;
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-family: inherit;
 	}
 
-	.input:focus,
-	textarea.input:focus,
-	select.input:focus {
+	.dialog-field :global(.admin-input:focus) {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
-	/* Permissions editor in dialog */
 	.permission-editor-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1036,7 +961,7 @@
 		max-height: 400px;
 		overflow-y: auto;
 		padding: 0.5rem;
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		border-radius: var(--radius-md);
 	}
 
@@ -1048,16 +973,16 @@
 	}
 
 	.permission-category-editor {
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		overflow: hidden;
-		background: var(--bg-card);
+		background: var(--color-surface);
 	}
 
 	.permission-category-header {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		padding: 0.5rem 0.75rem;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.form-checkbox-label {
@@ -1082,7 +1007,7 @@
 	.permission-category-name {
 		font-weight: 600;
 		font-size: 0.8125rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.permission-category-body {
@@ -1099,11 +1024,11 @@
 		padding: 0.375rem;
 		border-radius: var(--radius-sm);
 		cursor: pointer;
-		transition: background var(--transition-fast);
+		transition: background 0.16s ease;
 	}
 
 	.permission-checkbox-item:hover {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 	}
 
 	.permission-view-item:hover {
@@ -1129,22 +1054,17 @@
 	.permission-checkbox-label {
 		font-size: 0.8125rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.permission-checkbox-desc {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	@media (max-width: 720px) {
 		.form-row {
 			grid-template-columns: 1fr;
-		}
-
-		.card-title-row {
-			align-items: stretch;
-			flex-direction: column;
 		}
 	}
 </style>

@@ -6,6 +6,9 @@
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let saving = $state(false);
 	let error = $state('');
@@ -56,177 +59,120 @@
 	<title>{$LL.admin_users_create_page_title()}</title>
 </svelte:head>
 
-<div>
-	<!-- Header -->
-	<div style="margin-bottom: 24px;">
-		<a href="/admin/users" style="color: #3b82f6; text-decoration: none; font-size: 14px;">
-			← {$LL.admin_users_back_to_users()}
-		</a>
-	</div>
+{#snippet headerActions()}
+	<a href="/admin/users" class="btn btn-secondary">
+		<i class="i-ph-arrow-left"></i>
+		{$LL.admin_users_back_to_users()}
+	</a>
+{/snippet}
 
-	<h1 style="font-size: 24px; font-weight: bold; color: #1f2937; margin: 0 0 24px 0;">
-		{$LL.admin_users_create()}
-	</h1>
+<AdminPageShell width="narrow">
+	<AdminPageHeader title={$LL.admin_users_create()} actions={headerActions} />
 
 	{#if error}
-		<div
-			style="background-color: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; padding: 12px; border-radius: 6px; margin-bottom: 16px;"
-		>
-			{error}
-		</div>
+		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<div
-		style="background-color: white; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 600px;"
-	>
+	<AdminSection>
 		<form
+			class="admin-user-form"
 			onsubmit={(e) => {
 				e.preventDefault();
 				handleSubmit();
 			}}
 		>
-			<div style="display: flex; flex-direction: column; gap: 16px;">
-				<!-- Email (required) -->
-				<div>
-					<label
-						for="email"
-						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
-					>
-						{$LL.admin_users_email()} <span style="color: #ef4444;">*</span>
+			<div class="admin-user-form__fields">
+				<div class="form-group">
+					<label for="email" class="form-label">
+						{$LL.admin_users_email()} <span class="required-marker">*</span>
 					</label>
 					<input
 						id="email"
 						type="email"
+						class="form-input"
 						bind:value={form.email}
 						required
 						placeholder="user@example.com"
-						style="
-							width: 100%;
-							padding: 10px 12px;
-							border: 1px solid #d1d5db;
-							border-radius: 6px;
-							font-size: 14px;
-							box-sizing: border-box;
-						"
 					/>
 				</div>
 
-				<!-- Name -->
-				<div>
-					<label
-						for="name"
-						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
-					>
+				<div class="form-group">
+					<label for="name" class="form-label">
 						{$LL.admin_users_name()}
 					</label>
 					<input
 						id="name"
 						type="text"
+						class="form-input"
 						bind:value={form.name}
 						placeholder={$LL.common_namePlaceholder()}
-						style="
-							width: 100%;
-							padding: 10px 12px;
-							border: 1px solid #d1d5db;
-							border-radius: 6px;
-							font-size: 14px;
-							box-sizing: border-box;
-						"
 					/>
 				</div>
 
-				<!-- Given Name -->
-				<div>
-					<label
-						for="given_name"
-						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
-					>
+				<div class="form-group">
+					<label for="given_name" class="form-label">
 						{$LL.admin_users_given_name()}
 					</label>
 					<input
 						id="given_name"
 						type="text"
+						class="form-input"
 						bind:value={form.given_name}
 						placeholder={$LL.admin_users_given_name_placeholder()}
-						style="
-							width: 100%;
-							padding: 10px 12px;
-							border: 1px solid #d1d5db;
-							border-radius: 6px;
-							font-size: 14px;
-							box-sizing: border-box;
-						"
 					/>
 				</div>
 
-				<!-- Family Name -->
-				<div>
-					<label
-						for="family_name"
-						style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;"
-					>
+				<div class="form-group">
+					<label for="family_name" class="form-label">
 						{$LL.admin_users_family_name()}
 					</label>
 					<input
 						id="family_name"
 						type="text"
+						class="form-input"
 						bind:value={form.family_name}
 						placeholder={$LL.admin_users_family_name_placeholder()}
-						style="
-							width: 100%;
-							padding: 10px 12px;
-							border: 1px solid #d1d5db;
-							border-radius: 6px;
-							font-size: 14px;
-							box-sizing: border-box;
-						"
 					/>
 				</div>
 
-				<!-- Email Verified -->
-				<div>
-					<ToggleSwitch
-						bind:checked={form.email_verified}
-						label={$LL.admin_users_verified_label()}
-						description={$LL.admin_users_verified_description()}
-					/>
-				</div>
+				<ToggleSwitch
+					bind:checked={form.email_verified}
+					label={$LL.admin_users_verified_label()}
+					description={$LL.admin_users_verified_description()}
+				/>
 			</div>
 
-			<!-- Buttons -->
-			<div style="display: flex; gap: 12px; margin-top: 24px;">
-				<button
-					type="submit"
-					disabled={saving || !canCreateUsers}
-					style="
-						padding: 10px 24px;
-						background-color: {saving || !canCreateUsers ? '#9ca3af' : '#3b82f6'};
-						color: white;
-						border: none;
-						border-radius: 6px;
-						cursor: {saving || !canCreateUsers ? 'not-allowed' : 'pointer'};
-						font-size: 14px;
-						font-weight: 500;
-					"
-				>
+			<div class="admin-user-form__actions">
+				<button type="submit" class="btn btn-primary" disabled={saving || !canCreateUsers}>
 					{saving ? $LL.admin_users_creating() : $LL.admin_users_create()}
 				</button>
-				<a
-					href="/admin/users"
-					style="
-						padding: 10px 24px;
-						background-color: white;
-						color: #374151;
-						border: 1px solid #d1d5db;
-						border-radius: 6px;
-						text-decoration: none;
-						font-size: 14px;
-						font-weight: 500;
-					"
-				>
+				<a href="/admin/users" class="btn btn-secondary">
 					{$LL.common_cancel()}
 				</a>
 			</div>
 		</form>
-	</div>
-</div>
+	</AdminSection>
+</AdminPageShell>
+
+<style>
+	.admin-user-form {
+		max-width: 640px;
+	}
+
+	.admin-user-form__fields {
+		display: grid;
+		gap: 16px;
+	}
+
+	.admin-user-form__actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex-wrap: wrap;
+		margin-top: 24px;
+	}
+
+	.required-marker {
+		color: var(--color-danger);
+	}
+</style>

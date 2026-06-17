@@ -11,6 +11,12 @@
 	} from '$lib/api/admin-admin-audit';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let entries: AdminAuditLogEntry[] = $state([]);
 	let total = $state(0);
@@ -242,24 +248,23 @@
 	<title>{$LL.admin_admin_audit_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_admin_audit_title()}</h1>
-			<p class="page-description">{$LL.admin_admin_audit_description()}</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={() => (showStats = !showStats)}>
-				<i class={showStats ? 'i-ph-chart-bar-horizontal' : 'i-ph-chart-bar'}></i>
-				{showStats ? $LL.admin_admin_audit_hide_stats() : $LL.admin_admin_audit_show_stats()}
-			</button>
-			<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
-				<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
-				{showFilters ? $LL.admin_admin_audit_hide_filters() : $LL.admin_admin_audit_show_filters()}
-			</button>
-		</div>
-	</div>
+{#snippet headerActions()}
+	<button class="btn btn-secondary" onclick={() => (showStats = !showStats)}>
+		<i class={showStats ? 'i-ph-chart-bar-horizontal' : 'i-ph-chart-bar'}></i>
+		{showStats ? $LL.admin_admin_audit_hide_stats() : $LL.admin_admin_audit_show_stats()}
+	</button>
+	<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
+		<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
+		{showFilters ? $LL.admin_admin_audit_hide_filters() : $LL.admin_admin_audit_show_filters()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_audit_title()}
+		description={$LL.admin_admin_audit_description()}
+		actions={headerActions}
+	/>
 
 	<!-- Statistics Panel -->
 	{#if showStats}
@@ -297,8 +302,7 @@
 		</div>
 
 		{#if stats && stats.top_actions.length > 0}
-			<div class="panel">
-				<h3 class="panel-title">{$LL.admin_admin_audit_top_actions()}</h3>
+			<AdminSection title={$LL.admin_admin_audit_top_actions()}>
 				<div class="top-actions-list">
 					{#each stats.top_actions.slice(0, 5) as actionStat (actionStat.action)}
 						<div class="top-action-item">
@@ -307,33 +311,33 @@
 						</div>
 					{/each}
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 	{/if}
 
 	<!-- Filters -->
 	{#if showFilters}
-		<div class="panel">
-			<div class="filter-row">
-				<div class="form-group">
-					<label for="admin_user_id" class="form-label">
+		<AdminSection>
+			<AdminToolbar>
+				<div class="admin-field admin-field--search">
+					<label for="admin_user_id" class="admin-field__label">
 						{$LL.admin_admin_audit_actor_filter()}
 					</label>
 					<input
 						id="admin_user_id"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						placeholder={$LL.admin_admin_audit_actor_filter_placeholder()}
 						bind:value={adminUserIdFilter}
 						oninput={handleSearchInput}
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="action" class="form-label">{$LL.admin_admin_audit_action()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="action" class="admin-field__label">{$LL.admin_admin_audit_action()}</label>
 					<select
 						id="action"
-						class="form-select"
+						class="admin-select"
 						bind:value={actionFilter}
 						onchange={handleFilterChange}
 					>
@@ -344,13 +348,13 @@
 					</select>
 				</div>
 
-				<div class="form-group">
-					<label for="resource_type" class="form-label">
+				<div class="admin-field admin-field--compact">
+					<label for="resource_type" class="admin-field__label">
 						{$LL.admin_admin_audit_resource_type()}
 					</label>
 					<select
 						id="resource_type"
-						class="form-select"
+						class="admin-select"
 						bind:value={resourceTypeFilter}
 						onchange={handleFilterChange}
 					>
@@ -360,14 +364,12 @@
 						{/each}
 					</select>
 				</div>
-			</div>
 
-			<div class="filter-row">
-				<div class="form-group">
-					<label for="result" class="form-label">{$LL.admin_admin_audit_result()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="result" class="admin-field__label">{$LL.admin_admin_audit_result()}</label>
 					<select
 						id="result"
-						class="form-select"
+						class="admin-select"
 						bind:value={resultFilter}
 						onchange={handleFilterChange}
 					>
@@ -377,11 +379,12 @@
 					</select>
 				</div>
 
-				<div class="form-group">
-					<label for="severity" class="form-label">{$LL.admin_admin_audit_severity()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="severity" class="admin-field__label">{$LL.admin_admin_audit_severity()}</label
+					>
 					<select
 						id="severity"
-						class="form-select"
+						class="admin-select"
 						bind:value={severityFilter}
 						onchange={handleFilterChange}
 					>
@@ -394,40 +397,42 @@
 					</select>
 				</div>
 
-				<div class="form-group">
-					<label for="start_date" class="form-label">{$LL.admin_admin_audit_start_date()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="start_date" class="admin-field__label">
+						{$LL.admin_admin_audit_start_date()}
+					</label>
 					<input
 						id="start_date"
 						type="date"
-						class="form-input"
+						class="admin-input"
 						bind:value={startDate}
 						onchange={handleFilterChange}
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="end_date" class="form-label">{$LL.admin_admin_audit_end_date()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="end_date" class="admin-field__label">
+						{$LL.admin_admin_audit_end_date()}
+					</label>
 					<input
 						id="end_date"
 						type="date"
-						class="form-input"
+						class="admin-input"
 						bind:value={endDate}
 						onchange={handleFilterChange}
 					/>
 				</div>
-			</div>
 
-			<div class="filter-actions">
 				<button class="btn btn-secondary" onclick={clearFilters}>
 					<i class="i-ph-x"></i>
 					{$LL.admin_admin_audit_clear_filters()}
 				</button>
-			</div>
+			</AdminToolbar>
 
 			<p class="filter-hint">
 				{$LL.admin_admin_audit_filter_hint()}
 			</p>
-		</div>
+		</AdminSection>
 	{/if}
 
 	{#if loading}
@@ -438,7 +443,7 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if entries.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<i class="i-ph-clipboard-text empty-state-icon"></i>
 				<p class="empty-state-description">{$LL.admin_admin_audit_empty()}</p>
@@ -448,11 +453,11 @@
 					</button>
 				{/if}
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
 		<!-- Audit Logs Table -->
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_admin_audit_date_time()}</th>
@@ -510,39 +515,28 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="pagination">
-				<p class="pagination-info">
-					{$LL.admin_admin_audit_pagination({
-						start: (currentPage - 1) * limit + 1,
-						end: Math.min(currentPage * limit, total),
-						total
-					})}
-				</p>
-				<div class="pagination-buttons">
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage - 1)}
-						disabled={currentPage <= 1}
-					>
-						{$LL.admin_admin_audit_previous()}
-					</button>
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage + 1)}
-						disabled={currentPage >= totalPages}
-					>
-						{$LL.admin_admin_audit_next()}
-					</button>
-				</div>
-			</div>
+			<AdminPagination
+				label={$LL.admin_admin_audit_title()}
+				info={$LL.admin_admin_audit_pagination({
+					start: (currentPage - 1) * limit + 1,
+					end: Math.min(currentPage * limit, total),
+					total
+				})}
+				previousLabel={$LL.admin_admin_audit_previous()}
+				nextLabel={$LL.admin_admin_audit_next()}
+				hasPrevious={currentPage > 1}
+				hasNext={currentPage < totalPages}
+				onPrevious={() => goToPage(currentPage - 1)}
+				onNext={() => goToPage(currentPage + 1)}
+			/>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Detail Modal -->
 <Modal
@@ -641,7 +635,7 @@
 			</div>
 			<div class="detail-item">
 				<span class="detail-label">{$LL.admin_admin_audit_user_agent()}</span>
-				<span class="detail-value text-small">{selectedEntry.user_agent || '-'}</span>
+				<span class="detail-value detail-value--compact">{selectedEntry.user_agent || '-'}</span>
 			</div>
 			<div class="detail-item">
 				<span class="detail-label">{$LL.admin_admin_audit_request_id()}</span>
@@ -684,7 +678,9 @@
 </Modal>
 
 <style>
-	/* Page-specific styles for Admin Audit */
+	:global(.admin-data-table-wrap tr[role='button']) {
+		cursor: pointer;
+	}
 
 	/* Stats Grid */
 	.stats-grid {
@@ -695,9 +691,9 @@
 	}
 
 	.stat-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 1.25rem;
 		text-align: center;
 	}
@@ -705,21 +701,21 @@
 	.stat-value {
 		font-size: 2rem;
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--color-text);
 		line-height: 1.2;
 	}
 
 	.stat-value.stat-success {
-		color: var(--success);
+		color: var(--color-success);
 	}
 
 	.stat-value.stat-danger {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	.stat-label {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-top: 0.25rem;
 	}
 
@@ -728,16 +724,6 @@
 		justify-content: center;
 		align-items: center;
 		min-height: 60px;
-	}
-
-	/* Top Actions List */
-	.panel-title {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--text-secondary);
-		margin-bottom: 1rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.top-actions-list {
@@ -751,7 +737,7 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 0.5rem 0;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.top-action-item:last-child {
@@ -759,23 +745,16 @@
 	}
 
 	.action-name {
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.action-count {
 		font-weight: 600;
-		color: var(--text-secondary);
-		background: var(--bg-subtle);
+		color: var(--color-text-muted);
+		background: var(--color-surface-muted);
 		padding: 0.125rem 0.5rem;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control);
 		font-size: 0.875rem;
-	}
-
-	/* Filter Actions */
-	.filter-actions {
-		display: flex;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
 	}
 
 	/* Detail Grid (for modal) */
@@ -794,16 +773,16 @@
 	.detail-label {
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.detail-value {
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
-	.text-small {
+	.detail-value--compact {
 		font-size: 0.875rem;
 		word-break: break-all;
 	}
@@ -812,13 +791,13 @@
 	.detail-section {
 		margin-top: 1.5rem;
 		padding-top: 1.5rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.detail-section-title {
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-bottom: 1rem;
 	}
 
@@ -837,14 +816,14 @@
 	.change-block-title {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 	}
 
 	.code-block {
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		padding: 1rem;
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
@@ -856,7 +835,7 @@
 	/* Empty State Icon */
 	.empty-state-icon {
 		font-size: 3rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-bottom: 1rem;
 	}
 

@@ -4,6 +4,9 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { adminAccessControlAPI, type AccessControlStats } from '$lib/api/admin-access-control';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let stats: AccessControlStats | null = $state(null);
 	let loading = $state(true);
@@ -91,32 +94,28 @@
 	<title>{$LL.admin_access_control_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
+<AdminPageShell>
 	<!-- Info Banner -->
-	<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
-		<div class="flex items-start">
-			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
+	<div class="info-banner">
+		<div class="info-banner__content">
+			<span class="i-ph-info info-banner__icon" aria-hidden="true"></span>
 			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">
+				<h3 class="info-banner__title">
 					{$LL.admin_access_control_banner_title()}
 				</h3>
-				<p class="text-sm text-blue-800">
+				<p class="info-banner__text">
 					{$LL.admin_access_control_banner()}
-					<a href="/admin/admin-access-control" class="underline hover:text-blue-900"
-						>{$LL.admin_access_control_admin_hub()}</a
-					>.
+					<a href="/admin/admin-access-control">{$LL.admin_access_control_admin_hub()}</a>.
 				</p>
 			</div>
 		</div>
 	</div>
 
 	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_access_control_title()}</h1>
-			<p class="page-description">{$LL.admin_access_control_description()}</p>
-		</div>
-	</div>
+	<AdminPageHeader
+		title={$LL.admin_access_control_title()}
+		description={$LL.admin_access_control_description()}
+	/>
 
 	{#if loading}
 		<div class="loading-state">
@@ -124,7 +123,7 @@
 			<p>{$LL.admin_access_control_loading()}</p>
 		</div>
 	{:else if error}
-		<div class="alert alert-error" style="margin-bottom: 16px;">
+		<div class="alert alert-error access-error">
 			{error}
 			<button class="btn btn-secondary btn-sm" onclick={() => location.reload()}>
 				{$LL.admin_access_control_retry()}
@@ -183,8 +182,7 @@
 		</button>
 
 		<!-- Quick Links Section -->
-		<div class="quick-links-section">
-			<h2 class="section-title">{$LL.admin_access_control_related_tools()}</h2>
+		<AdminSection title={$LL.admin_access_control_related_tools()}>
 			<div class="quick-links-grid">
 				<a href="/admin/access-trace" class="quick-link">
 					<i class="i-ph-path"></i>
@@ -197,12 +195,53 @@
 					<span class="quick-link-desc">{$LL.admin_access_control_role_rules_desc()}</span>
 				</a>
 			</div>
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	/* === Hub Cards Grid === */
+	.info-banner {
+		margin-bottom: 18px;
+		border: 1px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+		border-radius: var(--radius-panel);
+		padding: 16px;
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+	}
+
+	.info-banner__content {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+	}
+
+	.info-banner__icon {
+		flex: 0 0 auto;
+		color: var(--color-accent);
+		font-size: 1.25rem;
+	}
+
+	.info-banner__title {
+		margin: 0 0 4px;
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
+	.info-banner__text {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.88rem;
+		line-height: 1.6;
+	}
+
+	.access-error {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 16px;
+	}
+
 	.hub-cards-grid {
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
@@ -228,36 +267,40 @@
 		flex-direction: column;
 		gap: 12px;
 		padding: 24px;
-		background: var(--bg-secondary, var(--bg-card, #ffffff));
-		border: 1px solid var(--border-primary, var(--border, #e5e7eb));
-		border-radius: var(--radius-lg, 12px);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		color: var(--color-text);
 		cursor: pointer;
-		transition: all var(--transition-fast, 0.2s ease);
+		transition:
+			border-color var(--transition-fast),
+			box-shadow var(--transition-fast),
+			transform var(--transition-fast);
 		text-align: left;
 		width: 100%;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+		box-shadow: var(--shadow-sm);
 	}
 
 	.hub-card:hover {
-		border-color: var(--border-hover, var(--primary, #2c2724));
-		box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.15));
+		border-color: var(--hub-accent, var(--color-accent));
+		box-shadow: var(--shadow-md);
 		transform: translateY(-2px);
 	}
 
-	.hub-card.purple:hover {
-		border-color: var(--purple);
+	.hub-card.purple {
+		--hub-accent: var(--purple);
 	}
 
-	.hub-card.green:hover {
-		border-color: var(--success);
+	.hub-card.green {
+		--hub-accent: var(--color-success);
 	}
 
-	.hub-card.orange:hover {
-		border-color: var(--warning);
+	.hub-card.orange {
+		--hub-accent: var(--color-warning);
 	}
 
-	.hub-card.blue:hover {
-		border-color: var(--primary);
+	.hub-card.blue {
+		--hub-accent: var(--color-accent);
 	}
 
 	.hub-card-wide {
@@ -274,31 +317,13 @@
 	.hub-card-icon {
 		width: 48px;
 		height: 48px;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-control);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
-	}
-
-	.hub-card-icon.purple {
-		background: rgba(139, 92, 246, 0.15);
-		color: var(--purple);
-	}
-
-	.hub-card-icon.green {
-		background: rgba(34, 197, 94, 0.15);
-		color: var(--success);
-	}
-
-	.hub-card-icon.orange {
-		background: rgba(249, 115, 22, 0.15);
-		color: var(--warning);
-	}
-
-	.hub-card-icon.blue {
-		background: rgba(59, 130, 246, 0.15);
-		color: var(--primary);
+		background: color-mix(in srgb, var(--hub-accent, var(--color-accent)) 14%, transparent);
+		color: var(--hub-accent, var(--color-accent));
 	}
 
 	.hub-card-icon :global(i) {
@@ -314,32 +339,31 @@
 	.hub-card-title {
 		font-size: 1.125rem;
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0;
 		line-height: 1.3;
 	}
 
 	.hub-card-subtitle {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.hub-card-arrow {
 		width: 20px;
 		height: 20px;
-		color: var(--text-tertiary);
+		color: var(--color-text-subtle);
 		transition: transform var(--transition-fast);
 	}
 
 	.hub-card:hover .hub-card-arrow {
 		transform: translateX(4px);
-		color: var(--text-primary);
+		color: var(--hub-accent, var(--color-accent));
 	}
 
-	/* === Card Content === */
 	.hub-card-description {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		line-height: 1.5;
 		margin: 0;
 	}
@@ -349,26 +373,14 @@
 		align-items: center;
 		gap: 8px;
 		font-size: 0.8125rem;
-		color: var(--text-tertiary, var(--text-secondary, #64748b));
+		color: var(--color-text-subtle);
 		padding-top: 8px;
-		border-top: 1px solid var(--border-primary, var(--border, #e5e7eb));
+		border-top: 1px solid var(--color-border);
 	}
 
 	.hub-card-stats :global(i) {
 		width: 16px;
 		height: 16px;
-	}
-
-	/* === Quick Links Section === */
-	.quick-links-section {
-		margin-top: 16px;
-	}
-
-	.section-title {
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: 16px;
 	}
 
 	.quick-links-grid {
@@ -388,115 +400,37 @@
 		align-items: center;
 		gap: 12px;
 		padding: 16px;
-		background: var(--bg-secondary, var(--bg-card, #ffffff));
-		border: 1px solid var(--border-primary, var(--border, #e5e7eb));
-		border-radius: var(--radius-md, 8px);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		text-decoration: none;
-		transition: all var(--transition-fast, 0.2s ease);
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+		transition:
+			background-color var(--transition-fast),
+			border-color var(--transition-fast),
+			box-shadow var(--transition-fast);
+		box-shadow: var(--shadow-sm);
 	}
 
 	.quick-link:hover {
-		border-color: var(--border-hover, var(--primary, #2c2724));
-		background: var(--bg-tertiary, var(--bg-hover, #f9fafb));
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+		border-color: var(--color-accent);
+		background: var(--color-surface-raised);
+		box-shadow: var(--shadow-md);
 	}
 
 	.quick-link :global(i:first-child) {
 		width: 20px;
 		height: 20px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.quick-link span:first-of-type {
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.quick-link-desc {
 		margin-left: auto;
 		font-size: 0.8125rem;
-		color: var(--text-tertiary, var(--text-secondary, #64748b));
-	}
-
-	/* === Dark Mode Support === */
-	:global(.dark) .hub-card {
-		background: var(--bg-secondary, #1e1e1e);
-		border-color: var(--border-primary, #374151);
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-	}
-
-	:global(.dark) .hub-card:hover {
-		border-color: var(--border-hover, #4b5563);
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-	}
-
-	:global(.dark) .hub-card.purple:hover {
-		border-color: rgba(139, 92, 246, 0.6);
-	}
-
-	:global(.dark) .hub-card.green:hover {
-		border-color: rgba(34, 197, 94, 0.6);
-	}
-
-	:global(.dark) .hub-card.orange:hover {
-		border-color: rgba(249, 115, 22, 0.6);
-	}
-
-	:global(.dark) .hub-card.blue:hover {
-		border-color: rgba(59, 130, 246, 0.6);
-	}
-
-	:global(.dark) .hub-card-title {
-		color: var(--text-primary, #f5f5f5);
-	}
-
-	:global(.dark) .hub-card-subtitle {
-		color: var(--text-secondary, #a3a3a3);
-	}
-
-	:global(.dark) .hub-card-description {
-		color: var(--text-secondary, #a3a3a3);
-	}
-
-	:global(.dark) .hub-card-stats {
-		color: var(--text-tertiary, #737373);
-		border-top-color: var(--border-primary, #374151);
-	}
-
-	:global(.dark) .hub-card-arrow {
-		color: var(--text-tertiary, #737373);
-	}
-
-	:global(.dark) .hub-card:hover .hub-card-arrow {
-		color: var(--text-primary, #f5f5f5);
-	}
-
-	:global(.dark) .quick-link {
-		background: var(--bg-secondary, #1e1e1e);
-		border-color: var(--border-primary, #374151);
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-	}
-
-	:global(.dark) .quick-link:hover {
-		border-color: var(--border-hover, #4b5563);
-		background: var(--bg-tertiary, #2a2a2a);
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-	}
-
-	:global(.dark) .quick-link span:first-of-type {
-		color: var(--text-primary, #f5f5f5);
-	}
-
-	:global(.dark) .quick-link :global(i:first-child) {
-		color: var(--text-secondary, #a3a3a3);
-	}
-
-	:global(.dark) .quick-link-desc {
-		color: var(--text-tertiary, #737373);
-	}
-
-	:global(.dark) .section-title {
-		color: var(--text-primary, #f5f5f5);
+		color: var(--color-text-subtle);
 	}
 </style>

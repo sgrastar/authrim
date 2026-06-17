@@ -3177,6 +3177,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             display,
             ui_locales,
             login_hint,
+            authorization_details,
             sessionUserId: sub,
             authTime, // Preserve auth_time
             // Phase 2-B RBAC extensions
@@ -3312,6 +3313,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 display,
                 ui_locales,
                 login_hint,
+                authorization_details,
                 sessionUserId: sub,
                 authTime,
                 org_id,

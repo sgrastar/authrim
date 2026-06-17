@@ -11,6 +11,14 @@
 	} from '$lib/api/admin-flows';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminPagination,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 
 	// Product note: Flow may be omitted from Admin UI; keep new i18n work for this
 	// feature paused until product direction is confirmed.
@@ -189,23 +197,18 @@
 	<title>Flows - Admin Dashboard - Authrim</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">Flows</h1>
-			<p class="page-description">Manage authentication and authorization flows.</p>
-		</div>
-		<div class="page-actions">
+<AdminPageShell>
+	<AdminPageHeader title="Flows" description="Manage authentication and authorization flows.">
+		{#snippet actions()}
 			<button class="btn btn-primary" onclick={navigateToCreate} disabled={!flowEngineEnabled}>
 				<i class="i-ph-plus"></i>
 				Create Flow
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	<!-- Flow Engine Feature Flag Toggle -->
-	<div class="panel flow-engine-toggle-panel">
+	<AdminSection>
 		<div class="flow-engine-toggle-row">
 			<div class="flow-engine-info">
 				<h3 class="flow-engine-title">Flow Engine</h3>
@@ -232,7 +235,7 @@
 		{#if flowEngineSaving}
 			<div class="saving-indicator">Saving...</div>
 		{/if}
-	</div>
+	</AdminSection>
 
 	{#if !flowEngineEnabled && !flowEngineLoading}
 		<div class="alert alert-warning">
@@ -249,15 +252,15 @@
 	{/if}
 
 	<!-- Filters -->
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group" style="flex: 1;">
-				<label for="search" class="form-label">Search</label>
+	<AdminSection>
+		<AdminToolbar>
+			<div class="admin-field admin-field--search">
+				<label for="search" class="admin-field__label">Search</label>
 				<div class="search-box">
 					<input
 						id="search"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						placeholder="Search flows..."
 						bind:value={searchQuery}
 						onkeypress={(e) => e.key === 'Enter' && handleSearch()}
@@ -268,11 +271,11 @@
 				</div>
 			</div>
 
-			<div class="form-group">
-				<label for="profile-filter" class="form-label">Profile</label>
+			<div class="admin-field admin-field--compact">
+				<label for="profile-filter" class="admin-field__label">Profile</label>
 				<select
 					id="profile-filter"
-					class="form-select"
+					class="admin-select"
 					bind:value={filterProfile}
 					onchange={handleFilterChange}
 				>
@@ -284,11 +287,11 @@
 				</select>
 			</div>
 
-			<div class="form-group">
-				<label for="status-filter" class="form-label">Status</label>
+			<div class="admin-field admin-field--compact">
+				<label for="status-filter" class="admin-field__label">Status</label>
 				<select
 					id="status-filter"
-					class="form-select"
+					class="admin-select"
 					bind:value={filterActive}
 					onchange={handleFilterChange}
 				>
@@ -297,8 +300,8 @@
 					<option value="inactive">Inactive</option>
 				</select>
 			</div>
-		</div>
-	</div>
+		</AdminToolbar>
+	</AdminSection>
 
 	{#if loading}
 		<div class="loading-state">
@@ -306,15 +309,15 @@
 			<p>Loading flows...</p>
 		</div>
 	{:else if flows.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">No flows found.</p>
 				<button class="btn btn-primary" onclick={navigateToCreate}>Create your first flow</button>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>Name</th>
@@ -331,6 +334,7 @@
 						<tr
 							onclick={() => navigateToFlow(flow)}
 							onkeydown={(e) => e.key === 'Enter' && navigateToFlow(flow)}
+							data-clickable="true"
 							tabindex="0"
 							role="button"
 						>
@@ -381,30 +385,23 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
 
-		{#if totalPages > 1}
-			<div class="pagination">
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={page === 1}
-					onclick={() => goToPage(page - 1)}
-				>
-					Previous
-				</button>
-				<span class="pagination-info">Page {page} of {totalPages} ({total} total)</span>
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={page === totalPages}
-					onclick={() => goToPage(page + 1)}
-				>
-					Next
-				</button>
-			</div>
-		{/if}
+			{#if totalPages > 1}
+				<AdminPagination
+					label="Flow pagination"
+					info={`Page ${page} of ${totalPages} (${total} total)`}
+					previousLabel="Previous"
+					nextLabel="Next"
+					hasPrevious={page > 1}
+					hasNext={page < totalPages}
+					onPrevious={() => goToPage(page - 1)}
+					onNext={() => goToPage(page + 1)}
+				/>
+			{/if}
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Delete Confirmation Dialog -->
 <Modal
@@ -434,11 +431,6 @@
 
 <style>
 	/* Flow Engine Toggle Panel Styles */
-	.flow-engine-toggle-panel {
-		margin-bottom: 1.5rem;
-		padding: 1rem 1.25rem;
-	}
-
 	.flow-engine-toggle-row {
 		display: flex;
 		justify-content: space-between;
@@ -454,13 +446,13 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.flow-engine-description {
 		margin: 0.25rem 0 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.flow-engine-control {
@@ -469,15 +461,25 @@
 		gap: 0.75rem;
 	}
 
+	.search-box {
+		display: flex;
+		align-items: stretch;
+		gap: 8px;
+	}
+
+	.search-box :global(.admin-input) {
+		flex: 1;
+	}
+
 	.loading-text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.saving-indicator {
 		margin-top: 0.5rem;
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.alert-sm {
@@ -487,11 +489,11 @@
 	}
 
 	.alert-warning {
-		background-color: rgba(234, 179, 8, 0.1);
-		border: 1px solid rgba(234, 179, 8, 0.3);
-		border-radius: 0.375rem;
+		background-color: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+		border-radius: var(--radius-control);
 		padding: 0.75rem 1rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 1rem;
 	}
 </style>

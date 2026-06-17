@@ -773,19 +773,19 @@ export const adminJobsAPI = {
 export function getJobStatusColor(status: JobStatus): string {
 	switch (status) {
 		case 'pending':
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 		case 'running':
-			return '#3b82f6';
+			return 'var(--color-info)';
 		case 'completed':
-			return '#22c55e';
+			return 'var(--color-success)';
 		case 'partial_failure':
-			return '#f59e0b';
+			return 'var(--color-warning)';
 		case 'failed':
-			return '#ef4444';
+			return 'var(--color-danger)';
 		case 'cancelled':
-			return '#9ca3af';
+			return 'var(--color-text-subtle)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }
 

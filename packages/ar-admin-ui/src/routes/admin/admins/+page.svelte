@@ -4,6 +4,12 @@
 	import { adminAdminsAPI, type AdminUser, type AdminUserListParams } from '$lib/api/admin-admins';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let admins: AdminUser[] = $state([]);
 	let total = $state(0);
@@ -191,48 +197,57 @@
 	<title>{$LL.admin_admins_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_admins_title()}</h1>
-			<p class="page-description">{$LL.admin_admins_description()}</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={openCreateDialog}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_admins_add()}
-			</button>
-		</div>
-	</div>
+{#snippet headerActions()}
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus"></i>
+		{$LL.admin_admins_add()}
+	</button>
+{/snippet}
 
-	<!-- Filters -->
-	<div class="filters-bar">
-		<div class="filter-group">
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admins_title()}
+		description={$LL.admin_admins_description()}
+		actions={headerActions}
+	/>
+
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label for="admin-search" class="admin-field__label">{$LL.admin_admins_email()}</label>
 			<input
+				id="admin-search"
 				type="text"
-				class="input"
+				class="admin-input"
 				placeholder={$LL.admin_admins_search_placeholder()}
 				bind:value={searchQuery}
 				oninput={handleSearch}
 			/>
 		</div>
-		<div class="filter-group">
-			<select class="select" bind:value={statusFilter} onchange={handleStatusChange}>
+
+		<div class="admin-field admin-field--compact">
+			<label for="admin-status" class="admin-field__label">{$LL.admin_admins_status()}</label>
+			<select
+				id="admin-status"
+				class="admin-select"
+				bind:value={statusFilter}
+				onchange={handleStatusChange}
+			>
 				<option value="">{$LL.admin_admins_all_statuses()}</option>
 				<option value="active">{$LL.admin_admins_active()}</option>
 				<option value="suspended">{$LL.admin_admins_suspended()}</option>
 				<option value="locked">{$LL.admin_admins_locked()}</option>
 			</select>
 		</div>
-		<div class="filter-group">
-			<select class="select" onchange={handleMfaChange}>
+
+		<div class="admin-field admin-field--compact">
+			<label for="admin-mfa" class="admin-field__label">{$LL.admin_admins_mfa()}</label>
+			<select id="admin-mfa" class="admin-select" onchange={handleMfaChange}>
 				<option value="">{$LL.admin_admins_all_mfa()}</option>
 				<option value="true">{$LL.admin_admins_mfa_enabled()}</option>
 				<option value="false">{$LL.admin_admins_mfa_disabled()}</option>
 			</select>
 		</div>
-	</div>
+	</AdminToolbar>
 
 	<!-- Content -->
 	{#if loading}
@@ -241,30 +256,34 @@
 			<p>{$LL.admin_admins_loading()}</p>
 		</div>
 	{:else if error}
-		<div class="error-state">
-			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadAdmins}>{$LL.admin_admins_retry()}</button>
-		</div>
+		<AdminSection>
+			<div class="error-state">
+				<p class="error-text">{error}</p>
+				<button class="btn btn-secondary" onclick={loadAdmins}>{$LL.admin_admins_retry()}</button>
+			</div>
+		</AdminSection>
 	{:else if admins.length === 0}
-		<div class="empty-state">
-			<p>{$LL.admin_admins_empty()}</p>
-			{#if searchQuery || statusFilter || mfaFilter !== null}
-				<button
-					class="btn btn-secondary"
-					onclick={() => {
-						searchQuery = '';
-						statusFilter = '';
-						mfaFilter = null;
-						loadAdmins();
-					}}
-				>
-					{$LL.admin_admins_clear_filters()}
-				</button>
-			{/if}
-		</div>
+		<AdminSection>
+			<div class="empty-state">
+				<p>{$LL.admin_admins_empty()}</p>
+				{#if searchQuery || statusFilter || mfaFilter !== null}
+					<button
+						class="btn btn-secondary"
+						onclick={() => {
+							searchQuery = '';
+							statusFilter = '';
+							mfaFilter = null;
+							loadAdmins();
+						}}
+					>
+						{$LL.admin_admins_clear_filters()}
+					</button>
+				{/if}
+			</div>
+		</AdminSection>
 	{:else}
-		<div class="table-container">
-			<table class="table">
+		<AdminSection>
+			<AdminDataTable width="wide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_admins_email()}</th>
@@ -273,12 +292,17 @@
 						<th>{$LL.admin_admins_mfa()}</th>
 						<th>{$LL.admin_admins_last_login()}</th>
 						<th>{$LL.admin_admins_created()}</th>
-						<th>{$LL.admin_admins_actions()}</th>
+						<th class="text-right">{$LL.admin_admins_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each admins as admin (admin.id)}
-						<tr class="clickable" onclick={() => goto(`/admin/admins/${admin.id}`)}>
+						<tr
+							onclick={() => goto(`/admin/admins/${admin.id}`)}
+							onkeydown={(e) => e.key === 'Enter' && goto(`/admin/admins/${admin.id}`)}
+							tabindex="0"
+							role="button"
+						>
 							<td>{admin.email}</td>
 							<td>{admin.name || '-'}</td>
 							<td>
@@ -295,10 +319,10 @@
 							</td>
 							<td>{formatDate(admin.last_login_at)}</td>
 							<td>{formatDate(admin.created_at)}</td>
-							<td>
+							<td class="text-right">
 								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 								<div
-									class="action-buttons"
+									class="admin-row-actions"
 									onclick={(e) => e.stopPropagation()}
 									onkeydown={(e) => e.stopPropagation()}
 									role="group"
@@ -333,39 +357,28 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="pagination">
-				<span class="pagination-info">
-					{$LL.admin_admins_pagination({
-						from: (currentPage - 1) * limit + 1,
-						to: Math.min(currentPage * limit, total),
-						total
-					})}
-				</span>
-				<div class="pagination-buttons">
-					<button
-						class="btn btn-sm btn-secondary"
-						disabled={currentPage <= 1}
-						onclick={() => goToPage(currentPage - 1)}
-					>
-						{$LL.admin_admins_previous()}
-					</button>
-					<button
-						class="btn btn-sm btn-secondary"
-						disabled={currentPage >= totalPages}
-						onclick={() => goToPage(currentPage + 1)}
-					>
-						{$LL.admin_admins_next()}
-					</button>
-				</div>
-			</div>
+			<AdminPagination
+				label={$LL.admin_admins_title()}
+				info={$LL.admin_admins_pagination({
+					from: (currentPage - 1) * limit + 1,
+					to: Math.min(currentPage * limit, total),
+					total
+				})}
+				previousLabel={$LL.admin_admins_previous()}
+				nextLabel={$LL.admin_admins_next()}
+				hasPrevious={currentPage > 1}
+				hasNext={currentPage < totalPages}
+				onPrevious={() => goToPage(currentPage - 1)}
+				onNext={() => goToPage(currentPage + 1)}
+			/>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Admin Dialog -->
 <Modal
@@ -403,82 +416,17 @@
 </Modal>
 
 <style>
-	/* Page-specific styles for Admin Users */
-
-	/* Filters */
-	.filters-bar {
-		display: flex;
-		gap: 1rem;
-		margin-bottom: 1.5rem;
-		flex-wrap: wrap;
-	}
-
-	.filter-group {
-		flex: 1;
-		min-width: 150px;
-		max-width: 250px;
-	}
-
-	.input,
-	.select {
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-	}
-
-	.input:focus,
-	.select:focus {
-		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
-	}
-
-	/* Table */
-	.table-container {
-		overflow-x: auto;
-		background: var(--bg-card);
-		border-radius: var(--radius-lg);
-		border: 1px solid var(--border);
-	}
-
-	.table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.table th,
-	.table td {
-		padding: 0.75rem 1rem;
-		text-align: left;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.table th {
-		font-weight: 600;
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		color: var(--text-secondary);
-		background: var(--bg-subtle);
-	}
-
-	.table tr.clickable {
+	:global(.admin-data-table-wrap tr[role='button']) {
 		cursor: pointer;
 	}
 
-	.table tr.clickable:hover {
-		background: var(--bg-subtle);
+	.admin-row-actions {
+		display: inline-flex;
+		gap: 8px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
 
-	.action-buttons {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	/* Error state */
 	.error-state {
 		display: flex;
 		flex-direction: column;
@@ -486,17 +434,17 @@
 		justify-content: center;
 		padding: 48px 24px;
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.error-text {
-		color: var(--danger);
+		color: var(--color-danger);
 		margin-bottom: 1rem;
 	}
 
-	/* Alert for dialog errors */
 	.alert-danger {
-		background: var(--danger-subtle);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+		color: var(--color-danger);
 	}
 </style>

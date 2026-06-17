@@ -3,7 +3,6 @@
 	import { SvelteDate } from 'svelte/reactivity';
 	import {
 		adminJobsAPI,
-		getJobStatusColor,
 		formatJobDuration,
 		type Job,
 		type JobStatus,
@@ -23,6 +22,13 @@
 		sanitizeText
 	} from '$lib/utils';
 	import { Modal } from '$lib/components';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State
@@ -590,30 +596,35 @@
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_jobs_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_jobs_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={openTenantDbDialog}>
-				<i class="i-ph-database"></i>
-				{$LL.admin_jobs_tenant_db()}
-			</button>
-			<button class="btn btn-secondary" onclick={openCreateImportDialog}>
-				<i class="i-ph-upload-simple"></i>
-				{$LL.admin_jobs_import_users()}
-			</button>
-			<button class="btn btn-primary" onclick={openCreateReportDialog}>
-				<i class="i-ph-file-text"></i>
-				{$LL.admin_jobs_create_report_job()}
-			</button>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={openTenantDbDialog}>
+		<i class="i-ph-database"></i>
+		{$LL.admin_jobs_tenant_db()}
+	</button>
+	<button class="btn btn-secondary" onclick={openCreateImportDialog}>
+		<i class="i-ph-upload-simple"></i>
+		{$LL.admin_jobs_import_users()}
+	</button>
+	<button class="btn btn-primary" onclick={openCreateReportDialog}>
+		<i class="i-ph-file-text"></i>
+		{$LL.admin_jobs_create_report_job()}
+	</button>
+{/snippet}
+
+{#snippet queueActions()}
+	{#if activeFilterCount > 0}
+		<button class="btn btn-secondary btn-sm" onclick={clearFilters}>
+			{$LL.admin_jobs_clear_filters()}
+		</button>
+	{/if}
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_jobs_title()}
+		description={$LL.admin_jobs_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -642,15 +653,10 @@
 	</div>
 
 	{#if jobTypes.length > 0}
-		<div class="panel">
-			<div class="panel-header">
-				<div>
-					<h2 class="panel-title">{$LL.admin_jobs_creatable_types_title()}</h2>
-					<p class="panel-description">
-						{$LL.admin_jobs_creatable_types_description()}
-					</p>
-				</div>
-			</div>
+		<AdminSection
+			title={$LL.admin_jobs_creatable_types_title()}
+			description={$LL.admin_jobs_creatable_types_description()}
+		>
 			<div class="job-type-grid">
 				{#each jobTypes as jobType (jobType.job_type)}
 					<button class="job-type-item" onclick={() => viewJobTypeDetail(jobType)}>
@@ -667,26 +673,18 @@
 					</button>
 				{/each}
 			</div>
-		</div>
+		</AdminSection>
 	{/if}
 
-	<!-- Filters -->
-	<div class="panel">
-		<div class="panel-header">
-			<div>
-				<h2 class="panel-title">{$LL.admin_jobs_queue_title()}</h2>
-				<p class="panel-description">{$LL.admin_jobs_queue_description()}</p>
-			</div>
-			{#if activeFilterCount > 0}
-				<button class="btn btn-secondary btn-sm" onclick={clearFilters}
-					>{$LL.admin_jobs_clear_filters()}</button
-				>
-			{/if}
-		</div>
-		<div class="filter-row">
-			<div class="form-group">
-				<label for="status-filter" class="form-label">{$LL.admin_jobs_status()}</label>
-				<select id="status-filter" class="form-select" bind:value={statusFilter}>
+	<AdminSection
+		title={$LL.admin_jobs_queue_title()}
+		description={$LL.admin_jobs_queue_description()}
+		actions={queueActions}
+	>
+		<AdminToolbar>
+			<div class="admin-field admin-field--compact">
+				<label for="status-filter" class="admin-field__label">{$LL.admin_jobs_status()}</label>
+				<select id="status-filter" class="admin-input" bind:value={statusFilter}>
 					<option value="">{$LL.admin_jobs_all_status()}</option>
 					<option value="pending">{$LL.admin_jobs_status_pending()}</option>
 					<option value="running">{$LL.admin_jobs_status_running()}</option>
@@ -696,9 +694,9 @@
 					<option value="cancelled">{$LL.admin_jobs_status_cancelled()}</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<label for="type-filter" class="form-label">{$LL.admin_jobs_type()}</label>
-				<select id="type-filter" class="form-select" bind:value={typeFilter}>
+			<div class="admin-field admin-field--compact">
+				<label for="type-filter" class="admin-field__label">{$LL.admin_jobs_type()}</label>
+				<select id="type-filter" class="admin-input" bind:value={typeFilter}>
 					<option value="">{$LL.admin_jobs_all_types()}</option>
 					<option value="users_import">{$LL.admin_jobs_type_users_import()}</option>
 					<option value="users_bulk_update">{$LL.admin_jobs_type_users_bulk_update()}</option>
@@ -722,22 +720,20 @@
 					>
 				</select>
 			</div>
-			<div class="form-group form-group-action">
+			<div class="admin-field admin-field--compact">
 				<button class="btn btn-secondary" onclick={loadData} disabled={loading}>
 					<i class="i-ph-arrows-clockwise"></i>
 					{$LL.admin_jobs_refresh()}
 				</button>
 			</div>
-		</div>
-	</div>
+		</AdminToolbar>
 
-	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>{$LL.admin_jobs_loading_jobs()}</p>
-		</div>
-	{:else if jobs.length === 0}
-		<div class="panel">
+		{#if loading}
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner"></i>
+				<p>{$LL.admin_jobs_loading_jobs()}</p>
+			</div>
+		{:else if jobs.length === 0}
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_jobs_no_jobs()}</p>
 				{#if statusFilter || typeFilter}
@@ -758,10 +754,8 @@
 					</p>
 				{/if}
 			</div>
-		</div>
-	{:else}
-		<div class="data-table-container jobs-table-container">
-			<table class="data-table">
+		{:else}
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_jobs_type()}</th>
@@ -789,14 +783,14 @@
 							</td>
 							<td>
 								<div class="progress-cell">
-									<div class="progress-bar">
-										<div
-											class="progress-fill"
-											style="width: {getProgressPercent(
-												job
-											)}%; background-color: {getJobStatusColor(job.status)};"
-										></div>
-									</div>
+									<progress
+										class="job-progress"
+										data-job-status={job.status}
+										value={getProgressPercent(job)}
+										max="100"
+									>
+										{getProgressPercent(job)}%
+									</progress>
 									<span class="progress-text">{getProgressPercent(job)}%</span>
 								</div>
 							</td>
@@ -811,10 +805,10 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
-	{/if}
-</div>
+			</AdminDataTable>
+		{/if}
+	</AdminSection>
+</AdminPageShell>
 
 <!-- Tenant DB Provisioning Dialog -->
 <Modal
@@ -827,26 +821,30 @@
 		<div class="alert alert-error">{tenantDbRequestError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="tenant-db-slug" class="form-label">{$LL.admin_jobs_tenant_slug()}</label>
-		<input id="tenant-db-slug" type="text" class="form-input" bind:value={tenantDbSlug} />
+	<div class="admin-field dialog-field">
+		<label for="tenant-db-slug" class="admin-field__label">{$LL.admin_jobs_tenant_slug()}</label>
+		<input id="tenant-db-slug" type="text" class="admin-input" bind:value={tenantDbSlug} />
 		<p class="form-hint">{$LL.admin_jobs_tenant_slug_hint()}</p>
 	</div>
 
-	<div class="filter-row">
-		<div class="form-group">
-			<label for="tenant-db-generation" class="form-label">{$LL.admin_jobs_generation()}</label>
+	<div class="dialog-grid">
+		<div class="admin-field dialog-field">
+			<label for="tenant-db-generation" class="admin-field__label">
+				{$LL.admin_jobs_generation()}
+			</label>
 			<input
 				id="tenant-db-generation"
 				type="number"
 				min="1"
-				class="form-input"
+				class="admin-input"
 				bind:value={tenantDbGeneration}
 			/>
 		</div>
-		<div class="form-group">
-			<label for="tenant-db-execution" class="form-label">{$LL.admin_jobs_execution()}</label>
-			<select id="tenant-db-execution" class="form-select" bind:value={tenantDbExecutionMode}>
+		<div class="admin-field dialog-field">
+			<label for="tenant-db-execution" class="admin-field__label">
+				{$LL.admin_jobs_execution()}
+			</label>
+			<select id="tenant-db-execution" class="admin-input" bind:value={tenantDbExecutionMode}>
 				<option value="plan_only">{$LL.admin_jobs_execution_plan_only()}</option>
 				<option value="operator_cli">{$LL.admin_jobs_execution_operator_cli()}</option>
 			</select>
@@ -858,9 +856,9 @@
 		<span>{$LL.admin_jobs_activate_after_deploy()}</span>
 	</label>
 
-	<div class="form-group">
-		<label for="tenant-db-reason" class="form-label">{$LL.admin_jobs_reason()}</label>
-		<textarea id="tenant-db-reason" class="form-textarea" rows="3" bind:value={tenantDbReason}
+	<div class="admin-field dialog-field">
+		<label for="tenant-db-reason" class="admin-field__label">{$LL.admin_jobs_reason()}</label>
+		<textarea id="tenant-db-reason" class="admin-input" rows="3" bind:value={tenantDbReason}
 		></textarea>
 		<p class="form-hint">{$LL.admin_jobs_reason_hint()}</p>
 	</div>
@@ -892,13 +890,13 @@
 		<div class="alert alert-error">{createImportError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="import-file" class="form-label">{$LL.admin_jobs_csv_file()}</label>
+	<div class="admin-field dialog-field">
+		<label for="import-file" class="admin-field__label">{$LL.admin_jobs_csv_file()}</label>
 		<input
 			id="import-file"
 			type="file"
 			accept=".csv,text/csv"
-			class="form-input"
+			class="admin-input"
 			onchange={handleImportFileChange}
 		/>
 		<p class="muted">
@@ -911,18 +909,20 @@
 		</p>
 	</div>
 
-	<div class="filter-row">
-		<div class="form-group">
-			<label for="import-duplicate" class="form-label">{$LL.admin_jobs_on_duplicate()}</label>
-			<select id="import-duplicate" class="form-select" bind:value={importOnDuplicate}>
+	<div class="dialog-grid">
+		<div class="admin-field dialog-field">
+			<label for="import-duplicate" class="admin-field__label">
+				{$LL.admin_jobs_on_duplicate()}
+			</label>
+			<select id="import-duplicate" class="admin-input" bind:value={importOnDuplicate}>
 				<option value="skip">{$LL.admin_jobs_duplicate_skip()}</option>
 				<option value="update">{$LL.admin_jobs_duplicate_update()}</option>
 				<option value="error">{$LL.admin_jobs_duplicate_error()}</option>
 			</select>
 		</div>
-		<div class="form-group">
-			<label for="import-header" class="form-label">{$LL.admin_jobs_csv_header()}</label>
-			<select id="import-header" class="form-select" bind:value={importSkipHeader}>
+		<div class="admin-field dialog-field">
+			<label for="import-header" class="admin-field__label">{$LL.admin_jobs_csv_header()}</label>
+			<select id="import-header" class="admin-input" bind:value={importSkipHeader}>
 				<option value={true}>{$LL.admin_jobs_first_row_header()}</option>
 				<option value={false}>{$LL.admin_jobs_default_column_order()}</option>
 			</select>
@@ -955,9 +955,9 @@
 		<div class="alert alert-error">{createReportError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="report-type" class="form-label">{$LL.admin_jobs_report_type()}</label>
-		<select id="report-type" class="form-select" bind:value={reportType}>
+	<div class="admin-field dialog-field">
+		<label for="report-type" class="admin-field__label">{$LL.admin_jobs_report_type()}</label>
+		<select id="report-type" class="admin-input" bind:value={reportType}>
 			<option value="user_activity">{getReportTypeLabel('user_activity')}</option>
 			<option value="access_summary">{getReportTypeLabel('access_summary')}</option>
 			<option value="compliance_audit">{getReportTypeLabel('compliance_audit')}</option>
@@ -965,28 +965,34 @@
 		</select>
 	</div>
 
-	<div class="filter-row">
-		<div class="form-group">
-			<label for="report-from" class="form-label">{$LL.admin_jobs_from_date_optional()}</label>
-			<input id="report-from" type="date" class="form-input" bind:value={reportFromDate} />
+	<div class="dialog-grid">
+		<div class="admin-field dialog-field">
+			<label for="report-from" class="admin-field__label">
+				{$LL.admin_jobs_from_date_optional()}
+			</label>
+			<input id="report-from" type="date" class="admin-input" bind:value={reportFromDate} />
 		</div>
-		<div class="form-group">
-			<label for="report-to" class="form-label">{$LL.admin_jobs_to_date_optional()}</label>
-			<input id="report-to" type="date" class="form-input" bind:value={reportToDate} />
+		<div class="admin-field dialog-field">
+			<label for="report-to" class="admin-field__label">
+				{$LL.admin_jobs_to_date_optional()}
+			</label>
+			<input id="report-to" type="date" class="admin-input" bind:value={reportToDate} />
 		</div>
 	</div>
 
-	<div class="filter-row">
-		<div class="form-group">
-			<label for="report-format" class="form-label">{$LL.admin_jobs_format()}</label>
-			<select id="report-format" class="form-select" bind:value={reportFormat}>
+	<div class="dialog-grid">
+		<div class="admin-field dialog-field">
+			<label for="report-format" class="admin-field__label">{$LL.admin_jobs_format()}</label>
+			<select id="report-format" class="admin-input" bind:value={reportFormat}>
 				<option value="json">JSON</option>
 				<option value="csv">CSV</option>
 			</select>
 		</div>
-		<div class="form-group">
-			<label for="report-delivery" class="form-label">{$LL.admin_jobs_result_delivery()}</label>
-			<select id="report-delivery" class="form-select" bind:value={reportResultDelivery}>
+		<div class="admin-field dialog-field">
+			<label for="report-delivery" class="admin-field__label">
+				{$LL.admin_jobs_result_delivery()}
+			</label>
+			<select id="report-delivery" class="admin-input" bind:value={reportResultDelivery}>
 				<option value="auto">{$LL.admin_jobs_delivery_auto()}</option>
 				<option value="inline">{$LL.admin_jobs_delivery_inline()}</option>
 				<option value="artifact">{$LL.admin_jobs_delivery_artifact()}</option>
@@ -994,14 +1000,14 @@
 		</div>
 	</div>
 
-	<div class="filter-row">
-		<div class="form-group">
-			<label for="report-storage-destination" class="form-label"
+	<div class="dialog-grid">
+		<div class="admin-field dialog-field dialog-field--full">
+			<label for="report-storage-destination" class="admin-field__label"
 				>{$LL.admin_jobs_storage_destination()}</label
 			>
 			<select
 				id="report-storage-destination"
-				class="form-select"
+				class="admin-input"
 				bind:value={reportStorageDestinationId}
 			>
 				<option value="">{$LL.admin_jobs_runtime_default()}</option>
@@ -1155,14 +1161,14 @@
 			<div class="detail-section">
 				<h3 class="detail-section-title">{$LL.admin_jobs_progress()}</h3>
 				<div class="progress-detail">
-					<div class="progress-bar-lg">
-						<div
-							class="progress-fill"
-							style="width: {getProgressPercent(
-								selectedJob
-							)}%; background-color: {getJobStatusColor(selectedJob.status)};"
-						></div>
-					</div>
+					<progress
+						class="job-progress job-progress--lg"
+						data-job-status={selectedJob.status}
+						value={getProgressPercent(selectedJob)}
+						max="100"
+					>
+						{getProgressPercent(selectedJob)}%
+					</progress>
 					<span class="progress-text">
 						{selectedJob.progress.processed}/{selectedJob.progress.total}
 					</span>
@@ -1288,42 +1294,27 @@
 	}
 
 	.summary-card {
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		background: var(--bg-card);
+		background: var(--color-surface);
 		padding: 1rem;
 	}
 
 	.summary-card.warning {
-		border-color: color-mix(in srgb, var(--warning, #f59e0b) 30%, var(--border));
+		border-color: color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
 	}
 
 	.summary-label {
 		display: block;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		margin-bottom: 0.35rem;
 	}
 
 	.summary-card strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 1.35rem;
 		line-height: 1;
-	}
-
-	.panel-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-
-	.panel-description {
-		margin: 0.25rem 0 0;
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-		line-height: 1.45;
 	}
 
 	.job-type-grid {
@@ -1338,9 +1329,9 @@
 		justify-content: space-between;
 		gap: 0.75rem;
 		padding: 0.875rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		background: var(--color-surface-subtle);
 		color: inherit;
 		font: inherit;
 		text-align: left;
@@ -1352,13 +1343,13 @@
 	}
 
 	.job-type-item:hover {
-		border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
-		background: color-mix(in srgb, var(--primary) 5%, var(--bg-subtle));
+		border-color: color-mix(in srgb, var(--color-primary) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface-subtle));
 		transform: translateY(-1px);
 	}
 
 	.job-type-item:focus-visible {
-		outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent);
+		outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
 		outline-offset: 2px;
 	}
 
@@ -1369,45 +1360,63 @@
 		gap: 0.375rem;
 	}
 
-	.jobs-table-container {
-		border-radius: var(--radius-lg);
-	}
-
-	.data-table tbody tr.row-active {
-		background: color-mix(in srgb, var(--primary, #2563eb) 4%, var(--bg-card));
+	:global(.admin-data-table) tbody tr.row-active {
+		background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface));
 	}
 
 	.progress-cell {
 		min-width: 160px;
 	}
 
-	.progress-bar,
-	.progress-bar-lg {
-		overflow: hidden;
-		border-radius: var(--radius-full);
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-	}
-
-	.progress-bar {
+	.job-progress {
 		width: 100%;
 		height: 0.55rem;
 		margin-bottom: 0.35rem;
+		overflow: hidden;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		background: var(--color-surface-subtle);
+		accent-color: var(--color-info);
 	}
 
-	.progress-bar-lg {
+	.job-progress--lg {
 		height: 0.75rem;
 		flex: 1;
+		margin-bottom: 0;
 	}
 
-	.progress-fill {
-		height: 100%;
-		border-radius: inherit;
+	.job-progress::-webkit-progress-bar {
+		background: var(--color-surface-subtle);
+	}
+
+	.job-progress::-webkit-progress-value {
+		background: var(--job-progress-color, var(--color-info));
 		transition: width var(--transition-fast);
 	}
 
+	.job-progress::-moz-progress-bar {
+		background: var(--job-progress-color, var(--color-info));
+	}
+
+	.job-progress[data-job-status='pending'],
+	.job-progress[data-job-status='partial_failure'] {
+		--job-progress-color: var(--color-warning);
+	}
+
+	.job-progress[data-job-status='completed'] {
+		--job-progress-color: var(--color-success);
+	}
+
+	.job-progress[data-job-status='failed'] {
+		--job-progress-color: var(--color-danger);
+	}
+
+	.job-progress[data-job-status='cancelled'] {
+		--job-progress-color: var(--color-text-muted);
+	}
+
 	.progress-text {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		font-variant-numeric: tabular-nums;
 	}
@@ -1421,7 +1430,7 @@
 	}
 
 	.form-hint {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.4;
 		margin: 0.4rem 0 0;
@@ -1434,9 +1443,9 @@
 	}
 
 	.info-card {
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		background: var(--color-surface-subtle);
 		padding: 0.75rem;
 		min-width: 0;
 	}
@@ -1448,12 +1457,12 @@
 
 	.detail-section {
 		padding-top: 1rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.detail-section-title {
 		margin: 0 0 0.625rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.9375rem;
 		font-weight: 600;
 	}
@@ -1466,7 +1475,7 @@
 
 	.detail-copy {
 		margin: 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		line-height: 1.55;
 	}
@@ -1482,10 +1491,10 @@
 		align-items: flex-start;
 		gap: 0.625rem;
 		padding: 0.625rem 0.75rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		background: var(--color-surface-subtle);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		line-height: 1.45;
 	}

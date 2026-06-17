@@ -17,7 +17,7 @@
 
 	const label = $derived(data?.label || 'Check');
 	const icon = $derived(data?.icon || '🔍');
-	const color = $derived(data?.color || '#a855f7');
+	const color = $derived(data?.color || 'var(--flow-node-color-check)');
 
 	// Get check condition display
 	const checkCondition = $derived(() => {
@@ -73,15 +73,15 @@
 <style>
 	.logic-node {
 		position: relative;
-		background: white;
-		border: 1px solid #ededed;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-left: 3px solid var(--node-color);
-		border-radius: 6px;
+		border-radius: var(--flow-node-radius, var(--radius-control, 6px));
 		min-width: 120px;
 	}
 
 	.logic-node.selected {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -94,11 +94,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--flow-node-control-radius, var(--radius-xs, 3px));
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -109,8 +109,8 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-header {
@@ -120,7 +120,7 @@
 		padding: 5px 8px;
 		font-weight: 500;
 		font-size: 10px;
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.icon {
@@ -134,13 +134,13 @@
 
 	.node-body {
 		padding: 4px 10px 6px;
-		border-top: 1px solid #f3f4f6;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.condition {
 		font-size: 9px;
-		color: #6b7280;
-		font-family: ui-monospace, monospace;
+		color: var(--color-text-muted);
+		font-family: var(--font-mono, ui-monospace, monospace);
 		word-break: break-all;
 	}
 
@@ -168,19 +168,19 @@
 		font-size: 8px;
 		font-weight: 600;
 		padding: 1px 4px;
-		border-radius: 2px;
+		border-radius: var(--flow-node-badge-radius, var(--radius-xs, 2px));
 		pointer-events: none;
 	}
 
 	.handle-label.yes {
-		background: #dcfce7;
-		color: #166534;
+		background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+		color: var(--color-success);
 		margin-left: 12px;
 	}
 
 	.handle-label.no {
-		background: #fef3c7;
-		color: #92400e;
+		background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+		color: var(--color-warning);
 		margin-top: 10px;
 	}
 </style>

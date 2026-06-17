@@ -1101,7 +1101,11 @@ const id: Translations = {
   'web.envDetail.emailCloudflareRequirementManual':
     'Pengaturan domain di Cloudflare Dashboard masih manual',
   'web.envDetail.emailCloudflareFromHint':
-    'Harus menggunakan alamat dari domain yang sudah di-onboard ke Cloudflare Email Service.',
+    'Jika menggunakan Cloudflare Email Service, alamat harus berasal dari domain yang sudah di-onboard di Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Pengaturan Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'Jika menggunakan Resend, domain harus ditambahkan dan diverifikasi di Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Domain Resend',
   'web.envDetail.emailFromAddress': 'Alamat email From',
   'web.envDetail.emailFromName': 'Nama tampilan pengirim (opsional)',
   'web.envDetail.emailEnableCloudflare': 'Aktifkan Cloudflare Email Service',
@@ -1114,6 +1118,10 @@ const id: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     'Environment ini sudah memiliki provider email lain. Beralih ke Cloudflare Email Service?',
   'web.envDetail.emailStarting': 'Memulai pengaturan Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'Environment ini sudah memiliki provider email lain. Beralih ke Resend?',
+  'web.envDetail.emailResendStarting': 'Menyimpan konfigurasi email Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Konfigurasi email Resend disimpan.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Perbarui semua Workers',

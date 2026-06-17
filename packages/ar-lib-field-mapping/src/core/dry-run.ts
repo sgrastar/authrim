@@ -47,7 +47,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
   }
 
   for (const step of input.transforms ?? []) {
-    const result = executeTransformStep({ step, edgeValues });
+    const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
     transformReasons.push(...result.reasons);
     transformTrace.push(...result.trace);
     if (result.value) {

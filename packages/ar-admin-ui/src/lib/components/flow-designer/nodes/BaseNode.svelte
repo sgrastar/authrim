@@ -11,7 +11,7 @@
 	let {
 		data,
 		selected = false,
-		color = '#6b7280',
+		color = 'var(--color-text-muted)',
 		icon = 'circle',
 		showErrorHandle = false
 	}: Props = $props();
@@ -45,15 +45,13 @@
 
 <style>
 	.base-node {
-		background: white;
+		background: var(--flow-node-bg, var(--color-surface));
 		border: 2px solid var(--node-color);
-		border-radius: 8px;
+		border-radius: var(--radius-panel, 8px);
+		color: var(--color-text);
 		min-width: 150px;
-		font-family:
-			system-ui,
-			-apple-system,
-			sans-serif;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+		font-family: var(--font-body, system-ui, -apple-system, sans-serif);
+		box-shadow: var(--flow-node-shadow, var(--shadow-sm));
 		transition:
 			box-shadow 0.2s,
 			transform 0.2s;
@@ -61,8 +59,8 @@
 
 	.base-node.selected {
 		box-shadow:
-			0 0 0 2px var(--node-color),
-			0 4px 6px rgba(0, 0, 0, 0.1);
+			var(--flow-node-selected-ring, 0 0 0 2px var(--node-color)),
+			var(--flow-node-selected-shadow, var(--shadow-panel));
 	}
 
 	.node-header {
@@ -71,9 +69,9 @@
 		gap: 5px;
 		padding: 6px 10px;
 		background: var(--node-color);
-		color: white;
-		border-radius: 6px 6px 0 0;
-		font-weight: 500;
+		color: var(--flow-node-header-text, var(--color-accent-contrast));
+		border-radius: calc(var(--radius-panel, 8px) - 2px) calc(var(--radius-panel, 8px) - 2px) 0 0;
+		font-weight: var(--font-weight-semibold, 600);
 		font-size: 11px;
 	}
 
@@ -91,7 +89,7 @@
 	.node-config {
 		padding: 8px 14px;
 		font-size: 11px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 	}
 
 	.config-item {
@@ -101,28 +99,28 @@
 	}
 
 	.config-key {
-		color: #9ca3af;
+		color: var(--color-text-muted);
 	}
 
 	.config-value {
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	:global(.handle) {
 		width: 12px !important;
 		height: 12px !important;
-		border: 2px solid white !important;
+		border: 2px solid var(--flow-node-bg, var(--color-surface)) !important;
 	}
 
 	:global(.handle-input) {
-		background: #3b82f6 !important;
+		background: var(--flow-handle-input, var(--color-info)) !important;
 	}
 
 	:global(.handle-output) {
-		background: #22c55e !important;
+		background: var(--flow-handle-output, var(--color-success)) !important;
 	}
 
 	:global(.handle-error) {
-		background: #ef4444 !important;
+		background: var(--flow-handle-error, var(--color-danger)) !important;
 	}
 </style>

@@ -2157,6 +2157,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.overview': 'Overview',
           'web.envDetail.workersUpdates': 'Workers / Updates',
           'web.envDetail.storage': 'Storage',
+          'web.envDetail.migrations': 'Migrations',
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Resources',
           'web.envDetail.updates': 'Updates',
@@ -2180,6 +2181,33 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ProvisionDesc': 'Create Authrim R2 buckets, record lock bindings, enable the R2 feature flag, and redeploy workers.',
           'web.envDetail.provisionR2Deploy': 'Provision R2 and Deploy',
           'web.envDetail.r2ProvisioningProgress': 'R2 Provisioning Progress',
+          'web.envDetail.migrationTitle': 'Database Migrations',
+          'web.envDetail.migrationLoading': 'Loading migration status...',
+          'web.envDetail.migrationApplied': 'Applied',
+          'web.envDetail.migrationPending': 'Pending',
+          'web.envDetail.migrationChanged': 'Changed',
+          'web.envDetail.migrationOrphaned': 'Orphaned',
+          'web.envDetail.migrationRefresh': 'Refresh',
+          'web.envDetail.migrationApplyAllPending': 'Apply All Pending',
+          'web.envDetail.migrationProgress': 'Migration Progress:',
+          'web.envDetail.migrationStatus': 'Status',
+          'web.envDetail.migrationFile': 'Migration file',
+          'web.envDetail.migrationAppliedAt': 'Applied At',
+          'web.envDetail.migrationChecksum': 'Checksum',
+          'web.envDetail.migrationApplyPending': 'Apply',
+          'web.envDetail.migrationStatusApplied': 'Applied',
+          'web.envDetail.migrationStatusPending': 'Pending',
+          'web.envDetail.migrationStatusChanged': 'Changed',
+          'web.envDetail.migrationStatusOrphaned': 'Orphaned',
+          'web.envDetail.migrationChangedBlocked': 'Applied migration files have changed. Create a new migration file before applying updates.',
+          'web.envDetail.migrationPendingSummary': '{{count}} pending migration(s)',
+          'web.envDetail.migrationMiniSummary': '{{applied}} applied / {{pending}} pending / {{changed}} changed',
+          'web.envDetail.migrationNoPending': 'All migrations are applied.',
+          'web.envDetail.migrationNoFiles': 'No migration files found.',
+          'web.envDetail.migrationLoadFailed': 'Failed to load migration status.',
+          'web.envDetail.migrationApplyConfirm': 'Apply all pending database migrations?',
+          'web.envDetail.migrationApplying': 'Applying database migrations...',
+          'web.envDetail.migrationComplete': 'Database migrations completed.',
           'web.delete.selectResourcesTitle': 'Select Resources to Delete',
           'web.delete.targetResources': 'Target Resources',
           'web.delete.workersDesc': 'Router, API, and UI Workers',
@@ -2206,6 +2234,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.overview': '概要',
           'web.envDetail.workersUpdates': 'Workers・更新',
           'web.envDetail.storage': 'ストレージ運用',
+          'web.envDetail.migrations': 'マイグレーション',
           'web.envDetail.email': 'メール',
           'web.envDetail.resources': 'リソース一覧',
           'web.envDetail.updates': '更新可能',
@@ -2229,6 +2258,33 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ProvisionDesc': 'AuthrimのR2バケットを作成し、ロック用バインディングを記録、R2機能フラグを有効化してWorkerを再デプロイします。',
           'web.envDetail.provisionR2Deploy': 'R2を作成してデプロイ',
           'web.envDetail.r2ProvisioningProgress': 'R2作成の進行状況',
+          'web.envDetail.migrationTitle': 'データベースマイグレーション',
+          'web.envDetail.migrationLoading': 'マイグレーション状態を読み込み中...',
+          'web.envDetail.migrationApplied': '適用済み',
+          'web.envDetail.migrationPending': '未適用',
+          'web.envDetail.migrationChanged': '変更あり',
+          'web.envDetail.migrationOrphaned': '孤立',
+          'web.envDetail.migrationRefresh': '更新',
+          'web.envDetail.migrationApplyAllPending': '未適用をすべて適用',
+          'web.envDetail.migrationProgress': 'マイグレーション進行状況:',
+          'web.envDetail.migrationStatus': '状態',
+          'web.envDetail.migrationFile': 'マイグレーションファイル',
+          'web.envDetail.migrationAppliedAt': '適用日時',
+          'web.envDetail.migrationChecksum': 'チェックサム',
+          'web.envDetail.migrationApplyPending': '適用',
+          'web.envDetail.migrationStatusApplied': '適用済み',
+          'web.envDetail.migrationStatusPending': '未適用',
+          'web.envDetail.migrationStatusChanged': '変更あり',
+          'web.envDetail.migrationStatusOrphaned': '孤立',
+          'web.envDetail.migrationChangedBlocked': '適用済みのマイグレーションファイルが変更されています。更新を適用する前に新しいマイグレーションファイルを作成してください。',
+          'web.envDetail.migrationPendingSummary': '{{count}}件の未適用マイグレーションがあります',
+          'web.envDetail.migrationMiniSummary': '適用済み {{applied}} / 未適用 {{pending}} / 変更 {{changed}}',
+          'web.envDetail.migrationNoPending': 'すべてのマイグレーションが適用済みです。',
+          'web.envDetail.migrationNoFiles': 'マイグレーションファイルがありません。',
+          'web.envDetail.migrationLoadFailed': 'マイグレーション状態を読み込めませんでした。',
+          'web.envDetail.migrationApplyConfirm': '未適用のデータベースマイグレーションをすべて適用しますか？',
+          'web.envDetail.migrationApplying': 'データベースマイグレーションを適用中...',
+          'web.envDetail.migrationComplete': 'データベースマイグレーションが完了しました。',
           'web.delete.selectResourcesTitle': '削除するリソースの選択',
           'web.delete.targetResources': '対象リソース',
           'web.delete.workersDesc': 'Router / API / UI Workers',
@@ -5226,9 +5282,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     <div id="section-env-detail" class="hidden setup-step-surface env-management-surface">
       <nav class="tabs env-detail-tabs">
         <button type="button" class="tab on" data-env-tab="overview" data-i18n="web.envDetail.overview">Overview</button>
-        <button type="button" class="tab" data-env-tab="workers"><span data-i18n="web.envDetail.workersUpdates">Workers / Updates</span> <span class="cnt" id="detail-workers-tab-count">0</span></button>
-        <button type="button" class="tab" data-env-tab="storage" data-i18n="web.envDetail.storage">Storage</button>
         <button type="button" class="tab" data-env-tab="email" data-i18n="web.envDetail.email">Email</button>
+        <button type="button" class="tab" data-env-tab="storage" data-i18n="web.envDetail.storage">Storage</button>
+        <button type="button" class="tab" data-env-tab="workers"><span data-i18n="web.envDetail.workersUpdates">Workers / Updates</span> <span class="cnt" id="detail-workers-tab-count">0</span></button>
+        <button type="button" class="tab" data-env-tab="migrations"><span data-i18n="web.envDetail.migrations">Migrations</span> <span class="cnt" id="detail-migrations-tab-count">0</span></button>
         <button type="button" class="tab" data-env-tab="resources"><span data-i18n="web.envDetail.resources">Resources</span> <span class="cnt" id="detail-resource-tab-count">0</span></button>
       </nav>
 
@@ -5305,22 +5362,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
 
         <div class="sechead"><span class="idx">UI</span><h3 data-i18n="web.envDetail.uiUpdates">UI Updates</h3><span class="hint" data-i18n="web.envDetail.uiUpdatesHint">Admin UI / Login UI</span></div>
-        <div class="twocol" id="ui-update-section">
-          <div class="bigtable">
-            <div class="cap"><span>Admin UI</span><em>ar-admin-ui</em></div>
-            <table>
-              <tr><td class="k" data-i18n="web.envDetail.deployedVersion">Deployed</td><td class="v">—</td></tr>
-              <tr><td class="k" data-i18n="web.envDetail.origin">Origin</td><td class="v">—</td></tr>
-              <tr><td class="v" colspan="2" style="text-align:right;"><button class="btn btn-ghost sm" id="btn-update-admin-ui"><span data-i18n="web.envDetail.updateNow">Update</span></button></td></tr>
-            </table>
+        <div class="twocol ui-update-grid" id="ui-update-section">
+          <div class="bigtable ui-update-card">
+            <div class="cap"><span>ADMIN UI</span><em>ar-admin-ui</em></div>
+            <div class="ui-update-card-actions">
+              <button class="btn btn-ghost sm" id="btn-update-admin-ui"><span data-i18n="web.envDetail.updateNow">Update</span></button>
+            </div>
           </div>
-          <div class="bigtable">
-            <div class="cap"><span>Login UI</span><em>ar-login-ui</em></div>
-            <table>
-              <tr><td class="k" data-i18n="web.envDetail.deployedVersion">Deployed</td><td class="v">—</td></tr>
-              <tr><td class="k" data-i18n="web.envDetail.origin">Origin</td><td class="v">—</td></tr>
-              <tr><td class="v" colspan="2" style="text-align:right;"><button class="btn btn-ghost sm" id="btn-update-login-ui"><span data-i18n="web.envDetail.updateNow">Update</span></button></td></tr>
-            </table>
+          <div class="bigtable ui-update-card">
+            <div class="cap"><span>LOGIN UI</span><em>ar-login-ui</em></div>
+            <div class="ui-update-card-actions">
+              <button class="btn btn-ghost sm" id="btn-update-login-ui"><span data-i18n="web.envDetail.updateNow">Update</span></button>
+            </div>
           </div>
         </div>
         <div id="ui-update-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.updateProgress">Update Progress:</span></div><pre id="ui-update-log"></pre></div>
@@ -5354,6 +5407,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
       </div>
 
+      <div id="pane-migrations" class="tabpane" data-env-pane="migrations">
+        <div class="sechead">
+          <span class="idx">D1</span><h3 data-i18n="web.envDetail.migrationTitle">Database Migrations</h3>
+          <span class="hint" id="env-migration-summary" data-i18n="web.envDetail.migrationLoading">Loading migration status...</span>
+        </div>
+        <div class="stats migration-stats">
+          <div class="stat"><div class="s-k" data-i18n="web.envDetail.migrationApplied">Applied</div><div class="s-v" id="migration-stat-applied">0</div></div>
+          <div class="stat"><div class="s-k" data-i18n="web.envDetail.migrationPending">Pending</div><div class="s-v hot" id="migration-stat-pending">0</div></div>
+          <div class="stat"><div class="s-k" data-i18n="web.envDetail.migrationChanged">Changed</div><div class="s-v hot" id="migration-stat-changed">0</div></div>
+          <div class="stat"><div class="s-k" data-i18n="web.envDetail.migrationOrphaned">Orphaned</div><div class="s-v" id="migration-stat-orphaned">0</div></div>
+        </div>
+        <div id="migration-status-list" class="migration-status-list"></div>
+        <div class="inline-form env-migration-actions">
+          <button class="btn btn-ghost" id="btn-refresh-migrations" data-i18n="web.envDetail.migrationRefresh">Refresh</button>
+          <button class="btn btn-next" id="btn-apply-all-migrations" disabled><span data-i18n="web.envDetail.migrationApplyAllPending">Apply All Pending</span> <span class="arr">→</span></button>
+        </div>
+        <div id="migration-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.migrationProgress">Migration Progress:</span></div><pre id="migration-log"></pre></div>
+      </div>
+
       <div id="pane-email" class="tabpane" data-env-pane="email">
         <div id="env-email-section">
           <div class="sechead"><span class="idx">EMAIL</span><h3 data-i18n="web.envDetail.emailSettings">Email Settings</h3><span class="hint" data-i18n="web.envDetail.emailDesc">Enable Cloudflare Email Service later for this environment.</span></div>
@@ -5362,12 +5434,35 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <div class="stat"><div class="s-k" data-i18n="web.envDetail.emailCurrentStatus">Status</div><div class="s-v compact" id="env-email-status">-</div></div>
             <div class="stat"><div class="s-k" data-i18n="web.envDetail.emailCurrentFrom">From Address</div><div class="s-v mono-compact" id="env-email-from">-</div></div>
           </div>
-          <div class="alert"><div class="a-head" data-i18n="web.envDetail.emailCloudflareRequirements">Requirements</div><ul><li data-i18n="web.envDetail.emailCloudflareRequirementPaid">Workers Paid Plan is required</li><li data-i18n="web.envDetail.emailCloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li><li data-i18n="web.envDetail.emailCloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li></ul></div>
           <div class="twocol">
-            <div><label class="f-label" for="env-email-from-address" data-i18n="web.envDetail.emailFromAddress">From Email Address</label><input class="f-input sm" type="email" id="env-email-from-address" placeholder="noreply@yourdomain.com" autocomplete="off"><div class="f-help" data-i18n="web.envDetail.emailCloudflareFromHint">Must be from a domain onboarded to Cloudflare Email Service.</div></div>
+            <div>
+              <label class="f-label" for="env-email-from-address" data-i18n="web.envDetail.emailFromAddress">From Email Address</label>
+              <input class="f-input sm" type="email" id="env-email-from-address" placeholder="noreply@yourdomain.com" autocomplete="off">
+              <div class="f-help email-from-help">
+                <div><span data-i18n="web.envDetail.emailCloudflareFromHint">When using Cloudflare Email Service, the address must belong to an onboarded domain.</span> <a href="https://dash.cloudflare.com/?to=%2F%3Aaccount%2Femail-service%2Frouting" target="_blank" rel="noopener noreferrer" data-i18n="web.envDetail.emailCloudflareSettingsLink">Cloudflare Email Routing settings</a></div>
+                <div><span data-i18n="web.envDetail.emailResendFromHint">When using Resend, the domain must be added to Resend.</span> <a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer" data-i18n="web.envDetail.emailResendDomainsLink">Resend Domains</a></div>
+              </div>
+            </div>
             <div><label class="f-label" for="env-email-from-name" data-i18n="web.envDetail.emailFromName">From Display Name (optional)</label><input class="f-input sm" type="text" id="env-email-from-name" placeholder="Authrim" autocomplete="off"></div>
           </div>
-          <div class="inline-actions"><button class="btn btn-next" id="btn-enable-cloudflare-email"><span data-i18n="web.envDetail.emailEnableCloudflare">Enable Cloudflare Email Service</span> <span class="arr">→</span></button></div>
+          <div class="email-provider-update-grid">
+            <div class="bigtable email-provider-card">
+              <div class="cap"><span>Cloudflare</span><em>Email Service</em></div>
+              <div class="email-provider-card-body">
+                <div class="alert"><div class="a-head" data-i18n="web.envDetail.emailCloudflareRequirements">Requirements</div><ul><li data-i18n="web.envDetail.emailCloudflareRequirementPaid">Workers Paid Plan is required</li><li data-i18n="web.envDetail.emailCloudflareRequirementDns">Cloudflare DNS/domain onboarding is required</li><li data-i18n="web.envDetail.emailCloudflareRequirementManual">Domain setup in the Cloudflare dashboard is still manual</li></ul></div>
+                <div class="inline-actions"><button class="btn btn-next" id="btn-enable-cloudflare-email"><span data-i18n="web.envDetail.emailEnableCloudflare">Enable Cloudflare Email Service</span> <span class="arr">→</span></button></div>
+              </div>
+            </div>
+            <div class="bigtable email-provider-card">
+              <div class="cap"><span>Resend</span><em>API</em></div>
+              <div class="email-provider-card-body">
+                <label class="f-label" for="env-email-resend-api-key" data-i18n="web.email.resendApiKey">Resend API Key</label>
+                <input class="f-input sm" type="password" id="env-email-resend-api-key" placeholder="re_xxxxxxxxxx" autocomplete="off" spellcheck="false">
+                <div class="f-help" data-i18n="web.email.resendApiKeyHint">Your API key starts with "re_"</div>
+                <div class="inline-actions"><button class="btn btn-next" id="btn-enable-resend-email"><span data-i18n="web.email.configureResend">Resend</span> <span class="arr">→</span></button></div>
+              </div>
+            </div>
+          </div>
           <div id="env-email-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.emailProgress">Email Setup Progress:</span></div><pre id="env-email-log"></pre></div>
         </div>
       </div>
@@ -10333,12 +10428,20 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('env-email-progress').classList.add('hidden');
       document.getElementById('env-email-log').textContent = '';
       document.getElementById('btn-enable-cloudflare-email').disabled = false;
+      document.getElementById('btn-enable-resend-email').disabled = false;
+      document.getElementById('env-email-resend-api-key').value = '';
       const enableCloudflareBtnSpan = document
         .getElementById('btn-enable-cloudflare-email')
         ?.querySelector('span');
       if (enableCloudflareBtnSpan) {
         enableCloudflareBtnSpan.textContent =
           t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
+      }
+      const enableResendBtnSpan = document
+        .getElementById('btn-enable-resend-email')
+        ?.querySelector('span');
+      if (enableResendBtnSpan) {
+        enableResendBtnSpan.textContent = t('web.email.configureResend') || 'Resend';
       }
 
       // Render resource lists with loading state
@@ -10384,6 +10487,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('env-r2-provision-log').textContent = '';
       document.getElementById('btn-provision-r2-buckets').disabled = false;
       loadR2ProvisionStatus(env.env);
+      resetMigrationStatusUI();
+      loadMigrationStatus(env.env);
 
       // Reset and load worker version comparison
       resetWorkerUpdateUI();
@@ -10956,6 +11061,254 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    function resetMigrationStatusUI() {
+      const list = document.getElementById('migration-status-list');
+      if (list) {
+        list.innerHTML = '<div class="bigtable"><div class="cap"><span>' +
+          escapeHtml(t('web.envDetail.migrations')) +
+          '</span><em>' +
+          escapeHtml(t('web.status.loading')) +
+          '</em></div></div>';
+      }
+      document.getElementById('env-migration-summary').textContent =
+        t('web.envDetail.migrationLoading');
+      document.getElementById('detail-migrations-tab-count').textContent = '0';
+      document.getElementById('migration-stat-applied').textContent = '0';
+      document.getElementById('migration-stat-pending').textContent = '0';
+      document.getElementById('migration-stat-changed').textContent = '0';
+      document.getElementById('migration-stat-orphaned').textContent = '0';
+      document.getElementById('btn-apply-all-migrations').disabled = true;
+      document.getElementById('migration-progress').classList.add('hidden');
+      document.getElementById('migration-log').textContent = '';
+    }
+
+    function migrationStatusLabel(status) {
+      const labels = {
+        applied: t('web.envDetail.migrationStatusApplied'),
+        pending: t('web.envDetail.migrationStatusPending'),
+        changed: t('web.envDetail.migrationStatusChanged'),
+        orphaned: t('web.envDetail.migrationStatusOrphaned'),
+      };
+      return labels[status] || status;
+    }
+
+    function migrationRoleLabel(role) {
+      const labels = {
+        core: 'Core D1',
+        pii: 'PII D1',
+        admin: 'Admin D1',
+      };
+      return labels[role] || role;
+    }
+
+    function formatMigrationAppliedAt(value) {
+      const numeric = Number(value || 0);
+      if (!Number.isFinite(numeric) || numeric <= 0) return '—';
+      const millis = numeric < 100000000000 ? numeric * 1000 : numeric;
+      return new Date(millis).toLocaleString();
+    }
+
+    function shortChecksum(value) {
+      return value ? String(value).slice(0, 12) : '—';
+    }
+
+    function appendMigrationRow(tbody, database, migration) {
+      const row = document.createElement('tr');
+      row.className = 'migration-row migration-' + migration.status;
+
+      const statusCell = document.createElement('td');
+      statusCell.appendChild(document.createTextNode(migrationStatusLabel(migration.status)));
+      row.appendChild(statusCell);
+
+      const fileCell = document.createElement('td');
+      fileCell.className = 'migration-file';
+      fileCell.textContent = migration.filename;
+      row.appendChild(fileCell);
+
+      const appliedCell = document.createElement('td');
+      appliedCell.textContent = formatMigrationAppliedAt(migration.appliedAt);
+      row.appendChild(appliedCell);
+
+      const checksumCell = document.createElement('td');
+      checksumCell.className = 'migration-checksum';
+      checksumCell.title = migration.checksum || migration.appliedChecksum || '';
+      checksumCell.textContent =
+        migration.status === 'changed'
+          ? shortChecksum(migration.appliedChecksum) + ' → ' + shortChecksum(migration.checksum)
+          : shortChecksum(migration.checksum || migration.appliedChecksum);
+      row.appendChild(checksumCell);
+
+      const actionCell = document.createElement('td');
+      actionCell.className = 'migration-action-cell';
+      if (migration.status === 'pending') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-ghost sm migration-apply-one';
+        button.dataset.role = database.role;
+        button.dataset.filename = migration.filename;
+        button.textContent = t('web.envDetail.migrationApplyPending');
+        actionCell.appendChild(button);
+      } else {
+        actionCell.textContent = '—';
+      }
+      row.appendChild(actionCell);
+
+      tbody.appendChild(row);
+    }
+
+    function renderMigrationStatus(response) {
+      const list = document.getElementById('migration-status-list');
+      const applyAllButton = document.getElementById('btn-apply-all-migrations');
+      list.textContent = '';
+
+      if (!response || !response.success) {
+        document.getElementById('env-migration-summary').textContent =
+          response?.error || t('web.envDetail.migrationLoadFailed');
+        applyAllButton.disabled = true;
+        return;
+      }
+
+      const databases = response.databases || [];
+      const totals = databases.reduce((acc, database) => {
+        const counts = database.counts || {};
+        acc.applied += counts.applied || 0;
+        acc.pending += counts.pending || 0;
+        acc.changed += counts.changed || 0;
+        acc.orphaned += counts.orphaned || 0;
+        return acc;
+      }, { applied: 0, pending: 0, changed: 0, orphaned: 0 });
+
+      document.getElementById('migration-stat-applied').textContent = String(totals.applied);
+      document.getElementById('migration-stat-pending').textContent = String(totals.pending);
+      document.getElementById('migration-stat-changed').textContent = String(totals.changed);
+      document.getElementById('migration-stat-orphaned').textContent = String(totals.orphaned);
+      document.getElementById('detail-migrations-tab-count').textContent = String(
+        totals.pending + totals.changed
+      );
+
+      if (totals.changed > 0) {
+        document.getElementById('env-migration-summary').textContent =
+          t('web.envDetail.migrationChangedBlocked');
+        applyAllButton.disabled = true;
+      } else if (totals.pending > 0) {
+        document.getElementById('env-migration-summary').textContent =
+          t('web.envDetail.migrationPendingSummary', { count: totals.pending });
+        applyAllButton.disabled = false;
+      } else {
+        document.getElementById('env-migration-summary').textContent =
+          t('web.envDetail.migrationNoPending');
+        applyAllButton.disabled = true;
+      }
+
+      for (const database of databases) {
+        const table = document.createElement('div');
+        table.className = 'bigtable migration-table';
+        const cap = document.createElement('div');
+        cap.className = 'cap';
+        const title = document.createElement('span');
+        title.textContent = migrationRoleLabel(database.role);
+        const summary = document.createElement('em');
+        const counts = database.counts || {};
+        summary.textContent =
+          (database.dbName || '') +
+          ' · ' +
+          t('web.envDetail.migrationMiniSummary', {
+            applied: counts.applied || 0,
+            pending: counts.pending || 0,
+            changed: counts.changed || 0,
+          });
+        cap.appendChild(title);
+        cap.appendChild(summary);
+        table.appendChild(cap);
+
+        const tableEl = document.createElement('table');
+        const thead = document.createElement('thead');
+        thead.innerHTML =
+          '<tr><th>' + escapeHtml(t('web.envDetail.migrationStatus')) +
+          '</th><th>' + escapeHtml(t('web.envDetail.migrationFile')) +
+          '</th><th>' + escapeHtml(t('web.envDetail.migrationAppliedAt')) +
+          '</th><th>' + escapeHtml(t('web.envDetail.migrationChecksum')) +
+          '</th><th style="text-align:right;">' + escapeHtml(t('web.envDetail.action')) +
+          '</th></tr>';
+        tableEl.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        for (const migration of database.migrations || []) {
+          appendMigrationRow(tbody, database, migration);
+        }
+        if (!database.migrations || database.migrations.length === 0) {
+          const emptyRow = document.createElement('tr');
+          const emptyCell = document.createElement('td');
+          emptyCell.colSpan = 5;
+          emptyCell.textContent = database.error || t('web.envDetail.migrationNoFiles');
+          emptyRow.appendChild(emptyCell);
+          tbody.appendChild(emptyRow);
+        }
+        tableEl.appendChild(tbody);
+        table.appendChild(tableEl);
+        list.appendChild(table);
+      }
+    }
+
+    async function loadMigrationStatus(envName) {
+      document.getElementById('env-migration-summary').textContent =
+        t('web.envDetail.migrationLoading');
+      try {
+        const response = await api('/migrations/status/' + encodeURIComponent(envName));
+        renderMigrationStatus(response);
+      } catch (error) {
+        renderMigrationStatus({ success: false, error: error.message });
+      }
+    }
+
+    async function applyMigrationsForEnv(options = {}) {
+      if (!selectedEnvForDetail) {
+        alert(t('web.envDetail.noEnvironmentSelected'));
+        return;
+      }
+
+      const applyAll = !options.role;
+      if (applyAll && !confirm(t('web.envDetail.migrationApplyConfirm'))) {
+        return;
+      }
+
+      const progressDiv = document.getElementById('migration-progress');
+      const logDiv = document.getElementById('migration-log');
+      const applyAllButton = document.getElementById('btn-apply-all-migrations');
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+      applyAllButton.disabled = true;
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.migrationApplying'));
+        const response = await api('/migrations/apply', {
+          method: 'POST',
+          body: {
+            env: selectedEnvForDetail.env,
+            role: options.role,
+            filenames: options.filename ? [options.filename] : undefined,
+          },
+        });
+        if (Array.isArray(response.progress)) {
+          response.progress.forEach((msg) => addLog(formatProgressMessageForDisplay(msg)));
+        }
+        if (!response.success) {
+          throw new Error(response.error || response.core?.error || response.pii?.error || response.admin?.error || t('web.status.error'));
+        }
+        addLog(t('web.envDetail.migrationComplete'));
+      } catch (error) {
+        addLog(t('web.status.errorWithMessage', { error: error.message }));
+      } finally {
+        await loadMigrationStatus(selectedEnvForDetail.env);
+      }
+    }
+
     async function enableCloudflareEmailForEnv() {
       if (!selectedEnvForDetail) {
         alert(t('web.envDetail.noEnvironmentSelected'));
@@ -11045,6 +11398,104 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           btnSpan.textContent =
             t('web.envDetail.emailEnableCloudflare') || 'Enable Cloudflare Email Service';
         }
+      }
+    }
+
+    async function enableResendEmailForEnv() {
+      if (!selectedEnvForDetail) {
+        alert(t('web.envDetail.noEnvironmentSelected'));
+        return;
+      }
+
+      const btn = document.getElementById('btn-enable-resend-email');
+      const btnSpan = btn.querySelector('span');
+      const progressDiv = document.getElementById('env-email-progress');
+      const logDiv = document.getElementById('env-email-log');
+      const fromAddress = document.getElementById('env-email-from-address').value.trim();
+      const fromName = document.getElementById('env-email-from-name').value.trim();
+      const apiKey = document.getElementById('env-email-resend-api-key').value.trim();
+      const currentProvider = selectedEnvDetailConfig?.features?.email?.provider;
+
+      if (!fromAddress) {
+        alert(t('web.envDetail.emailFromMissing'));
+        return;
+      }
+
+      const emailInput = document.getElementById('env-email-from-address');
+      if (emailInput && !emailInput.checkValidity()) {
+        alert(t('web.envDetail.emailFromInvalid'));
+        return;
+      }
+
+      if (!apiKey) {
+        alert(t('web.email.resendApiKeyMissing') || 'Resend API key is required.');
+        return;
+      }
+
+      if (!apiKey.startsWith('re_')) {
+        const proceed = confirm(
+          t('web.email.resendApiKeyConfirmInvalid') ||
+            'The API key does not start with "re_". Continue anyway?'
+        );
+        if (!proceed) return;
+      }
+
+      if (
+        currentProvider &&
+        currentProvider !== 'none' &&
+        currentProvider !== 'resend' &&
+        !confirm(
+          t('web.envDetail.emailSwitchProviderToResendConfirm') ||
+            'This environment already has another email provider configured. Switch it to Resend?'
+        )
+      ) {
+        return;
+      }
+
+      btn.disabled = true;
+      if (btnSpan) btnSpan.textContent = t('web.envDetail.emailDeploying') || 'Updating...';
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.emailResendStarting') || 'Saving Resend email configuration...');
+        const response = await api('/email/configure', {
+          method: 'POST',
+          body: {
+            env: selectedEnvForDetail.env,
+            provider: 'resend',
+            apiKey,
+            fromAddress,
+            fromName,
+          },
+        });
+
+        if (!response.success) {
+          addLog('');
+          addLog(t('web.status.errorWithMessage', {
+            error: response.error || t('web.envDetail.emailUpdateFailed') || t('web.status.error'),
+          }));
+          return;
+        }
+
+        addLog('');
+        addLog(t('web.envDetail.emailResendUpdatedSuccess') || 'Resend email configuration updated.');
+        document.getElementById('env-email-resend-api-key').value = '';
+        await loadEnvEmailStatus(selectedEnvForDetail.env);
+        resetWorkerUpdateUI();
+        await loadWorkerVersionComparison(selectedEnvForDetail.env);
+      } catch (error) {
+        addLog(t('web.status.errorWithMessage', { error: error.message }));
+      } finally {
+        btn.disabled = false;
+        if (btnSpan) btnSpan.textContent = t('web.email.configureResend') || 'Resend';
       }
     }
 
@@ -11326,7 +11777,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           if (response.version) addLog(t('web.envDetail.logVersion', { value: response.version }));
           if (response.deployedAt) addLog(t('web.envDetail.logDeployedAt', { value: response.deployedAt }));
 
-          // Refresh version table
+          if (response.version) {
+            workerVersionComparison = workerVersionComparison.map((item) =>
+              item.component === componentName
+                ? {
+                    ...item,
+                    deployedVersion: response.version,
+                    lastDeployedAt: response.deployedAt || item.lastDeployedAt,
+                    needsUpdate: item.localVersion ? response.version !== item.localVersion : false,
+                  }
+                : item
+            );
+            renderVersionTable(workerVersionComparison);
+            updateWorkerUpdateButtonState();
+          }
+
+          // Refresh version table from the lock file after the deploy endpoint saves it.
           await loadWorkerVersionComparison(currentEnvForUpdate);
         } else {
           addLog('');
@@ -11417,6 +11883,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
     document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
     document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
+    document.getElementById('btn-enable-resend-email')?.addEventListener('click', enableResendEmailForEnv);
     document.getElementById('btn-refresh-tenant-d1-pool')?.addEventListener('click', () => {
       if (selectedEnvForDetail) {
         loadTenantD1PoolStatus(selectedEnvForDetail.env);
@@ -11711,6 +12178,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         document.querySelectorAll('[data-env-pane]').forEach((pane) => {
           pane.classList.toggle('on', pane.getAttribute('data-env-pane') === name);
         });
+      });
+    });
+
+    document.getElementById('btn-refresh-migrations')?.addEventListener('click', () => {
+      if (selectedEnvForDetail) {
+        loadMigrationStatus(selectedEnvForDetail.env);
+      }
+    });
+
+    document.getElementById('btn-apply-all-migrations')?.addEventListener('click', () => {
+      applyMigrationsForEnv();
+    });
+
+    document.getElementById('migration-status-list')?.addEventListener('click', (event) => {
+      const button = event.target?.closest?.('.migration-apply-one');
+      if (!button) return;
+      applyMigrationsForEnv({
+        role: button.dataset.role,
+        filename: button.dataset.filename,
       });
     });
 

@@ -365,6 +365,11 @@ export const OIDC_STANDARD_CLAIM_FIELDS: CustomClaimPresetField[] = [
   },
 ];
 
+export const BUILTIN_CANONICAL_SCHEMA_FIELDS: CustomClaimPresetField[] =
+  OIDC_STANDARD_CLAIM_FIELDS.filter((field) =>
+    ['email', 'email_verified', 'name', 'locale'].includes(field.field_key)
+  );
+
 export const CUSTOM_CLAIM_PRESETS: CustomClaimPreset[] = [
   {
     id: 'oidc_standard',

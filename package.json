@@ -29,6 +29,8 @@
     "test:lighthouse": "lhci autorun",
     "test:lighthouse:collect": "lhci collect",
     "test:lighthouse:assert": "lhci assert",
+    "asvs:check": "node scripts/asvs-check.mjs",
+    "asvs:check:enforce": "node scripts/asvs-check.mjs --enforce-no-gaps",
     "conformance:run": "tsx conformance/scripts/run-conformance.ts",
     "conformance:basic": "tsx conformance/scripts/run-conformance.ts --plan basic-op",
     "conformance:config": "tsx conformance/scripts/run-conformance.ts --plan config-op",

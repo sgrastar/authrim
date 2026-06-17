@@ -24,6 +24,7 @@
 		type LoggingQuotaPolicy,
 		type LoggingQuotaEvaluation
 	} from '$lib/api/admin-logging-control';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -907,27 +908,25 @@
 	<title>{$LL.admin_logging_policies_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_logging_policies_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_logging_policies_description()}
-			</p>
-		</div>
-		<div class="page-actions">
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_logging_policies_title()}
+		description={$LL.admin_logging_policies_description()}
+	>
+		{#snippet actions()}
 			{#if canFilterByTenant}
 				<input
+					class="action-control"
 					bind:value={tenantId}
 					placeholder={$LL.admin_logging_policies_tenant_id_placeholder()}
 				/>
 			{/if}
-			<select bind:value={deliveryWindowPreset}>
+			<select class="action-control" bind:value={deliveryWindowPreset}>
 				<option value="1h">{$LL.admin_logging_policies_last_hour()}</option>
 				<option value="24h">{$LL.admin_logging_policies_last_24_hours()}</option>
 				<option value="7d">{$LL.admin_logging_policies_last_7_days()}</option>
 			</select>
-			<select bind:value={statusFilter}>
+			<select class="action-control" bind:value={statusFilter}>
 				<option value="">{$LL.admin_logging_policies_any_status()}</option>
 				<option value="queued">{$LL.admin_logging_policies_queued()}</option>
 				<option value="delivered">{$LL.admin_logging_policies_delivered()}</option>
@@ -936,10 +935,11 @@
 				<option value="dlq">DLQ</option>
 			</select>
 			<button class="btn btn-secondary" onclick={load} disabled={loading}>
+				<i class="i-ph-arrows-clockwise"></i>
 				{$LL.admin_logging_policies_refresh()}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if error}<div class="alert error">{error}</div>{/if}
 
@@ -954,34 +954,32 @@
 			{:else if !policies || policies.assignments.length === 0}
 				<p class="muted">{$LL.admin_logging_policies_no_assignments()}</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_logging_policies_log_type()}</th>
+							<th>{$LL.admin_logging_policies_plane()}</th>
+							<th>{$LL.admin_logging_policies_managed_by()}</th>
+							<th>{$LL.admin_logging_policies_destination()}</th>
+							<th>{$LL.admin_logging_policies_enabled()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each policies.assignments as item (item.id)}
 							<tr>
-								<th>{$LL.admin_logging_policies_log_type()}</th>
-								<th>{$LL.admin_logging_policies_plane()}</th>
-								<th>{$LL.admin_logging_policies_managed_by()}</th>
-								<th>{$LL.admin_logging_policies_destination()}</th>
-								<th>{$LL.admin_logging_policies_enabled()}</th>
+								<td>{item.log_type}</td>
+								<td>{item.plane}</td>
+								<td>{item.managed_by}</td>
+								<td>{item.destination_name ?? item.destination_id}</td>
+								<td
+									>{item.enabled
+										? $LL.admin_logging_policies_enabled()
+										: $LL.admin_logging_policies_disabled()}</td
+								>
 							</tr>
-						</thead>
-						<tbody>
-							{#each policies.assignments as item (item.id)}
-								<tr>
-									<td>{item.log_type}</td>
-									<td>{item.plane}</td>
-									<td>{item.managed_by}</td>
-									<td>{item.destination_name ?? item.destination_id}</td>
-									<td
-										>{item.enabled
-											? $LL.admin_logging_policies_enabled()
-											: $LL.admin_logging_policies_disabled()}</td
-									>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</section>
 
@@ -993,28 +991,26 @@
 			{#if !policies || policies.fallbacks.length === 0}
 				<p class="muted">{$LL.admin_logging_policies_no_fallbacks()}</p>
 			{:else}
-				<div class="table-wrap">
-					<table>
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_logging_policies_scope()}</th>
+							<th>{$LL.admin_logging_policies_log_type()}</th>
+							<th>{$LL.admin_logging_policies_mode()}</th>
+							<th>{$LL.admin_logging_policies_fallback()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each policies.fallbacks as item (item.id)}
 							<tr>
-								<th>{$LL.admin_logging_policies_scope()}</th>
-								<th>{$LL.admin_logging_policies_log_type()}</th>
-								<th>{$LL.admin_logging_policies_mode()}</th>
-								<th>{$LL.admin_logging_policies_fallback()}</th>
+								<td>{item.scope_type}</td>
+								<td>{item.log_type}</td>
+								<td>{item.failure_mode}</td>
+								<td>{item.fallback_destination_id ?? '-'}</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each policies.fallbacks as item (item.id)}
-								<tr>
-									<td>{item.scope_type}</td>
-									<td>{item.log_type}</td>
-									<td>{item.failure_mode}</td>
-									<td>{item.fallback_destination_id ?? '-'}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</section>
 	</div>
@@ -1069,28 +1065,26 @@
 		{#if !policies || policies.snapshots.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_snapshots()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_scope()}</th>
+						<th>{$LL.admin_logging_policies_version()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_published()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each policies.snapshots as item (item.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_scope()}</th>
-							<th>{$LL.admin_logging_policies_version()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_published()}</th>
+							<td>{item.scope_type}</td>
+							<td>{item.version}</td>
+							<td>{item.status}</td>
+							<td>{formatDate(item.published_at)}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each policies.snapshots as item (item.id)}
-							<tr>
-								<td>{item.scope_type}</td>
-								<td>{item.version}</td>
-								<td>{item.status}</td>
-								<td>{formatDate(item.published_at)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</section>
 
@@ -1238,38 +1232,36 @@
 						.missing_binding ?? 0}</span
 				>
 			</div>
-			<div class="table-wrap compact-table">
-				<table>
-					<thead>
+			<AdminDataTable compact>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_role()}</th>
+						<th>{$LL.admin_logging_policies_state()}</th>
+						<th>{$LL.admin_logging_policies_pointer()}</th>
+						<th>{$LL.admin_logging_policies_registry()}</th>
+						<th>{$LL.admin_logging_policies_provider()}</th>
+						<th>{$LL.admin_logging_policies_binding()}</th>
+						<th>{$LL.admin_logging_policies_schema()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each tenantDbHealth.items as item (`${item.tenant_id}:${item.role}:${item.shard_group}:${item.generation}`)}
 						<tr>
-							<th>{$LL.admin_logging_policies_role()}</th>
-							<th>{$LL.admin_logging_policies_state()}</th>
-							<th>{$LL.admin_logging_policies_pointer()}</th>
-							<th>{$LL.admin_logging_policies_registry()}</th>
-							<th>{$LL.admin_logging_policies_provider()}</th>
-							<th>{$LL.admin_logging_policies_binding()}</th>
-							<th>{$LL.admin_logging_policies_schema()}</th>
+							<td>{item.role}</td>
+							<td>{item.health_state}</td>
+							<td>{item.pointer_status}</td>
+							<td>{item.registry_status}</td>
+							<td>{item.provider ?? '-'}</td>
+							<td
+								>{item.binding_ref ?? item.connection_ref ?? '-'} / {item.binding_configured
+									? $LL.admin_logging_policies_yes()
+									: $LL.admin_logging_policies_no()}</td
+							>
+							<td>{item.schema_version ?? '-'}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each tenantDbHealth.items as item (`${item.tenant_id}:${item.role}:${item.shard_group}:${item.generation}`)}
-							<tr>
-								<td>{item.role}</td>
-								<td>{item.health_state}</td>
-								<td>{item.pointer_status}</td>
-								<td>{item.registry_status}</td>
-								<td>{item.provider ?? '-'}</td>
-								<td
-									>{item.binding_ref ?? item.connection_ref ?? '-'} / {item.binding_configured
-										? $LL.admin_logging_policies_yes()
-										: $LL.admin_logging_policies_no()}</td
-								>
-								<td>{item.schema_version ?? '-'}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 		{#if tenantDbProbe}
 			<div class="detail-grid topology-grid">
@@ -1354,32 +1346,30 @@
 		{#if quotaPolicies.length === 0 && quotaEvaluations.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_quota_on_demand()}</p>
 		{:else}
-			<div class="table-wrap compact-table">
-				<table>
-					<thead>
+			<AdminDataTable compact>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_scope()}</th>
+						<th>{$LL.admin_logging_policies_metric()}</th>
+						<th>{$LL.admin_logging_policies_window()}</th>
+						<th>{$LL.admin_logging_policies_soft()}</th>
+						<th>{$LL.admin_logging_policies_hard()}</th>
+						<th>{$LL.admin_logging_policies_mode()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each quotaPolicies as policy (policy.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_scope()}</th>
-							<th>{$LL.admin_logging_policies_metric()}</th>
-							<th>{$LL.admin_logging_policies_window()}</th>
-							<th>{$LL.admin_logging_policies_soft()}</th>
-							<th>{$LL.admin_logging_policies_hard()}</th>
-							<th>{$LL.admin_logging_policies_mode()}</th>
+							<td>{policy.scope_type}:{policy.scope_id}</td>
+							<td>{policy.metric_name}</td>
+							<td>{policy.window_kind}</td>
+							<td>{policy.soft_limit ?? '-'}</td>
+							<td>{policy.hard_limit ?? '-'}</td>
+							<td>{policy.enforcement_mode}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each quotaPolicies as policy (policy.id)}
-							<tr>
-								<td>{policy.scope_type}:{policy.scope_id}</td>
-								<td>{policy.metric_name}</td>
-								<td>{policy.window_kind}</td>
-								<td>{policy.soft_limit ?? '-'}</td>
-								<td>{policy.hard_limit ?? '-'}</td>
-								<td>{policy.enforcement_mode}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 			<pre class="summary-preview">{formatJsonPreview({
 					evaluations: quotaEvaluations.slice(0, 10)
 				})}</pre>
@@ -1425,30 +1415,28 @@
 		{#if deliverySummary.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_delivery_activity()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_lane()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_log_type()}</th>
+						<th>{$LL.admin_logging_policies_batches()}</th>
+						<th>{$LL.admin_logging_policies_records_header()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each deliverySummary as item (`${item.lane}:${item.status}:${item.log_type}:${item.plane}`)}
 						<tr>
-							<th>{$LL.admin_logging_policies_lane()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_log_type()}</th>
-							<th>{$LL.admin_logging_policies_batches()}</th>
-							<th>{$LL.admin_logging_policies_records_header()}</th>
+							<td>{item.lane}</td>
+							<td>{item.status}</td>
+							<td>{item.log_type}</td>
+							<td>{item.batch_count}</td>
+							<td>{item.record_count}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each deliverySummary as item (`${item.lane}:${item.status}:${item.log_type}:${item.plane}`)}
-							<tr>
-								<td>{item.lane}</td>
-								<td>{item.status}</td>
-								<td>{item.log_type}</td>
-								<td>{item.batch_count}</td>
-								<td>{item.record_count}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</section>
 
@@ -1587,49 +1575,47 @@
 		{:else if messageJobs.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_jobs()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_created()}</th>
+						<th>{$LL.admin_logging_policies_kind()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_lane()}</th>
+						<th>{$LL.admin_logging_policies_source()}</th>
+						<th>{$LL.admin_logging_policies_attempts()}</th>
+						<th>{$LL.admin_logging_policies_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each messageJobs as item (item.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_created()}</th>
-							<th>{$LL.admin_logging_policies_kind()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_lane()}</th>
-							<th>{$LL.admin_logging_policies_source()}</th>
-							<th>{$LL.admin_logging_policies_attempts()}</th>
-							<th>{$LL.admin_logging_policies_actions()}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each messageJobs as item (item.id)}
-							<tr>
-								<td>{formatDate(item.created_at)}</td>
-								<td>{item.kind}</td>
-								<td>{item.status}</td>
-								<td>{item.lane}</td>
-								<td>{item.source_type}:{item.source_id}</td>
-								<td>{item.attempt_count}/{item.max_attempts}</td>
-								<td>
-									<div class="row-actions">
-										<button class="btn btn-secondary" onclick={() => (selectedMessageJob = item)}>
-											{$LL.admin_logging_policies_details()}
+							<td>{formatDate(item.created_at)}</td>
+							<td>{item.kind}</td>
+							<td>{item.status}</td>
+							<td>{item.lane}</td>
+							<td>{item.source_type}:{item.source_id}</td>
+							<td>{item.attempt_count}/{item.max_attempts}</td>
+							<td>
+								<div class="row-actions">
+									<button class="btn btn-secondary" onclick={() => (selectedMessageJob = item)}>
+										{$LL.admin_logging_policies_details()}
+									</button>
+									{#if messageJobIsCancellable(item)}
+										<button
+											class="btn btn-danger"
+											onclick={() => cancelMessageJob(item)}
+											disabled={messageJobActionId === item.id || !canCancelMessageJob(item)}
+										>
+											{$LL.admin_logging_policies_cancel()}
 										</button>
-										{#if messageJobIsCancellable(item)}
-											<button
-												class="btn btn-danger"
-												onclick={() => cancelMessageJob(item)}
-												disabled={messageJobActionId === item.id || !canCancelMessageJob(item)}
-											>
-												{$LL.admin_logging_policies_cancel()}
-											</button>
-										{/if}
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+									{/if}
+								</div>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 			{#if selectedMessageJob}
 				<div class="message-job-detail">
 					<div>
@@ -1695,55 +1681,53 @@
 		{#if messageRepairFindings.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_findings()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_detected()}</th>
+						<th>{$LL.admin_logging_policies_severity()}</th>
+						<th>{$LL.admin_logging_policies_type()}</th>
+						<th>{$LL.admin_logging_policies_job()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each messageRepairFindings as item (item.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_detected()}</th>
-							<th>{$LL.admin_logging_policies_severity()}</th>
-							<th>{$LL.admin_logging_policies_type()}</th>
-							<th>{$LL.admin_logging_policies_job()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_actions()}</th>
+							<td>{formatDate(item.detected_at)}</td>
+							<td>{item.severity}</td>
+							<td>{item.finding_type}</td>
+							<td>{item.message_job_id ?? '-'}</td>
+							<td>{item.status}</td>
+							<td>
+								<div class="row-actions">
+									{#if item.safe_action}
+										<button
+											class="btn btn-secondary"
+											onclick={() => applySafeMessageRepair(item)}
+											disabled={messageRepairActionId === item.id || !canRunMessageRepair}
+										>
+											{$LL.admin_logging_policies_safe_repair()}
+										</button>
+									{/if}
+									{#if item.dangerous_action}
+										<button
+											class="btn btn-danger"
+											onclick={() => applyDangerousMessageRepair(item)}
+											disabled={messageRepairActionId === item.id ||
+												!canReadMessageRepair ||
+												!canRunMessageRepair}
+										>
+											{$LL.admin_logging_policies_dangerous()}
+										</button>
+									{/if}
+								</div>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each messageRepairFindings as item (item.id)}
-							<tr>
-								<td>{formatDate(item.detected_at)}</td>
-								<td>{item.severity}</td>
-								<td>{item.finding_type}</td>
-								<td>{item.message_job_id ?? '-'}</td>
-								<td>{item.status}</td>
-								<td>
-									<div class="row-actions">
-										{#if item.safe_action}
-											<button
-												class="btn btn-secondary"
-												onclick={() => applySafeMessageRepair(item)}
-												disabled={messageRepairActionId === item.id || !canRunMessageRepair}
-											>
-												{$LL.admin_logging_policies_safe_repair()}
-											</button>
-										{/if}
-										{#if item.dangerous_action}
-											<button
-												class="btn btn-danger"
-												onclick={() => applyDangerousMessageRepair(item)}
-												disabled={messageRepairActionId === item.id ||
-													!canReadMessageRepair ||
-													!canRunMessageRepair}
-											>
-												{$LL.admin_logging_policies_dangerous()}
-											</button>
-										{/if}
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</section>
 
@@ -1765,30 +1749,28 @@
 		{:else if deliveryEvents.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_delivery_events()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_created()}</th>
+						<th>{$LL.admin_logging_policies_lane()}</th>
+						<th>{$LL.admin_logging_policies_log_type()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_attempts()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each deliveryEvents as item (item.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_created()}</th>
-							<th>{$LL.admin_logging_policies_lane()}</th>
-							<th>{$LL.admin_logging_policies_log_type()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_attempts()}</th>
+							<td>{formatDate(item.created_at)}</td>
+							<td>{item.lane}</td>
+							<td>{item.log_type}</td>
+							<td>{item.status}</td>
+							<td>{item.attempt_count}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each deliveryEvents as item (item.id)}
-							<tr>
-								<td>{formatDate(item.created_at)}</td>
-								<td>{item.lane}</td>
-								<td>{item.log_type}</td>
-								<td>{item.status}</td>
-								<td>{item.attempt_count}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 			{#if deliveryCursor}
 				<div class="pagination-actions">
 					<button
@@ -1813,42 +1795,40 @@
 		{#if notifications.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_alerts()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_created()}</th>
+						<th>{$LL.admin_logging_policies_severity()}</th>
+						<th>{$LL.admin_logging_policies_category()}</th>
+						<th>{$LL.admin_logging_policies_event()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each notifications as item (item.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_created()}</th>
-							<th>{$LL.admin_logging_policies_severity()}</th>
-							<th>{$LL.admin_logging_policies_category()}</th>
-							<th>{$LL.admin_logging_policies_event()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_actions()}</th>
+							<td>{formatDateText(item.created_at)}</td>
+							<td>{item.severity}</td>
+							<td>{item.category}</td>
+							<td>{item.event_type}</td>
+							<td>{item.status}</td>
+							<td>
+								<button
+									class="btn btn-secondary"
+									onclick={() => resolveNotification(item)}
+									disabled={notificationActionId === item.id}
+								>
+									{notificationActionId === item.id
+										? $LL.admin_logging_policies_resolving()
+										: $LL.admin_logging_policies_resolve_alert()}
+								</button>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each notifications as item (item.id)}
-							<tr>
-								<td>{formatDateText(item.created_at)}</td>
-								<td>{item.severity}</td>
-								<td>{item.category}</td>
-								<td>{item.event_type}</td>
-								<td>{item.status}</td>
-								<td>
-									<button
-										class="btn btn-secondary"
-										onclick={() => resolveNotification(item)}
-										disabled={notificationActionId === item.id}
-									>
-										{notificationActionId === item.id
-											? $LL.admin_logging_policies_resolving()
-											: $LL.admin_logging_policies_resolve_alert()}
-									</button>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</section>
 
@@ -1899,67 +1879,65 @@
 		{:else if dlqItems.length === 0}
 			<p class="muted">{$LL.admin_logging_policies_no_dlq_items()}</p>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_logging_policies_created()}</th>
+						<th>{$LL.admin_logging_policies_lane()}</th>
+						<th>{$LL.admin_logging_policies_dlq_payload()}</th>
+						<th>{$LL.admin_logging_policies_status()}</th>
+						<th>{$LL.admin_logging_policies_attempts()}</th>
+						<th>{$LL.admin_logging_policies_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each dlqItems as item (item.id)}
 						<tr>
-							<th>{$LL.admin_logging_policies_created()}</th>
-							<th>{$LL.admin_logging_policies_lane()}</th>
-							<th>{$LL.admin_logging_policies_dlq_payload()}</th>
-							<th>{$LL.admin_logging_policies_status()}</th>
-							<th>{$LL.admin_logging_policies_attempts()}</th>
-							<th>{$LL.admin_logging_policies_actions()}</th>
+							<td>{formatDate(item.created_at)}</td>
+							<td>{item.lane}</td>
+							<td>{item.payload_type}</td>
+							<td>{item.status}</td>
+							<td>{item.attempt_count}</td>
+							<td>
+								<div class="row-actions">
+									<button
+										class="btn btn-secondary"
+										onclick={() => previewDlqPayload(item)}
+										disabled={dlqActionId === item.id || !canReadDeliveryEvents}
+									>
+										{$LL.admin_logging_policies_preview()}
+									</button>
+									<button
+										class="btn btn-secondary"
+										onclick={() => runDlqAction(item, 'replay')}
+										disabled={dlqActionId === item.id ||
+											item.status !== 'open' ||
+											!canRetryDelivery}
+									>
+										{$LL.admin_logging_policies_replay()}
+									</button>
+									<button
+										class="btn btn-secondary"
+										onclick={() => runDlqAction(item, 'delete')}
+										disabled={dlqActionId === item.id || item.status !== 'open' || !canDeleteDlq}
+									>
+										{$LL.admin_logging_policies_delete()}
+									</button>
+									{#if canPurgeDlq}
+										<button
+											class="btn btn-danger"
+											onclick={() => runDlqAction(item, 'purge')}
+											disabled={dlqActionId === item.id || item.status !== 'open' || !canPurgeDlq}
+										>
+											{$LL.admin_logging_policies_purge()}
+										</button>
+									{/if}
+								</div>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each dlqItems as item (item.id)}
-							<tr>
-								<td>{formatDate(item.created_at)}</td>
-								<td>{item.lane}</td>
-								<td>{item.payload_type}</td>
-								<td>{item.status}</td>
-								<td>{item.attempt_count}</td>
-								<td>
-									<div class="row-actions">
-										<button
-											class="btn btn-secondary"
-											onclick={() => previewDlqPayload(item)}
-											disabled={dlqActionId === item.id || !canReadDeliveryEvents}
-										>
-											{$LL.admin_logging_policies_preview()}
-										</button>
-										<button
-											class="btn btn-secondary"
-											onclick={() => runDlqAction(item, 'replay')}
-											disabled={dlqActionId === item.id ||
-												item.status !== 'open' ||
-												!canRetryDelivery}
-										>
-											{$LL.admin_logging_policies_replay()}
-										</button>
-										<button
-											class="btn btn-secondary"
-											onclick={() => runDlqAction(item, 'delete')}
-											disabled={dlqActionId === item.id || item.status !== 'open' || !canDeleteDlq}
-										>
-											{$LL.admin_logging_policies_delete()}
-										</button>
-										{#if canPurgeDlq}
-											<button
-												class="btn btn-danger"
-												onclick={() => runDlqAction(item, 'purge')}
-												disabled={dlqActionId === item.id || item.status !== 'open' || !canPurgeDlq}
-											>
-												{$LL.admin_logging_policies_purge()}
-											</button>
-										{/if}
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 			{#if dlqCursor}
 				<div class="pagination-actions">
 					<button class="btn btn-secondary" onclick={loadMoreDlqItems} disabled={dlqLoading}>
@@ -1982,7 +1960,7 @@
 			{/if}
 		{/if}
 	</section>
-</div>
+</AdminPageShell>
 
 <DangerConfirmationModal
 	open={Boolean(dangerConfirmation)}
@@ -1995,60 +1973,69 @@
 />
 
 <style>
-	.admin-page {
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
+	.grid,
+	.panel,
+	.snapshot-draft,
+	.message-job-detail,
+	.health-strip div,
+	.export-controls,
+	.message-job-controls,
+	.action-control,
+	.export-controls input,
+	.export-controls select,
+	.message-job-controls input,
+	.message-job-controls select {
+		box-sizing: border-box;
+		min-width: 0;
 	}
 
-	.page-header {
-		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
-		align-items: flex-start;
-	}
-
-	.page-title {
-		margin: 0 0 0.25rem;
-		font-size: 1.5rem;
-	}
-
-	.page-description,
 	.muted {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0;
 		font-size: 0.875rem;
 	}
 
-	.page-actions {
-		display: flex;
-		gap: 0.75rem;
-		align-items: center;
-		flex-shrink: 0;
+	.action-control,
+	.export-controls input,
+	.export-controls select,
+	.message-job-controls input,
+	.message-job-controls select {
+		min-width: 0;
+		min-height: var(--control-height, 2.25rem);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		padding: var(--control-padding, 0.45rem 0.65rem);
+		font: inherit;
 	}
 
-	.page-actions input,
-	.page-actions select {
-		min-height: 2.25rem;
+	.action-control {
+		width: auto;
+		min-width: 10rem;
 	}
 
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
 		gap: 1rem;
+		min-width: 0;
 	}
 
 	.panel {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		padding: 1.25rem;
-		background: var(--bg-card);
+		min-width: 0;
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		padding: var(--settings-panel-padding, 1.25rem);
+		background: var(--settings-panel-bg, var(--color-surface));
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
 	.section-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		gap: 0.75rem;
 		margin-bottom: 1rem;
 	}
 
@@ -2063,18 +2050,18 @@
 	.diff-grid,
 	.message-job-detail > div:first-child {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 0.5rem;
 		align-items: center;
 	}
 
 	.snapshot-draft {
 		justify-content: space-between;
-		flex-wrap: wrap;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
 		margin-bottom: 0.75rem;
-		background: var(--bg-subtle);
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.snapshot-draft > div:first-child {
@@ -2091,18 +2078,18 @@
 	.diff-grid span {
 		font-variant-numeric: tabular-nums;
 		font-size: 0.8125rem;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 2px 6px;
 	}
 
 	.message-job-detail {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
 		margin-top: 0.75rem;
-		background: var(--bg-subtle);
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.message-job-detail > div:first-child {
@@ -2114,14 +2101,15 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 		gap: 0.5rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
+		min-width: 0;
 	}
 
 	.topology-grid span {
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.25rem 0.5rem;
 	}
 
@@ -2130,19 +2118,21 @@
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 		gap: 0.75rem;
 		margin-bottom: 1rem;
+		min-width: 0;
 	}
 
 	.health-strip div {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		min-width: 0;
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
-		background: var(--bg-card);
+		background: var(--settings-card-bg, var(--color-surface));
 	}
 
 	.health-strip span,
 	.health-strip small {
 		display: block;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 	}
 
@@ -2154,18 +2144,9 @@
 
 	.panel-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 0.5rem;
 		margin-bottom: 0.75rem;
-	}
-
-	.table-wrap {
-		overflow-x: auto;
-	}
-
-	.compact-table th,
-	.compact-table td {
-		padding: 0.5rem 0.75rem;
-		font-size: 0.8125rem;
 	}
 
 	.pagination-actions {
@@ -2194,9 +2175,9 @@
 	.message-job-controls {
 		margin-bottom: 0.75rem;
 		padding: 0.75rem;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 	}
 
 	.export-controls input,
@@ -2223,11 +2204,11 @@
 		margin: 0.75rem 0 0;
 		max-height: 18rem;
 		overflow: auto;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
-		background: #0f172a;
-		color: #e2e8f0;
+		background: var(--code-block-bg, var(--color-surface-muted));
+		color: var(--code-block-color, var(--color-text));
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 		white-space: pre-wrap;
@@ -2236,11 +2217,11 @@
 	.summary-preview {
 		margin: 0.75rem 0 0;
 		overflow: auto;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		padding: 0.75rem;
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		color: var(--color-text);
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 		white-space: pre-wrap;
@@ -2261,40 +2242,51 @@
 	}
 
 	.btn-danger {
-		border: 1px solid rgba(239, 68, 68, 0.3);
-		background: rgba(239, 68, 68, 0.08);
-		color: #991b1b;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 
 	.btn-danger:hover:not(:disabled) {
-		background: rgba(239, 68, 68, 0.14);
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	th,
-	td {
-		text-align: left;
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--border);
-	}
-
-	th {
-		color: var(--text-secondary);
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		font-weight: 600;
+		background: color-mix(in srgb, var(--color-danger) 16%, transparent);
 	}
 
 	.alert.error {
 		margin-bottom: 1rem;
 		padding: 0.75rem 1rem;
-		border-radius: var(--radius-sm);
-		background: rgba(239, 68, 68, 0.08);
-		color: #991b1b;
-		border: 1px solid rgba(239, 68, 68, 0.2);
+		border-radius: var(--radius-control);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 24%, transparent);
+	}
+
+	@media (max-width: 720px) {
+		.action-control,
+		.export-controls input,
+		.export-controls select,
+		.export-controls button,
+		.message-job-controls input,
+		.message-job-controls select,
+		.message-job-controls button {
+			flex: 1 1 100%;
+			width: 100%;
+		}
+
+		.grid {
+			grid-template-columns: 1fr;
+		}
+
+		.panel {
+			padding: 1rem;
+		}
+
+		.section-header {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.health-strip {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
 	}
 </style>

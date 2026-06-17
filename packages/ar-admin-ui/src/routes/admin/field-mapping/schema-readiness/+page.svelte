@@ -5,6 +5,13 @@
 		type IdentityMappingSchemaReadinessRow,
 		type IdentityMappingSchemaReadinessSummary
 	} from '$lib/api/admin-identity-mapping';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type GateFilter = IdentityMappingSchemaReadinessRow['gateState'] | 'all';
@@ -50,164 +57,115 @@
 	<title>{$LL.admin_identity_mapping_schema_head_title()}</title>
 </svelte:head>
 
-<div class="readiness-page">
-	<div class="page-heading">
-		<div>
-			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
-			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
-			<h1>{$LL.admin_identity_mapping_schema_title()}</h1>
-			<p class="summary">
-				{$LL.admin_identity_mapping_schema_description()}
-			</p>
-		</div>
-		<div class="status-panel">
-			<div>
-				<span>{$LL.admin_identity_mapping_schema_blocked()}</span>
-				<strong>{summary.blocked}</strong>
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_identity_mapping_title()}
+		title={$LL.admin_identity_mapping_schema_title()}
+		description={$LL.admin_identity_mapping_schema_description()}
+	>
+		{#snippet actions()}
+			<div class="status-panel">
+				<div>
+					<span>{$LL.admin_identity_mapping_schema_blocked()}</span>
+					<strong>{summary.blocked}</strong>
+				</div>
+				<div>
+					<span>{$LL.admin_identity_mapping_schema_deferred()}</span>
+					<strong>{summary.deferred}</strong>
+				</div>
+				<div>
+					<span>{$LL.admin_identity_mapping_schema_attention()}</span>
+					<strong>{summary.attention}</strong>
+				</div>
+				<div>
+					<span>{$LL.admin_identity_mapping_schema_total()}</span>
+					<strong>{summary.total}</strong>
+				</div>
 			</div>
-			<div>
-				<span>{$LL.admin_identity_mapping_schema_deferred()}</span>
-				<strong>{summary.deferred}</strong>
-			</div>
-			<div>
-				<span>{$LL.admin_identity_mapping_schema_attention()}</span>
-				<strong>{summary.attention}</strong>
-			</div>
-			<div>
-				<span>{$LL.admin_identity_mapping_schema_total()}</span>
-				<strong>{summary.total}</strong>
-			</div>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
-	<section class="readiness-panel">
-		<div class="filter-bar" aria-label={$LL.admin_identity_mapping_schema_filters_aria()}>
-			{#each statuses as status (status)}
-				<button
-					type="button"
-					class:active={activeStatus === status}
-					onclick={() => (activeStatus = status)}
-				>
-					{status.replace('_', ' ')}
-				</button>
-			{/each}
+	<AdminSection>
+		<AdminToolbar>
+			<div class="filter-segment" aria-label={$LL.admin_identity_mapping_schema_filters_aria()}>
+				{#each statuses as status (status)}
+					<button
+						type="button"
+						class:active={activeStatus === status}
+						onclick={() => (activeStatus = status)}
+					>
+						{status.replace('_', ' ')}
+					</button>
+				{/each}
+			</div>
 			<button type="button" onclick={loadSchemaReadiness} disabled={loading}>
 				{$LL.admin_identity_mapping_refresh()}
 			</button>
-		</div>
+		</AdminToolbar>
 
 		{#if loading}
 			<div class="empty-state">{$LL.admin_identity_mapping_schema_loading()}</div>
 		{:else if errorMessage}
 			<div class="empty-state">{errorMessage}</div>
 		{:else}
-			<div class="table-shell">
-				<table>
-					<thead>
+			<AdminDataTable width="xwide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_identity_mapping_schema_inventory_id()}</th>
+						<th>{$LL.admin_identity_mapping_schema_area()}</th>
+						<th>{$LL.admin_identity_mapping_schema_status()}</th>
+						<th>{$LL.admin_identity_mapping_schema_gate_state()}</th>
+						<th>{$LL.admin_identity_mapping_schema_object()}</th>
+						<th>{$LL.admin_identity_mapping_schema_connection()}</th>
+						<th>{$LL.admin_identity_mapping_schema_gate()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each visibleRows as row (row.id)}
 						<tr>
-							<th>{$LL.admin_identity_mapping_schema_inventory_id()}</th>
-							<th>{$LL.admin_identity_mapping_schema_area()}</th>
-							<th>{$LL.admin_identity_mapping_schema_status()}</th>
-							<th>{$LL.admin_identity_mapping_schema_gate_state()}</th>
-							<th>{$LL.admin_identity_mapping_schema_object()}</th>
-							<th>{$LL.admin_identity_mapping_schema_connection()}</th>
-							<th>{$LL.admin_identity_mapping_schema_gate()}</th>
+							<td><strong>{row.id}</strong></td>
+							<td>{row.area}</td>
+							<td><span class="status status-{row.status}">{row.status}</span></td>
+							<td>
+								<span class="status status-{row.gateState}">{row.gateState}</span>
+							</td>
+							<td>
+								{#if row.schemaObject}
+									<code>{row.schemaObject}</code>
+									<small>
+										{row.schemaPresent
+											? $LL.admin_identity_mapping_present()
+											: $LL.admin_identity_mapping_missing()}
+									</small>
+								{:else}
+									<span class="muted">{$LL.admin_identity_mapping_service_adapter()}</span>
+								{/if}
+							</td>
+							<td>{row.expectedConnectionPr}</td>
+							<td>{row.gate}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each visibleRows as row (row.id)}
-							<tr>
-								<td><strong>{row.id}</strong></td>
-								<td>{row.area}</td>
-								<td><span class="status status-{row.status}">{row.status}</span></td>
-								<td>
-									<span class="status status-{row.gateState}">{row.gateState}</span>
-								</td>
-								<td>
-									{#if row.schemaObject}
-										<code>{row.schemaObject}</code>
-										<small>
-											{row.schemaPresent
-												? $LL.admin_identity_mapping_present()
-												: $LL.admin_identity_mapping_missing()}
-										</small>
-									{:else}
-										<span class="muted">{$LL.admin_identity_mapping_service_adapter()}</span>
-									{/if}
-								</td>
-								<td>{row.expectedConnectionPr}</td>
-								<td>{row.gate}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
-	</section>
-</div>
+	</AdminSection>
+</AdminPageShell>
 
 <style>
-	.readiness-page {
-		display: grid;
-		gap: 18px;
-	}
-
-	.page-heading {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 18px;
-	}
-
-	.back-link {
-		display: inline-flex;
-		margin-bottom: 12px;
-		color: var(--color-primary);
-		font-size: 13px;
+	.status-panel span {
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 700;
-		text-decoration: none;
-	}
-
-	.eyebrow,
-	.status-panel span,
-	th {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 12px;
-		font-weight: 800;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
-	h1,
-	p {
-		margin: 0;
-	}
-
-	h1 {
-		color: var(--text-primary);
-		font-size: 28px;
-	}
-
-	.summary,
-	td {
-		color: var(--text-secondary);
-		font-size: 13px;
-		line-height: 1.45;
-	}
-
-	.summary {
-		max-width: 760px;
-		margin-top: 8px;
-		font-size: 14px;
-	}
-
 	.status-panel,
-	.readiness-panel,
-	.table-shell {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+	.empty-state {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.status-panel {
@@ -221,93 +179,67 @@
 	.status-panel strong {
 		display: block;
 		margin-top: 4px;
-		color: var(--text-primary);
-		font-size: 22px;
-	}
-
-	.readiness-panel {
-		display: grid;
-		gap: 14px;
-		padding: 16px;
+		color: var(--color-text);
+		font-family: var(--font-display);
+		font-size: var(--stat-value-size, 1.35rem);
 	}
 
 	.empty-state {
 		padding: 18px;
-		border: 1px dashed var(--border-color);
-		border-radius: 8px;
-		color: var(--text-secondary);
+		border: 1px dashed var(--color-border);
+		color: var(--color-text-muted);
 	}
 
-	.filter-bar {
+	.filter-segment {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
 	}
 
 	button {
-		min-height: 34px;
+		min-height: var(--control-height, 34px);
 		padding: 0 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-secondary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text-muted);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-weight: 800;
 		text-transform: capitalize;
+		cursor: pointer;
 	}
 
 	button.active {
-		color: var(--text-primary);
-		border-color: var(--color-primary);
-		background: var(--bg-hover);
-	}
-
-	.table-shell {
-		overflow: auto;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	th,
-	td {
-		padding: 12px;
-		border-bottom: 1px solid var(--border-color);
-		text-align: left;
-		vertical-align: top;
-	}
-
-	tr:last-child td {
-		border-bottom: 0;
+		color: var(--color-text);
+		border-color: var(--color-accent);
+		background: var(--color-surface-muted);
 	}
 
 	td strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	td small {
 		display: block;
 		margin-top: 4px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 12px;
 	}
 
 	code {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 12px;
 	}
 
 	.muted {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.status {
 		display: inline-flex;
 		padding: 4px 8px;
 		border-radius: 999px;
-		background: var(--bg-muted);
-		color: var(--text-primary);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 		font-weight: 800;
 	}
 
@@ -317,32 +249,31 @@
 	.status-repo_connected,
 	.status-service_connected,
 	.status-pass {
-		color: #047857;
-		background: rgba(16, 185, 129, 0.14);
+		color: var(--color-success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
 	}
 
 	.status-deferred,
 	.status-reserved_planned,
 	.status-adapter_deferred {
-		color: #92400e;
-		background: rgba(245, 158, 11, 0.16);
+		color: var(--color-warning);
+		background: color-mix(in srgb, var(--color-warning) 16%, transparent);
 	}
 
 	.status-attention,
 	.status-schema_added,
 	.status-existing_to_migrate,
 	.status-breaking_planned {
-		color: #9a3412;
-		background: rgba(249, 115, 22, 0.16);
+		color: var(--color-warning);
+		background: color-mix(in srgb, var(--color-warning) 16%, transparent);
 	}
 
 	.status-blocked {
-		color: #b91c1c;
-		background: rgba(239, 68, 68, 0.14);
+		color: var(--color-danger);
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 	}
 
 	@media (max-width: 900px) {
-		.page-heading,
 		.status-panel {
 			display: grid;
 		}

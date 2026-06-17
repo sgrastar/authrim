@@ -55,9 +55,9 @@
 	.grant-guide {
 		margin-top: 0.75rem;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 12px;
+		border-radius: var(--guide-card-radius, var(--radius-panel, 12px));
 		padding: 0.85rem;
-		background: color-mix(in srgb, var(--color-success-50) 35%, white);
+		background: color-mix(in srgb, var(--color-success) 10%, var(--color-surface));
 	}
 
 	.grant-guide-header {
@@ -73,7 +73,7 @@
 	}
 
 	.grant-guide-badge {
-		border-radius: 999px;
+		border-radius: var(--guide-badge-radius, var(--status-badge-radius, 999px));
 		padding: 0.25rem 0.55rem;
 		background: var(--color-success-100);
 		color: var(--color-success-800);
@@ -108,7 +108,7 @@
 	}
 
 	.monospace {
-		font-family: var(--font-family-monospace, monospace);
+		font-family: var(--font-mono, var(--font-family-monospace, monospace));
 		word-break: break-word;
 	}
 </style>

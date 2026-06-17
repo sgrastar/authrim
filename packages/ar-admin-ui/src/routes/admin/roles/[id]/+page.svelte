@@ -21,6 +21,13 @@
 		formatRoleType,
 		formatScope
 	} from '$lib/admin/roles-i18n';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminPagination,
+		AdminSection
+	} from '$lib/components/admin';
 
 	let role: RoleDetail | null = $state(null);
 	let loading = $state(true);
@@ -221,9 +228,7 @@
 	>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/roles" class="back-link">← {$LL.admin_roles_back_to_roles()}</a>
-
+<AdminPageShell>
 	{#if loading}
 		<div class="loading-state">{$LL.admin_roles_detail_loading()}</div>
 	{:else if error}
@@ -232,20 +237,23 @@
 			<button class="btn btn-secondary btn-sm" onclick={loadRole}>{$LL.admin_roles_retry()}</button>
 		</div>
 	{:else if role}
-		<!-- Role Header -->
-		<div class="page-header-with-status">
-			<div class="page-header-info">
-				<h1 class="page-title">
-					{role.display_name || role.name}
-					{#if role.display_name && role.display_name !== role.name}
-						<span class="page-subtitle">({role.name})</span>
-					{/if}
-				</h1>
+		<AdminPageHeader
+			title={role.display_name || role.name}
+			description={role.description || undefined}
+		>
+			{#snippet titleAccessory()}
 				{#if roleType}
 					<span class={getRoleTypeBadgeClass(roleType)}>{formatRoleType(roleType, $LL)}</span>
 				{/if}
-			</div>
-			<div class="action-buttons">
+				{#if role?.display_name && role.display_name !== role.name}
+					<span class="page-subtitle">({role.name})</span>
+				{/if}
+			{/snippet}
+			{#snippet actions()}
+				<button class="btn btn-secondary" onclick={_navigateBack}>
+					<i class="i-ph-arrow-left"></i>
+					{$LL.admin_roles_back_to_roles()}
+				</button>
 				{#if canEdit}
 					<button class="btn btn-secondary" onclick={navigateToEdit}
 						>{$LL.admin_roles_edit()}</button
@@ -256,27 +264,24 @@
 						>{$LL.admin_roles_delete()}</button
 					>
 				{/if}
-			</div>
-		</div>
-
-		{#if role.description}
-			<p class="modal-description">{role.description}</p>
-		{/if}
+			{/snippet}
+		</AdminPageHeader>
 
 		<!-- Inheritance Notice -->
 		{#if role.inherits_from}
-			<div class="info-box">
-				<span>ℹ️</span>
-				<div>
-					<strong>{$LL.admin_roles_inherits_from({ role: role.inherits_from })}</strong>
-					<p>{$LL.admin_roles_inherits_note()}</p>
+			<AdminSection>
+				<div class="info-box">
+					<i class="i-ph-info" aria-hidden="true"></i>
+					<div>
+						<strong>{$LL.admin_roles_inherits_from({ role: role.inherits_from })}</strong>
+						<p>{$LL.admin_roles_inherits_note()}</p>
+					</div>
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 
 		<!-- Role Info Panel -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_roles_role_information()}</h2>
+		<AdminSection title={$LL.admin_roles_role_information()}>
 			<div class="info-grid">
 				<div class="info-item">
 					<dt class="info-label">{$LL.admin_roles_id()}</dt>
@@ -299,14 +304,14 @@
 					<dd class="info-value">{formatDate(role.updated_at)}</dd>
 				</div>
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- Permissions Panel -->
-		<div class="panel">
-			<h2 class="panel-title">
-				{$LL.admin_roles_permissions_with_count({ count: role.effectivePermissions?.length || 0 })}
-			</h2>
-
+		<AdminSection
+			title={$LL.admin_roles_permissions_with_count({
+				count: role.effectivePermissions?.length || 0
+			})}
+		>
 			{#if permissionsByCategory.length === 0}
 				<p class="empty-text">{$LL.admin_roles_no_permissions()}</p>
 			{:else}
@@ -333,15 +338,13 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 
 		<!-- Assigned Users Panel -->
-		<div class="panel">
-			<h2 class="panel-title">
-				{$LL.admin_roles_assigned_users()} ({role.assignment_count})
-			</h2>
-			<p class="form-hint">{$LL.admin_roles_assigned_users_hint()}</p>
-
+		<AdminSection
+			title={`${$LL.admin_roles_assigned_users()} (${role.assignment_count})`}
+			description={$LL.admin_roles_assigned_users_hint()}
+		>
 			{#if assignedUsersLoading}
 				<div class="loading-state">{$LL.admin_roles_loading_users()}</div>
 			{:else if assignedUsersError}
@@ -356,85 +359,72 @@
 			{:else if assignedUsers.length === 0}
 				<div class="empty-state">{$LL.admin_roles_no_assigned_users()}</div>
 			{:else}
-				<div class="table-container">
-					<table class="data-table">
-						<thead>
+				<AdminDataTable width="wide">
+					<thead>
+						<tr>
+							<th>{$LL.admin_roles_user()}</th>
+							<th>{$LL.admin_roles_scope()}</th>
+							<th>{$LL.admin_roles_assigned()}</th>
+							<th>{$LL.admin_roles_actions()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each assignedUsers as user (user.assignment_id)}
 							<tr>
-								<th>{$LL.admin_roles_user()}</th>
-								<th>{$LL.admin_roles_scope()}</th>
-								<th>{$LL.admin_roles_assigned()}</th>
-								<th>{$LL.admin_roles_actions()}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each assignedUsers as user (user.assignment_id)}
-								<tr>
-									<td>
-										<div class="user-cell">
-											<span class="user-cell-name"
-												>{user.user_name || $LL.admin_roles_unknown()}</span
-											>
-											<span class="user-cell-email">{user.user_email || user.user_id}</span>
-										</div>
-									</td>
-									<td>
-										<span class={getScopeBadgeClass(user.scope)}
-											>{formatScope(user.scope, $LL)}</span
+								<td>
+									<div class="user-cell">
+										<span class="user-cell-name">{user.user_name || $LL.admin_roles_unknown()}</span
 										>
-										{#if user.scope_target}
-											<span class="scope-target">{user.scope_target}</span>
-										{/if}
-									</td>
-									<td class="nowrap text-secondary">{formatDate(user.assigned_at)}</td>
-									<td>
-										<button class="btn-link" onclick={() => navigateToUser(user.user_id)}>
-											{$LL.admin_roles_view_user()} →
-										</button>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+										<span class="user-cell-email">{user.user_email || user.user_id}</span>
+									</div>
+								</td>
+								<td>
+									<span class={getScopeBadgeClass(user.scope)}>{formatScope(user.scope, $LL)}</span>
+									{#if user.scope_target}
+										<span class="scope-target">{user.scope_target}</span>
+									{/if}
+								</td>
+								<td class="nowrap text-secondary">{formatDate(user.assigned_at)}</td>
+								<td>
+									<button class="btn-link" onclick={() => navigateToUser(user.user_id)}>
+										{$LL.admin_roles_view_user()} →
+									</button>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 
 				<!-- Pagination -->
 				{#if assignedUsersPagination.totalPages > 1}
-					<div class="pagination">
-						<button
-							class="btn btn-secondary btn-sm"
-							disabled={!assignedUsersPagination.hasPrev}
-							onclick={() => loadAssignedUsers(assignedUsersPagination.page - 1)}
-						>
-							← {$LL.admin_roles_previous()}
-						</button>
-						<span class="pagination-info">
-							{$LL.admin_roles_page_of({
-								page: assignedUsersPagination.page,
-								totalPages: assignedUsersPagination.totalPages
-							})}
-						</span>
-						<button
-							class="btn btn-secondary btn-sm"
-							disabled={!assignedUsersPagination.hasNext}
-							onclick={() => loadAssignedUsers(assignedUsersPagination.page + 1)}
-						>
-							{$LL.admin_roles_next()} →
-						</button>
-					</div>
+					<AdminPagination
+						label={$LL.admin_roles_assigned_users()}
+						info={$LL.admin_roles_page_of({
+							page: assignedUsersPagination.page,
+							totalPages: assignedUsersPagination.totalPages
+						})}
+						previousLabel={$LL.admin_roles_previous()}
+						nextLabel={$LL.admin_roles_next()}
+						hasPrevious={assignedUsersPagination.hasPrev}
+						hasNext={assignedUsersPagination.hasNext}
+						onPrevious={() => loadAssignedUsers(assignedUsersPagination.page - 1)}
+						onNext={() => loadAssignedUsers(assignedUsersPagination.page + 1)}
+					/>
 				{/if}
 			{/if}
-		</div>
+		</AdminSection>
 
 		<!-- Delete restriction notice -->
 		{#if roleType === 'custom' && role.assignment_count > 0}
-			<div class="warning-box">
-				<p>
-					⚠️ {$LL.admin_roles_delete_assigned_warning({ count: role.assignment_count })}
-				</p>
-			</div>
+			<AdminSection>
+				<div class="warning-box">
+					<i class="i-ph-warning" aria-hidden="true"></i>
+					<p>{$LL.admin_roles_delete_assigned_warning({ count: role.assignment_count })}</p>
+				</div>
+			</AdminSection>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Delete Confirmation Dialog -->
 <Modal

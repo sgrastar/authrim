@@ -22,6 +22,7 @@ function createMockD1(results: unknown[] = []) {
 // Mock environment
 const mockEnv = {
   POLICY_API_SECRET: 'test-secret-key',
+  ENABLE_POLICY_SIMULATION_API: 'true',
   VERSION_MANAGER: {
     idFromName: vi.fn(() => ({ toString: () => 'mock-id' })),
     get: vi.fn(() => ({
@@ -317,6 +318,27 @@ describe('Policy Service API', () => {
       const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
+    });
+
+    it('should reject caller-supplied roles when simulation API is disabled', async () => {
+      const req = createRequest('/api/policy/check-access', {
+        method: 'POST',
+        body: {
+          subjectId: 'user_123',
+          roles: [{ name: 'system_admin', scope: 'global' }],
+          resourceType: 'document',
+          resourceId: 'doc_456',
+          action: 'read',
+        },
+      });
+      const res = await app.fetch(req, {
+        ...mockEnv,
+        ENABLE_POLICY_SIMULATION_API: undefined,
+      });
+
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.error).toBe('access_denied');
     });
 
     it('should return 400 when neither claims nor roles is provided', async () => {

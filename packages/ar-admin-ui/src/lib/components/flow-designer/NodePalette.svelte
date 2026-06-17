@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { GraphNodeType, NodeCategory } from '$lib/api/admin-flows';
+	import { getFlowNodeColor } from './flow-node-metadata';
 
 	interface NodeTypeInfo {
 		type: GraphNodeType;
@@ -28,7 +29,7 @@
 			type: 'start',
 			label: 'Start',
 			icon: '▶',
-			color: '#22c55e',
+			color: '',
 			description: 'Flow entry point',
 			category: 'control'
 		},
@@ -36,7 +37,7 @@
 			type: 'end',
 			label: 'End',
 			icon: '●',
-			color: '#10b981',
+			color: '',
 			description: 'Flow success exit',
 			category: 'control'
 		},
@@ -44,7 +45,7 @@
 			type: 'goto',
 			label: 'Goto',
 			icon: '↪',
-			color: '#64748b',
+			color: '',
 			description: 'Jump to another node',
 			category: 'control'
 		},
@@ -54,7 +55,7 @@
 			type: 'check_session',
 			label: 'Condition',
 			icon: '🔍',
-			color: '#a855f7',
+			color: '',
 			description: 'Check session/user/context state (fact-based)',
 			category: 'check',
 			options: ['Is Logged In?', 'MFA Verified?', 'Email Verified?', 'First Login?', 'New Device?']
@@ -63,7 +64,7 @@
 			type: 'check_auth_level',
 			label: 'Auth Level',
 			icon: '📊',
-			color: '#8b5cf6',
+			color: '',
 			description: 'Check authentication level',
 			category: 'check',
 			options: ['basic', 'mfa', 'step_up']
@@ -72,7 +73,7 @@
 			type: 'check_first_login',
 			label: 'First Login',
 			icon: '🆕',
-			color: '#7c3aed',
+			color: '',
 			description: 'Is this first login?',
 			category: 'check'
 		},
@@ -80,7 +81,7 @@
 			type: 'check_user_attribute',
 			label: 'User Attr',
 			icon: '👁️',
-			color: '#6366f1',
+			color: '',
 			description: 'Check user attributes',
 			category: 'check',
 			options: ['email_verified', 'phone_verified', 'mfa_enabled', 'has_password', 'has_passkey']
@@ -89,7 +90,7 @@
 			type: 'check_context',
 			label: 'Context',
 			icon: '📍',
-			color: '#4f46e5',
+			color: '',
 			description: 'Check request context',
 			category: 'check',
 			options: ['new_device', 'high_risk', 'suspicious_ip']
@@ -98,7 +99,7 @@
 			type: 'check_risk',
 			label: 'Risk',
 			icon: '⚠️',
-			color: '#dc2626',
+			color: '',
 			description: 'Evaluate risk score',
 			category: 'check',
 			options: ['low', 'medium', 'high']
@@ -109,7 +110,7 @@
 			type: 'auth_method_select',
 			label: 'Auth Select',
 			icon: '🔑',
-			color: '#3b82f6',
+			color: '',
 			description: 'User selects auth method',
 			category: 'selection',
 			options: ['Password', 'Passkey', 'Email OTP', 'SMS OTP', 'Magic Link', 'Social']
@@ -118,7 +119,7 @@
 			type: 'login_method_select',
 			label: 'Login Select',
 			icon: '🚪',
-			color: '#0ea5e9',
+			color: '',
 			description: 'User selects authentication method',
 			category: 'selection',
 			options: ['Email + Password', 'Social Login', 'Passkey', 'Enterprise SSO']
@@ -127,7 +128,7 @@
 			type: 'identifier',
 			label: 'Identifier',
 			icon: '👤',
-			color: '#06b6d4',
+			color: '',
 			description: 'Collect user ID (email/phone)',
 			category: 'selection',
 			options: ['Email', 'Phone', 'Username']
@@ -136,7 +137,7 @@
 			type: 'profile_input',
 			label: 'Profile',
 			icon: '📋',
-			color: '#0891b2',
+			color: '',
 			description: 'Collect profile fields',
 			category: 'selection',
 			options: ['Name', 'Phone', 'Address', 'Birthdate']
@@ -145,7 +146,7 @@
 			type: 'custom_form',
 			label: 'Custom Form',
 			icon: '📄',
-			color: '#0284c7',
+			color: '',
 			description: 'Custom input form',
 			category: 'selection'
 		},
@@ -153,7 +154,7 @@
 			type: 'information',
 			label: 'Information',
 			icon: 'ℹ️',
-			color: '#64748b',
+			color: '',
 			description: 'Display information screen',
 			category: 'selection'
 		},
@@ -161,7 +162,7 @@
 			type: 'challenge',
 			label: 'Challenge',
 			icon: '🎯',
-			color: '#f59e0b',
+			color: '',
 			description: 'Security challenge (CAPTCHA)',
 			category: 'selection',
 			options: ['CAPTCHA', 'Security Question']
@@ -172,7 +173,7 @@
 			type: 'login',
 			label: 'Login',
 			icon: '🔐',
-			color: '#6366f1',
+			color: '',
 			description: 'Execute login with method',
 			category: 'auth',
 			options: ['Password', 'Passkey', 'Social', 'Magic Link']
@@ -181,7 +182,7 @@
 			type: 'mfa',
 			label: 'MFA',
 			icon: '🛡️',
-			color: '#f59e0b',
+			color: '',
 			description: 'Multi-factor authentication',
 			category: 'auth',
 			options: ['TOTP', 'SMS', 'Email OTP', 'WebAuthn']
@@ -190,7 +191,7 @@
 			type: 'register',
 			label: 'Register',
 			icon: '📝',
-			color: '#10b981',
+			color: '',
 			description: 'User registration',
 			category: 'auth'
 		},
@@ -200,7 +201,7 @@
 			type: 'consent',
 			label: 'Consent',
 			icon: '✓',
-			color: '#06b6d4',
+			color: '',
 			description: 'Request user consent',
 			category: 'consent',
 			options: ['Terms', 'Privacy', 'Marketing', 'Data Processing']
@@ -209,7 +210,7 @@
 			type: 'check_consent_status',
 			label: 'Check Consent',
 			icon: '✔️',
-			color: '#0891b2',
+			color: '',
 			description: 'Check if consent given',
 			category: 'consent'
 		},
@@ -217,7 +218,7 @@
 			type: 'record_consent',
 			label: 'Record Consent',
 			icon: '📜',
-			color: '#0284c7',
+			color: '',
 			description: 'Record consent decision',
 			category: 'consent'
 		},
@@ -227,7 +228,7 @@
 			type: 'resolve_tenant',
 			label: 'Resolve Tenant',
 			icon: '🏢',
-			color: '#8b5cf6',
+			color: '',
 			description: 'Resolve tenant from email domain',
 			category: 'resolve'
 		},
@@ -235,7 +236,7 @@
 			type: 'resolve_org',
 			label: 'Resolve Org',
 			icon: '🏛️',
-			color: '#7c3aed',
+			color: '',
 			description: 'Resolve organization',
 			category: 'resolve'
 		},
@@ -243,7 +244,7 @@
 			type: 'resolve_policy',
 			label: 'Resolve Policy',
 			icon: '📋',
-			color: '#6366f1',
+			color: '',
 			description: 'Resolve applicable policies',
 			category: 'resolve'
 		},
@@ -253,7 +254,7 @@
 			type: 'issue_tokens',
 			label: 'Issue Tokens',
 			icon: '🎫',
-			color: '#22c55e',
+			color: '',
 			description: 'Issue access/refresh tokens',
 			category: 'session'
 		},
@@ -261,7 +262,7 @@
 			type: 'refresh_session',
 			label: 'Refresh',
 			icon: '🔄',
-			color: '#10b981',
+			color: '',
 			description: 'Refresh session',
 			category: 'session'
 		},
@@ -269,7 +270,7 @@
 			type: 'revoke_session',
 			label: 'Revoke',
 			icon: '🚫',
-			color: '#ef4444',
+			color: '',
 			description: 'Revoke session',
 			category: 'session'
 		},
@@ -277,7 +278,7 @@
 			type: 'bind_device',
 			label: 'Bind Device',
 			icon: '📱',
-			color: '#f59e0b',
+			color: '',
 			description: 'Bind device to session',
 			category: 'session'
 		},
@@ -285,7 +286,7 @@
 			type: 'link_account',
 			label: 'Link Account',
 			icon: '🔗',
-			color: '#ec4899',
+			color: '',
 			description: 'Link social account',
 			category: 'session'
 		},
@@ -295,7 +296,7 @@
 			type: 'redirect',
 			label: 'Redirect',
 			icon: '↗️',
-			color: '#0891b2',
+			color: '',
 			description: 'Redirect to semantic destination',
 			category: 'side_effect'
 		},
@@ -303,7 +304,7 @@
 			type: 'webhook',
 			label: 'Webhook',
 			icon: '🌐',
-			color: '#0284c7',
+			color: '',
 			description: 'Call webhook',
 			category: 'side_effect'
 		},
@@ -311,7 +312,7 @@
 			type: 'event_emit',
 			label: 'Emit Event',
 			icon: '📡',
-			color: '#059669',
+			color: '',
 			description: 'Emit custom event',
 			category: 'side_effect'
 		},
@@ -319,7 +320,7 @@
 			type: 'email_send',
 			label: 'Email',
 			icon: '📧',
-			color: '#7c3aed',
+			color: '',
 			description: 'Send email',
 			category: 'side_effect'
 		},
@@ -327,7 +328,7 @@
 			type: 'sms_send',
 			label: 'SMS',
 			icon: '💬',
-			color: '#8b5cf6',
+			color: '',
 			description: 'Send SMS',
 			category: 'side_effect'
 		},
@@ -335,7 +336,7 @@
 			type: 'push_notify',
 			label: 'Push',
 			icon: '🔔',
-			color: '#a855f7',
+			color: '',
 			description: 'Send push notification',
 			category: 'side_effect'
 		},
@@ -345,7 +346,7 @@
 			type: 'decision',
 			label: 'Decision',
 			icon: '◇',
-			color: '#8b5cf6',
+			color: '',
 			description: 'N-way conditional branch (3+ branches)',
 			category: 'logic',
 			options: ['Risk-based routing', 'Social login result', 'Multi-condition flow']
@@ -354,7 +355,7 @@
 			type: 'switch',
 			label: 'Switch',
 			icon: '⎇',
-			color: '#a855f7',
+			color: '',
 			description: 'Enum-based branching (country, locale, etc)',
 			category: 'logic',
 			options: ['Country-based', 'Locale-based', 'Client type routing']
@@ -365,7 +366,7 @@
 			type: 'policy_check',
 			label: 'Policy Check',
 			icon: '🛡️',
-			color: '#4f46e5',
+			color: '',
 			description: 'Evaluate policy rules',
 			category: 'policy'
 		},
@@ -375,7 +376,7 @@
 			type: 'error',
 			label: 'Error',
 			icon: '✕',
-			color: '#ef4444',
+			color: '',
 			description: 'Error screen with reason',
 			category: 'error'
 		},
@@ -383,7 +384,7 @@
 			type: 'log',
 			label: 'Log',
 			icon: '📋',
-			color: '#64748b',
+			color: '',
 			description: 'Log for debugging',
 			category: 'error'
 		}
@@ -407,7 +408,9 @@
 	const nodesByCategory = $derived(
 		categories.map((cat) => ({
 			...cat,
-			nodes: nodeTypes.filter((n) => n.category === cat.id)
+			nodes: nodeTypes
+				.filter((n) => n.category === cat.id)
+				.map((nodeType) => ({ ...nodeType, color: getFlowNodeColor(nodeType.type) }))
 		}))
 	);
 
@@ -496,26 +499,27 @@
 <style>
 	.node-palette {
 		width: 200px;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 8px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, 8px);
 		padding: 12px;
 		height: fit-content;
 		max-height: calc(100vh - 200px);
 		overflow-y: auto;
+		box-shadow: var(--card-shadow, none);
 	}
 
 	.palette-title {
 		margin: 0 0 4px 0;
 		font-size: 14px;
 		font-weight: 600;
-		color: #111827;
+		color: var(--color-text);
 	}
 
 	.palette-hint {
 		margin: 0 0 12px 0;
 		font-size: 11px;
-		color: #9ca3af;
+		color: var(--color-text-muted);
 	}
 
 	.category-list {
@@ -535,20 +539,20 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 4px 0;
-		border-bottom: 1px solid #e5e7eb;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.category-label {
 		font-size: 11px;
 		font-weight: 600;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
 
 	.category-desc {
 		font-size: 10px;
-		color: #9ca3af;
+		color: var(--color-text-subtle, var(--color-text-muted));
 	}
 
 	.node-list {
@@ -562,9 +566,10 @@
 		align-items: center;
 		gap: 6px;
 		padding: 6px 10px;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
+		color: var(--color-text);
 		cursor: pointer;
 		transition: all 0.15s;
 		text-align: left;
@@ -573,9 +578,9 @@
 
 	.node-item:hover {
 		border-color: var(--node-color);
-		background: color-mix(in srgb, var(--node-color) 5%, white);
+		background: color-mix(in srgb, var(--node-color) 8%, var(--color-surface));
 		transform: translateY(-1px);
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+		box-shadow: var(--flow-node-hover-shadow, var(--shadow-sm));
 	}
 
 	.node-item:active {
@@ -594,15 +599,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: color-mix(in srgb, var(--node-color) 15%, white);
-		border-radius: 4px;
+		background: color-mix(in srgb, var(--node-color) 15%, var(--color-surface));
+		border-radius: var(--flow-node-icon-radius, var(--radius-xs, 4px));
 		flex-shrink: 0;
 	}
 
 	.node-label {
 		font-size: 11px;
 		font-weight: 500;
-		color: #374151;
+		color: var(--color-text);
 		white-space: nowrap;
 	}
 
@@ -610,10 +615,13 @@
 	.node-tooltip {
 		position: fixed;
 		z-index: 1000;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 8px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, 8px);
+		box-shadow: var(
+			--shadow-xl,
+			0 12px 28px color-mix(in srgb, var(--color-text) 16%, transparent)
+		);
 		padding: 12px;
 		min-width: 200px;
 		max-width: 280px;
@@ -626,7 +634,7 @@
 		gap: 8px;
 		margin-bottom: 8px;
 		padding-bottom: 8px;
-		border-bottom: 1px solid #f3f4f6;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.tooltip-icon {
@@ -636,33 +644,33 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: color-mix(in srgb, var(--node-color) 15%, white);
-		border-radius: 6px;
+		background: color-mix(in srgb, var(--node-color) 15%, var(--color-surface));
+		border-radius: var(--flow-node-icon-radius, var(--radius-control, 6px));
 	}
 
 	.tooltip-label {
 		font-size: 14px;
 		font-weight: 600;
-		color: #111827;
+		color: var(--color-text);
 	}
 
 	.tooltip-description {
 		margin: 0 0 8px 0;
 		font-size: 12px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		line-height: 1.4;
 	}
 
 	.tooltip-options {
-		background: #f9fafb;
-		border-radius: 6px;
+		background: var(--color-surface-muted);
+		border-radius: var(--flow-node-control-radius, var(--radius-control, 6px));
 		padding: 8px;
 	}
 
 	.options-label {
 		font-size: 10px;
 		font-weight: 600;
-		color: #9ca3af;
+		color: var(--color-text-subtle, var(--color-text-muted));
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
@@ -671,7 +679,7 @@
 		margin: 4px 0 0 0;
 		padding: 0 0 0 16px;
 		font-size: 11px;
-		color: #4b5563;
+		color: var(--color-text-muted);
 	}
 
 	.options-list li {

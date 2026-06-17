@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminAdminRolesAPI,
 		type AdminRole,
@@ -9,6 +10,9 @@
 		getRoleTypeBadgeClass
 	} from '$lib/api/admin-admin-roles';
 	import { Modal } from '$lib/components';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let roles: AdminRole[] = $state([]);
 	let permissions: AdminPermission[] = $state([]);
@@ -41,7 +45,7 @@
 			roles = response.items;
 		} catch (err) {
 			console.error('Failed to load roles:', err);
-			error = err instanceof Error ? err.message : 'Failed to load admin roles';
+			error = err instanceof Error ? err.message : $LL.admin_admin_rbac_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -76,7 +80,7 @@
 
 	async function handleCreate() {
 		if (!newRoleName.trim()) {
-			createError = 'Role name is required';
+			createError = $LL.admin_admin_rbac_role_name_required();
 			return;
 		}
 
@@ -93,7 +97,7 @@
 			closeCreateDialog();
 			loadRoles();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Failed to create role';
+			createError = err instanceof Error ? err.message : $LL.admin_admin_rbac_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -126,20 +130,20 @@
 			closeEditDialog();
 			loadRoles();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to update role');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_update_failed());
 		} finally {
 			saving = false;
 		}
 	}
 
 	async function handleDelete(role: AdminRole) {
-		if (!confirm(`Are you sure you want to delete the role "${role.name}"?`)) return;
+		if (!confirm($LL.admin_admin_rbac_delete_confirm({ role: role.name }))) return;
 
 		try {
 			await adminAdminRolesAPI.delete(role.id);
 			loadRoles();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : 'Failed to delete role');
+			alert(err instanceof Error ? err.message : $LL.admin_admin_rbac_delete_failed());
 		}
 	}
 
@@ -159,133 +163,151 @@
 </script>
 
 <svelte:head>
-	<title>Admin Roles - Authrim</title>
+	<title>{$LL.admin_admin_rbac_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">Admin Roles</h1>
-			<p class="page-description">Manage roles and permissions for administrator accounts</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={openCreateDialog}>
-				<i class="i-ph-plus"></i>
-				Create Role
-			</button>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus" aria-hidden="true"></i>
+		{$LL.admin_admin_rbac_create_role()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_rbac_perm_category_admin_roles()}
+		description={$LL.admin_admin_rbac_description()}
+		actions={pageActions}
+	/>
 
 	<!-- Content -->
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-spinner loading-spinner"></i>
-			<p>Loading admin roles...</p>
+			<p>{$LL.admin_admin_rbac_loading()}</p>
 		</div>
 	{:else if error}
 		<div class="error-state">
 			<p class="error-text">{error}</p>
-			<button class="btn btn-secondary" onclick={loadRoles}>Retry</button>
+			<button class="btn btn-secondary" onclick={loadRoles}>{$LL.admin_admin_rbac_retry()}</button>
 		</div>
 	{:else if roles.length === 0}
-		<div class="empty-state">
-			<p>No admin roles found</p>
-		</div>
+		<AdminSection>
+			<div class="empty-state">
+				<p>{$LL.admin_admin_rbac_empty()}</p>
+			</div>
+		</AdminSection>
 	{:else}
-		<div class="roles-grid">
-			{#each roles as role (role.id)}
-				<div class="role-card">
-					<div class="role-header">
-						<div class="role-title">
-							<h3>{role.display_name || role.name}</h3>
-							<span class="role-name">{role.name}</span>
+		<AdminSection>
+			<div class="roles-grid">
+				{#each roles as role (role.id)}
+					<div class="role-card">
+						<div class="role-header">
+							<div class="role-title">
+								<h3>{role.display_name || role.name}</h3>
+								<span class="role-name">{role.name}</span>
+							</div>
+							<span class={getRoleTypeBadgeClass(role.role_type)}>
+								{role.role_type}
+							</span>
 						</div>
-						<span class={getRoleTypeBadgeClass(role.role_type)}>
-							{role.role_type}
-						</span>
-					</div>
-					{#if role.description}
-						<p class="role-description">{role.description}</p>
-					{/if}
-					<div class="role-permissions">
-						<span class="permissions-label">Permissions:</span>
-						<div class="permissions-list">
-							{#if role.permissions.length === 0}
-								<span class="text-muted">None</span>
-							{:else if role.permissions.includes('*')}
-								<span class="permission-badge permission-all">Full Access</span>
-							{:else}
-								{#each role.permissions.slice(0, 5) as perm (perm)}
-									<span class="permission-badge">{perm}</span>
-								{/each}
-								{#if role.permissions.length > 5}
-									<span class="permission-badge permission-more">
-										+{role.permissions.length - 5} more
-									</span>
+						{#if role.description}
+							<p class="role-description">{role.description}</p>
+						{/if}
+						<div class="role-permissions">
+							<span class="permissions-label">{$LL.admin_admin_rbac_permissions()}:</span>
+							<div class="permissions-list">
+								{#if role.permissions.length === 0}
+									<span class="text-muted">{$LL.admin_admin_rbac_none()}</span>
+								{:else if role.permissions.includes('*')}
+									<span class="permission-badge permission-all"
+										>{$LL.admin_admin_rbac_full_access()}</span
+									>
+								{:else}
+									{#each role.permissions.slice(0, 5) as perm (perm)}
+										<span class="permission-badge">{perm}</span>
+									{/each}
+									{#if role.permissions.length > 5}
+										<span class="permission-badge permission-more">
+											{$LL.admin_admin_rbac_more_permissions({
+												count: role.permissions.length - 5
+											})}
+										</span>
+									{/if}
 								{/if}
+							</div>
+						</div>
+						<div class="role-meta">
+							<span>{$LL.admin_admin_rbac_level({ level: role.hierarchy_level })}</span>
+						</div>
+						<div class="role-actions">
+							{#if canEditAdminRole(role)}
+								<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(role)}>
+									{$LL.admin_admin_rbac_edit()}
+								</button>
+							{/if}
+							{#if canDeleteAdminRole(role)}
+								<button class="btn btn-sm btn-danger" onclick={() => handleDelete(role)}>
+									{$LL.admin_admin_rbac_delete()}
+								</button>
 							{/if}
 						</div>
 					</div>
-					<div class="role-meta">
-						<span>Level: {role.hierarchy_level}</span>
-					</div>
-					<div class="role-actions">
-						{#if canEditAdminRole(role)}
-							<button class="btn btn-sm btn-secondary" onclick={() => openEditDialog(role)}>
-								Edit
-							</button>
-						{/if}
-						{#if canDeleteAdminRole(role)}
-							<button class="btn btn-sm btn-danger" onclick={() => handleDelete(role)}>
-								Delete
-							</button>
-						{/if}
-					</div>
-				</div>
-			{/each}
-		</div>
+				{/each}
+			</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Role Dialog -->
-<Modal open={showCreateDialog} onClose={closeCreateDialog} title="Create Admin Role" size="lg">
+<Modal
+	open={showCreateDialog}
+	onClose={closeCreateDialog}
+	title={$LL.admin_admin_rbac_create_title()}
+	size="lg"
+>
 	{#if createError}
 		<div class="alert alert-danger">{createError}</div>
 	{/if}
-	<div class="form-group">
-		<label for="name">Role Name *</label>
+	<div class="admin-field dialog-field">
+		<label for="name" class="admin-field__label">
+			{$LL.admin_admin_rbac_role_name()}
+			{$LL.admin_admin_rbac_required()}
+		</label>
 		<input
 			type="text"
 			id="name"
-			class="input"
+			class="admin-input"
 			bind:value={newRoleName}
-			placeholder="e.g., security_admin"
+			placeholder={$LL.admin_admin_rbac_name_placeholder()}
 		/>
 	</div>
-	<div class="form-group">
-		<label for="displayName">Display Name</label>
+	<div class="admin-field dialog-field">
+		<label for="displayName" class="admin-field__label">{$LL.admin_admin_rbac_display_name()}</label
+		>
 		<input
 			type="text"
 			id="displayName"
-			class="input"
+			class="admin-input"
 			bind:value={newRoleDisplayName}
-			placeholder="e.g., Security Administrator"
+			placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
 		/>
 	</div>
-	<div class="form-group">
-		<label for="description">Description</label>
+	<div class="admin-field dialog-field">
+		<label for="description" class="admin-field__label">
+			{$LL.admin_admin_rbac_description_label()}
+		</label>
 		<textarea
 			id="description"
-			class="input"
+			class="admin-input"
 			bind:value={newRoleDescription}
-			placeholder="What this role can do..."
+			placeholder={$LL.admin_admin_rbac_create_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label>Permissions</label>
+		<label class="admin-field__label">{$LL.admin_admin_rbac_permissions()}</label>
 		<div class="permissions-grid">
 			{#each permissions as perm (perm.key)}
 				<label class="permission-checkbox">
@@ -303,10 +325,10 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={closeCreateDialog} disabled={creating}>
-			Cancel
+			{$LL.admin_admin_rbac_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-			{creating ? 'Creating...' : 'Create'}
+			{creating ? $LL.admin_admin_rbac_creating() : $LL.admin_admin_rbac_create_button()}
 		</button>
 	{/snippet}
 </Modal>
@@ -315,32 +337,36 @@
 <Modal
 	open={showEditDialog && !!editingRole}
 	onClose={closeEditDialog}
-	title="Edit Role: {editingRole?.name || ''}"
+	title={$LL.admin_admin_rbac_edit_title({ role: editingRole?.name || '' })}
 	size="lg"
 >
-	<div class="form-group">
-		<label for="editDisplayName">Display Name</label>
+	<div class="admin-field dialog-field">
+		<label for="editDisplayName" class="admin-field__label">
+			{$LL.admin_admin_rbac_display_name()}
+		</label>
 		<input
 			type="text"
 			id="editDisplayName"
-			class="input"
+			class="admin-input"
 			bind:value={editDisplayName}
-			placeholder="e.g., Security Administrator"
+			placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
 		/>
 	</div>
-	<div class="form-group">
-		<label for="editDescription">Description</label>
+	<div class="admin-field dialog-field">
+		<label for="editDescription" class="admin-field__label">
+			{$LL.admin_admin_rbac_description_label()}
+		</label>
 		<textarea
 			id="editDescription"
-			class="input"
+			class="admin-input"
 			bind:value={editDescription}
-			placeholder="What this role can do..."
+			placeholder={$LL.admin_admin_rbac_description_placeholder()}
 			rows="2"
 		></textarea>
 	</div>
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label>Permissions</label>
+		<label class="admin-field__label">{$LL.admin_admin_rbac_permissions()}</label>
 		<div class="permissions-grid">
 			{#each permissions as perm (perm.key)}
 				<label class="permission-checkbox">
@@ -357,9 +383,11 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}> Cancel </button>
+		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>
+			{$LL.admin_admin_rbac_cancel()}
+		</button>
 		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Saving...' : 'Save'}
+			{saving ? $LL.admin_admin_rbac_saving() : $LL.admin_admin_rbac_save()}
 		</button>
 	{/snippet}
 </Modal>
@@ -373,10 +401,11 @@
 	}
 
 	.role-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 1.25rem;
+		box-shadow: var(--shadow-sm);
 	}
 
 	.role-header {
@@ -390,17 +419,17 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.role-name {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.role-description {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-bottom: 0.75rem;
 	}
 
@@ -410,7 +439,7 @@
 
 	.permissions-label {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		display: block;
 		margin-bottom: 0.5rem;
 	}
@@ -425,24 +454,24 @@
 		display: inline-block;
 		padding: 0.125rem 0.5rem;
 		font-size: 0.75rem;
-		background: var(--bg-subtle);
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
+		background: var(--color-surface-raised);
+		border-radius: var(--radius-control);
+		color: var(--color-text-muted);
 	}
 
 	.permission-all {
-		background: var(--primary-subtle);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.permission-more {
-		background: var(--bg-subtle);
-		color: var(--text-tertiary);
+		background: var(--color-surface-raised);
+		color: var(--color-text-subtle);
 	}
 
 	.role-meta {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-bottom: 0.75rem;
 	}
 
@@ -459,32 +488,44 @@
 		justify-content: center;
 		padding: 48px 24px;
 		text-align: center;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.error-text {
-		color: var(--danger);
+		color: var(--color-danger);
 		margin-bottom: 1rem;
 	}
 
-	/* Form input styling */
-	.input,
-	textarea.input {
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-		font-family: inherit;
+	.dialog-field {
+		display: grid;
+		gap: 6px;
+		margin-bottom: 16px;
 	}
 
-	.input:focus,
-	textarea.input:focus {
+	.dialog-field :global(.admin-field__label) {
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+		color: var(--color-text-subtle);
+	}
+
+	.dialog-field :global(.admin-input) {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
+	}
+
+	.dialog-field :global(.admin-input:focus) {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	/* Permissions grid in dialog */
@@ -495,8 +536,8 @@
 		max-height: 200px;
 		overflow-y: auto;
 		padding: 0.5rem;
-		background: var(--bg-subtle);
-		border-radius: var(--radius-md);
+		background: var(--color-surface-raised);
+		border-radius: var(--radius-panel);
 	}
 
 	.permission-checkbox {
@@ -504,13 +545,13 @@
 		align-items: flex-start;
 		gap: 0.5rem;
 		padding: 0.5rem;
-		background: var(--bg-card);
-		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		border-radius: var(--radius-control);
 		cursor: pointer;
 	}
 
 	.permission-checkbox:hover {
-		background: var(--bg-subtle);
+		background: var(--color-surface-raised);
 	}
 
 	.permission-checkbox input {
@@ -520,18 +561,18 @@
 	.permission-key {
 		font-weight: 500;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.permission-desc {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		display: block;
 	}
 
 	/* Alert for dialog errors */
 	.alert-danger {
-		background: var(--danger-subtle);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 </style>

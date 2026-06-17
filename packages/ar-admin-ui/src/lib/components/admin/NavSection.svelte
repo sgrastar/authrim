@@ -24,23 +24,24 @@
 
 <style>
 	.nav-section {
-		margin-bottom: 4px;
+		margin-bottom: var(--nav-section-gap, 4px);
 	}
 
 	/* Section header with left accent bar */
 	.nav-section-header {
 		display: flex;
 		align-items: center;
-		margin-top: 12px;
-		padding: 5px 12px 5px 10px;
-		font-size: 0.625rem;
-		font-weight: 700;
+		margin-top: var(--nav-section-margin-top, 18px);
+		padding: var(--nav-section-header-padding, 5px 20px);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--nav-section-font-size, 0.68rem);
+		font-weight: var(--nav-section-font-weight, 700);
 		text-transform: uppercase;
-		letter-spacing: 0.12em;
+		letter-spacing: var(--nav-section-letter-spacing, 0.12em);
 		min-height: 26px;
 		margin-bottom: 4px;
-		border-left: 2px solid transparent;
-		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+		border-left: var(--nav-section-border-width, 0) solid transparent;
+		border-radius: var(--nav-section-radius, 0);
 	}
 
 	/* Level-specific accent colors */
@@ -62,15 +63,5 @@
 	.nav-section[data-level='platform'] .nav-section-header {
 		border-left-color: var(--level-platform-color);
 		color: var(--level-platform-color);
-	}
-
-	/* Global visibility control - handled by parent */
-	:global(.nav-floating:not(.expanded):not(.open)) .nav-section-header {
-		opacity: 0;
-	}
-
-	:global(.nav-floating.expanded) .nav-section-header,
-	:global(.nav-floating.open) .nav-section-header {
-		opacity: 1;
 	}
 </style>

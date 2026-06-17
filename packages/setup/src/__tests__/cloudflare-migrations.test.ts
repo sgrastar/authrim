@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildDefaultCanonicalCatalogSeedSql,
   buildRecordMigrationSql,
+  calculateD1MigrationChecksum,
   buildRuntimeProfileSeedSql,
   listD1MigrationSqlFiles,
   shouldMirrorPiiMigrationsToCore,
@@ -212,9 +213,28 @@ describe('buildRecordMigrationSql', () => {
     const sql = buildRecordMigrationSql("seed'file.sql", 1234567890);
 
     expect(sql).toContain('INSERT INTO authrim_migrations');
-    expect(sql).toContain("SELECT 'seed''file.sql', 1234567890");
+    expect(sql).toContain("SELECT 'seed''file.sql', '', 1234567890");
     expect(sql).toContain('WHERE NOT EXISTS');
     expect(sql).not.toContain('INSERT OR IGNORE');
+  });
+});
+
+describe('calculateD1MigrationChecksum', () => {
+  it('changes when rendered migration SQL changes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'authrim-migration-checksum-'));
+    const file = join(dir, '001_test.sql');
+    try {
+      writeFileSync(file, 'CREATE TABLE example(id TEXT);');
+      const first = calculateD1MigrationChecksum(file);
+      writeFileSync(file, 'CREATE TABLE example(id TEXT, name TEXT);');
+      const second = calculateD1MigrationChecksum(file);
+
+      expect(first).toMatch(/^[a-f0-9]{64}$/);
+      expect(second).toMatch(/^[a-f0-9]{64}$/);
+      expect(second).not.toBe(first);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

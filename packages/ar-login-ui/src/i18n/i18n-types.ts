@@ -225,6 +225,10 @@ type RootTranslation = {
 	 */
 	login_continueWith: RequiredParams<'provider'>
 	/**
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	login_noMethodsAvailable: string
+	/**
 	 * T​e​n​a​n​t​ ​D​i​s​c​o​v​e​r​y
 	 */
 	discover_pageTitle: string
@@ -368,6 +372,10 @@ type RootTranslation = {
 	 * N​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
 	 */
 	register_errorNameRequired: string
+	/**
+	 * N​o​ ​s​i​g​n​u​p​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	register_noMethodsAvailable: string
 	/**
 	 * C​h​e​c​k​ ​y​o​u​r​ ​e​m​a​i​l
 	 */
@@ -1490,6 +1498,10 @@ export type TranslationFunctions = {
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString
 	/**
+	 * No authentication method is enabled for this tenant. Contact your administrator.
+	 */
+	login_noMethodsAvailable: () => LocalizedString
+	/**
 	 * Tenant Discovery
 	 */
 	discover_pageTitle: () => LocalizedString
@@ -1633,6 +1645,10 @@ export type TranslationFunctions = {
 	 * Name is required
 	 */
 	register_errorNameRequired: () => LocalizedString
+	/**
+	 * No signup method is enabled for this tenant. Contact your administrator.
+	 */
+	register_noMethodsAvailable: () => LocalizedString
 	/**
 	 * Check your email
 	 */

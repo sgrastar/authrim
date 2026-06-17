@@ -31,6 +31,7 @@ import {
   createConfigurationError,
   getLogger,
   resolveAuthCorePersistenceAdapterFromEnv,
+  requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
 } from '@authrim/ar-lib-core';
 import {
@@ -83,9 +84,12 @@ import {
   SAMLNameIDPolicyError,
   resolveSAMLNameIDFormat,
   resolveSAMLNameIDValue,
+  resolveSAMLEduPersonTargetedIDOpaque,
   resolveSAMLPairwiseSecret,
+  resolveSAMLPairwiseSecretForRef,
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
+  type SAMLPersistentIdentifierAlgorithm,
 } from './subject';
 import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import {
@@ -1130,11 +1134,13 @@ async function generateSAMLResponse(
   });
 
   const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig);
+  const pairwiseSecret = await resolveSAMLPairwiseSecret(env, tenantId);
+  const persistentRegistry = resolveSAMLPersistentNameIDRegistryStore(env);
   const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
     tenantId,
     spEntityId: spConfig.entityId,
-    pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
-    persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
+    pairwiseSalt: pairwiseSecret,
+    persistentRegistry,
     allowCreate: authnRequest.nameIdPolicy?.allowCreate ?? true,
     transientStore: resolveSAMLTransientNameIDStore(env),
     transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
@@ -1149,10 +1155,26 @@ async function generateSAMLResponse(
     idpEntityId,
     spConfig
   );
+  const identityMappingRuntimeContext = await buildSAMLIdentityMappingRuntimeContext({
+    env,
+    tenantId,
+    idpEntityId,
+    spEntityId: spConfig.entityId,
+    userInfo,
+    pairwiseSecret,
+    persistentRegistry,
+    identityMapping,
+  });
   const attributeRelease = buildSAMLAttributesForSPWithDiagnostics(userInfo, {
     ...spConfig,
+    tenantId,
     localEntityId: idpEntityId,
-    identityMapping,
+    identityMapping: identityMapping
+      ? {
+          ...identityMapping,
+          runtimeContext: identityMappingRuntimeContext,
+        }
+      : undefined,
   });
   await enforceSAMLAttributeReleaseConsent({
     env,
@@ -1249,7 +1271,7 @@ async function resolveSAMLRuntimeIdentityMapping(
     return configured;
   }
 
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-identity-mapping');
+  const adapter = requireAdminDatabaseAdapter(env, 'saml-identity-mapping');
   const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
     tenantId,
     protocol: 'saml',
@@ -1289,6 +1311,164 @@ async function resolveSAMLRuntimeIdentityMapping(
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
     destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
   };
+}
+
+async function buildSAMLIdentityMappingRuntimeContext(input: {
+  env: Env;
+  tenantId: string;
+  idpEntityId: string;
+  spEntityId: string;
+  userInfo: SAMLUserInfo;
+  pairwiseSecret?: string;
+  persistentRegistry?: ReturnType<typeof resolveSAMLPersistentNameIDRegistryStore>;
+  identityMapping?: SAMLIdentityMappingReleaseConfig;
+}): Promise<Record<string, unknown>> {
+  const samlContext: Record<string, unknown> = {
+    localEntityId: input.idpEntityId,
+    partnerEntityId: input.spEntityId,
+  };
+
+  if (usesSAMLEduPersonTargetedIDTransform(input.identityMapping)) {
+    const profileId = findSAMLPersistentIdentifierProfileId(input.identityMapping);
+    const profile = profileId
+      ? await loadSAMLPersistentIdentifierProfile(input.env, input.tenantId, profileId)
+      : null;
+    const pairwiseSecret = profile?.secretRef
+      ? await resolveSAMLPairwiseSecretForRef(input.env, input.tenantId, profile.secretRef)
+      : input.pairwiseSecret;
+    if (profile?.issuerEntityId) {
+      samlContext.localEntityId = profile.issuerEntityId;
+    }
+    if (!pairwiseSecret) {
+      throw new SAMLIdentityMappingRuntimeError([
+        {
+          category: 'policy',
+          code: profile
+            ? 'policy.persistent_identifier_secret_missing'
+            : 'policy.identity_mapping_pairwise_secret_missing',
+          severity: 'critical',
+        },
+      ]);
+    }
+    samlContext.eduPersonTargetedIdOpaque = await resolveSAMLEduPersonTargetedIDOpaque(
+      input.userInfo,
+      {
+        tenantId: input.tenantId,
+        spEntityId: input.spEntityId,
+        pairwiseSalt: pairwiseSecret,
+        pairwiseAlgorithm: profile?.algorithm,
+        pairwiseAudienceMode: profile?.audienceMode,
+        persistentProfileId: profile?.id,
+        persistentRegistry: input.persistentRegistry,
+      }
+    );
+  }
+
+  return { saml: samlContext };
+}
+
+interface SAMLPersistentIdentifierProfile {
+  id: string;
+  secretRef?: string;
+  issuerEntityId?: string;
+  algorithm?: SAMLPersistentIdentifierAlgorithm;
+  audienceMode?: 'runtime' | 'saml_sp_entity_id' | 'oidc_sector_identifier';
+}
+
+interface SAMLPersistentIdentifierProfileRow {
+  id: string;
+  mode: string;
+  algorithm: string;
+  protocol_scope: string;
+  secret_ref: string | null;
+  issuer_entity_id: string | null;
+  audience_mode: string | null;
+}
+
+function findSAMLPersistentIdentifierProfileId(
+  identityMapping?: SAMLIdentityMappingReleaseConfig
+): string | undefined {
+  const bindings = [
+    identityMapping,
+    identityMapping?.defaultBinding,
+    ...(identityMapping?.bindings ?? []),
+  ];
+  for (const binding of bindings) {
+    const transform = binding?.transforms?.find(
+      (item) => item.operation === 'saml_edu_person_targeted_id'
+    );
+    const profileId = readString(transform?.parameters?.persistentIdentifierProfileId);
+    if (profileId) {
+      return profileId;
+    }
+  }
+  return undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+async function loadSAMLPersistentIdentifierProfile(
+  env: Env,
+  tenantId: string,
+  profileId: string
+): Promise<SAMLPersistentIdentifierProfile | null> {
+  const adapter = requireAdminDatabaseAdapter(env, 'saml-persistent-identifier-profile');
+  const rows = await adapter.query<SAMLPersistentIdentifierProfileRow>(
+    `SELECT id, mode, algorithm, protocol_scope, secret_ref, issuer_entity_id, audience_mode
+       FROM persistent_identifier_profiles
+      WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active'
+      LIMIT 1`,
+    [tenantId, profileId]
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.persistent_identifier_profile_not_found',
+        severity: 'critical',
+      },
+    ]);
+  }
+  if (row.mode !== 'computed' || !['any', 'saml', 'generic'].includes(row.protocol_scope)) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.persistent_identifier_profile_unsupported_mode',
+        severity: 'critical',
+      },
+    ]);
+  }
+  return {
+    id: row.id,
+    secretRef: row.secret_ref ?? undefined,
+    issuerEntityId: row.issuer_entity_id ?? undefined,
+    algorithm: row.algorithm === 'shibboleth_sha1_base64' ? 'shibboleth_sha1_base64' : undefined,
+    audienceMode: isSAMLPersistentIdentifierAudienceMode(row.audience_mode)
+      ? row.audience_mode
+      : undefined,
+  };
+}
+
+function isSAMLPersistentIdentifierAudienceMode(
+  value: string | null
+): value is 'runtime' | 'saml_sp_entity_id' | 'oidc_sector_identifier' {
+  return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
+}
+
+function usesSAMLEduPersonTargetedIDTransform(
+  identityMapping?: SAMLIdentityMappingReleaseConfig
+): boolean {
+  const bindings = [
+    identityMapping,
+    identityMapping?.defaultBinding,
+    ...(identityMapping?.bindings ?? []),
+  ];
+  return bindings.some((binding) =>
+    binding?.transforms?.some((transform) => transform.operation === 'saml_edu_person_targeted_id')
+  );
 }
 
 async function generateSAMLProtocolErrorResponse(

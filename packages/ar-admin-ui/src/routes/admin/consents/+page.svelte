@@ -13,7 +13,7 @@
 		type SettingSource
 	} from '$lib/api/admin-settings';
 	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
-	import { InheritanceIndicator } from '$lib/components/admin';
+	import { AdminPageHeader, AdminPageShell, InheritanceIndicator } from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
@@ -200,6 +200,11 @@
 		return false;
 	}
 
+	function getAvailableTenantSettingKeys(keys: string[]): string[] {
+		if (!meta) return [];
+		return keys.filter((key) => Boolean(meta?.settings[key]));
+	}
+
 	// Handle tenant value change
 	function handleTenantChange(key: string, value: unknown) {
 		tenantPatches = tenantPatches.filter((p) => p.key !== key);
@@ -351,21 +356,18 @@
 	<title>{$LL.admin_consents_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_consents_title()}</h1>
-			<p class="page-description">{$LL.admin_consents_description()}</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_consents_title()}
+		description={$LL.admin_consents_description()}
+	/>
 
 	<!-- Error message -->
 	{#if error}
 		<div class="alert alert-error">
 			{error}
 			{#if error === $LL.admin_consents_conflict()}
-				<button onclick={loadData} class="btn btn-sm btn-danger" style="margin-left: 12px;">
+				<button onclick={loadData} class="btn btn-sm btn-danger reload-button">
 					{$LL.admin_consents_reload()}
 				</button>
 			{/if}
@@ -381,11 +383,11 @@
 		<section class="consent-section tenant-section">
 			<div class="section-header">
 				<div class="section-header-left">
-					<span class="section-badge tenant">🏢 {$LL.admin_consents_tenant_badge()}</span>
+					<span class="section-badge tenant">{$LL.admin_consents_tenant_badge()}</span>
 					<h2 class="section-title">{$LL.admin_consents_tenant_title()}</h2>
 				</div>
 				{#if !canEdit}
-					<span class="readonly-badge">🔒 {$LL.admin_consents_readonly()}</span>
+					<span class="readonly-badge">{$LL.admin_consents_readonly()}</span>
 				{/if}
 			</div>
 
@@ -398,7 +400,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_display()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.display as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.display) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -475,7 +477,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_requirements()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.requirements as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.requirements) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -515,7 +517,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_caching()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.caching as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.caching) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -579,7 +581,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_versioning()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.versioning as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.versioning) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -619,7 +621,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_expiration()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.expiration as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.expiration) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -678,7 +680,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_gdpr()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.gdpr as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.gdpr) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -737,7 +739,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_other()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.other as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.other) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -792,7 +794,7 @@
 				<div class="settings-group">
 					<h3 class="group-title">{$LL.admin_consents_group_rbac()}</h3>
 					<div class="settings-form-card">
-						{#each CONSENT_SETTING_GROUPS.rbac as key (key)}
+						{#each getAvailableTenantSettingKeys(CONSENT_SETTING_GROUPS.rbac) as key (key)}
 							{@const settingMeta = meta.settings[key]}
 							{@const value = getTenantValue(key)}
 							{@const locked = isSettingLocked(key, settingMeta, tenantSettings)}
@@ -854,7 +856,7 @@
 		<section class="client-selector-section">
 			<div class="section-header">
 				<div class="section-header-left">
-					<span class="section-badge client">📦 {$LL.admin_consents_client_badge()}</span>
+					<span class="section-badge client">{$LL.admin_consents_client_badge()}</span>
 					<h2 class="section-title">{$LL.admin_consents_client_overrides_title()}</h2>
 				</div>
 			</div>
@@ -882,7 +884,7 @@
 			<section class="consent-section client-section">
 				<div class="section-header">
 					<div class="section-header-left">
-						<span class="section-badge client">📦 {$LL.admin_consents_client_badge()}</span>
+						<span class="section-badge client">{$LL.admin_consents_client_badge()}</span>
 						<h2 class="section-title">
 							{$LL.admin_consents_client_settings_title({
 								name: selectedClientName || selectedClientId
@@ -890,7 +892,7 @@
 						</h2>
 					</div>
 					{#if !canEdit}
-						<span class="readonly-badge">🔒 {$LL.admin_consents_readonly()}</span>
+						<span class="readonly-badge">{$LL.admin_consents_readonly()}</span>
 					{/if}
 				</div>
 
@@ -958,24 +960,36 @@
 			</section>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
+	.consent-section,
+	.settings-form-card,
+	.setting-item,
+	.setting-item-content,
+	.client-selector-section,
+	.settings-actions {
+		box-sizing: border-box;
+		min-width: 0;
+	}
+
 	/* Consent Sections */
 	.consent-section {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: 12px;
-		padding: 24px;
+		background: var(--settings-panel-bg, var(--color-surface));
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		padding: var(--settings-panel-padding, 24px);
 		margin-bottom: 24px;
+		color: var(--color-text);
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
 	.tenant-section {
-		border-left: 4px solid var(--primary);
+		border-left: var(--settings-panel-accent-border, 4px solid var(--color-accent));
 	}
 
 	.client-section {
-		border-left: 4px solid #a855f7;
+		border-left: var(--settings-panel-accent-border, 4px solid var(--color-accent));
 	}
 
 	.section-header {
@@ -995,38 +1009,46 @@
 	.section-badge {
 		display: inline-flex;
 		align-items: center;
-		padding: 4px 12px;
-		border-radius: 6px;
-		font-size: 13px;
-		font-weight: 500;
+		padding: var(--settings-badge-padding, 4px 12px);
+		border: var(--settings-badge-border, 1px solid transparent);
+		border-radius: var(--settings-badge-radius, var(--radius-control));
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--settings-badge-size, 0.72rem);
+		font-weight: 700;
+		letter-spacing: var(--settings-badge-letter-spacing, 0.08em);
+		text-transform: uppercase;
 	}
 
 	.section-badge.tenant {
-		background: var(--primary-light);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.section-badge.client {
-		background: #f3e8ff;
-		color: #a855f7;
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.section-title {
-		font-size: 20px;
-		font-weight: 600;
-		color: var(--text-primary);
+		font-size: var(--settings-section-title-size, 1.1rem);
+		font-weight: var(--settings-section-title-weight, 700);
+		color: var(--color-text);
 		margin: 0;
 	}
 
 	.readonly-badge {
 		display: inline-flex;
 		align-items: center;
-		padding: 4px 12px;
-		border-radius: 6px;
-		font-size: 13px;
-		font-weight: 500;
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		padding: var(--settings-badge-padding, 4px 12px);
+		border: var(--settings-badge-border, 1px solid transparent);
+		border-radius: var(--settings-badge-radius, var(--radius-control));
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--settings-badge-size, 0.72rem);
+		font-weight: 700;
+		letter-spacing: var(--settings-badge-letter-spacing, 0.08em);
+		text-transform: uppercase;
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	/* Settings Groups */
@@ -1043,23 +1065,23 @@
 	}
 
 	.group-title {
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--text-primary);
+		font-size: var(--settings-group-title-size, 0.95rem);
+		font-weight: var(--settings-group-title-weight, 700);
+		color: var(--color-text);
 		margin: 0;
 		padding-left: 4px;
 	}
 
 	/* Settings Form Card */
 	.settings-form-card {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: 8px;
+		background: var(--settings-card-bg, var(--color-surface));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-panel));
 		overflow: hidden;
 	}
 
 	.setting-item {
-		border-bottom: 1px solid var(--border);
+		border-bottom: var(--settings-row-border-bottom, 1px solid var(--color-border));
 		transition: background-color 0.15s ease;
 	}
 
@@ -1068,14 +1090,14 @@
 	}
 
 	.setting-item.modified {
-		background: var(--primary-light);
+		background: var(--color-accent-muted);
 	}
 
 	.setting-item-content {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 16px 20px;
+		padding: var(--settings-row-padding, 16px 20px);
 		gap: 24px;
 	}
 
@@ -1092,27 +1114,27 @@
 	}
 
 	.setting-label {
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--text-primary);
+		font-size: var(--settings-label-size, 0.88rem);
+		font-weight: var(--settings-label-weight, 700);
+		color: var(--color-text);
 		margin: 0;
 	}
 
 	.setting-modified {
 		font-size: 12px;
-		color: var(--primary);
+		color: var(--color-accent);
 		font-weight: 500;
 	}
 
 	.setting-description {
-		font-size: 13px;
-		color: var(--text-secondary);
+		font-size: var(--settings-description-size, 0.82rem);
+		color: var(--color-text-muted);
 		margin: 0;
 		line-height: 1.5;
 	}
 
 	.setting-unit {
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		font-style: italic;
 	}
 
@@ -1121,17 +1143,18 @@
 		flex-direction: column;
 		align-items: flex-end;
 		gap: 4px;
-		min-width: 200px;
+		min-width: min(200px, 100%);
 	}
 
 	.settings-input,
 	.settings-select {
 		width: 100%;
-		padding: 8px 12px;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-card);
-		color: var(--text-primary);
+		box-sizing: border-box;
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 14px;
 	}
 
@@ -1143,11 +1166,12 @@
 
 	/* Client Selector Section */
 	.client-selector-section {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: 12px;
-		padding: 24px;
+		background: var(--settings-panel-bg, var(--color-surface));
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		padding: var(--settings-panel-padding, 24px);
 		margin-bottom: 24px;
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
 	.client-selector-wrapper {
@@ -1159,15 +1183,15 @@
 	.client-selector-label {
 		font-size: 14px;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.client-selector {
-		padding: 10px 14px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--bg-card);
-		color: var(--text-primary);
+		padding: var(--control-padding, 10px 14px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 14px;
 		cursor: pointer;
 		max-width: 400px;
@@ -1175,8 +1199,8 @@
 
 	.client-selector:focus {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-light);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
 	/* Action Buttons */
@@ -1184,10 +1208,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
+		flex-wrap: wrap;
 		gap: 12px;
 		margin-top: 24px;
 		padding-top: 24px;
-		border-top: 1px solid var(--border);
+		border-top: var(--settings-actions-border-top, 1px solid var(--color-border));
+	}
+
+	.reload-button {
+		margin-left: 12px;
 	}
 
 	/* Alerts */
@@ -1199,15 +1228,15 @@
 	}
 
 	.alert-error {
-		background: var(--danger-light);
-		color: var(--danger);
-		border: 1px solid var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--color-border));
 	}
 
 	.alert-success {
-		background: var(--success-light);
-		color: var(--success);
-		border: 1px solid var(--success);
+		background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+		color: var(--color-success);
+		border: 1px solid color-mix(in srgb, var(--color-success) 42%, var(--color-border));
 	}
 
 	/* Loading State */
@@ -1216,10 +1245,43 @@
 		justify-content: center;
 		align-items: center;
 		padding: 48px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.text-secondary {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
+	}
+
+	@media (max-width: 640px) {
+		.consent-section,
+		.client-selector-section {
+			padding: 22px 16px;
+		}
+
+		.section-header,
+		.section-header-left,
+		.setting-item-content {
+			align-items: flex-start;
+		}
+
+		.section-header,
+		.setting-item-content {
+			flex-direction: column;
+		}
+
+		.setting-control {
+			align-items: stretch;
+			width: 100%;
+		}
+
+		.settings-actions {
+			justify-content: stretch;
+		}
+
+		.settings-actions .btn {
+			flex: 1 1 100%;
+			width: 100%;
+			min-width: 0;
+		}
 	}
 </style>

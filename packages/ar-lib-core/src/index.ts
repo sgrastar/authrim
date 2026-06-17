@@ -124,6 +124,7 @@ export * from './utils/ssrf-protection';
 export * from './services/identity-mapping-runtime-resolver';
 export * from './services/oidc-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
+export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
 export * from './utils/custom-redirect';

@@ -6,6 +6,7 @@
 		type IdentityMappingDestinationProfileSummary,
 		type IdentityMappingSourceProfileSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type ProfileKind = 'source' | 'destination' | 'template';
@@ -120,38 +121,35 @@
 	<title>{$LL.admin_identity_mapping_profiles_head_title()}</title>
 </svelte:head>
 
-<div class="profiles-page">
-	<div class="page-heading">
-		<div>
-			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
-			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
-			<h1>{$LL.admin_identity_mapping_profiles_title()}</h1>
-			<p class="summary">
-				{$LL.admin_identity_mapping_profiles_description()}
-			</p>
-		</div>
-		<div class="status-panel">
-			<div>
-				<span>{$LL.admin_identity_mapping_source()}</span>
-				<strong>{sourceCount}</strong>
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_identity_mapping_title()}
+		title={$LL.admin_identity_mapping_profiles_title()}
+		description={$LL.admin_identity_mapping_profiles_description()}
+	>
+		{#snippet actions()}
+			<div class="status-panel">
+				<div>
+					<span>{$LL.admin_identity_mapping_source()}</span>
+					<strong>{sourceCount}</strong>
+				</div>
+				<div>
+					<span>{$LL.admin_identity_mapping_destination()}</span>
+					<strong>{destinationCount}</strong>
+				</div>
 			</div>
-			<div>
-				<span>{$LL.admin_identity_mapping_destination()}</span>
-				<strong>{destinationCount}</strong>
-			</div>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
-	<section class="profile-list-panel" aria-labelledby="profile-list-heading">
-		<div class="panel-heading">
-			<div>
-				<p class="eyebrow">{$LL.admin_identity_mapping_profiles_inventory()}</p>
-				<h2 id="profile-list-heading">{$LL.admin_identity_mapping_profiles_lists_title()}</h2>
-			</div>
+	<AdminSection
+		title={$LL.admin_identity_mapping_profiles_lists_title()}
+		description={$LL.admin_identity_mapping_profiles_inventory()}
+	>
+		{#snippet actions()}
 			<button type="button" onclick={loadProfiles} disabled={loading}>
 				{$LL.admin_identity_mapping_refresh()}
 			</button>
-		</div>
+		{/snippet}
 
 		{#if loading}
 			<div class="empty-state">{$LL.admin_identity_mapping_profiles_loading()}</div>
@@ -232,79 +230,40 @@
 				</section>
 			</div>
 		{/if}
-	</section>
-</div>
+	</AdminSection>
+</AdminPageShell>
 
 <style>
-	.profiles-page {
-		display: grid;
-		gap: 18px;
-	}
-
-	.page-heading,
-	.panel-heading {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 18px;
-	}
-
-	.back-link {
-		display: inline-flex;
-		margin-bottom: 10px;
-		color: var(--color-primary);
-		font-size: 13px;
-		font-weight: 700;
-		text-decoration: none;
-	}
-
-	h1,
-	h2,
 	h3,
-	h4,
-	p {
+	h4 {
 		margin: 0;
 	}
 
-	h1 {
-		color: var(--text-primary);
-		font-size: 28px;
-	}
-
-	h2,
 	h3,
 	h4 {
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
-	.summary {
-		max-width: 840px;
-		color: var(--text-secondary);
-		font-size: 14px;
-		line-height: 1.5;
-	}
-
-	.eyebrow,
 	.status-panel span {
-		color: var(--text-muted);
-		font-size: 12px;
-		font-weight: 800;
-		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
 	.status-panel,
-	.profile-list-panel,
 	.empty-state {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.status-panel {
 		display: flex;
 		gap: 16px;
-		padding: 14px;
+		padding: var(--profile-status-padding, 14px);
 	}
 
 	.status-panel div {
@@ -313,32 +272,28 @@
 	}
 
 	.status-panel strong {
-		color: var(--text-primary);
-		font-size: 18px;
-	}
-
-	.profile-list-panel {
-		display: grid;
-		gap: 16px;
-		padding: 16px;
+		color: var(--color-text);
+		font-family: var(--font-display);
+		font-size: var(--stat-value-size, 1.15rem);
 	}
 
 	.empty-state {
 		padding: 14px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.profile-list-columns {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
+		gap: var(--profile-list-gap, 12px);
 	}
 
 	.profile-list-column {
 		display: grid;
 		align-content: start;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 		overflow: hidden;
 	}
 
@@ -348,12 +303,12 @@
 		justify-content: space-between;
 		gap: 12px;
 		padding: 14px;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.column-empty {
 		padding: 18px 14px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.profile-list {
@@ -369,15 +324,16 @@
 		min-height: 72px;
 		padding: 14px;
 		border: 0;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--color-border);
 		border-radius: 0;
 		background: transparent;
+		color: var(--color-text);
 		text-align: left;
 	}
 
 	.profile-list-item:hover,
 	.profile-list-item:focus-visible {
-		background: var(--bg-hover);
+		background: var(--color-surface-muted);
 	}
 
 	.profile-list-main,
@@ -388,7 +344,7 @@
 
 	.profile-list-main span,
 	.profile-list-meta span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 13px;
 	}
 
@@ -401,8 +357,8 @@
 		align-items: center;
 		justify-content: center;
 		min-height: 24px;
-		border-radius: 999px;
-		background: var(--bg-hover);
+		border-radius: var(--status-badge-radius, 999px);
+		background: var(--color-surface-muted);
 		padding: 0 10px;
 		font-weight: 800;
 	}
@@ -412,13 +368,14 @@
 	}
 
 	button {
-		min-height: 34px;
+		min-height: var(--control-height, 34px);
 		padding: 0 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-secondary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text-muted);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-weight: 800;
+		cursor: pointer;
 	}
 
 	button:disabled {
@@ -427,14 +384,10 @@
 	}
 
 	@media (max-width: 1020px) {
-		.page-heading,
-		.panel-heading {
-			display: grid;
-		}
-
 		.status-panel,
 		.profile-list-columns {
 			grid-template-columns: 1fr;
+			width: 100%;
 		}
 
 		.profile-list-item {

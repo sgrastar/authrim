@@ -10,6 +10,10 @@
 	} from '$lib/api/admin-plugins';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let plugins: PluginWithStatus[] = $state([]);
 	let loading = $state(true);
@@ -420,38 +424,44 @@
 	}
 </script>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div class="page-header-info">
-			<h1 class="page-title">{$LL.admin_plugins_page_title()}</h1>
-			<p class="modal-description">
-				{$LL.admin_plugins_description()}
-			</p>
-		</div>
-	</div>
+<svelte:head>
+	<title>{$LL.admin_plugins_page_title()}</title>
+</svelte:head>
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_plugins_page_title()}
+		description={$LL.admin_plugins_description()}
+	/>
 
 	<!-- Filters -->
-	<div class="filter-bar">
-		<div class="form-group">
-			<label for="filter-category" class="form-label">{$LL.admin_plugins_category()}</label>
-			<select id="filter-category" class="form-select" bind:value={filterCategory}>
-				<option value="">{$LL.admin_plugins_all_categories()}</option>
-				{#each PLUGIN_CATEGORIES as category (category.id)}
-					<option value={category.id}>{formatCategory(category.id)}</option>
-				{/each}
-			</select>
-		</div>
-		<div class="form-group">
-			<label for="filter-status" class="form-label">{$LL.admin_plugins_status()}</label>
-			<select id="filter-status" class="form-select" bind:value={filterEnabled}>
-				<option value={undefined}>{$LL.admin_plugins_all()}</option>
-				<option value={true}>{$LL.admin_plugins_enabled()}</option>
-				<option value={false}>{$LL.admin_plugins_disabled()}</option>
-			</select>
-		</div>
-		<button class="btn-filter" onclick={applyFilters}>{$LL.admin_plugins_apply()}</button>
-		<button class="btn-clear" onclick={clearFilters}>{$LL.admin_plugins_clear()}</button>
-	</div>
+	<AdminSection>
+		<AdminToolbar>
+			<div class="admin-field admin-field--compact">
+				<label for="filter-category" class="admin-field__label">
+					{$LL.admin_plugins_category()}
+				</label>
+				<select id="filter-category" class="admin-select" bind:value={filterCategory}>
+					<option value="">{$LL.admin_plugins_all_categories()}</option>
+					{#each PLUGIN_CATEGORIES as category (category.id)}
+						<option value={category.id}>{formatCategory(category.id)}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="admin-field admin-field--compact">
+				<label for="filter-status" class="admin-field__label">
+					{$LL.admin_plugins_status()}
+				</label>
+				<select id="filter-status" class="admin-select" bind:value={filterEnabled}>
+					<option value={undefined}>{$LL.admin_plugins_all()}</option>
+					<option value={true}>{$LL.admin_plugins_enabled()}</option>
+					<option value={false}>{$LL.admin_plugins_disabled()}</option>
+				</select>
+			</div>
+			<button class="btn btn-secondary" onclick={applyFilters}>{$LL.admin_plugins_apply()}</button>
+			<button class="btn btn-secondary" onclick={clearFilters}>{$LL.admin_plugins_clear()}</button>
+		</AdminToolbar>
+	</AdminSection>
 
 	{#if error && !showDetailDialog}
 		<div class="alert alert-error">{error}</div>
@@ -564,7 +574,7 @@
 			{/each}
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Detail Dialog -->
 <Modal

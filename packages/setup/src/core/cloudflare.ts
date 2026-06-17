@@ -6,10 +6,11 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { createHash } from 'node:crypto';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { basename, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
@@ -82,6 +83,39 @@ export interface R2BucketProvisioningStatus extends R2BucketInfo {
   exists: boolean;
   configured: boolean;
   state: R2BucketProvisioningState;
+}
+
+export type D1MigrationDatabaseRole = 'core' | 'pii' | 'admin';
+export type D1MigrationFileStatus = 'applied' | 'pending' | 'changed' | 'orphaned';
+
+export interface D1MigrationFileState {
+  filename: string;
+  status: D1MigrationFileStatus;
+  checksum?: string;
+  appliedChecksum?: string | null;
+  appliedAt?: number | null;
+  executionTimeMs?: number | null;
+}
+
+export interface D1MigrationDatabaseStatus {
+  role: D1MigrationDatabaseRole;
+  dbName: string;
+  success: boolean;
+  error?: string;
+  counts: {
+    total: number;
+    applied: number;
+    pending: number;
+    changed: number;
+    orphaned: number;
+  };
+  migrations: D1MigrationFileState[];
+}
+
+export interface D1MigrationEnvironmentStatus {
+  env: string;
+  success: boolean;
+  databases: D1MigrationDatabaseStatus[];
 }
 
 export interface ProvisionedResources {
@@ -1967,9 +2001,20 @@ export async function queryD1Rows<T extends Record<string, unknown>>(
 const CREATE_MIGRATIONS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS authrim_migrations (
   filename TEXT PRIMARY KEY,
-  applied_at INTEGER NOT NULL
+  checksum TEXT NOT NULL,
+  applied_at INTEGER NOT NULL,
+  execution_time_ms INTEGER,
+  setup_version TEXT,
+  tool_version TEXT
 );
 `.trim();
+
+const MIGRATION_TABLE_COLUMN_ALTERS = [
+  'ALTER TABLE authrim_migrations ADD COLUMN checksum TEXT;',
+  'ALTER TABLE authrim_migrations ADD COLUMN execution_time_ms INTEGER;',
+  'ALTER TABLE authrim_migrations ADD COLUMN setup_version TEXT;',
+  'ALTER TABLE authrim_migrations ADD COLUMN tool_version TEXT;',
+];
 
 /**
  * Ensure the authrim_migrations tracking table exists in the target database.
@@ -1989,6 +2034,13 @@ async function ensureMigrationsTable(
       '--command',
       CREATE_MIGRATIONS_TABLE_SQL,
     ]);
+    for (const sql of MIGRATION_TABLE_COLUMN_ALTERS) {
+      try {
+        await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+      } catch {
+        // Existing columns are expected for databases created with the current schema.
+      }
+    }
     return true;
   } catch (error) {
     onProgress?.(
@@ -2003,7 +2055,20 @@ async function ensureMigrationsTable(
  * Falls back to an empty set on error so we never skip migrations when unsure.
  */
 async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
+  const rows = await getAppliedMigrationRows(dbName);
+  return new Set(rows.map((r) => r.filename));
+}
+
+interface AppliedMigrationRow extends Record<string, unknown> {
+  filename: string;
+  checksum?: string | null;
+  applied_at?: number | null;
+  execution_time_ms?: number | null;
+}
+
+async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
   try {
+    await ensureMigrationsTable(dbName);
     const { stdout } = await wrangler([
       'd1',
       'execute',
@@ -2011,14 +2076,12 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
       '--remote',
       '--yes',
       '--command',
-      'SELECT filename FROM authrim_migrations;',
+      'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;',
       '--json',
     ]);
-    const rows = JSON.parse(stdout);
-    const results: Array<{ filename: string }> = rows?.[0]?.results ?? [];
-    return new Set(results.map((r) => r.filename));
+    return parseD1RowsFromWranglerJson<AppliedMigrationRow>(stdout);
   } catch {
-    return new Set();
+    return [];
   }
 }
 
@@ -2056,13 +2119,45 @@ export async function validateD1MigrationVersion(
  */
 export function buildRecordMigrationSql(filename: string, appliedAt = Date.now()): string {
   const escapedFilename = filename.replace(/'/g, "''");
-  return `INSERT INTO authrim_migrations (filename, applied_at)
-SELECT '${escapedFilename}', ${appliedAt}
+  return `INSERT INTO authrim_migrations (filename, checksum, applied_at, execution_time_ms, setup_version, tool_version)
+SELECT '${escapedFilename}', '', ${appliedAt}, NULL, NULL, NULL
 WHERE NOT EXISTS (
   SELECT 1
   FROM authrim_migrations
   WHERE filename = '${escapedFilename}'
 );`;
+}
+
+function escapeSqlString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function buildRecordMigrationWithChecksumSql(input: {
+  filename: string;
+  checksum: string;
+  appliedAt?: number;
+  executionTimeMs?: number | null;
+  setupVersion?: string | null;
+  toolVersion?: string | null;
+}): string {
+  const appliedAt = input.appliedAt ?? Date.now();
+  const executionTimeMs = Number.isFinite(input.executionTimeMs ?? Number.NaN)
+    ? String(Math.max(0, Math.round(input.executionTimeMs ?? 0)))
+    : 'NULL';
+  const setupVersion = input.setupVersion ? `'${escapeSqlString(input.setupVersion)}'` : 'NULL';
+  const toolVersion = input.toolVersion ? `'${escapeSqlString(input.toolVersion)}'` : 'NULL';
+  return `INSERT INTO authrim_migrations (filename, checksum, applied_at, execution_time_ms, setup_version, tool_version)
+SELECT '${escapeSqlString(input.filename)}', '${escapeSqlString(input.checksum)}', ${appliedAt}, ${executionTimeMs}, ${setupVersion}, ${toolVersion}
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM authrim_migrations
+  WHERE filename = '${escapeSqlString(input.filename)}'
+);`;
+}
+
+export function calculateD1MigrationChecksum(sqlFilePath: string): string {
+  const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+  return createHash('sha256').update(renderedSql).digest('hex');
 }
 
 const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
@@ -2073,6 +2168,7 @@ interface ListD1MigrationOptions {
 
 interface RunD1MigrationOptions extends ListD1MigrationOptions {
   logSummaryLimit?: number;
+  onlyFiles?: ReadonlySet<string>;
 }
 
 export function listD1MigrationSqlFiles(
@@ -2117,13 +2213,95 @@ function formatMigrationFileSummary(files: string[], limit = 8): string {
   return remaining > 0 ? `${visible}, +${remaining} more` : visible;
 }
 
-async function recordMigration(dbName: string, filename: string): Promise<void> {
-  const sql = buildRecordMigrationSql(filename);
+async function recordMigration(
+  dbName: string,
+  input: { filename: string; checksum: string; executionTimeMs?: number | null }
+): Promise<void> {
+  const sql = buildRecordMigrationWithChecksumSql(input);
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
     // Non-fatal: tracking failure should not abort the migration run
   }
+}
+
+function countMigrationStates(migrations: D1MigrationFileState[]): D1MigrationDatabaseStatus['counts'] {
+  return {
+    total: migrations.length,
+    applied: migrations.filter((item) => item.status === 'applied').length,
+    pending: migrations.filter((item) => item.status === 'pending').length,
+    changed: migrations.filter((item) => item.status === 'changed').length,
+    orphaned: migrations.filter((item) => item.status === 'orphaned').length,
+  };
+}
+
+export async function getD1MigrationStatus(
+  dbName: string,
+  migrationsDir: string,
+  role: D1MigrationDatabaseRole,
+  options: ListD1MigrationOptions = {}
+): Promise<D1MigrationDatabaseStatus> {
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  if (!existsSync(migrationsDir)) {
+    return {
+      role,
+      dbName,
+      success: false,
+      error: `Migrations directory not found: ${migrationsDir}`,
+      counts: { total: 0, applied: 0, pending: 0, changed: 0, orphaned: 0 },
+      migrations: [],
+    };
+  }
+
+  await ensureMigrationsTable(dbName);
+  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const appliedRows = await getAppliedMigrationRows(dbName);
+  const appliedByFilename = new Map(appliedRows.map((row) => [row.filename, row]));
+  const localFilenames = new Set(sqlFiles);
+  const migrations: D1MigrationFileState[] = [];
+
+  for (const filename of sqlFiles) {
+    const checksum = calculateD1MigrationChecksum(join(migrationsDir, filename));
+    const applied = appliedByFilename.get(filename);
+    const appliedChecksum = applied?.checksum ?? null;
+    const status: D1MigrationFileStatus = !applied
+      ? 'pending'
+      : appliedChecksum === checksum
+        ? 'applied'
+        : 'changed';
+    migrations.push({
+      filename,
+      status,
+      checksum,
+      appliedChecksum,
+      appliedAt: applied?.applied_at ?? null,
+      executionTimeMs: applied?.execution_time_ms ?? null,
+    });
+  }
+
+  for (const applied of appliedRows) {
+    if (!localFilenames.has(applied.filename)) {
+      migrations.push({
+        filename: applied.filename,
+        status: 'orphaned',
+        appliedChecksum: applied.checksum ?? null,
+        appliedAt: applied.applied_at ?? null,
+        executionTimeMs: applied.execution_time_ms ?? null,
+      });
+    }
+  }
+
+  migrations.sort((a, b) => a.filename.localeCompare(b.filename));
+
+  return {
+    role,
+    dbName,
+    success: true,
+    counts: countMigrationStates(migrations),
+    migrations,
+  };
 }
 
 /**
@@ -2150,18 +2328,37 @@ export async function runD1Migrations(
     };
   }
 
-  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const sqlFiles = options.onlyFiles
+    ? allSqlFiles.filter((file) => options.onlyFiles?.has(file))
+    : allSqlFiles;
 
-  if (sqlFiles.length === 0) {
+  if (allSqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
     return { success: true, appliedCount: 0, skippedCount: 0 };
   }
 
-  onProgress?.(`  Found ${sqlFiles.length} migration files`);
+  onProgress?.(`  Found ${allSqlFiles.length} migration files`);
 
   // Ensure tracking table exists; if it fails we continue without tracking
   await ensureMigrationsTable(dbName, onProgress);
-  const applied = await getAppliedMigrations(dbName);
+  const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', options);
+  const changedFiles = status.migrations
+    .filter((item) => item.status === 'changed')
+    .map((item) => item.filename);
+  if (changedFiles.length > 0) {
+    return {
+      success: false,
+      appliedCount: 0,
+      skippedCount: status.counts.applied,
+      error:
+        'Applied migration file checksum mismatch. Create a new migration instead of modifying applied files: ' +
+        formatMigrationFileSummary(changedFiles),
+    };
+  }
+  const applied = new Set(
+    status.migrations.filter((item) => item.status === 'applied').map((item) => item.filename)
+  );
   onProgress?.(`  ${applied.size} migration(s) already recorded as applied`);
 
   let appliedCount = 0;
@@ -2176,7 +2373,10 @@ export async function runD1Migrations(
       continue;
     }
 
-    const result = await executeD1Migration(dbName, join(migrationsDir, sqlFile), onProgress);
+    const sqlFilePath = join(migrationsDir, sqlFile);
+    const checksum = calculateD1MigrationChecksum(sqlFilePath);
+    const startedAt = Date.now();
+    const result = await executeD1Migration(dbName, sqlFilePath, onProgress);
     if (!result.success) {
       return {
         success: false,
@@ -2186,7 +2386,11 @@ export async function runD1Migrations(
       };
     }
 
-    await recordMigration(dbName, sqlFile);
+    await recordMigration(dbName, {
+      filename: sqlFile,
+      checksum,
+      executionTimeMs: Date.now() - startedAt,
+    });
     appliedCount++;
   }
 
@@ -3378,6 +3582,110 @@ export async function runMigrationsForEnvironment(
     },
     pii: piiResult,
     admin: adminResult,
+  };
+}
+
+async function resolveMigrationRootOrError(
+  rootDir: string,
+  onProgress?: (message: string) => void
+): Promise<{ success: true; migrationsRoot: string } | { success: false; error: string }> {
+  const migrationSearch = await findMigrationsRoot(rootDir, onProgress);
+  if (!migrationSearch.path) {
+    return {
+      success: false,
+      error: `Migrations directory not found. Searched:\n${migrationSearch.searchPaths.map((p) => `    - ${p}`).join('\n')}`,
+    };
+  }
+  return { success: true, migrationsRoot: migrationSearch.path };
+}
+
+export async function getD1MigrationStatusForEnvironment(
+  env: string,
+  rootDir: string,
+  onProgress?: (message: string) => void
+): Promise<D1MigrationEnvironmentStatus> {
+  const { join } = await import('node:path');
+  const root = await resolveMigrationRootOrError(rootDir, onProgress);
+  if (!root.success) {
+    return { env, success: false, databases: [] };
+  }
+
+  const databases = await Promise.all([
+    getD1MigrationStatus(getD1DatabaseName(env, 'core-db'), root.migrationsRoot, 'core', {
+      excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+    }),
+    getD1MigrationStatus(getD1DatabaseName(env, 'pii-db'), join(root.migrationsRoot, 'pii'), 'pii'),
+    getD1MigrationStatus(
+      getD1DatabaseName(env, 'admin-db'),
+      join(root.migrationsRoot, 'admin'),
+      'admin'
+    ),
+  ]);
+
+  return {
+    env,
+    success: databases.every((database) => database.success),
+    databases,
+  };
+}
+
+export async function runD1MigrationsForEnvironmentSelection(input: {
+  env: string;
+  rootDir: string;
+  role?: D1MigrationDatabaseRole;
+  filenames?: string[];
+  onProgress?: (message: string) => void;
+  config?: MigrationProfileConfig;
+}): Promise<{
+  success: boolean;
+  core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  pii?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  admin?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  error?: string;
+}> {
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const onlyFiles = input.filenames?.length ? new Set(input.filenames) : undefined;
+
+  if (!input.role && !onlyFiles) {
+    return runMigrationsForEnvironment(input.env, input.rootDir, input.onProgress, input.config);
+  }
+
+  const root = await resolveMigrationRootOrError(input.rootDir, input.onProgress);
+  if (!root.success) {
+    return { success: false, error: root.error };
+  }
+
+  const roles: D1MigrationDatabaseRole[] = input.role ? [input.role] : ['core', 'pii', 'admin'];
+  const results: {
+    core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+    pii?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+    admin?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  } = {};
+
+  for (const role of roles) {
+    const dbName = getD1DatabaseName(input.env, `${role}-db`);
+    const migrationsDir =
+      role === 'core' ? root.migrationsRoot : join(root.migrationsRoot, role);
+    const options: RunD1MigrationOptions = {
+      onlyFiles,
+      ...(role === 'core'
+        ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS }
+        : {}),
+    };
+
+    if (!existsSync(migrationsDir)) {
+      results[role] = { success: true, appliedCount: 0, skippedCount: 0 };
+      continue;
+    }
+
+    input.onProgress?.(`📜 Running ${role} migrations for ${dbName}...`);
+    results[role] = await runD1Migrations(dbName, migrationsDir, input.onProgress, options);
+  }
+
+  return {
+    success: Object.values(results).every((result) => result?.success),
+    ...results,
   };
 }
 

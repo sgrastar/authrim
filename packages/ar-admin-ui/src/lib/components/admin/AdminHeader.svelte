@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { adminAuthAPI } from '$lib/api/admin-auth';
+	import AdminBreadcrumbs from '$lib/components/admin/AdminBreadcrumbs.svelte';
+	import ThemeSwitcher from '$lib/components/admin/ThemeSwitcher.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
-	import { themeStore } from '$lib/stores/theme.svelte';
-	import { getLocale, LL } from '$i18n/i18n-svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Breadcrumb {
 		label: string;
@@ -20,7 +21,7 @@
 		userEmail?: string;
 		userName?: string;
 		userPicture?: string | null;
-		lastLoginAt?: number | null;
+		userId?: string;
 		hideTenantSelector?: boolean;
 	}
 
@@ -33,12 +34,13 @@
 		userEmail,
 		userName,
 		userPicture,
-		lastLoginAt,
+		userId,
 		hideTenantSelector = false
 	}: Props = $props();
 
 	// User dropdown state
 	let showUserMenu = $state(false);
+	let userMenuRoot: HTMLDivElement | undefined = $state();
 
 	function toggleUserMenu() {
 		showUserMenu = !showUserMenu;
@@ -48,20 +50,15 @@
 		showUserMenu = false;
 	}
 
-	function formatLastLogin(timestamp: number | null | undefined): string {
-		if (!timestamp) return $LL.common_never();
-		const date = new Date(timestamp);
-		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
-		const diffMins = Math.floor(diffMs / (1000 * 60));
-		const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+	function handleWindowPointerDown(event: PointerEvent) {
+		if (!showUserMenu) return;
+		const target = event.target;
+		if (target instanceof Node && userMenuRoot?.contains(target)) return;
+		closeUserMenu();
+	}
 
-		if (diffMins < 1) return $LL.common_just_now();
-		if (diffMins < 60) return $LL.common_minutes_ago({ count: diffMins });
-		if (diffHours < 24) return $LL.common_hours_ago({ count: diffHours });
-		if (diffDays < 7) return $LL.common_days_ago({ count: diffDays });
-		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') closeUserMenu();
 	}
 
 	async function handleLogout() {
@@ -72,7 +69,14 @@
 		const select = event.target as HTMLSelectElement;
 		onTenantChange?.(select.value);
 	}
+
+	const userDisplayName = $derived(
+		userName?.trim() || userEmail?.trim() || $LL.admin_header_admin_fallback()
+	);
+	const accountSettingsHref = '/admin/account-settings';
 </script>
+
+<svelte:window onpointerdown={handleWindowPointerDown} onkeydown={handleWindowKeydown} />
 
 <header class="header">
 	<div class="header-left">
@@ -85,32 +89,7 @@
 		</button>
 
 		{#if breadcrumbs.length > 0}
-			<div
-				class="hierarchy-breadcrumb"
-				role="navigation"
-				aria-label={$LL.admin_header_breadcrumb()}
-			>
-				{#each breadcrumbs as crumb, i (crumb.label)}
-					{#if i > 0}
-						<span class="hierarchy-sep" aria-hidden="true">/</span>
-					{/if}
-					{#if crumb.href}
-						<a href={crumb.href} class="hierarchy-item" data-level={crumb.level || 'tenant'}>
-							{#if crumb.icon}
-								<i class={crumb.icon}></i>
-							{/if}
-							{crumb.label}
-						</a>
-					{:else}
-						<span class="hierarchy-item current" data-level={crumb.level || 'tenant'}>
-							{#if crumb.icon}
-								<i class={crumb.icon}></i>
-							{/if}
-							{crumb.label}
-						</span>
-					{/if}
-				{/each}
-			</div>
+			<AdminBreadcrumbs items={breadcrumbs} />
 		{/if}
 	</div>
 
@@ -131,65 +110,20 @@
 		{/if}
 
 		<!-- User Info -->
-		<div class="header-user">
+		<div class="header-user" bind:this={userMenuRoot}>
 			<button class="user-button" onclick={toggleUserMenu} aria-expanded={showUserMenu}>
 				<Avatar email={userEmail} name={userName} picture={userPicture} size="sm" />
 				<div class="user-info">
-					<span class="user-email">{userEmail || $LL.admin_header_admin_fallback()}</span>
-					{#if lastLoginAt}
-						<span class="user-last-login">
-							{$LL.admin_header_last_login({ time: formatLastLogin(lastLoginAt) })}
-						</span>
-					{/if}
+					<span class="user-email">{userDisplayName}</span>
 				</div>
 				<i class="i-ph-caret-down user-caret" class:open={showUserMenu}></i>
 			</button>
 
 			{#if showUserMenu}
 				<div class="user-menu">
-					<div class="user-menu-header">
-						<Avatar email={userEmail} name={userName} picture={userPicture} size="lg" />
-						<div class="user-menu-info">
-							<span class="user-menu-email">{userEmail || $LL.admin_header_admin_fallback()}</span>
-							{#if lastLoginAt}
-								<span class="user-menu-last-login">
-									{$LL.admin_header_last_login({
-										time: new Date(lastLoginAt).toLocaleString(
-											getLocale() === 'ja' ? 'ja-JP' : 'en-US'
-										)
-									})}
-								</span>
-							{/if}
-						</div>
-					</div>
+					<ThemeSwitcher variant="menu" />
 					<div class="user-menu-divider"></div>
-					<!-- Theme Toggle -->
-					<div class="theme-toggle-row">
-						<span class="theme-toggle-label">
-							<i class={themeStore.isLight ? 'i-ph-sun' : 'i-ph-moon'}></i>
-							{$LL.admin_header_theme()}
-						</span>
-						<div class="theme-toggle-buttons">
-							<button
-								class="theme-btn"
-								class:active={themeStore.isLight}
-								onclick={() => themeStore.setMode('light')}
-								title={$LL.admin_header_light_mode()}
-							>
-								<i class="i-ph-sun"></i>
-							</button>
-							<button
-								class="theme-btn"
-								class:active={themeStore.isDark}
-								onclick={() => themeStore.setMode('dark')}
-								title={$LL.admin_header_dark_mode()}
-							>
-								<i class="i-ph-moon"></i>
-							</button>
-						</div>
-					</div>
-					<div class="user-menu-divider"></div>
-					<a href="/admin/account-settings" class="user-menu-item" onclick={closeUserMenu}>
+					<a href={accountSettingsHref} class="user-menu-item" onclick={closeUserMenu}>
 						<i class="i-ph-user-circle"></i>
 						{$LL.admin_header_account_settings()}
 					</a>
@@ -210,18 +144,21 @@
 
 <style>
 	.header {
-		position: relative;
+		position: sticky;
+		top: 0;
 		z-index: var(--z-sticky);
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin-bottom: 32px;
-		padding: 16px 24px;
-		background: var(--bg-glass);
-		backdrop-filter: var(--blur-md);
-		-webkit-backdrop-filter: var(--blur-md);
-		border-radius: var(--radius-lg);
-		border: 1px solid var(--border-glass);
+		min-height: var(--header-height);
+		padding: var(--header-padding, 14px 32px);
+		background: var(--header-bg, var(--color-bg-page));
+		backdrop-filter: var(--header-backdrop, none);
+		-webkit-backdrop-filter: var(--header-backdrop, none);
+		border-bottom: var(--header-border, 1px solid var(--color-border));
+		border-radius: var(--header-radius, 0);
+		box-shadow: var(--header-shadow, none);
+		box-sizing: border-box;
 	}
 
 	.header-left {
@@ -243,7 +180,7 @@
 		height: 40px;
 		border: none;
 		background: transparent;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		border-radius: var(--radius-md);
 		align-items: center;
@@ -256,68 +193,15 @@
 		font-size: 24px;
 	}
 
-	/* Breadcrumb */
-	.hierarchy-breadcrumb {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.hierarchy-item {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 12px;
-		border-radius: var(--radius-sm);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		text-decoration: none;
-		transition: all var(--transition-fast);
-	}
-
-	.hierarchy-item :global(i) {
-		width: 14px;
-		height: 14px;
-		font-size: 14px;
-	}
-
-	.hierarchy-item[data-level='system'] {
-		background: var(--system-bg);
-		color: var(--system-color);
-	}
-
-	.hierarchy-item[data-level='tenant'] {
-		background: var(--tenant-bg);
-		color: var(--tenant-color);
-	}
-
-	.hierarchy-item[data-level='client'] {
-		background: var(--client-bg);
-		color: var(--client-color);
-	}
-
-	.hierarchy-item:hover:not(.current) {
-		filter: brightness(0.95);
-	}
-
-	.hierarchy-item.current {
-		font-weight: 600;
-	}
-
-	.hierarchy-sep {
-		color: var(--text-muted);
-		font-size: 0.75rem;
-	}
-
 	/* Tenant selector */
 	.header-tenant-selector {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		padding: 8px 12px;
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		border-radius: var(--radius-md);
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 	}
 
 	.tenant-selector-label {
@@ -325,19 +209,19 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		white-space: nowrap;
 	}
 
 	.tenant-selector-dropdown {
 		padding: 6px 32px 6px 10px;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
-		background-color: var(--bg-card);
+		background-color: var(--color-surface);
 		font-family: var(--font-body);
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		cursor: pointer;
 		transition: all var(--transition-fast);
 		outline: none;
@@ -351,13 +235,13 @@
 
 	.tenant-selector-dropdown:hover,
 	.tenant-selector-dropdown:focus {
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-light);
+		border-color: var(--color-accent);
+		box-shadow: var(--control-focus-shadow, 0 0 0 3px var(--color-accent-muted));
 	}
 
 	.tenant-selector-dropdown option {
-		background-color: var(--bg-card);
-		color: var(--text-primary);
+		background-color: var(--color-surface);
+		color: var(--color-text);
 	}
 
 	/* Header User */
@@ -378,46 +262,28 @@
 	}
 
 	.user-button:hover {
-		background: var(--bg-subtle);
-	}
-
-	.user-avatar {
-		width: 36px;
-		height: 36px;
-		border-radius: var(--radius-full);
-		background: var(--gradient-accent);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: white;
-		font-family: var(--font-display);
-		font-weight: 700;
-		font-size: 0.875rem;
-		flex-shrink: 0;
+		background: var(--color-surface-muted);
 	}
 
 	.user-info {
 		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
+		align-items: center;
+		min-width: 0;
 	}
 
 	.user-email {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
-	}
-
-	.user-last-login {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.user-caret {
 		width: 16px;
 		height: 16px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		transition: transform var(--transition-fast);
 	}
 
@@ -431,61 +297,19 @@
 		top: calc(100% + 8px);
 		right: 0;
 		width: 280px;
-		background: var(--bg-card);
-		border: 1px solid var(--border);
+		background: var(--user-menu-bg, var(--color-surface));
+		backdrop-filter: var(--user-menu-backdrop, var(--header-backdrop, none));
+		-webkit-backdrop-filter: var(--user-menu-backdrop, var(--header-backdrop, none));
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-lg);
 		z-index: 1000;
 		overflow: hidden;
 	}
 
-	.user-menu-header {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 16px;
-		background: var(--bg-subtle);
-	}
-
-	.user-avatar-lg {
-		width: 48px;
-		height: 48px;
-		border-radius: var(--radius-full);
-		background: var(--gradient-accent);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: white;
-		font-family: var(--font-display);
-		font-weight: 700;
-		font-size: 1rem;
-		flex-shrink: 0;
-	}
-
-	.user-menu-info {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		min-width: 0;
-	}
-
-	.user-menu-email {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.user-menu-last-login {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-	}
-
 	.user-menu-divider {
 		height: 1px;
-		background: var(--border);
+		background: var(--color-border);
 	}
 
 	.user-menu-item {
@@ -497,22 +321,22 @@
 		background: transparent;
 		border: none;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		cursor: pointer;
 		transition: background var(--transition-fast);
 		text-decoration: none;
 	}
 
 	.user-menu-item:hover {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 	}
 
 	.user-menu-item.danger {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	.user-menu-item.danger:hover {
-		background: var(--danger-subtle);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 	}
 
 	.user-menu-item :global(i) {
@@ -529,77 +353,18 @@
 		cursor: default;
 	}
 
-	/* Theme Toggle */
-	.theme-toggle-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 10px 16px;
-	}
-
-	.theme-toggle-label {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		font-size: 0.875rem;
-		color: var(--text-primary);
-	}
-
-	.theme-toggle-label :global(i) {
-		width: 18px;
-		height: 18px;
-	}
-
-	.theme-toggle-buttons {
-		display: flex;
-		gap: 4px;
-		background: var(--bg-tertiary);
-		padding: 3px;
-		border-radius: var(--radius-md);
-	}
-
-	.theme-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 28px;
-		border: none;
-		background: transparent;
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.theme-btn:hover {
-		color: var(--text-primary);
-	}
-
-	.theme-btn.active {
-		background: var(--bg-card);
-		color: var(--primary);
-		box-shadow: var(--shadow-sm);
-	}
-
-	.theme-btn :global(i) {
-		width: 16px;
-		height: 16px;
-	}
-
 	/* Responsive */
 	@media (max-width: 768px) {
 		.header {
-			flex-direction: column;
 			gap: 16px;
-			align-items: stretch;
+			align-items: center;
 		}
 
 		.mobile-menu-btn {
 			display: flex;
 		}
 
-		.hierarchy-breadcrumb {
+		:global(.admin-breadcrumbs) {
 			display: none;
 		}
 	}
@@ -611,7 +376,6 @@
 
 		.header {
 			padding: 10px 16px;
-			margin-bottom: 16px;
 		}
 	}
 </style>

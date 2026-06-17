@@ -10,6 +10,7 @@
 
 	import type { SettingSource } from '$lib/api/admin-settings';
 	import type { SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {
 		/** Current value source */
@@ -38,11 +39,10 @@
 		compact = false
 	}: Props = $props();
 
-	// Source display configuration
-	const sourceConfig: Record<SettingSource, { label: string; icon: string; color: string }> = {
-		env: { label: 'Environment', icon: '🔧', color: '#dc2626' },
-		kv: { label: 'KV Store', icon: '💾', color: '#3b82f6' },
-		default: { label: 'Default', icon: '📋', color: '#6b7280' }
+	const sourceIcons: Record<SettingSource, string> = {
+		env: 'i-ph-wrench',
+		kv: 'i-ph-database',
+		default: 'i-ph-clipboard-text'
 	};
 
 	// Format value for display
@@ -59,20 +59,39 @@
 
 	// Get parent scope label
 	function getParentLabel(scope?: SettingScopeLevel): string {
-		if (!scope) return 'Parent';
+		if (!scope) return $LL.admin_inheritance_parent();
 		const labels: Record<SettingScopeLevel, string> = {
-			platform: 'Platform',
-			tenant: 'Tenant',
-			client: 'Client'
+			platform: $LL.admin_settings_scope_platform(),
+			tenant: $LL.admin_settings_scope_tenant(),
+			client: $LL.admin_settings_scope_client()
 		};
 		return labels[scope];
 	}
 
+	function getSourceLabel(settingSource: SettingSource): string {
+		const labels: Record<SettingSource, string> = {
+			env: $LL.admin_inheritance_source_environment(),
+			kv: $LL.admin_inheritance_source_kv(),
+			default: $LL.admin_inheritance_source_default()
+		};
+		return labels[settingSource];
+	}
+
+	function getCompactTitle(): string {
+		if (isOverridden) {
+			return $LL.admin_inheritance_title_overridden({
+				scope: getParentLabel(parentScope),
+				value: formatValue(parentValue)
+			});
+		}
+		if (isInherited) {
+			return $LL.admin_inheritance_title_inherited({ scope: getParentLabel(parentScope) });
+		}
+		return $LL.admin_inheritance_title_source({ source: getSourceLabel(source) });
+	}
+
 	// Check if value is inherited (not locally set)
 	let isInherited = $derived(!isOverridden && parentScope && parentScope !== currentScope);
-
-	// Source info
-	let sourceInfo = $derived(sourceConfig[source]);
 </script>
 
 {#if compact}
@@ -82,20 +101,16 @@
 		class:inherited={isInherited}
 		class:overridden={isOverridden}
 		class:readonly={source === 'env' || !canEdit}
-		title={isOverridden
-			? `Overridden (${getParentLabel(parentScope)}: ${formatValue(parentValue)})`
-			: isInherited
-				? `Inherited from ${getParentLabel(parentScope)}`
-				: `Source: ${sourceInfo.label}`}
+		title={getCompactTitle()}
 	>
 		{#if source === 'env'}
 			<span class="source-badge env">env</span>
-			<span class="lock-icon">🔒</span>
+			<i class="lock-icon i-ph-lock-key" aria-hidden="true"></i>
 		{:else if isInherited}
-			<span class="inherit-icon">↑</span>
+			<i class="inherit-icon i-ph-arrow-up" aria-hidden="true"></i>
 			<span class="inherit-text">{getParentLabel(parentScope)}</span>
 		{:else if isOverridden}
-			<span class="override-icon">✓</span>
+			<i class="override-icon i-ph-check" aria-hidden="true"></i>
 			<span class="source-badge kv">kv</span>
 		{:else}
 			<span class="source-badge {source}">{source}</span>
@@ -113,25 +128,27 @@
 		<div class="primary-row">
 			{#if source === 'env'}
 				<span class="indicator-badge env">
-					<span class="badge-icon">{sourceInfo.icon}</span>
-					<span class="badge-text">Locked by Environment</span>
-					<span class="lock-icon">🔒</span>
+					<i class="badge-icon {sourceIcons[source]}" aria-hidden="true"></i>
+					<span class="badge-text">{$LL.admin_inheritance_locked_by_environment()}</span>
+					<i class="lock-icon i-ph-lock-key" aria-hidden="true"></i>
 				</span>
 			{:else if isInherited}
 				<span class="indicator-badge inherited">
-					<span class="badge-icon">↑</span>
-					<span class="badge-text">Inherited from {getParentLabel(parentScope)}</span>
+					<i class="badge-icon i-ph-arrow-up" aria-hidden="true"></i>
+					<span class="badge-text">
+						{$LL.admin_inheritance_inherited_from({ scope: getParentLabel(parentScope) })}
+					</span>
 				</span>
 			{:else if isOverridden}
 				<span class="indicator-badge overridden">
-					<span class="badge-icon">✓</span>
-					<span class="badge-text">Override</span>
+					<i class="badge-icon i-ph-check" aria-hidden="true"></i>
+					<span class="badge-text">{$LL.admin_inheritance_override()}</span>
 					<span class="source-tag">[kv]</span>
 				</span>
 			{:else}
 				<span class="indicator-badge source-{source}">
-					<span class="badge-icon">{sourceInfo.icon}</span>
-					<span class="badge-text">{sourceInfo.label}</span>
+					<i class="badge-icon {sourceIcons[source]}" aria-hidden="true"></i>
+					<span class="badge-text">{getSourceLabel(source)}</span>
 				</span>
 			{/if}
 		</div>
@@ -154,24 +171,28 @@
 		gap: 4px;
 		font-size: 11px;
 		padding: 2px 6px;
-		border-radius: 4px;
-		background-color: #f3f4f6;
-		color: #6b7280;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.indicator-compact.inherited {
-		background-color: #e0f2fe;
-		color: #0369a1;
+		border-color: color-mix(in srgb, var(--color-info) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface));
+		color: var(--color-info);
 	}
 
 	.indicator-compact.overridden {
-		background-color: #d1fae5;
-		color: #065f46;
+		border-color: color-mix(in srgb, var(--color-success) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+		color: var(--color-success);
 	}
 
 	.indicator-compact.readonly {
-		background-color: #fef3c7;
-		color: #92400e;
+		border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+		color: var(--color-warning);
 	}
 
 	.inherit-icon,
@@ -188,22 +209,22 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		padding: 1px 4px;
-		border-radius: 3px;
+		border-radius: var(--radius-control, 4px);
 	}
 
 	.source-badge.env {
-		background-color: #fecaca;
-		color: #b91c1c;
+		background: color-mix(in srgb, var(--color-danger) 14%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.source-badge.kv {
-		background-color: #bfdbfe;
-		color: #1d4ed8;
+		background: color-mix(in srgb, var(--color-info) 14%, var(--color-surface));
+		color: var(--color-info);
 	}
 
 	.source-badge.default {
-		background-color: #e5e7eb;
-		color: #4b5563;
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.lock-icon {
@@ -227,34 +248,39 @@
 		align-items: center;
 		gap: 6px;
 		padding: 4px 10px;
-		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
 		font-size: 12px;
-		font-weight: 500;
+		font-weight: var(--font-weight-semibold, 600);
 	}
 
 	.indicator-badge.env {
-		background-color: #fef3c7;
-		color: #92400e;
+		border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+		color: var(--color-warning);
 	}
 
 	.indicator-badge.inherited {
-		background-color: #e0f2fe;
-		color: #0369a1;
+		border-color: color-mix(in srgb, var(--color-info) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface));
+		color: var(--color-info);
 	}
 
 	.indicator-badge.overridden {
-		background-color: #d1fae5;
-		color: #065f46;
+		border-color: color-mix(in srgb, var(--color-success) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+		color: var(--color-success);
 	}
 
 	.indicator-badge.source-default {
-		background-color: #f3f4f6;
-		color: #6b7280;
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.indicator-badge.source-kv {
-		background-color: #dbeafe;
-		color: #1d4ed8;
+		border-color: color-mix(in srgb, var(--color-info) 34%, var(--color-border));
+		background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface));
+		color: var(--color-info);
 	}
 
 	.badge-icon {
@@ -276,7 +302,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: 11px;
-		color: #6b7280;
+		color: var(--color-text-muted);
 		padding-left: 20px;
 	}
 
@@ -285,80 +311,10 @@
 	}
 
 	.parent-value-text {
-		font-family: monospace;
-		background-color: #f9fafb;
+		font-family: var(--font-mono, monospace);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 		padding: 2px 6px;
-		border-radius: 3px;
-	}
-
-	/* Dark mode */
-	@media (prefers-color-scheme: dark) {
-		.indicator-compact {
-			background-color: #374151;
-			color: #9ca3af;
-		}
-
-		.indicator-compact.inherited {
-			background-color: rgba(14, 165, 233, 0.2);
-			color: #7dd3fc;
-		}
-
-		.indicator-compact.overridden {
-			background-color: rgba(16, 185, 129, 0.2);
-			color: #6ee7b7;
-		}
-
-		.indicator-compact.readonly {
-			background-color: rgba(251, 191, 36, 0.2);
-			color: #fcd34d;
-		}
-
-		.source-badge.env {
-			background-color: rgba(220, 38, 38, 0.3);
-			color: #fca5a5;
-		}
-
-		.source-badge.kv {
-			background-color: rgba(59, 130, 246, 0.3);
-			color: #93c5fd;
-		}
-
-		.source-badge.default {
-			background-color: rgba(107, 114, 128, 0.3);
-			color: #d1d5db;
-		}
-
-		.indicator-badge.env {
-			background-color: rgba(251, 191, 36, 0.2);
-			color: #fcd34d;
-		}
-
-		.indicator-badge.inherited {
-			background-color: rgba(14, 165, 233, 0.2);
-			color: #7dd3fc;
-		}
-
-		.indicator-badge.overridden {
-			background-color: rgba(16, 185, 129, 0.2);
-			color: #6ee7b7;
-		}
-
-		.indicator-badge.source-default {
-			background-color: #374151;
-			color: #9ca3af;
-		}
-
-		.indicator-badge.source-kv {
-			background-color: rgba(59, 130, 246, 0.2);
-			color: #93c5fd;
-		}
-
-		.parent-value {
-			color: #9ca3af;
-		}
-
-		.parent-value-text {
-			background-color: #374151;
-		}
+		border-radius: var(--radius-control, 4px);
 	}
 </style>

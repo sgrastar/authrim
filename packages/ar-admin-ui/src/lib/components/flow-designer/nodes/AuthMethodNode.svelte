@@ -76,15 +76,15 @@
 <style>
 	.auth-node {
 		position: relative;
-		background: white;
-		border: 1px solid #ededed;
-		border-left: 3px solid #8b5cf6;
-		border-radius: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-left: 3px solid var(--flow-node-color-check-alt);
+		border-radius: var(--flow-node-radius, var(--radius-control, 6px));
 		min-width: 100px;
 	}
 
 	.auth-node.selected {
-		outline: 2px solid #ff4000;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -97,11 +97,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: white;
-		border: 1px solid #e5e7eb;
-		border-radius: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--flow-node-control-radius, var(--radius-xs, 3px));
 		cursor: pointer;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		opacity: 0;
 		transition: opacity 0.15s;
 		z-index: 10;
@@ -112,8 +112,8 @@
 	}
 
 	.config-btn:hover {
-		background: #f3f4f6;
-		color: #374151;
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.node-header {
@@ -123,7 +123,7 @@
 		padding: 5px 8px;
 		font-weight: 500;
 		font-size: 10px;
-		color: #374151;
+		color: var(--color-text);
 	}
 
 	.icon {
@@ -137,11 +137,11 @@
 	.node-body {
 		padding: 4px 10px 6px;
 		font-size: 9px;
-		border-top: 1px solid #f3f4f6;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.config-value {
-		color: #6b7280;
+		color: var(--color-text-muted);
 	}
 
 	.handle-wrapper {
@@ -174,25 +174,25 @@
 		font-size: 7px;
 		font-weight: 600;
 		padding: 1px 3px;
-		border-radius: 2px;
+		border-radius: var(--flow-node-badge-radius, var(--radius-xs, 2px));
 		pointer-events: none;
 	}
 
 	.handle-label.success {
-		background: #dcfce7;
-		color: #166534;
+		background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+		color: var(--color-success);
 		margin-left: 10px;
 	}
 
 	.handle-label.failure {
-		background: #fee2e2;
-		color: #991b1b;
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
 		margin-top: 10px;
 	}
 
 	.handle-label.unavailable {
-		background: #fef3c7;
-		color: #92400e;
+		background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+		color: var(--color-warning);
 		margin-left: 10px;
 	}
 </style>

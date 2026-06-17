@@ -114,6 +114,7 @@ const TOMBSTONE_KEY_PREFIX = 'tombstone:';
  */
 const TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
 const SESSION_STORE_TENANT_CONTEXT_KEY = 'session-store:tenant-context';
+const USER_SESSION_REVOCATION_CACHE_TTL_MS = 1000;
 
 /**
  * Tombstone data interface
@@ -136,6 +137,10 @@ interface Tombstone {
  */
 export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
+  private userSessionRevocationCache: Map<
+    string,
+    { revokedAfterMs: number | null; checkedAtMs: number }
+  > = new Map();
   private cleanupInterval: number | null = null;
   private actorCtx: ActorContext;
   private sessionPersistence: SessionPersistenceAdapter | null = null;
@@ -466,6 +471,39 @@ export class SessionStore extends DurableObject<Env> {
     }
   }
 
+  private async getUserSessionsRevokedAfter(userId: string): Promise<number | null> {
+    const now = Date.now();
+    const cached = this.userSessionRevocationCache.get(userId);
+    if (cached && now - cached.checkedAtMs < USER_SESSION_REVOCATION_CACHE_TTL_MS) {
+      return cached.revokedAfterMs;
+    }
+
+    const persistence = await this.ensureSessionPersistence();
+    if (!persistence) {
+      return null;
+    }
+
+    try {
+      const revokedAfterMs = await persistence.getUserSessionsRevokedAfter(userId);
+      this.userSessionRevocationCache.set(userId, { revokedAfterMs, checkedAtMs: now });
+      return revokedAfterMs;
+    } catch (error) {
+      log.error('Session revocation epoch lookup error', { userId }, error as Error);
+      return null;
+    }
+  }
+
+  private async isRevokedByUserEpoch(session: Session): Promise<boolean> {
+    const revokedAfterMs = await this.getUserSessionsRevokedAfter(session.userId);
+    return revokedAfterMs !== null && session.createdAt <= revokedAfterMs;
+  }
+
+  private async dropRevokedSession(session: Session): Promise<void> {
+    this.sessionCache.delete(session.id);
+    await this.actorCtx.storage.delete(this.buildSessionKey(session.id));
+    await this.createTombstone(session.id);
+  }
+
   /**
    * Save session to cold persistence
    * Uses retry logic with exponential backoff for reliability
@@ -514,6 +552,10 @@ export class SessionStore extends DurableObject<Env> {
     // 1. Check in-memory cache (hot)
     let session = this.sessionCache.get(sessionId);
     if (session) {
+      if (await this.isRevokedByUserEpoch(session)) {
+        await this.dropRevokedSession(session);
+        return null;
+      }
       if (!this.isExpired(session)) {
         return session;
       }
@@ -526,6 +568,10 @@ export class SessionStore extends DurableObject<Env> {
     // 2. Check Durable Storage
     const storedSession = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
     if (storedSession) {
+      if (await this.isRevokedByUserEpoch(storedSession)) {
+        await this.dropRevokedSession(storedSession);
+        return null;
+      }
       if (!this.isExpired(storedSession)) {
         // Promote to cache
         this.sessionCache.set(sessionId, storedSession);
@@ -544,6 +590,10 @@ export class SessionStore extends DurableObject<Env> {
       ]);
 
       if (persistedSession && !this.isExpired(persistedSession)) {
+        if (await this.isRevokedByUserEpoch(persistedSession)) {
+          await this.dropRevokedSession(persistedSession);
+          return null;
+        }
         // Promote to cache and storage
         this.sessionCache.set(sessionId, persistedSession);
         await this.actorCtx.storage.put(this.buildSessionKey(sessionId), persistedSession);

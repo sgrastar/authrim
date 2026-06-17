@@ -3,6 +3,13 @@ export type MappingRisk = 'low' | 'medium' | 'high';
 export type NodeRole = 'source' | 'transform' | 'target' | 'destination';
 export type TransformOperation =
 	| 'copy'
+	| 'as_array'
+	| 'split'
+	| 'join'
+	| 'first'
+	| 'oidc_pairwise_sub'
+	| 'saml_edu_person_targeted_id'
+	| 'affix_text'
 	| 'concat'
 	| 'fallback'
 	| 'normalize'
@@ -44,7 +51,7 @@ export interface MappingNode {
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
 	transformOperation?: TransformOperation;
-	transformParameters?: Record<string, string>;
+	transformParameters?: Record<string, string | boolean>;
 	layoutPosition?: {
 		x: number;
 		y: number;

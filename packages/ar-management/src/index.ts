@@ -648,6 +648,14 @@ import {
   adminSamlReleasePreviewHandler,
 } from './identity-mapping-preview';
 import {
+  adminPersistentIdentifierProfileCreateHandler,
+  adminPersistentIdentifierProfileDeleteHandler,
+  adminPersistentIdentifierProfileGetHandler,
+  adminPersistentIdentifierProfilesListHandler,
+  adminPersistentIdentifierProfileUpdateHandler,
+  adminPersistentIdentifierPreviewHandler,
+} from './persistent-identifier-profiles';
+import {
   adminIdentityMappingCatalogCreateHandler,
   adminIdentityMappingCatalogsListHandler,
   adminIdentityMappingExternalSchemaImportHandler,
@@ -2271,6 +2279,36 @@ app.post(
   '/api/admin/field-mapping/preview/oidc',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcReleasePreviewHandler
+);
+app.get(
+  '/api/admin/field-mapping/persistent-identifier-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierProfilesListHandler
+);
+app.get(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierProfileGetHandler
+);
+app.post(
+  '/api/admin/field-mapping/persistent-identifier-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileCreateHandler
+);
+app.put(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileUpdateHandler
+);
+app.delete(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileDeleteHandler
+);
+app.post(
+  '/api/admin/field-mapping/persistent-identifier-profiles/preview',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierPreviewHandler
 );
 app.get(
   '/api/admin/field-mapping/catalogs',

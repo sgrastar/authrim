@@ -91,7 +91,7 @@ import {
   parseTrustedIssuers,
   getIDTokenRBACClaims,
   getAccessTokenRBACClaims,
-  evaluatePermissionsForScope,
+  evaluatePermissionEmbeddingForScope,
   isPolicyEmbeddingEnabled,
   isTokenRevoked,
   timingSafeEqual,
@@ -582,8 +582,10 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
     const authCtx = createAuthContextFromHono(c, tenantId);
     const mapped = await applyOIDCIdentityMapping({
       adapter: authCtx.coreAdapter,
+      env: c.env,
       tenantId,
       clientId,
+      sectorIdentifier: clientMetadata.sector_identifier_uri,
       selector: clientMetadata.identity_mapping,
       claims,
     });
@@ -815,6 +817,12 @@ async function isDPoPRequiredForTokenRequest(
 // ===== Module-level Logger for Helper Functions =====
 // Used by functions that don't have access to Hono Context
 const moduleLogger = createLogger().module('TOKEN');
+
+type AccessTokenScopedPermission = {
+  permission: string;
+  scope_type: 'org' | 'resource';
+  scope_target: string;
+};
 
 // ===== Key Caching for Performance Optimization =====
 // Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
@@ -1822,15 +1830,18 @@ async function handleAuthorizationCodeGrant(
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
+  let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && authCodeData.scope) {
-      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+      const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         authCodeData.sub,
         authCodeData.scope,
         { cache: c.env.REBAC_CACHE, tenantId }
       );
+      policyEmbeddingPermissions = policyEmbedding.permissions;
+      policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
@@ -1950,6 +1961,7 @@ async function handleAuthorizationCodeGrant(
     authrim_org_type?: string;
     // Phase 2 Policy Embedding (type-level permissions)
     authrim_permissions?: string[];
+    authrim_scoped_permissions?: AccessTokenScopedPermission[];
     // Phase 8.2: ID-level Resource Permissions
     authrim_resource_permissions?: string[];
     // Phase 8.2: Custom Claims (dynamic via [key: string]: unknown)
@@ -1971,6 +1983,9 @@ async function handleAuthorizationCodeGrant(
   // Phase 2 Policy Embedding: Add evaluated permissions
   if (policyEmbeddingPermissions.length > 0) {
     accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+  }
+  if (policyEmbeddingScopedPermissions.length > 0) {
+    accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
   }
 
   // Phase 8.2: Add ID-level resource permissions
@@ -2943,15 +2958,18 @@ async function handleRefreshTokenGrant(
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
+  let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && grantedScope) {
-      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+      const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         refreshTokenData.sub,
         grantedScope,
         { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
+      policyEmbeddingPermissions = policyEmbedding.permissions;
+      policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
@@ -3053,6 +3071,7 @@ async function handleRefreshTokenGrant(
       client_id: string;
       cnf?: { jkt: string };
       authrim_permissions?: string[];
+      authrim_scoped_permissions?: AccessTokenScopedPermission[];
       [key: string]: unknown;
     } = {
       iss: getRequestIssuer(c),
@@ -3069,6 +3088,9 @@ async function handleRefreshTokenGrant(
     // Phase 2 Policy Embedding: Add evaluated permissions
     if (policyEmbeddingPermissions.length > 0) {
       accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+    }
+    if (policyEmbeddingScopedPermissions.length > 0) {
+      accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
     }
 
     // Add DPoP confirmation (cnf) claim if DPoP is used
@@ -3860,15 +3882,18 @@ async function handleDeviceCodeGrant(
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
+  let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
-      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+      const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
         { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
+      policyEmbeddingPermissions = policyEmbedding.permissions;
+      policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
@@ -3935,6 +3960,7 @@ async function handleDeviceCodeGrant(
     scope: string | undefined;
     client_id: string;
     authrim_permissions?: string[];
+    authrim_scoped_permissions?: AccessTokenScopedPermission[];
     [key: string]: unknown;
   } = {
     iss: getRequestIssuer(c),
@@ -3950,6 +3976,9 @@ async function handleDeviceCodeGrant(
   // Phase 2 Policy Embedding: Add evaluated permissions
   if (policyEmbeddingPermissions.length > 0) {
     accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+  }
+  if (policyEmbeddingScopedPermissions.length > 0) {
+    accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
   }
 
   let accessToken: string;
@@ -4449,15 +4478,18 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
+  let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
-      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+      const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
         metadata.sub,
         metadata.scope,
         { cache: c.env.REBAC_CACHE, tenantId: authCtx.tenantId }
       );
+      policyEmbeddingPermissions = policyEmbedding.permissions;
+      policyEmbeddingScopedPermissions = policyEmbedding.scopedPermissions;
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
@@ -4473,6 +4505,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     client_id: string;
     cnf?: { jkt: string };
     authrim_permissions?: string[];
+    authrim_scoped_permissions?: AccessTokenScopedPermission[];
     [key: string]: unknown;
   } = {
     iss: getRequestIssuer(c),
@@ -4488,6 +4521,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   // Phase 2 Policy Embedding: Add evaluated permissions
   if (policyEmbeddingPermissions.length > 0) {
     accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+  }
+  if (policyEmbeddingScopedPermissions.length > 0) {
+    accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
   }
 
   // Generate region-aware JTI for token revocation sharding
@@ -6434,8 +6470,10 @@ async function handleNativeSSOTokenExchange(
   try {
     const mapped = await applyOIDCIdentityMapping({
       adapter: authCtx.coreAdapter,
+      env: c.env,
       tenantId,
       clientId,
+      sectorIdentifier: clientMetadata.sector_identifier_uri,
       selector: clientMetadata.identity_mapping,
       claims: newIdTokenClaims,
     });

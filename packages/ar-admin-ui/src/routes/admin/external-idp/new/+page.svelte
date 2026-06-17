@@ -7,6 +7,7 @@
 		type ProviderTemplate,
 		PROVIDER_TEMPLATES
 	} from '$lib/api/admin-external-providers';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { ToggleSwitch } from '$lib/components';
 
@@ -267,10 +268,12 @@
 	<title>{$LL.admin_external_idp_new_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/external-idp" class="back-link">← {$LL.admin_external_idp_back()}</a>
+{#snippet pageActions()}
+	<a href="/admin/external-idp" class="btn btn-secondary">{$LL.admin_external_idp_back()}</a>
+{/snippet}
 
-	<h1 class="page-title">{$LL.admin_external_idp_new_title()}</h1>
+<AdminPageShell>
+	<AdminPageHeader title={$LL.admin_external_idp_new_title()} actions={pageActions} />
 
 	<form
 		onsubmit={(e) => {
@@ -283,9 +286,8 @@
 		{/if}
 
 		<!-- Template Selection -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_external_idp_template_title()}</h2>
-			<p class="form-hint" style="margin-bottom: 16px;">
+		<AdminSection title={$LL.admin_external_idp_template_title()}>
+			<p class="field-hint field-hint--spaced">
 				{$LL.admin_external_idp_template_desc()}
 			</p>
 
@@ -299,7 +301,7 @@
 						handleTemplateChange();
 					}}
 				>
-					<div class="i-ph-gear h-5 w-5 template-icon"></div>
+					<div class="i-ph-gear template-icon"></div>
 					<div class="template-name">{$LL.admin_external_idp_template_custom()}</div>
 					<div class="template-desc">{$LL.admin_external_idp_template_custom_desc()}</div>
 				</button>
@@ -314,21 +316,21 @@
 							handleTemplateChange();
 						}}
 					>
-						<div class="{template.icon} h-5 w-5 template-icon"></div>
+						<div class="{template.icon} template-icon"></div>
 						<div class="template-name">{template.name}</div>
 						<div class="template-desc">{template.providerType.toUpperCase()}</div>
 					</button>
 				{/each}
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- Basic Information -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_external_idp_basic_information()}</h2>
-
+		<AdminSection title={$LL.admin_external_idp_basic_information()}>
 			<div class="form-grid">
-				<div class="form-group">
-					<label for="name" class="form-label">{$LL.admin_external_idp_name_required()}</label>
+				<div class="admin-field">
+					<label for="name" class="admin-field__label"
+						>{$LL.admin_external_idp_name_required()}</label
+					>
 					<input
 						id="name"
 						type="text"
@@ -336,12 +338,14 @@
 						oninput={handleNameChange}
 						required
 						placeholder={$LL.admin_external_idp_name_placeholder()}
-						class="form-input"
+						class="admin-input"
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="slug" class="form-label">{$LL.admin_external_idp_slug_required()}</label>
+				<div class="admin-field">
+					<label for="slug" class="admin-field__label"
+						>{$LL.admin_external_idp_slug_required()}</label
+					>
 					<input
 						id="slug"
 						type="text"
@@ -349,36 +353,38 @@
 						oninput={handleSlugInput}
 						required
 						placeholder={$LL.admin_external_idp_slug_placeholder()}
-						class="form-input"
+						class="admin-input"
 						class:input-error={slugError}
 					/>
 					{#if slugError}
 						<p class="form-error">{slugError}</p>
 					{:else}
-						<p class="form-hint">{$LL.admin_external_idp_slug_hint()}</p>
+						<p class="field-hint">{$LL.admin_external_idp_slug_hint()}</p>
 					{/if}
 				</div>
 
-				<div class="form-group">
-					<label for="providerType" class="form-label"
+				<div class="admin-field">
+					<label for="providerType" class="admin-field__label"
 						>{$LL.admin_external_idp_provider_type()}</label
 					>
-					<select id="providerType" bind:value={providerType} class="form-select">
+					<select id="providerType" bind:value={providerType} class="admin-select">
 						<option value="oidc">OIDC (OpenID Connect)</option>
 						<option value="oauth2">OAuth 2.0</option>
 					</select>
 				</div>
 
-				<div class="form-group">
-					<label for="priority" class="form-label">{$LL.admin_external_idp_priority()}</label>
-					<input id="priority" type="number" bind:value={priority} min="0" class="form-input" />
+				<div class="admin-field">
+					<label for="priority" class="admin-field__label"
+						>{$LL.admin_external_idp_priority()}</label
+					>
+					<input id="priority" type="number" bind:value={priority} min="0" class="admin-input" />
 				</div>
 			</div>
 
 			<!-- Redirect URL Display -->
 			<div class="redirect-url-section">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label class="form-label">{$LL.admin_external_idp_redirect_url()}</label>
+				<label class="admin-field__label">{$LL.admin_external_idp_redirect_url()}</label>
 				{#if redirectUrl()}
 					<div class="redirect-url-box">
 						<code class="redirect-url-text">{redirectUrl()}</code>
@@ -409,30 +415,28 @@
 						</button>
 					</div>
 				{:else}
-					<p class="form-hint">
+					<p class="field-hint">
 						{$LL.admin_external_idp_redirect_url_hint()}
 					</p>
 				{/if}
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- Enable/Disable Toggle -->
-		<div class="panel">
+		<AdminSection>
 			<ToggleSwitch
 				bind:checked={enabled}
 				label={$LL.admin_external_idp_provider_status()}
 				description={$LL.admin_external_idp_provider_status_desc()}
 			/>
-		</div>
+		</AdminSection>
 
 		<!-- OAuth/OIDC Configuration -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_external_idp_oauth_config()}</h2>
-
+		<AdminSection title={$LL.admin_external_idp_oauth_config()}>
 			<!-- OIDC Discovery -->
 			{#if providerType === 'oidc'}
 				<div class="discovery-section">
-					<label for="discoveryUrl" class="form-label"
+					<label for="discoveryUrl" class="admin-field__label"
 						>{$LL.admin_external_idp_discovery_label()}</label
 					>
 					<div class="discovery-input-row">
@@ -441,7 +445,7 @@
 							type="url"
 							bind:value={discoveryUrl}
 							placeholder={$LL.admin_external_idp_discovery_placeholder()}
-							class="form-input"
+							class="admin-input"
 						/>
 						<button
 							type="button"
@@ -474,7 +478,7 @@
 					{#if discoveryError}
 						<p class="form-error">{discoveryError}</p>
 					{:else}
-						<p class="form-hint">
+						<p class="field-hint">
 							{$LL.admin_external_idp_discovery_hint()}
 						</p>
 					{/if}
@@ -482,8 +486,8 @@
 			{/if}
 
 			<div class="form-grid">
-				<div class="form-group">
-					<label for="clientId" class="form-label"
+				<div class="admin-field">
+					<label for="clientId" class="admin-field__label"
 						>{$LL.admin_external_idp_client_id_required()}</label
 					>
 					<input
@@ -492,12 +496,12 @@
 						bind:value={clientId}
 						required
 						placeholder={$LL.admin_external_idp_client_id_placeholder()}
-						class="form-input"
+						class="admin-input"
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="clientSecret" class="form-label"
+				<div class="admin-field">
+					<label for="clientSecret" class="admin-field__label"
 						>{$LL.admin_external_idp_client_secret_required()}</label
 					>
 					<input
@@ -506,34 +510,36 @@
 						bind:value={clientSecret}
 						required
 						placeholder={$LL.admin_external_idp_client_secret_placeholder()}
-						class="form-input"
+						class="admin-input"
 					/>
 				</div>
 
 				{#if providerType === 'oidc'}
-					<div class="form-group form-group-full">
-						<label for="issuer" class="form-label">{$LL.admin_external_idp_issuer_url()}</label>
+					<div class="admin-field admin-field--full">
+						<label for="issuer" class="admin-field__label"
+							>{$LL.admin_external_idp_issuer_url()}</label
+						>
 						<input
 							id="issuer"
 							type="url"
 							bind:value={issuer}
 							placeholder="https://accounts.google.com"
-							class="form-input"
+							class="admin-input"
 						/>
-						<p class="form-hint">
+						<p class="field-hint">
 							{$LL.admin_external_idp_issuer_hint()}
 						</p>
 					</div>
 				{/if}
 
-				<div class="form-group form-group-full">
-					<label for="scopes" class="form-label">{$LL.admin_external_idp_scopes()}</label>
+				<div class="admin-field admin-field--full">
+					<label for="scopes" class="admin-field__label">{$LL.admin_external_idp_scopes()}</label>
 					<input
 						id="scopes"
 						type="text"
 						bind:value={scopes}
 						placeholder="openid email profile"
-						class="form-input"
+						class="admin-input"
 					/>
 				</div>
 			</div>
@@ -543,9 +549,9 @@
 					<summary class="advanced-details-summary">
 						{$LL.admin_external_idp_manual_endpoints()}
 					</summary>
-					<div class="form-grid" style="margin-top: 12px;">
-						<div class="form-group">
-							<label for="authorizationEndpoint" class="form-label"
+					<div class="form-grid form-grid--nested">
+						<div class="admin-field">
+							<label for="authorizationEndpoint" class="admin-field__label"
 								>{$LL.admin_external_idp_authorization_endpoint()}</label
 							>
 							<input
@@ -553,12 +559,12 @@
 								type="url"
 								bind:value={authorizationEndpoint}
 								placeholder="https://provider.com/oauth/authorize"
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 
-						<div class="form-group">
-							<label for="tokenEndpoint" class="form-label"
+						<div class="admin-field">
+							<label for="tokenEndpoint" class="admin-field__label"
 								>{$LL.admin_external_idp_token_endpoint()}</label
 							>
 							<input
@@ -566,12 +572,12 @@
 								type="url"
 								bind:value={tokenEndpoint}
 								placeholder="https://provider.com/oauth/token"
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 
-						<div class="form-group">
-							<label for="userinfoEndpoint" class="form-label"
+						<div class="admin-field">
+							<label for="userinfoEndpoint" class="admin-field__label"
 								>{$LL.admin_external_idp_userinfo_endpoint()}</label
 							>
 							<input
@@ -579,29 +585,29 @@
 								type="url"
 								bind:value={userinfoEndpoint}
 								placeholder="https://provider.com/oauth/userinfo"
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 
-						<div class="form-group">
-							<label for="jwksUri" class="form-label">{$LL.admin_external_idp_jwks_uri()}</label>
+						<div class="admin-field">
+							<label for="jwksUri" class="admin-field__label"
+								>{$LL.admin_external_idp_jwks_uri()}</label
+							>
 							<input
 								id="jwksUri"
 								type="url"
 								bind:value={jwksUri}
 								placeholder="https://provider.com/.well-known/jwks.json"
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 					</div>
 				</details>
 			{/if}
-		</div>
+		</AdminSection>
 
 		<!-- Behavior Settings -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_external_idp_behavior_settings()}</h2>
-
+		<AdminSection title={$LL.admin_external_idp_behavior_settings()}>
 			<div class="behavior-settings-list">
 				<ToggleSwitch
 					bind:checked={autoLinkEmail}
@@ -627,25 +633,24 @@
 					description={$LL.admin_external_idp_always_fetch_userinfo_desc()}
 				/>
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- UI Customization -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_external_idp_ui_customization()}</h2>
-
+		<AdminSection title={$LL.admin_external_idp_ui_customization()}>
 			<div class="form-grid">
-				<div class="form-group form-group-full">
-					<label for="iconUrl" class="form-label">{$LL.admin_external_idp_icon_url()}</label>
+				<div class="admin-field admin-field--full">
+					<label for="iconUrl" class="admin-field__label">{$LL.admin_external_idp_icon_url()}</label
+					>
 					<input
 						id="iconUrl"
 						type="url"
 						bind:value={iconUrl}
 						placeholder="ex. https://example.com/icon.png"
-						class="form-input"
+						class="admin-input"
 					/>
 				</div>
 
-				<div class="form-group form-group-full">
+				<div class="admin-field admin-field--full">
 					<LoginProviderIconPicker
 						bind:value={iconName}
 						defaultIcon="sign-in"
@@ -654,8 +659,8 @@
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="buttonColor" class="form-label"
+				<div class="admin-field">
+					<label for="buttonColor" class="admin-field__label"
 						>{$LL.admin_external_idp_button_color_light()}</label
 					>
 					<div class="color-picker-row">
@@ -665,13 +670,13 @@
 							type="text"
 							bind:value={buttonColor}
 							placeholder="ex. #4285F4"
-							class="form-input"
+							class="admin-input"
 						/>
 					</div>
 				</div>
 
-				<div class="form-group">
-					<label for="buttonColorDark" class="form-label"
+				<div class="admin-field">
+					<label for="buttonColorDark" class="admin-field__label"
 						>{$LL.admin_external_idp_button_color_dark()}</label
 					>
 					<div class="color-picker-row">
@@ -681,13 +686,15 @@
 							type="text"
 							bind:value={buttonColorDark}
 							placeholder="ex. #8AB4F8"
-							class="form-input"
+							class="admin-input"
 						/>
 					</div>
 				</div>
 
-				<div class="form-group form-group-full">
-					<label for="buttonText" class="form-label">{$LL.admin_external_idp_button_text()}</label>
+				<div class="admin-field admin-field--full">
+					<label for="buttonText" class="admin-field__label"
+						>{$LL.admin_external_idp_button_text()}</label
+					>
 					<input
 						id="buttonText"
 						type="text"
@@ -695,12 +702,12 @@
 						placeholder={name
 							? $LL.admin_external_idp_button_text_named_placeholder({ name })
 							: $LL.admin_external_idp_button_text_placeholder()}
-						class="form-input"
+						class="admin-input"
 					/>
-					<p class="form-hint">{$LL.admin_external_idp_button_text_hint()}</p>
+					<p class="field-hint">{$LL.admin_external_idp_button_text_hint()}</p>
 				</div>
 			</div>
-		</div>
+		</AdminSection>
 
 		<!-- Actions -->
 		<div class="form-actions">
@@ -712,13 +719,126 @@
 			</button>
 		</div>
 	</form>
-</div>
+</AdminPageShell>
 
 <style>
+	form {
+		display: grid;
+		gap: 18px;
+	}
+
+	.form-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 16px;
+	}
+
+	.form-grid--nested {
+		margin-top: 12px;
+	}
+
+	.admin-field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.admin-field--full {
+		grid-column: 1 / -1;
+	}
+
+	.admin-field__label {
+		color: var(--color-text);
+		font-size: 0.84rem;
+		font-weight: 700;
+	}
+
+	.admin-input,
+	.admin-select {
+		width: 100%;
+		min-height: var(--control-height, 40px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.admin-input:focus,
+	.admin-select:focus {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.field-hint {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		line-height: 1.5;
+	}
+
+	.field-hint--spaced {
+		margin-bottom: 16px;
+	}
+
+	.template-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 12px;
+	}
+
+	.template-card {
+		display: grid;
+		gap: 6px;
+		align-content: start;
+		min-height: 112px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-card);
+		background: var(--color-surface);
+		color: var(--color-text);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.template-card:hover,
+	.template-card-selected {
+		border-color: var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
+	}
+
+	.template-icon {
+		width: 20px;
+		height: 20px;
+		color: var(--color-accent);
+	}
+
+	.template-name {
+		font-weight: 700;
+	}
+
+	.template-desc {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+
+	.behavior-settings-list {
+		display: grid;
+		gap: 14px;
+	}
+
+	.form-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 10px;
+		padding-top: 4px;
+	}
+
 	.redirect-url-section {
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.redirect-url-box {
@@ -727,15 +847,15 @@
 		gap: 8px;
 		margin-top: 8px;
 		padding: 10px 12px;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: 6px;
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-card);
 	}
 
 	.redirect-url-text {
 		flex: 1;
 		font-size: 13px;
-		color: var(--text-primary);
+		color: var(--color-text);
 		word-break: break-all;
 	}
 
@@ -744,31 +864,31 @@
 		align-items: center;
 		justify-content: center;
 		padding: 6px;
-		background: var(--bg-input);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text-secondary);
+		background: var(--control-bg, var(--color-surface));
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		transition: all 0.15s ease;
 	}
 
 	.copy-btn:hover {
-		background: var(--primary-light);
-		color: var(--primary);
-		border-color: var(--primary);
+		background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+		color: var(--color-accent);
+		border-color: var(--color-accent);
 	}
 
 	.copy-success {
-		color: #10b981;
+		color: var(--color-success);
 		font-weight: 600;
 	}
 
 	.input-error {
-		border-color: #ef4444 !important;
+		border-color: var(--color-danger) !important;
 	}
 
 	.form-error {
-		color: #ef4444;
+		color: var(--color-danger);
 		font-size: 12px;
 		margin-top: 4px;
 	}
@@ -776,7 +896,7 @@
 	.discovery-section {
 		margin-bottom: 20px;
 		padding-bottom: 20px;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.discovery-input-row {
@@ -785,7 +905,7 @@
 		margin-top: 8px;
 	}
 
-	.discovery-input-row .form-input {
+	.discovery-input-row .admin-input {
 		flex: 1;
 	}
 
@@ -821,9 +941,9 @@
 		width: 40px;
 		height: 38px;
 		padding: 2px;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-input);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
 		cursor: pointer;
 		flex-shrink: 0;
 	}
@@ -837,7 +957,23 @@
 		border-radius: 3px;
 	}
 
-	.color-picker-row .form-input {
+	.color-picker-row .admin-input {
 		flex: 1;
+	}
+
+	@media (max-width: 720px) {
+		.form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.admin-field--full {
+			grid-column: auto;
+		}
+
+		.discovery-input-row,
+		.form-actions {
+			align-items: stretch;
+			flex-direction: column;
+		}
 	}
 </style>

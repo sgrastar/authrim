@@ -105,6 +105,38 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_create_destination: 'Create destination profile',
 	admin_identity_mapping_profiles_no_source: 'No source profiles.',
 	admin_identity_mapping_profiles_no_destination: 'No destination profiles.',
+	admin_identity_mapping_persistent_head_title: 'Persistent Identifiers - Authrim Admin',
+	admin_identity_mapping_persistent_title: 'Persistent Identifiers',
+	admin_identity_mapping_persistent_description:
+		'Manage identifier generation profiles shared by SAML eduPersonTargetedID, SAML persistent NameID, and OIDC pairwise sub.',
+	admin_identity_mapping_persistent_inventory: 'Profile inventory',
+	admin_identity_mapping_persistent_loading: 'Loading persistent identifier profiles.',
+	admin_identity_mapping_persistent_empty:
+		'No persistent identifier profiles have been registered yet.',
+	admin_identity_mapping_persistent_load_failed: 'Failed to load persistent identifier profiles',
+	admin_identity_mapping_persistent_create: 'Create Persistent Identifier',
+	admin_identity_mapping_persistent_usage_empty: 'No usages configured',
+	admin_identity_mapping_persistent_algorithm: 'Algorithm',
+	admin_identity_mapping_persistent_scope: 'Scope',
+	admin_identity_mapping_persistent_audience: 'Audience',
+	admin_identity_mapping_persistent_secret: 'Secret',
+	admin_identity_mapping_persistent_create_title: 'Create Persistent Identifier',
+	admin_identity_mapping_persistent_edit_title: 'Edit Persistent Identifier',
+	admin_identity_mapping_persistent_display_name: 'Display name',
+	admin_identity_mapping_persistent_profile_key: 'Profile key',
+	admin_identity_mapping_persistent_description_label: 'Description',
+	admin_identity_mapping_persistent_mode: 'Mode',
+	admin_identity_mapping_persistent_protocol_scope: 'Protocol scope',
+	admin_identity_mapping_persistent_usage: 'Usage',
+	admin_identity_mapping_persistent_issuer: 'Issuer entity ID',
+	admin_identity_mapping_persistent_secret_ref: 'Secret ref',
+	admin_identity_mapping_persistent_save: 'Save',
+	admin_identity_mapping_persistent_saving: 'Saving...',
+	admin_identity_mapping_persistent_delete: 'Delete',
+	admin_identity_mapping_persistent_saved: 'Persistent identifier profile saved.',
+	admin_identity_mapping_persistent_save_failed: 'Failed to save persistent identifier profile',
+	admin_identity_mapping_persistent_delete_failed: 'Failed to delete persistent identifier profile',
+	admin_identity_mapping_persistent_delete_confirm: 'Delete this persistent identifier profile?',
 
 	admin_identity_mapping_profile_edit_head_title: 'Edit Profile - Authrim Admin',
 	admin_identity_mapping_policies_head_title: 'Field Mapping Sets - Authrim Admin',
@@ -491,12 +523,16 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_select_active_policy: 'Select an active field mapping set',
 	admin_identity_mapping_flow_no_profiles_registered:
 		'No source or destination profiles registered',
+	admin_identity_mapping_flow_schema_not_configured: 'Profile schema is not configured',
 	admin_identity_mapping_flow_no_active_policies_desc:
 		'Save, publish, compile, and activate a field mapping set before using this overview.',
 	admin_identity_mapping_flow_select_active_policy_desc:
 		'Choose a Source Field Mapping Set and/or Destination Field Mapping Set to render its nodes and edges.',
 	admin_identity_mapping_flow_no_profiles_registered_desc:
 		'Register source and destination profiles, or add a field catalog, to populate this graph.',
+	admin_identity_mapping_flow_schema_not_configured_desc:
+		'Profiles are registered, but no schema is available for the Field Mapping Set editor yet. Configure the schema in Source/Destination Profiles first.',
+	admin_identity_mapping_flow_schema_not_configured_action: 'Open Source/Destination Profiles',
 	admin_identity_mapping_flow_source_policy: 'Source Field Mapping Set',
 	admin_identity_mapping_flow_destination_policy: 'Destination Field Mapping Set',
 	admin_identity_mapping_flow_select_source_policy: 'Select Source Field Mapping Set',
@@ -561,6 +597,26 @@ const adminIdentityMapping = {
 		'Auto-mapped {count:number} connections. Review and compile the draft when ready.',
 	admin_identity_mapping_flow_transform_copy_label: 'Copy',
 	admin_identity_mapping_flow_transform_copy_desc: 'Pass the first input value through unchanged.',
+	admin_identity_mapping_flow_transform_as_array_label: 'As array',
+	admin_identity_mapping_flow_transform_as_array_desc:
+		'Wrap one input value as a multi-value array.',
+	admin_identity_mapping_flow_transform_split_label: 'Split',
+	admin_identity_mapping_flow_transform_split_desc:
+		'Split one text value into a multi-value array.',
+	admin_identity_mapping_flow_transform_join_label: 'Join',
+	admin_identity_mapping_flow_transform_join_desc: 'Join a multi-value array into one text value.',
+	admin_identity_mapping_flow_transform_first_label: 'First value',
+	admin_identity_mapping_flow_transform_first_desc: 'Use the first value from a multi-value array.',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: 'OIDC pairwise sub',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc:
+		'Use the current OIDC client pairwise subject identifier.',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label:
+		'SAML eduPersonTargetedID',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc:
+		'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
+	admin_identity_mapping_flow_transform_affix_text_label: 'Add prefix/suffix',
+	admin_identity_mapping_flow_transform_affix_text_desc:
+		'Add fixed text before or after the input value.',
 	admin_identity_mapping_flow_transform_trim_label: 'Trim',
 	admin_identity_mapping_flow_transform_trim_desc:
 		'Remove leading and trailing whitespace from the first input value.',
@@ -592,6 +648,14 @@ const adminIdentityMapping = {
 		'Read a JSON path and output an integer or null.',
 	admin_identity_mapping_flow_transform_param_mode: 'Mode',
 	admin_identity_mapping_flow_transform_param_delimiter: 'Delimiter',
+	admin_identity_mapping_flow_transform_param_trim_items: 'Trim items',
+	admin_identity_mapping_flow_transform_param_omit_empty: 'Omit empty values',
+	admin_identity_mapping_flow_transform_param_unique: 'Remove duplicates',
+	admin_identity_mapping_flow_transform_param_persistent_identifier_profile:
+		'Persistent Identifier Profile',
+	admin_identity_mapping_flow_transform_param_prefix: 'Prefix',
+	admin_identity_mapping_flow_transform_param_suffix: 'Suffix',
+	admin_identity_mapping_flow_transform_tenant_default_profile: 'Tenant default',
 	admin_identity_mapping_flow_transform_param_true_values: 'True values',
 	admin_identity_mapping_flow_transform_param_false_values: 'False values',
 	admin_identity_mapping_flow_transform_param_null_values: 'Null values',

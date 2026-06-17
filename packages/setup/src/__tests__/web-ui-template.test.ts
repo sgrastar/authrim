@@ -311,6 +311,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('function runThemeTransition(newTheme)');
     expect(html).toContain('window.requestAnimationFrame(applyTheme)');
     expect(html).toContain('themeTransitionCleanupTimer = window.setTimeout');
+    expect(html).toContain('class="twocol ui-update-grid"');
+    expect(html).toContain('class="bigtable ui-update-card"');
     expect(html).toContain("'theme-transition-to-dark'");
     expect(html).toContain("'theme-transition-to-light'");
     expect(SETUP_WEB_UI_STYLE).toContain('--paper: #f9f8f3');

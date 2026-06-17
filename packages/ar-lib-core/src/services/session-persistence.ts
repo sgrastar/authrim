@@ -16,6 +16,8 @@ export interface SessionPersistenceAdapter {
   deleteSession(sessionId: string): Promise<void>;
   batchDeleteSessions(sessionIds: string[]): Promise<void>;
   listUserSessions(userId: string, nowMs: number): Promise<SessionPersistenceRecord[]>;
+  getUserSessionsRevokedAfter(userId: string): Promise<number | null>;
+  setUserSessionsRevokedAfter(userId: string, revokedAfterMs: number): Promise<void>;
   updateSessionUserId(sessionId: string, newUserId: string): Promise<void>;
   getType(): string;
 }
@@ -124,6 +126,37 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
       expiresAt: row.expires_at * 1000,
       createdAt: row.created_at * 1000,
     }));
+  }
+
+  async getUserSessionsRevokedAfter(userId: string): Promise<number | null> {
+    const row = await this.db.queryOne<{ revoked_after_ms: number }>(
+      `SELECT revoked_after_ms
+       FROM session_revocation_epochs
+       WHERE tenant_id = ? AND user_id = ?`,
+      [this.tenantId, userId]
+    );
+
+    return row ? row.revoked_after_ms : null;
+  }
+
+  async setUserSessionsRevokedAfter(userId: string, revokedAfterMs: number): Promise<void> {
+    const updatedAt = Math.floor(Date.now() / 1000);
+    const updated = await this.db.execute(
+      `UPDATE session_revocation_epochs
+       SET revoked_after_ms = ?, updated_at = ?
+       WHERE tenant_id = ? AND user_id = ?`,
+      [Math.floor(revokedAfterMs), updatedAt, this.tenantId, userId]
+    );
+
+    if (updated.rowsAffected > 0) {
+      return;
+    }
+
+    await this.db.execute(
+      `INSERT INTO session_revocation_epochs (tenant_id, user_id, revoked_after_ms, updated_at)
+       VALUES (?, ?, ?, ?)`,
+      [this.tenantId, userId, Math.floor(revokedAfterMs), updatedAt]
+    );
   }
 
   async updateSessionUserId(sessionId: string, newUserId: string): Promise<void> {

@@ -561,12 +561,14 @@ export function getProfileDisplayName(profileId: ProfileId): string {
  */
 export function getProfileBadgeStyle(profileId: ProfileId): string {
 	const styles: Record<ProfileId, string> = {
-		'human-basic': 'background-color: #dbeafe; color: #1e40af;',
-		'human-org': 'background-color: #e0e7ff; color: #3730a3;',
-		'ai-agent': 'background-color: #d1fae5; color: #065f46;',
-		'iot-device': 'background-color: #fef3c7; color: #92400e;'
+		'human-basic': 'background-color: var(--color-info-50); color: var(--color-info-700);',
+		'human-org': 'background-color: var(--color-accent-muted); color: var(--color-accent);',
+		'ai-agent': 'background-color: var(--color-success-50); color: var(--color-success-700);',
+		'iot-device': 'background-color: var(--color-warning-50); color: var(--color-warning-800);'
 	};
-	return styles[profileId] || 'background-color: #f3f4f6; color: #374151;';
+	return (
+		styles[profileId] || 'background-color: var(--color-surface-muted); color: var(--color-text);'
+	);
 }
 
 export function getProfileBadgeClass(profileId: ProfileId): string {

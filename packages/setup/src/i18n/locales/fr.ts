@@ -1125,7 +1125,11 @@ const fr: Translations = {
   'web.envDetail.emailCloudflareRequirementManual':
     'La configuration du domaine dans Cloudflare Dashboard reste manuelle',
   'web.envDetail.emailCloudflareFromHint':
-    'L’adresse doit appartenir à un domaine onboardé dans Cloudflare Email Service.',
+    'Si vous utilisez Cloudflare Email Service, l’adresse doit appartenir à un domaine onboardé dans Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Paramètres Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'Si vous utilisez Resend, le domaine doit être ajouté et vérifié dans Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Domaines Resend',
   'web.envDetail.emailFromAddress': 'Adresse email From',
   'web.envDetail.emailFromName': 'Nom affiché de l’expéditeur (optionnel)',
   'web.envDetail.emailEnableCloudflare': 'Activer Cloudflare Email Service',
@@ -1138,6 +1142,10 @@ const fr: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     'Cet environnement a déjà un autre fournisseur email configuré. Passer à Cloudflare Email Service ?',
   'web.envDetail.emailStarting': 'Démarrage de la configuration Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'Cet environnement a déjà un autre fournisseur email configuré. Passer à Resend ?',
+  'web.envDetail.emailResendStarting': 'Enregistrement de la configuration email Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Configuration email Resend enregistrée.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Mettre à jour tous les Workers',

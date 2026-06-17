@@ -12,6 +12,7 @@
 		formatAdminPermissionCategory,
 		formatAdminPermissionCategoryDescription
 	} from '$lib/admin/admin-admin-rbac-i18n';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 
 	// Form state
 	let name = $state('');
@@ -125,105 +126,114 @@
 	<title>{$LL.admin_admin_rbac_create_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/admin-rbac" class="back-link">← {$LL.admin_admin_rbac_back_to_roles()}</a>
+{#snippet pageActions()}
+	<button type="button" class="btn btn-secondary" onclick={navigateBack} disabled={submitting}>
+		{$LL.admin_admin_rbac_cancel()}
+	</button>
+	<button
+		type="submit"
+		class="btn btn-primary"
+		form="admin-rbac-create-form"
+		disabled={!isValid || submitting}
+	>
+		{submitting ? $LL.admin_admin_rbac_creating() : $LL.admin_admin_rbac_create_button()}
+	</button>
+{/snippet}
 
-	<h1 class="page-title">{$LL.admin_admin_rbac_create_title()}</h1>
-	<p class="modal-description">
-		{$LL.admin_admin_rbac_create_description()}
-	</p>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_admin_rbac_create_title()}
+		description={$LL.admin_admin_rbac_create_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
 
 	<form
+		id="admin-rbac-create-form"
 		onsubmit={(e) => {
 			e.preventDefault();
 			handleSubmit();
 		}}
 	>
-		<!-- Basic Info Section -->
-		<div class="panel">
-			<h2 class="panel-title">{$LL.admin_admin_rbac_basic_information()}</h2>
+		<AdminSection title={$LL.admin_admin_rbac_basic_information()}>
+			<div class="admin-form-grid">
+				<div class="form-field admin-field">
+					<label for="name" class="admin-field__label">
+						{$LL.admin_admin_rbac_role_name()}
+						<span class="text-danger">{$LL.admin_admin_rbac_required()}</span>
+					</label>
+					<input
+						type="text"
+						id="name"
+						bind:value={name}
+						placeholder={$LL.admin_admin_rbac_name_placeholder()}
+						class="admin-input"
+						class:admin-input-error={nameError}
+					/>
+					{#if nameError}
+						<span class="form-error">{nameError}</span>
+					{/if}
+					<span class="form-hint">
+						{$LL.admin_admin_rbac_name_hint()}
+					</span>
+				</div>
 
-			<div class="form-group">
-				<label for="name" class="form-label">
-					{$LL.admin_admin_rbac_role_name()}
-					<span class="text-danger">{$LL.admin_admin_rbac_required()}</span>
-				</label>
-				<input
-					type="text"
-					id="name"
-					bind:value={name}
-					placeholder={$LL.admin_admin_rbac_name_placeholder()}
-					class="form-input"
-					class:form-input-error={nameError}
-				/>
-				{#if nameError}
-					<span class="form-error">{nameError}</span>
-				{/if}
-				<span class="form-hint">
-					{$LL.admin_admin_rbac_name_hint()}
-				</span>
+				<div class="form-field admin-field">
+					<label for="displayName" class="admin-field__label">
+						{$LL.admin_admin_rbac_display_name()}
+					</label>
+					<input
+						type="text"
+						id="displayName"
+						bind:value={displayName}
+						placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
+						class="admin-input"
+					/>
+					<span class="form-hint">{$LL.admin_admin_rbac_display_name_hint()}</span>
+				</div>
+
+				<div class="form-field form-field--full admin-field">
+					<label for="description" class="admin-field__label">
+						{$LL.admin_admin_rbac_description_label()}
+					</label>
+					<textarea
+						id="description"
+						bind:value={description}
+						placeholder={$LL.admin_admin_rbac_create_description_placeholder()}
+						rows="3"
+						class="admin-input"
+					></textarea>
+				</div>
+
+				<div class="form-field form-field--full admin-field">
+					<label for="inherits-from" class="admin-field__label">
+						{$LL.admin_admin_rbac_inherit_from()}
+					</label>
+					<select
+						id="inherits-from"
+						bind:value={inheritsFrom}
+						disabled={loadingRoles}
+						class="admin-input"
+					>
+						<option value="">{$LL.admin_admin_rbac_inherit_none()}</option>
+						{#each availableRoles as role (role.id)}
+							<option value={role.id}>{role.display_name || role.name}</option>
+						{/each}
+					</select>
+					<span class="form-hint">
+						{$LL.admin_admin_rbac_inherit_hint()}
+					</span>
+				</div>
 			</div>
+		</AdminSection>
 
-			<div class="form-group">
-				<label for="displayName" class="form-label">
-					{$LL.admin_admin_rbac_display_name()}
-				</label>
-				<input
-					type="text"
-					id="displayName"
-					bind:value={displayName}
-					placeholder={$LL.admin_admin_rbac_display_name_placeholder()}
-					class="form-input"
-				/>
-				<span class="form-hint">{$LL.admin_admin_rbac_display_name_hint()}</span>
-			</div>
-
-			<div class="form-group">
-				<label for="description" class="form-label">
-					{$LL.admin_admin_rbac_description_label()}
-				</label>
-				<textarea
-					id="description"
-					bind:value={description}
-					placeholder={$LL.admin_admin_rbac_create_description_placeholder()}
-					rows="3"
-					class="form-input"
-				></textarea>
-			</div>
-
-			<div class="form-group">
-				<label for="inherits-from" class="form-label">
-					{$LL.admin_admin_rbac_inherit_from()}
-				</label>
-				<select
-					id="inherits-from"
-					bind:value={inheritsFrom}
-					disabled={loadingRoles}
-					class="form-select"
-				>
-					<option value="">{$LL.admin_admin_rbac_inherit_none()}</option>
-					{#each availableRoles as role (role.id)}
-						<option value={role.id}>{role.display_name || role.name}</option>
-					{/each}
-				</select>
-				<span class="form-hint">
-					{$LL.admin_admin_rbac_inherit_hint()}
-				</span>
-			</div>
-		</div>
-
-		<!-- Permissions Section -->
-		<div class="panel">
-			<h2 class="panel-title">
-				{$LL.admin_admin_rbac_permissions()}
-				<span class="text-danger">{$LL.admin_admin_rbac_required()}</span>
-			</h2>
-			<p class="form-hint" style="margin-bottom: 16px;">
+		<AdminSection title={$LL.admin_admin_rbac_permissions()}>
+			<p class="form-hint permissions-hint">
 				{$LL.admin_admin_rbac_permissions_hint()}
+				<span class="text-danger">{$LL.admin_admin_rbac_required()}</span>
 			</p>
 
 			<div class="permission-editor-grid">
@@ -269,9 +279,8 @@
 					{$LL.admin_admin_rbac_selected_count({ count: selectedPermissions.size })}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 
-		<!-- Actions -->
 		<div class="form-actions">
 			<button type="button" class="btn btn-secondary" onclick={navigateBack} disabled={submitting}>
 				{$LL.admin_admin_rbac_cancel()}
@@ -281,100 +290,80 @@
 			</button>
 		</div>
 	</form>
-</div>
+</AdminPageShell>
 
 <style>
-	.back-link {
-		display: inline-block;
-		margin-bottom: 1rem;
-		color: var(--text-secondary);
-		text-decoration: none;
-		font-size: 0.875rem;
-		transition: color var(--transition-fast);
+	.admin-form-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
 	}
 
-	.back-link:hover {
-		color: var(--text-primary);
+	.form-field {
+		min-width: 0;
 	}
 
-	.panel {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		padding: 1.5rem;
-		margin-bottom: 1.5rem;
+	.form-field--full {
+		grid-column: 1 / -1;
 	}
 
-	.panel-title {
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0 0 1rem;
-	}
-
-	.form-group {
-		margin-bottom: 1rem;
-	}
-
-	.form-group:last-child {
-		margin-bottom: 0;
-	}
-
-	.form-label {
+	.form-field :global(.admin-field__label) {
 		display: block;
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 0.5rem;
 	}
 
 	.text-danger {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
-	.form-input,
-	.form-select,
-	textarea.form-input {
+	.form-field :global(.admin-input) {
 		width: 100%;
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		background: var(--bg-input);
-		color: var(--text-primary);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 0.875rem;
 		font-family: inherit;
-		transition: border-color var(--transition-fast);
+		transition:
+			border-color 0.16s ease,
+			box-shadow 0.16s ease;
 	}
 
-	.form-input:focus,
-	.form-select:focus,
-	textarea.form-input:focus {
+	.form-field :global(.admin-input:focus) {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
 	}
 
-	.form-input-error {
-		border-color: var(--danger);
+	.form-field :global(.admin-input-error) {
+		border-color: var(--color-danger);
 	}
 
-	.form-input-error:focus {
-		border-color: var(--danger);
-		box-shadow: 0 0 0 3px var(--danger-subtle);
+	.form-field :global(.admin-input-error:focus) {
+		border-color: var(--color-danger);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger) 14%, transparent);
 	}
 
 	.form-error {
 		display: block;
 		font-size: 0.75rem;
-		color: var(--danger);
+		color: var(--color-danger);
 		margin-top: 0.25rem;
 	}
 
 	.form-hint {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-top: 0.25rem;
 		display: block;
+	}
+
+	.permissions-hint {
+		margin-bottom: 16px;
 	}
 
 	.permission-editor-grid {
@@ -385,15 +374,16 @@
 	}
 
 	.permission-category-editor {
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		overflow: hidden;
+		background: var(--color-surface);
 	}
 
 	.permission-category-header {
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		padding: 0.75rem 1rem;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.form-checkbox-label {
@@ -411,7 +401,7 @@
 	.permission-category-name {
 		font-weight: 600;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.permission-category-body {
@@ -428,11 +418,11 @@
 		padding: 0.5rem;
 		border-radius: var(--radius-sm);
 		cursor: pointer;
-		transition: background var(--transition-fast);
+		transition: background 0.16s ease;
 	}
 
 	.permission-checkbox-item:hover {
-		background: var(--bg-hover);
+		background: var(--color-surface-muted);
 	}
 
 	.permission-checkbox-item input[type='checkbox'] {
@@ -450,20 +440,20 @@
 	.permission-checkbox-label {
 		font-size: 0.8125rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.permission-checkbox-desc {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.permission-selected-count {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-align: center;
 		padding-top: 0.5rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.form-actions {
@@ -474,10 +464,17 @@
 	}
 
 	.alert-error {
-		background: var(--danger-subtle);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+		color: var(--color-danger);
 		padding: 0.75rem 1rem;
 		border-radius: var(--radius-md);
 		margin-bottom: 1rem;
+	}
+
+	@media (max-width: 720px) {
+		.admin-form-grid {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

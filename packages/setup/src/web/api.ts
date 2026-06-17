@@ -31,6 +31,8 @@ import {
   checkAdminSetupStatus,
   generateAndStoreSetupToken,
   runMigrationsForEnvironment,
+  getD1MigrationStatusForEnvironment,
+  runD1MigrationsForEnvironmentSelection,
   ensureInitialAdminRolesInD1,
   ensureAdminUiBffMachineAccessInD1,
   cleanupSetupMachineAccessInD1,
@@ -108,6 +110,7 @@ import {
 } from '../core/naming.js';
 import {
   getLocalPackageVersions,
+  getPackageVersion,
   compareVersions,
   getComponentsToUpdate,
 } from '../core/version.js';
@@ -3559,6 +3562,27 @@ export function createApiRoutes(): Hono {
             });
 
             if (result.success) {
+              if (!dryRun) {
+                try {
+                  const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+                  if (currentLock && lockPath) {
+                    const version = await getPackageVersion(join(rootDir, 'packages', componentName));
+                    const workers = { ...currentLock.workers };
+                    workers[componentName] = {
+                      name: result.projectName,
+                      deployedAt: result.deployedAt,
+                      version: version ?? undefined,
+                    };
+
+                    await saveLockFile({ ...currentLock, workers }, lockPath);
+                    addProgress('Lock file updated');
+                  }
+                } catch (lockError) {
+                  addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
+                }
+              }
+
               state.status = 'complete';
               addProgress(`✓ ${componentName} deployed successfully`);
               return c.json({
@@ -3786,6 +3810,73 @@ export function createApiRoutes(): Hono {
   // Apply session validation to migrations
   api.use('/migrations/*', validateSession);
 
+  api.get('/migrations/status/:env', async (c) => {
+    try {
+      const envParam = c.req.param('env');
+      const parseResult = EnvNameSchema.safeParse(envParam);
+      if (!parseResult.success) {
+        return c.json({ success: false, error: 'Invalid environment name' }, 400);
+      }
+
+      const env = parseResult.data;
+      const result = await getD1MigrationStatusForEnvironment(env, process.cwd(), addProgress);
+      return c.json({ ...result, success: result.success });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.post('/migrations/apply', async (c) => {
+    return withLock(async () => {
+      try {
+        const body = await c.req.json();
+        const { env: envParam, role, filenames } = body;
+
+        const parseResult = EnvNameSchema.safeParse(envParam);
+        if (!parseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        if (role !== undefined && !['core', 'pii', 'admin'].includes(role)) {
+          return c.json({ success: false, error: 'Invalid migration database role' }, 400);
+        }
+        if (
+          filenames !== undefined &&
+          (!Array.isArray(filenames) || filenames.some((file) => typeof file !== 'string'))
+        ) {
+          return c.json({ success: false, error: 'Invalid migration filenames' }, 400);
+        }
+
+        const safeFilenames = Array.isArray(filenames)
+          ? filenames.filter((file) => file.endsWith('.sql') && !file.includes('..'))
+          : undefined;
+        if (Array.isArray(filenames) && safeFilenames?.length !== filenames.length) {
+          return c.json({ success: false, error: 'Invalid migration filenames' }, 400);
+        }
+
+        clearProgress();
+        addProgress(`📜 Applying database migrations for environment: ${parseResult.data}`);
+        const result = await runD1MigrationsForEnvironmentSelection({
+          env: parseResult.data,
+          rootDir: process.cwd(),
+          role,
+          filenames: safeFilenames,
+          onProgress: addProgress,
+          config: state.config ?? undefined,
+        });
+
+        if (result.success) {
+          addProgress('✅ Database migrations completed successfully');
+        } else {
+          addProgress('❌ Database migrations failed');
+        }
+
+        return c.json({ ...result, success: result.success, progress: state.progress });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
   // Run D1 migrations for an environment
   api.post('/migrations/run', async (c) => {
     return withLock(async () => {
@@ -3817,6 +3908,7 @@ export function createApiRoutes(): Hono {
           success: result.success,
           core: result.core,
           pii: result.pii,
+          admin: result.admin,
           progress: state.progress,
         });
       } catch (error) {

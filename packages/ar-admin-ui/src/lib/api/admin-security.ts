@@ -431,17 +431,17 @@ export const adminSecurityAPI = {
 export function getSeverityColor(severity: AlertSeverity): string {
 	switch (severity) {
 		case 'critical':
-			return '#dc2626';
+			return 'var(--color-danger)';
 		case 'high':
-			return '#ea580c';
+			return 'var(--orange)';
 		case 'medium':
-			return '#d97706';
+			return 'var(--color-warning)';
 		case 'low':
-			return '#65a30d';
+			return 'var(--color-success)';
 		case 'info':
-			return '#0284c7';
+			return 'var(--color-info)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }
 
@@ -451,15 +451,15 @@ export function getSeverityColor(severity: AlertSeverity): string {
 export function getAlertStatusColor(status: AlertStatus): string {
 	switch (status) {
 		case 'open':
-			return '#ef4444';
+			return 'var(--color-danger)';
 		case 'acknowledged':
-			return '#f59e0b';
+			return 'var(--color-warning)';
 		case 'resolved':
-			return '#22c55e';
+			return 'var(--color-success)';
 		case 'dismissed':
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }
 
@@ -469,15 +469,15 @@ export function getAlertStatusColor(status: AlertStatus): string {
 export function getRiskLevelColor(level: IPReputationResult['risk_level']): string {
 	switch (level) {
 		case 'critical':
-			return '#dc2626';
+			return 'var(--color-danger)';
 		case 'high':
-			return '#ea580c';
+			return 'var(--orange)';
 		case 'medium':
-			return '#d97706';
+			return 'var(--color-warning)';
 		case 'low':
-			return '#22c55e';
+			return 'var(--color-success)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }
 

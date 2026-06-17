@@ -14,6 +14,8 @@
 		type AssignableAdminRoleScopeType
 	} from '$lib/api/admin-admin-roles';
 	import { Modal } from '$lib/components';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let admin: AdminUserDetail | null = $state(null);
@@ -337,14 +339,7 @@
 	</title>
 </svelte:head>
 
-<div class="page-container">
-	<!-- Breadcrumb -->
-	<nav class="breadcrumb">
-		<a href="/admin/admins">{$LL.admin_admins_title()}</a>
-		<span>/</span>
-		<span>{admin?.email || $LL.admin_admins_detail_loading_fallback()}</span>
-	</nav>
-
+<AdminPageShell>
 	{#if loading}
 		<div class="loading-container">
 			<div class="spinner"></div>
@@ -358,29 +353,29 @@
 			</button>
 		</div>
 	{:else if admin}
-		<!-- Page Header -->
-		<div class="page-header">
-			<div class="header-content">
-				<h1>{admin.email}</h1>
-				<div class="header-badges">
-					<span class={getStatusBadgeClass(admin.status)}>{statusLabel(admin.status)}</span>
-					{#if admin.mfa_enabled}
-						<span class="badge badge-info">{$LL.admin_admins_mfa_enabled()}</span>
-					{/if}
-				</div>
+		{@const adminUser = admin}
+		{#snippet titleAccessory()}
+			<div class="header-badges">
+				<span class={getStatusBadgeClass(adminUser.status)}>{statusLabel(adminUser.status)}</span>
+				{#if adminUser.mfa_enabled}
+					<span class="badge badge-info">{$LL.admin_admins_mfa_enabled()}</span>
+				{/if}
 			</div>
-			<div class="header-actions">
+		{/snippet}
+
+		{#snippet actions()}
+			<div class="admin-detail-actions">
 				{#if !isEditing}
 					<button class="btn btn-secondary" onclick={startEdit}>{$LL.admin_admins_edit()}</button>
-					{#if admin.status === 'active'}
+					{#if adminUser.status === 'active'}
 						<button class="btn btn-warning" onclick={handleSuspend}
 							>{$LL.admin_admins_suspend()}</button
 						>
-					{:else if admin.status === 'suspended'}
+					{:else if adminUser.status === 'suspended'}
 						<button class="btn btn-success" onclick={handleActivate}
 							>{$LL.admin_admins_activate()}</button
 						>
-					{:else if admin.status === 'locked'}
+					{:else if adminUser.status === 'locked'}
 						<button class="btn btn-primary" onclick={handleUnlock}
 							>{$LL.admin_admins_unlock()}</button
 						>
@@ -388,7 +383,14 @@
 					<button class="btn btn-danger" onclick={handleDelete}>{$LL.admin_admins_delete()}</button>
 				{/if}
 			</div>
-		</div>
+		{/snippet}
+
+		<AdminPageHeader
+			title={adminUser.email}
+			eyebrow={$LL.admin_admins_title()}
+			{titleAccessory}
+			{actions}
+		/>
 
 		<div class="content-grid">
 			<!-- Basic Info Card -->
@@ -539,7 +541,7 @@
 			</div>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Role Assignment Dialog -->
 <Modal
@@ -679,50 +681,17 @@
 </Modal>
 
 <style>
-	.page-container {
-		padding: 1.5rem;
-		max-width: 1200px;
-		margin: 0 auto;
-	}
-
-	.breadcrumb {
-		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
-		font-size: 0.875rem;
-		color: var(--text-muted);
-	}
-
-	.breadcrumb a {
-		color: var(--primary);
-		text-decoration: none;
-	}
-
-	.breadcrumb a:hover {
-		text-decoration: underline;
-	}
-
-	.page-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		margin-bottom: 1.5rem;
-	}
-
-	.header-content h1 {
-		margin: 0 0 0.5rem 0;
-		font-size: 1.5rem;
-		font-weight: 600;
-	}
-
 	.header-badges {
 		display: flex;
 		gap: 0.5rem;
+		flex-wrap: wrap;
 	}
 
-	.header-actions {
+	.admin-detail-actions {
 		display: flex;
 		gap: 0.5rem;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
 
 	.content-grid {
@@ -736,9 +705,11 @@
 	}
 
 	.card {
-		background: var(--bg-primary);
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-lg);
+		min-width: 0;
+		background: var(--settings-panel-bg, var(--color-surface));
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
 	}
 
 	.card-header {
@@ -746,7 +717,7 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 1rem 1.5rem;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: var(--settings-row-border-bottom, 1px solid var(--color-border));
 	}
 
 	.card-header h2 {
@@ -772,12 +743,16 @@
 	}
 
 	.info-label {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
 	.info-value {
 		font-weight: 500;
+		color: var(--color-text);
+		text-align: right;
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 
 	.roles-list {
@@ -790,9 +765,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 1rem;
 		padding: 0.75rem;
-		background: var(--bg-secondary);
-		border-radius: var(--radius-md);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.role-info {
@@ -806,7 +783,7 @@
 
 	.role-id {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.role-meta {
@@ -821,10 +798,10 @@
 		display: inline-flex;
 		align-items: center;
 		padding: 0.125rem 0.5rem;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-primary);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 0.75rem;
 		white-space: nowrap;
 	}
@@ -841,10 +818,10 @@
 
 	.readonly-value {
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--bg-secondary);
-		color: var(--text-primary);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		background: var(--control-bg, var(--color-surface-muted));
+		color: var(--color-text);
 		font-size: 0.875rem;
 	}
 
@@ -865,54 +842,62 @@
 	.input,
 	.select {
 		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--bg-primary);
-		color: var(--text-primary);
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 0.5rem 0.75rem);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font-size: 0.875rem;
 	}
 
+	.input:focus,
+	.select:focus {
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+		outline-offset: 1px;
+	}
+
 	.badge {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
 		padding: 0.25rem 0.5rem;
 		font-size: 0.75rem;
 		font-weight: 500;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-full);
 	}
 
 	.badge-success {
-		background: var(--success-bg);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-warning {
-		background: var(--warning-bg);
-		color: var(--warning);
+		background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+		color: var(--color-warning);
 	}
 
 	.badge-danger {
-		background: var(--danger-bg);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+		color: var(--color-danger);
 	}
 
 	.badge-info {
-		background: var(--info-bg);
-		color: var(--info);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.badge-neutral {
-		background: var(--bg-tertiary);
-		color: var(--text-muted);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.btn {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.5rem 1rem;
-		border: none;
-		border-radius: var(--radius-md);
+		padding: var(--button-padding, 0.5rem 1rem);
+		border: 1px solid var(--control-border, transparent);
+		border-radius: var(--control-radius, var(--radius-control));
 		font-size: 0.875rem;
 		font-weight: 500;
 		cursor: pointer;
@@ -925,29 +910,32 @@
 	}
 
 	.btn-primary {
-		background: var(--primary);
-		color: white;
+		background: var(--color-accent);
+		color: var(--color-accent-contrast);
 	}
 
 	.btn-secondary {
-		background: var(--bg-secondary);
-		color: var(--text-primary);
-		border: 1px solid var(--border-color);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
+		border-color: var(--color-border);
 	}
 
 	.btn-success {
-		background: var(--success);
-		color: white;
+		border-color: color-mix(in srgb, var(--color-success) 40%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+		color: var(--color-success);
 	}
 
 	.btn-warning {
-		background: var(--warning);
-		color: white;
+		border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+		color: var(--color-warning);
 	}
 
 	.btn-danger {
-		background: var(--danger);
-		color: white;
+		border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 14%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.btn:disabled {
@@ -956,7 +944,7 @@
 	}
 
 	.text-muted {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.loading-container,
@@ -972,8 +960,8 @@
 	.spinner {
 		width: 2rem;
 		height: 2rem;
-		border: 2px solid var(--border-color);
-		border-top-color: var(--primary);
+		border: 2px solid var(--color-border);
+		border-top-color: var(--color-accent);
 		border-radius: 50%;
 		animation: spin 1s linear infinite;
 	}
@@ -985,19 +973,19 @@
 	}
 
 	.error-text {
-		color: var(--danger);
+		color: var(--color-danger);
 		margin-bottom: 1rem;
 	}
 
 	.alert {
 		padding: 0.75rem;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-control);
 		margin-bottom: 1rem;
 	}
 
 	.alert-danger {
-		background: var(--danger-bg);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	@media (max-width: 768px) {
@@ -1005,17 +993,26 @@
 			grid-template-columns: 1fr;
 		}
 
-		.page-header {
-			flex-direction: column;
-			gap: 1rem;
-		}
-
-		.header-actions {
-			flex-wrap: wrap;
+		.admin-detail-actions {
+			justify-content: flex-start;
 		}
 
 		.form-row {
 			grid-template-columns: 1fr;
+		}
+
+		.info-row,
+		.role-item {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.info-value {
+			text-align: left;
+		}
+
+		.role-meta {
+			align-items: flex-start;
 		}
 	}
 </style>

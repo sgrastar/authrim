@@ -2,6 +2,10 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import {
+		adminIdentityMappingAPI,
+		type PersistentIdentifierProfileSummary
+	} from '$lib/api/admin-identity-mapping';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		type MappingAdapter,
@@ -62,6 +66,12 @@
 				kind: 'string';
 				required: boolean;
 				placeholder: string;
+		  }
+		| {
+				name: string;
+				label: string;
+				kind: 'boolean';
+				required: boolean;
 		  };
 	type TransformOperationSchema = {
 		operation: TransformOperation;
@@ -69,6 +79,7 @@
 		description: string;
 		parameters: TransformParameterSchema[];
 	};
+	type TransformParameterValue = string | boolean;
 
 	const transformOperationSchemas: TransformOperationSchema[] = [
 		{
@@ -76,6 +87,108 @@
 			label: 'Copy',
 			description: 'Pass the first input value through unchanged.',
 			parameters: []
+		},
+		{
+			operation: 'as_array',
+			label: 'As array',
+			description: 'Wrap one input value as a multi-value array.',
+			parameters: [
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false },
+				{ name: 'unique', label: 'Remove duplicates', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'split',
+			label: 'Split',
+			description: 'Split one text value into a multi-value array.',
+			parameters: [
+				{
+					name: 'delimiter',
+					label: 'Delimiter',
+					kind: 'string',
+					required: false,
+					placeholder: 'comma, space, or custom text'
+				},
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false },
+				{ name: 'unique', label: 'Remove duplicates', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'join',
+			label: 'Join',
+			description: 'Join a multi-value array into one text value.',
+			parameters: [
+				{
+					name: 'delimiter',
+					label: 'Delimiter',
+					kind: 'string',
+					required: false,
+					placeholder: 'comma, space, or custom text'
+				},
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false },
+				{ name: 'unique', label: 'Remove duplicates', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'first',
+			label: 'First',
+			description: 'Use the first value from a multi-value array.',
+			parameters: [
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'oidc_pairwise_sub',
+			label: 'OIDC pairwise sub',
+			description: 'Use the current OIDC client pairwise subject identifier.',
+			parameters: [
+				{
+					name: 'persistentIdentifierProfileId',
+					label: 'Persistent Identifier Profile',
+					kind: 'string',
+					required: false,
+					placeholder: 'profile id'
+				}
+			]
+		},
+		{
+			operation: 'saml_edu_person_targeted_id',
+			label: 'SAML eduPersonTargetedID',
+			description: 'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
+			parameters: [
+				{
+					name: 'persistentIdentifierProfileId',
+					label: 'Persistent Identifier Profile',
+					kind: 'string',
+					required: false,
+					placeholder: 'profile id'
+				}
+			]
+		},
+		{
+			operation: 'affix_text',
+			label: 'Add prefix/suffix',
+			description: 'Add fixed text before or after the input value.',
+			parameters: [
+				{
+					name: 'prefix',
+					label: 'Prefix',
+					kind: 'string',
+					required: false,
+					placeholder: 'prefix'
+				},
+				{
+					name: 'suffix',
+					label: 'Suffix',
+					kind: 'string',
+					required: false,
+					placeholder: 'suffix'
+				}
+			]
 		},
 		{
 			operation: 'trim',
@@ -257,6 +370,10 @@
 		initialPolicyOptionId = null,
 		selectedViewMode = null,
 		selectedProfileId = null,
+		emptyStateTitle = null,
+		emptyStateDescription = null,
+		emptyStateActionHref = null,
+		emptyStateActionLabel = null,
 		draftResetKey = 0,
 		onDraftDirtyChange = null,
 		onCompileDraft = null
@@ -281,6 +398,10 @@
 		initialPolicyOptionId?: string | null;
 		selectedViewMode?: ViewMode | null;
 		selectedProfileId?: string | null;
+		emptyStateTitle?: string | null;
+		emptyStateDescription?: string | null;
+		emptyStateActionHref?: string | null;
+		emptyStateActionLabel?: string | null;
 		draftResetKey?: number;
 		onDraftDirtyChange?: ((dirty: boolean) => void) | null;
 		onCompileDraft?: ((draft: MappingDraftPayload) => Promise<void> | void) | null;
@@ -342,6 +463,7 @@
 	let activeDraftResetKey = $state<number | null>(null);
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
 	let draftSubmitMessage = $state<string | null>(null);
+	let persistentIdentifierProfiles = $state<PersistentIdentifierProfileSummary[]>([]);
 	let swappingNodeIds = $state<string[]>([]);
 	let nodeSwapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
 	let animateNextSampleSourceNodes = false;
@@ -492,6 +614,8 @@
 				: $LL.admin_identity_mapping_flow_select_active_policy_desc()
 			: $LL.admin_identity_mapping_flow_no_profiles_registered_desc()
 	);
+	const resolvedEmptyGraphTitle = $derived(emptyStateTitle ?? emptyGraphTitle);
+	const resolvedEmptyGraphDescription = $derived(emptyStateDescription ?? emptyGraphDescription);
 	const hasControlPlaneData = $derived(
 		samples.length > 0 && (laneSelectorMode !== 'policy' || policySelectorOptions.length > 0)
 	);
@@ -651,6 +775,7 @@
 	});
 
 	onMount(() => {
+		void loadPersistentIdentifierProfiles();
 		const resize = () => {
 			const rect = canvas?.getBoundingClientRect();
 			if (!rect) return;
@@ -674,6 +799,17 @@
 			window.removeEventListener('beforeunload', beforeUnload);
 		};
 	});
+
+	async function loadPersistentIdentifierProfiles() {
+		try {
+			const response = await adminIdentityMappingAPI.listPersistentIdentifierProfiles();
+			persistentIdentifierProfiles = response.profiles.filter(
+				(profile) => profile.lifecycleState === 'active'
+			);
+		} catch {
+			persistentIdentifierProfiles = [];
+		}
+	}
 
 	function activateSample(next: MappingSample) {
 		activeSampleRef = next;
@@ -1256,10 +1392,12 @@
 		return typeof value === 'string' && value.trim().length > 0 ? value : null;
 	}
 
-	function stringParameters(value: Record<string, unknown> | undefined): Record<string, string> {
+	function stringParameters(
+		value: Record<string, unknown> | undefined
+	): Record<string, TransformParameterValue> {
 		return Object.fromEntries(
 			Object.entries(value ?? {}).flatMap(([key, entry]) =>
-				typeof entry === 'string' ? [[key, entry]] : []
+				typeof entry === 'string' || typeof entry === 'boolean' ? [[key, entry]] : []
 			)
 		);
 	}
@@ -1560,6 +1698,11 @@
 			`--stack-shadow-x:${22 + node.stackIndex * 8}px`,
 			`--stack-shadow-y:${14 + node.stackIndex * 6}px`
 		].join(';');
+	}
+
+	function nodeInfoPlacement(node: LayoutNode): 'above' | 'below' {
+		const minimumReadableSpaceAbove = 96;
+		return node.top < minimumReadableSpaceAbove ? 'below' : 'above';
 	}
 
 	function transformDeleteStyle(node: LayoutNode): string {
@@ -1903,6 +2046,37 @@
 		return fromAllowed.some((value) => !toAllowedValues.has(value.toLowerCase()));
 	}
 
+	function requiredTransformOperationForNode(node: MappingNode): TransformOperation | null {
+		const fieldRef = node.fieldRef;
+		if (!fieldRef) return null;
+		const namespace = fieldRef.namespace.toLowerCase();
+		const identifiers = [
+			fieldRef.path,
+			fieldRef.catalogEntryId,
+			node.label,
+			node.caption,
+			node.storageTarget
+		]
+			.filter(Boolean)
+			.map((value) => String(value).toLowerCase());
+		if (
+			namespace === 'oidc.claim' &&
+			identifiers.some((value) => value === 'sub' || value.endsWith('.sub'))
+		) {
+			return 'oidc_pairwise_sub';
+		}
+		if (
+			(namespace === 'saml.attribute' || node.adapter === 'SAML') &&
+			identifiers.some(
+				(value) =>
+					value.includes('edupersontargetedid') || value.includes('1.3.6.1.4.1.5923.1.1.1.10')
+			)
+		) {
+			return 'saml_edu_person_targeted_id';
+		}
+		return null;
+	}
+
 	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
 		const toNode = nodeById(edge.to);
 		if (!toNode) return false;
@@ -1944,9 +2118,18 @@
 		const fromType = effectiveNodeOutputType(fromNode);
 		if (!fromType) return true;
 		const operation = activeTransformOperation(transformNode);
+		if (operation === 'join' || operation === 'first') return fromType === 'multi-value';
+		if (operation === 'split' || operation === 'as_array') return fromType !== 'multi-value';
 		if (operation === 'json_extract_text') return fromType === 'json';
 		if (operation === 'json_extract_boolean') return fromType === 'json';
 		if (operation === 'json_extract_integer') return fromType === 'json';
+		if (operation === 'affix_text') {
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'number'].includes(
+				fromType
+			);
+		}
+		if (operation === 'oidc_pairwise_sub') return true;
+		if (operation === 'saml_edu_person_targeted_id') return true;
 		if (operation === 'text_to_boolean') {
 			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'boolean'].includes(
 				fromType
@@ -2015,8 +2198,18 @@
 		const operation = activeTransformOperation(node);
 		if (operation === 'text_to_boolean' || operation === 'json_extract_boolean') return 'boolean';
 		if (operation === 'json_extract_integer') return 'number';
-		if (operation === 'json_extract_text' || operation === 'concat') return 'text';
+		if (operation === 'split' || operation === 'as_array') return 'multi-value';
+		if (
+			operation === 'json_extract_text' ||
+			operation === 'concat' ||
+			operation === 'join' ||
+			operation === 'affix_text' ||
+			operation === 'oidc_pairwise_sub' ||
+			operation === 'saml_edu_person_targeted_id'
+		)
+			return 'text';
 		if (operation === 'json_build') return 'json';
+		if (operation === 'first') return 'text';
 		return firstTransformInputType(node);
 	}
 
@@ -2378,7 +2571,7 @@
 		const insertPoint = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
 		const nodeId = `transform-node-${customCounter}`;
 		const ruleId = `transform-rule-${customCounter}`;
-		const operation: TransformOperation = 'copy';
+		const operation: TransformOperation = requiredTransformOperationForNode(toNode) ?? 'copy';
 		const parameters = defaultTransformParameters(operation);
 		const transformNode: MappingNode = {
 			id: nodeId,
@@ -2688,6 +2881,20 @@
 		switch (operation) {
 			case 'copy':
 				return $LL.admin_identity_mapping_flow_transform_copy_label();
+			case 'as_array':
+				return $LL.admin_identity_mapping_flow_transform_as_array_label();
+			case 'split':
+				return $LL.admin_identity_mapping_flow_transform_split_label();
+			case 'join':
+				return $LL.admin_identity_mapping_flow_transform_join_label();
+			case 'first':
+				return $LL.admin_identity_mapping_flow_transform_first_label();
+			case 'oidc_pairwise_sub':
+				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_label();
+			case 'saml_edu_person_targeted_id':
+				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label();
+			case 'affix_text':
+				return $LL.admin_identity_mapping_flow_transform_affix_text_label();
 			case 'trim':
 				return $LL.admin_identity_mapping_flow_transform_trim_label();
 			case 'normalize':
@@ -2715,6 +2922,20 @@
 		switch (operation) {
 			case 'copy':
 				return $LL.admin_identity_mapping_flow_transform_copy_desc();
+			case 'as_array':
+				return $LL.admin_identity_mapping_flow_transform_as_array_desc();
+			case 'split':
+				return $LL.admin_identity_mapping_flow_transform_split_desc();
+			case 'join':
+				return $LL.admin_identity_mapping_flow_transform_join_desc();
+			case 'first':
+				return $LL.admin_identity_mapping_flow_transform_first_desc();
+			case 'oidc_pairwise_sub':
+				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc();
+			case 'saml_edu_person_targeted_id':
+				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc();
+			case 'affix_text':
+				return $LL.admin_identity_mapping_flow_transform_affix_text_desc();
 			case 'trim':
 				return $LL.admin_identity_mapping_flow_transform_trim_desc();
 			case 'normalize':
@@ -2744,6 +2965,18 @@
 				return $LL.admin_identity_mapping_flow_transform_param_mode();
 			case 'delimiter':
 				return $LL.admin_identity_mapping_flow_transform_param_delimiter();
+			case 'trimItems':
+				return $LL.admin_identity_mapping_flow_transform_param_trim_items();
+			case 'omitEmpty':
+				return $LL.admin_identity_mapping_flow_transform_param_omit_empty();
+			case 'unique':
+				return $LL.admin_identity_mapping_flow_transform_param_unique();
+			case 'persistentIdentifierProfileId':
+				return $LL.admin_identity_mapping_flow_transform_param_persistent_identifier_profile();
+			case 'prefix':
+				return $LL.admin_identity_mapping_flow_transform_param_prefix();
+			case 'suffix':
+				return $LL.admin_identity_mapping_flow_transform_param_suffix();
 			case 'trueValues':
 				return $LL.admin_identity_mapping_flow_transform_param_true_values();
 			case 'falseValues':
@@ -2759,6 +2992,27 @@
 			default:
 				return parameter.label;
 		}
+	}
+
+	function persistentIdentifierProfileOptions(operation: TransformOperation) {
+		const usage =
+			operation === 'oidc_pairwise_sub'
+				? 'oidc_pairwise_sub'
+				: operation === 'saml_edu_person_targeted_id'
+					? 'saml_edu_person_targeted_id'
+					: null;
+		const protocol =
+			operation === 'oidc_pairwise_sub'
+				? 'oidc'
+				: operation === 'saml_edu_person_targeted_id'
+					? 'saml'
+					: null;
+		return persistentIdentifierProfiles.filter((profile) => {
+			const usageMatches = !usage || profile.usage.length === 0 || profile.usage.includes(usage);
+			const protocolMatches =
+				!protocol || profile.protocolScope === 'any' || profile.protocolScope === protocol;
+			return usageMatches && protocolMatches;
+		});
 	}
 
 	function transformOptionLabel(parameterName: string, value: string, fallback: string): string {
@@ -2779,7 +3033,19 @@
 		return fallback;
 	}
 
-	function defaultTransformParameters(operation: TransformOperation): Record<string, string> {
+	function defaultTransformParameters(
+		operation: TransformOperation
+	): Record<string, TransformParameterValue> {
+		if (operation === 'as_array') return { trimItems: true, omitEmpty: true, unique: false };
+		if (operation === 'split')
+			return { delimiter: ',', trimItems: true, omitEmpty: true, unique: false };
+		if (operation === 'join')
+			return { delimiter: ',', trimItems: true, omitEmpty: true, unique: false };
+		if (operation === 'first') return { trimItems: true, omitEmpty: true };
+		if (operation === 'oidc_pairwise_sub' || operation === 'saml_edu_person_targeted_id') {
+			return { persistentIdentifierProfileId: '' };
+		}
+		if (operation === 'affix_text') return { prefix: '', suffix: '' };
 		if (operation === 'normalize') return { mode: 'whitespace' };
 		if (operation === 'case') return { mode: 'lower' };
 		if (operation === 'concat') return { delimiter: ' ' };
@@ -2803,33 +3069,45 @@
 
 	function sanitizeTransformParameters(
 		operation: TransformOperation,
-		parameters: Record<string, string> = {}
-	): Record<string, string> {
+		parameters: Record<string, TransformParameterValue> = {}
+	): Record<string, TransformParameterValue> {
 		const schema = transformSchema(operation);
 		const defaults = defaultTransformParameters(operation);
-		const sanitized: Record<string, string> = {};
+		const sanitized: Record<string, TransformParameterValue> = {};
 		for (const parameter of schema.parameters) {
 			const value = parameters[parameter.name] ?? defaults[parameter.name] ?? '';
 			if (parameter.kind === 'enum') {
 				sanitized[parameter.name] = parameter.options.some((option) => option.value === value)
 					? value
 					: (parameter.options[0]?.value ?? '');
+			} else if (parameter.kind === 'boolean') {
+				sanitized[parameter.name] = value === true || value === 'true';
 			} else {
-				sanitized[parameter.name] = value;
+				sanitized[parameter.name] = typeof value === 'string' ? value : String(value);
 			}
 		}
 		return sanitized;
 	}
 
+	function transformParameterTextValue(node: MappingNode, parameterName: string): string {
+		const value = sanitizeTransformParameters(
+			activeTransformOperation(node),
+			node.transformParameters
+		)[parameterName];
+		return typeof value === 'string' ? value : String(value ?? '');
+	}
+
 	function transformSummary(
 		operation: TransformOperation,
-		parameters: Record<string, string> = {}
+		parameters: Record<string, TransformParameterValue> = {}
 	): string {
 		const schema = transformSchema(operation);
 		const entries = schema.parameters
 			.map((parameter) => {
 				const value = parameters[parameter.name];
-				return value ? `${parameter.name}=${JSON.stringify(value)}` : null;
+				return value !== undefined && value !== ''
+					? `${parameter.name}=${JSON.stringify(value)}`
+					: null;
 			})
 			.filter(Boolean);
 		return entries.length > 0 ? `${operation}(${entries.join(', ')})` : operation;
@@ -2837,14 +3115,15 @@
 
 	function transformCaption(
 		operation: TransformOperation,
-		parameters: Record<string, string> = {}
+		parameters: Record<string, TransformParameterValue> = {}
 	): string {
 		const schema = transformSchema(operation);
 		const label = transformOperationLabel(operation).toLowerCase();
 		if (schema.parameters.length === 0) return label;
 		const values = schema.parameters
 			.map((parameter) => parameters[parameter.name])
-			.filter((value) => value && value.length > 0);
+			.filter((value) => value !== undefined && value !== '' && value !== false)
+			.map((value) => String(value));
 		return [label, ...values].join(' / ');
 	}
 
@@ -2864,7 +3143,7 @@
 	function updateTransformNode(
 		nodeId: string,
 		operation: TransformOperation,
-		parameters: Record<string, string>
+		parameters: Record<string, TransformParameterValue>
 	) {
 		if (!editable) return;
 		const sanitized = sanitizeTransformParameters(operation, parameters);
@@ -2896,7 +3175,11 @@
 		updateTransformNode(node.id, operation, defaultTransformParameters(operation));
 	}
 
-	function updateTransformParameter(node: MappingNode, parameterName: string, value: string) {
+	function updateTransformParameter(
+		node: MappingNode,
+		parameterName: string,
+		value: TransformParameterValue
+	) {
 		const operation = activeTransformOperation(node);
 		updateTransformNode(node.id, operation, {
 			...sanitizeTransformParameters(operation, node.transformParameters),
@@ -3254,15 +3537,20 @@
 								? $LL.admin_identity_mapping_flow_loading_schemas()
 								: loadError
 									? $LL.admin_identity_mapping_flow_schema_load_failed()
-									: emptyGraphTitle}</strong
+									: resolvedEmptyGraphTitle}</strong
 						>
 						<span
 							>{loading
 								? $LL.admin_identity_mapping_flow_loading_schemas_desc()
 								: loadError
 									? loadError
-									: emptyGraphDescription}</span
+									: resolvedEmptyGraphDescription}</span
 						>
+						{#if !loading && !loadError && emptyStateActionHref && emptyStateActionLabel}
+							<a class="graph-empty-action" href={emptyStateActionHref}>
+								{emptyStateActionLabel}
+							</a>
+						{/if}
 					</div>
 				{/if}
 				{#if viewMode !== 'destination'}
@@ -3543,6 +3831,7 @@
 							{#if node.role !== 'transform' && !node.hidden}
 								<span
 									class="node-info"
+									data-tooltip-placement={nodeInfoPlacement(node)}
 									aria-hidden="true"
 									onpointerenter={() => (infoOverlayNodeId = node.id)}
 									onpointerleave={() => {
@@ -3756,13 +4045,50 @@
 												>
 											{/each}
 										</select>
+									{:else if parameter.kind === 'boolean'}
+										<span class="inline-check">
+											<input
+												id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+												type="checkbox"
+												checked={Boolean(
+													sanitizeTransformParameters(
+														activeTransformOperation(selectedTransformNode),
+														selectedTransformNode.transformParameters
+													)[parameter.name]
+												)}
+												disabled={!editable}
+												onchange={(event) =>
+													updateTransformParameter(
+														selectedTransformNode,
+														parameter.name,
+														(event.currentTarget as HTMLInputElement).checked
+													)}
+											/>
+											<span>{transformParameterLabel(parameter)}</span>
+										</span>
+									{:else if parameter.name === 'persistentIdentifierProfileId'}
+										<select
+											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+											value={transformParameterTextValue(selectedTransformNode, parameter.name)}
+											disabled={!editable}
+											onchange={(event) =>
+												updateTransformParameter(
+													selectedTransformNode,
+													parameter.name,
+													(event.currentTarget as HTMLSelectElement).value
+												)}
+										>
+											<option value="">
+												{$LL.admin_identity_mapping_flow_transform_tenant_default_profile()}
+											</option>
+											{#each persistentIdentifierProfileOptions(activeTransformOperation(selectedTransformNode)) as profile (profile.id)}
+												<option value={profile.id}>{profile.displayName}</option>
+											{/each}
+										</select>
 									{:else}
 										<input
 											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
-											value={sanitizeTransformParameters(
-												activeTransformOperation(selectedTransformNode),
-												selectedTransformNode.transformParameters
-											)[parameter.name]}
+											value={transformParameterTextValue(selectedTransformNode, parameter.name)}
 											placeholder={parameter.placeholder}
 											disabled={!editable}
 											oninput={(event) =>
@@ -3897,19 +4223,19 @@
 
 <style>
 	.mapping-shell {
-		--map-bg: var(--bg-card);
-		--map-surface: var(--bg-card);
-		--map-surface-muted: var(--bg-subtle);
-		--map-canvas: color-mix(in srgb, var(--bg-card) 78%, var(--bg-page));
-		--map-line: var(--border-color);
-		--map-line-strong: color-mix(in srgb, var(--border-color) 70%, var(--text-muted));
-		--map-text: var(--text-primary);
-		--map-muted: var(--text-secondary);
-		--map-brand: var(--primary);
+		--map-bg: var(--color-surface);
+		--map-surface: var(--color-surface);
+		--map-surface-muted: var(--color-surface-muted);
+		--map-canvas: color-mix(in srgb, var(--color-surface) 78%, var(--color-bg-page));
+		--map-line: var(--color-border);
+		--map-line-strong: color-mix(in srgb, var(--color-border) 70%, var(--color-text-muted));
+		--map-text: var(--color-text);
+		--map-muted: var(--color-text-muted);
+		--map-brand: var(--color-accent);
 		--map-teal: #0f766e;
 		--map-green: #15803d;
 		--map-amber: #b45309;
-		--map-red: #b91c1c;
+		--map-red: var(--color-danger);
 		--map-violet: #6d28d9;
 		--map-radius: 4px;
 		--map-target-surface: color-mix(in srgb, var(--map-brand) 2%, var(--map-surface));
@@ -3933,11 +4259,11 @@
 	}
 
 	:global([data-theme='dark']) .mapping-shell {
-		--map-bg: color-mix(in srgb, var(--bg-card) 76%, #030712);
-		--map-surface: color-mix(in srgb, var(--bg-card) 84%, #05070d);
-		--map-surface-muted: color-mix(in srgb, var(--bg-subtle) 70%, #060914);
-		--map-canvas: color-mix(in srgb, var(--bg-page) 34%, #05070d);
-		--map-line: color-mix(in srgb, var(--border-color) 60%, #344156);
+		--map-bg: color-mix(in srgb, var(--color-surface) 76%, #030712);
+		--map-surface: color-mix(in srgb, var(--color-surface) 84%, #05070d);
+		--map-surface-muted: color-mix(in srgb, var(--color-surface-muted) 70%, #060914);
+		--map-canvas: color-mix(in srgb, var(--color-bg-page) 34%, #05070d);
+		--map-line: color-mix(in srgb, var(--color-border) 60%, #344156);
 		--map-line-strong: #344156;
 		--map-text: #e5edf6;
 		--map-muted: #8ea0b7;
@@ -4202,7 +4528,7 @@
 
 	.graph-canvas {
 		position: relative;
-		overflow: hidden;
+		overflow: visible;
 		background: var(--map-canvas);
 	}
 
@@ -4228,6 +4554,28 @@
 		color: var(--map-muted);
 		font-size: 12px;
 		line-height: 1.45;
+	}
+
+	.graph-empty-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: fit-content;
+		margin-top: 6px;
+		padding: var(--button-sm-padding, 8px 14px);
+		border: var(--button-secondary-border, 1px solid var(--color-border));
+		border-radius: var(--button-radius, var(--radius-sm));
+		background: var(--button-secondary-bg, var(--color-surface));
+		color: var(--button-secondary-text, var(--color-accent));
+		font-size: var(--button-sm-font-size, 0.82rem);
+		font-weight: var(--button-font-weight, 700);
+		text-decoration: none;
+	}
+
+	.graph-empty-action:hover {
+		border-color: var(--button-secondary-hover-border, var(--color-accent));
+		background: var(--button-secondary-hover-bg, var(--color-surface-muted));
+		color: var(--button-secondary-hover-text, var(--color-accent));
 	}
 
 	.lane-label {
@@ -4974,12 +5322,13 @@
 
 	.node-info-overlay {
 		position: absolute;
-		top: 16px;
-		right: -6px;
+		right: -8px;
+		bottom: 12px;
 		z-index: 20;
 		display: none;
+		width: max-content;
 		min-width: 190px;
-		max-width: 260px;
+		max-width: min(280px, calc(100vw - 40px));
 		padding: 9px 10px;
 		border: 1px solid color-mix(in srgb, var(--node-accent) 48%, var(--map-line));
 		border-radius: 6px;
@@ -4987,6 +5336,11 @@
 		background: color-mix(in srgb, var(--map-surface) 96%, var(--map-canvas));
 		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
 		text-align: left;
+	}
+
+	.node-info[data-tooltip-placement='below'] .node-info-overlay {
+		top: 12px;
+		bottom: auto;
 	}
 
 	.node-info:hover .node-info-overlay {
@@ -5244,6 +5598,24 @@
 		font-size: 10px;
 		letter-spacing: 0;
 		text-transform: none;
+	}
+
+	.inline-check {
+		display: inline-flex;
+		align-items: center;
+		justify-content: flex-start;
+		gap: 8px;
+		color: var(--map-text);
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+
+	.inline-check input {
+		width: 15px;
+		height: 15px;
+		accent-color: var(--map-brand);
 	}
 
 	.detail-list div,

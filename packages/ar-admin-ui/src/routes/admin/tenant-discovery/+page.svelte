@@ -6,6 +6,8 @@
 		type CategorySettings
 	} from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { getTenantInfo } from '$lib/api/admin-info';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
@@ -755,19 +757,13 @@
 	<title>{$LL.admin_tenant_discovery_head_title()}</title>
 </svelte:head>
 
-<div class="page-shell">
-	<header class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_tenant_discovery_title()}</h1>
-			<p class="page-description">
-				{#if singleTenantMode}
-					{$LL.admin_tenant_discovery_description_single()}
-				{:else}
-					{$LL.admin_tenant_discovery_description_multi()}
-				{/if}
-			</p>
-		</div>
-	</header>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_tenant_discovery_title()}
+		description={singleTenantMode
+			? $LL.admin_tenant_discovery_description_single()
+			: $LL.admin_tenant_discovery_description_multi()}
+	/>
 
 	{#if loading}
 		<div class="loading-state">
@@ -1731,38 +1727,18 @@
 			{/if}
 		</section>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.page-shell {
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-	}
-
-	.page-title {
-		margin: 0 0 0.25rem;
-		font-size: 1.5rem;
-	}
-
-	.page-description {
-		margin: 0;
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-	}
-
 	.panel {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-md));
+		background: var(--color-surface);
 		padding: 1.25rem;
+	}
+
+	.panel + .panel {
+		margin-top: var(--section-gap, 1.25rem);
 	}
 
 	.section-header {
@@ -1781,7 +1757,7 @@
 	.section-header p,
 	.methods-card p {
 		margin: 0.25rem 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.subtle-link {
@@ -1805,7 +1781,7 @@
 
 	.field-hint {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0;
 	}
 
@@ -1814,20 +1790,20 @@
 		gap: 0.35rem;
 		margin-top: 0.25rem;
 		padding: 0.75rem 0.85rem;
-		border: 1px solid var(--border);
-		border-radius: 10px;
-		background: var(--bg-subtle);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 10px);
+		background: var(--color-surface-muted);
 	}
 
 	.inline-help p {
 		margin: 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		line-height: 1.45;
 	}
 
 	.inline-help code {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 		white-space: normal;
 		overflow-wrap: anywhere;
@@ -1849,11 +1825,11 @@
 	select,
 	textarea {
 		width: 100%;
-		border: 1px solid var(--border);
-		border-radius: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 12px);
 		padding: 0.8rem 0.9rem;
-		background: var(--bg-card);
-		color: var(--text-primary);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 	}
 
 	.methods-card,
@@ -1865,9 +1841,9 @@
 
 	.methods-card {
 		padding: 1rem;
-		border: 1px solid var(--border);
-		border-radius: 16px;
-		background: var(--bg-glass);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, 16px);
+		background: var(--color-surface-muted);
 	}
 
 	.toggle-row {
@@ -1876,7 +1852,7 @@
 		justify-content: space-between;
 		gap: 1rem;
 		padding: 0.9rem 0;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.toggle-row:last-child {
@@ -1896,22 +1872,22 @@
 	.alert {
 		margin-bottom: 1rem;
 		padding: 0.9rem 1rem;
-		border-radius: 12px;
+		border-radius: var(--radius-control, 12px);
 	}
 
 	.alert-error {
-		background: rgba(239, 68, 68, 0.1);
-		color: #b91c1c;
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.alert-success {
-		background: rgba(16, 185, 129, 0.12);
-		color: #047857;
+		background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+		color: var(--color-success);
 	}
 
 	.alert-info {
-		background: rgba(59, 130, 246, 0.1);
-		color: #1d4ed8;
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.override-toggle {
@@ -1921,23 +1897,23 @@
 		gap: 1rem;
 		margin-bottom: 1rem;
 		padding: 0.95rem 1rem;
-		border: 1px solid var(--border);
-		border-radius: 12px;
-		background: var(--bg-glass);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 12px);
+		background: var(--color-surface-muted);
 	}
 
 	.override-toggle p {
 		margin: 0.3rem 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.9rem;
 	}
 
 	.collapsed-override {
 		padding: 1rem;
-		border: 1px dashed var(--border);
-		border-radius: 12px;
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-control, 12px);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		font-size: 0.9rem;
 	}
 

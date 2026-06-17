@@ -6,6 +6,7 @@
 		type IdentityMappingFederationTrustSourceSummary
 	} from '$lib/api/admin-identity-mapping';
 	import { adminSAMLAPI, type SAMLMetadataEntitySummary } from '$lib/api/admin-saml';
+	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let trustSources = $state<IdentityMappingFederationTrustSourceSummary[]>([]);
@@ -109,21 +110,19 @@
 	<title>{$LL.admin_identity_mapping_trust_head_title()}</title>
 </svelte:head>
 
-<div class="trust-page">
-	<div class="page-heading">
-		<div>
-			<a class="back-link" href="/admin/field-mapping">{$LL.admin_identity_mapping_back()}</a>
-			<p class="eyebrow">{$LL.admin_identity_mapping_title()}</p>
-			<h1>{$LL.admin_identity_mapping_trust_title()}</h1>
-			<p class="summary">
-				{$LL.admin_identity_mapping_trust_description()}
-			</p>
-		</div>
-		<div class="status-panel">
-			<strong>{trustSources.length}</strong>
-			<span>{$LL.admin_identity_mapping_trust_sources_count()}</span>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_identity_mapping_title()}
+		title={$LL.admin_identity_mapping_trust_title()}
+		description={$LL.admin_identity_mapping_trust_description()}
+	>
+		{#snippet actions()}
+			<div class="status-panel">
+				<strong>{trustSources.length}</strong>
+				<span>{$LL.admin_identity_mapping_trust_sources_count()}</span>
+			</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	<div class="trust-layout">
 		<section class="source-list" aria-label={$LL.admin_identity_mapping_trust_sources_aria()}>
@@ -269,15 +268,9 @@
 			</div>
 		</section>
 	</div>
-</div>
+</AdminPageShell>
 
 <style>
-	.trust-page {
-		display: grid;
-		gap: 18px;
-	}
-
-	.page-heading,
 	.panel-heading,
 	.document-list article,
 	.entity-list article {
@@ -287,15 +280,6 @@
 		gap: 18px;
 	}
 
-	.back-link {
-		display: inline-flex;
-		margin-bottom: 12px;
-		color: var(--color-primary);
-		font-size: 13px;
-		font-weight: 700;
-		text-decoration: none;
-	}
-
 	.eyebrow,
 	.detail-grid span,
 	.aggregate-form span,
@@ -303,23 +287,18 @@
 	.document-list p,
 	.status-panel span {
 		margin: 0;
-		color: var(--text-muted);
-		font-size: 12px;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 700;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
 		text-transform: uppercase;
 	}
 
-	h1,
 	h2,
 	h3,
 	p {
 		margin: 0;
-	}
-
-	h1 {
-		color: var(--text-primary);
-		font-size: 28px;
 	}
 
 	h2,
@@ -329,30 +308,23 @@
 	.document-list strong,
 	.source-list button strong,
 	.status-panel strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	h2 {
-		font-size: 18px;
+		font-size: var(--section-title-size, 1rem);
 	}
 
 	h3 {
 		font-size: 15px;
 	}
 
-	.summary,
 	.entity-list span,
 	.document-list span,
 	.source-list button small {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 13px;
 		line-height: 1.45;
-	}
-
-	.summary {
-		max-width: 760px;
-		margin-top: 8px;
-		font-size: 14px;
 	}
 
 	.status-panel,
@@ -363,9 +335,9 @@
 	.aggregate-panel,
 	.document-list article,
 	.entity-list article {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		background: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 	}
 
 	.status-panel {
@@ -376,7 +348,8 @@
 
 	.status-panel strong {
 		display: block;
-		font-size: 24px;
+		font-family: var(--font-display);
+		font-size: var(--stat-value-size, 1.45rem);
 	}
 
 	.trust-layout {
@@ -391,13 +364,14 @@
 	}
 
 	button {
-		min-height: 36px;
+		min-height: var(--control-height, 36px);
 		padding: 0 12px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-card);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 		font-weight: 800;
+		cursor: pointer;
 	}
 
 	button:disabled {
@@ -417,15 +391,15 @@
 	}
 
 	.source-list > button.active {
-		border-color: var(--color-primary);
-		background: var(--bg-hover);
+		border-color: var(--color-accent);
+		background: var(--color-surface-muted);
 	}
 
 	.badge {
 		padding: 4px 9px;
-		border-radius: 999px;
-		color: #047857;
-		background: rgba(16, 185, 129, 0.14);
+		border-radius: var(--status-badge-radius, 999px);
+		color: var(--color-success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
 		font-size: 12px;
 	}
 
@@ -463,12 +437,12 @@
 	}
 
 	input {
-		min-height: 36px;
-		padding: 0 10px;
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text-primary);
-		background: var(--bg-input);
+		min-height: var(--control-height, 36px);
+		padding: var(--control-padding, 0 10px);
+		border: var(--toolbar-control-border, 1px solid var(--color-border));
+		border-radius: var(--toolbar-control-radius, var(--radius-control));
+		color: var(--color-text);
+		background: var(--toolbar-control-bg, var(--color-surface));
 	}
 
 	.entity-list,
@@ -478,7 +452,6 @@
 	}
 
 	@media (max-width: 1000px) {
-		.page-heading,
 		.trust-layout,
 		.panel-heading,
 		.aggregate-form,

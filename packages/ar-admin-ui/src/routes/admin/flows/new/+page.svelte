@@ -6,6 +6,7 @@
 		getProfileDisplayName,
 		createEmptyGraphDefinition
 	} from '$lib/api/admin-flows';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 
 	let name = $state('');
 	let description = $state('');
@@ -55,20 +56,25 @@
 	<title>Create Flow - Admin Dashboard - Authrim</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/flows" class="back-link">← Back to Flows</a>
-
-	<h1 class="page-title">Create Flow</h1>
-	<p class="modal-description">Create a new authentication or authorization flow.</p>
+<AdminPageShell width="narrow">
+	<AdminPageHeader
+		title="Create Flow"
+		description="Create a new authentication or authorization flow."
+	>
+		{#snippet actions()}
+			<button type="button" class="btn btn-secondary" onclick={handleCancel}>
+				<i class="i-ph-arrow-left"></i>
+				Back to Flows
+			</button>
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<form class="panel" onsubmit={handleSubmit}>
-		<div class="form-section">
-			<h2 class="section-title-border">Basic Information</h2>
-
+	<form onsubmit={handleSubmit}>
+		<AdminSection title="Basic Information">
 			<div class="form-group">
 				<label for="name" class="form-label">Name <span class="text-danger">*</span></label>
 				<input
@@ -93,11 +99,9 @@
 				></textarea>
 				<span class="form-hint">Optional description explaining the purpose of this flow.</span>
 			</div>
-		</div>
+		</AdminSection>
 
-		<div class="form-section">
-			<h2 class="section-title-border">Configuration</h2>
-
+		<AdminSection title="Configuration">
 			<div class="form-group">
 				<label for="profile" class="form-label"
 					>Target Profile <span class="text-danger">*</span></label
@@ -125,7 +129,7 @@
 					for this profile.
 				</span>
 			</div>
-		</div>
+		</AdminSection>
 
 		<div class="form-actions">
 			<button type="button" class="btn btn-secondary" onclick={handleCancel} disabled={saving}>
@@ -136,4 +140,4 @@
 			</button>
 		</div>
 	</form>
-</div>
+</AdminPageShell>

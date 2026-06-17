@@ -319,7 +319,7 @@
 <style>
 	.timeline-card {
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 14px;
+		border-radius: var(--timeline-card-radius, var(--radius-panel, 14px));
 		padding: 0.9rem;
 		background: var(--color-surface-elevated);
 	}
@@ -353,9 +353,9 @@
 	}
 
 	.timeline-badges span {
-		border-radius: 999px;
+		border-radius: var(--guide-badge-radius, var(--status-badge-radius, 999px));
 		padding: 0.24rem 0.6rem;
-		background: color-mix(in srgb, var(--color-surface-default) 82%, white);
+		background: color-mix(in srgb, var(--color-surface-default) 82%, var(--color-surface));
 		font-size: 0.77rem;
 		color: var(--color-text-secondary);
 	}

@@ -76,6 +76,7 @@ interface EdgeRow {
   id: string;
   source_ref_json: string;
   target_ref_json: string;
+  edge_kind: string | null;
   display_order: number;
 }
 
@@ -146,6 +147,7 @@ export async function resolveRuntimeIdentityMappingBinding(
       id: edge.id,
       sourceRef: parseFieldRef(edge.source_ref_json),
       targetRef: parseFieldRef(edge.target_ref_json),
+      edgeKind: edge.edge_kind ?? undefined,
     })),
     transforms: transforms.map((transform) => ({
       id: transform.id,
@@ -301,7 +303,7 @@ async function loadEdges(
   fieldMappingVersionId: string
 ): Promise<EdgeRow[]> {
   return adapter.query<EdgeRow>(
-    `SELECT e.id, e.source_ref_json, e.target_ref_json, e.display_order
+    `SELECT e.id, e.source_ref_json, e.target_ref_json, e.edge_kind, e.display_order
        FROM mapping_rules r
        JOIN mapping_rule_edges e
          ON e.tenant_id = r.tenant_id
@@ -421,6 +423,7 @@ function normalizeFieldRef(value: Record<string, unknown>): FieldRef {
     path:
       readString(value.path) ?? readString(value.fieldKey) ?? readString(value.nodeId) ?? 'unknown',
     catalogEntryId: readString(value.catalogEntryId) ?? readString(value.catalog_entry_id),
+    valueType: readString(value.valueType) ?? readString(value.value_type),
   };
 }
 

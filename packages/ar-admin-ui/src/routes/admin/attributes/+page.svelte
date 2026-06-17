@@ -11,6 +11,12 @@
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	// State
 	let attributes: UserAttribute[] = $state([]);
@@ -314,50 +320,48 @@
 	<title>{$LL.admin_attributes_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
+{#snippet pageActions()}
+	<button
+		class="btn btn-secondary"
+		onclick={() => (showCleanupDialog = true)}
+		disabled={!abacEnabled}
+	>
+		<i class="i-ph-trash" aria-hidden="true"></i>
+		{$LL.admin_attributes_cleanup_expired()}
+	</button>
+	<button class="btn btn-primary" onclick={openCreateDialog} disabled={!abacEnabled}>
+		<i class="i-ph-plus" aria-hidden="true"></i>
+		{$LL.admin_attributes_add_attribute()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
 	<!-- Info Banner -->
-	<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
-		<div class="flex items-start">
-			<span class="i-ph-info text-blue-600 text-xl mr-3 mt-0.5"></span>
+	<div class="info-banner">
+		<div class="info-banner__content">
+			<span class="i-ph-info info-banner__icon" aria-hidden="true"></span>
 			<div>
-				<h3 class="font-semibold text-blue-900 mb-1">{$LL.admin_attributes_info_title()}</h3>
-				<p class="text-sm text-blue-800">
+				<h3 class="info-banner__title">{$LL.admin_attributes_info_title()}</h3>
+				<p class="info-banner__text">
 					{$LL.admin_attributes_info_prefix()}
 					<strong>End Users</strong>{$LL.admin_attributes_info_middle()}
 					<strong>Admin Operator</strong>
 					{$LL.admin_attributes_info_suffix()}
-					<a href="/admin/admin-abac" class="underline hover:text-blue-900">Admin ABAC</a>.
+					<a href="/admin/admin-abac">Admin ABAC</a>.
 				</p>
 			</div>
 		</div>
 	</div>
 
 	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_attributes_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_attributes_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button
-				class="btn btn-secondary"
-				onclick={() => (showCleanupDialog = true)}
-				disabled={!abacEnabled}
-			>
-				<i class="i-ph-trash"></i>
-				{$LL.admin_attributes_cleanup_expired()}
-			</button>
-			<button class="btn btn-primary" onclick={openCreateDialog} disabled={!abacEnabled}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_attributes_add_attribute()}
-			</button>
-		</div>
-	</div>
+	<AdminPageHeader
+		title={$LL.admin_attributes_title()}
+		description={$LL.admin_attributes_description()}
+		actions={pageActions}
+	/>
 
 	<!-- ABAC Feature Flag Toggle -->
-	<div class="panel feature-toggle-panel">
+	<AdminSection>
 		<div class="feature-toggle-row">
 			<div class="feature-toggle-info">
 				<h3 class="feature-toggle-title">{$LL.admin_attributes_abac_engine()}</h3>
@@ -379,7 +383,7 @@
 		{#if abacSaving}
 			<div class="saving-indicator">{$LL.admin_attributes_saving()}</div>
 		{/if}
-	</div>
+	</AdminSection>
 
 	{#if !abacEnabled && !abacLoading}
 		<div class="alert alert-warning">
@@ -420,74 +424,94 @@
 
 		<!-- Source Distribution -->
 		{#if stats.by_source.length > 0}
-			<div class="panel">
-				<h3 class="panel-title">{$LL.admin_attributes_by_source()}</h3>
+			<AdminSection title={$LL.admin_attributes_by_source()}>
 				<div class="distribution-bars">
 					{#each stats.by_source as source (source.source_type)}
 						<div class="distribution-item">
 							<span class={getSourceBadgeClass(source.source_type)}>
 								{formatSourceType(source.source_type as AttributeSourceType)}
 							</span>
-							<div class="bar-container">
-								<div
-									class="bar bar-{source.source_type}"
-									style="width: {(source.count / stats.total) * 100}%"
-								></div>
-							</div>
+							<progress
+								class="distribution-progress distribution-progress--{source.source_type}"
+								value={source.count}
+								max={stats.total}
+							>
+								{source.count}
+							</progress>
 							<span class="distribution-count">{source.count}</span>
 						</div>
 					{/each}
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 	{/if}
 
 	<!-- Filters -->
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group">
+	<AdminSection>
+		<AdminToolbar>
+			<div class="admin-field admin-field--search">
+				<label for="attribute-search" class="admin-field__label">
+					{$LL.admin_attributes_search_placeholder()}
+				</label>
 				<input
+					id="attribute-search"
 					type="text"
-					class="form-input"
+					class="admin-input"
 					placeholder={$LL.admin_attributes_search_placeholder()}
 					bind:value={filterSearch}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
-			<div class="form-group">
+			<div class="admin-field admin-field--compact">
+				<label for="attribute-user-id" class="admin-field__label">
+					{$LL.admin_attributes_user_id()}
+				</label>
 				<input
+					id="attribute-user-id"
 					type="text"
-					class="form-input"
+					class="admin-input"
 					placeholder={$LL.admin_attributes_user_id()}
 					bind:value={filterUserId}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
-			<div class="form-group">
+			<div class="admin-field admin-field--compact">
+				<label for="attribute-name-filter" class="admin-field__label">
+					{$LL.admin_attributes_attribute_name()}
+				</label>
 				<input
+					id="attribute-name-filter"
 					type="text"
-					class="form-input"
+					class="admin-input"
 					placeholder={$LL.admin_attributes_attribute_name()}
 					bind:value={filterAttributeName}
 					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				/>
 			</div>
-			<div class="form-group">
-				<select class="form-select" bind:value={filterSourceType} onchange={applyFilters}>
+			<div class="admin-field admin-field--compact">
+				<label for="attribute-source-filter" class="admin-field__label">
+					{$LL.admin_attributes_source()}
+				</label>
+				<select
+					id="attribute-source-filter"
+					class="admin-select"
+					bind:value={filterSourceType}
+					onchange={applyFilters}
+				>
 					<option value="">{$LL.admin_attributes_all_sources()}</option>
 					<option value="vc">{$LL.admin_attributes_source_vc()}</option>
 					<option value="saml">{$LL.admin_attributes_source_saml()}</option>
 					<option value="manual">{$LL.admin_attributes_source_manual()}</option>
 				</select>
 			</div>
-			<div class="form-group" style="min-width: 180px;">
+			<div class="admin-field admin-field--compact toggle-field">
 				<ToggleSwitch
 					bind:checked={includeExpired}
 					label={$LL.admin_attributes_include_expired()}
 					size="sm"
 				/>
 			</div>
-			<div class="form-group">
+			<div class="toolbar-actions">
 				<button class="btn btn-primary" onclick={applyFilters}
 					>{$LL.admin_attributes_apply()}</button
 				>
@@ -495,8 +519,8 @@
 					>{$LL.admin_attributes_clear()}</button
 				>
 			</div>
-		</div>
-	</div>
+		</AdminToolbar>
+	</AdminSection>
 
 	<!-- Attributes Table -->
 	{#if loading}
@@ -505,17 +529,17 @@
 			<p>{$LL.admin_attributes_loading()}</p>
 		</div>
 	{:else if attributes.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_attributes_empty()}</p>
 				<button class="btn btn-primary" onclick={openCreateDialog}
 					>{$LL.admin_attributes_add_attribute()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection title={$LL.admin_attributes_title()}>
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_attributes_user()}</th>
@@ -572,37 +596,27 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
 		<!-- Pagination -->
 		{#if pagination.total_pages > 1}
-			<div class="pagination">
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={pagination.page === 1}
-					onclick={() => goToPage(pagination.page - 1)}
-				>
-					{$LL.admin_attributes_previous()}
-				</button>
-				<span class="pagination-info">
-					{$LL.admin_attributes_page_of({
-						page: pagination.page,
-						totalPages: pagination.total_pages
-					})}
-					<span class="muted">{$LL.admin_attributes_total_count({ count: pagination.total })}</span>
-				</span>
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={pagination.page === pagination.total_pages}
-					onclick={() => goToPage(pagination.page + 1)}
-				>
-					{$LL.admin_attributes_next()}
-				</button>
-			</div>
+			<AdminPagination
+				label={$LL.admin_attributes_title()}
+				info={`${$LL.admin_attributes_page_of({
+					page: pagination.page,
+					totalPages: pagination.total_pages
+				})} · ${$LL.admin_attributes_total_count({ count: pagination.total })}`}
+				previousLabel={$LL.admin_attributes_previous()}
+				nextLabel={$LL.admin_attributes_next()}
+				hasPrevious={pagination.page > 1}
+				hasNext={pagination.page < pagination.total_pages}
+				onPrevious={() => goToPage(pagination.page - 1)}
+				onNext={() => goToPage(pagination.page + 1)}
+			/>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Dialog -->
 <Modal
@@ -615,40 +629,44 @@
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="user-id" class="form-label">{$LL.admin_attributes_user_id()}</label>
+	<div class="admin-field dialog-field">
+		<label for="user-id" class="admin-field__label">{$LL.admin_attributes_user_id()}</label>
 		<input
 			id="user-id"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			bind:value={createForm.user_id}
 			placeholder="user_123"
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="attr-name" class="form-label">{$LL.admin_attributes_attribute_name_title()}</label>
+	<div class="admin-field dialog-field">
+		<label for="attr-name" class="admin-field__label"
+			>{$LL.admin_attributes_attribute_name_title()}</label
+		>
 		<input
 			id="attr-name"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			bind:value={createForm.attribute_name}
 			placeholder="subscription_tier, verified_email, country..."
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="attr-value" class="form-label">{$LL.admin_attributes_attribute_value()}</label>
+	<div class="admin-field dialog-field">
+		<label for="attr-value" class="admin-field__label"
+			>{$LL.admin_attributes_attribute_value()}</label
+		>
 		<input
 			id="attr-value"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			bind:value={createForm.attribute_value}
 			placeholder="premium, true, US..."
 		/>
 	</div>
 
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<ToggleSwitch
 			bind:checked={createForm.has_expiry}
 			label={$LL.admin_attributes_set_expiration()}
@@ -657,12 +675,12 @@
 	</div>
 
 	{#if createForm.has_expiry}
-		<div class="form-group">
-			<label for="expires-at" class="form-label">{$LL.admin_attributes_expires_at()}</label>
+		<div class="admin-field dialog-field">
+			<label for="expires-at" class="admin-field__label">{$LL.admin_attributes_expires_at()}</label>
 			<input
 				id="expires-at"
 				type="datetime-local"
-				class="form-input"
+				class="admin-input"
 				bind:value={createForm.expires_at}
 			/>
 		</div>
@@ -752,10 +770,38 @@
 </Modal>
 
 <style>
-	/* Feature Toggle Panel Styles */
-	.feature-toggle-panel {
-		margin-bottom: 1.5rem;
-		padding: 1rem 1.25rem;
+	.info-banner {
+		margin-bottom: 18px;
+		border: 1px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+		border-radius: var(--radius-panel);
+		padding: 16px;
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+	}
+
+	.info-banner__content {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+	}
+
+	.info-banner__icon {
+		flex: 0 0 auto;
+		color: var(--color-accent);
+		font-size: 1.25rem;
+	}
+
+	.info-banner__title {
+		margin: 0 0 4px;
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
+	.info-banner__text {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.88rem;
+		line-height: 1.6;
 	}
 
 	.feature-toggle-row {
@@ -773,13 +819,13 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.feature-toggle-description {
 		margin: 0.25rem 0 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.feature-toggle-control {
@@ -790,13 +836,13 @@
 
 	.loading-text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.saving-indicator {
 		margin-top: 0.5rem;
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.alert-sm {
@@ -806,11 +852,122 @@
 	}
 
 	.alert-warning {
-		background-color: rgba(234, 179, 8, 0.1);
-		border: 1px solid rgba(234, 179, 8, 0.3);
-		border-radius: 0.375rem;
+		background-color: color-mix(in srgb, var(--color-warning) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-warning) 32%, var(--color-border));
+		border-radius: var(--radius-panel);
 		padding: 0.75rem 1rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 1rem;
+	}
+
+	.distribution-bars {
+		display: grid;
+		gap: 12px;
+	}
+
+	.distribution-item {
+		display: grid;
+		grid-template-columns: minmax(120px, auto) minmax(180px, 1fr) auto;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.distribution-progress {
+		width: 100%;
+		height: 10px;
+		overflow: hidden;
+		border: 0;
+		border-radius: 999px;
+		background: var(--color-surface-raised);
+	}
+
+	.distribution-progress::-webkit-progress-bar {
+		background: var(--color-surface-raised);
+	}
+
+	.distribution-progress::-webkit-progress-value {
+		background: var(--color-accent);
+		border-radius: 999px;
+	}
+
+	.distribution-progress::-moz-progress-bar {
+		background: var(--color-accent);
+		border-radius: 999px;
+	}
+
+	.distribution-progress--vc::-webkit-progress-value,
+	.distribution-progress--vc::-moz-progress-bar {
+		background: var(--color-success);
+	}
+
+	.distribution-progress--saml::-webkit-progress-value,
+	.distribution-progress--saml::-moz-progress-bar {
+		background: var(--color-info);
+	}
+
+	.distribution-count {
+		color: var(--color-text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+	}
+
+	.toggle-field {
+		justify-content: end;
+		min-width: 180px;
+	}
+
+	.toolbar-actions {
+		display: flex;
+		align-items: flex-end;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.dialog-field {
+		display: grid;
+		gap: 6px;
+		margin-bottom: 16px;
+	}
+
+	.dialog-field :global(.admin-field__label) {
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+		color: var(--color-text-subtle);
+	}
+
+	.dialog-field :global(.admin-input) {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.dialog-field :global(.admin-input:focus) {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	@media (max-width: 720px) {
+		.feature-toggle-row,
+		.info-banner__content {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.distribution-item {
+			grid-template-columns: 1fr;
+		}
+
+		.toolbar-actions {
+			width: 100%;
+		}
 	}
 </style>
