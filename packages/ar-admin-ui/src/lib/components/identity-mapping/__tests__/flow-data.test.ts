@@ -88,7 +88,15 @@ describe('field mapping flow data adapter', () => {
 		const csvSample = samples.find((sample) => sample.title === 'employee-columns');
 		expect(csvSample).toBeDefined();
 		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
-		expect(csvSample?.nodes.some((node) => node.role === 'target')).toBe(false);
+		expect(
+			csvSample?.nodes.some(
+				(node) =>
+					node.role === 'target' &&
+					node.label === 'UUID' &&
+					node.uiGroupKey === 'system' &&
+					node.storageTarget === 'System identity'
+			)
+		).toBe(true);
 		expect(
 			csvSample?.nodes.some((node) => node.label === 'email' && node.role === 'destination')
 		).toBe(true);
@@ -218,6 +226,30 @@ describe('field mapping flow data adapter', () => {
 
 		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
 		expect(targetNodes[0]).toEqual(
+			expect.objectContaining({
+				label: 'User ID',
+				uiGroupKey: 'system',
+				uiGroupLabel: 'System',
+				storageTarget: 'System identity',
+				fieldRef: expect.objectContaining({
+					path: 'id',
+					catalogEntryId: 'system.identity.user_id'
+				})
+			})
+		);
+		expect(targetNodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					label: 'UUID',
+					uiGroupKey: 'system',
+					fieldRef: expect.objectContaining({
+						path: 'account_id',
+						catalogEntryId: 'system.identity.account_uuid'
+					})
+				})
+			])
+		);
+		expect(targetNodes.find((node) => node.label === 'Subject Identifier')).toEqual(
 			expect.objectContaining({
 				label: 'Subject Identifier',
 				storageTarget: 'Account identity',
@@ -371,19 +403,31 @@ describe('field mapping flow data adapter', () => {
 		});
 
 		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
-		expect(targetNodes).toEqual([
+		expect(targetNodes[0]).toEqual(
 			expect.objectContaining({
-				label: 'Email',
+				label: 'User ID',
+				uiGroupKey: 'system',
 				fieldRef: expect.objectContaining({
-					path: 'email',
-					catalogEntryId: 'custom-claim.email'
-				}),
-				uiGroupKey: 'contact',
-				uiGroupLabel: 'Contact',
-				privacy: 'PII',
-				required: true
+					path: 'id',
+					catalogEntryId: 'system.identity.user_id'
+				})
 			})
-		]);
+		);
+		expect(targetNodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					label: 'Email',
+					fieldRef: expect.objectContaining({
+						path: 'email',
+						catalogEntryId: 'custom-claim.email'
+					}),
+					uiGroupKey: 'contact',
+					uiGroupLabel: 'Contact',
+					privacy: 'PII',
+					required: true
+				})
+			])
+		);
 		expect(JSON.stringify(samples)).not.toContain('unused');
 		expect(JSON.stringify(samples)).not.toContain('Disabled');
 	});
@@ -578,7 +622,16 @@ describe('field mapping flow data adapter', () => {
 			])
 		);
 		expect(samples[0].nodes.some((node) => node.role === 'source')).toBe(false);
-		expect(samples[0].nodes.some((node) => node.role === 'target')).toBe(false);
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'target',
+					label: 'UUID',
+					uiGroupKey: 'system',
+					storageTarget: 'System identity'
+				})
+			])
+		);
 	});
 
 	it('does not build profile nodes for registered profiles without schema', () => {

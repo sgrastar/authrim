@@ -55,6 +55,58 @@ interface ExtractedField {
 
 const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
 
+const systemIdentityFields = [
+	{
+		id: 'system.identity.user_id',
+		path: 'id',
+		label: 'User ID',
+		valueType: 'identifier',
+		note: 'Runtime user identifier. Use this as the default stable seed for pairwise or persistent identifiers.',
+		uiFieldOrder: 10
+	},
+	{
+		id: 'system.identity.account_uuid',
+		path: 'account_id',
+		label: 'UUID',
+		valueType: 'identifier',
+		note: 'Canonical identity account UUID.',
+		uiFieldOrder: 20
+	},
+	{
+		id: 'system.identity.subject_id',
+		path: 'subject_id',
+		label: 'Subject ID',
+		valueType: 'identifier',
+		note: 'Primary canonical subject identifier linked to the account.',
+		uiFieldOrder: 30
+	},
+	{
+		id: 'system.identity.lifecycle_state',
+		path: 'lifecycle_state',
+		label: 'Lifecycle State',
+		valueType: 'string',
+		allowedValues: ['active', 'suspended', 'deleted'],
+		note: 'Current lifecycle state of the identity account.',
+		uiFieldOrder: 40
+	},
+	{
+		id: 'system.identity.created_at',
+		path: 'created_at',
+		label: 'Created At',
+		valueType: 'datetime',
+		note: 'Account creation timestamp.',
+		uiFieldOrder: 50
+	},
+	{
+		id: 'system.identity.updated_at',
+		path: 'updated_at',
+		label: 'Updated At',
+		valueType: 'datetime',
+		note: 'Account update timestamp.',
+		uiFieldOrder: 60
+	}
+] as const;
+
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const sourceProfiles = [
 		...input.sourceProfiles.map(sourceProfileToProfile),
@@ -247,9 +299,35 @@ function buildIdentityTargets(
 	identitySchemas: CustomClaimSchema[],
 	catalogs: IdentityMappingCatalogSummary[]
 ): MappingNode[] {
+	const systemTargets = buildSystemIdentityTargets();
 	const schemaTargets = buildCustomClaimTargets(identitySchemas);
-	if (schemaTargets.length > 0) return schemaTargets;
-	return buildCatalogTargets(catalogs);
+	if (schemaTargets.length > 0) return [...systemTargets, ...schemaTargets];
+	return [...systemTargets, ...buildCatalogTargets(catalogs)];
+}
+
+function buildSystemIdentityTargets(): MappingNode[] {
+	return systemIdentityFields.map((field) =>
+		canonicalTargetNode({
+			id: field.id,
+			stableFieldId: field.id,
+			path: field.path,
+			label: field.label,
+			valueType: field.valueType,
+			cardinality: 'single',
+			classification: 'internal',
+			storageTarget: 'System identity',
+			uiGroupKey: 'system',
+			uiGroupLabel: 'System',
+			uiGroupOrder: -100,
+			uiFieldOrder: field.uiFieldOrder,
+			examples: [],
+			note: field.note,
+			allowedValues: 'allowedValues' in field ? Array.from(field.allowedValues) : undefined,
+			valueMultiplicity: 'single',
+			nullable: false,
+			required: false
+		})
+	);
 }
 
 function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {

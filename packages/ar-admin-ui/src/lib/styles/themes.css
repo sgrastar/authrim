@@ -1468,9 +1468,9 @@ html.theme-transitioning.theme-transition-to-light::after {
 
 /* Classic */
 :root[data-admin-skin='classic'] {
-	--font-display: 'Lora', 'Zen Kaku Gothic New', Georgia, serif;
-	--font-body: 'Public Sans', 'Zen Kaku Gothic New', system-ui, sans-serif;
-	--font-meta: 'Spline Sans Mono', 'Zen Kaku Gothic New', ui-monospace, monospace;
+	--font-display: 'Lora', Georgia, serif;
+	--font-body: 'Public Sans', system-ui, sans-serif;
+	--font-meta: 'Spline Sans Mono', ui-monospace, monospace;
 	--font-brand: 'Cinzel', Georgia, serif;
 	--brand-weight: 400;
 	--brand-size: 17px;
@@ -1564,9 +1564,9 @@ html.theme-transitioning.theme-transition-to-light::after {
 
 /* Swiss Grid */
 :root[data-admin-skin='admin'] {
-	--font-display: 'Archivo', 'Zen Kaku Gothic New', system-ui, sans-serif;
-	--font-body: 'Archivo', 'Zen Kaku Gothic New', system-ui, sans-serif;
-	--font-meta: 'Spline Sans Mono', 'Zen Kaku Gothic New', ui-monospace, monospace;
+	--font-display: 'Archivo', system-ui, sans-serif;
+	--font-body: 'Archivo', system-ui, sans-serif;
+	--font-meta: 'Spline Sans Mono', ui-monospace, monospace;
 	--font-brand: 'Cinzel', Georgia, serif;
 	--brand-weight: 400;
 	--brand-size: 1rem;
@@ -1846,9 +1846,9 @@ html.theme-transitioning.theme-transition-to-light::after {
 
 /* Paper Beige */
 :root[data-admin-skin='paper-beige'] {
-	--font-display: 'Figtree', 'Zen Maru Gothic', system-ui, sans-serif;
-	--font-body: 'Figtree', 'Zen Maru Gothic', system-ui, sans-serif;
-	--font-meta: 'Spline Sans Mono', 'Zen Maru Gothic', ui-monospace, monospace;
+	--font-display: 'Figtree', system-ui, sans-serif;
+	--font-body: 'Figtree', system-ui, sans-serif;
+	--font-meta: 'Spline Sans Mono', ui-monospace, monospace;
 	--font-brand: 'Cinzel', Georgia, serif;
 	--brand-weight: 400;
 	--brand-size: 17px;
@@ -2027,9 +2027,9 @@ html.theme-transitioning.theme-transition-to-light::after {
 
 /* Frosted */
 :root[data-admin-skin='frosted'] {
-	--font-display: 'Schibsted Grotesk', 'Zen Kaku Gothic New', system-ui, sans-serif;
-	--font-body: 'Schibsted Grotesk', 'Zen Kaku Gothic New', system-ui, sans-serif;
-	--font-meta: 'Spline Sans Mono', 'Zen Kaku Gothic New', ui-monospace, monospace;
+	--font-display: 'Schibsted Grotesk', system-ui, sans-serif;
+	--font-body: 'Schibsted Grotesk', system-ui, sans-serif;
+	--font-meta: 'Spline Sans Mono', ui-monospace, monospace;
 	--font-brand: 'Cinzel', Georgia, serif;
 	--brand-weight: 400;
 	--brand-size: 17px;

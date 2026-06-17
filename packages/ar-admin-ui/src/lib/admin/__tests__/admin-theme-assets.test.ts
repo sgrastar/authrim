@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 const srcDir = fileURLToPath(new URL('../../../', import.meta.url));
 const packageDir = fileURLToPath(new URL('../../../../', import.meta.url));
 const staticDir = `${packageDir}/static`;
+const stylesDir = `${srcDir}/lib/styles`;
 
 function walkFiles(dir: string): string[] {
 	return readdirSync(dir)
@@ -21,7 +22,7 @@ function readSource(relativePath: string): string {
 }
 
 describe('Admin UI theme assets', () => {
-	it('loads Admin UI theme fonts from the bundled static font directory', () => {
+	it('loads Admin UI theme fonts as bundled Vite assets', () => {
 		const appCss = readSource('app.css');
 		const fontsCss = readSource('lib/styles/fonts.css');
 		const fontUrls = [...fontsCss.matchAll(/url\('([^']+)'\)/g)].map((match) => match[1]);
@@ -30,9 +31,14 @@ describe('Admin UI theme assets', () => {
 		expect(fontUrls.length).toBeGreaterThan(0);
 
 		for (const fontUrl of fontUrls) {
-			expect(fontUrl.startsWith('/fonts/admin-ui/')).toBe(true);
-			expect(existsSync(`${staticDir}${fontUrl}`), `${fontUrl} should exist in static`).toBe(true);
+			expect(fontUrl.startsWith('../assets/fonts/admin-ui/')).toBe(true);
+			expect(fontUrl).not.toMatch(/zen-(?:kaku|maru)/);
+			expect(existsSync(`${stylesDir}/${fontUrl}`), `${fontUrl} should exist as a Vite asset`).toBe(
+				true
+			);
 		}
+
+		expect(fontsCss).not.toMatch(/Zen (?:Kaku|Maru)/);
 	});
 
 	it('does not reference Google Fonts from Admin UI source or static assets', () => {
