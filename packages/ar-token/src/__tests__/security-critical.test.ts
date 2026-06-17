@@ -165,6 +165,10 @@ const mocks = vi.hoisted(() => ({
   mockGetIDTokenRBACClaims: vi.fn().mockResolvedValue({}),
   mockGetAccessTokenRBACClaims: vi.fn().mockResolvedValue({}),
   mockEvaluatePermissionsForScope: vi.fn().mockReturnValue([]),
+  mockEvaluatePermissionEmbeddingForScope: vi.fn().mockResolvedValue({
+    permissions: [],
+    scopedPermissions: [],
+  }),
   mockIsPolicyEmbeddingEnabled: vi.fn().mockResolvedValue(false),
   mockCreateTokenClaimEvaluator: vi.fn().mockReturnValue({ evaluate: vi.fn().mockReturnValue({}) }),
   mockEvaluateIdLevelPermissions: vi.fn().mockReturnValue([]),
@@ -257,6 +261,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getIDTokenRBACClaims: mocks.mockGetIDTokenRBACClaims,
     getAccessTokenRBACClaims: mocks.mockGetAccessTokenRBACClaims,
     evaluatePermissionsForScope: mocks.mockEvaluatePermissionsForScope,
+    evaluatePermissionEmbeddingForScope: mocks.mockEvaluatePermissionEmbeddingForScope,
     isPolicyEmbeddingEnabled: mocks.mockIsPolicyEmbeddingEnabled,
     createTokenClaimEvaluator: mocks.mockCreateTokenClaimEvaluator,
     isCustomClaimsEnabled: mocks.mockIsCustomClaimsEnabled,
@@ -376,6 +381,11 @@ function resetAllMocks() {
   // Reset RBAC mocks
   mocks.mockGetIDTokenRBACClaims.mockReset().mockResolvedValue({});
   mocks.mockGetAccessTokenRBACClaims.mockReset().mockResolvedValue({});
+  mocks.mockEvaluatePermissionsForScope.mockReset().mockResolvedValue([]);
+  mocks.mockEvaluatePermissionEmbeddingForScope.mockReset().mockResolvedValue({
+    permissions: [],
+    scopedPermissions: [],
+  });
   mocks.mockIsPolicyEmbeddingEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsNativeSSOEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsCustomClaimsEnabled.mockReset().mockResolvedValue(false);
@@ -498,7 +508,10 @@ describe('Security-Critical Tests', () => {
       mocks.mockValidateClientId.mockReturnValue({ valid: true });
       mocks.mockValidateRedirectUri.mockReturnValue({ valid: true });
       mocks.mockIsPolicyEmbeddingEnabled.mockResolvedValue(true);
-      mocks.mockEvaluatePermissionsForScope.mockResolvedValue(['perm:read']);
+      mocks.mockEvaluatePermissionEmbeddingForScope.mockResolvedValue({
+        permissions: ['perm:read'],
+        scopedPermissions: [],
+      });
 
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
@@ -543,7 +556,7 @@ describe('Security-Critical Tests', () => {
         authCodeData.userId,
         expect.any(Object)
       );
-      expect(mocks.mockEvaluatePermissionsForScope).toHaveBeenCalledWith(
+      expect(mocks.mockEvaluatePermissionEmbeddingForScope).toHaveBeenCalledWith(
         runtimeCoreAdapter,
         authCodeData.userId,
         authCodeData.scope,
@@ -618,7 +631,10 @@ describe('Security-Critical Tests', () => {
         randomPart: 'abc',
       });
       mocks.mockIsPolicyEmbeddingEnabled.mockResolvedValue(true);
-      mocks.mockEvaluatePermissionsForScope.mockResolvedValue(['perm:refresh']);
+      mocks.mockEvaluatePermissionEmbeddingForScope.mockResolvedValue({
+        permissions: ['perm:refresh'],
+        scopedPermissions: [],
+      });
 
       mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
         rotateRpc: vi.fn().mockResolvedValue({
@@ -664,7 +680,7 @@ describe('Security-Critical Tests', () => {
         refreshTokenPayload.sub,
         expect.any(Object)
       );
-      expect(mocks.mockEvaluatePermissionsForScope).toHaveBeenCalledWith(
+      expect(mocks.mockEvaluatePermissionEmbeddingForScope).toHaveBeenCalledWith(
         runtimeCoreAdapter,
         refreshTokenPayload.sub,
         refreshTokenPayload.scope,

@@ -3564,10 +3564,15 @@ export function createApiRoutes(): Hono {
             if (result.success) {
               if (!dryRun) {
                 try {
-                  const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+                  const { lock: currentLock, path: lockPath } = await loadLockFileAuto(
+                    rootDir,
+                    env
+                  );
 
                   if (currentLock && lockPath) {
-                    const version = await getPackageVersion(join(rootDir, 'packages', componentName));
+                    const version = await getPackageVersion(
+                      join(rootDir, 'packages', componentName)
+                    );
                     const workers = { ...currentLock.workers };
                     workers[componentName] = {
                       name: result.projectName,
