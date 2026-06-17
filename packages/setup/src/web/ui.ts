@@ -12070,7 +12070,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
           if (info.versionId) {
             const span = document.createElement('span');
-            span.textContent = info.versionId;
+            span.textContent = info.versionId.substring(0, 8) + '...';
             detailsDiv.appendChild(span);
           }
         } else {

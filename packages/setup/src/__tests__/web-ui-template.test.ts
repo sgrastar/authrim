@@ -323,6 +323,8 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('html.theme-transitioning::after');
     expect(SETUP_WEB_UI_STYLE).toContain('html.theme-transitioning *');
     expect(SETUP_WEB_UI_STYLE).toContain('transition-duration: 1800ms !important;');
+    expect(SETUP_WEB_UI_STYLE).not.toContain('html.theme-transitioning .setup-wordmark');
+    expect(SETUP_WEB_UI_STYLE).not.toContain('html.theme-transitioning .setup-hero-title');
     expect(SETUP_WEB_UI_STYLE).not.toContain('radial-gradient(circle at 18% 12%');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-hero.setup-enter .setup-hero-number');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .row');
