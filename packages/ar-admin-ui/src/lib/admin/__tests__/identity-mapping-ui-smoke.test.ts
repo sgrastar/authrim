@@ -29,8 +29,9 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(layout).toContain('/admin/field-mapping/profiles');
 		expect(layout).toContain('/admin/field-mapping/field-mapping-sets');
 		expect(layout).toContain('/admin/field-mapping/resolution-center');
+		expect(layout).toContain('/admin/field-mapping/edit');
+		expect(layout).toContain("activePaths: ['/admin/field-mapping/edit']");
 		expect(layout).not.toContain('Mapping Rules');
-		expect(layout).not.toContain('/admin/field-mapping/edit');
 		expect(layout).not.toContain('/admin/field-mapping/operations');
 		expect(layout).not.toContain('/admin/field-mapping/overview');
 		expect(layout).not.toContain('/admin/field-mapping/federation-trust');
