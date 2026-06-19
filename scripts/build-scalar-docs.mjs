@@ -31,6 +31,10 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+function escapeHtmlAttribute(value) {
+  return escapeHtml(value).replace(/'/g, '&#39;');
+}
+
 function groupedSpecs(specs) {
   const groups = new Map();
   for (const spec of specs) {
@@ -65,7 +69,7 @@ function renderIndex(specs) {
     .map(([group, items]) => {
       const links = items
         .map(
-          (spec) => `          <a class="api-link" href="${escapeHtml(spec.html)}">
+          (spec) => `          <a class="api-link" href="${escapeHtmlAttribute(spec.html)}">
             <span>
               <strong>${escapeHtml(spec.title)}</strong>
               <small>${escapeHtml(spec.description)}</small>
@@ -220,9 +224,9 @@ function renderScalarPage(spec) {
     </div>
     <script
       id="api-reference"
-      data-url="${escapeHtml(specUrlFromGeneratedPage)}"
-      data-configuration='${escapeHtml(JSON.stringify(pageConfig))}'
-      src="${scalarScriptUrl}"
+      data-url="${escapeHtmlAttribute(specUrlFromGeneratedPage)}"
+      data-configuration="${escapeHtmlAttribute(JSON.stringify(pageConfig))}"
+      src="${escapeHtmlAttribute(scalarScriptUrl)}"
     ></script>`,
   });
 }
