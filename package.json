@@ -137,7 +137,7 @@
       "basic-ftp": ">=5.3.1",
       "path-to-regexp@<0.1.13": "0.1.13",
       "picomatch": ">=4.0.4",
-      "undici": ">=7.24.0",
+      "undici": ">=8.5.0",
       "defu": ">=6.1.5",
       "vite": ">=7.3.2",
       "@sveltejs/kit": ">=2.57.1",

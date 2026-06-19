@@ -22,7 +22,7 @@ overrides:
   basic-ftp: '>=5.3.1'
   path-to-regexp@<0.1.13: 0.1.13
   picomatch: '>=4.0.4'
-  undici: '>=7.24.0'
+  undici: '>=8.5.0'
   defu: '>=6.1.5'
   vite: '>=7.3.2'
   '@sveltejs/kit': '>=2.57.1'
@@ -4594,8 +4594,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici@8.4.1:
-    resolution: {integrity: sha512-RNHlB4fxZK0IrkhBsxhlbx7s8kFWwr7rzzOqj5nvZugw3ig3RsB7KW3zVlV0eu8POl+rx5d1hmL7rRg0z1owow==}
+  undici@8.5.0:
+    resolution: {integrity: sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==}
     engines: {node: '>=22.19.0'}
 
   unenv@2.0.0-rc.24:
@@ -7868,7 +7868,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.34.5
-      undici: 8.4.1
+      undici: 8.5.0
       workerd: 1.20260116.0
       ws: 8.21.0
       youch: 4.1.0-beta.10
@@ -8811,7 +8811,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici@8.4.1: {}
+  undici@8.5.0: {}
 
   unenv@2.0.0-rc.24:
     dependencies:
