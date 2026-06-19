@@ -17,7 +17,7 @@
  * Security:
  *   - No secrets or internal config exposed
  *   - Rate limited to prevent abuse
- *   - Cache-friendly (TTL in response)
+ *   - Short cache TTL to balance Login UI performance and Admin UI update propagation
  */
 
 import type { Context } from 'hono';
@@ -27,6 +27,11 @@ import {
   getTenantIdFromContext,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
+import {
+  decryptSecretFields,
+  getPluginEncryptionKey,
+  type EncryptedConfig,
+} from '@authrim/ar-lib-plugin';
 
 // =============================================================================
 // Types
@@ -54,6 +59,26 @@ interface DirectoryPasswordMethod {
   enabled: boolean;
   label: string;
   steps: string[];
+}
+
+type HumanVerificationProvider = string;
+type HumanVerificationFailurePolicy = 'fail_closed' | 'fail_open';
+type HumanVerificationWidgetMode = 'managed' | 'checkbox' | 'invisible' | 'score';
+
+interface HumanVerificationMethod {
+  enabled: boolean;
+  provider: HumanVerificationProvider;
+  siteKey: string | null;
+  loginEnabled: boolean;
+  signupEnabled: boolean;
+  reauthEnabled: boolean;
+  failurePolicy: HumanVerificationFailurePolicy;
+  widget: {
+    actionPrefix: string;
+    theme: 'auto';
+    size: 'flexible';
+    mode: HumanVerificationWidgetMode;
+  };
 }
 
 type ExternalLoginProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
@@ -87,6 +112,7 @@ interface AuthenticationMethods {
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
   directoryPassword: DirectoryPasswordMethod;
+  humanVerification: HumanVerificationMethod;
   external: ExternalAuthenticationMethod;
 }
 
@@ -137,7 +163,7 @@ interface AuthenticationMethodsErrorResponse {
 // Defaults
 // =============================================================================
 
-const DEFAULT_CACHE_TTL = 300; // 5 minutes (seconds)
+const DEFAULT_CACHE_TTL = 180; // 3 minutes (seconds)
 const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
@@ -271,6 +297,10 @@ interface AuthenticationMethodKVSettings {
   'authentication-methods.email_otp.signup_enabled'?: boolean | string;
   'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
   'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+  'authentication-methods.human_verification.provider'?: string;
+  'authentication-methods.human_verification.login_enabled'?: boolean | string;
+  'authentication-methods.human_verification.signup_enabled'?: boolean | string;
+  'authentication-methods.human_verification.reauth_enabled'?: boolean | string;
   'authentication-methods.external_provider_usage'?: string | ExternalLoginProviderUsageConfig[];
   'authentication-methods.external_providers'?: string | ExternalLoginProviderConfig[];
   'authentication-methods.directory_password.enabled'?: boolean | string;
@@ -714,6 +744,20 @@ interface DirectoryPasswordResolved {
   label: string;
 }
 
+interface HumanVerificationResolved {
+  providerPluginId: string;
+  loginEnabled: boolean;
+  signupEnabled: boolean;
+  reauthEnabled: boolean;
+}
+
+interface HumanVerificationPluginConfig {
+  siteKey?: unknown;
+  secretKey?: unknown;
+  failurePolicy?: unknown;
+  widgetMode?: unknown;
+}
+
 interface BuiltInMethodsResolved {
   passkeyLoginEnabled: boolean;
   passkeySignupEnabled: boolean;
@@ -818,6 +862,172 @@ async function resolveDirectoryPasswordMethod(
   }
 }
 
+async function decryptPluginConfigIfNeeded(
+  config: Record<string, unknown>,
+  env: Env
+): Promise<Record<string, unknown>> {
+  const encrypted = config as EncryptedConfig;
+  if (!encrypted._encrypted || encrypted._encrypted.length === 0) {
+    return config;
+  }
+
+  try {
+    const key = await getPluginEncryptionKey(
+      env as { PLUGIN_ENCRYPTION_KEY?: string; KEY_MANAGER_SECRET?: string }
+    );
+    return await decryptSecretFields(encrypted, key);
+  } catch {
+    const { _encrypted, ...rest } = config as EncryptedConfig;
+    return rest;
+  }
+}
+
+async function readHumanVerificationPluginConfig(
+  env: Env,
+  tenantId: string,
+  pluginId: string
+): Promise<HumanVerificationPluginConfig> {
+  const settings = env.SETTINGS;
+  if (!settings) return {};
+
+  const readConfig = async (key: string): Promise<Record<string, unknown>> => {
+    const raw = await settings.get(key);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return {};
+      return await decryptPluginConfigIfNeeded(parsed as Record<string, unknown>, env);
+    } catch {
+      return {};
+    }
+  };
+
+  const [globalConfig, tenantConfig] = await Promise.all([
+    readConfig(`plugins:config:${pluginId}`),
+    readConfig(`plugins:config:${pluginId}:tenant:${tenantId}`),
+  ]);
+
+  return { ...globalConfig, ...tenantConfig };
+}
+
+function providerFromHumanVerificationPluginId(pluginId: string): HumanVerificationProvider {
+  switch (pluginId) {
+    case 'human-verification-cloudflare-turnstile':
+      return 'turnstile';
+    case 'human-verification-hcaptcha':
+      return 'hcaptcha';
+    case 'human-verification-google-recaptcha':
+      return 'recaptcha';
+    default:
+      return 'custom';
+  }
+}
+
+function widgetModeFromConfig(
+  provider: HumanVerificationProvider,
+  config: HumanVerificationPluginConfig
+): HumanVerificationWidgetMode {
+  if (provider === 'turnstile') return 'managed';
+  if (config.widgetMode === 'invisible') return 'invisible';
+  if (provider === 'recaptcha' && config.widgetMode === 'score') return 'score';
+  return 'checkbox';
+}
+
+async function isPluginEnabled(
+  settings: KVNamespace | undefined,
+  pluginId: string,
+  tenantId: string
+): Promise<boolean> {
+  if (!settings) return false;
+
+  const tenantValue = await settings.get(`plugins:enabled:${pluginId}:tenant:${tenantId}`);
+  if (tenantValue !== null) {
+    return tenantValue === 'true';
+  }
+
+  const globalValue = await settings.get(`plugins:enabled:${pluginId}`);
+  if (globalValue !== null) {
+    return globalValue === 'true';
+  }
+
+  return true;
+}
+
+async function resolveHumanVerificationMethod(
+  env: Env,
+  tenantId: string
+): Promise<HumanVerificationMethod> {
+  const defaults: HumanVerificationResolved = {
+    providerPluginId: 'human-verification-cloudflare-turnstile',
+    loginEnabled: false,
+    signupEnabled: false,
+    reauthEnabled: false,
+  };
+
+  let resolved = defaults;
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    if (kvJson) {
+      const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+      resolved = {
+        providerPluginId:
+          typeof kvSettings['authentication-methods.human_verification.provider'] === 'string'
+            ? kvSettings['authentication-methods.human_verification.provider']
+            : defaults.providerPluginId,
+        loginEnabled: normalizeBoolean(
+          kvSettings['authentication-methods.human_verification.login_enabled'],
+          defaults.loginEnabled
+        ),
+        signupEnabled: normalizeBoolean(
+          kvSettings['authentication-methods.human_verification.signup_enabled'],
+          defaults.signupEnabled
+        ),
+        reauthEnabled: normalizeBoolean(
+          kvSettings['authentication-methods.human_verification.reauth_enabled'],
+          defaults.reauthEnabled
+        ),
+      };
+    }
+  } catch {
+    resolved = defaults;
+  }
+
+  let pluginEnabled = false;
+  let pluginConfig: HumanVerificationPluginConfig = {};
+  try {
+    pluginEnabled = await isPluginEnabled(env.SETTINGS, resolved.providerPluginId, tenantId);
+    pluginConfig = await readHumanVerificationPluginConfig(
+      env,
+      tenantId,
+      resolved.providerPluginId
+    );
+  } catch {
+    pluginEnabled = false;
+    pluginConfig = {};
+  }
+  const provider = providerFromHumanVerificationPluginId(resolved.providerPluginId);
+  const siteKey = typeof pluginConfig.siteKey === 'string' ? pluginConfig.siteKey : '';
+  const configured = Boolean(siteKey && typeof pluginConfig.secretKey === 'string');
+  const failurePolicy = pluginConfig.failurePolicy === 'fail_open' ? 'fail_open' : 'fail_closed';
+  const hasEnabledUsage = resolved.loginEnabled || resolved.signupEnabled || resolved.reauthEnabled;
+
+  return {
+    enabled: pluginEnabled && hasEnabledUsage,
+    provider,
+    siteKey: pluginEnabled && configured ? siteKey : null,
+    loginEnabled: pluginEnabled && resolved.loginEnabled,
+    signupEnabled: pluginEnabled && resolved.signupEnabled,
+    reauthEnabled: pluginEnabled && resolved.reauthEnabled,
+    failurePolicy,
+    widget: {
+      actionPrefix: 'authrim',
+      theme: 'auto',
+      size: 'flexible',
+      mode: widgetModeFromConfig(provider, pluginConfig),
+    },
+  };
+}
+
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
@@ -906,6 +1116,30 @@ function applyExternalProviderUsage(
     .filter((provider) => provider.enabled);
 }
 
+function applyHumanVerificationToExternalProviders(
+  providers: ExternalLoginProvider[],
+  humanVerification: HumanVerificationMethod
+): ExternalLoginProvider[] {
+  if (!humanVerification.enabled) return providers;
+
+  return providers
+    .map((provider) => {
+      if (provider.startMode !== 'direct') return provider;
+
+      const loginEnabled = humanVerification.loginEnabled ? false : provider.loginEnabled;
+      const signupEnabled = humanVerification.signupEnabled ? false : provider.signupEnabled;
+      const reauthEnabled = humanVerification.reauthEnabled ? false : provider.reauthEnabled;
+      return {
+        ...provider,
+        loginEnabled,
+        signupEnabled,
+        reauthEnabled,
+        enabled: loginEnabled || signupEnabled || reauthEnabled,
+      };
+    })
+    .filter((provider) => provider.enabled);
+}
+
 /**
  * Build UI config from resolved Login UI settings
  */
@@ -985,6 +1219,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       samlProviders,
       configuredProviders,
       directoryPassword,
+      humanVerification,
       externalProviderUsage,
     ] = await Promise.all([
       getSystemSettings(env),
@@ -992,11 +1227,15 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       fetchSAMLLoginProviders(env, tenantId),
       fetchConfiguredExternalLoginProviders(env, tenantId),
       resolveDirectoryPasswordMethod(env, tenantId),
+      resolveHumanVerificationMethod(env, tenantId),
       resolveExternalProviderUsage(env, tenantId),
     ]);
-    const externalProviders = applyExternalProviderUsage(
-      mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
-      externalProviderUsage
+    const externalProviders = applyHumanVerificationToExternalProviders(
+      applyExternalProviderUsage(
+        mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
+        externalProviderUsage
+      ),
+      humanVerification
     );
 
     const builtInMethods = await resolveBuiltInAuthenticationMethods(env, tenantId, settings);
@@ -1056,6 +1295,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
         label: directoryPassword.label,
         steps: directoryPasswordEnabled ? ['username', 'password'] : [],
       },
+      humanVerification,
       external: {
         enabled: externalEnabled,
         providers: externalProviders,
@@ -1078,7 +1318,6 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       },
     };
 
-    // Set cache headers for CDN/browser caching
     c.header('Cache-Control', `public, max-age=${cacheTTL}`);
 
     return c.json(response);

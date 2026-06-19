@@ -7348,7 +7348,7 @@ type RootTranslation = {
 	 */
 	admin_roles_end_user_rbac: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​o​l​e​s​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​r​o​l​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​o​l​e​s​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​r​o​l​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
 	 */
 	admin_roles_info_banner: string
 	/**
@@ -8242,7 +8242,7 @@ type RootTranslation = {
 	 */
 	admin_access_control_banner_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​ ​(​y​o​u​r​ ​a​p​p​l​i​c​a​t​i​o​n​'​s​ ​u​s​e​r​s​)​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​,​ ​v​i​s​i​t​
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​ ​(​y​o​u​r​ ​a​p​p​l​i​c​a​t​i​o​n​'​s​ ​u​s​e​r​s​)​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​,​ ​v​i​s​i​t​ 
 	 */
 	admin_access_control_banner: string
 	/**
@@ -8557,15 +8557,15 @@ type RootTranslation = {
 	 */
 	admin_attributes_info_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​t​t​r​i​b​u​t​e​s​ ​f​o​r​
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​t​t​r​i​b​u​t​e​s​ ​f​o​r​ 
 	 */
 	admin_attributes_info_prefix: string
 	/**
-	 * .​ ​F​o​r​
+	 * .​ ​F​o​r​ 
 	 */
 	admin_attributes_info_middle: string
 	/**
-	 *  ​a​t​t​r​i​b​u​t​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
+	 *  ​a​t​t​r​i​b​u​t​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
 	 */
 	admin_attributes_info_suffix: string
 	/**
@@ -8768,11 +8768,11 @@ type RootTranslation = {
 	 */
 	admin_attributes_delete_attribute: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​ 
 	 */
 	admin_attributes_delete_confirm_prefix: string
 	/**
-	 *  ​f​o​r​ ​u​s​e​r​
+	 *  ​f​o​r​ ​u​s​e​r​ 
 	 */
 	admin_attributes_delete_confirm_middle: string
 	/**
@@ -8792,7 +8792,7 @@ type RootTranslation = {
 	 */
 	admin_attributes_cleanup_expired_title: string
 	/**
-	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d​
+	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d​ 
 	 */
 	admin_attributes_cleanup_success_prefix: string
 	/**
@@ -8804,7 +8804,7 @@ type RootTranslation = {
 	 */
 	admin_attributes_cleanup_description: string
 	/**
-	 * C​u​r​r​e​n​t​l​y​ ​t​h​e​r​e​ ​a​r​e​
+	 * C​u​r​r​e​n​t​l​y​ ​t​h​e​r​e​ ​a​r​e​ 
 	 */
 	admin_attributes_cleanup_current_prefix: string
 	/**
@@ -9105,7 +9105,7 @@ type RootTranslation = {
 	 */
 	admin_policies_delete_rule: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​r​u​l​e​
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​r​u​l​e​ 
 	 */
 	admin_policies_delete_confirm_prefix: string
 	/**
@@ -9626,15 +9626,15 @@ type RootTranslation = {
 	 */
 	admin_rebac_info_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​f​o​r​
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​f​o​r​ 
 	 */
 	admin_rebac_info_prefix: string
 	/**
-	 * .​ ​F​o​r​
+	 * .​ ​F​o​r​ 
 	 */
 	admin_rebac_info_middle: string
 	/**
-	 *  ​r​e​l​a​t​i​o​n​s​h​i​p​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
+	 *  ​r​e​l​a​t​i​o​n​s​h​i​p​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
 	 */
 	admin_rebac_info_suffix: string
 	/**
@@ -10078,7 +10078,7 @@ type RootTranslation = {
 	 */
 	admin_rebac_definitions_delete_title: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​r​e​l​a​t​i​o​n​ ​d​e​f​i​n​i​t​i​o​n​
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​r​e​l​a​t​i​o​n​ ​d​e​f​i​n​i​t​i​o​n​ 
 	 */
 	admin_rebac_definitions_delete_confirm_prefix: string
 	/**
@@ -10206,11 +10206,11 @@ type RootTranslation = {
 	 */
 	admin_rebac_definition_detail_show: string
 	/**
-	 * T​e​s​t​ ​i​f​ ​a​ ​u​s​e​r​ ​w​o​u​l​d​ ​h​a​v​e​ ​t​h​e​
+	 * T​e​s​t​ ​i​f​ ​a​ ​u​s​e​r​ ​w​o​u​l​d​ ​h​a​v​e​ ​t​h​e​ 
 	 */
 	admin_rebac_definition_detail_test_prefix: string
 	/**
-	 *  ​r​e​l​a​t​i​o​n​ ​o​n​ ​a​
+	 *  ​r​e​l​a​t​i​o​n​ ​o​n​ ​a​ 
 	 */
 	admin_rebac_definition_detail_test_middle: string
 	/**
@@ -25837,6 +25837,10 @@ type RootTranslation = {
 	 */
 	admin_authentication_methods_saving: string
 	/**
+	 * C​h​a​n​g​e​s​ ​m​a​y​ ​t​a​k​e​ ​u​p​ ​t​o​ ​3​ ​m​i​n​u​t​e​s​ ​t​o​ ​a​p​p​e​a​r​ ​i​n​ ​L​o​g​i​n​ ​U​I​.
+	 */
+	admin_authentication_methods_cache_notice: string
+	/**
 	 * L​o​a​d​i​n​g​.​.​.
 	 */
 	admin_authentication_methods_loading: string
@@ -25853,7 +25857,7 @@ type RootTranslation = {
 	 */
 	admin_authentication_methods_passkey: string
 	/**
-	 * A​l​l​o​w​ ​W​e​b​A​u​t​h​n​ ​p​a​s​s​k​e​y​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​o​r​ ​b​o​t​h​.
+	 * U​s​e​ ​p​a​s​s​k​e​y​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​a​n​d​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
 	 */
 	admin_authentication_methods_passkey_description: string
 	/**
@@ -25861,9 +25865,61 @@ type RootTranslation = {
 	 */
 	admin_authentication_methods_email_otp: string
 	/**
-	 * A​l​l​o​w​ ​e​m​a​i​l​ ​o​n​e​-​t​i​m​e​ ​c​o​d​e​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​o​r​ ​b​o​t​h​.
+	 * U​s​e​ ​e​m​a​i​l​ ​c​o​d​e​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​a​n​d​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
 	 */
 	admin_authentication_methods_email_otp_description: string
+	/**
+	 * S​e​c​u​r​i​t​y​ ​C​h​e​c​k
+	 */
+	admin_authentication_methods_human_verification_title: string
+	/**
+	 * S​e​l​e​c​t​ ​w​h​e​r​e​ ​L​o​g​i​n​ ​U​I​ ​r​e​q​u​i​r​e​s​ ​a​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​b​e​f​o​r​e​ ​s​t​a​r​t​i​n​g​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	admin_authentication_methods_human_verification_description: string
+	/**
+	 * C​l​o​u​d​f​l​a​r​e​ ​T​u​r​n​s​t​i​l​e
+	 */
+	admin_authentication_methods_turnstile: string
+	/**
+	 * U​s​e​ ​T​u​r​n​s​t​i​l​e​ ​f​o​r​ ​L​o​g​i​n​ ​U​I​ ​a​b​u​s​e​ ​p​r​o​t​e​c​t​i​o​n​.
+	 */
+	admin_authentication_methods_turnstile_description: string
+	/**
+	 * U​s​e​ ​h​C​a​p​t​c​h​a​ ​f​o​r​ ​L​o​g​i​n​ ​U​I​ ​a​b​u​s​e​ ​p​r​o​t​e​c​t​i​o​n​.
+	 */
+	admin_authentication_methods_hcaptcha_description: string
+	/**
+	 * U​s​e​ ​r​e​C​A​P​T​C​H​A​ ​f​o​r​ ​L​o​g​i​n​ ​U​I​ ​a​b​u​s​e​ ​p​r​o​t​e​c​t​i​o​n​.
+	 */
+	admin_authentication_methods_recaptcha_description: string
+	/**
+	 * {​p​r​o​v​i​d​e​r​}​ ​i​s​ ​n​o​t​ ​e​n​a​b​l​e​d​.​ ​O​p​e​n​ ​p​l​u​g​i​n​ ​s​e​t​t​i​n​g​s​ ​a​n​d​ ​e​n​a​b​l​e​ ​i​t​ ​b​e​f​o​r​e​ ​u​s​i​n​g​ ​i​t​ ​i​n​ ​L​o​g​i​n​ ​U​I​.
+	 * @param {string} provider
+	 */
+	admin_authentication_methods_provider_disabled: RequiredParams<'provider'>
+	/**
+	 * {​p​r​o​v​i​d​e​r​}​ ​i​s​ ​e​n​a​b​l​e​d​ ​b​u​t​ ​r​e​q​u​i​r​e​d​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​i​s​ ​m​i​s​s​i​n​g​.
+	 * @param {string} provider
+	 */
+	admin_authentication_methods_provider_missing_config: RequiredParams<'provider'>
+	/**
+	 * {​p​r​o​v​i​d​e​r​}​ ​i​s​ ​e​n​a​b​l​e​d​ ​b​u​t​ ​r​e​q​u​i​r​e​d​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​i​s​ ​m​i​s​s​i​n​g​:​ ​{​f​i​e​l​d​s​}​.
+	 * @param {string} fields
+	 * @param {string} provider
+	 */
+	admin_authentication_methods_provider_missing_config_with_fields: RequiredParams<'fields' | 'provider'>
+	/**
+	 * P​l​u​g​i​n​ ​s​t​a​t​u​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​C​h​e​c​k​ ​p​l​u​g​i​n​ ​s​e​t​t​i​n​g​s​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​ ​t​h​i​s​ ​p​r​o​v​i​d​e​r​.
+	 */
+	admin_authentication_methods_provider_status_unknown: string
+	/**
+	 * P​l​u​g​i​n​ ​m​a​n​a​g​e​d
+	 */
+	admin_authentication_methods_plugin_managed: string
+	/**
+	 * O​p​e​n​ ​p​l​u​g​i​n​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_authentication_methods_configure_plugin: string
 	/**
 	 * L​o​g​i​n
 	 */
@@ -26162,6 +26218,10 @@ type RootTranslation = {
 	 * S​a​v​i​n​g​.​.​.
 	 */
 	admin_login_ui_saving: string
+	/**
+	 * C​h​a​n​g​e​s​ ​m​a​y​ ​t​a​k​e​ ​u​p​ ​t​o​ ​3​ ​m​i​n​u​t​e​s​ ​t​o​ ​a​p​p​e​a​r​ ​i​n​ ​L​o​g​i​n​ ​U​I​.
+	 */
+	admin_login_ui_cache_notice: string
 	/**
 	 * S​a​v​e​ ​G​l​o​b​a​l​ ​U​I​ ​C​o​n​f​i​g​u​r​a​t​i​o​n
 	 */
@@ -34129,7 +34189,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_roles_end_user_rbac: () => LocalizedString
 	/**
-	 * This page manages roles for End Users. For Admin Operator role management, visit
+	 * This page manages roles for End Users. For Admin Operator role management, visit 
 	 */
 	admin_roles_info_banner: () => LocalizedString
 	/**
@@ -35009,7 +35069,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_access_control_banner_title: () => LocalizedString
 	/**
-	 * This page manages access control for End Users (your application's users). For Admin Operator access control, visit
+	 * This page manages access control for End Users (your application's users). For Admin Operator access control, visit 
 	 */
 	admin_access_control_banner: () => LocalizedString
 	/**
@@ -35313,15 +35373,15 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_info_title: () => LocalizedString
 	/**
-	 * This page manages attributes for
+	 * This page manages attributes for 
 	 */
 	admin_attributes_info_prefix: () => LocalizedString
 	/**
-	 * . For
+	 * . For 
 	 */
 	admin_attributes_info_middle: () => LocalizedString
 	/**
-	 *  attribute management, visit
+	 *  attribute management, visit 
 	 */
 	admin_attributes_info_suffix: () => LocalizedString
 	/**
@@ -35521,11 +35581,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_delete_attribute: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the attribute
+	 * Are you sure you want to delete the attribute 
 	 */
 	admin_attributes_delete_confirm_prefix: () => LocalizedString
 	/**
-	 *  for user
+	 *  for user 
 	 */
 	admin_attributes_delete_confirm_middle: () => LocalizedString
 	/**
@@ -35545,7 +35605,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_cleanup_expired_title: () => LocalizedString
 	/**
-	 * Successfully deleted
+	 * Successfully deleted 
 	 */
 	admin_attributes_cleanup_success_prefix: () => LocalizedString
 	/**
@@ -35557,7 +35617,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_cleanup_description: () => LocalizedString
 	/**
-	 * Currently there are
+	 * Currently there are 
 	 */
 	admin_attributes_cleanup_current_prefix: () => LocalizedString
 	/**
@@ -35853,7 +35913,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_policies_delete_rule: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the policy rule
+	 * Are you sure you want to delete the policy rule 
 	 */
 	admin_policies_delete_confirm_prefix: () => LocalizedString
 	/**
@@ -36353,15 +36413,15 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_info_title: () => LocalizedString
 	/**
-	 * This page manages relationships for
+	 * This page manages relationships for 
 	 */
 	admin_rebac_info_prefix: () => LocalizedString
 	/**
-	 * . For
+	 * . For 
 	 */
 	admin_rebac_info_middle: () => LocalizedString
 	/**
-	 *  relationship management, visit
+	 *  relationship management, visit 
 	 */
 	admin_rebac_info_suffix: () => LocalizedString
 	/**
@@ -36801,7 +36861,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_definitions_delete_title: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the relation definition
+	 * Are you sure you want to delete the relation definition 
 	 */
 	admin_rebac_definitions_delete_confirm_prefix: () => LocalizedString
 	/**
@@ -36929,11 +36989,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_definition_detail_show: () => LocalizedString
 	/**
-	 * Test if a user would have the
+	 * Test if a user would have the 
 	 */
 	admin_rebac_definition_detail_test_prefix: () => LocalizedString
 	/**
-	 *  relation on a
+	 *  relation on a 
 	 */
 	admin_rebac_definition_detail_test_middle: () => LocalizedString
 	/**
@@ -52339,6 +52399,10 @@ Remove this role from {email}?
 	 */
 	admin_authentication_methods_saving: () => LocalizedString
 	/**
+	 * Changes may take up to 3 minutes to appear in Login UI.
+	 */
+	admin_authentication_methods_cache_notice: () => LocalizedString
+	/**
 	 * Loading...
 	 */
 	admin_authentication_methods_loading: () => LocalizedString
@@ -52355,7 +52419,7 @@ Remove this role from {email}?
 	 */
 	admin_authentication_methods_passkey: () => LocalizedString
 	/**
-	 * Allow WebAuthn passkeys for login, signup, or both.
+	 * Use passkeys for login, signup, and re-authentication.
 	 */
 	admin_authentication_methods_passkey_description: () => LocalizedString
 	/**
@@ -52363,9 +52427,57 @@ Remove this role from {email}?
 	 */
 	admin_authentication_methods_email_otp: () => LocalizedString
 	/**
-	 * Allow email one-time codes for login, signup, or both.
+	 * Use email codes for login, signup, and re-authentication.
 	 */
 	admin_authentication_methods_email_otp_description: () => LocalizedString
+	/**
+	 * Security Check
+	 */
+	admin_authentication_methods_human_verification_title: () => LocalizedString
+	/**
+	 * Select where Login UI requires a security check before starting authentication.
+	 */
+	admin_authentication_methods_human_verification_description: () => LocalizedString
+	/**
+	 * Cloudflare Turnstile
+	 */
+	admin_authentication_methods_turnstile: () => LocalizedString
+	/**
+	 * Use Turnstile for Login UI abuse protection.
+	 */
+	admin_authentication_methods_turnstile_description: () => LocalizedString
+	/**
+	 * Use hCaptcha for Login UI abuse protection.
+	 */
+	admin_authentication_methods_hcaptcha_description: () => LocalizedString
+	/**
+	 * Use reCAPTCHA for Login UI abuse protection.
+	 */
+	admin_authentication_methods_recaptcha_description: () => LocalizedString
+	/**
+	 * {provider} is not enabled. Open plugin settings and enable it before using it in Login UI.
+	 */
+	admin_authentication_methods_provider_disabled: (arg: { provider: string }) => LocalizedString
+	/**
+	 * {provider} is enabled but required configuration is missing.
+	 */
+	admin_authentication_methods_provider_missing_config: (arg: { provider: string }) => LocalizedString
+	/**
+	 * {provider} is enabled but required configuration is missing: {fields}.
+	 */
+	admin_authentication_methods_provider_missing_config_with_fields: (arg: { fields: string, provider: string }) => LocalizedString
+	/**
+	 * Plugin status could not be loaded. Check plugin settings before saving this provider.
+	 */
+	admin_authentication_methods_provider_status_unknown: () => LocalizedString
+	/**
+	 * Plugin managed
+	 */
+	admin_authentication_methods_plugin_managed: () => LocalizedString
+	/**
+	 * Open plugin settings
+	 */
+	admin_authentication_methods_configure_plugin: () => LocalizedString
 	/**
 	 * Login
 	 */
@@ -52658,6 +52770,10 @@ Remove this role from {email}?
 	 * Saving...
 	 */
 	admin_login_ui_saving: () => LocalizedString
+	/**
+	 * Changes may take up to 3 minutes to appear in Login UI.
+	 */
+	admin_login_ui_cache_notice: () => LocalizedString
 	/**
 	 * Save Global UI Configuration
 	 */

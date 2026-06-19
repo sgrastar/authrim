@@ -103,7 +103,7 @@ type RootTranslation = {
 	 */
 	language_english: string
 	/**
-	 * J​a​p​a​n​e​s​e
+	 * 日​本​語
 	 */
 	language_japanese: string
 	/**
@@ -224,6 +224,18 @@ type RootTranslation = {
 	 * @param {string} provider
 	 */
 	login_continueWith: RequiredParams<'provider'>
+	/**
+	 * C​o​m​p​l​e​t​e​ ​t​h​e​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 */
+	login_humanVerificationRequired: string
+	/**
+	 * L​o​a​d​i​n​g​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​.​.​.
+	 */
+	login_humanVerificationLoading: string
+	/**
+	 * S​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​R​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	login_humanVerificationLoadFailed: string
 	/**
 	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
 	 */
@@ -1378,7 +1390,7 @@ export type TranslationFunctions = {
 	 */
 	language_english: () => LocalizedString
 	/**
-	 * Japanese
+	 * 日本語
 	 */
 	language_japanese: () => LocalizedString
 	/**
@@ -1497,6 +1509,18 @@ export type TranslationFunctions = {
 	 * Continue with {provider}
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString
+	/**
+	 * Complete the security check to continue.
+	 */
+	login_humanVerificationRequired: () => LocalizedString
+	/**
+	 * Loading security check...
+	 */
+	login_humanVerificationLoading: () => LocalizedString
+	/**
+	 * Security check could not be loaded. Reload the page and try again.
+	 */
+	login_humanVerificationLoadFailed: () => LocalizedString
 	/**
 	 * No authentication method is enabled for this tenant. Contact your administrator.
 	 */

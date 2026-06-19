@@ -32,12 +32,23 @@ function getRequiredFieldError(label: string): string {
   return `${label} is required`;
 }
 
-const FIXED_REGISTRATION_FIELD_KEYS = new Set(['name', 'email', 'email_verified']);
+const FIXED_REGISTRATION_FIELD_KEYS = new Set([
+  'name',
+  'field.canonical.name',
+  'email',
+  'field.canonical.email',
+  'email_verified',
+  'field.canonical.email_verified',
+]);
+
+export function isFixedRegistrationFieldKey(fieldKey: string): boolean {
+  return FIXED_REGISTRATION_FIELD_KEYS.has(fieldKey.trim().toLowerCase());
+}
 
 function filterCustomRegistrationFieldSchemas(
   schemas: RegistrationFieldSchemaRow[]
 ): RegistrationFieldSchemaRow[] {
-  return schemas.filter((schema) => !FIXED_REGISTRATION_FIELD_KEYS.has(schema.field_key));
+  return schemas.filter((schema) => !isFixedRegistrationFieldKey(schema.field_key));
 }
 
 function toMissingRequiredRegistrationField(
@@ -61,9 +72,9 @@ export async function validateRegistrationFieldSubmission(
   tenantId: string,
   submitted: Record<string, unknown> | undefined
 ): Promise<ValidationResult> {
-  const schemas = filterCustomRegistrationFieldSchemas(
-    await listRegistrationFieldSchemas(db, tenantId)
-  );
+  const schemas = await listRegistrationFieldSchemas(db, tenantId, {
+    includeRequiredHidden: true,
+  });
   const input =
     submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
   const values: Record<string, string> = {};
@@ -207,7 +218,9 @@ export async function persistRegistrationFieldValues(
     return;
   }
 
-  const schemas = await listRegistrationFieldSchemas(db, tenantId);
+  const schemas = await listRegistrationFieldSchemas(db, tenantId, {
+    includeRequiredHidden: true,
+  });
   const customSchemas = filterCustomRegistrationFieldSchemas(schemas);
   if (customSchemas.length === 0) {
     return;

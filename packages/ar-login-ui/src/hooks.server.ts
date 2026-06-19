@@ -196,6 +196,100 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 	return "connect-src 'self'";
 }
 
+export function buildContentSecurityPolicy(
+	platformEnv: Record<string, unknown> | undefined,
+	humanVerificationProvider: 'turnstile' | 'hcaptcha' | 'recaptcha' | null
+): string {
+	const turnstileOrigin = 'https://challenges.cloudflare.com';
+	const cloudflareInsightsOrigin = 'https://static.cloudflareinsights.com';
+	const hcaptchaOrigins = ['https://hcaptcha.com', 'https://*.hcaptcha.com'];
+	const recaptchaOrigins = ['https://www.google.com', 'https://www.gstatic.com'];
+	const scriptOrigins = [];
+	const frameOrigins = [];
+	const connectOrigins = [];
+	const styleOrigins = [];
+	if (humanVerificationProvider === 'turnstile') {
+		scriptOrigins.push(turnstileOrigin, cloudflareInsightsOrigin);
+		frameOrigins.push(turnstileOrigin);
+	}
+	if (humanVerificationProvider === 'hcaptcha') {
+		scriptOrigins.push(...hcaptchaOrigins);
+		frameOrigins.push(...hcaptchaOrigins);
+		connectOrigins.push(...hcaptchaOrigins);
+		styleOrigins.push(...hcaptchaOrigins);
+	}
+	if (humanVerificationProvider === 'recaptcha') {
+		scriptOrigins.push(...recaptchaOrigins);
+		frameOrigins.push(...recaptchaOrigins);
+		connectOrigins.push(...recaptchaOrigins);
+	}
+	const scriptSrc = `script-src 'self' 'unsafe-inline'${scriptOrigins.length ? ` ${scriptOrigins.join(' ')}` : ''}`;
+	const frameSrc = frameOrigins.length ? [`frame-src ${frameOrigins.join(' ')}`] : [];
+	const styleSrc = `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com${styleOrigins.length ? ` ${styleOrigins.join(' ')}` : ''}`;
+	const connectSrc = `${buildConnectSrc(platformEnv)}${connectOrigins.length ? ` ${connectOrigins.join(' ')}` : ''}`;
+
+	return [
+		"default-src 'self'",
+		scriptSrc,
+		styleSrc,
+		"font-src 'self' https://fonts.gstatic.com data:",
+		connectSrc,
+		"img-src 'self' data: https:",
+		...frameSrc,
+		"frame-ancestors 'none'"
+	].join('; ');
+}
+
+export async function resolveHumanVerificationProviderForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): Promise<'turnstile' | 'hcaptcha' | 'recaptcha' | null> {
+	try {
+		const apiBackendUrl = getApiBackendUrl(platformEnv);
+		const forwardedHost = getForwardedHost(event, platformEnv);
+		const upstreamUrl = new URL('/api/auth/authentication-methods', apiBackendUrl);
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+		headers.set('Accept', 'application/json');
+
+		const apiBinding =
+			(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+			(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
+			null;
+		const response = apiBinding
+			? await apiBinding.fetch(new Request(upstreamUrl.toString(), { headers }))
+			: await fetch(new Request(upstreamUrl.toString(), { headers }));
+		if (!response.ok) return null;
+
+		const data = (await response.json()) as {
+			methods?: {
+				humanVerification?: {
+					enabled?: unknown;
+					provider?: unknown;
+					siteKey?: unknown;
+				};
+			};
+		};
+		const humanVerification = data.methods?.humanVerification;
+		if (
+			humanVerification?.enabled !== true ||
+			typeof humanVerification.siteKey !== 'string' ||
+			!humanVerification.siteKey.trim()
+		) {
+			return null;
+		}
+		if (
+			humanVerification.provider === 'turnstile' ||
+			humanVerification.provider === 'hcaptcha' ||
+			humanVerification.provider === 'recaptcha'
+		) {
+			return humanVerification.provider;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 export function shouldProxyPath(pathname: string): boolean {
 	return (
 		(pathname.startsWith('/api/') && pathname !== '/api/set-language') ||
@@ -367,15 +461,11 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 const securityHeadersHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
 	const response = await resolve(event);
-	const csp = [
-		"default-src 'self'",
-		"script-src 'self' 'unsafe-inline'",
-		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-		"font-src 'self' https://fonts.gstatic.com data:",
-		buildConnectSrc(platformEnv),
-		"img-src 'self' data: https:",
-		"frame-ancestors 'none'"
-	].join('; ');
+	const humanVerificationProvider = await resolveHumanVerificationProviderForRequest(
+		event,
+		platformEnv
+	);
+	const csp = buildContentSecurityPolicy(platformEnv, humanVerificationProvider);
 
 	response.headers.set('Content-Security-Policy', csp);
 	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');

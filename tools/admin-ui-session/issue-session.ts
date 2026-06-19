@@ -248,7 +248,6 @@ function buildIssueSql(input: {
   scopeType: ScopeType;
   nowMs: number;
   expiresAtMs: number;
-  expiresAtSeconds: number;
 }): string {
   const ids = buildIds(input.runId);
   const scopeId = input.scopeType === 'tenant' ? input.tenantId : null;
@@ -291,7 +290,7 @@ SELECT
   role.id,
   ${sqlString(input.scopeType)},
   ${sqlNullableString(scopeId)},
-  ${input.expiresAtSeconds},
+  ${input.expiresAtMs},
   ${sqlString(TOOL_ID)},
   ${input.nowMs}
 FROM (
@@ -569,7 +568,6 @@ async function main(): Promise<void> {
   const ids = buildIds(runId);
   const nowMs = Date.now();
   const expiresAtMs = nowMs + options.ttlMinutes * 60 * 1000;
-  const expiresAtSeconds = Math.floor(expiresAtMs / 1000);
   const email = options.email ?? ids.email;
   const issueSql = buildIssueSql({
     runId,
@@ -580,7 +578,6 @@ async function main(): Promise<void> {
     scopeType: options.scopeType,
     nowMs,
     expiresAtMs,
-    expiresAtSeconds,
   });
   const verifySql = buildVerifySql({ runId, nowMs, tenantId: target.tenantId });
   const cleanupCommand = `pnpm run admin-ui:issue-session -- --env ${target.env} --cleanup ${runId}${options.mode === 'local' ? ' --local' : ''}`;

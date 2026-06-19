@@ -249,7 +249,12 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
-      custom_fields
+      {
+        ...(custom_fields ?? {}),
+        email,
+        'field.canonical.email': email,
+        ...(name ? { name, 'field.canonical.name': name } : {}),
+      }
     );
     if (!customFieldValidation.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -586,12 +591,6 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PASSKEY');
   try {
-    const body = await c.req.json<{
-      email?: string;
-    }>();
-
-    const { email } = body;
-
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
@@ -605,46 +604,12 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     const originUrl = new URL(originHeader);
     const rpID = originUrl.hostname;
 
-    let allowCredentials: Array<{
-      id: string;
-      type: 'public-key';
-      transports?: AuthenticatorTransport[];
-    }> = [];
-
-    // If email provided, get user's passkeys via canonical runtime user lookup.
-    if (email) {
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-      const runtimeUser = await runtimeUsers.findByEmail(email);
-      const user = runtimeUser ? { id: runtimeUser.id } : null;
-
-      if (user) {
-        const userPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
-
-        allowCredentials = userPasskeys
-          .map((pk) => {
-            const normalizedId = normalizeStoredCredentialId(pk.credential_id);
-            if (!normalizedId) {
-              return null;
-            }
-
-            return {
-              id: normalizedId,
-              type: 'public-key' as const,
-              transports: pk.transports.length > 0 ? pk.transports : undefined,
-            };
-          })
-          .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
-      }
-    }
-
     // Generate authentication options
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: 'required',
-      // Always include allowCredentials, even if empty (required by @simplewebauthn/browser v11+)
-      allowCredentials: allowCredentials.length > 0 ? allowCredentials : [],
+      // Always use discoverable credentials. Email collection belongs to OTP or profile flows.
+      allowCredentials: [],
     });
 
     // WebAuthn Level 3: Add hints to influence browser UI
@@ -670,7 +635,6 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       userId: 'unknown', // Will be determined during verification
       challenge: options.challenge,
       ttl: 300, // 5 minutes
-      metadata: { email: email || null },
     });
 
     return c.json({

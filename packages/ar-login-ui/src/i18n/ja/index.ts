@@ -24,7 +24,7 @@ const ja = {
 	//footer_stack: 'SvelteKit v5 + UnoCSS + Melt UI + Cloudflare Pages',
 	footer_stack: 'Powered by Authrim',
 	language_switch: '言語を切り替え',
-	language_english: '英語',
+	language_english: 'English',
 	language_japanese: '日本語',
 
 	common_email: 'メールアドレス',
@@ -58,6 +58,10 @@ const ja = {
 	login_errorDirectoryFailed: 'ディレクトリ認証に失敗しました',
 	login_orContinueWith: '他のアカウントでログイン',
 	login_continueWith: '{provider}でログイン',
+	login_humanVerificationRequired: '続行するにはセキュリティ確認を完了してください。',
+	login_humanVerificationLoading: 'セキュリティ確認を読み込んでいます...',
+	login_humanVerificationLoadFailed:
+		'セキュリティ確認を読み込めませんでした。ページを再読み込みしてもう一度お試しください。',
 	login_noMethodsAvailable:
 		'このテナントで利用できるログイン方法がありません。管理者にお問い合わせください。',
 

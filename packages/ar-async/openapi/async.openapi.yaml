@@ -1,0 +1,134 @@
+openapi: 3.2.0
+info:
+  title: Authrim Async Authorization API
+  version: 0.3.2
+  summary: Device Authorization and CIBA endpoints.
+  description: Initial OpenAPI contract for `@authrim/ar-async`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Device Authorization
+  - name: CIBA
+paths:
+  /device_authorization:
+    post:
+      tags:
+        - Device Authorization
+      summary: Start an OAuth Device Authorization Grant.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /device:
+    get:
+      tags:
+        - Device Authorization
+      summary: Render the device verification page.
+      responses:
+        "200":
+          description: HTML device verification page.
+    post:
+      tags:
+        - Device Authorization
+      summary: Submit a device user code.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /api/devices/verify:
+    post:
+      tags:
+        - Device Authorization
+      summary: Verify or approve a device authorization request.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /bc-authorize:
+    post:
+      tags:
+        - CIBA
+      summary: Start a CIBA backchannel authentication request.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/ciba/pending:
+    get:
+      tags:
+        - CIBA
+      summary: List pending CIBA requests for the current user/session.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/ciba/requests/{auth_req_id}:
+    get:
+      tags:
+        - CIBA
+      summary: Get a pending CIBA request.
+      parameters:
+        - name: auth_req_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/ciba/approve:
+    post:
+      tags:
+        - CIBA
+      summary: Approve a CIBA request.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/ciba/deny:
+    post:
+      tags:
+        - CIBA
+      summary: Deny a CIBA request.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+components:
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    FormOrJson:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Any:
+      description: Successful JSON or HTML response.

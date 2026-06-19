@@ -16,6 +16,7 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-field-mapping": "workspace:*",
+    "@authrim/ar-lib-plugin": "workspace:*",
     "@xmldom/xmldom": "^0.8.13",
     "hono": "4.12.25",
     "jose": "^6.1.2",

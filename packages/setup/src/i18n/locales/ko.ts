@@ -1118,6 +1118,7 @@ const ko: Translations = {
   'web.envDetail.upToDate': '최신',
   'web.envDetail.notDeployed': '미배포',
   'web.envDetail.updateOnlyChanged': '변경된 버전만 업데이트',
+  'web.envDetail.updateIncludeUiWorkers': 'Admin UI / Login UI 업데이트',
   'web.envDetail.updateAllWorkers': '모든 Workers 업데이트',
   'web.envDetail.refreshVersions': '새로고침',
   'web.envDetail.updateProgress': '업데이트 진행:',

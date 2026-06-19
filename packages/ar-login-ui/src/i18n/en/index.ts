@@ -25,7 +25,7 @@ const en = {
 	footer_stack: 'Powered by Authrim',
 	language_switch: 'Switch Language',
 	language_english: 'English',
-	language_japanese: 'Japanese',
+	language_japanese: '日本語',
 
 	common_email: 'Email address',
 	common_emailPlaceholder: 'you@example.com',
@@ -57,6 +57,10 @@ const en = {
 	login_errorDirectoryFailed: 'Directory sign-in failed',
 	login_orContinueWith: 'Or continue with',
 	login_continueWith: 'Continue with {provider:string}',
+	login_humanVerificationRequired: 'Complete the security check to continue.',
+	login_humanVerificationLoading: 'Loading security check...',
+	login_humanVerificationLoadFailed:
+		'Security check could not be loaded. Reload the page and try again.',
 	login_noMethodsAvailable:
 		'No authentication method is enabled for this tenant. Contact your administrator.',
 

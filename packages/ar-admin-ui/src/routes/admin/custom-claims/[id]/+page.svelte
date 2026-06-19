@@ -160,7 +160,7 @@
 				is_exportable: editForm.is_exportable,
 				is_vc_claim: editForm.is_vc_claim,
 				show_on_registration: editForm.show_on_registration,
-				registration_required: editForm.show_on_registration && editForm.registration_required,
+				registration_required: editForm.registration_required,
 				registration_order: editForm.registration_order,
 				registration_placeholder: editForm.registration_placeholder || null
 			});
@@ -251,15 +251,9 @@
 		loadSchema();
 	});
 
-	$effect(() => {
-		if (!editForm.show_on_registration && editForm.registration_required) {
-			editForm.registration_required = false;
-		}
-	});
-
 	const isSystem = $derived(!!schema?.is_system);
 	const isEditable = $derived(schema?.operation_status === 'active');
-	const registrationConfigDisabled = $derived(!isEditable || !editForm.show_on_registration);
+	const registrationConfigDisabled = $derived(!isEditable);
 </script>
 
 <svelte:head>

@@ -72,12 +72,13 @@ const PLUGINS_SCHEMA_PREFIX = 'plugins:schema:';
 
 // Import builtin plugins
 import { builtinNotifierPlugins } from '../builtin/notifier';
+import { builtinSecurityPlugins } from '../builtin/security';
 
 /**
  * Get all builtin plugins
  */
 export function getBuiltinPlugins(): AuthrimPlugin<unknown>[] {
-  return [...builtinNotifierPlugins] as AuthrimPlugin<unknown>[];
+  return [...builtinNotifierPlugins, ...builtinSecurityPlugins] as AuthrimPlugin<unknown>[];
 }
 
 /**

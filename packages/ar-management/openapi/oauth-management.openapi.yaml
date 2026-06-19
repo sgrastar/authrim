@@ -1,0 +1,277 @@
+openapi: 3.2.0
+info:
+  title: Authrim OAuth Management API
+  version: 0.3.2
+  summary: Dynamic client registration, token introspection, revocation, and self-service devices.
+  description: >
+    Initial OpenAPI contract for OAuth-adjacent management endpoints owned by
+    `@authrim/ar-management`. Admin UI routes remain in `admin.openapi.yaml`.
+servers:
+  - name: Tenant runtime
+    url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Dynamic Client Registration
+    summary: Dynamic client registration
+    kind: nav
+  - name: Token Management
+    summary: Token management
+    kind: nav
+  - name: Devices
+    summary: Self-service devices
+    kind: nav
+  - name: Admin Route Coverage
+paths:
+  /register:
+    post:
+      tags:
+        - Dynamic Client Registration
+      summary: Register an OAuth/OIDC client.
+      security:
+        - initialAccessToken: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Json"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /clients/{client_id}:
+    get:
+      tags:
+        - Dynamic Client Registration
+      summary: Read a dynamically registered client.
+      security:
+        - registrationAccessToken: []
+      parameters:
+        - $ref: "#/components/parameters/ClientId"
+        - &a1
+          name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+    put:
+      tags:
+        - Dynamic Client Registration
+      summary: Replace a dynamically registered client.
+      security:
+        - registrationAccessToken: []
+      parameters:
+        - $ref: "#/components/parameters/ClientId"
+        - *a1
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+    delete:
+      tags:
+        - Dynamic Client Registration
+      summary: Delete a dynamically registered client.
+      security:
+        - registrationAccessToken: []
+      parameters:
+        - $ref: "#/components/parameters/ClientId"
+        - *a1
+      responses:
+        "204":
+          description: Client deleted.
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /introspect:
+    post:
+      tags:
+        - Token Management
+      summary: Introspect an OAuth token.
+      security:
+        - clientAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                token:
+                  type: string
+                token_type_hint:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /revoke:
+    post:
+      tags:
+        - Token Management
+      summary: Revoke an OAuth token.
+      security:
+        - clientAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                token:
+                  type: string
+                token_type_hint:
+                  type: string
+      responses:
+        "200":
+          description: Token revocation request accepted.
+        "401":
+          $ref: "#/components/responses/OAuthError"
+  /revoke/batch:
+    post:
+      tags:
+        - Token Management
+      summary: Revoke OAuth tokens in batch.
+      security:
+        - clientAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /me/devices:
+    get:
+      tags:
+        - Devices
+      summary: List current user's remembered devices.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /me/devices/{id}:
+    patch:
+      tags:
+        - Devices
+      summary: Update current user's remembered device metadata.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - &a2
+          name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+    delete:
+      tags:
+        - Devices
+      summary: Delete a remembered device for the current user.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - *a2
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /clients/{client_id}/config:
+    get:
+      tags:
+        - Admin Route Coverage
+      operationId: getClientsByClientIdConfig
+      summary: GET /clients/{client_id}/config
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+        "400":
+          $ref: "#/components/responses/OAuthError"
+        "401":
+          $ref: "#/components/responses/OAuthError"
+        "403":
+          $ref: "#/components/responses/OAuthError"
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+components:
+  securitySchemes:
+    initialAccessToken:
+      type: http
+      scheme: bearer
+      description: Initial access token for dynamic client registration.
+    registrationAccessToken:
+      type: http
+      scheme: bearer
+      description: Registration access token for client configuration endpoint operations.
+    clientAuth:
+      type: http
+      scheme: bearer
+      description: OAuth client authentication represented as bearer where applicable.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_session
+  parameters:
+    ClientId:
+      name: client_id
+      in: path
+      required: true
+      schema:
+        type: string
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    Json:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    OAuthError:
+      description: OAuth error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string

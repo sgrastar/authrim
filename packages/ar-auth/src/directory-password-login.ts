@@ -31,8 +31,10 @@ import {
 } from './directory-password';
 import {
   consumeAuthorizationChallengeContinuation,
+  readAuthorizationChallengeType,
   type AuthorizationChallengeContinuation,
 } from './direct-auth';
+import { verifyHumanVerificationForAction } from './human-verification';
 
 const DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID = 'default';
 const DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES = ['mail', 'displayName', 'uid'];
@@ -43,6 +45,8 @@ interface DirectoryPasswordLoginRequest {
   username?: unknown;
   password?: unknown;
   authorization_challenge_id?: unknown;
+  human_verification_response?: unknown;
+  cf_turnstile_response?: unknown;
 }
 
 interface DirectoryConnectorKVSettings {
@@ -90,6 +94,27 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     if (!username || !password) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
+
+    let turnstileAction: 'login' | 'reauth' = 'login';
+    if (authorizationChallengeId) {
+      const challengeType = await readAuthorizationChallengeType(
+        c.env,
+        tenantId,
+        authorizationChallengeId
+      );
+      if (!challengeType) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'authorization_challenge_id' },
+        });
+      }
+      turnstileAction = challengeType;
+    }
+    const turnstileError = await verifyHumanVerificationForAction(
+      c,
+      turnstileAction,
+      request.human_verification_response ?? request.cf_turnstile_response
+    );
+    if (turnstileError) return turnstileError;
 
     const connector = await resolveDirectoryConnector(c.env, tenantId);
     if (!connector) {

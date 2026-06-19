@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Button, Input, Card, Alert } from '$lib/components';
+	import { Button, Input, Card, Alert, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import {
 		passkeyAPI,
 		emailCodeAPI,
@@ -25,6 +25,7 @@
 	import { auth } from '$lib/stores/auth';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
+	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/stores';
@@ -53,6 +54,16 @@
 	let directoryPasswordLabel = $state('Organization ID');
 	let externalEnabled = $state(false);
 	let externalProviders = $state<ExternalProvider[]>([]);
+	let turnstileSiteKey = $state<string | null>(null);
+	let humanVerificationProvider = $state<'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom'>(
+		'turnstile'
+	);
+	let humanVerificationMode = $state<'managed' | 'checkbox' | 'invisible' | 'score'>('managed');
+	let turnstileRequired = $state(false);
+	let turnstileToken = $state('');
+	let activeTurnstileTarget = $state<string | null>(null);
+	let pendingTurnstileTarget = $state<string | null>(null);
+	const turnstileAction = 'authrim-login';
 
 	// OAuth login challenge client info
 	interface ClientInfo {
@@ -111,6 +122,8 @@
 
 	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
+	let turnstileLanguage = $state('en');
+	const turnstileTheme = $derived(isDarkMode ? 'dark' : 'light');
 
 	// Derived: WebAuthn support check
 	const isPasskeySupported = $derived(
@@ -128,6 +141,10 @@
 			(externalEnabled && externalProviders.length > 0)
 	);
 
+	function resolveTurnstileLanguage(): string {
+		return resolveConfiguredTurnstileLanguage(document.documentElement.lang, getLocale());
+	}
+
 	// ---------------------------------------------------------------------------
 	// Lifecycle
 	// ---------------------------------------------------------------------------
@@ -140,13 +157,15 @@
 			return false;
 		};
 		isDarkMode = checkDarkMode();
+		turnstileLanguage = resolveTurnstileLanguage();
 
 		const observer = new MutationObserver(() => {
 			isDarkMode = checkDarkMode();
+			turnstileLanguage = resolveTurnstileLanguage();
 		});
 		observer.observe(document.documentElement, {
 			attributes: true,
-			attributeFilter: ['data-theme']
+			attributeFilter: ['data-theme', 'lang']
 		});
 
 		const mql = window.matchMedia('(prefers-color-scheme: dark)');
@@ -209,8 +228,24 @@
 				emailCodeEnabled = data.methods.emailCode.loginEnabled ?? data.methods.emailCode.enabled;
 				directoryPasswordEnabled = data.methods.directoryPassword.enabled;
 				directoryPasswordLabel = data.methods.directoryPassword.label || 'Organization ID';
+				const humanVerificationRequired =
+					data.methods.humanVerification.enabled && data.methods.humanVerification.loginEnabled;
+				humanVerificationProvider =
+					data.methods.humanVerification.provider === 'hcaptcha' ||
+					data.methods.humanVerification.provider === 'recaptcha' ||
+					data.methods.humanVerification.provider === 'custom'
+						? data.methods.humanVerification.provider
+						: 'turnstile';
+				humanVerificationMode = data.methods.humanVerification.widget.mode ?? 'managed';
+				turnstileRequired =
+					humanVerificationRequired &&
+					humanVerificationProvider !== 'custom' &&
+					Boolean(data.methods.humanVerification.siteKey);
+				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
 				externalProviders = data.methods.external.providers.filter(
-					(provider) => provider.loginEnabled ?? provider.enabled !== false
+					(provider) =>
+						(provider.loginEnabled ?? provider.enabled !== false) &&
+						(!humanVerificationRequired || provider.startMode !== 'direct')
 				);
 				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
 			}
@@ -259,6 +294,49 @@
 		});
 	}
 
+	function getTurnstileToken(target: string): string | undefined {
+		if (!turnstileRequired) return undefined;
+		if (!turnstileToken) {
+			activeTurnstileTarget = target;
+			pendingTurnstileTarget = target;
+			return undefined;
+		}
+		return turnstileToken;
+	}
+
+	function showTurnstileFor(target: string): boolean {
+		return turnstileRequired && Boolean(turnstileSiteKey) && activeTurnstileTarget === target;
+	}
+
+	function resumeTurnstileTarget(target: string) {
+		if (target === 'passkey') {
+			void handlePasskeyLogin();
+			return;
+		}
+		if (target === 'email-code') {
+			void handleEmailCodeSend();
+			return;
+		}
+		if (target === 'directory-password') {
+			void handleDirectoryPasswordLogin();
+			return;
+		}
+		if (target.startsWith('external:')) {
+			const providerId = target.slice('external:'.length);
+			const provider = externalProviders.find((candidate) => candidate.id === providerId);
+			if (provider) {
+				void handleExternalLogin(provider);
+			}
+		}
+	}
+
+	$effect(() => {
+		if (!turnstileToken || !pendingTurnstileTarget) return;
+		const target = pendingTurnstileTarget;
+		pendingTurnstileTarget = null;
+		queueMicrotask(() => resumeTurnstileTarget(target));
+	});
+
 	function buildPostAuthRedirect(redirectUrl?: string): string {
 		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
 			const params = new SvelteURLSearchParams({
@@ -282,7 +360,11 @@
 		passkeyLoading = true;
 
 		try {
-			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({});
+			const cfTurnstileResponse = getTurnstileToken('passkey');
+			if (turnstileRequired && !cfTurnstileResponse) return;
+			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({
+				human_verification_response: cfTurnstileResponse
+			});
 			if (optionsError) {
 				throw new Error(getApiErrorMessage(optionsError));
 			}
@@ -326,7 +408,12 @@
 
 		emailCodeLoading = true;
 		try {
-			const { error: apiError } = await emailCodeAPI.send({ email });
+			const cfTurnstileResponse = getTurnstileToken('email-code');
+			if (turnstileRequired && !cfTurnstileResponse) return;
+			const { error: apiError } = await emailCodeAPI.send({
+				email,
+				human_verification_response: cfTurnstileResponse
+			});
 			if (apiError) {
 				throw new Error(getApiErrorMessage(apiError));
 			}
@@ -364,10 +451,13 @@
 
 		directoryPasswordLoading = true;
 		try {
+			const cfTurnstileResponse = getTurnstileToken('directory-password');
+			if (turnstileRequired && !cfTurnstileResponse) return;
 			const { data, error: apiError } = await directoryPasswordAPI.login({
 				username,
 				password: directoryPassword,
-				authorizationChallengeId: authorizationChallengeId || undefined
+				authorizationChallengeId: authorizationChallengeId || undefined,
+				human_verification_response: cfTurnstileResponse
 			});
 			if (apiError) {
 				if (apiError.error === 'invalid_credentials') {
@@ -394,6 +484,8 @@
 	async function handleExternalLogin(provider: ExternalProvider) {
 		const providerId = provider.id;
 		if (authActionLoading) return;
+		const cfTurnstileResponse = getTurnstileToken(`external:${providerId}`);
+		if (turnstileRequired && !cfTurnstileResponse) return;
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri =
@@ -404,7 +496,8 @@
 				providerId,
 				redirectUri,
 				provider.startUrl,
-				provider.startMode
+				provider.startMode,
+				turnstileRequired ? { token: cfTurnstileResponse } : undefined
 			);
 
 			if (!isValidRedirectUrl(url)) {
@@ -625,6 +718,20 @@
 						<div class="i-heroicons-key h-5 w-5"></div>
 						{$LL.login_signInWithPasskey()}
 					</Button>
+					{#if showTurnstileFor('passkey') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 
 					{#if directoryPasswordEnabled || emailCodeEnabled}
 						<div class="auth-divider">
@@ -673,6 +780,20 @@
 						<div class="i-heroicons-identification h-5 w-5"></div>
 						{$LL.login_signInWithDirectory({ label: directoryPasswordLabel })}
 					</Button>
+					{#if showTurnstileFor('directory-password') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 
 					{#if emailCodeEnabled}
 						<div class="auth-divider">
@@ -708,6 +829,20 @@
 						<div class="i-heroicons-envelope h-5 w-5"></div>
 						{$LL.login_sendCode()}
 					</Button>
+					{#if showTurnstileFor('email-code') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 				{/if}
 
 				<!-- External Login Section -->
@@ -747,6 +882,20 @@
 								{/if}
 								{getProviderButtonText(provider)}
 							</Button>
+							{#if showTurnstileFor(`external:${provider.id}`) && turnstileSiteKey}
+								<TurnstileWidget
+									siteKey={turnstileSiteKey}
+									provider={humanVerificationProvider}
+									mode={humanVerificationMode}
+									action={turnstileAction}
+									theme={turnstileTheme}
+									language={turnstileLanguage}
+									bind:token={turnstileToken}
+									disabled={authActionLoading}
+									loadingLabel={$LL.login_humanVerificationLoading()}
+									errorLabel={$LL.login_humanVerificationLoadFailed()}
+								/>
+							{/if}
 						{/each}
 					</div>
 				{/if}

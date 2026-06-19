@@ -192,18 +192,18 @@ describe('Authentication Methods API', () => {
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.meta.cacheTTL).toBe(300);
+      expect(body.meta.cacheTTL).toBe(180);
       expect(body.meta.revision).toBeDefined();
       // revision should be a valid ISO date string
       expect(new Date(body.meta.revision).toISOString()).toBe(body.meta.revision);
     });
 
-    it('should set Cache-Control header', async () => {
+    it('should set no-store Cache-Control header', async () => {
       const { app, mockEnv } = createTestApp();
 
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
-      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=180');
     });
   });
 
@@ -244,6 +244,34 @@ describe('Authentication Methods API', () => {
       expect(body.methods.emailCode.steps).toEqual([]);
     });
 
+    it('should expose per-usage built-in method switches from authentication-methods settings', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.login_enabled': true,
+          'authentication-methods.passkey.signup_enabled': true,
+          'authentication-methods.passkey.reauth_enabled': true,
+          'authentication-methods.passkey.account_link_enabled': true,
+          'authentication-methods.email_otp.login_enabled': false,
+          'authentication-methods.email_otp.signup_enabled': false,
+          'authentication-methods.email_otp.reauth_enabled': true,
+          'authentication-methods.email_otp.account_link_enabled': true,
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.emailCode).toMatchObject({
+        enabled: true,
+        loginEnabled: false,
+        signupEnabled: false,
+        reauthEnabled: true,
+        accountLinkEnabled: true,
+      });
+    });
+
     it('should enable directory password from authentication-methods settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
@@ -270,6 +298,108 @@ describe('Authentication Methods API', () => {
       expect(JSON.stringify(body)).not.toContain('secret');
       expect(JSON.stringify(body)).not.toContain('endpoint');
       expect(JSON.stringify(body)).not.toContain('connector_id');
+    });
+
+    it('should expose Turnstile site key but never the secret key', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.human_verification.provider':
+            'human-verification-cloudflare-turnstile',
+          'authentication-methods.human_verification.login_enabled': true,
+        }),
+        'plugins:enabled:human-verification-cloudflare-turnstile:tenant:default': 'true',
+        'plugins:config:human-verification-cloudflare-turnstile:tenant:default': JSON.stringify({
+          siteKey: '0x4AAAAAA_site_key',
+          secretKey: '0x4AAAAAA_secret_key',
+          failurePolicy: 'fail_closed',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.humanVerification).toMatchObject({
+        enabled: true,
+        provider: 'turnstile',
+        siteKey: '0x4AAAAAA_site_key',
+        loginEnabled: true,
+        signupEnabled: false,
+        reauthEnabled: false,
+        failurePolicy: 'fail_closed',
+      });
+      expect(JSON.stringify(body)).not.toContain('0x4AAAAAA_secret_key');
+    });
+
+    it('should expose selected reCAPTCHA provider metadata without the secret key', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.human_verification.provider':
+            'human-verification-google-recaptcha',
+          'authentication-methods.human_verification.login_enabled': true,
+        }),
+        'plugins:enabled:human-verification-google-recaptcha:tenant:default': 'true',
+        'plugins:config:human-verification-google-recaptcha:tenant:default': JSON.stringify({
+          siteKey: 'recaptcha-site-key',
+          secretKey: 'recaptcha-secret-key',
+          widgetMode: 'score',
+          scoreThreshold: 0.7,
+          failurePolicy: 'fail_open',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.humanVerification).toMatchObject({
+        enabled: true,
+        provider: 'recaptcha',
+        siteKey: 'recaptcha-site-key',
+        loginEnabled: true,
+        failurePolicy: 'fail_open',
+        widget: {
+          mode: 'score',
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain('recaptcha-secret-key');
+      expect(JSON.stringify(body)).not.toContain('scoreThreshold');
+    });
+
+    it('should expose selected hCaptcha provider metadata without the secret key', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+          'authentication-methods.human_verification.signup_enabled': true,
+        }),
+        'plugins:enabled:human-verification-hcaptcha:tenant:default': 'true',
+        'plugins:config:human-verification-hcaptcha:tenant:default': JSON.stringify({
+          siteKey: 'hcaptcha-site-key',
+          secretKey: 'hcaptcha-secret-key',
+          widgetMode: 'invisible',
+          failurePolicy: 'fail_closed',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.humanVerification).toMatchObject({
+        enabled: true,
+        provider: 'hcaptcha',
+        siteKey: 'hcaptcha-site-key',
+        loginEnabled: false,
+        signupEnabled: true,
+        failurePolicy: 'fail_closed',
+        widget: {
+          mode: 'invisible',
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain('hcaptcha-secret-key');
     });
   });
 
@@ -377,6 +507,44 @@ describe('Authentication Methods API', () => {
           startUrl: '/vp/login',
           iconName: 'none',
         })
+      );
+    });
+
+    it('should disable direct external providers for human-verification protected usages', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.human_verification.provider':
+            'human-verification-cloudflare-turnstile',
+          'authentication-methods.human_verification.login_enabled': true,
+          'authentication-methods.human_verification.signup_enabled': true,
+          'authentication-methods.human_verification.reauth_enabled': true,
+          'authentication-methods.external_providers': [
+            {
+              id: 'wallet-vp',
+              name: 'Wallet Presentation',
+              type: 'vc',
+              startMode: 'direct',
+              startUrl: '/vp/login',
+              enabled: true,
+            },
+          ],
+        }),
+        'plugins:enabled:human-verification-cloudflare-turnstile:tenant:default': 'true',
+        'plugins:config:human-verification-cloudflare-turnstile:tenant:default': JSON.stringify({
+          siteKey: '0x4AAAAAA_site_key',
+          secretKey: '0x4AAAAAA_secret_key',
+          failurePolicy: 'fail_closed',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.humanVerification.enabled).toBe(true);
+      expect(body.methods.external.providers).not.toContainEqual(
+        expect.objectContaining({ id: 'wallet-vp' })
       );
     });
 

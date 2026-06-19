@@ -24,6 +24,11 @@
       "import": "./dist/builtin/index.js",
       "types": "./dist/builtin/index.d.ts",
       "default": "./src/builtin/index.ts"
+    },
+    "./builtin/security": {
+      "import": "./src/builtin/security/index.ts",
+      "types": "./src/builtin/security/index.ts",
+      "default": "./src/builtin/security/index.ts"
     }
   },
   "scripts": {

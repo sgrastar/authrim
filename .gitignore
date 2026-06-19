@@ -12,6 +12,12 @@ dist/
 .wrangler/
 .svelte-kit/
 
+# Generated API reference output
+docs/api/generated/
+docs/api/openapi/
+docs/api/index.html
+docs/api/scalar.html
+
 # Environment variables
 .env
 .env.local

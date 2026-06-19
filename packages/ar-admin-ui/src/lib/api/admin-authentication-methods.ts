@@ -22,6 +22,15 @@ const EMAIL_OTP_SIGNUP_ENABLED_KEY = 'authentication-methods.email_otp.signup_en
 const EMAIL_OTP_REAUTH_ENABLED_KEY = 'authentication-methods.email_otp.reauth_enabled';
 const EMAIL_OTP_ACCOUNT_LINK_ENABLED_KEY = 'authentication-methods.email_otp.account_link_enabled';
 const LEGACY_EMAIL_OTP_ENABLED_KEY = 'authentication-methods.email_otp.enabled';
+const HUMAN_VERIFICATION_PROVIDER_KEY = 'authentication-methods.human_verification.provider';
+const HUMAN_VERIFICATION_LOGIN_ENABLED_KEY =
+	'authentication-methods.human_verification.login_enabled';
+const HUMAN_VERIFICATION_SIGNUP_ENABLED_KEY =
+	'authentication-methods.human_verification.signup_enabled';
+const HUMAN_VERIFICATION_REAUTH_ENABLED_KEY =
+	'authentication-methods.human_verification.reauth_enabled';
+
+export const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';
 
 export type AuthenticationMethodProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
 export type AuthenticationMethodProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
@@ -67,9 +76,17 @@ export interface AuthenticationMethodBuiltInSettings {
 	emailOtpAccountLinkEnabled: boolean;
 }
 
+export interface AuthenticationMethodHumanVerificationSettings {
+	provider: string;
+	loginEnabled: boolean;
+	signupEnabled: boolean;
+	reauthEnabled: boolean;
+}
+
 export interface AuthenticationMethodSettingsResponse {
 	settings: CategorySettings;
 	builtIn: AuthenticationMethodBuiltInSettings;
+	humanVerification: AuthenticationMethodHumanVerificationSettings;
 	providers: AuthenticationMethodExternalProvider[];
 	externalProviderUsages: AuthenticationMethodExternalProviderUsage[];
 }
@@ -324,6 +341,14 @@ export const adminAuthenticationMethodsAPI = {
 					legacyEmailOtpEnabled
 				)
 			},
+			humanVerification: {
+				provider: String(
+					settings.values[HUMAN_VERIFICATION_PROVIDER_KEY] || DEFAULT_HUMAN_VERIFICATION_PROVIDER
+				),
+				loginEnabled: parseBoolean(settings.values[HUMAN_VERIFICATION_LOGIN_ENABLED_KEY], false),
+				signupEnabled: parseBoolean(settings.values[HUMAN_VERIFICATION_SIGNUP_ENABLED_KEY], false),
+				reauthEnabled: parseBoolean(settings.values[HUMAN_VERIFICATION_REAUTH_ENABLED_KEY], false)
+			},
 			providers: parseProviders(settings.values[EXTERNAL_PROVIDERS_KEY]),
 			externalProviderUsages: resolveExternalProviderUsages(
 				externalProviders,
@@ -336,6 +361,7 @@ export const adminAuthenticationMethodsAPI = {
 	async update(
 		settings: CategorySettings,
 		builtIn: AuthenticationMethodBuiltInSettings,
+		humanVerification: AuthenticationMethodHumanVerificationSettings,
 		providers: AuthenticationMethodExternalProvider[],
 		externalProviderUsages: AuthenticationMethodExternalProviderUsage[],
 		tenantId?: string
@@ -354,6 +380,11 @@ export const adminAuthenticationMethodsAPI = {
 						[EMAIL_OTP_SIGNUP_ENABLED_KEY]: builtIn.emailOtpSignupEnabled,
 						[EMAIL_OTP_REAUTH_ENABLED_KEY]: builtIn.emailOtpReauthEnabled,
 						[EMAIL_OTP_ACCOUNT_LINK_ENABLED_KEY]: builtIn.emailOtpAccountLinkEnabled,
+						[HUMAN_VERIFICATION_PROVIDER_KEY]:
+							humanVerification.provider || DEFAULT_HUMAN_VERIFICATION_PROVIDER,
+						[HUMAN_VERIFICATION_LOGIN_ENABLED_KEY]: humanVerification.loginEnabled,
+						[HUMAN_VERIFICATION_SIGNUP_ENABLED_KEY]: humanVerification.signupEnabled,
+						[HUMAN_VERIFICATION_REAUTH_ENABLED_KEY]: humanVerification.reauthEnabled,
 						[EXTERNAL_PROVIDER_USAGE_KEY]: serializeExternalProviderUsages(externalProviderUsages),
 						[EXTERNAL_PROVIDERS_KEY]: serializeProviders(providers)
 					}

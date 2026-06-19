@@ -367,8 +367,8 @@ async function isPluginEnabled(
     return globalValue === 'true';
   }
 
-  // Default: enabled
-  return true;
+  // Default: disabled. Plugins must be explicitly enabled after configuration.
+  return false;
 }
 
 /**
@@ -929,6 +929,22 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
     tenantId = getRequestTenantId(c, body.tenant_id);
   } catch {
     tenantId = getRequestTenantId(c);
+  }
+
+  const { configured, missingRequiredFields } = await getResolvedPluginConfigState(
+    kv,
+    c.env,
+    pluginId,
+    tenantId
+  );
+  if (!configured) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'plugin configuration' },
+      extensions: {
+        plugin_id: pluginId,
+        missing_required_fields: missingRequiredFields,
+      },
+    });
   }
 
   const enableKey = tenantId

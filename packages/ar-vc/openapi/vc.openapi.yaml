@@ -1,0 +1,237 @@
+openapi: 3.2.0
+info:
+  title: Authrim Verifiable Credentials API
+  version: 0.3.2
+  summary: OpenID4VP, OpenID4VCI, status list, and DID endpoints.
+  description: Initial OpenAPI contract for `@authrim/ar-vc`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: OpenID4VP
+  - name: OpenID4VCI
+  - name: DID
+  - name: Status Lists
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      summary: Return VC Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /.well-known/openid-credential-verifier:
+    get:
+      tags:
+        - OpenID4VP
+      summary: Return OpenID4VP verifier metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vp/authorize:
+    post:
+      tags:
+        - OpenID4VP
+      summary: Create an OpenID4VP authorization request.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vp/response:
+    post:
+      tags:
+        - OpenID4VP
+      summary: Receive a wallet VP response.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vp/requests/{id}:
+    get:
+      tags:
+        - OpenID4VP
+      summary: Get VP request status.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /.well-known/openid-credential-issuer:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Return OpenID4VCI issuer metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vci/token:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Exchange a pre-authorized code for a credential access token.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vci/offers/{id}:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Get a credential offer.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vci/credential:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Issue a credential.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vci/deferred:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Retrieve a deferred credential.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /vci/status-lists/{listId}:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Return a status list credential.
+      parameters:
+        - name: listId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /.well-known/did.json:
+    get:
+      tags:
+        - DID
+      summary: Return Authrim DID document.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /did/resolve/{did}:
+    get:
+      tags:
+        - DID
+      summary: Resolve a DID.
+      parameters:
+        - name: did
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/live:
+    get:
+      tags:
+        - Health
+      operationId: getHealthLive
+      summary: GET /health/live
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /health/ready:
+    get:
+      tags:
+        - Health
+      operationId: getHealthReady
+      summary: GET /health/ready
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /vci/status-lists/{listId}/json:
+    get:
+      tags:
+        - Status Lists
+      operationId: getVciStatusListsByListIdJson
+      summary: GET /vci/status-lists/{listId}/json
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+      parameters:
+        - name: listId
+          in: path
+          required: true
+          schema:
+            type: string
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    FormOrJson:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Any:
+      description: Successful JSON, JWT, or credential response.

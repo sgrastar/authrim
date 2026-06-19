@@ -575,6 +575,7 @@
 				</div>
 
 				<div class="form-actions">
+					<span class="cache-notice">{$LL.admin_login_ui_cache_notice()}</span>
 					<button
 						onclick={discardUiConfigChanges}
 						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
@@ -785,6 +786,7 @@
 
 			<!-- Action buttons -->
 			<div class="settings-actions">
+				<span class="cache-notice">{$LL.admin_login_ui_cache_notice()}</span>
 				<button
 					onclick={discardChanges}
 					disabled={!hasChanges || saving || !canEditLoginUiSettings}
@@ -911,9 +913,22 @@
 
 	.form-actions {
 		display: flex;
+		align-items: center;
 		justify-content: flex-end;
 		gap: 8px;
+		flex-wrap: wrap;
 		margin-top: 16px;
+	}
+
+	.cache-notice {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		line-height: 1.35;
+	}
+
+	.settings-actions {
+		align-items: center;
+		flex-wrap: wrap;
 	}
 
 	.reload-action {

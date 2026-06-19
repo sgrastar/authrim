@@ -1092,6 +1092,7 @@ const zhTW: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未部署',
   'web.envDetail.updateOnlyChanged': '僅更新已變更的版本',
+  'web.envDetail.updateIncludeUiWorkers': '更新 Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': '更新所有 Workers',
   'web.envDetail.refreshVersions': '重新整理',
   'web.envDetail.updateProgress': '更新進度：',

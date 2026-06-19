@@ -427,9 +427,19 @@
 		}
 	}
 
+	function normalizeTimestampMs(timestamp: number): number {
+		const absolute = Math.abs(timestamp);
+		if (absolute < 100_000_000_000) return timestamp * 1000;
+		if (absolute < 100_000_000_000_000) return timestamp;
+		if (absolute < 100_000_000_000_000_000) return timestamp / 1000;
+		return timestamp / 1_000_000;
+	}
+
 	function formatTimestamp(timestamp: number | null): string {
 		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+		const date = new Date(normalizeTimestampMs(timestamp));
+		if (Number.isNaN(date.getTime())) return '-';
+		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function formatDateValue(value: string | null): string {

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   publishEvent: vi.fn(),
   createAuditLog: vi.fn(),
   challengeStore: {
+    getChallengeRpc: vi.fn(),
     consumeChallengeRpc: vi.fn(),
   },
   confirmationStore: {
@@ -434,7 +435,13 @@ describe('directory password login handler', () => {
         code_challenge_method: 'S256',
       },
     });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      tenantId: 'tenant-a',
+      type: 'login',
+      challenge: 'login_challenge',
+    });
     mocks.getChallengeStoreByChallengeId
+      .mockResolvedValueOnce(mocks.challengeStore)
       .mockResolvedValueOnce(mocks.challengeStore)
       .mockResolvedValueOnce(mocks.confirmationStore);
     const handler = createDirectoryPasswordLoginHandler(fetcher);

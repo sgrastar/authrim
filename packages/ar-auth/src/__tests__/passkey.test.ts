@@ -724,25 +724,15 @@ describe('Passkey Handlers', () => {
       );
     });
 
-    it('should include user credentials when email provided', async () => {
-      // PII/Non-PII DB Separation via Repository pattern:
-      // 1. Query PII DB for user by email
-      // 2. Query Core DB to verify user exists and is active
-      // 3. Query for user's passkeys via Repository
-
-      // Setup: User found in PII DB
+    it('should ignore email and use discoverable credential login', async () => {
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
         id: 'user-123',
         email: 'user@example.com',
       });
-
-      // Setup: User is active in Core DB
       mockUserCoreRepository.findById.mockResolvedValueOnce({
         id: 'user-123',
         is_active: true,
       });
-
-      // Setup: User has existing passkeys
       mockPasskeyRepository.findByUserId.mockResolvedValueOnce([
         { credential_id: 'cred-1', transports: ['internal'] },
         { credential_id: 'cred-2', transports: ['usb'] },
@@ -755,13 +745,14 @@ describe('Passkey Handlers', () => {
 
       await passkeyLoginOptionsHandler(c);
 
-      // Should query PII DB for user by email via Repository
-      expect(mockUserPIIRepository.findByTenantAndEmail).toHaveBeenCalledWith(
-        'default',
-        'user@example.com'
+      expect(mockUserPIIRepository.findByTenantAndEmail).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.findByUserId).not.toHaveBeenCalled();
+      expect(mockWebAuthnFunctions.generateAuthenticationOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          allowCredentials: [],
+          userVerification: 'required',
+        })
       );
-      // Should query for passkeys via Repository
-      expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user-123');
     });
 
     it('should work without email (discoverable credential flow)', async () => {
@@ -775,6 +766,25 @@ describe('Passkey Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           options: expect.any(Object),
+          challengeId: expect.any(String),
+        })
+      );
+    });
+
+    it('should not require a JSON body for discoverable credential login', async () => {
+      const c = createMockContext({
+        headers: { origin: 'https://example.com' },
+      });
+      c.req.json.mockRejectedValueOnce(new Error('empty body'));
+
+      const response = await passkeyLoginOptionsHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            challenge: expect.any(String),
+          }),
           challengeId: expect.any(String),
         })
       );

@@ -4068,6 +4068,13 @@ tr.expired {
 
 .plugin-icon {
 	font-size: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	color: var(--primary);
+	flex-shrink: 0;
 }
 
 .plugin-name {
@@ -4120,29 +4127,27 @@ tr.expired {
 	border-top: 1px solid var(--border);
 }
 
-/* Plugin Status Badge (Enabled/Disabled toggle button) */
-.plugin-status-btn {
-	padding: 4px 10px;
-	border-radius: 9999px;
+/* Plugin Status Toggle */
+.plugin-status-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.plugin-status-toggle--detail {
+	margin-bottom: 6px;
+}
+
+.plugin-status-label {
 	font-size: 0.75rem;
-	font-weight: 500;
-	border: none;
-	cursor: pointer;
-	transition: all var(--transition-fast);
-}
-
-.plugin-status-btn.enabled {
-	background-color: var(--success-light);
-	color: var(--success);
-}
-
-.plugin-status-btn.disabled {
-	background-color: var(--bg-subtle);
+	font-weight: 600;
 	color: var(--text-muted);
+	line-height: 1;
 }
 
-.plugin-status-btn:hover {
-	opacity: 0.8;
+.plugin-status-label.enabled {
+	color: var(--success);
 }
 
 /* Trust Level Badge */
@@ -4294,6 +4299,13 @@ tr.expired {
 
 .plugin-dialog-icon {
 	font-size: 32px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	color: var(--primary);
+	flex-shrink: 0;
 }
 
 .plugin-dialog-title {

@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { Button, Input, Card, Alert } from '$lib/components';
+	import { Button, Input, Card, Alert, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { LL } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import { passkeyAPI, emailCodeAPI, externalIdpAPI, type APIError } from '$lib/api/client';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
 	import { brandingStore } from '$lib/stores/branding.svelte';
@@ -20,6 +20,7 @@
 		removeLoginUiSessionItems,
 		setLoginUiSessionItem
 	} from '$lib/authrim/storage-keys';
+	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onMount } from 'svelte';
 
 	// ---------------------------------------------------------------------------
@@ -40,6 +41,9 @@
 	let emailError = $state('');
 	let nameError = $state('');
 	let externalIdpLoading = $state<string | null>(null);
+	const authActionLoading = $derived(
+		passkeyLoading || emailCodeLoading || externalIdpLoading !== null
+	);
 
 	// Authentication methods (from API)
 	let methodsLoading = $state(true);
@@ -47,9 +51,21 @@
 	let emailCodeEnabled = $state(false);
 	let externalEnabled = $state(false);
 	let externalProviders = $state<ExternalProvider[]>([]);
+	let turnstileSiteKey = $state<string | null>(null);
+	let humanVerificationProvider = $state<'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom'>(
+		'turnstile'
+	);
+	let humanVerificationMode = $state<'managed' | 'checkbox' | 'invisible' | 'score'>('managed');
+	let turnstileRequired = $state(false);
+	let turnstileToken = $state('');
+	let activeTurnstileTarget = $state<string | null>(null);
+	let pendingTurnstileTarget = $state<string | null>(null);
+	const turnstileAction = 'authrim-signup';
 
 	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
+	let turnstileLanguage = $state('en');
+	const turnstileTheme = $derived(isDarkMode ? 'dark' : 'light');
 
 	// Derived: WebAuthn support check
 	const isPasskeySupported = $derived(
@@ -62,9 +78,35 @@
 	const hasVisibleSignupMethod = $derived(
 		showPasskey || emailCodeEnabled || (externalEnabled && externalProviders.length > 0)
 	);
-	const FIXED_REGISTRATION_FIELD_KEYS = new Set(['name', 'email', 'email_verified']);
+	const NAME_REGISTRATION_FIELD_KEYS = new Set(['name', 'field.canonical.name']);
+	const EMAIL_REGISTRATION_FIELD_KEYS = new Set(['email', 'field.canonical.email']);
+	const FIXED_REGISTRATION_FIELD_KEYS = new Set([
+		...NAME_REGISTRATION_FIELD_KEYS,
+		...EMAIL_REGISTRATION_FIELD_KEYS,
+		'email_verified',
+		'field.canonical.email_verified'
+	]);
 
-	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
+	function resolveTurnstileLanguage(): string {
+		return resolveConfiguredTurnstileLanguage(document.documentElement.lang, getLocale());
+	}
+
+	function hasMissingRequiredRegistrationFields(apiError: APIError | null | undefined): boolean {
+		const missingRequiredFields = apiError?.extensions?.missing_required_fields;
+		return Array.isArray(missingRequiredFields) && missingRequiredFields.length > 0;
+	}
+
+	function getMissingRequiredRegistrationFieldsMessage(): string {
+		return getLocale() === 'ja'
+			? '必須の登録項目がフォームに表示されていません。管理者に問い合わせてください。'
+			: 'A required registration field is not available in this signup form. Contact your administrator.';
+	}
+
+	function getApiErrorMessage(apiError: APIError | null | undefined): string {
+		if (hasMissingRequiredRegistrationFields(apiError)) {
+			return getMissingRequiredRegistrationFieldsMessage();
+		}
+
 		return messageForApiError(apiError, {
 			unknown: () => $LL.error_unknown(),
 			invalidRequest: () => $LL.error_invalid_request(),
@@ -87,13 +129,15 @@
 			return false;
 		};
 		isDarkMode = checkDarkMode();
+		turnstileLanguage = resolveTurnstileLanguage();
 
 		const observer = new MutationObserver(() => {
 			isDarkMode = checkDarkMode();
+			turnstileLanguage = resolveTurnstileLanguage();
 		});
 		observer.observe(document.documentElement, {
 			attributes: true,
-			attributeFilter: ['data-theme']
+			attributeFilter: ['data-theme', 'lang']
 		});
 
 		const mql = window.matchMedia('(prefers-color-scheme: dark)');
@@ -128,8 +172,24 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.signupEnabled ?? data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.signupEnabled ?? data.methods.emailCode.enabled;
+				const humanVerificationRequired =
+					data.methods.humanVerification.enabled && data.methods.humanVerification.signupEnabled;
+				humanVerificationProvider =
+					data.methods.humanVerification.provider === 'hcaptcha' ||
+					data.methods.humanVerification.provider === 'recaptcha' ||
+					data.methods.humanVerification.provider === 'custom'
+						? data.methods.humanVerification.provider
+						: 'turnstile';
+				humanVerificationMode = data.methods.humanVerification.widget.mode ?? 'managed';
+				turnstileRequired =
+					humanVerificationRequired &&
+					humanVerificationProvider !== 'custom' &&
+					Boolean(data.methods.humanVerification.siteKey);
+				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
 				externalProviders = data.methods.external.providers.filter(
-					(provider) => provider.signupEnabled ?? provider.enabled !== false
+					(provider) =>
+						(provider.signupEnabled ?? provider.enabled !== false) &&
+						(!humanVerificationRequired || provider.startMode !== 'direct')
 				);
 				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
 			} else {
@@ -151,13 +211,13 @@
 	}
 
 	async function loadRegistrationFields() {
-		registrationFields = (await fetchRegistrationFields()).filter(
-			(field) => !FIXED_REGISTRATION_FIELD_KEYS.has(field.field_key)
-		);
+		registrationFields = await fetchRegistrationFields();
 		customFieldValues = {};
 		customFieldErrors = {};
 		for (const f of registrationFields) {
-			customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
+			if (!isFixedRegistrationField(f)) {
+				customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
+			}
 		}
 	}
 
@@ -166,6 +226,28 @@
 	// ---------------------------------------------------------------------------
 	function validateEmail(value: string): boolean {
 		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+	}
+
+	function normalizeRegistrationFieldKey(fieldKey: string): string {
+		return fieldKey.trim().toLowerCase();
+	}
+
+	function isNameRegistrationField(field: RegistrationField): boolean {
+		return NAME_REGISTRATION_FIELD_KEYS.has(normalizeRegistrationFieldKey(field.field_key));
+	}
+
+	function isEmailRegistrationField(field: RegistrationField): boolean {
+		return EMAIL_REGISTRATION_FIELD_KEYS.has(normalizeRegistrationFieldKey(field.field_key));
+	}
+
+	function isFixedRegistrationField(field: RegistrationField): boolean {
+		return FIXED_REGISTRATION_FIELD_KEYS.has(normalizeRegistrationFieldKey(field.field_key));
+	}
+
+	function getRegistrationFieldValue(field: RegistrationField): string {
+		if (isNameRegistrationField(field)) return name;
+		if (isEmailRegistrationField(field)) return email;
+		return customFieldValues[field.field_key] ?? '';
 	}
 
 	function getFieldLabel(field: RegistrationField): string {
@@ -192,18 +274,30 @@
 		customFieldErrors = {};
 
 		for (const field of registrationFields) {
-			const value = customFieldValues[field.field_key] ?? '';
+			const value = getRegistrationFieldValue(field);
 			if (field.required && value.trim() === '') {
-				customFieldErrors[field.field_key] = `${field.display_label} is required`;
+				const message = `${field.display_label} is required`;
+				if (isNameRegistrationField(field)) {
+					nameError = message;
+				} else if (isEmailRegistrationField(field)) {
+					emailError = message;
+				} else {
+					customFieldErrors[field.field_key] = message;
+				}
 			}
 		}
 
-		return Object.values(customFieldErrors).every((value) => !value);
+		return !nameError && !emailError && Object.values(customFieldErrors).every((value) => !value);
 	}
 
 	function getSubmittedCustomFields(): Record<string, string> {
 		return Object.fromEntries(
-			Object.entries(customFieldValues).filter(([, value]) => value !== '')
+			Object.entries(customFieldValues).filter(([fieldKey, value]) => {
+				if (FIXED_REGISTRATION_FIELD_KEYS.has(normalizeRegistrationFieldKey(fieldKey))) {
+					return false;
+				}
+				return value !== '';
+			})
 		);
 	}
 
@@ -211,23 +305,54 @@
 		emailError = '';
 		nameError = '';
 
-		if (!name.trim()) {
-			nameError = $LL.register_errorNameRequired();
-			return false;
-		}
-		if (!email.trim()) {
-			emailError = $LL.login_errorEmailRequired();
-			return false;
-		}
-		if (!validateEmail(email)) {
-			emailError = $LL.login_errorEmailInvalid();
-			return false;
-		}
 		if (!validateCustomFields()) {
+			return false;
+		}
+		if (email.trim() && !validateEmail(email)) {
+			emailError = $LL.login_errorEmailInvalid();
 			return false;
 		}
 		return true;
 	}
+
+	function getTurnstileToken(target: string): string | undefined {
+		if (!turnstileRequired) return undefined;
+		if (!turnstileToken) {
+			activeTurnstileTarget = target;
+			pendingTurnstileTarget = target;
+			return undefined;
+		}
+		return turnstileToken;
+	}
+
+	function showTurnstileFor(target: string): boolean {
+		return turnstileRequired && Boolean(turnstileSiteKey) && activeTurnstileTarget === target;
+	}
+
+	function resumeTurnstileTarget(target: string) {
+		if (target === 'passkey') {
+			void handlePasskeyRegister();
+			return;
+		}
+		if (target === 'email-code') {
+			void handleEmailCodeSignup();
+			return;
+		}
+		if (target.startsWith('external:')) {
+			const providerId = target.slice('external:'.length);
+			const provider = externalProviders.find((candidate) => candidate.id === providerId);
+			if (provider) {
+				void handleExternalLogin(provider);
+			}
+		}
+	}
+
+	$effect(() => {
+		if (!turnstileToken || !pendingTurnstileTarget) return;
+		const target = pendingTurnstileTarget;
+		pendingTurnstileTarget = null;
+		queueMicrotask(() => resumeTurnstileTarget(target));
+	});
 
 	async function handlePasskeyRegister() {
 		if (passkeyLoading) return;
@@ -237,10 +362,13 @@
 		passkeyLoading = true;
 
 		try {
+			const cfTurnstileResponse = getTurnstileToken('passkey');
+			if (turnstileRequired && !cfTurnstileResponse) return;
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
 				email,
 				name,
-				custom_fields: getSubmittedCustomFields()
+				custom_fields: getSubmittedCustomFields(),
+				human_verification_response: cfTurnstileResponse
 			});
 
 			if (optionsError) {
@@ -307,12 +435,15 @@
 		emailCodeLoading = true;
 
 		try {
+			const cfTurnstileResponse = getTurnstileToken('email-code');
+			if (turnstileRequired && !cfTurnstileResponse) return;
 			const submittedCustomFields = getSubmittedCustomFields();
 			const { error: apiError } = await emailCodeAPI.send({
 				email,
 				name,
 				invite_token: inviteToken || undefined,
-				custom_fields: submittedCustomFields
+				custom_fields: submittedCustomFields,
+				human_verification_response: cfTurnstileResponse
 			});
 			if (apiError) {
 				throw new Error(getApiErrorMessage(apiError));
@@ -346,6 +477,8 @@
 
 	async function handleExternalLogin(provider: ExternalProvider) {
 		const providerId = provider.id;
+		const cfTurnstileResponse = getTurnstileToken(`external:${providerId}`);
+		if (turnstileRequired && !cfTurnstileResponse) return;
 		externalIdpLoading = providerId;
 		try {
 			const redirectUri =
@@ -356,7 +489,8 @@
 				providerId,
 				redirectUri,
 				provider.startUrl,
-				provider.startMode
+				provider.startMode,
+				turnstileRequired ? { token: cfTurnstileResponse } : undefined
 			);
 
 			if (!isValidRedirectUrl(url)) {
@@ -467,38 +601,32 @@
 					</Alert>
 				{/if}
 
-				<!-- Name Input -->
-				<div class="mb-4">
-					<Input
-						label={$LL.common_name()}
-						type="text"
-						placeholder={$LL.common_namePlaceholder()}
-						bind:value={name}
-						error={nameError}
-						autocomplete="name"
-						required
-					/>
-				</div>
-
-				<!-- Email Input -->
-				<div class="mb-6">
-					<Input
-						label={$LL.common_email()}
-						type="email"
-						placeholder={$LL.common_emailPlaceholder()}
-						bind:value={email}
-						error={emailError}
-						onkeypress={handleKeyPress}
-						autocomplete="email"
-						required
-					/>
-				</div>
-
-				<!-- Custom Registration Fields -->
+				<!-- Registration Fields -->
 				{#if registrationFields.length > 0}
 					{#each registrationFields as field (field.field_key)}
 						<div class="mb-4">
-							{#if field.field_type === 'boolean'}
+							{#if isNameRegistrationField(field)}
+								<Input
+									label={getFieldLabel(field)}
+									type="text"
+									placeholder={field.placeholder ?? $LL.common_namePlaceholder()}
+									bind:value={name}
+									error={nameError}
+									autocomplete="name"
+									required={field.required}
+								/>
+							{:else if isEmailRegistrationField(field)}
+								<Input
+									label={getFieldLabel(field)}
+									type="email"
+									placeholder={field.placeholder ?? $LL.common_emailPlaceholder()}
+									bind:value={email}
+									error={emailError}
+									onkeypress={handleKeyPress}
+									autocomplete="email"
+									required={field.required}
+								/>
+							{:else if field.field_type === 'boolean'}
 								<label class="flex items-center gap-2" style="cursor: pointer;">
 									<input
 										type="checkbox"
@@ -592,6 +720,20 @@
 						<div class="i-heroicons-key h-5 w-5"></div>
 						{$LL.register_createWithPasskey()}
 					</Button>
+					{#if showTurnstileFor('passkey') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 
 					{#if emailCodeEnabled}
 						<div class="auth-divider">
@@ -614,6 +756,20 @@
 						<div class="i-heroicons-envelope h-5 w-5"></div>
 						{$LL.register_sendCode()}
 					</Button>
+					{#if showTurnstileFor('email-code') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 				{/if}
 
 				<!-- External Login Section -->
@@ -652,6 +808,20 @@
 								{/if}
 								{getProviderButtonText(provider)}
 							</Button>
+							{#if showTurnstileFor(`external:${provider.id}`) && turnstileSiteKey}
+								<TurnstileWidget
+									siteKey={turnstileSiteKey}
+									provider={humanVerificationProvider}
+									mode={humanVerificationMode}
+									action={turnstileAction}
+									theme={turnstileTheme}
+									language={turnstileLanguage}
+									bind:token={turnstileToken}
+									disabled={authActionLoading}
+									loadingLabel={$LL.login_humanVerificationLoading()}
+									errorLabel={$LL.login_humanVerificationLoadFailed()}
+								/>
+							{/if}
 						{/each}
 					</div>
 				{/if}

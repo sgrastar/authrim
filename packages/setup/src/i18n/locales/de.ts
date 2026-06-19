@@ -1144,6 +1144,7 @@ const de: Translations = {
   'web.envDetail.upToDate': 'Aktuell',
   'web.envDetail.notDeployed': 'Nicht bereitgestellt',
   'web.envDetail.updateOnlyChanged': 'Nur geänderte Versionen aktualisieren',
+  'web.envDetail.updateIncludeUiWorkers': 'Admin UI / Login UI aktualisieren',
   'web.envDetail.updateAllWorkers': 'Alle Workers aktualisieren',
   'web.envDetail.refreshVersions': 'Aktualisieren',
   'web.envDetail.updateProgress': 'Aktualisierungsfortschritt:',

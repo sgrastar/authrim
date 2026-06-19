@@ -66,6 +66,7 @@ const mocks = vi.hoisted(() => {
     hashEmail: vi.fn(),
     validateRegistrationFieldSubmissionFromEnv: vi.fn(),
     persistRegistrationFieldValuesFromEnv: vi.fn(),
+    verifyHumanVerificationForAction: vi.fn(),
     getCookie: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -95,6 +96,10 @@ vi.mock('../utils/email-code-utils', () => ({
 vi.mock('../registration-field-utils', () => ({
   validateRegistrationFieldSubmissionFromEnv: mocks.validateRegistrationFieldSubmissionFromEnv,
   persistRegistrationFieldValuesFromEnv: mocks.persistRegistrationFieldValuesFromEnv,
+}));
+
+vi.mock('../human-verification', () => ({
+  verifyHumanVerificationForAction: mocks.verifyHumanVerificationForAction,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -219,6 +224,7 @@ function createEnv() {
     AUTHRIM_CONFIG: {
       get: vi.fn().mockResolvedValue(null),
     },
+    SETTINGS: undefined as KVNamespace | undefined,
     RATE_LIMITER: {
       idFromName: vi.fn(() => 'rate-limit-id'),
       get: vi.fn(() => mocks.rateLimiter),
@@ -227,6 +233,14 @@ function createEnv() {
       idFromName: vi.fn(() => 'auth-code-id'),
       get: vi.fn(() => mocks.authCodeStore),
     },
+  };
+}
+
+function createMockKV(data: Record<string, string> = {}) {
+  return {
+    get: vi.fn(async (key: string) => data[key] ?? null),
+    put: vi.fn(),
+    delete: vi.fn(),
   };
 }
 
@@ -368,9 +382,161 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       values: {},
     });
     mocks.persistRegistrationFieldValuesFromEnv.mockResolvedValue(undefined);
+    mocks.verifyHumanVerificationForAction.mockImplementation(
+      async (
+        c: { env: { SETTINGS?: { get: (key: string) => Promise<string | null> } } },
+        action: string,
+        responseToken: unknown
+      ) => {
+        const raw = await c.env.SETTINGS?.get('settings:tenant:tenant_test:authentication-methods');
+        const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const enabled =
+          settings['authentication-methods.human_verification.provider'] &&
+          settings[`authentication-methods.human_verification.${action}_enabled`] === true;
+        if (!enabled || responseToken) return null;
+        return new Response(JSON.stringify({ error: 'human_verification_required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    );
   });
 
-  it('starts passkey login with an existing active user and credential allow-list', async () => {
+  it('rejects passkey login start when Turnstile is required and token is missing', async () => {
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders(),
+      'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.provider':
+          'human-verification-cloudflare-turnstile',
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_test': 'true',
+      'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_test': JSON.stringify({
+        siteKey: '0x4AAAAAA_site_key',
+        secretKey: '0x4AAAAAA_secret_key',
+        failurePolicy: 'fail_closed',
+      }),
+    }) as never;
+
+    const response = await directPasskeyLoginStartHandler(context as never);
+    const body = (await response.json()) as { error?: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBeDefined();
+    expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+  });
+
+  it('does not let the client downgrade login Turnstile to the reauth policy', async () => {
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+        human_verification_action: 'reauth',
+      },
+      webHeaders(),
+      'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.provider':
+          'human-verification-cloudflare-turnstile',
+        'authentication-methods.human_verification.login_enabled': true,
+        'authentication-methods.human_verification.reauth_enabled': false,
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_test': 'true',
+      'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_test': JSON.stringify({
+        siteKey: '0x4AAAAAA_site_key',
+        secretKey: '0x4AAAAAA_secret_key',
+        failurePolicy: 'fail_closed',
+      }),
+    }) as never;
+
+    const response = await directPasskeyLoginStartHandler(context as never);
+
+    expect(response.status).toBe(400);
+    expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+  });
+
+  it('uses the authorization challenge type for reauth Turnstile start checks', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'reauth_challenge',
+      tenantId: 'tenant_test',
+      type: 'reauth',
+      challenge: 'reauth_challenge',
+    });
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+        authorization_challenge_id: 'reauth_challenge',
+      },
+      webHeaders(),
+      'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.provider':
+          'human-verification-cloudflare-turnstile',
+        'authentication-methods.human_verification.login_enabled': false,
+        'authentication-methods.human_verification.reauth_enabled': true,
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_test': 'true',
+      'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_test': JSON.stringify({
+        siteKey: '0x4AAAAAA_site_key',
+        secretKey: '0x4AAAAAA_secret_key',
+        failurePolicy: 'fail_closed',
+      }),
+    }) as never;
+
+    const response = await directPasskeyLoginStartHandler(context as never);
+
+    expect(response.status).toBe(400);
+    expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+  });
+
+  it('rejects passkey login start when the login usage is disabled', async () => {
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders()
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.passkey.login_enabled': false,
+        'authentication-methods.passkey.signup_enabled': true,
+        'authentication-methods.passkey.reauth_enabled': true,
+      }),
+    }) as never;
+
+    const response = await directPasskeyLoginStartHandler(context as never);
+
+    expect(response.status).toBe(403);
+    expect(mocks.generateAuthenticationOptions).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('ignores email during passkey login start and uses discoverable credentials', async () => {
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
       email: 'user@example.com',
@@ -411,14 +577,11 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect.objectContaining({
         rpID: 'app.example.com',
         userVerification: 'required',
-        allowCredentials: [
-          expect.objectContaining({
-            type: 'public-key',
-            transports: ['internal'],
-          }),
-        ],
+        allowCredentials: [],
       })
     );
+    expect(mocks.userPII.findByTenantAndEmail).not.toHaveBeenCalled();
+    expect(mocks.passkey.findByUserId).not.toHaveBeenCalled();
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'direct_passkey_login',
@@ -427,7 +590,6 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           client_id: 'web-client',
           channel: 'browser',
           code_challenge: 'pkce-challenge',
-          email: 'user@example.com',
           origin: 'https://app.example.com',
           rpID: 'app.example.com',
         }),
@@ -602,6 +764,32 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         userId: 'user_new',
       })
     );
+  });
+
+  it('rejects passkey signup start when the signup usage is disabled', async () => {
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        email: 'new@example.com',
+        code_challenge: 'signup-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders()
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.passkey.login_enabled': true,
+        'authentication-methods.passkey.signup_enabled': false,
+      }),
+    }) as never;
+
+    const response = await directPasskeySignupStartHandler(context as never);
+
+    expect(response.status).toBe(403);
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
   });
 
   it('rejects passkey signup for an existing user', async () => {
@@ -904,6 +1092,190 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
+  });
+
+  it('does not validate signup registration fields for existing email-code users', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'existing@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.validateRegistrationFieldSubmissionFromEnv).not.toHaveBeenCalled();
+  });
+
+  it('returns an accepted email-code response when login usage is disabled', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        email: 'existing@example.com',
+        code_challenge: 'email-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders()
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.email_otp.login_enabled': false,
+        'authentication-methods.email_otp.signup_enabled': true,
+      }),
+    }) as never;
+
+    const response = await directEmailCodeSendHandler(context as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'e***g@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('returns an accepted email-code response when signup usage is disabled', async () => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        email: 'new@example.com',
+        code_challenge: 'email-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders()
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.email_otp.login_enabled': true,
+        'authentication-methods.email_otp.signup_enabled': false,
+      }),
+    }) as never;
+
+    const response = await directEmailCodeSendHandler(context as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('returns an accepted email-code response when signup Turnstile is missing', async () => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        email: 'new@example.com',
+        code_challenge: 'email-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      webHeaders()
+    );
+    context.env.SETTINGS = createMockKV({
+      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.provider':
+          'human-verification-cloudflare-turnstile',
+        'authentication-methods.human_verification.login_enabled': false,
+        'authentication-methods.human_verification.signup_enabled': true,
+      }),
+      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_test': 'true',
+      'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_test': JSON.stringify({
+        siteKey: '0x4AAAAAA_site_key',
+        secretKey: '0x4AAAAAA_secret_key',
+        failurePolicy: 'fail_closed',
+      }),
+    }) as never;
+
+    const response = await directEmailCodeSendHandler(context as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('returns an accepted email-code response when signup field validation fails', async () => {
+    mocks.validateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
+      ok: false,
+      error: 'Missing required registration fields',
+      missingRequiredFields: [
+        {
+          fieldKey: 'company',
+          label: 'Company',
+          fieldType: 'text',
+        },
+      ],
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
+    expect(body).not.toHaveProperty('extensions');
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 
   it('does not return email codes when no email notifier is configured', async () => {

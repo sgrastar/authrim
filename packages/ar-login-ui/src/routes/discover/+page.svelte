@@ -439,11 +439,6 @@
 		gap: 1.25rem;
 	}
 
-	.discover-card :global(.auth-topbar) {
-		top: 1.25rem;
-		right: 1.25rem;
-	}
-
 	.discover-brand {
 		display: flex;
 		align-items: center;

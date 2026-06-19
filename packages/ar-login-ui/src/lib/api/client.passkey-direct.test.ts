@@ -400,6 +400,23 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(url.searchParams.has('code_challenge')).toBe(false);
 	});
 
+	it('adds human verification responses only to Authrim-managed external start URLs', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		const result = await externalIdpAPI.startLogin(
+			'github',
+			'https://login.example.com/callback',
+			undefined,
+			'oauth_redirect',
+			{ token: 'human-token' }
+		);
+		const url = new URL(result.url);
+
+		expect(url.pathname).toBe('/api/external/github/start');
+		expect(url.searchParams.get('human_verification_response')).toBe('human-token');
+		expect(url.searchParams.has('cf_turnstile_response')).toBe(false);
+	});
+
 	it('returns direct external provider start URLs without adding OAuth parameters', async () => {
 		const { externalIdpAPI } = await loadClient();
 
@@ -415,5 +432,21 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(url.searchParams.get('profile')).toBe('employee');
 		expect(url.searchParams.has('redirect_uri')).toBe(false);
 		expect(url.searchParams.has('code_challenge')).toBe(false);
+	});
+
+	it('does not attach human verification responses to direct external URLs', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		await expect(
+			externalIdpAPI.startLogin(
+				'wallet-vp',
+				'https://login.example.com/callback',
+				'/vp/login?profile=employee',
+				'direct',
+				{ token: 'human-token' }
+			)
+		).rejects.toThrow(
+			'Human verification requires an Authrim-managed external provider start URL.'
+		);
 	});
 });

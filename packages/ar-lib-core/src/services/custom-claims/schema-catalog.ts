@@ -53,13 +53,17 @@ function getAdapter(db: DatabaseSource): DatabaseAdapter {
 
 export async function listRegistrationFieldSchemas(
   db: DatabaseSource,
-  tenantId: string
+  tenantId: string,
+  options: { includeRequiredHidden?: boolean } = {}
 ): Promise<RegistrationFieldSchemaRow[]> {
+  const visibilityFilter = options.includeRequiredHidden
+    ? '(show_on_registration = 1 OR registration_required = 1)'
+    : 'show_on_registration = 1';
   return getAdapter(db).query<RegistrationFieldSchemaRow>(
     `SELECT field_key, display_label, field_type, is_pii, registration_required,
             registration_order, registration_placeholder, validation_rules
      FROM custom_claim_schemas
-     WHERE tenant_id = ? AND show_on_registration = 1 AND is_active = 1
+     WHERE tenant_id = ? AND ${visibilityFilter} AND is_active = 1
      ORDER BY registration_order ASC, display_order ASC`,
     [tenantId]
   );
