@@ -257,8 +257,7 @@ const adminOther = {
 	admin_authentication_methods_turnstile: 'Cloudflare Turnstile',
 	admin_authentication_methods_turnstile_description:
 		'Use Turnstile for Login UI abuse protection.',
-	admin_authentication_methods_hcaptcha_description:
-		'Use hCaptcha for Login UI abuse protection.',
+	admin_authentication_methods_hcaptcha_description: 'Use hCaptcha for Login UI abuse protection.',
 	admin_authentication_methods_recaptcha_description:
 		'Use reCAPTCHA for Login UI abuse protection.',
 	admin_authentication_methods_provider_disabled:

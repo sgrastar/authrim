@@ -140,12 +140,7 @@ export type PluginCapability =
 /**
  * Plugin category for UI grouping
  */
-export type PluginCategory =
-  | 'notification'
-  | 'identity'
-  | 'authentication'
-  | 'security'
-  | 'flow';
+export type PluginCategory = 'notification' | 'identity' | 'authentication' | 'security' | 'flow';
 
 // =============================================================================
 // FlowNode Definition (Extension Point for Future Flow x UI Architecture)

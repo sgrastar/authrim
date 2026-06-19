@@ -445,6 +445,8 @@ describe('LoginUI external IdP adapter boundary', () => {
 				'direct',
 				{ token: 'human-token' }
 			)
-		).rejects.toThrow('Human verification requires an Authrim-managed external provider start URL.');
+		).rejects.toThrow(
+			'Human verification requires an Authrim-managed external provider start URL.'
+		);
 	});
 });
