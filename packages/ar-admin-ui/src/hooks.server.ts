@@ -63,6 +63,21 @@ function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
+const httpsRedirect: Handle = async ({ event, resolve }) => {
+	if (event.url.protocol !== 'http:' || isLoopbackHost(event.url.hostname)) {
+		return resolve(event);
+	}
+
+	const redirectUrl = new URL(event.url);
+	redirectUrl.protocol = 'https:';
+	return new Response(null, {
+		status: 308,
+		headers: {
+			Location: redirectUrl.toString()
+		}
+	});
+};
+
 function isHttpsUrl(url: string): boolean {
 	try {
 		const parsed = new URL(url);
@@ -1046,4 +1061,4 @@ const csrfProtection: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handle = sequence(apiProxy, securityHeaders, csrfProtection);
+export const handle = sequence(httpsRedirect, apiProxy, securityHeaders, csrfProtection);

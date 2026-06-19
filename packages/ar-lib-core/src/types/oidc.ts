@@ -279,6 +279,7 @@ export interface ClientRegistrationRequest {
   // Grant types and response types
   grant_types?: string[];
   response_types?: string[];
+  require_pkce?: boolean;
   // Application type
   application_type?: 'web' | 'native';
   // Scopes
@@ -358,6 +359,7 @@ export interface ClientRegistrationResponse {
   token_endpoint_auth_method?: string;
   grant_types?: string[];
   response_types?: string[];
+  require_pkce?: boolean;
   application_type?: string;
   scope?: string;
   subject_type?: 'public' | 'pairwise';

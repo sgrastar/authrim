@@ -98,6 +98,50 @@ function userTypeFromAccountType(accountType: string): string {
   return 'end_user';
 }
 
+function normalizeAdminEmailInput(
+  email: unknown
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof email !== 'string') {
+    return { ok: false, error: 'Email is required' };
+  }
+
+  const normalized = email.trim();
+  if (!normalized) {
+    return { ok: false, error: 'Email is required' };
+  }
+  if (normalized.length > 254 || /[\s\x00-\x1f\x7f]/.test(normalized)) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  const parts = normalized.split('@');
+  if (parts.length !== 2) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  const [localPart, domain] = parts;
+  if (!localPart || localPart.length > 64 || !domain || domain.length > 253) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+  if (localPart.startsWith('.') || localPart.endsWith('.') || localPart.includes('..')) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  const labels = domain.split('.');
+  const validDomain =
+    labels.length >= 2 &&
+    labels.every(
+      (label) =>
+        label.length > 0 &&
+        label.length <= 63 &&
+        /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+    );
+  if (!validDomain) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  return { ok: true, value: normalized };
+}
+
 function addressPartsFromProjection(projection: CanonicalRuntimeUserProjection): {
   formatted: string | null;
   street_address: string | null;
@@ -648,15 +692,17 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     } = body;
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_CREATE_RESERVED_FIELDS);
 
-    if (!email) {
+    const emailValidation = normalizeAdminEmailInput(email);
+    if (!emailValidation.ok) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'Email is required',
+          error_description: emailValidation.error,
         },
         400
       );
     }
+    const normalizedEmail = emailValidation.value;
 
     const tenantId = getTenantIdFromContext(c);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
@@ -675,7 +721,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           AND value_json = ?
           AND lifecycle_state = 'active'
         LIMIT 1`,
-      [tenantId, JSON.stringify(email)]
+      [tenantId, JSON.stringify(normalizedEmail)]
     );
 
     if (emailExists) {
@@ -726,7 +772,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           user_type: typeof user_type === 'string' ? user_type : 'end_user',
         },
         {
-          email,
+          email: normalizedEmail,
           phone_number: phone_number ?? null,
           name: name ?? null,
           given_name: given_name ?? null,

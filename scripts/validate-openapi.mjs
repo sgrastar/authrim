@@ -59,10 +59,41 @@ function collectPathParameterNames(route) {
   return [...route.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
 }
 
-function collectDeclaredPathParameters(pathItem, operation) {
+function resolveParameter(document, parameter) {
+  if (parameter?.$ref?.startsWith('#/')) {
+    return resolvePointer(document, parameter.$ref.slice(1));
+  }
+  return parameter;
+}
+
+function parameterKey(document, parameter) {
+  const resolved = resolveParameter(document, parameter);
+  if (!resolved?.name || !resolved?.in) {
+    return null;
+  }
+  return `${resolved.in}:${resolved.name}`;
+}
+
+function collectDeclaredPathParameters(document, pathItem, operation) {
   return [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
+    .map((parameter) => resolveParameter(document, parameter))
     .filter((parameter) => parameter?.in === 'path')
     .map((parameter) => parameter.name);
+}
+
+function assertNoDuplicateParameters(file, document, route, method, pathItem, operation) {
+  const seen = new Map();
+  for (const parameter of [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]) {
+    const key = parameterKey(document, parameter);
+    if (!key) {
+      continue;
+    }
+    assert(
+      !seen.has(key),
+      `${file}: ${method.toUpperCase()} ${route} duplicate parameter ${key}; already declared at ${seen.get(key)}`
+    );
+    seen.set(key, parameter.$ref ?? `${parameter.in}:${parameter.name}`);
+  }
 }
 
 function assert(condition, message) {
@@ -82,7 +113,10 @@ function validateDocument(file, document) {
   const operationIds = new Map();
   for (const [route, pathItem] of Object.entries(document.paths)) {
     assert(route.startsWith('/'), `${file}: path must start with /: ${route}`);
-    assert(pathItem && typeof pathItem === 'object', `${file}: path item must be an object: ${route}`);
+    assert(
+      pathItem && typeof pathItem === 'object',
+      `${file}: path item must be an object: ${route}`
+    );
 
     for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
       const operation = pathItem[method];
@@ -103,7 +137,11 @@ function validateDocument(file, document) {
         operationIds.set(operation.operationId, `${method.toUpperCase()} ${route}`);
       }
 
-      const declaredPathParameters = new Set(collectDeclaredPathParameters(pathItem, operation));
+      assertNoDuplicateParameters(file, document, route, method, pathItem, operation);
+
+      const declaredPathParameters = new Set(
+        collectDeclaredPathParameters(document, pathItem, operation)
+      );
       for (const parameterName of collectPathParameterNames(route)) {
         assert(
           declaredPathParameters.has(parameterName),

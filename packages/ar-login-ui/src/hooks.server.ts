@@ -17,6 +17,25 @@ interface ServiceBinding {
 	fetch(request: Request): Promise<Response>;
 }
 
+function isLoopbackHost(hostname: string): boolean {
+	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+const httpsRedirectHandle: Handle = async ({ event, resolve }) => {
+	if (event.url.protocol !== 'http:' || isLoopbackHost(event.url.hostname)) {
+		return resolve(event);
+	}
+
+	const redirectUrl = new URL(event.url);
+	redirectUrl.protocol = 'https:';
+	return new Response(null, {
+		status: 308,
+		headers: {
+			Location: redirectUrl.toString()
+		}
+	});
+};
+
 function isValidProxyUrl(url: string): boolean {
 	try {
 		const parsed = new URL(url);
@@ -546,4 +565,10 @@ const localeHandle: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handle = sequence(apiProxyHandle, csrfHandle, localeHandle, securityHeadersHandle);
+export const handle = sequence(
+	httpsRedirectHandle,
+	apiProxyHandle,
+	csrfHandle,
+	localeHandle,
+	securityHeadersHandle
+);

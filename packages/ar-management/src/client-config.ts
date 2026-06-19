@@ -34,8 +34,22 @@ import {
   buildKVKey,
   getTenantIdFromContext,
   validateWebhookUrl,
+  GRANT_TYPES,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+
+const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
+  GRANT_TYPES.AUTHORIZATION_CODE,
+  GRANT_TYPES.REFRESH_TOKEN,
+  GRANT_TYPES.CLIENT_CREDENTIALS,
+  GRANT_TYPES.DEVICE_CODE,
+  GRANT_TYPES.CIBA,
+  GRANT_TYPES.TOKEN_EXCHANGE,
+]);
+
+function isLoopbackRedirectHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
 
 /**
  * Validate URI for security (HTTPS required, no fragments, no dangerous schemes)
@@ -54,9 +68,9 @@ function validateSecureUri(uri: string, fieldName: string): string | null {
       return `${fieldName} must use HTTP or HTTPS scheme`;
     }
 
-    // HTTPS required (allow http://localhost for development only)
-    if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') {
-      return `${fieldName} must use HTTPS (except localhost for development)`;
+    // HTTPS required (allow loopback HTTP for development only)
+    if (parsed.protocol !== 'https:' && !isLoopbackRedirectHost(parsed.hostname)) {
+      return `${fieldName} must use HTTPS except for loopback development callbacks`;
     }
 
     // Fragment identifiers not allowed (security: prevents token leakage via Referer)
@@ -161,6 +175,20 @@ function validateUpdateRequest(
         error_description:
           'grant_types appears malformed. Send grant type values, not character arrays.',
       };
+    }
+    if (body.grant_types.length === 0) {
+      return {
+        error: 'invalid_client_metadata',
+        error_description: 'grant_types must be a non-empty array',
+      };
+    }
+    for (const grantType of body.grant_types) {
+      if (!VALID_GRANT_TYPES.has(grantType)) {
+        return {
+          error: 'invalid_client_metadata',
+          error_description: `Unsupported grant_type: ${grantType}`,
+        };
+      }
     }
   }
 

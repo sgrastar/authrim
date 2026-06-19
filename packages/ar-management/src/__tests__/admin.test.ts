@@ -1510,6 +1510,27 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject invalid email syntax before persistence', async () => {
+      const mockDB = createMockDB({});
+
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'not-an-email', name: 'Invalid Email User' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Email must be a valid email address',
+        }),
+        400
+      );
+      expect(mockDB.prepare).not.toHaveBeenCalled();
+    });
+
     it('should reject create when required custom field is missing', async () => {
       const mockDB = createMockDB({
         runResult: { success: true },
@@ -2839,6 +2860,92 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject non-HTTPS non-loopback redirect_uris', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Insecure Redirect Client',
+          redirect_uris: ['http://example.com/callback'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'redirect_uris must use HTTPS except for loopback development callbacks',
+        }),
+        400
+      );
+    });
+
+    it('should reject fragment redirect_uris', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Fragment Redirect Client',
+          redirect_uris: ['https://example.com/callback#token'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'redirect_uris must not contain fragment identifiers',
+        }),
+        400
+      );
+    });
+
+    it('should reject unsupported grant_types during create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Unsupported Grant Client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code', 'password'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Unsupported grant_type: password',
+        }),
+        400
+      );
+    });
+
+    it('should require PKCE for public authorization-code clients during create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Public Code Client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          token_endpoint_auth_method: 'none',
+          require_pkce: false,
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'require_pkce must be true for public clients using the authorization_code grant',
+        }),
+        400
+      );
+    });
+
     it('should reject invalid allowed_redirect_origins', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -3377,7 +3484,114 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: 'invalid_request',
-          error_description: 'redirect_uris must contain valid URI strings',
+          error_description: 'Invalid redirect_uri: still-not-a-uri',
+        }),
+        400
+      );
+    });
+
+    it('should reject non-HTTPS non-loopback redirect_uris during update', async () => {
+      const clientId = 'client-insecure-redirect-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          redirect_uris: ['http://example.com/callback'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'redirect_uris must use HTTPS except for loopback development callbacks',
+        }),
+        400
+      );
+    });
+
+    it('should reject unsupported grant_types during update', async () => {
+      const clientId = 'client-unsupported-grant-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          grant_types: ['authorization_code', 'password'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Unsupported grant_type: password',
+        }),
+        400
+      );
+    });
+
+    it('should require PKCE for public authorization-code clients during update', async () => {
+      const clientId = 'client-public-pkce-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+        token_endpoint_auth_method: 'client_secret_basic',
+        require_pkce: 1,
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          token_endpoint_auth_method: 'none',
+          require_pkce: false,
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'require_pkce must be true for public clients using the authorization_code grant',
         }),
         400
       );

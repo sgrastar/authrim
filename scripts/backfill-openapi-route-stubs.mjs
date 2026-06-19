@@ -147,6 +147,33 @@ function parameterName(segment) {
   return segment.slice(1, -1);
 }
 
+function decodePointerPart(part) {
+  return part.replace(/~1/g, '/').replace(/~0/g, '~');
+}
+
+function resolvePointer(document, pointer) {
+  return pointer
+    .split('/')
+    .slice(1)
+    .map(decodePointerPart)
+    .reduce((value, key) => (value == null ? undefined : value[key]), document);
+}
+
+function resolveParameter(doc, parameter) {
+  if (parameter?.$ref?.startsWith('#/')) {
+    return resolvePointer(doc, parameter.$ref.slice(1));
+  }
+  return parameter;
+}
+
+function parameterKey(doc, parameter) {
+  const resolved = resolveParameter(doc, parameter);
+  if (!resolved?.name || !resolved?.in) {
+    return null;
+  }
+  return `${resolved.in}:${resolved.name}`;
+}
+
 function pathParameters(routePath) {
   return routePath
     .split('/')
@@ -159,12 +186,48 @@ function pathParameters(routePath) {
     }));
 }
 
-function declaredPathParameterNames(pathItem, operation) {
+function declaredPathParameterNames(doc, pathItem, operation) {
   return new Set(
     [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
+      .map((parameter) => resolveParameter(doc, parameter))
       .filter((parameter) => parameter?.in === 'path')
       .map((parameter) => parameter.name)
   );
+}
+
+function dedupeOperationParameters(doc, pathItem, operation) {
+  if (!operation.parameters) {
+    return 0;
+  }
+
+  const pathItemKeys = new Set(
+    (pathItem.parameters ?? []).map((parameter) => parameterKey(doc, parameter)).filter(Boolean)
+  );
+  const operationKeys = new Set();
+  const nextParameters = [];
+  let removed = 0;
+
+  for (const parameter of operation.parameters) {
+    const key = parameterKey(doc, parameter);
+    if (key && (pathItemKeys.has(key) || operationKeys.has(key))) {
+      removed += 1;
+      continue;
+    }
+    if (key) {
+      operationKeys.add(key);
+    }
+    nextParameters.push(parameter);
+  }
+
+  if (removed > 0) {
+    if (nextParameters.length > 0) {
+      operation.parameters = nextParameters;
+    } else {
+      delete operation.parameters;
+    }
+  }
+
+  return removed;
 }
 
 function ensurePathParameters(doc) {
@@ -181,8 +244,12 @@ function ensurePathParameters(doc) {
         continue;
       }
 
-      const declaredNames = declaredPathParameterNames(pathItem, operation);
-      const missingParameters = expectedParameters.filter((parameter) => !declaredNames.has(parameter.name));
+      changed += dedupeOperationParameters(doc, pathItem, operation);
+
+      const declaredNames = declaredPathParameterNames(doc, pathItem, operation);
+      const missingParameters = expectedParameters.filter(
+        (parameter) => !declaredNames.has(parameter.name)
+      );
       if (missingParameters.length === 0) {
         continue;
       }
@@ -221,7 +288,7 @@ function ensureOperation(doc, packageName, route) {
       'Route coverage stub generated from the Worker route table. Replace this with a detailed request and response contract when changing this API.',
     'x-authrim-route-coverage': 'inferred-from-source',
     responses: {
-      '200': {
+      200: {
         $ref: responseRef(doc),
       },
     },
@@ -297,5 +364,5 @@ for (const [target, doc] of docs) {
 }
 
 process.stdout.write(
-  `Added ${added} OpenAPI route coverage operations and ${fixedPathParameters} path parameters.\n`
+  `Added ${added} OpenAPI route coverage operations and fixed ${fixedPathParameters} path parameter declarations.\n`
 );

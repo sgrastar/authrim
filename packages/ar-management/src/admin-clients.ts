@@ -19,6 +19,7 @@ import {
   putClient,
   buildKVKey,
   getClient,
+  GRANT_TYPES,
   getWebOriginRegistry,
   replaceWebOriginRegistry,
   validateWebOriginRegistryPayload,
@@ -42,6 +43,12 @@ type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
 type AdminBrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 type AdminClientChannel = 'browser' | 'native' | 'server';
+type AdminTokenEndpointAuthMethod =
+  | 'none'
+  | 'client_secret_basic'
+  | 'client_secret_post'
+  | 'client_secret_jwt'
+  | 'private_key_jwt';
 
 interface AdminOIDCIdentityMappingSelector {
   policySetId?: string;
@@ -78,6 +85,21 @@ const VALID_ATTRIBUTE_RELEASE_CONSENT_MODES = new Set([
   'until_attributes_change',
 ]);
 const VALID_ASC_TRANSFORMED_CLAIMS = new Set(DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS);
+const VALID_GRANT_TYPES = new Set([
+  GRANT_TYPES.AUTHORIZATION_CODE,
+  GRANT_TYPES.REFRESH_TOKEN,
+  GRANT_TYPES.CLIENT_CREDENTIALS,
+  GRANT_TYPES.DEVICE_CODE,
+  GRANT_TYPES.CIBA,
+  GRANT_TYPES.TOKEN_EXCHANGE,
+]);
+const VALID_TOKEN_ENDPOINT_AUTH_METHODS = new Set<AdminTokenEndpointAuthMethod>([
+  'none',
+  'client_secret_basic',
+  'client_secret_post',
+  'client_secret_jwt',
+  'private_key_jwt',
+]);
 const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
   'app_suite',
   'trust_group_id',
@@ -179,6 +201,125 @@ function validateOptionalStrictBooleanField(
     return { ok: false, error: `${field} must be a boolean` };
   }
   return { ok: true, value };
+}
+
+function isLoopbackRedirectHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function validateRedirectUriList(
+  value: unknown,
+  field: string,
+  required: boolean
+): { ok: true; value: string[] | undefined } | { ok: false; error: string } {
+  if (value === undefined && !required) {
+    return { ok: true, value: undefined };
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    return {
+      ok: false,
+      error: required
+        ? `${field} is required and must be a non-empty array`
+        : `${field} must be a non-empty array`,
+    };
+  }
+  if (value.some((uri) => typeof uri !== 'string')) {
+    return { ok: false, error: `${field} must contain valid URI strings` };
+  }
+  if (isCharArrayLike(value)) {
+    return { ok: false, error: `${field} appears malformed. Send full URI values.` };
+  }
+
+  for (const uri of value) {
+    let parsed: URL;
+    try {
+      parsed = new URL(uri);
+    } catch {
+      return { ok: false, error: `Invalid redirect_uri: ${uri}` };
+    }
+    if (parsed.hash) {
+      return { ok: false, error: `${field} must not contain fragment identifiers` };
+    }
+    if (
+      parsed.protocol !== 'https:' &&
+      !(parsed.protocol === 'http:' && isLoopbackRedirectHost(parsed.hostname))
+    ) {
+      return {
+        ok: false,
+        error: `${field} must use HTTPS except for loopback development callbacks`,
+      };
+    }
+  }
+
+  return { ok: true, value };
+}
+
+function validateGrantTypes(
+  value: unknown,
+  field: string,
+  defaultValue?: string[]
+): { ok: true; value: string[] | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: defaultValue };
+  }
+  if (!Array.isArray(value) || value.some((grantType) => typeof grantType !== 'string')) {
+    return { ok: false, error: `${field} must be an array of strings` };
+  }
+  if (value.length === 0) {
+    return { ok: false, error: `${field} must be a non-empty array` };
+  }
+  if (isCharArrayLike(value)) {
+    return {
+      ok: false,
+      error: `${field} appears malformed. Send grant type values like authorization_code, not character arrays.`,
+    };
+  }
+
+  for (const grantType of value) {
+    if (!VALID_GRANT_TYPES.has(grantType)) {
+      return { ok: false, error: `Unsupported grant_type: ${grantType}` };
+    }
+  }
+
+  return { ok: true, value };
+}
+
+function validateTokenEndpointAuthMethod(
+  value: unknown,
+  field: string,
+  defaultValue?: AdminTokenEndpointAuthMethod
+): { ok: true; value: AdminTokenEndpointAuthMethod | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: defaultValue };
+  }
+  if (
+    typeof value !== 'string' ||
+    !VALID_TOKEN_ENDPOINT_AUTH_METHODS.has(value as AdminTokenEndpointAuthMethod)
+  ) {
+    return {
+      ok: false,
+      error: `${field} must be one of ${Array.from(VALID_TOKEN_ENDPOINT_AUTH_METHODS).join(', ')}`,
+    };
+  }
+  return { ok: true, value: value as AdminTokenEndpointAuthMethod };
+}
+
+function validatePkcePolicy(
+  grantTypes: string[],
+  tokenEndpointAuthMethod: AdminTokenEndpointAuthMethod,
+  requirePkce: unknown
+): { ok: true } | { ok: false; error: string } {
+  if (
+    tokenEndpointAuthMethod === 'none' &&
+    grantTypes.includes(GRANT_TYPES.AUTHORIZATION_CODE) &&
+    requirePkce !== true
+  ) {
+    return {
+      ok: false,
+      error: 'require_pkce must be true for public clients using the authorization_code grant',
+    };
+  }
+  return { ok: true };
 }
 
 function validateOptionalChannelArrayField(
@@ -586,32 +727,81 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (
-      !body.redirect_uris ||
-      !Array.isArray(body.redirect_uris) ||
-      body.redirect_uris.length === 0
-    ) {
+    const redirectUrisValidation = validateRedirectUriList(
+      body.redirect_uris,
+      'redirect_uris',
+      true
+    );
+    if (!redirectUrisValidation.ok) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'redirect_uris is required and must be a non-empty array',
+          error_description: redirectUrisValidation.error,
         },
         400
       );
     }
 
-    for (const uri of body.redirect_uris) {
-      try {
-        new URL(uri);
-      } catch {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: `Invalid redirect_uri: ${uri}`,
-          },
-          400
-        );
-      }
+    const grantTypesValidation = validateGrantTypes(body.grant_types, 'grant_types', [
+      GRANT_TYPES.AUTHORIZATION_CODE,
+    ]);
+    if (!grantTypesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: grantTypesValidation.error,
+        },
+        400
+      );
+    }
+
+    const tokenEndpointAuthMethodValidation = validateTokenEndpointAuthMethod(
+      body.token_endpoint_auth_method,
+      'token_endpoint_auth_method',
+      'client_secret_basic'
+    );
+    if (!tokenEndpointAuthMethodValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: tokenEndpointAuthMethodValidation.error,
+        },
+        400
+      );
+    }
+
+    const requirePkceValidation = validateOptionalStrictBooleanField(
+      body.require_pkce,
+      'require_pkce'
+    );
+    if (!requirePkceValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: requirePkceValidation.error,
+        },
+        400
+      );
+    }
+
+    const validatedRedirectUris = redirectUrisValidation.value ?? [];
+    const validatedGrantTypes = grantTypesValidation.value ?? [GRANT_TYPES.AUTHORIZATION_CODE];
+    const validatedTokenEndpointAuthMethod =
+      tokenEndpointAuthMethodValidation.value ?? 'client_secret_basic';
+
+    const pkcePolicyValidation = validatePkcePolicy(
+      validatedGrantTypes,
+      validatedTokenEndpointAuthMethod,
+      requirePkceValidation.value ?? false
+    );
+    if (!pkcePolicyValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: pkcePolicyValidation.error,
+        },
+        400
+      );
     }
 
     let validatedAllowedOrigins: string[] | undefined;
@@ -1007,8 +1197,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
       device_secret_introspection_trust_groups:
         deviceSecretIntrospectionTrustGroupsValidation.value,
-      redirect_uris: body.redirect_uris,
-      grant_types: body.grant_types || ['authorization_code'],
+      redirect_uris: validatedRedirectUris,
+      grant_types: validatedGrantTypes,
       response_types: body.response_types || ['code'],
       scope: body.scope || 'openid profile email',
       logo_uri: body.logo_uri || null,
@@ -1016,13 +1206,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       policy_uri: body.policy_uri || null,
       tos_uri: body.tos_uri || null,
       contacts: body.contacts || null,
-      token_endpoint_auth_method:
-        (body.token_endpoint_auth_method as
-          | 'none'
-          | 'client_secret_basic'
-          | 'client_secret_post'
-          | 'client_secret_jwt'
-          | 'private_key_jwt') || 'client_secret_basic',
+      token_endpoint_auth_method: validatedTokenEndpointAuthMethod,
       subject_type: (body.subject_type as 'public' | 'pairwise') || 'public',
       sector_identifier_uri: body.sector_identifier_uri || null,
       is_trusted: body.is_trusted || false,
@@ -1045,7 +1229,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       default_audience: body.default_audience ?? null,
       default_resource: defaultResourceValidation.value,
       allowed_redirect_origins: validatedAllowedOrigins,
-      require_pkce: body.require_pkce || false,
+      require_pkce: requirePkceValidation.value ?? false,
     });
 
     let webOriginRegistry: WebOriginRegistryDocument = { origins: [] };
@@ -1565,59 +1749,75 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    if (redirect_uris !== undefined) {
-      if (!Array.isArray(redirect_uris) || redirect_uris.length === 0) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'redirect_uris must be a non-empty array',
-          },
-          400
-        );
-      }
-
-      const hasInvalidUri = redirect_uris.some((uri) => {
-        if (typeof uri !== 'string') return true;
-        try {
-          new URL(uri);
-          return false;
-        } catch {
-          return true;
-        }
-      });
-
-      if (hasInvalidUri) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'redirect_uris must contain valid URI strings',
-          },
-          400
-        );
-      }
+    const redirectUrisValidation = validateRedirectUriList(redirect_uris, 'redirect_uris', false);
+    if (!redirectUrisValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: redirectUrisValidation.error,
+        },
+        400
+      );
     }
 
-    if (grant_types !== undefined) {
-      if (!Array.isArray(grant_types) || grant_types.some((v) => typeof v !== 'string')) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'grant_types must be an array of strings',
-          },
-          400
-        );
-      }
+    const grantTypesValidation = validateGrantTypes(grant_types, 'grant_types');
+    if (!grantTypesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: grantTypesValidation.error,
+        },
+        400
+      );
+    }
 
-      if (isCharArrayLike(grant_types)) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description:
-              'grant_types appears malformed. Send grant type values like authorization_code, not character arrays.',
-          },
-          400
-        );
-      }
+    const tokenEndpointAuthMethodValidation = validateTokenEndpointAuthMethod(
+      token_endpoint_auth_method,
+      'token_endpoint_auth_method'
+    );
+    if (!tokenEndpointAuthMethodValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: tokenEndpointAuthMethodValidation.error,
+        },
+        400
+      );
+    }
+
+    const requirePkceValidation = validateOptionalStrictBooleanField(require_pkce, 'require_pkce');
+    if (!requirePkceValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: requirePkceValidation.error,
+        },
+        400
+      );
+    }
+
+    const effectiveGrantTypes =
+      grantTypesValidation.value ??
+      parseClientStringArray(existingClient.grant_types, [GRANT_TYPES.AUTHORIZATION_CODE]);
+    const effectiveTokenEndpointAuthMethod =
+      tokenEndpointAuthMethodValidation.value ??
+      existingClient.token_endpoint_auth_method ??
+      'client_secret_basic';
+    const effectiveRequirePkce =
+      requirePkceValidation.value ?? Boolean(existingClient.require_pkce);
+    const pkcePolicyValidation = validatePkcePolicy(
+      effectiveGrantTypes,
+      effectiveTokenEndpointAuthMethod,
+      effectiveRequirePkce
+    );
+    if (!pkcePolicyValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: pkcePolicyValidation.error,
+        },
+        400
+      );
     }
 
     if (response_types !== undefined) {
@@ -2034,10 +2234,10 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       ? await authCtx.repositories.client.update(clientId, {
           client_name,
           description: descriptionValidation.value,
-          redirect_uris,
-          grant_types,
+          redirect_uris: redirectUrisValidation.value,
+          grant_types: grantTypesValidation.value,
           response_types,
-          token_endpoint_auth_method,
+          token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
           scope,
           logo_uri,
           client_uri,
@@ -2055,7 +2255,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           asc_transformed_claims_enabled: ascTransformedClaimsEnabledValidation.value ?? undefined,
           asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
           allowed_redirect_origins: validatedAllowedOrigins,
-          require_pkce,
+          require_pkce: requirePkceValidation.value,
           initiate_login_uri,
           login_ui_url,
           application_type: applicationTypeValidation.value,

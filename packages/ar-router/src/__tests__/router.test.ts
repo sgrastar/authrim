@@ -60,6 +60,24 @@ describe('Router Worker', () => {
     });
   });
 
+  describe('HTTPS Redirect', () => {
+    it('redirects external HTTP requests before routing to service bindings', async () => {
+      const req = new Request('http://first.example.com/login');
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(308);
+      expect(res.headers.get('Location')).toBe('https://first.example.com/login');
+      expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+    });
+
+    it('allows loopback HTTP requests for local development', async () => {
+      const req = new Request('http://localhost/api/health');
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+    });
+  });
+
   describe('Path Routing', () => {
     describe('OP_DISCOVERY routes', () => {
       it('should route /.well-known/openid-configuration to OP_DISCOVERY', async () => {
