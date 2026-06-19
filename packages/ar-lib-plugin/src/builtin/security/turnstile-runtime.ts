@@ -17,7 +17,6 @@ export type HumanVerificationFailurePolicy = 'fail_closed' | 'fail_open';
 export type TurnstileFailurePolicy = HumanVerificationFailurePolicy;
 
 type HumanVerificationProvider = 'turnstile' | 'hcaptcha' | 'recaptcha';
-type ReCaptchaWidgetMode = 'checkbox' | 'invisible' | 'score';
 
 interface HumanVerificationRuntimeEnv {
   SETTINGS?: KVNamespace;
@@ -83,7 +82,7 @@ interface RequiredHumanVerificationPolicy {
   expectedHostname: string | null;
   failurePolicy: HumanVerificationFailurePolicy;
   timeoutMs: number;
-  widgetMode: ReCaptchaWidgetMode | string;
+  widgetMode: string;
   scoreThreshold: number;
 }
 
