@@ -240,8 +240,8 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
       userID: encoder.encode(adminUser.id),
       attestationType: 'none',
       authenticatorSelection: {
-        residentKey: 'preferred',
-        userVerification: 'preferred',
+        residentKey: 'required',
+        userVerification: 'required',
         // Allow both platform and cross-platform authenticators
       },
       timeout: 60000,
@@ -374,7 +374,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
         expectedChallenge: challenge,
         expectedOrigin: storedOrigin,
         expectedRPID: rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
     } catch (error) {
       logger.error('Passkey verification failed', { action: 'verify_passkey' }, error as Error);

@@ -1,0 +1,86 @@
+openapi: 3.2.0
+info:
+  title: Authrim Discovery API
+  version: 0.3.2
+  summary: OIDC/OAuth metadata and JWKS endpoints.
+  description: Initial OpenAPI contract for `@authrim/ar-discovery`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: Discovery
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      summary: Return discovery Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/live:
+    get:
+      tags:
+        - Health
+      summary: Return liveness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Return readiness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /.well-known/openid-configuration:
+    get:
+      tags:
+        - Discovery
+      summary: Return OpenID Provider metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /.well-known/oauth-authorization-server:
+    get:
+      tags:
+        - Discovery
+      summary: Return OAuth Authorization Server metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /.well-known/webfinger:
+    get:
+      tags:
+        - Discovery
+      summary: Return WebFinger metadata.
+      parameters:
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /.well-known/jwks.json:
+    get:
+      tags:
+        - Discovery
+      summary: Return JSON Web Key Set.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+components:
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true

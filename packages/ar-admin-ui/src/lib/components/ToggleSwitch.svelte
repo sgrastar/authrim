@@ -9,6 +9,7 @@
 		description?: string;
 		size?: 'sm' | 'md' | 'lg';
 		id?: string;
+		ariaLabel?: string;
 		onchange?: (checked: boolean) => void;
 	}
 
@@ -19,6 +20,7 @@
 		description,
 		size = 'md',
 		id,
+		ariaLabel,
 		onchange
 	}: Props = $props();
 
@@ -55,8 +57,8 @@
 		lg: 'toggle-switch-lg'
 	};
 
-	const ariaLabel = $derived(
-		label ?? ($switchChecked ? $LL.common_toggle_on() : $LL.common_toggle_off())
+	const resolvedAriaLabel = $derived(
+		ariaLabel ?? label ?? ($switchChecked ? $LL.common_toggle_on() : $LL.common_toggle_off())
 	);
 </script>
 
@@ -78,7 +80,7 @@
 		class:toggle-switch-checked={$switchChecked}
 		{disabled}
 		type="button"
-		aria-label={ariaLabel}
+		aria-label={resolvedAriaLabel}
 	>
 		<span class="toggle-switch-thumb"></span>
 	</button>

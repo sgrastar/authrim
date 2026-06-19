@@ -1,0 +1,277 @@
+openapi: 3.2.0
+info:
+  title: Authrim Policy API
+  version: 0.3.2
+  summary: Policy, ReBAC, and authorization check APIs.
+  description: Initial OpenAPI contract for `@authrim/ar-policy`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Policy
+  - name: ReBAC
+  - name: Check
+  - name: Subscriptions
+paths:
+  /api/policy/health:
+    get:
+      tags:
+        - Policy
+      security: []
+      summary: Return policy API health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/policy/flags:
+    get:
+      tags:
+        - Policy
+      summary: List policy feature flags.
+      responses:
+        "200":
+          $ref: "#/components/responses/List"
+  /api/policy/flags/{name}:
+    put:
+      tags:
+        - Policy
+      summary: Upsert a policy feature flag.
+      parameters:
+        - $ref: "#/components/parameters/Name"
+        - &a1
+          name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      tags:
+        - Policy
+      summary: Delete a policy feature flag.
+      parameters:
+        - $ref: "#/components/parameters/Name"
+        - *a1
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/policy/evaluate:
+    post:
+      tags:
+        - Policy
+      summary: Evaluate policy input.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/policy/check-role:
+    post:
+      tags:
+        - Policy
+      summary: Check role membership.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/policy/check-access:
+    post:
+      tags:
+        - Policy
+      summary: Check access against policy.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/policy/is-admin:
+    post:
+      tags:
+        - Policy
+      summary: Check whether a subject is an admin.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/rebac/health:
+    get:
+      tags:
+        - ReBAC
+      security: []
+      summary: Return ReBAC API health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/rebac/check:
+    post:
+      tags:
+        - ReBAC
+      summary: Check a relationship-based authorization decision.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/rebac/batch-check:
+    post:
+      tags:
+        - ReBAC
+      summary: Check relationship-based authorization decisions in batch.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/rebac/list-objects:
+    post:
+      tags:
+        - ReBAC
+      summary: List objects reachable by a subject and relation.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/List"
+  /api/rebac/list-users:
+    post:
+      tags:
+        - ReBAC
+      summary: List users reachable by an object and relation.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/List"
+  /api/rebac/invalidate:
+    post:
+      tags:
+        - ReBAC
+      summary: Invalidate ReBAC cache entries.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/check/health:
+    get:
+      tags:
+        - Check
+      security: []
+      summary: Return check API health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/check:
+    post:
+      tags:
+        - Check
+      summary: Run an authorization check.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/check/batch:
+    post:
+      tags:
+        - Check
+      summary: Run authorization checks in batch.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/List"
+  /api/check/subscribe:
+    get:
+      tags:
+        - Subscriptions
+      operationId: getApiCheckSubscribe
+      summary: GET /api/check/subscribe
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/check/subscribe/stats:
+    get:
+      tags:
+        - Subscriptions
+      operationId: getApiCheckSubscribeStats
+      summary: GET /api/check/subscribe/stats
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/rebac/tuples:
+    delete:
+      tags:
+        - ReBAC
+      operationId: deleteApiRebacTuples
+      summary: DELETE /api/rebac/tuples
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/rebac/write:
+    post:
+      tags:
+        - ReBAC
+      operationId: postApiRebacWrite
+      summary: POST /api/rebac/write
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    List:
+      description: Successful JSON list response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true

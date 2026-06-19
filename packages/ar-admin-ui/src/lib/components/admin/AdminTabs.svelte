@@ -93,6 +93,11 @@
 			transform var(--transition-fast);
 	}
 
+	.admin-tabs__tab i {
+		display: var(--tabs-icon-display, inline-block);
+		font-size: var(--tabs-icon-size, 1rem);
+	}
+
 	.admin-tabs__tab:hover {
 		color: var(--tabs-tab-hover-color, var(--color-text));
 		border-color: var(--tabs-tab-hover-border, var(--color-accent));

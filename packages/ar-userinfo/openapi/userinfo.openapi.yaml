@@ -1,0 +1,134 @@
+openapi: 3.2.0
+info:
+  title: Authrim UserInfo API
+  version: 0.3.2
+  summary: OIDC UserInfo and protected customer profile APIs.
+  description: Initial OpenAPI contract for `@authrim/ar-userinfo`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: UserInfo
+  - name: Customer Profiles
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      security: []
+      summary: Return UserInfo Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/live:
+    get:
+      tags:
+        - Health
+      security: []
+      summary: Return liveness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/ready:
+    get:
+      tags:
+        - Health
+      security: []
+      summary: Return readiness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /userinfo:
+    get:
+      tags:
+        - UserInfo
+      summary: Return OIDC claims for the bearer access token.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - UserInfo
+      summary: Return OIDC claims for the bearer access token.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/protected/customer-profiles/{userId}:
+    get:
+      tags:
+        - Customer Profiles
+      summary: Return a protected customer profile.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/protected/customer-profiles/users/{userId}:
+    patch:
+      tags:
+        - Customer Profiles
+      operationId: patchApiProtectedCustomerProfilesUsersByUserId
+      summary: PATCH /api/protected/customer-profiles/users/{userId}
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/GeneratedJsonObject"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  requestBodies:
+    GeneratedJsonObject:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true

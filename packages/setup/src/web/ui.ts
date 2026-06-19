@@ -5273,8 +5273,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div class="actions setup-env-actions">
         <span class="progress"><span data-i18n="web.env.detected">Detected</span> <b id="env-list-count">0</b> <span data-i18n="web.env.environments">environments</span></span>
         <span class="spacer"></span>
-        <button class="btn btn-back" id="btn-back-env-list">← <span data-i18n="web.env.start">Start</span></button>
-        <button class="btn btn-ghost" id="btn-refresh-env-list">↻ <span data-i18n="web.env.rescan">Rescan</span></button>
+        <button class="btn btn-back" id="btn-back-env-list"><span class="setup-action-icon" aria-hidden="true">←</span><span data-i18n="web.env.start">Start</span></button>
+        <button class="btn btn-ghost" id="btn-refresh-env-list"><span class="setup-action-icon" aria-hidden="true">↻</span><span data-i18n="web.env.rescan">Rescan</span></button>
       </div>
     </div>
 
@@ -5348,13 +5348,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </table>
         </div>
         <div class="inline-form env-update-actions">
-          <label class="switchline on">
-            <input type="checkbox" id="update-only-changed" checked>
-            <span class="sw"></span>
-            <span class="sw-label" data-i18n="web.envDetail.updateOnlyChanged">Update only changed versions</span>
-          </label>
-          <button class="btn btn-ghost" id="btn-refresh-versions"><span data-i18n="web.envDetail.refreshVersions">Refresh</span></button>
-          <button class="btn btn-next" id="btn-update-workers" disabled><span data-i18n="web.envDetail.updateAllWorkers">Update All Workers</span> <span class="arr">→</span></button>
+          <div class="env-update-options">
+            <label class="switchline on">
+              <input type="checkbox" id="update-only-changed" checked>
+              <span class="sw"></span>
+              <span class="sw-label" data-i18n="web.envDetail.updateOnlyChanged">Update only changed versions</span>
+            </label>
+            <label class="switchline on">
+              <input type="checkbox" id="update-include-ui-workers" checked>
+              <span class="sw"></span>
+              <span class="sw-label" data-i18n="web.envDetail.updateIncludeUiWorkers">Update Admin UI / Login UI</span>
+            </label>
+          </div>
+          <div class="env-update-buttons">
+            <button class="btn btn-ghost" id="btn-refresh-versions"><span data-i18n="web.envDetail.refreshVersions">Refresh</span></button>
+            <button class="worker-update-button" id="btn-update-workers" disabled><span data-i18n="web.envDetail.updateAllWorkers">Update All Workers</span> <span class="arr">→</span></button>
+          </div>
         </div>
         <div id="worker-update-progress" class="hidden logbox">
           <div class="cap"><span data-i18n="web.envDetail.updateProgress">Update Progress:</span></div>
@@ -5956,6 +5965,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let selectedEnvDetailConfig = null;
     let selectedEnvForDelete = null;
     let envCardRenderGeneration = 0;
+    let migrationStatusLoadGeneration = 0;
+    let migrationApplyInProgress = false;
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
 
@@ -11064,11 +11075,20 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function resetMigrationStatusUI() {
       const list = document.getElementById('migration-status-list');
       if (list) {
-        list.innerHTML = '<div class="bigtable"><div class="cap"><span>' +
+        list.innerHTML =
+          '<div class="bigtable migration-loading-card">' +
+          '<div class="cap"><span>' +
           escapeHtml(t('web.envDetail.migrations')) +
           '</span><em>' +
           escapeHtml(t('web.status.loading')) +
-          '</em></div></div>';
+          '</em></div>' +
+          '<div class="env-loading-indicator migration-loading-indicator">' +
+          '<span class="env-loading-spinner" aria-hidden="true"></span>' +
+          '<span>' +
+          escapeHtml(t('web.envDetail.migrationLoading')) +
+          '</span>' +
+          '</div>' +
+          '</div>';
       }
       document.getElementById('env-migration-summary').textContent =
         t('web.envDetail.migrationLoading');
@@ -11080,6 +11100,19 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('btn-apply-all-migrations').disabled = true;
       document.getElementById('migration-progress').classList.add('hidden');
       document.getElementById('migration-log').textContent = '';
+    }
+
+    function setMigrationApplyBusy(isBusy) {
+      migrationApplyInProgress = isBusy;
+      document.getElementById('btn-refresh-migrations')?.toggleAttribute('disabled', isBusy);
+      document.getElementById('btn-back-env-detail')?.toggleAttribute('disabled', isBusy);
+      document.getElementById('btn-delete-from-detail')?.toggleAttribute('disabled', isBusy);
+      if (isBusy) {
+        document.getElementById('btn-apply-all-migrations')?.setAttribute('disabled', '');
+      }
+      document.querySelectorAll('.migration-apply-one').forEach((button) => {
+        button.disabled = isBusy;
+      });
     }
 
     function migrationStatusLabel(status) {
@@ -11146,6 +11179,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         button.className = 'btn btn-ghost sm migration-apply-one';
         button.dataset.role = database.role;
         button.dataset.filename = migration.filename;
+        button.disabled = migrationApplyInProgress;
         button.textContent = t('web.envDetail.migrationApplyPending');
         actionCell.appendChild(button);
       } else {
@@ -11193,7 +11227,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       } else if (totals.pending > 0) {
         document.getElementById('env-migration-summary').textContent =
           t('web.envDetail.migrationPendingSummary', { count: totals.pending });
-        applyAllButton.disabled = false;
+        applyAllButton.disabled = migrationApplyInProgress;
       } else {
         document.getElementById('env-migration-summary').textContent =
           t('web.envDetail.migrationNoPending');
@@ -11250,21 +11284,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     async function loadMigrationStatus(envName) {
+      const generation = ++migrationStatusLoadGeneration;
+      resetMigrationStatusUI();
       document.getElementById('env-migration-summary').textContent =
         t('web.envDetail.migrationLoading');
       try {
         const response = await api('/migrations/status/' + encodeURIComponent(envName));
+        if (generation !== migrationStatusLoadGeneration) return;
         renderMigrationStatus(response);
       } catch (error) {
+        if (generation !== migrationStatusLoadGeneration) return;
         renderMigrationStatus({ success: false, error: error.message });
       }
     }
 
     async function applyMigrationsForEnv(options = {}) {
+      if (migrationApplyInProgress) return;
       if (!selectedEnvForDetail) {
         alert(t('web.envDetail.noEnvironmentSelected'));
         return;
       }
+      const envName = selectedEnvForDetail.env;
 
       const applyAll = !options.role;
       if (applyAll && !confirm(t('web.envDetail.migrationApplyConfirm'))) {
@@ -11273,10 +11313,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const progressDiv = document.getElementById('migration-progress');
       const logDiv = document.getElementById('migration-log');
-      const applyAllButton = document.getElementById('btn-apply-all-migrations');
       progressDiv.classList.remove('hidden');
       logDiv.textContent = '';
-      applyAllButton.disabled = true;
+      setMigrationApplyBusy(true);
+      progressDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
       const addLog = (msg) => {
         const line = document.createElement('div');
@@ -11290,7 +11330,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const response = await api('/migrations/apply', {
           method: 'POST',
           body: {
-            env: selectedEnvForDetail.env,
+            env: envName,
             role: options.role,
             filenames: options.filename ? [options.filename] : undefined,
           },
@@ -11305,7 +11345,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       } catch (error) {
         addLog(t('web.status.errorWithMessage', { error: error.message }));
       } finally {
-        await loadMigrationStatus(selectedEnvForDetail.env);
+        migrationApplyInProgress = false;
+        await loadMigrationStatus(envName);
+        setMigrationApplyBusy(false);
       }
     }
 
@@ -11646,16 +11688,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         // Action column with individual update button
         const tdAction = document.createElement('td');
         tdAction.style.textAlign = 'right';
-        if (item.needsUpdate) {
-          const updateBtn = document.createElement('button');
-          updateBtn.className = 'btn btn-ghost sm';
-          updateBtn.textContent = t('web.envDetail.updateNow') || 'Update';
-          updateBtn.title = t('web.envDetail.updateThis');
-          updateBtn.onclick = () => updateSingleComponent(item.component);
-          tdAction.appendChild(updateBtn);
-        } else {
-          tdAction.textContent = '—';
-        }
+        const updateBtn = document.createElement('button');
+        updateBtn.className = 'btn btn-ghost sm';
+        updateBtn.textContent = t('web.envDetail.updateNow') || 'Update';
+        updateBtn.title = t('web.envDetail.updateThis');
+        updateBtn.onclick = () => updateSingleComponent(item.component);
+        tdAction.appendChild(updateBtn);
         tr.appendChild(tdAction);
 
         tbody.appendChild(tr);
@@ -11672,6 +11710,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const progressDiv = document.getElementById('worker-update-progress');
       const logDiv = document.getElementById('worker-update-log');
       const onlyChanged = document.getElementById('update-only-changed').checked;
+      const includeUiWorkers = document.getElementById('update-include-ui-workers').checked;
 
       btn.disabled = true;
       const btnSpan = btn.querySelector('span');
@@ -11686,22 +11725,64 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         logDiv.scrollTop = logDiv.scrollHeight;
       };
 
+      let lastProgressLength = 0;
+      let hasSeenUpdateStart = false;
+      const updateStartMarker = 'Starting worker update for environment: ' + currentEnvForUpdate;
+      const appendProgressMessages = (progress) => {
+        if (!Array.isArray(progress)) return;
+
+        if (!hasSeenUpdateStart) {
+          const startIndex = progress.findIndex((msg) => String(msg || '').includes(updateStartMarker));
+          if (startIndex === -1) return;
+          hasSeenUpdateStart = true;
+          lastProgressLength = startIndex + 1;
+        }
+
+        if (progress.length < lastProgressLength) {
+          lastProgressLength = 0;
+        }
+
+        if (progress.length > lastProgressLength) {
+          const newMessages = progress.slice(lastProgressLength);
+          for (const msg of newMessages) {
+            addLog(formatProgressMessageForDisplay(msg));
+          }
+          lastProgressLength = progress.length;
+        }
+      };
+
+      let pollTimer = null;
+      const pollWorkerUpdateProgress = async () => {
+        try {
+          const statusResult = await api('/deploy/status');
+          appendProgressMessages(statusResult.progress || []);
+        } catch {
+          // Keep the deploy request in charge of final error handling.
+        }
+      };
+
       try {
         addLog(t('web.envDetail.workerUpdateStarting', { env: currentEnvForUpdate }));
 
-        const response = await api('/update/workers', {
+        const updateRequest = api('/update/workers', {
           method: 'POST',
           body: JSON.stringify({
             env: currentEnvForUpdate,
-            onlyChanged: onlyChanged
+            onlyChanged: onlyChanged,
+            includeUiWorkers: includeUiWorkers
           })
         });
 
-        if (response.progress && Array.isArray(response.progress)) {
-          for (const msg of response.progress) {
-            addLog(formatProgressMessageForDisplay(msg));
-          }
+        pollTimer = window.setInterval(pollWorkerUpdateProgress, 1000);
+        window.setTimeout(pollWorkerUpdateProgress, 300);
+
+        const response = await updateRequest;
+
+        if (pollTimer) {
+          window.clearInterval(pollTimer);
+          pollTimer = null;
         }
+        appendProgressMessages(response.progress || []);
 
         if (response.success) {
           addLog('');
@@ -11729,6 +11810,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       } catch (error) {
         addLog(t('web.status.errorWithMessage', { error: error.message }));
       } finally {
+        if (pollTimer) {
+          window.clearInterval(pollTimer);
+        }
+        await pollWorkerUpdateProgress();
         updateWorkerUpdateButtonState();
         const btnSpan2 = btn.querySelector('span');
         if (btnSpan2) btnSpan2.textContent = t('web.envDetail.updateAllWorkers') || 'Update All Workers';
@@ -12159,6 +12244,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       showSection('topMenu');
     });
 
+    window.addEventListener('beforeunload', (event) => {
+      if (!migrationApplyInProgress) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+
     document.getElementById('btn-refresh-env-list').addEventListener('click', () => {
       loadEnvironments();
     });
@@ -12178,6 +12269,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         document.querySelectorAll('[data-env-pane]').forEach((pane) => {
           pane.classList.toggle('on', pane.getAttribute('data-env-pane') === name);
         });
+
+        if (name === 'migrations' && selectedEnvForDetail) {
+          loadMigrationStatus(selectedEnvForDetail.env);
+        }
       });
     });
 

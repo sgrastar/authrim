@@ -51,6 +51,83 @@ describe('registration-field-utils', () => {
     });
   });
 
+  it('validates required signup base fields from registration schema', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      {
+        field_key: 'field.canonical.name',
+        display_label: 'Full Name',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'field.canonical.email',
+        display_label: 'Email',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+    ]);
+
+    const result = await validateRegistrationFieldSubmission(adapter, 'tenant-1', {});
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Full Name is required',
+      missingRequiredFields: [
+        {
+          fieldKey: 'field.canonical.name',
+          label: 'Full Name',
+          fieldType: 'string',
+        },
+        {
+          fieldKey: 'field.canonical.email',
+          label: 'Email',
+          fieldType: 'string',
+        },
+      ],
+    });
+  });
+
+  it('accepts submitted signup base fields without persisting them as custom fields', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      {
+        field_key: 'field.canonical.name',
+        display_label: 'Full Name',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'field.canonical.email',
+        display_label: 'Email',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+    ]);
+
+    const result = await validateRegistrationFieldSubmission(adapter, 'tenant-1', {
+      'field.canonical.name': 'Yuta',
+      'field.canonical.email': 'yuta@example.com',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      schemas: expect.any(Array),
+      values: {
+        'field.canonical.name': 'Yuta',
+        'field.canonical.email': 'yuta@example.com',
+      },
+    });
+  });
+
   it('validates enum/date/number fields and returns sanitized values', async () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.query).mockResolvedValueOnce([

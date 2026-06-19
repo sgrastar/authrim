@@ -102,6 +102,7 @@ interface ScimToken {
 export interface APIError {
 	error: string;
 	error_description: string;
+	extensions?: Record<string, unknown>;
 }
 
 interface DirectAuthPkceState {
@@ -702,10 +703,11 @@ export const passkeyAPI = {
 	 * Get registration options for Passkey
 	 */
 	async getRegisterOptions(data: {
-		email: string;
+		email?: string;
 		name?: string;
 		userId?: string;
 		custom_fields?: Record<string, unknown>;
+		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
 		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
@@ -717,9 +719,10 @@ export const passkeyAPI = {
 					code_challenge: pkce.codeChallenge,
 					code_challenge_method: pkce.codeChallengeMethod,
 					channel: 'browser',
-					email: data.email,
+					email: data.email || undefined,
 					display_name: data.name,
-					custom_fields: data.custom_fields
+					custom_fields: data.custom_fields,
+					human_verification_response: data.human_verification_response
 				})
 			}
 		);
@@ -815,7 +818,11 @@ export const passkeyAPI = {
 	/**
 	 * Get authentication options for Passkey login
 	 */
-	async getLoginOptions(data: { email?: string }) {
+	async getLoginOptions(data: {
+		email?: string;
+		authorizationChallengeId?: string;
+		human_verification_response?: string;
+	}) {
 		const pkce = await createDirectAuthPkce();
 		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
 			'/api/v1/auth/direct/passkey/login/start',
@@ -826,7 +833,9 @@ export const passkeyAPI = {
 					code_challenge: pkce.codeChallenge,
 					code_challenge_method: pkce.codeChallengeMethod,
 					channel: 'browser',
-					email: data.email
+					email: data.email,
+					authorization_challenge_id: data.authorizationChallengeId,
+					human_verification_response: data.human_verification_response
 				})
 			}
 		);
@@ -923,7 +932,9 @@ export const emailCodeAPI = {
 		email: string;
 		name?: string;
 		invite_token?: string;
+		authorizationChallengeId?: string;
 		custom_fields?: Record<string, unknown>;
+		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
 		const response = await apiFetch<{
@@ -936,11 +947,14 @@ export const emailCodeAPI = {
 			body: JSON.stringify({
 				client_id: getAuthConfig().clientId,
 				email: data.email,
+				display_name: data.name,
 				code_challenge: pkce.codeChallenge,
 				code_challenge_method: pkce.codeChallengeMethod,
 				channel: 'browser',
 				invite_token: data.invite_token,
-				custom_fields: data.custom_fields
+				authorization_challenge_id: data.authorizationChallengeId,
+				custom_fields: data.custom_fields,
+				human_verification_response: data.human_verification_response
 			})
 		});
 
@@ -1036,7 +1050,12 @@ export const emailCodeAPI = {
  * Auth API - Directory Password
  */
 export const directoryPasswordAPI = {
-	async login(data: { username: string; password: string; authorizationChallengeId?: string }) {
+	async login(data: {
+		username: string;
+		password: string;
+		authorizationChallengeId?: string;
+		human_verification_response?: string;
+	}) {
 		const session = await apiFetch<ManagedDirectSessionResponse>(
 			'/api/auth/directory-password/login',
 			{
@@ -1044,7 +1063,8 @@ export const directoryPasswordAPI = {
 				body: JSON.stringify({
 					username: data.username,
 					password: data.password,
-					authorization_challenge_id: data.authorizationChallengeId
+					authorization_challenge_id: data.authorizationChallengeId,
+					human_verification_response: data.human_verification_response
 				})
 			}
 		);
@@ -1584,7 +1604,8 @@ export const externalIdpAPI = {
 		providerId: string,
 		redirectUri?: string,
 		startUrl?: string,
-		startMode: 'oauth_redirect' | 'saml_sp' | 'direct' = 'oauth_redirect'
+		startMode: 'oauth_redirect' | 'saml_sp' | 'direct' = 'oauth_redirect',
+		humanVerification?: { token?: string }
 	): Promise<{
 		url: string;
 	}> {
@@ -1592,7 +1613,16 @@ export const externalIdpAPI = {
 		const targetUrl = new URL(startUrl || `/api/external/${encodedProviderId}/start`, API_BASE_URL);
 
 		if (startMode === 'direct') {
+			if (humanVerification?.token) {
+				throw new Error(
+					'Human verification requires an Authrim-managed external provider start URL.'
+				);
+			}
 			return { url: targetUrl.toString() };
+		}
+
+		if (humanVerification?.token) {
+			targetUrl.searchParams.set('human_verification_response', humanVerification.token);
 		}
 
 		if (startMode === 'saml_sp') {

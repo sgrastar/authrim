@@ -236,16 +236,36 @@ const adminOther = {
 	admin_authentication_methods_discard: '破棄',
 	admin_authentication_methods_save: '保存',
 	admin_authentication_methods_saving: '保存中...',
+	admin_authentication_methods_cache_notice: 'Login UIへの反映には最大3分かかります。',
 	admin_authentication_methods_loading: '読み込み中...',
 	admin_authentication_methods_builtin_title: '組み込み認証方法',
 	admin_authentication_methods_builtin_description:
 		'Authrim標準の認証方法をこのテナントでどう使用するか選択します。',
 	admin_authentication_methods_passkey: 'Passkey',
-	admin_authentication_methods_passkey_description:
-		'WebAuthn Passkeyをログイン、新規登録、またはその両方で許可します。',
+	admin_authentication_methods_passkey_description: 'Passkeyをログイン・登録・再認証で使います。',
 	admin_authentication_methods_email_otp: 'Email OTP',
 	admin_authentication_methods_email_otp_description:
-		'メールのワンタイムコードをログイン、新規登録、またはその両方で許可します。',
+		'メールコードをログイン・登録・再認証で使います。',
+	admin_authentication_methods_human_verification_title: 'セキュリティ確認',
+	admin_authentication_methods_human_verification_description:
+		'Login UIで認証開始前にセキュリティ確認を要求する箇所を選択します。',
+	admin_authentication_methods_turnstile: 'Cloudflare Turnstile',
+	admin_authentication_methods_turnstile_description:
+		'Login UIの不正利用対策にTurnstileを使います。',
+	admin_authentication_methods_hcaptcha_description:
+		'Login UIの不正利用対策にhCaptchaを使います。',
+	admin_authentication_methods_recaptcha_description:
+		'Login UIの不正利用対策にreCAPTCHAを使います。',
+	admin_authentication_methods_provider_disabled:
+		'{provider} は有効になっていません。Login UIで使用する前にプラグイン設定画面で有効化してください。',
+	admin_authentication_methods_provider_missing_config:
+		'{provider} は有効ですが、必要な設定が不足しています。',
+	admin_authentication_methods_provider_missing_config_with_fields:
+		'{provider} は有効ですが、必要な設定が不足しています: {fields}。',
+	admin_authentication_methods_provider_status_unknown:
+		'プラグイン状態を読み込めませんでした。保存前にプラグイン設定を確認してください。',
+	admin_authentication_methods_plugin_managed: 'プラグイン管理',
+	admin_authentication_methods_configure_plugin: 'プラグイン設定画面へ',
 	admin_authentication_methods_login_enabled: 'ログイン',
 	admin_authentication_methods_signup_enabled: '新規登録',
 	admin_authentication_methods_reauth_enabled: '再認証',
@@ -332,6 +352,7 @@ const adminOther = {
 	admin_login_ui_modified: '変更済み',
 	admin_login_ui_discard_changes: '変更を破棄',
 	admin_login_ui_saving: '保存中...',
+	admin_login_ui_cache_notice: 'Login UIへの反映には最大3分かかります。',
 	admin_login_ui_save_global_config: 'グローバルUI設定を保存',
 	admin_login_ui_trusted_origins_title: '信頼済みorigin',
 	admin_login_ui_trusted_origins_description:

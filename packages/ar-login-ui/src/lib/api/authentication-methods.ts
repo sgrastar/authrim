@@ -63,10 +63,29 @@ export interface ExternalMethod {
 	providers: ExternalProvider[];
 }
 
+export type HumanVerificationFailurePolicy = 'fail_closed' | 'fail_open';
+
+export interface HumanVerificationMethod {
+	enabled: boolean;
+	provider: string;
+	siteKey: string | null;
+	loginEnabled: boolean;
+	signupEnabled: boolean;
+	reauthEnabled: boolean;
+	failurePolicy: HumanVerificationFailurePolicy;
+	widget: {
+		actionPrefix: string;
+		theme: 'auto';
+		size: 'flexible';
+		mode: 'managed' | 'checkbox' | 'invisible' | 'score';
+	};
+}
+
 export interface AuthenticationMethods {
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
 	directoryPassword: DirectoryPasswordMethod;
+	humanVerification: HumanVerificationMethod;
 	external: ExternalMethod;
 }
 
@@ -113,7 +132,6 @@ export async function fetchAuthenticationMethods(): Promise<{
 	data?: AuthenticationMethodsResponse;
 	error?: AuthenticationMethodsError;
 }> {
-	// Return cached response if still valid
 	if (cachedResponse && Date.now() < cacheExpiry) {
 		return { data: cachedResponse };
 	}
@@ -136,9 +154,8 @@ export async function fetchAuthenticationMethods(): Promise<{
 
 		const result = data as AuthenticationMethodsResponse;
 
-		// Cache the response
 		cachedResponse = result;
-		cacheExpiry = Date.now() + (result.meta.cacheTTL || 300) * 1000;
+		cacheExpiry = Date.now() + (result.meta.cacheTTL || 180) * 1000;
 
 		return { data: result };
 	} catch {

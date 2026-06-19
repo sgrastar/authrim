@@ -239,16 +239,38 @@ const adminOther = {
 	admin_authentication_methods_discard: 'Discard',
 	admin_authentication_methods_save: 'Save',
 	admin_authentication_methods_saving: 'Saving...',
+	admin_authentication_methods_cache_notice:
+		'Changes may take up to 3 minutes to appear in Login UI.',
 	admin_authentication_methods_loading: 'Loading...',
 	admin_authentication_methods_builtin_title: 'Built-in Authentication Methods',
 	admin_authentication_methods_builtin_description:
 		'Select how Authrim built-in methods can be used for this tenant.',
 	admin_authentication_methods_passkey: 'Passkey',
 	admin_authentication_methods_passkey_description:
-		'Allow WebAuthn passkeys for login, signup, or both.',
+		'Use passkeys for login, signup, and re-authentication.',
 	admin_authentication_methods_email_otp: 'Email OTP',
 	admin_authentication_methods_email_otp_description:
-		'Allow email one-time codes for login, signup, or both.',
+		'Use email codes for login, signup, and re-authentication.',
+	admin_authentication_methods_human_verification_title: 'Security Check',
+	admin_authentication_methods_human_verification_description:
+		'Select where Login UI requires a security check before starting authentication.',
+	admin_authentication_methods_turnstile: 'Cloudflare Turnstile',
+	admin_authentication_methods_turnstile_description:
+		'Use Turnstile for Login UI abuse protection.',
+	admin_authentication_methods_hcaptcha_description:
+		'Use hCaptcha for Login UI abuse protection.',
+	admin_authentication_methods_recaptcha_description:
+		'Use reCAPTCHA for Login UI abuse protection.',
+	admin_authentication_methods_provider_disabled:
+		'{provider:string} is not enabled. Open plugin settings and enable it before using it in Login UI.',
+	admin_authentication_methods_provider_missing_config:
+		'{provider:string} is enabled but required configuration is missing.',
+	admin_authentication_methods_provider_missing_config_with_fields:
+		'{provider:string} is enabled but required configuration is missing: {fields:string}.',
+	admin_authentication_methods_provider_status_unknown:
+		'Plugin status could not be loaded. Check plugin settings before saving this provider.',
+	admin_authentication_methods_plugin_managed: 'Plugin managed',
+	admin_authentication_methods_configure_plugin: 'Open plugin settings',
 	admin_authentication_methods_login_enabled: 'Login',
 	admin_authentication_methods_signup_enabled: 'Signup',
 	admin_authentication_methods_reauth_enabled: 'Re-authentication',
@@ -337,6 +359,7 @@ const adminOther = {
 	admin_login_ui_modified: 'Modified',
 	admin_login_ui_discard_changes: 'Discard Changes',
 	admin_login_ui_saving: 'Saving...',
+	admin_login_ui_cache_notice: 'Changes may take up to 3 minutes to appear in Login UI.',
 	admin_login_ui_save_global_config: 'Save Global UI Configuration',
 	admin_login_ui_trusted_origins_title: 'Trusted Origins',
 	admin_login_ui_trusted_origins_description:

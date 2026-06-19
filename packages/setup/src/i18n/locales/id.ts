@@ -1133,6 +1133,7 @@ const id: Translations = {
   'web.envDetail.upToDate': 'Terkini',
   'web.envDetail.notDeployed': 'Belum terdeploy',
   'web.envDetail.updateOnlyChanged': 'Perbarui hanya versi yang berubah',
+  'web.envDetail.updateIncludeUiWorkers': 'Perbarui Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Perbarui semua Workers',
   'web.envDetail.refreshVersions': 'Segarkan',
   'web.envDetail.updateProgress': 'Progres pembaruan:',

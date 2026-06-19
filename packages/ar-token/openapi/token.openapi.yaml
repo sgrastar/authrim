@@ -1,0 +1,92 @@
+openapi: 3.2.0
+info:
+  title: Authrim Token API
+  version: 0.3.2
+  summary: OAuth/OIDC token endpoint.
+  description: Initial OpenAPI contract for `@authrim/ar-token`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: OAuth
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      summary: Return token Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/live:
+    get:
+      tags:
+        - Health
+      summary: Return liveness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Return readiness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /token:
+    post:
+      tags:
+        - OAuth
+      summary: Exchange an OAuth grant for tokens.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                grant_type:
+                  type: string
+                code:
+                  type: string
+                refresh_token:
+                  type: string
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                code_verifier:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+components:
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Error:
+      description: OAuth error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string

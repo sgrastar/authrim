@@ -52,7 +52,6 @@
 
 	<!-- Language Selector -->
 	<div class="flex items-center gap-1.5">
-		<div class="i-heroicons-globe-alt h-4 w-4" style="color: var(--text-muted);"></div>
 		<select
 			value={currentLang}
 			onchange={(e) => switchLanguage(e.currentTarget.value)}

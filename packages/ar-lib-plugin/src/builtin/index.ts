@@ -10,5 +10,8 @@ export * from './notifier';
 // Authenticator Plugins
 export * from './authenticator';
 
+// Security Plugins
+export * from './security';
+
 // Future: IdP Plugins
 // export * from './idp';

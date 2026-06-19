@@ -248,6 +248,7 @@ describe('Plugin Admin API - List Plugins', () => {
       const kv = createMockKV({
         getValues: {
           'plugins:registry': JSON.stringify(registry),
+          'plugins:enabled:enabled-plugin': 'true',
           'plugins:enabled:disabled-plugin': 'false',
         },
       });
@@ -444,7 +445,7 @@ describe('Plugin Admin API - Get Plugin', () => {
           }),
           status: expect.objectContaining({
             pluginId: 'test-plugin',
-            enabled: true,
+            enabled: false,
           }),
         })
       );
@@ -1085,6 +1086,38 @@ describe('Plugin Admin API - Enable/Disable', () => {
       expect(body).toHaveProperty('error');
     });
 
+    it('should reject enabling a plugin with missing required configuration', async () => {
+      const registry = {
+        'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:test-plugin': JSON.stringify({
+            type: 'object',
+            required: ['apiKey'],
+          }),
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        body: {},
+        kv,
+      });
+
+      const response = await enablePluginHandler(c);
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(400);
+      expect(body).toMatchObject({
+        error: expect.any(String),
+      });
+      expect(kv.put).not.toHaveBeenCalledWith('plugins:enabled:test-plugin', 'true');
+    });
+
     it('should support tenant-specific enable', async () => {
       const registry = {
         'test-plugin': createPluginEntry({ id: 'test-plugin' }),
@@ -1263,6 +1296,7 @@ describe('Plugin Admin API - Test Email', () => {
           'plugins:config:notifier-cloudflare': JSON.stringify({
             defaultFrom: 'noreply@example.com',
           }),
+          'plugins:enabled:notifier-cloudflare': 'true',
         },
       });
 

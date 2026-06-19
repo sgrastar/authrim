@@ -5974,6 +5974,7 @@ tr.expired {
 
 /* --- Auth container (max-width control) --- */
 .auth-container {
+	order: 1;
 	width: 100%;
 	max-width: 420px;
 }
@@ -6022,13 +6023,17 @@ tr.expired {
 
 /* --- Auth top bar (language switcher, theme toggle) --- */
 .auth-topbar {
-	position: absolute;
-	top: 16px;
-	right: 16px;
+	position: static;
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	z-index: 10;
+	z-index: 40;
+}
+
+.auth-page > .auth-topbar {
+	order: 2;
+	align-self: center;
+	margin-top: 24px;
 }
 
 /* --- Theme toggle button --- */
@@ -6267,7 +6272,8 @@ tr.expired {
 
 /* --- Auth footer --- */
 .auth-footer {
-	margin-top: 48px;
+	order: 3;
+	margin-top: 16px;
 	text-align: center;
 	font-size: 0.75rem;
 	color: var(--text-muted);
@@ -6451,6 +6457,7 @@ tr.expired {
 
 /* --- Language selector (themed) --- */
 .auth-lang-select {
+	max-width: min(160px, calc(100vw - 92px));
 	padding: 6px 10px;
 	font-size: 0.8125rem;
 	border: 1px solid var(--border);
@@ -6480,17 +6487,17 @@ tr.expired {
 		padding: 24px 16px;
 	}
 
+	.auth-page > .auth-topbar {
+		align-self: flex-end;
+		max-width: calc(100vw - 24px);
+	}
+
 	.auth-header__title {
 		font-size: 1.75rem;
 	}
 
 	.auth-section-title {
 		font-size: 1.25rem;
-	}
-
-	.auth-topbar {
-		top: 12px;
-		right: 12px;
 	}
 }
 

@@ -291,6 +291,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
+      '@authrim/ar-lib-plugin':
+        specifier: workspace:*
+        version: link:../ar-lib-plugin
       hono:
         specifier: 4.12.25
         version: 4.12.25
@@ -703,6 +706,9 @@ importers:
       '@authrim/ar-lib-field-mapping':
         specifier: workspace:*
         version: link:../ar-lib-field-mapping
+      '@authrim/ar-lib-plugin':
+        specifier: workspace:*
+        version: link:../ar-lib-plugin
       '@xmldom/xmldom':
         specifier: ^0.8.13
         version: 0.8.13

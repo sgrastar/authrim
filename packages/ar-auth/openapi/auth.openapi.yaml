@@ -1,0 +1,1118 @@
+openapi: 3.2.0
+info:
+  title: Authrim Authentication API
+  version: 0.3.2
+  summary: Browser and API authentication endpoints.
+  description: >
+    Initial OpenAPI contract for endpoints owned by `@authrim/ar-auth`. This document intentionally
+    contains route contracts only; do not add secrets, private test credentials, or vulnerability
+    notes.
+  x-authrim-coverage: initial route inventory
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: OAuth
+  - name: Passkeys
+  - name: Email Codes
+  - name: Directory Password
+  - name: DID
+  - name: Anonymous Login
+  - name: Upgrade
+  - name: Consent
+  - name: Sessions
+  - name: Logout
+  - name: DID Auth
+  - name: Login Challenges
+  - name: Direct Auth
+  - name: Invitations
+  - name: Registration
+  - name: Auth
+paths:
+  /api/auth/health:
+    get:
+      tags:
+        - Health
+      summary: Return authentication Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /authorize:
+    get:
+      tags:
+        - OAuth
+      summary: Start or continue an OAuth/OIDC authorization request.
+      parameters:
+        - $ref: "#/components/parameters/ClientIdQuery"
+        - name: redirect_uri
+          in: query
+          schema:
+            type: string
+        - name: response_type
+          in: query
+          schema:
+            type: string
+        - name: scope
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "302":
+          description: Redirect response.
+    post:
+      tags:
+        - OAuth
+      summary: Submit an OAuth/OIDC authorization request.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "302":
+          description: Redirect response.
+  /par:
+    post:
+      tags:
+        - OAuth
+      summary: Create a pushed authorization request.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "201":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+    get:
+      tags:
+        - Auth
+      operationId: getPar
+      summary: GET /par
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /flow/login:
+    get:
+      tags:
+        - OAuth
+      summary: Render a built-in login flow page when enabled.
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+    post:
+      tags:
+        - OAuth
+      summary: Submit a built-in login flow step when enabled.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /flow/confirm:
+    get:
+      tags:
+        - OAuth
+      summary: Render a built-in confirmation step when enabled.
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+    post:
+      tags:
+        - OAuth
+      summary: Submit a built-in confirmation step when enabled.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /api/auth/passkeys/register/options:
+    post:
+      tags:
+        - Passkeys
+      summary: Create WebAuthn registration options.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/passkeys/register/verify:
+    post:
+      tags:
+        - Passkeys
+      summary: Verify a WebAuthn registration response.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/passkeys/login/options:
+    post:
+      tags:
+        - Passkeys
+      summary: Create WebAuthn login options.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/passkeys/login/verify:
+    post:
+      tags:
+        - Passkeys
+      summary: Verify a WebAuthn login response.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/email-codes/send:
+    post:
+      tags:
+        - Email Codes
+      summary: Send an email code.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/email-codes/verify:
+    post:
+      tags:
+        - Email Codes
+      summary: Verify an email code.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/directory-password/login:
+    post:
+      tags:
+        - Directory Password
+      summary: Authenticate with a directory password.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/dids/challenge:
+    post:
+      tags:
+        - DID
+      summary: Create a DID authentication challenge.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/dids/verify:
+    post:
+      tags:
+        - DID
+      summary: Verify a DID authentication response.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/dids:
+    get:
+      tags:
+        - DID
+      summary: List linked DIDs for the current session.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/dids/{did}:
+    delete:
+      tags:
+        - DID
+      summary: Unlink a DID from the current session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: did
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/anon-login/challenge:
+    post:
+      tags:
+        - Anonymous Login
+      summary: Create an anonymous-login challenge.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/anon-login/verify:
+    post:
+      tags:
+        - Anonymous Login
+      summary: Verify an anonymous-login challenge response.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/upgrade:
+    post:
+      tags:
+        - Upgrade
+      summary: Start anonymous-user upgrade.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/upgrade/complete:
+    post:
+      tags:
+        - Upgrade
+      summary: Complete anonymous-user upgrade.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/upgrade/status:
+    get:
+      tags:
+        - Upgrade
+      summary: Get anonymous-user upgrade status.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/auth/consents:
+    get:
+      tags:
+        - Consent
+      summary: Get consent request state.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      tags:
+        - Consent
+      summary: Submit a consent decision.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /auth/consent:
+    get:
+      tags:
+        - Consent
+      summary: Render built-in consent page when enabled.
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+    post:
+      tags:
+        - Consent
+      summary: Submit built-in consent page decision when enabled.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /api/sessions:
+    post:
+      tags:
+        - Sessions
+      summary: Issue a session token.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/sessions/verify:
+    post:
+      tags:
+        - Sessions
+      summary: Verify a session token.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/sessions/status:
+    get:
+      tags:
+        - Sessions
+      summary: Return current browser session status.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /api/sessions/refresh:
+    post:
+      tags:
+        - Sessions
+      summary: Refresh current browser session expiration.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /session/check:
+    get:
+      tags:
+        - Sessions
+      summary: OIDC Session Management check-session iframe endpoint.
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /logout:
+    get:
+      tags:
+        - Logout
+      summary: Start front-channel logout.
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "302":
+          description: Redirect response.
+  /logout/backchannel:
+    post:
+      tags:
+        - Logout
+      summary: Receive OIDC back-channel logout token.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /api/auth/dids/register/challenge:
+    post:
+      tags:
+        - DID Auth
+      operationId: postApiAuthDidsRegisterChallenge
+      summary: POST /api/auth/dids/register/challenge
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/auth/dids/register/verify:
+    post:
+      tags:
+        - DID Auth
+      operationId: postApiAuthDidsRegisterVerify
+      summary: POST /api/auth/dids/register/verify
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/auth/login-challenges:
+    get:
+      tags:
+        - Login Challenges
+      operationId: getApiAuthLoginChallenges
+      summary: GET /api/auth/login-challenges
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/direct/email-code/send:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectEmailCodeSend
+      summary: POST /api/v1/auth/direct/email-code/send
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/email-code/verify:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectEmailCodeVerify
+      summary: POST /api/v1/auth/direct/email-code/verify
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/logout:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectLogout
+      summary: POST /api/v1/auth/direct/logout
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/passkey/login/finish:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyLoginFinish
+      summary: POST /api/v1/auth/direct/passkey/login/finish
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/passkey/login/start:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyLoginStart
+      summary: POST /api/v1/auth/direct/passkey/login/start
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/passkey/register/finish:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyRegisterFinish
+      summary: POST /api/v1/auth/direct/passkey/register/finish
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/passkey/register/start:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyRegisterStart
+      summary: POST /api/v1/auth/direct/passkey/register/start
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/passkey/signup/finish:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeySignupFinish
+      summary: POST /api/v1/auth/direct/passkey/signup/finish
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/passkey/signup/start:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeySignupStart
+      summary: POST /api/v1/auth/direct/passkey/signup/start
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/session:
+    get:
+      tags:
+        - Direct Auth
+      operationId: getApiV1AuthDirectSession
+      summary: GET /api/v1/auth/direct/session
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectSession
+      summary: POST /api/v1/auth/direct/session
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/auth/direct/token:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectToken
+      summary: POST /api/v1/auth/direct/token
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/invitations/use:
+    post:
+      tags:
+        - Invitations
+      operationId: postApiV1InvitationsUse
+      summary: POST /api/v1/invitations/use
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/v1/invitations/validate:
+    get:
+      tags:
+        - Invitations
+      operationId: getApiV1InvitationsValidate
+      summary: GET /api/v1/invitations/validate
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/v1/registration-fields:
+    get:
+      tags:
+        - Registration
+      operationId: getApiV1RegistrationFields
+      summary: GET /api/v1/registration-fields
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /auth/login-challenge:
+    get:
+      tags:
+        - Login Challenges
+      operationId: getAuthLoginChallenge
+      summary: GET /auth/login-challenge
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /admin-init-setup:
+    get:
+      tags:
+        - Auth
+      operationId: getAdminInitSetup
+      summary: GET /admin-init-setup
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/admin-init-setup/complete:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminInitSetupComplete
+      summary: POST /api/admin-init-setup/complete
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin-init-setup/initialize:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminInitSetupInitialize
+      summary: POST /api/admin-init-setup/initialize
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin-init-setup/status:
+    get:
+      tags:
+        - Auth
+      operationId: getApiAdminInitSetupStatus
+      summary: GET /api/admin-init-setup/status
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/admin/auth/passkey/options:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminAuthPasskeyOptions
+      summary: POST /api/admin/auth/passkey/options
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/auth/passkey/verify:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminAuthPasskeyVerify
+      summary: POST /api/admin/auth/passkey/verify
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/setup-token/generate:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenGenerate
+      summary: POST /api/admin/setup-token/generate
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/setup-token/passkey/complete:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenPasskeyComplete
+      summary: POST /api/admin/setup-token/passkey/complete
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/setup-token/passkey/options:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenPasskeyOptions
+      summary: POST /api/admin/setup-token/passkey/options
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/setup-token/verify:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenVerify
+      summary: POST /api/admin/setup-token/verify
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/flow/cancel:
+    post:
+      tags:
+        - Auth
+      operationId: postApiFlowCancel
+      summary: POST /api/flow/cancel
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/flow/init:
+    post:
+      tags:
+        - Auth
+      operationId: postApiFlowInit
+      summary: POST /api/flow/init
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/flow/state/{sessionId}:
+    get:
+      tags:
+        - Auth
+      operationId: getApiFlowStateBySessionId
+      summary: GET /api/flow/state/{sessionId}
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/flow/submit:
+    post:
+      tags:
+        - Auth
+      operationId: postApiFlowSubmit
+      summary: POST /api/flow/submit
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_session
+  parameters:
+    ClientIdQuery:
+      name: client_id
+      in: query
+      required: false
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JsonObject"
+    FormOrJson:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JsonObject"
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JsonObject"
+    Any:
+      description: Successful response. The representation can be JSON, HTML, or a redirect.
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    JsonObject:
+      type: object
+      additionalProperties: true
+    Error:
+      type: object
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+        message:
+          type: string

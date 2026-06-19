@@ -982,7 +982,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const body = await c.req.json();
     const showOnRegistration = !!body.show_on_registration;
-    const registrationRequired = showOnRegistration && !!body.registration_required;
+    const registrationRequired = !!body.registration_required;
 
     // Validate required fields
     const { field_key, display_label, field_type = 'string' } = body;
@@ -1649,17 +1649,6 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: { field: 'scope_mode', reason: "Must be 'all' or 'any'" },
       });
-    }
-
-    const effectiveShowOnRegistration =
-      body.show_on_registration !== undefined
-        ? !!body.show_on_registration
-        : schema.show_on_registration === 1;
-    if (
-      (body.show_on_registration !== undefined || body.registration_required !== undefined) &&
-      !effectiveShowOnRegistration
-    ) {
-      body.registration_required = false;
     }
 
     if (

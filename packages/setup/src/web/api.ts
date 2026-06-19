@@ -283,7 +283,7 @@ function resolveProgressLogKeysDir(env: string): string {
 
 async function beginProgressLog(
   env: string,
-  operation: 'provision' | 'deploy' | 'delete'
+  operation: 'provision' | 'deploy' | 'delete' | 'update'
 ): Promise<string | null> {
   await flushProgressLog();
   progressLogState = null;
@@ -3070,7 +3070,7 @@ export function createApiRoutes(): Hono {
     return withLock(async () => {
       try {
         const body = await c.req.json();
-        const { env: envParam, onlyChanged = true } = body;
+        const { env: envParam, onlyChanged = true, includeUiWorkers = true } = body;
         const rootDir = process.cwd();
 
         // Validate environment name to prevent path traversal
@@ -3081,7 +3081,10 @@ export function createApiRoutes(): Hono {
         const env = parseResult.data;
 
         state.status = 'deploying';
+        state.error = null;
+        state.deployResults = [];
         clearProgress();
+        state.logPath = await beginProgressLog(env, 'update');
         addProgress(`Starting worker update for environment: ${env}`);
 
         // Load lock file
@@ -3090,10 +3093,14 @@ export function createApiRoutes(): Hono {
 
         if (!lock) {
           state.status = 'error';
+          state.error = `Environment "${env}" not found.`;
+          await flushProgressLog();
           return c.json(
             {
               success: false,
-              error: `Environment "${env}" not found.`,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
             },
             404
           );
@@ -3120,10 +3127,13 @@ export function createApiRoutes(): Hono {
         if (componentsToUpdate.length === 0) {
           state.status = 'complete';
           addProgress('All workers are up to date. No updates needed.');
+          await flushProgressLog();
           return c.json({
             success: true,
             message: 'All workers are up to date',
             summary: { totalComponents: 0, successCount: 0, failedCount: 0 },
+            progress: state.progress,
+            logPath: state.logPath,
           });
         }
 
@@ -3135,7 +3145,16 @@ export function createApiRoutes(): Hono {
         if (!existsSync(envPaths.config)) {
           state.status = 'error';
           state.error = `Config file not found: ${envPaths.config}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         const configContent = await readFile(envPaths.config, 'utf-8');
@@ -3155,7 +3174,16 @@ export function createApiRoutes(): Hono {
         if (!masterResult.success) {
           state.status = 'error';
           state.error = `Wrangler config generation failed: ${masterResult.errors.join(', ')}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         addProgress('Syncing wrangler configs...');
@@ -3172,7 +3200,16 @@ export function createApiRoutes(): Hono {
         if (!syncResult.success && syncResult.errors.length > 0) {
           state.status = 'error';
           state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
@@ -3187,10 +3224,20 @@ export function createApiRoutes(): Hono {
         if (!buildResult.success) {
           state.status = 'error';
           state.error = `Build failed: ${buildResult.error}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         if (
+          includeUiWorkers !== false &&
           (config.components.loginUi || config.components.adminUi) &&
           componentsToUpdate.includes('ar-router')
         ) {
@@ -3234,6 +3281,7 @@ export function createApiRoutes(): Hono {
           },
           componentsToUpdate
         );
+        state.deployResults = summary.results;
 
         // Update lock file with new versions
         if (summary.successCount > 0) {
@@ -3309,15 +3357,6 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        if (summary.failedCount === 0) {
-          await maybeConfigureDownstreamIntrospectionForWebDeploy({
-            env,
-            rootDir: resolve(rootDir),
-            config,
-            components: componentsToUpdate,
-          });
-        }
-
         state.status = summary.failedCount === 0 ? 'complete' : 'error';
 
         if (summary.failedCount === 0) {
@@ -3327,17 +3366,24 @@ export function createApiRoutes(): Hono {
             `Updated ${summary.successCount}/${summary.totalComponents}, ${summary.failedCount} failed`
           );
         }
+        await flushProgressLog();
 
         return c.json({
           success: summary.failedCount === 0,
           summary,
           updatedComponents: componentsToUpdate,
           progress: state.progress,
+          logPath: state.logPath,
         });
       } catch (error) {
         state.status = 'error';
         state.error = sanitizeError(error);
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        addProgress(`❌ Worker update failed: ${state.error}`);
+        await flushProgressLog();
+        return c.json(
+          { success: false, error: state.error, progress: state.progress, logPath: state.logPath },
+          500
+        );
       }
     });
   });

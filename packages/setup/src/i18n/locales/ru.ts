@@ -1135,6 +1135,7 @@ const ru: Translations = {
   'web.envDetail.upToDate': 'Актуально',
   'web.envDetail.notDeployed': 'Не развёрнут',
   'web.envDetail.updateOnlyChanged': 'Обновить только изменённые версии',
+  'web.envDetail.updateIncludeUiWorkers': 'Обновить Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Обновить все Workers',
   'web.envDetail.refreshVersions': 'Обновить',
   'web.envDetail.updateProgress': 'Прогресс обновления:',

@@ -9,7 +9,6 @@ vi.mock('$app/environment', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	API_BASE_URL: 'https://login.example.com',
 	buildDiagnosticHeaders: vi.fn(() => new Headers())
 }));
 
@@ -75,10 +74,11 @@ describe('auth store storage policy', () => {
 			user: null
 		});
 		expect(fetch).toHaveBeenCalledWith(
-			'https://login.example.com/logout',
+			'/logout',
 			expect.objectContaining({
 				method: 'GET',
-				credentials: 'include'
+				credentials: 'include',
+				redirect: 'manual'
 			})
 		);
 		expect(localStorageMock.removeItem).not.toHaveBeenCalled();

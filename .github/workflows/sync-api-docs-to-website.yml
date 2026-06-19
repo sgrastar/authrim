@@ -1,0 +1,104 @@
+name: Sync API Docs to Website
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/api/specs.json'
+      - 'packages/*/openapi/**'
+      - 'scripts/build-scalar-docs.mjs'
+      - 'scripts/openapi-route-inventory.mjs'
+      - 'scripts/sync-api-docs-to-website.mjs'
+      - 'scripts/validate-openapi.mjs'
+      - '.github/workflows/sync-api-docs-to-website.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Generate Scalar docs and open website PR
+    runs-on: ubuntu-latest
+    if: github.repository == 'sgrastar/authrim'
+
+    env:
+      WEBSITE_REPOSITORY: sgrastar/authrim-website
+      WEBSITE_BRANCH: main
+
+    steps:
+      - name: Checkout Authrim
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: authrim
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: authrim/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: authrim
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate OpenAPI contracts
+        working-directory: authrim
+        run: pnpm openapi:validate
+
+      - name: Check OpenAPI route coverage
+        working-directory: authrim
+        run: pnpm openapi:routes -- --fail-on-missing
+
+      - name: Generate Scalar API docs
+        working-directory: authrim
+        run: pnpm docs:api
+
+      - name: Checkout website
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: ${{ env.WEBSITE_REPOSITORY }}
+          ref: ${{ env.WEBSITE_BRANCH }}
+          token: ${{ secrets.WEBSITE_SYNC_TOKEN }}
+          path: authrim-website
+
+      - name: Sync generated docs
+        working-directory: authrim
+        run: pnpm docs:api:sync-website -- --website ../authrim-website
+
+      - name: Detect website changes
+        id: changes
+        working-directory: authrim-website
+        run: |
+          if [ -n "$(git status --porcelain public/api)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create website pull request
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: authrim-website
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_SYNC_TOKEN }}
+          BRANCH_NAME: api-docs/authrim-${{ github.run_id }}
+        run: |
+          git config user.name "authrim-api-docs-bot"
+          git config user.email "authrim-api-docs-bot@users.noreply.github.com"
+          git checkout -b "$BRANCH_NAME"
+          git add public/api
+          git commit -m "docs: update generated API reference"
+          git push --force-with-lease origin "$BRANCH_NAME"
+          gh pr create \
+            --repo "$WEBSITE_REPOSITORY" \
+            --base "$WEBSITE_BRANCH" \
+            --head "$BRANCH_NAME" \
+            --title "docs: update generated API reference" \
+            --body "Generated from sgrastar/authrim@${GITHUB_SHA}."

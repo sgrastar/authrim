@@ -1157,6 +1157,7 @@ const fr: Translations = {
   'web.envDetail.upToDate': 'À jour',
   'web.envDetail.notDeployed': 'Non déployé',
   'web.envDetail.updateOnlyChanged': 'Mettre à jour uniquement les versions modifiées',
+  'web.envDetail.updateIncludeUiWorkers': 'Mettre à jour Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Mettre à jour tous les Workers',
   'web.envDetail.refreshVersions': 'Actualiser',
   'web.envDetail.updateProgress': 'Progression de la mise à jour :',

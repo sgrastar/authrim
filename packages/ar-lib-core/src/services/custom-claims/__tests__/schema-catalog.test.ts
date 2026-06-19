@@ -49,6 +49,17 @@ describe('schema-catalog', () => {
     );
   });
 
+  it('can include hidden required registration field schemas for submission validation', async () => {
+    await listRegistrationFieldSchemas(mockAdapter as any, 'tenant-1', {
+      includeRequiredHidden: true,
+    });
+
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('(show_on_registration = 1 OR registration_required = 1)'),
+      ['tenant-1']
+    );
+  });
+
   it('parses registration field definitions for API consumers', async () => {
     const rows = [
       {

@@ -10,6 +10,7 @@
 
 import type { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { verifyHumanVerificationToken } from '@authrim/ar-lib-plugin/builtin/security';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
@@ -47,6 +48,36 @@ const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   windowSeconds: 60,
   enabled: true,
 };
+
+function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
+  return (
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    undefined
+  );
+}
+
+async function verifyExternalStartHumanVerification(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<Response | null> {
+  const result = await verifyHumanVerificationToken({
+    env: c.env,
+    tenantId,
+    actions: ['login', 'signup'],
+    response: c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
+    remoteIp: remoteIp(c),
+  });
+  if (result.ok) return null;
+
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description: 'Human verification failed',
+    },
+    400
+  );
+}
 
 /**
  * Start external IdP login flow
@@ -94,6 +125,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const codeChallenge = c.req.query('code_challenge');
     const codeChallengeMethod = c.req.query('code_challenge_method');
     const stateParam = c.req.query('state');
+    const turnstileError = await verifyExternalStartHumanVerification(c, tenantId);
+    if (turnstileError) return turnstileError;
 
     // Parse max_age parameter (OIDC Core)
     const maxAge = maxAgeParam ? parseInt(maxAgeParam, 10) : undefined;

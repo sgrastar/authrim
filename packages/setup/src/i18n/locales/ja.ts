@@ -1126,6 +1126,7 @@ const ja: Translations = {
   'web.envDetail.upToDate': '最新',
   'web.envDetail.notDeployed': '未デプロイ',
   'web.envDetail.updateOnlyChanged': '変更されたもののみ更新',
+  'web.envDetail.updateIncludeUiWorkers': 'Admin UI / Login UI も更新',
   'web.envDetail.updateAllWorkers': '全てのWorkerを更新',
   'web.envDetail.refreshVersions': '更新',
   'web.envDetail.updateProgress': '更新状況:',

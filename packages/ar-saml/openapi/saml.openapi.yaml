@@ -1,0 +1,570 @@
+openapi: 3.2.0
+info:
+  title: Authrim SAML API
+  version: 0.3.2
+  summary: SAML protocol endpoints and SAML administration API.
+  description: >
+    Initial OpenAPI contract for `@authrim/ar-saml`. SAML XML and browser binding responses are
+    represented at a high level; detailed SAML message schemas remain defined by the SAML
+    specifications.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: SAML IdP
+  - name: SAML SP
+  - name: SAML Admin
+paths:
+  /saml/health:
+    get:
+      tags:
+        - Health
+      summary: Return SAML Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /saml/idp/metadata:
+    get:
+      tags:
+        - SAML IdP
+      summary: Return SAML IdP metadata XML.
+      responses:
+        "200":
+          $ref: "#/components/responses/Xml"
+  /saml/idp/sso:
+    get:
+      tags:
+        - SAML IdP
+      summary: Handle IdP SSO redirect binding.
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          description: Redirect response.
+    post:
+      tags:
+        - SAML IdP
+      summary: Handle IdP SSO POST binding.
+      requestBody:
+        $ref: "#/components/requestBodies/SamlForm"
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+  /saml/idp/slo:
+    get:
+      tags:
+        - SAML IdP
+      summary: Handle IdP SLO redirect binding.
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          description: Redirect response.
+    post:
+      tags:
+        - SAML IdP
+      summary: Handle IdP SLO POST binding.
+      requestBody:
+        $ref: "#/components/requestBodies/SamlForm"
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+  /saml/metadata:
+    get:
+      tags:
+        - SAML SP
+      summary: Return SAML SP metadata XML.
+      responses:
+        "200":
+          $ref: "#/components/responses/Xml"
+  /saml/sp/metadata:
+    get:
+      tags:
+        - SAML SP
+      summary: Return SAML SP metadata XML.
+      responses:
+        "200":
+          $ref: "#/components/responses/Xml"
+  /saml/sp/login:
+    get:
+      tags:
+        - SAML SP
+      summary: Start SAML SP login.
+      responses:
+        "302":
+          description: Redirect response.
+  /saml/sp/acs:
+    post:
+      tags:
+        - SAML SP
+      summary: Receive SAML SP assertion consumer POST.
+      requestBody:
+        $ref: "#/components/requestBodies/SamlForm"
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          description: Redirect response.
+  /saml/sp/slo:
+    get:
+      tags:
+        - SAML SP
+      summary: Handle SAML SP logout redirect binding.
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+    post:
+      tags:
+        - SAML SP
+      summary: Handle SAML SP logout POST binding.
+      requestBody:
+        $ref: "#/components/requestBodies/SamlForm"
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+  /api/admin/saml-settings:
+    get:
+      tags:
+        - SAML Admin
+      summary: Get SAML settings.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+    put:
+      tags:
+        - SAML Admin
+      summary: Update SAML settings.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /api/admin/saml-providers:
+    get:
+      tags:
+        - SAML Admin
+      summary: List SAML providers.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+    post:
+      tags:
+        - SAML Admin
+      summary: Create a SAML provider.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Json"
+  /api/admin/saml-providers/{id}:
+    get:
+      tags:
+        - SAML Admin
+      summary: Get a SAML provider.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - &a1
+          name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+    put:
+      tags:
+        - SAML Admin
+      summary: Update a SAML provider.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - *a1
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+    delete:
+      tags:
+        - SAML Admin
+      summary: Delete a SAML provider.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - *a1
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /api/admin/saml-attribute-presets:
+    get:
+      tags:
+        - SAML Admin
+      summary: List SAML attribute presets.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+    post:
+      tags:
+        - SAML Admin
+      summary: Create a SAML attribute preset.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Json"
+  /api/admin/saml-metadata/preview:
+    post:
+      tags:
+        - SAML Admin
+      summary: Preview SAML metadata import.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+  /api/admin/saml-attribute-presets/{id}:
+    delete:
+      tags:
+        - SAML Admin
+      operationId: deleteApiAdminSamlAttributePresetsById
+      summary: DELETE /api/admin/saml-attribute-presets/{id}
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/admin/saml-metadata/batches/{batchId}:
+    get:
+      tags:
+        - SAML Admin
+      operationId: getApiAdminSamlMetadataBatchesByBatchId
+      summary: GET /api/admin/saml-metadata/batches/{batchId}
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: batchId
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/admin/saml-metadata/certificate-preview:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlMetadataCertificatePreview
+      summary: POST /api/admin/saml-metadata/certificate-preview
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-metadata/previews/{previewId}/batch-create:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlMetadataPreviewsByPreviewIdBatchCreate
+      summary: POST /api/admin/saml-metadata/previews/{previewId}/batch-create
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: previewId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-metadata/previews/{previewId}/entities:
+    get:
+      tags:
+        - SAML Admin
+      operationId: getApiAdminSamlMetadataPreviewsByPreviewIdEntities
+      summary: GET /api/admin/saml-metadata/previews/{previewId}/entities
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: previewId
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/admin/saml-providers/{id}/import-metadata:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlProvidersByIdImportMetadata
+      summary: POST /api/admin/saml-providers/{id}/import-metadata
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-providers/{id}/refresh-metadata:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlProvidersByIdRefreshMetadata
+      summary: POST /api/admin/saml-providers/{id}/refresh-metadata
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-providers/{id}/signing-rollover/promote-next:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlProvidersByIdSigningRolloverPromoteNext
+      summary: POST /api/admin/saml-providers/{id}/signing-rollover/promote-next
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-providers/{id}/signing-rollover/publish-next:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlProvidersByIdSigningRolloverPublishNext
+      summary: POST /api/admin/saml-providers/{id}/signing-rollover/publish-next
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-providers/{id}/signing-rollover/retire-backup:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlProvidersByIdSigningRolloverRetireBackup
+      summary: POST /api/admin/saml-providers/{id}/signing-rollover/retire-backup
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-settings/local-signing:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlSettingsLocalSigning
+      summary: POST /api/admin/saml-settings/local-signing
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-settings/local-signing/dr-bundle:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlSettingsLocalSigningDrBundle
+      summary: POST /api/admin/saml-settings/local-signing/dr-bundle
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/admin/saml-settings/local-signing/dr-bundle/import:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlSettingsLocalSigningDrBundleImport
+      summary: POST /api/admin/saml-settings/local-signing/dr-bundle/import
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /saml/idp/attribute-release-consent:
+    post:
+      tags:
+        - SAML IdP
+      operationId: postSamlIdpAttributeReleaseConsent
+      summary: POST /saml/idp/attribute-release-consent
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /saml/idp/init:
+    get:
+      tags:
+        - SAML IdP
+      operationId: getSamlIdpInit
+      summary: GET /saml/idp/init
+      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
+        request and response contract when changing this API.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Json"
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+    adminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_admin_session
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    SamlForm:
+      required: false
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            additionalProperties: true
+            properties:
+              SAMLRequest:
+                type: string
+              SAMLResponse:
+                type: string
+              RelayState:
+                type: string
+  responses:
+    Json:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Xml:
+      description: Successful XML response.
+      content:
+        application/xml:
+          schema:
+            type: string
+    Html:
+      description: Successful HTML response.
+      content:
+        text/html:
+          schema:
+            type: string

@@ -134,12 +134,18 @@ export type PluginCapability =
   | `notifier.${string}` // notifier.email, notifier.sms, notifier.push
   | `idp.${string}` // idp.google, idp.saml, idp.oidc
   | `authenticator.${string}` // authenticator.passkey, authenticator.otp
+  | `human_verification.${string}` // human_verification.turnstile, human_verification.recaptcha
   | `flow.${string}`; // flow.otp-send (future: Flow UI nodes)
 
 /**
  * Plugin category for UI grouping
  */
-export type PluginCategory = 'notification' | 'identity' | 'authentication' | 'flow';
+export type PluginCategory =
+  | 'notification'
+  | 'identity'
+  | 'authentication'
+  | 'security'
+  | 'flow';
 
 // =============================================================================
 // FlowNode Definition (Extension Point for Future Flow x UI Architecture)

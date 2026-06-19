@@ -107,6 +107,10 @@ import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import {
+  verifyHumanVerificationForAction,
+  type HumanVerificationAction,
+} from './human-verification';
 
 // ===== Constants =====
 
@@ -120,6 +124,7 @@ const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callba
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 
 type AuthorizationChallengeType = 'login' | 'reauth';
+type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
 
 export interface AuthorizationChallengeContinuation {
   redirectUrl: string;
@@ -129,6 +134,19 @@ export interface AuthorizationChallengeContinuation {
 interface AuthorizationChallengeData {
   userId?: string;
   metadata?: Record<string, unknown>;
+}
+
+interface AuthenticationMethodKVSettings {
+  'authentication-methods.passkey.enabled'?: boolean | string;
+  'authentication-methods.passkey.login_enabled'?: boolean | string;
+  'authentication-methods.passkey.signup_enabled'?: boolean | string;
+  'authentication-methods.passkey.reauth_enabled'?: boolean | string;
+  'authentication-methods.passkey.account_link_enabled'?: boolean | string;
+  'authentication-methods.email_otp.enabled'?: boolean | string;
+  'authentication-methods.email_otp.login_enabled'?: boolean | string;
+  'authentication-methods.email_otp.signup_enabled'?: boolean | string;
+  'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
+  'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
 }
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
@@ -175,6 +193,73 @@ export function isDirectAuthClientChannelAllowed(
   }
 
   return true;
+}
+
+function normalizeBooleanSetting(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return fallback;
+}
+
+async function readAuthenticationMethodSettings(
+  env: Env,
+  tenantId: string
+): Promise<AuthenticationMethodKVSettings> {
+  const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as AuthenticationMethodKVSettings) : {};
+  } catch {
+    return {};
+  }
+}
+
+function methodUsageEnabled(
+  settings: AuthenticationMethodKVSettings,
+  method: 'passkey' | 'email_otp',
+  usage: AuthenticationMethodUsage
+): boolean {
+  const legacyEnabled = settings[`authentication-methods.${method}.enabled`];
+  const legacyFallback = normalizeBooleanSetting(legacyEnabled, true);
+  const key =
+    usage === 'account_link'
+      ? `authentication-methods.${method}.account_link_enabled`
+      : `authentication-methods.${method}.${usage}_enabled`;
+  return normalizeBooleanSetting(
+    settings[key as keyof AuthenticationMethodKVSettings],
+    legacyFallback
+  );
+}
+
+async function isAuthenticationMethodUsageEnabled(
+  env: Env,
+  tenantId: string,
+  method: 'passkey' | 'email_otp',
+  usage: AuthenticationMethodUsage
+): Promise<boolean> {
+  const settings = await readAuthenticationMethodSettings(env, tenantId);
+  return methodUsageEnabled(settings, method, usage);
+}
+
+async function rejectIfAuthenticationMethodDisabled(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  method: 'passkey' | 'email_otp',
+  usage: AuthenticationMethodUsage
+): Promise<Response | null> {
+  const enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, method, usage);
+  if (enabled) return null;
+  return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+    extensions: {
+      authentication_method: method,
+      usage,
+    },
+  });
 }
 
 // WebAuthn transport types
@@ -482,6 +567,51 @@ export async function consumeAuthorizationChallengeContinuation(
   };
 }
 
+export async function readAuthorizationChallengeType(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined
+): Promise<AuthorizationChallengeType | null> {
+  if (!challengeId) return null;
+
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+    const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+      tenantId?: string;
+      type?: string;
+    } | null;
+    if (challenge?.tenantId !== tenantId) return null;
+    if (challenge.type === 'login' || challenge.type === 'reauth') return challenge.type;
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+async function resolveDirectStartTurnstileAction(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  authorizationChallengeId: string | undefined
+): Promise<HumanVerificationAction | { error: Response }> {
+  if (!authorizationChallengeId) return 'login';
+
+  const challengeType = await readAuthorizationChallengeType(
+    c.env,
+    tenantId,
+    authorizationChallengeId
+  );
+  if (!challengeType) {
+    return {
+      error: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      }),
+    };
+  }
+
+  return challengeType;
+}
+
 async function validateDirectAuthClient(
   c: Context<{ Bindings: Env }>,
   clientId: string,
@@ -699,10 +829,22 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       code_challenge_method: CodeChallengeMethod;
       channel: DirectAuthChannel;
       scope?: string;
-      email?: string; // Optional: for allowCredentials filtering
+      email?: string; // Accepted for backward compatibility; passkey discovery ignores it.
+      authorization_challenge_id?: string;
+      human_verification_response?: string;
+      cf_turnstile_response?: string;
     }>();
 
-    const { client_id, code_challenge, code_challenge_method, channel, scope, email } = body;
+    const {
+      client_id,
+      code_challenge,
+      code_challenge_method,
+      channel,
+      scope,
+      authorization_challenge_id,
+      human_verification_response,
+      cf_turnstile_response,
+    } = body;
 
     // Validate required fields
     if (!client_id || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -713,6 +855,26 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
     if (!isDirectAuthChannel(channel)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    const tenantId = getTenantIdFromContext(c);
+    const turnstileAction = await resolveDirectStartTurnstileAction(
+      c,
+      tenantId,
+      authorization_challenge_id
+    );
+    if (typeof turnstileAction !== 'string') return turnstileAction.error;
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      tenantId,
+      'passkey',
+      turnstileAction
+    );
+    if (methodDisabledError) return methodDisabledError;
+    const turnstileError = await verifyHumanVerificationForAction(
+      c,
+      turnstileAction,
+      human_verification_response ?? cf_turnstile_response
+    );
+    if (turnstileError) return turnstileError;
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
@@ -721,7 +883,7 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       return clientValidation.errorResponse as Response;
     }
 
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, tenantId);
 
     if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
@@ -730,41 +892,12 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
     const originUrl = new URL(originHeader);
     const rpID = originUrl.hostname;
 
-    // Get user's passkeys if email is provided
-    let allowCredentials: Array<{
-      id: string;
-      type: 'public-key';
-      transports?: AuthenticatorTransport[];
-    }> = [];
-
-    if (email) {
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-      const runtimeUser = await runtimeUsers.findByEmail(email);
-
-      if (runtimeUser) {
-        const userPasskeys = await authCtx.repositories.passkey.findByUserId(runtimeUser.id);
-        allowCredentials = userPasskeys
-          .map((pk) => {
-            const normalizedId = normalizeStoredCredentialId(pk.credential_id);
-            if (!normalizedId) return null;
-
-            return {
-              id: normalizedId,
-              type: 'public-key' as const,
-              transports: pk.transports.length > 0 ? pk.transports : undefined,
-            };
-          })
-          .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
-      }
-    }
-
     // Generate authentication options
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: 'required',
-      allowCredentials: allowCredentials.length > 0 ? allowCredentials : [],
+      // Passkey login is discoverable; email is reserved for OTP/profile collection flows.
+      allowCredentials: [],
     });
 
     // Store challenge with code_challenge in ChallengeStore
@@ -788,7 +921,6 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         channel,
         scope,
         transaction_id: challengeId,
-        email: email || null,
         origin: originHeader,
         rpID,
       },
@@ -1017,7 +1149,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
   try {
     const body = await c.req.json<{
       client_id: string;
-      email: string;
+      email?: string;
       display_name?: string;
       code_challenge: string;
       code_challenge_method: CodeChallengeMethod;
@@ -1027,6 +1159,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       resident_key?: 'required' | 'preferred' | 'discouraged';
       user_verification?: 'required' | 'preferred' | 'discouraged';
       custom_fields?: Record<string, unknown>;
+      human_verification_response?: string;
+      cf_turnstile_response?: string;
     }>();
 
     const {
@@ -1041,18 +1175,34 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       resident_key = 'required',
       user_verification = 'required',
       custom_fields,
+      human_verification_response,
+      cf_turnstile_response,
     } = body;
 
-    if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256' || !channel) {
+    if (!client_id || !code_challenge || code_challenge_method !== 'S256' || !channel) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: {
-          field: 'client_id, email, code_challenge, code_challenge_method=S256, channel',
+          field: 'client_id, code_challenge, code_challenge_method=S256, channel',
         },
       });
     }
     if (!isDirectAuthChannel(channel)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    const tenantId = getTenantIdFromContext(c);
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      tenantId,
+      'passkey',
+      'signup'
+    );
+    if (methodDisabledError) return methodDisabledError;
+    const turnstileError = await verifyHumanVerificationForAction(
+      c,
+      'signup',
+      human_verification_response ?? cf_turnstile_response
+    );
+    if (turnstileError) return turnstileError;
 
     // Validate Origin
     const originHeader = c.req.header('origin');
@@ -1071,20 +1221,29 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const rpID = originUrl.hostname;
 
     // Check if user exists or create new
-    const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    let user: { id: string; email: string; name: string | null } | null = null;
+    let user: { id: string; email: string | null; name: string | null } | null = null;
+    const normalizedEmail =
+      typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
 
-    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase());
-    if (existingUser) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    if (normalizedEmail) {
+      const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
+      if (existingUser) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+      }
     }
 
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
-      custom_fields
+      {
+        ...(custom_fields ?? {}),
+        ...(normalizedEmail
+          ? { email: normalizedEmail, 'field.canonical.email': normalizedEmail }
+          : {}),
+        ...(display_name ? { name: display_name, 'field.canonical.name': display_name } : {}),
+      }
     );
     if (!customFieldValidation.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -1105,12 +1264,12 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       // Create new user
       const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const defaultName = display_name || null;
-      const preferredUsername = email.split('@')[0];
+      const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
 
       try {
         await runtimeUsers.syncUser({
           userId: newUserId,
-          email: email.toLowerCase(),
+          email: normalizedEmail,
           name: defaultName,
           active: true,
           emailVerified: false,
@@ -1128,7 +1287,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: newUserId, email: email.toLowerCase(), name: defaultName };
+      user = { id: newUserId, email: normalizedEmail, name: defaultName };
     }
 
     // Get existing passkeys for exclusion
@@ -1171,8 +1330,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
       userID: encoder.encode(user.id),
-      userName: email.toLowerCase(),
-      userDisplayName: display_name || user.name || email,
+      userName: normalizedEmail ?? user.id,
+      userDisplayName: display_name || user.name || normalizedEmail || user.id,
       excludeCredentials,
       authenticatorSelection,
       attestationType: 'none',
@@ -1193,7 +1352,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       userId: user.id,
       challenge: options.challenge,
       ttl: CHALLENGE_TTL,
-      email: email.toLowerCase(),
+      email: normalizedEmail ?? undefined,
       metadata: {
         code_challenge,
         client_id,
@@ -1468,7 +1627,12 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       scope?: string;
       locale?: string;
       invite_token?: string;
+      authorization_challenge_id?: string;
+      display_name?: string;
+      name?: string;
       custom_fields?: Record<string, unknown>;
+      human_verification_response?: string;
+      cf_turnstile_response?: string;
     }>();
 
     const {
@@ -1480,7 +1644,12 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       scope,
       locale,
       invite_token,
+      authorization_challenge_id,
+      display_name,
+      name,
       custom_fields,
+      human_verification_response,
+      cf_turnstile_response,
     } = body;
 
     if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -1493,7 +1662,6 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     if (!isDirectAuthChannel(channel)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
-
     const clientValidation = await validateDirectAuthClient(
       c,
       client_id,
@@ -1509,6 +1677,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     if (!emailRegex.test(email)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    const normalizedEmail = email.toLowerCase();
+    const rawDisplayName =
+      typeof display_name === 'string' ? display_name : typeof name === 'string' ? name : undefined;
+    const displayName = rawDisplayName?.trim() || null;
 
     // Check/create user
     let tenantId = getTenantIdFromContext(c);
@@ -1534,10 +1706,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
       // If invitation is restricted to a specific email, enforce it
-      if (
-        invitation.invited_email &&
-        invitation.invited_email.toLowerCase() !== email.toLowerCase()
-      ) {
+      if (invitation.invited_email && invitation.invited_email.toLowerCase() !== normalizedEmail) {
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
@@ -1563,13 +1732,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
-    const rateLimitResult = await rateLimiter.incrementRpc(
-      `direct_email_code:${email.toLowerCase()}`,
-      {
-        windowSeconds: 15 * 60,
-        maxRequests: 3,
-      }
-    );
+    const rateLimitResult = await rateLimiter.incrementRpc(`direct_email_code:${normalizedEmail}`, {
+      windowSeconds: 15 * 60,
+      maxRequests: 3,
+    });
 
     if (!rateLimitResult.allowed) {
       return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
@@ -1577,48 +1743,98 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       });
     }
 
-    const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
-      c.env,
-      tenantId,
-      custom_fields
-    );
-    if (!customFieldValidation.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-        variables: { field: 'custom_fields', reason: customFieldValidation.error },
-        extensions: customFieldValidation.missingRequiredFields
-          ? {
-              missing_required_fields: customFieldValidation.missingRequiredFields.map((field) => ({
-                field_key: field.fieldKey,
-                label: field.label,
-                field_type: field.fieldType,
-              })),
-            }
-          : undefined,
-      });
-    }
-
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
+    let customFieldValues: Record<string, string> = {};
 
-    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase());
+    const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
     if (existingUser) {
       user = {
         id: existingUser.id,
-        email: existingUser.email || email.toLowerCase(),
+        email: existingUser.email || normalizedEmail,
         name: existingUser.name || null,
       };
     }
 
+    let suppressEmailCodeSend = false;
+
+    let turnstileAction: HumanVerificationAction;
+    if (authorization_challenge_id) {
+      const resolvedAction = await resolveDirectStartTurnstileAction(
+        c,
+        tenantId,
+        authorization_challenge_id
+      );
+      if (typeof resolvedAction !== 'string') return resolvedAction.error;
+      turnstileAction = resolvedAction;
+    } else {
+      turnstileAction = user ? 'login' : 'signup';
+    }
+    const emailCodeUsage = turnstileAction;
+    const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
+      c.env,
+      tenantId,
+      'email_otp',
+      emailCodeUsage
+    );
+    if (!emailOtpEnabled) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because email OTP usage is disabled', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'method_disabled',
+        usage: emailCodeUsage,
+      });
+    }
+    const turnstileError = await verifyHumanVerificationForAction(
+      c,
+      turnstileAction,
+      human_verification_response ?? cf_turnstile_response
+    );
+    if (turnstileError) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because human verification failed', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'human_verification',
+        usage: turnstileAction,
+      });
+    }
+
+    if (!user && !suppressEmailCodeSend) {
+      const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+        c.env,
+        tenantId,
+        {
+          ...(custom_fields ?? {}),
+          email: normalizedEmail,
+          'field.canonical.email': normalizedEmail,
+          ...(displayName ? { name: displayName, 'field.canonical.name': displayName } : {}),
+        }
+      );
+      if (!customFieldValidation.ok) {
+        suppressEmailCodeSend = true;
+        log.info('Suppressing email-code send because signup field validation failed', {
+          action: 'direct_email_code_send_suppressed',
+          reason: 'signup_field_validation',
+        });
+      } else {
+        customFieldValues = customFieldValidation.values;
+      }
+    }
+
+    if (suppressEmailCodeSend) {
+      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+    }
+
     if (!user) {
       const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
-      const preferredUsername = email.split('@')[0];
+      const preferredUsername = normalizedEmail.split('@')[0];
 
       try {
         await runtimeUsers.syncUser({
           userId,
-          email: email.toLowerCase(),
-          name: null,
+          email: normalizedEmail,
+          name: displayName,
           active: true,
           emailVerified: false,
           userType: 'end_user',
@@ -1631,7 +1847,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: userId, email: email.toLowerCase(), name: null };
+      user = { id: userId, email: normalizedEmail, name: displayName };
     }
 
     // Generate attempt ID and code
@@ -1647,8 +1863,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     }
 
     const [codeHash, emailHash, challengeStore] = await Promise.all([
-      hashEmailCode(code, email.toLowerCase(), attemptId, issuedAt, hmacSecret),
-      hashEmail(email.toLowerCase()),
+      hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
+      hashEmail(normalizedEmail),
       getChallengeStoreByChallengeId(c.env, attemptId, getTenantIdFromContext(c)),
     ]);
 
@@ -1659,7 +1875,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       userId: user.id,
       challenge: codeHash,
       ttl: EMAIL_CODE_TTL,
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       metadata: {
         code_challenge,
         client_id,
@@ -1679,9 +1895,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             }
           : {}),
         // Custom registration fields (validated and saved after email verification)
-        ...(Object.keys(customFieldValidation.values).length > 0
-          ? { custom_fields: customFieldValidation.values }
-          : {}),
+        ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
       },
     });
 
@@ -1700,12 +1914,12 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     await emailNotifier.send({
       channel: 'email',
-      to: email,
+      to: normalizedEmail,
       from: fromEmail,
       subject: 'Your verification code',
       body: getEmailCodeHtml({
         name: user.name || undefined,
-        email,
+        email: normalizedEmail,
         code,
         expiresInMinutes: EMAIL_CODE_TTL / 60,
         appName: 'Authrim',
@@ -1714,7 +1928,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       metadata: {
         textBody: getEmailCodeText({
           name: user.name || undefined,
-          email,
+          email: normalizedEmail,
           code,
           expiresInMinutes: EMAIL_CODE_TTL / 60,
           appName: 'Authrim',
@@ -1725,7 +1939,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     return c.json({
       attempt_id: attemptId,
       expires_in: EMAIL_CODE_TTL,
-      masked_email: maskEmail(email),
+      masked_email: maskEmail(normalizedEmail),
     });
   } catch (error) {
     log.error('Direct email code send error', {
@@ -1747,6 +1961,14 @@ function maskEmail(email: string): string {
     local.length <= 2 ? local.charAt(0) + '***' : local.charAt(0) + '***' + local.slice(-1);
 
   return `${masked}@${domain}`;
+}
+
+function acceptedEmailCodeSendResponse(c: Context<{ Bindings: Env }>, normalizedEmail: string) {
+  return c.json({
+    attempt_id: crypto.randomUUID(),
+    expires_in: EMAIL_CODE_TTL,
+    masked_email: maskEmail(normalizedEmail),
+  });
 }
 
 /**

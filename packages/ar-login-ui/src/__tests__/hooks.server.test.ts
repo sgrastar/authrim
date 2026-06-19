@@ -70,4 +70,66 @@ describe('Login UI proxy hooks', () => {
 		expect(headers.get('X-Forwarded-Host')).toBe('login.multi-tenant.authrim.com');
 		expect(headers.get('Cookie')).toContain('authrim_remembered_tenant');
 	});
+
+	it('adds Turnstile CSP origins only when Turnstile is enabled', async () => {
+		const { buildContentSecurityPolicy } = await import('../hooks.server');
+
+		const disabled = buildContentSecurityPolicy(undefined, null);
+		const enabled = buildContentSecurityPolicy(undefined, 'turnstile');
+
+		expect(disabled).not.toContain('https://challenges.cloudflare.com');
+		expect(disabled).not.toContain('https://static.cloudflareinsights.com');
+		expect(enabled).toContain(
+			"script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com"
+		);
+		expect(enabled).toContain('https://static.cloudflareinsights.com');
+		expect(enabled).toContain('frame-src https://challenges.cloudflare.com');
+	});
+
+	it('adds hCaptcha and reCAPTCHA CSP origins only for the selected provider', async () => {
+		const { buildContentSecurityPolicy } = await import('../hooks.server');
+
+		const hcaptcha = buildContentSecurityPolicy(undefined, 'hcaptcha');
+		const recaptcha = buildContentSecurityPolicy(undefined, 'recaptcha');
+
+		expect(hcaptcha).toContain('https://hcaptcha.com');
+		expect(hcaptcha).toContain('https://*.hcaptcha.com');
+		expect(hcaptcha).not.toContain('https://www.google.com');
+		expect(recaptcha).toContain('https://www.google.com');
+		expect(recaptcha).toContain('https://www.gstatic.com');
+		expect(recaptcha).not.toContain('https://hcaptcha.com');
+	});
+
+	it('removes Turnstile CSP origins when the Turnstile plugin is disabled', async () => {
+		const { buildContentSecurityPolicy, resolveHumanVerificationProviderForRequest } =
+			await import('../hooks.server');
+		const event = {
+			request: new Request('https://login.example.com/login'),
+			url: new URL('https://login.example.com/login'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const platformEnv = {
+			AR_ROUTER: {
+				fetch: vi.fn(async () =>
+					Response.json({
+						methods: {
+							humanVerification: {
+								enabled: false,
+								provider: 'turnstile',
+								siteKey: null
+							}
+						}
+					})
+				)
+			}
+		};
+
+		const provider = await resolveHumanVerificationProviderForRequest(event as never, platformEnv);
+		const csp = buildContentSecurityPolicy(platformEnv, provider);
+
+		expect(provider).toBeNull();
+		expect(csp).not.toContain('https://challenges.cloudflare.com');
+		expect(csp).not.toContain('https://static.cloudflareinsights.com');
+	});
 });

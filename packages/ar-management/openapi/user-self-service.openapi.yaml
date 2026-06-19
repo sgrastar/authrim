@@ -1,0 +1,993 @@
+openapi: 3.2.0
+info:
+  title: Authrim User Self-Service API
+  version: 0.3.2
+  summary: Authenticated user consent and data export endpoints.
+  description: OpenAPI contract for user-facing self-service endpoints owned by the management Worker.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+        description: Tenant runtime domain serving `/api/admin/*`.
+security:
+  - adminBearer: []
+  - adminSessionCookie: []
+tags:
+  - name: User Consent
+  - name: User Data Export
+paths:
+  /api/user/consents:
+    get:
+      tags:
+        - User Consent
+      operationId: getApiUserConsents
+      summary: List Consents.
+      description: List Consents in the User Consent area. Use this operation to retrieve consent data
+        without mutating tenant state.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/user/consents/{clientId}:
+    delete:
+      tags:
+        - User Consent
+      operationId: deleteApiUserConsentsByClientId
+      summary: Delete Consent.
+      description: Delete Consent in the User Consent area. The operation changes tenant state and should
+        be protected by the documented admin authorization and audit controls.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/user/data-export:
+    post:
+      tags:
+        - User Data Export
+      operationId: postApiUserDataExport
+      summary: Create Data Export.
+      description: Create Data Export in the User Data Export area. The request body is JSON unless the
+        detailed schema for this operation states otherwise.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+  /api/user/data-export/{id}:
+    get:
+      tags:
+        - User Data Export
+      operationId: getApiUserDataExportById
+      summary: Get Data Export.
+      description: Get Data Export in the User Data Export area. Use this operation to retrieve data
+        export data without mutating tenant state.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/user/data-export/{id}/download:
+    get:
+      tags:
+        - User Data Export
+      operationId: getApiUserDataExportByIdDownload
+      summary: Download Data Export.
+      description: Download Data Export in the User Data Export area. Use this operation to retrieve data
+        export data without mutating tenant state.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/user/data-export/artifacts/{artifactId}:
+    get:
+      tags:
+        - User Data Export
+      operationId: getApiUserDataExportArtifactsByArtifactId
+      summary: Get Artifact.
+      description: Get Artifact in the User Data Export area. Use this operation to retrieve artifact data
+        without mutating tenant state.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/user/data-export/artifacts/{artifactId}/chunks/{index}:
+    get:
+      tags:
+        - User Data Export
+      operationId: getApiUserDataExportArtifactsByArtifactIdChunksByIndex
+      summary: Get Chunk.
+      description: Get Chunk in the User Data Export area. Use this operation to retrieve chunk data
+        without mutating tenant state.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/user/data-export/artifacts/{artifactId}/download:
+    get:
+      tags:
+        - User Data Export
+      operationId: getApiUserDataExportArtifactsByArtifactIdDownload
+      summary: Download Artifact.
+      description: Download Artifact in the User Data Export area. Use this operation to retrieve artifact
+        data without mutating tenant state.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema:
+            type: string
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      description: Admin API bearer token for headless/API usage.
+    adminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_admin_session
+      description: Admin UI session cookie for browser usage.
+  parameters:
+    TenantIdHeader:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Tenant selector for multi-tenant admin requests.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Idempotency key for state-changing operations that support replay protection.
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    ClientId:
+      name: clientId
+      in: path
+      required: true
+      schema:
+        type: string
+    TenantIdPath:
+      name: tenantId
+      in: path
+      required: true
+      schema:
+        type: string
+    Category:
+      name: category
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JsonObject"
+    AdminClientCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminClientCreate"
+    AdminClientUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminClientUpdate"
+    AdminUserCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminUserCreate"
+    AdminUserUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminUserUpdate"
+    AdminUserStatusChange:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminUserStatusChange"
+    WebhookCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WebhookCreate"
+    WebhookUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WebhookUpdate"
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JsonObject"
+    List:
+      description: Successful JSON list response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JsonObject"
+    AdminClient:
+      description: OAuth/OIDC client response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminClientResponse"
+    AdminClientMutation:
+      description: OAuth/OIDC client mutation response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminClientMutationResponse"
+    AdminClientList:
+      description: OAuth/OIDC client list response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminClientListResponse"
+    AdminUser:
+      description: Admin end-user response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminUserResponse"
+    AdminUserDetail:
+      description: Admin end-user detail response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminUserDetailResponse"
+    AdminUserList:
+      description: Admin end-user list response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminUserListResponse"
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    JsonObject:
+      type: object
+      additionalProperties: true
+    UriString:
+      type: string
+      format: uri
+    OriginString:
+      type: string
+      pattern: ^https?://[^/]+$
+    StringArray:
+      type: array
+      items:
+        type: string
+    Pagination:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - totalPages
+        - hasNext
+        - hasPrev
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+        hasNext:
+          type: boolean
+        hasPrev:
+          type: boolean
+    AdminClientBase:
+      type: object
+      additionalProperties: true
+      properties:
+        client_name:
+          type: string
+          minLength: 1
+        description:
+          type:
+            - string
+            - "null"
+        redirect_uris:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/UriString"
+        grant_types:
+          type: array
+          items:
+            type: string
+            enum:
+              - authorization_code
+              - refresh_token
+              - client_credentials
+              - urn:ietf:params:oauth:grant-type:device_code
+              - urn:openid:params:grant-type:ciba
+              - urn:ietf:params:oauth:grant-type:token-exchange
+        response_types:
+          type: array
+          items:
+            type: string
+            enum:
+              - code
+              - id_token
+              - token
+        scope:
+          type: string
+        logo_uri:
+          $ref: "#/components/schemas/UriString"
+        client_uri:
+          $ref: "#/components/schemas/UriString"
+        policy_uri:
+          $ref: "#/components/schemas/UriString"
+        tos_uri:
+          $ref: "#/components/schemas/UriString"
+        contacts:
+          $ref: "#/components/schemas/StringArray"
+        token_endpoint_auth_method:
+          type: string
+          enum:
+            - none
+            - client_secret_basic
+            - client_secret_post
+            - client_secret_jwt
+            - private_key_jwt
+        subject_type:
+          type: string
+          enum:
+            - public
+            - pairwise
+        sector_identifier_uri:
+          $ref: "#/components/schemas/UriString"
+        is_trusted:
+          type: boolean
+        skip_consent:
+          type: boolean
+        allow_claims_without_scope:
+          type: boolean
+        allowed_redirect_origins:
+          type: array
+          items:
+            $ref: "#/components/schemas/OriginString"
+        web_origin_registry:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        require_pkce:
+          type: boolean
+        application_type:
+          type: string
+          enum:
+            - web
+            - native
+            - service
+        trust_group:
+          type:
+            - string
+            - "null"
+        browser_public_client_mode:
+          type:
+            - string
+            - "null"
+          enum:
+            - disabled
+            - enabled
+            - required
+            - null
+        browser_refresh_token_policy:
+          type:
+            - string
+            - "null"
+          enum:
+            - disabled
+            - rotation
+            - persistent
+            - null
+        native_sso_enabled:
+          type:
+            - boolean
+            - "null"
+        native_channel_allowed:
+          type:
+            - boolean
+            - "null"
+        allowed_channels:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+        token_exchange_allowed:
+          type: boolean
+        allowed_subject_token_clients:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+        allowed_token_exchange_resources:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+        delegation_mode:
+          type: string
+          enum:
+            - none
+            - delegation
+            - impersonation
+        client_credentials_allowed:
+          type: boolean
+        allowed_scopes:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+        default_scope:
+          type:
+            - string
+            - "null"
+        default_audience:
+          type:
+            - string
+            - "null"
+        default_resource:
+          type:
+            - string
+            - "null"
+    AdminClientCreate:
+      allOf:
+        - $ref: "#/components/schemas/AdminClientBase"
+        - type: object
+          required:
+            - client_name
+            - redirect_uris
+    AdminClientUpdate:
+      allOf:
+        - $ref: "#/components/schemas/AdminClientBase"
+        - type: object
+          properties:
+            initiate_login_uri:
+              $ref: "#/components/schemas/UriString"
+            login_ui_url:
+              $ref: "#/components/schemas/UriString"
+    AdminClient:
+      allOf:
+        - $ref: "#/components/schemas/AdminClientBase"
+        - type: object
+          additionalProperties: true
+          required:
+            - client_id
+            - client_name
+            - redirect_uris
+            - grant_types
+            - response_types
+          properties:
+            client_id:
+              type: string
+            client_secret:
+              type: string
+              writeOnly: true
+              description: Returned only on secret-issuing operations such as client creation or regeneration.
+            tenant_id:
+              type: string
+            created_at:
+              oneOf:
+                - type: integer
+                - type: string
+            updated_at:
+              oneOf:
+                - type: integer
+                - type: string
+    AdminClientResponse:
+      type: object
+      required:
+        - client
+      properties:
+        client:
+          $ref: "#/components/schemas/AdminClient"
+    AdminClientMutationResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+        client:
+          $ref: "#/components/schemas/AdminClient"
+    AdminClientListResponse:
+      type: object
+      required:
+        - clients
+        - pagination
+      properties:
+        clients:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminClient"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    AdminUserCreate:
+      type: object
+      additionalProperties:
+        oneOf:
+          - type: string
+          - type: number
+          - type: boolean
+          - type: "null"
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        given_name:
+          type: string
+        family_name:
+          type: string
+        nickname:
+          type: string
+        preferred_username:
+          type: string
+        picture:
+          type: string
+          format: uri
+        email_verified:
+          type: boolean
+        phone_number:
+          type: string
+        phone_number_verified:
+          type: boolean
+        user_type:
+          type: string
+    AdminUser:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        legacy_user_id:
+          type: string
+        tenant_id:
+          type: string
+        email:
+          type:
+            - string
+            - "null"
+          format: email
+        name:
+          type:
+            - string
+            - "null"
+        given_name:
+          type:
+            - string
+            - "null"
+        family_name:
+          type:
+            - string
+            - "null"
+        nickname:
+          type:
+            - string
+            - "null"
+        preferred_username:
+          type:
+            - string
+            - "null"
+        picture:
+          type:
+            - string
+            - "null"
+          format: uri
+        email_verified:
+          type: boolean
+        phone_number:
+          type:
+            - string
+            - "null"
+        phone_number_verified:
+          type: boolean
+        user_type:
+          type: string
+        active:
+          type: boolean
+        lifecycle_state:
+          type: string
+        created_at:
+          oneOf:
+            - type: integer
+            - type: string
+        updated_at:
+          oneOf:
+            - type: integer
+            - type: string
+    AdminUserResponse:
+      type: object
+      required:
+        - user
+      properties:
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/AdminUser"
+            - type: "null"
+    AdminUserDetailResponse:
+      allOf:
+        - $ref: "#/components/schemas/AdminUserResponse"
+        - type: object
+          properties:
+            passkeys:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                  credential_id:
+                    type: string
+                  device_name:
+                    type:
+                      - string
+                      - "null"
+                  created_at:
+                    oneOf:
+                      - type: integer
+                      - type: string
+                      - type: "null"
+                  last_used_at:
+                    oneOf:
+                      - type: integer
+                      - type: string
+                      - type: "null"
+            missing_required_fields:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            customFields:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+    AdminUserListResponse:
+      type: object
+      required:
+        - users
+        - pagination
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    AdminUserUpdate:
+      type: object
+      additionalProperties:
+        oneOf:
+          - type: string
+          - type: number
+          - type: boolean
+          - type: "null"
+      properties:
+        name:
+          type: string
+        given_name:
+          type: string
+        family_name:
+          type: string
+        nickname:
+          type: string
+        preferred_username:
+          type: string
+        picture:
+          type: string
+          format: uri
+        email_verified:
+          type: boolean
+        phone_number:
+          type: string
+        phone_number_verified:
+          type: boolean
+        user_type:
+          type: string
+    AdminUserStatusChange:
+      type: object
+      additionalProperties: false
+      properties:
+        reason_code:
+          type: string
+        reason_detail:
+          type: string
+        duration_hours:
+          type: number
+          minimum: 0
+    WebhookRetryPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        maxRetries:
+          type: integer
+          minimum: 0
+          maximum: 10
+        initialDelayMs:
+          type: integer
+          minimum: 0
+        backoffMultiplier:
+          type: number
+          minimum: 1
+        maxDelayMs:
+          type: integer
+          minimum: 0
+    WebhookCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - url
+        - events
+      properties:
+        name:
+          type: string
+          minLength: 1
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        secret:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        retryPolicy:
+          $ref: "#/components/schemas/WebhookRetryPolicy"
+        timeoutMs:
+          type: integer
+          minimum: 1000
+          maximum: 60000
+        clientId:
+          type: string
+    WebhookUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        secret:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        retryPolicy:
+          $ref: "#/components/schemas/WebhookRetryPolicy"
+        timeoutMs:
+          type: integer
+          minimum: 1000
+          maximum: 60000
+        active:
+          type: boolean
+    Webhook:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        clientId:
+          type:
+            - string
+            - "null"
+        scope:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        hasSecret:
+          type: boolean
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        retryPolicy:
+          $ref: "#/components/schemas/WebhookRetryPolicy"
+        timeoutMs:
+          type: integer
+        active:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        lastSuccessAt:
+          type:
+            - string
+            - "null"
+        lastFailureAt:
+          type:
+            - string
+            - "null"
+    WebhookMutationResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+        webhook:
+          oneOf:
+            - $ref: "#/components/schemas/Webhook"
+            - type: "null"
+    Error:
+      type: object
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        error_description:
+          type: string

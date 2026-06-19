@@ -18,6 +18,10 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.email_otp.signup_enabled': boolean;
   'authentication-methods.email_otp.reauth_enabled': boolean;
   'authentication-methods.email_otp.account_link_enabled': boolean;
+  'authentication-methods.human_verification.provider': string;
+  'authentication-methods.human_verification.login_enabled': boolean;
+  'authentication-methods.human_verification.signup_enabled': boolean;
+  'authentication-methods.human_verification.reauth_enabled': boolean;
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
@@ -33,7 +37,7 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
   'authentication-methods.cache_ttl': {
     key: 'authentication-methods.cache_ttl',
     type: 'duration',
-    default: 300,
+    default: 180,
     envKey: 'AUTHENTICATION_METHODS_CACHE_TTL',
     label: 'Cache TTL',
     description: 'Cache lifetime for the public authentication methods response',
@@ -114,6 +118,38 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable email one-time-code use for account linking flows',
     visibility: 'page',
   },
+  'authentication-methods.human_verification.provider': {
+    key: 'authentication-methods.human_verification.provider',
+    type: 'string',
+    default: 'human-verification-cloudflare-turnstile',
+    label: 'Human Verification Provider',
+    description: 'Plugin provider used for Login UI human verification',
+    visibility: 'admin',
+  },
+  'authentication-methods.human_verification.login_enabled': {
+    key: 'authentication-methods.human_verification.login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Human Verification Login',
+    description: 'Require human verification before login actions',
+    visibility: 'page',
+  },
+  'authentication-methods.human_verification.signup_enabled': {
+    key: 'authentication-methods.human_verification.signup_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Human Verification Signup',
+    description: 'Require human verification before signup actions',
+    visibility: 'page',
+  },
+  'authentication-methods.human_verification.reauth_enabled': {
+    key: 'authentication-methods.human_verification.reauth_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Human Verification Re-authentication',
+    description: 'Require human verification before re-authentication actions',
+    visibility: 'page',
+  },
   'authentication-methods.external_provider_usage': {
     key: 'authentication-methods.external_provider_usage',
     type: 'json',
@@ -165,7 +201,7 @@ export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
 };
 
 export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
-  'authentication-methods.cache_ttl': 300,
+  'authentication-methods.cache_ttl': 180,
   'authentication-methods.passkey.login_enabled': true,
   'authentication-methods.passkey.signup_enabled': true,
   'authentication-methods.passkey.reauth_enabled': true,
@@ -174,6 +210,10 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.email_otp.signup_enabled': true,
   'authentication-methods.email_otp.reauth_enabled': true,
   'authentication-methods.email_otp.account_link_enabled': true,
+  'authentication-methods.human_verification.provider': 'human-verification-cloudflare-turnstile',
+  'authentication-methods.human_verification.login_enabled': false,
+  'authentication-methods.human_verification.signup_enabled': false,
+  'authentication-methods.human_verification.reauth_enabled': false,
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,

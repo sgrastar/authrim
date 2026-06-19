@@ -170,32 +170,11 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
-        c.env,
-        tenantId,
-        custom_fields
-      );
-      if (!customFieldValidation.ok) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-          variables: { field: 'custom_fields', reason: customFieldValidation.error },
-          extensions: customFieldValidation.missingRequiredFields
-            ? {
-                missing_required_fields: customFieldValidation.missingRequiredFields.map(
-                  (field) => ({
-                    field_key: field.fieldKey,
-                    label: field.label,
-                    field_type: field.fieldType,
-                  })
-                ),
-              }
-            : undefined,
-        });
-      }
-
       // Check if user exists, if not create a new canonical runtime user.
       let user: { id: string; email: string; name: string | null } | null = null;
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
       const normalizedEmail = email.toLowerCase();
+      let customFieldValues: Record<string, string> = {};
 
       const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
       if (existingUser) {
@@ -207,9 +186,37 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!user) {
+        const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+          c.env,
+          tenantId,
+          {
+            ...(custom_fields ?? {}),
+            email: normalizedEmail,
+            'field.canonical.email': normalizedEmail,
+            ...(name ? { name, 'field.canonical.name': name } : {}),
+          }
+        );
+        if (!customFieldValidation.ok) {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+            variables: { field: 'custom_fields', reason: customFieldValidation.error },
+            extensions: customFieldValidation.missingRequiredFields
+              ? {
+                  missing_required_fields: customFieldValidation.missingRequiredFields.map(
+                    (field) => ({
+                      field_key: field.fieldKey,
+                      label: field.label,
+                      field_type: field.fieldType,
+                    })
+                  ),
+                }
+              : undefined,
+          });
+        }
+        customFieldValues = customFieldValidation.values;
+
         const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
         const defaultName = name || null;
-        const preferredUsername = email.split('@')[0];
+        const preferredUsername = normalizedEmail.split('@')[0];
 
         try {
           await runtimeUsers.syncUser({
@@ -272,8 +279,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           otp_session_id: otpSessionId,
           issued_at: issuedAt,
           purpose: 'login',
-          ...(Object.keys(customFieldValidation.values).length > 0
-            ? { custom_fields: customFieldValidation.values }
+          ...(Object.keys(customFieldValues).length > 0
+            ? { custom_fields: customFieldValues }
             : {}),
         },
       });
