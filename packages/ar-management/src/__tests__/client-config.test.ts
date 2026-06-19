@@ -203,6 +203,59 @@ describe('client-config update handler', () => {
     expect(body.error_description).toContain('internal addresses');
   });
 
+  it('rejects unsupported grant types before persistence', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code', 'password'],
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; error_description: string };
+    expect(body.error).toBe('invalid_client_metadata');
+    expect(body.error_description).toBe('Unsupported grant_type: password');
+  });
+
+  it('rejects non-HTTPS non-loopback redirect URIs before persistence', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['http://example.com/callback'],
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; error_description: string };
+    expect(body.error).toBe('invalid_client_metadata');
+    expect(body.error_description).toBe(
+      'redirect_uri must use HTTPS except for loopback development callbacks'
+    );
+  });
+
   it('rejects jwks_uri values that target internal addresses', async () => {
     mocked.getClientCached.mockResolvedValueOnce({
       client_id: 'client-123',

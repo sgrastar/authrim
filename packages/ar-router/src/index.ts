@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
@@ -235,6 +235,29 @@ async function proxyToUiWorker(
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
 
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function requestUsesHttp(c: Context<{ Bindings: Env }>): boolean {
+  const requestUrl = new URL(c.req.url);
+  if (requestUrl.protocol === 'http:') {
+    return true;
+  }
+
+  return (c.req.header('x-forwarded-proto') ?? '').toLowerCase() === 'http';
+}
+
+async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: Next) {
+  const requestUrl = new URL(c.req.url);
+  if (!requestUsesHttp(c) || isLoopbackHost(requestUrl.hostname)) {
+    return next();
+  }
+
+  requestUrl.protocol = 'https:';
+  return c.redirect(requestUrl.toString(), 308);
+}
+
 function notFoundResponse(): Response {
   return Response.json(
     {
@@ -246,6 +269,7 @@ function notFoundResponse(): Response {
 }
 
 // Middleware
+app.use('*', redirectExternalHttpToHttps);
 app.use('*', logger());
 
 // Enhanced security headers

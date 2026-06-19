@@ -234,6 +234,31 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.scope).toBe('openid profile email');
     });
 
+    it('should default require_pkce to true for public authorization code clients', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.require_pkce).toBe(true);
+    });
+
     it('uses the request host for registration_client_uri in multi-tenant mode', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
@@ -935,6 +960,60 @@ describe('Dynamic Client Registration Handler', () => {
       const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('Unsupported grant_type');
+    });
+  });
+
+  describe('Validation - require_pkce', () => {
+    it('should reject non-boolean require_pkce', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        require_pkce: 'true',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('require_pkce must be a boolean');
+    });
+
+    it('should reject require_pkce false for public authorization code clients', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code'],
+        require_pkce: false,
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('require_pkce must be true');
     });
   });
 
