@@ -673,6 +673,10 @@ import {
   getAccountReauthStatusHandler,
 } from './account-page';
 import {
+  listAccountSessionsHandler,
+  deleteAccountSessionHandler,
+} from './account-sessions';
+import {
   createWebhook,
   listWebhooks,
   getWebhook,
@@ -1163,6 +1167,8 @@ app.use('/api/account/*', async (c, next) => {
 });
 app.get('/api/account/profile', getAccountProfileHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
+app.get('/api/account/sessions', listAccountSessionsHandler);
+app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
 app.get('/api/account/devices', listMyDevicesHandler);
 app.patch('/api/account/devices/:id', updateMyDeviceHandler);
 app.delete('/api/account/devices/:id', deleteMyDeviceHandler);

@@ -51,6 +51,43 @@ paths:
         "500":
           $ref: "#/components/responses/Error"
       security: *accountSession
+  /api/account/sessions:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountSessions
+      summary: List current user's Authrim browser sessions.
+      description: Returns active Authrim browser sessions owned by the authenticated Account Page user.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountSessions"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security: *accountSession
+  /api/account/sessions/{id}:
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountSessionById
+      summary: Revoke one current user's Authrim browser session.
+      description: Invalidates a session owned by the authenticated Account Page user. Revoking the
+        current session also clears the Account Page session cookie.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountSessionRevoke"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      security: *accountSession
   /api/account/devices:
     get:
       tags:
@@ -484,6 +521,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/AccountDevicesResponse"
+    AccountSessions:
+      description: Account Page session list response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountSessionsResponse"
+    AccountSessionRevoke:
+      description: Account Page session revoke response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountSessionRevokeResponse"
     AccountDevice:
       description: Account Page device mutation response.
       content:
@@ -754,6 +803,56 @@ components:
             $ref: "#/components/schemas/AccountDevice"
         next_cursor:
           type: string
+    AccountSession:
+      type: object
+      required:
+        - id
+        - current
+        - created_at
+        - expires_at
+      properties:
+        id:
+          type: string
+        current:
+          type: boolean
+        created_at:
+          type: integer
+        expires_at:
+          type: integer
+    AccountSessionsResponse:
+      type: object
+      required:
+        - sessions
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountSession"
+    AccountSessionRevokeResponse:
+      type: object
+      required:
+        - ok
+        - session
+      properties:
+        ok:
+          type: boolean
+        session:
+          type: object
+          required:
+            - id
+            - current
+            - store_status
+          properties:
+            id:
+              type: string
+            current:
+              type: boolean
+            store_status:
+              type: string
+              enum:
+                - revoked
+                - not_found
+                - not_applicable
     AccountDeviceResponse:
       type: object
       required:
