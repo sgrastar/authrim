@@ -15,13 +15,16 @@ import {
   cleanupSetupMachineAccessInD1,
   ensureSetupMachineAccessInD1,
 } from '../packages/setup/src/core/cloudflare.js';
+import { loadLockFileAuto, saveLockFile } from '../packages/setup/src/core/lock.js';
 import {
   UI_WORKER_COMPONENTS,
   deployUiWorkerComponent,
   type UiWorkerComponent,
 } from '../packages/setup/src/core/deploy.js';
+import { getPackageVersion } from '../packages/setup/src/core/version.js';
 import { ensureLoginUiClient } from '../packages/setup/src/core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../packages/setup/src/core/ui-deployment.js';
+import { mergeAndSaveUiEnv } from '../packages/setup/src/core/ui-env.js';
 import {
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
@@ -184,6 +187,12 @@ async function deployComponent(
     loginUiClientId,
   });
 
+  if (component === 'ar-login-ui' && resolved.type === 'new' && loginUiClientId) {
+    const uiEnvPath = (resolved.paths as EnvironmentPaths).uiEnv;
+    await mergeAndSaveUiEnv(uiEnvPath, uiSettings.uiEnv);
+    console.log(`Updated Login UI env: ${uiEnvPath}`);
+  }
+
   const result = await deployUiWorkerComponent(component, {
     env,
     rootDir,
@@ -198,6 +207,28 @@ async function deployComponent(
 
   if (!result.success) {
     throw new Error(`${component}: ${result.error || 'Pages deployment failed'}`);
+  }
+
+  if (resolved.type === 'new' && result.deployedAt) {
+    const { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+    if (lock && lockPath) {
+      const version = await getPackageVersion(join(rootDir, 'packages', component));
+      await saveLockFile(
+        {
+          ...lock,
+          workers: {
+            ...lock.workers,
+            [component]: {
+              name: result.projectName,
+              deployedAt: result.deployedAt,
+              version: version ?? undefined,
+            },
+          },
+          updatedAt: new Date().toISOString(),
+        },
+        lockPath
+      );
+    }
   }
 
   console.log(`Deployed ${component} to ${result.projectName}`);

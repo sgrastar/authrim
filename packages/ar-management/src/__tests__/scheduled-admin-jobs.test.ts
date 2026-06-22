@@ -5,6 +5,7 @@ const {
   mockProcessPendingUserImportJobs,
   mockProcessPendingDataExportRequests,
   mockProcessPendingSupportOpsSnapshotJobs,
+  mockProcessConsentRetentionJobs,
   mockRefreshTenantDatabaseStats,
   mockProcessPendingTenantDatabaseHealthCheckJobs,
   mockRefreshTenantDatabaseHealth,
@@ -19,6 +20,7 @@ const {
   mockProcessPendingUserImportJobs: vi.fn(),
   mockProcessPendingDataExportRequests: vi.fn(),
   mockProcessPendingSupportOpsSnapshotJobs: vi.fn(),
+  mockProcessConsentRetentionJobs: vi.fn(),
   mockRefreshTenantDatabaseStats: vi.fn(),
   mockProcessPendingTenantDatabaseHealthCheckJobs: vi.fn(),
   mockRefreshTenantDatabaseHealth: vi.fn(),
@@ -44,6 +46,10 @@ vi.mock('../data-export', () => ({
 
 vi.mock('../support-ops', () => ({
   processPendingSupportOpsSnapshotJobs: mockProcessPendingSupportOpsSnapshotJobs,
+}));
+
+vi.mock('../consent-retention-jobs', () => ({
+  processConsentRetentionJobs: mockProcessConsentRetentionJobs,
 }));
 
 vi.mock('../tenant-database-stats-jobs', () => ({
@@ -93,6 +99,7 @@ describe('scheduled admin job queues', () => {
     mockProcessPendingUserImportJobs.mockResolvedValue(undefined);
     mockProcessPendingDataExportRequests.mockResolvedValue(undefined);
     mockProcessPendingSupportOpsSnapshotJobs.mockResolvedValue(undefined);
+    mockProcessConsentRetentionJobs.mockResolvedValue(undefined);
     mockRefreshTenantDatabaseStats.mockResolvedValue(undefined);
     mockProcessPendingTenantDatabaseHealthCheckJobs.mockResolvedValue(undefined);
     mockRefreshTenantDatabaseHealth.mockResolvedValue(undefined);
@@ -111,6 +118,7 @@ describe('scheduled admin job queues', () => {
     expect(mockProcessPendingUserImportJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingDataExportRequests).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(env, log);
+    expect(mockProcessConsentRetentionJobs).toHaveBeenCalledWith(env, log);
     expect(mockRefreshTenantDatabaseStats).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDatabaseHealthCheckJobs).toHaveBeenCalledWith(env, log);
     expect(mockRefreshTenantDatabaseHealth).toHaveBeenCalledWith(env, log);

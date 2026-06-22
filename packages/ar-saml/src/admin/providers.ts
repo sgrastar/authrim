@@ -213,6 +213,9 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
     return { field: 'jitEmailLinkingPolicy' };
   }
+  if (!config.identityMapping?.fieldMappingSetId) {
+    return { field: 'identityMapping.fieldMappingSetId' };
+  }
 
   return {
     ...config,
@@ -222,20 +225,22 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
 }
 
 function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseValidationError {
-  const presetConfig = normalizeSAMLSPAttributePresetConfig(config);
-  if (presetConfig.attributeReleaseConsent === undefined) {
-    return presetConfig;
+  if (!config.identityMapping?.fieldMappingSetId) {
+    return { field: 'identityMapping.fieldMappingSetId' };
+  }
+  if (config.attributeReleaseConsent === undefined) {
+    return config;
   }
 
   const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
-    presetConfig.attributeReleaseConsent
+    config.attributeReleaseConsent
   );
   if (!attributeReleaseConsent) {
     return { field: 'attributeReleaseConsent.mode' };
   }
 
   return {
-    ...presetConfig,
+    ...config,
     attributeReleaseConsent,
   };
 }
@@ -2323,16 +2328,13 @@ function buildConfigFromMetadata(
   providerType: string,
   metadataXml: string,
   profile?: SAMLSPProfile,
-  attributePresetId?: SAMLAttributePresetId
+  _attributePresetId?: SAMLAttributePresetId
 ): SAMLIdPConfig | SAMLSPConfig {
   if (providerType === 'saml_idp') {
     return parseIdPMetadata(metadataXml);
   }
 
-  const profiledConfig = applySAMLSPProfileDefaults(parseSPMetadata(metadataXml, profile), profile);
-  return attributePresetId
-    ? applySAMLAttributePresetToSPConfig(profiledConfig, attributePresetId)
-    : normalizeSAMLSPAttributePresetConfig(profiledConfig);
+  return applySAMLSPProfileDefaults(parseSPMetadata(metadataXml, profile), profile);
 }
 
 function detectSAMLMetadataProviderType(metadataXml: string): 'saml_idp' | 'saml_sp' {

@@ -286,7 +286,7 @@ const adminSaml = {
 	admin_saml_detail_allowed_bindings_hint:
 		'Controls which SAML protocol bindings this provider may use for SSO/SLO messages.',
 	admin_saml_detail_at_least_one_binding: 'At least one binding is required',
-	admin_saml_detail_sp_login_policy: 'SP Login Policy',
+	admin_saml_detail_sp_login_policy: 'External IdP Login Policy',
 	admin_saml_detail_sp_display_name: 'SP Display Name',
 	admin_saml_detail_jit_linking_policy: 'JIT Linking Policy',
 	admin_saml_detail_jit_existing_or_create: 'Existing verified email or JIT create',
@@ -301,15 +301,28 @@ const adminSaml = {
 	admin_saml_detail_signature_required_hint:
 		'Required by default. Use Optional or Disabled only for explicit legacy IdP compatibility.',
 	admin_saml_detail_authn_context_policy: 'AuthnContext Policy',
+	admin_saml_detail_authn_context_policy_hint:
+		'Controls how Authrim handles RequestedAuthnContext in SP AuthnRequests. Observe records the request without blocking; Require allowed rejects requests whose AuthnContextClassRef is not listed below.',
 	admin_saml_detail_allowed_authn_context: 'Allowed AuthnContextClassRef',
-	admin_saml_detail_sp_policy: 'SP Policy',
-	admin_saml_detail_profile: 'Profile',
+	admin_saml_detail_allowed_authn_context_hint:
+		'One AuthnContextClassRef URI per line. Used only when AuthnContext Policy is Require allowed; include every authentication context this SP is allowed to request.',
+	admin_saml_detail_sp_policy: 'SAML SP Attribute Release Policy',
+	admin_saml_detail_profile: 'SP compatibility profile',
+	admin_saml_detail_profile_hint_baseline:
+		'Baseline is the recommended default for ordinary SAML SPs. It keeps signing, NameID, and binding behavior on safe standard defaults.',
+	admin_saml_detail_profile_hint_strict:
+		'Strict applies tighter signature and compatibility expectations. Use it when the SP follows modern SAML behavior.',
+	admin_saml_detail_profile_hint_academic_publisher:
+		'Uses strict SP defaults for publisher/library SPs: signed assertions, required signed AuthnRequest and Logout, and Persistent NameID. Pair it with an attribute mapping when the SP expects mail, displayName, eduPersonScopedAffiliation, or eduPersonEntitlement.',
+	admin_saml_detail_profile_hint_legacy:
+		'Legacy relaxes compatibility for older SPs. Use it only for an explicit legacy exception.',
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'None',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
-	admin_saml_detail_identity_mapping_policy_default: 'Tenant default / legacy release',
+	admin_saml_detail_identity_mapping_policy_default: 'Select a Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_hint:
-		'Selects the active Field Mapping Set used for SAML Attribute release to this SP.',
+		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
+	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
 	admin_saml_detail_attribute_release_consent: 'Attribute release consent',
 	admin_saml_detail_attribute_release_consent_disabled: 'Do not ask before releasing attributes',
 	admin_saml_detail_attribute_release_consent_once: 'Ask the first time, then remember',
@@ -318,12 +331,18 @@ const adminSaml = {
 		'Ask again when attributes change',
 	admin_saml_detail_attribute_release_consent_hint:
 		'Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.',
-	admin_saml_detail_authn_request_signature: 'AuthnRequest Signature',
-	admin_saml_detail_logout_request_signature: 'LogoutRequest Signature',
+	admin_saml_detail_authn_request_signature: 'AuthnRequest signature verification',
+	admin_saml_detail_authn_request_signature_hint:
+		'Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.',
+	admin_saml_detail_logout_request_signature: 'LogoutRequest signature verification',
 	admin_saml_detail_sp_signature_hint:
-		'Required by default. Relax only for an explicit legacy SP exception.',
-	admin_saml_detail_authn_context_mode: 'AuthnContext Mode',
-	admin_saml_detail_default_authn_context: 'Default AuthnContext',
+		'Controls whether LogoutRequests from this SP must be signed. Required is the default.',
+	admin_saml_detail_authn_context_mode: 'AuthnContext emission mode',
+	admin_saml_detail_authn_context_mode_hint:
+		'Choose whether Assertion AuthnContextClassRef follows the actual login session or uses a fixed value.',
+	admin_saml_detail_default_authn_context: 'Default login AuthnContext',
+	admin_saml_detail_default_authn_context_hint:
+		'AuthnContextClassRef used for fixed emission or ordinary logins. Most SPs accept PasswordProtectedTransport.',
 	admin_saml_detail_passkey_authn_context: 'Passkey AuthnContext',
 	admin_saml_detail_sign_assertions: 'Sign Assertions',
 	admin_saml_detail_sign_assertions_desc: 'Sign SAML Assertions sent to this service provider.',

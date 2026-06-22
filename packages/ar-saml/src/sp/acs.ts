@@ -12,6 +12,7 @@ import {
   getSessionStoreForNewSession,
   type DatabaseAdapter,
   ensureDatabaseAdapter,
+  requireAdminDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
@@ -26,6 +27,7 @@ import {
   resolveUserStoreRuntimeSourcesFromEnv,
   getChallengeStoreByChallengeId,
   CanonicalRuntimeUserStore,
+  resolveRuntimeIdentityMappingBinding,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -35,6 +37,7 @@ import {
   // Audit Log
   createAuditLog,
 } from '@authrim/ar-lib-core';
+import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-field-mapping';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   parseXml,
@@ -146,8 +149,8 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Extract user information from assertion
-    const userInfo = extractUserInfo(assertion, idpConfig);
+    // Extract user information from assertion through the configured Field Mapping Set.
+    const userInfo = await extractUserInfo(env, tenantId, spEntityId, assertion, idpConfig);
 
     // Resolve the federated identity before applying any future attribute mapping.
     const identityResolution = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
@@ -261,6 +264,15 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
               })),
             }
           : undefined,
+      });
+    }
+
+    if (error instanceof SamlAttributeMappingError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'identity_mapping',
+          reason: error.message,
+        },
       });
     }
 
@@ -1167,10 +1179,23 @@ class SamlProvisioningError extends Error {
   }
 }
 
+class SamlAttributeMappingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SamlAttributeMappingError';
+  }
+}
+
 /**
- * Extract user information from assertion using IdP's attribute mapping
+ * Extract user information from assertion using the configured Field Mapping Set.
  */
-function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): UserInfo {
+async function extractUserInfo(
+  env: Env,
+  tenantId: string,
+  spEntityId: string,
+  assertion: SAMLAssertion,
+  idpConfig: SAMLIdPConfig
+): Promise<UserInfo> {
   const userInfo: UserInfo = {
     nameId: assertion.subject.nameId,
     nameIdFormat: assertion.subject.nameIdFormat,
@@ -1188,29 +1213,133 @@ function extractUserInfo(assertion: SAMLAssertion, idpConfig: SAMLIdPConfig): Us
     }
   }
 
-  // Apply attribute mapping
-  for (const [samlAttr, oidcClaim] of Object.entries(idpConfig.attributeMapping)) {
-    const values = userInfo.attributes[samlAttr];
-    if (values && values.length > 0) {
-      if (oidcClaim === 'email') {
-        userInfo.email = values[0];
-      } else if (oidcClaim === 'name') {
-        userInfo.name = values[0];
-      } else if (oidcClaim.startsWith('custom_claims.') || oidcClaim.startsWith('custom_fields.')) {
-        const fieldKey = oidcClaim.includes('.') ? oidcClaim.slice(oidcClaim.indexOf('.') + 1) : '';
-        if (fieldKey) {
-          userInfo.customClaims[fieldKey] = values[0];
-        }
-      }
+  const configured = idpConfig.identityMapping;
+  if (!configured?.fieldMappingSetId) {
+    throw new SamlAttributeMappingError('SAML IdP Field Mapping Set is required');
+  }
+
+  const adapter = requireAdminDatabaseAdapter(env, 'saml-sp-identity-mapping');
+  const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+    tenantId,
+    protocol: 'saml',
+    role: 'sp',
+    fieldMappingSetId: configured.fieldMappingSetId,
+    fieldMappingVersionId: configured.fieldMappingVersionId,
+    localEntityId: spEntityId,
+    partnerEntityId: idpConfig.entityId,
+  });
+  if (!binding) {
+    throw new SamlAttributeMappingError('SAML IdP Field Mapping Set is not active');
+  }
+
+  const runtimeResult = executeRuntimeMapping({
+    catalog: binding.catalog,
+    sourceValues: buildSAMLInboundSourceValues(assertion),
+    edges: binding.edges,
+    transforms: binding.transforms,
+    validationRules: binding.validationRules,
+    fieldMappingSet: binding.fieldMappingSet,
+    runtimeContext: {
+      tenantId,
+      localEntityId: spEntityId,
+      partnerEntityId: idpConfig.entityId,
+      protocol: 'saml',
+      role: 'sp',
+    },
+  });
+  if (runtimeResult.status === 'failed') {
+    throw new SamlAttributeMappingError(
+      `SAML IdP Field Mapping Set failed: ${runtimeResult.reasons.map((item) => item.code).join(', ')}`
+    );
+  }
+
+  applySAMLInboundMappedValues(userInfo, runtimeResult.values);
+
+  return userInfo;
+}
+
+function buildSAMLInboundSourceValues(assertion: SAMLAssertion): SourceValueEnvelope[] {
+  const values: SourceValueEnvelope[] = [
+    {
+      value: assertion.subject.nameId,
+      sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameId' },
+      metadata: { sourceType: 'saml' },
+    },
+    {
+      value: assertion.subject.nameIdFormat,
+      sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameIdFormat' },
+      metadata: { sourceType: 'saml' },
+    },
+  ];
+
+  for (const attribute of assertion.attributeStatement ?? []) {
+    const value = attribute.values.length === 1 ? attribute.values[0] : attribute.values;
+    values.push({
+      value,
+      sourceRef: { side: 'source', namespace: 'saml.attribute', path: attribute.name },
+      metadata: {
+        sourceType: 'saml',
+        samlAttributeName: attribute.name,
+        samlNameFormat: attribute.nameFormat,
+      },
+    });
+    if (attribute.friendlyName) {
+      values.push({
+        value,
+        sourceRef: { side: 'source', namespace: 'saml.attribute', path: attribute.friendlyName },
+        metadata: {
+          sourceType: 'saml',
+          samlAttributeName: attribute.name,
+          samlNameFormat: attribute.nameFormat,
+        },
+      });
     }
   }
 
-  // Fallback: use NameID as email if email attribute mapping didn't work
-  if (!userInfo.email && assertion.subject.nameIdFormat?.includes('emailAddress')) {
-    userInfo.email = assertion.subject.nameId;
-  }
+  return values;
+}
 
-  return userInfo;
+function applySAMLInboundMappedValues(
+  userInfo: UserInfo,
+  values: SourceValueEnvelope[]
+): void {
+  for (const mappedValue of values) {
+    const value = firstMappedScalar(mappedValue.value);
+    if (value === undefined) continue;
+    const namespace = mappedValue.sourceRef.namespace;
+    const path = mappedValue.sourceRef.path;
+
+    if (path === 'email') {
+      userInfo.email = value;
+      continue;
+    }
+    if (path === 'name') {
+      userInfo.name = value;
+      continue;
+    }
+    if (
+      namespace === 'authrim.custom_claims' ||
+      namespace === 'custom_claims' ||
+      namespace === 'authrim.custom_fields' ||
+      namespace === 'custom_fields'
+    ) {
+      userInfo.customClaims[path] = value;
+      continue;
+    }
+    if (path.startsWith('custom_claims.') || path.startsWith('custom_fields.')) {
+      userInfo.customClaims[path.slice(path.indexOf('.') + 1)] = value;
+    }
+  }
+}
+
+function firstMappedScalar(value: unknown): string | undefined {
+  const firstValue = Array.isArray(value) ? value[0] : value;
+  if (firstValue === undefined || firstValue === null) return undefined;
+  if (typeof firstValue === 'string') return firstValue;
+  if (typeof firstValue === 'number' || typeof firstValue === 'boolean') {
+    return String(firstValue);
+  }
+  return undefined;
 }
 
 /**

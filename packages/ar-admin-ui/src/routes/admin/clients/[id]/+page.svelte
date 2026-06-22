@@ -31,6 +31,7 @@
 	} from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import AdminDetailHeader from '$lib/components/admin/AdminDetailHeader.svelte';
+	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
@@ -2296,6 +2297,14 @@
 							</div>
 						{/if}
 					</div>
+				</section>
+
+				<section class="section-spacing">
+					<ConsentPolicyTargetSettings
+						targetType="oidc_client"
+						targetId={clientId}
+						title="OIDC consent policy"
+					/>
 				</section>
 
 				<!-- Edit Actions for Security Tab -->

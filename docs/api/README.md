@@ -1,20 +1,17 @@
 # Authrim API Reference
 
-This directory contains the Scalar entry point for Authrim API documentation.
-The OpenAPI source of truth remains in package-local `openapi/` directories,
-for example `packages/ar-management/openapi/admin.openapi.yaml`.
+This directory contains the publishable OpenAPI copies used by the Authrim
+website. The OpenAPI source of truth remains in package-local `openapi/`
+directories, for example `packages/ar-management/openapi/admin.openapi.yaml`.
 
 ## Structure
 
-- `specs.json`: Scalar navigation metadata and grouping.
-- `index.html`: Generated API reference index, ignored by git.
-- `scalar.html`: Generic Scalar viewer for a `?spec=` URL, ignored by git.
-- `generated/*.html`: Generated Scalar pages for each OpenAPI document, ignored by git.
+- `specs.json`: OpenAPI source metadata and grouping.
 - `openapi/*.yaml`: Generated copies of package-local OpenAPI contracts, ignored by git.
+- `openapi/*.json`: Generated JSON copies for website tooling, ignored by git.
 
-After generation, the publishable API reference consists only of generated HTML
-and generated OpenAPI copies. The product repository keeps the package-local
-OpenAPI documents as the source of truth.
+The product repository does not publish static API reference HTML. The website
+repository renders these OpenAPI copies through Starlight OpenAPI.
 
 ## Groups
 
@@ -27,10 +24,7 @@ OpenAPI documents as the source of truth.
 
 ```sh
 pnpm docs:api
-pnpm docs:api:serve
 ```
-
-Then open `http://127.0.0.1:4173/docs/api/`.
 
 Before regenerating docs after API changes, verify the OpenAPI contracts:
 

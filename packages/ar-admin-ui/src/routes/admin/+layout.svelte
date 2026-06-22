@@ -97,6 +97,11 @@
 			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
 			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
 			{
+				path: '/admin/consent-policies',
+				label: $LL.admin_consent_policies_nav(),
+				icon: 'i-ph-clipboard-text'
+			},
+			{
 				path: '/admin/consent-statements',
 				label: $LL.admin_nav_consent_statements(),
 				icon: 'i-ph-list-checks'

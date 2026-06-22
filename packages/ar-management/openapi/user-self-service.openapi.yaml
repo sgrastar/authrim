@@ -11,8 +11,8 @@ servers:
         default: auth.example.com
         description: Tenant runtime domain serving `/api/admin/*`.
 security:
-  - adminBearer: []
-  - adminSessionCookie: []
+  - userBearer: []
+  - userSessionCookie: []
 tags:
   - name: User Consent
   - name: User Data Export
@@ -22,31 +22,32 @@ paths:
       tags:
         - User Consent
       operationId: getApiUserConsents
-      summary: List Consents.
-      description: List Consents in the User Consent area. Use this operation to retrieve consent data
-        without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: List the current user's OAuth consents.
+      description: Returns consent records granted by the authenticated end user, including client display
+        metadata, scopes, grant time, expiry, and policy versions when available.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/UserConsents"
         "400":
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
+      security: &a1
+        - userBearer: []
+        - userSessionCookie: []
   /api/user/consents/{clientId}:
     delete:
       tags:
         - User Consent
       operationId: deleteApiUserConsentsByClientId
-      summary: Delete Consent.
-      description: Delete Consent in the User Consent area. The operation changes tenant state and should
-        be protected by the documented admin authorization and audit controls.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Revoke the current user's consent for a client.
+      description: Deletes the authenticated user's consent for the requested client, records consent
+        history, optionally revokes related tokens, and publishes a consent revoked event.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/ConsentRevoke"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -59,18 +60,20 @@ paths:
           required: true
           schema:
             type: string
+      security: *a1
   /api/user/data-export:
     post:
       tags:
         - User Data Export
       operationId: postApiUserDataExport
-      summary: Create Data Export.
-      description: Create Data Export in the User Data Export area. The request body is JSON unless the
-        detailed schema for this operation states otherwise.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Request a personal data export.
+      description: Creates a GDPR data portability export for the authenticated user. Small exports can
+        complete synchronously; larger exports return a pending request for later polling.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DataExportCreate"
+        "202":
+          $ref: "#/components/responses/DataExportCreate"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -78,19 +81,18 @@ paths:
         "403":
           $ref: "#/components/responses/Error"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/DataExportCreate"
+      security: *a1
   /api/user/data-export/{id}:
     get:
       tags:
         - User Data Export
       operationId: getApiUserDataExportById
-      summary: Get Data Export.
-      description: Get Data Export in the User Data Export area. Use this operation to retrieve data
-        export data without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Read a personal data export request.
+      description: Returns status and metadata for an export request owned by the authenticated user.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DataExportStatus"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -103,18 +105,20 @@ paths:
           required: true
           schema:
             type: string
+      security: *a1
   /api/user/data-export/{id}/download:
     get:
       tags:
         - User Data Export
       operationId: getApiUserDataExportByIdDownload
-      summary: Download Data Export.
-      description: Download Data Export in the User Data Export area. Use this operation to retrieve data
-        export data without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Download a completed personal data export.
+      description: Downloads the completed export owned by the authenticated user as JSON or CSV. The
+        endpoint returns not_ready until asynchronous exports complete and expired when the export
+        is no longer available.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          description: Export file download. Returns application/json or text/csv depending on the export
+            format.
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -127,18 +131,17 @@ paths:
           required: true
           schema:
             type: string
+      security: *a1
   /api/user/data-export/artifacts/{artifactId}:
     get:
       tags:
         - User Data Export
       operationId: getApiUserDataExportArtifactsByArtifactId
-      summary: Get Artifact.
-      description: Get Artifact in the User Data Export area. Use this operation to retrieve artifact data
-        without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Read a materialized export artifact manifest.
+      description: Returns the manifest for a materialized data export artifact owned by the authenticated user.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DataExportArtifactManifest"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -151,18 +154,18 @@ paths:
           required: true
           schema:
             type: string
+      security: *a1
   /api/user/data-export/artifacts/{artifactId}/chunks/{index}:
     get:
       tags:
         - User Data Export
       operationId: getApiUserDataExportArtifactsByArtifactIdChunksByIndex
-      summary: Get Chunk.
-      description: Get Chunk in the User Data Export area. Use this operation to retrieve chunk data
-        without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Read a materialized export artifact chunk.
+      description: Returns a single chunk from a materialized data export artifact owned by the
+        authenticated user.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DataExportArtifactChunk"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -180,18 +183,18 @@ paths:
           required: true
           schema:
             type: string
+      security: *a1
   /api/user/data-export/artifacts/{artifactId}/download:
     get:
       tags:
         - User Data Export
       operationId: getApiUserDataExportArtifactsByArtifactIdDownload
-      summary: Download Artifact.
-      description: Download Artifact in the User Data Export area. Use this operation to retrieve artifact
-        data without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Download a materialized export artifact.
+      description: Downloads a materialized data export artifact owned by the authenticated user as JSON or CSV.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          description: Artifact file download. Returns application/json or text/csv depending on the requested
+            format.
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -204,17 +207,19 @@ paths:
           required: true
           schema:
             type: string
+      security: *a1
 components:
   securitySchemes:
-    adminBearer:
+    userBearer:
       type: http
       scheme: bearer
-      description: Admin API bearer token for headless/API usage.
-    adminSessionCookie:
+      description: End-user access token. Data export requires a data_export or authrim:data_export scope
+        when bearer authentication is used.
+    userSessionCookie:
       type: apiKey
       in: cookie
-      name: authrim_admin_session
-      description: Admin UI session cookie for browser usage.
+      name: sid
+      description: End-user browser session cookie.
   parameters:
     TenantIdHeader:
       name: X-Tenant-Id
@@ -318,6 +323,17 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/WebhookUpdate"
+    DataExportCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DataExportRequestBody"
+          example:
+            sections:
+              - profile
+              - consents
+            format: json
   responses:
     Ok:
       description: Successful JSON response.
@@ -373,6 +389,88 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    UserConsents:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UserConsentsResponse"
+          example:
+            consents:
+              - id: consent_123
+                clientId: client_123
+                clientName: Example App
+                scopes:
+                  - openid
+                  - profile
+                grantedAt: 1770000000000
+            total: 1
+    ConsentRevoke:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ConsentRevokeResponse"
+          example:
+            success: true
+            accessTokensRevoked: 0
+            refreshTokensRevoked: 1
+            revokedAt: 1770000000000
+    DataExportCreate:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DataExportCreateResponse"
+          example:
+            status: pending
+            requestId: export_123
+            message: Export request created. Use GET /api/user/data-export/:id to check status.
+            estimatedWaitSeconds: 30
+    DataExportStatus:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DataExportStatus"
+          example:
+            id: export_123
+            publicArtifactId: artifact_123
+            userId: user_123
+            status: completed
+            format: json
+            includeSections:
+              - profile
+              - consents
+            requestedAt: 1770000000000
+            completedAt: 1770000005000
+            fileSize: 4096
+            availableFormats:
+              - json
+    DataExportArtifactManifest:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DataExportArtifactManifest"
+          example:
+            artifactId: artifact_123
+            requestId: export_123
+            format: json
+            downloadUrl: /api/user/data-export/artifacts/artifact_123/download?format=json
+            chunks: []
+    DataExportArtifactChunk:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DataExportArtifactChunk"
+          example:
+            artifactId: artifact_123
+            index: 0
+            data:
+              profile:
+                sub: user_123
   schemas:
     JsonObject:
       type: object
@@ -990,4 +1088,213 @@ components:
         message:
           type: string
         error_description:
+          type: string
+    UserConsent:
+      type: object
+      required:
+        - id
+        - clientId
+        - scopes
+        - grantedAt
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        clientName:
+          type: string
+        clientLogoUri:
+          type: string
+          format: uri
+        scopes:
+          type: array
+          items:
+            type: string
+        selectedScopes:
+          type: array
+          items:
+            type: string
+        grantedAt:
+          type: integer
+        expiresAt:
+          type: integer
+        policyVersions:
+          type: object
+          properties:
+            privacyPolicyVersion:
+              type: string
+            tosVersion:
+              type: string
+            consentVersion:
+              type: integer
+    UserConsentsResponse:
+      type: object
+      required:
+        - consents
+        - total
+      properties:
+        consents:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserConsent"
+        total:
+          type: integer
+    ConsentRevokeResponse:
+      type: object
+      required:
+        - success
+        - accessTokensRevoked
+        - refreshTokensRevoked
+        - revokedAt
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        accessTokensRevoked:
+          type: integer
+        refreshTokensRevoked:
+          type: integer
+        revokedAt:
+          type: integer
+    DataExportRequestBody:
+      type: object
+      properties:
+        sections:
+          type: array
+          items:
+            type: string
+            enum:
+              - profile
+              - consents
+              - sessions
+              - auth_history
+              - custom_claims
+        format:
+          type: string
+          enum:
+            - json
+            - csv
+    DataExportCreateResponse:
+      oneOf:
+        - type: object
+          required:
+            - status
+            - requestId
+            - format
+            - data
+            - exportedAt
+          properties:
+            status:
+              type: string
+              enum:
+                - completed
+            requestId:
+              type: string
+            format:
+              type: string
+              enum:
+                - json
+                - csv
+            data:
+              type: object
+              additionalProperties: true
+            exportedAt:
+              type: integer
+        - type: object
+          required:
+            - status
+            - requestId
+            - message
+            - estimatedWaitSeconds
+          properties:
+            status:
+              type: string
+              enum:
+                - pending
+            requestId:
+              type: string
+            message:
+              type: string
+            estimatedWaitSeconds:
+              type: integer
+    DataExportStatus:
+      type: object
+      required:
+        - id
+        - userId
+        - status
+        - format
+        - includeSections
+        - requestedAt
+      properties:
+        id:
+          type: string
+        publicArtifactId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+            - expired
+        format:
+          type: string
+          enum:
+            - json
+            - csv
+        includeSections:
+          type: array
+          items:
+            type: string
+        requestedAt:
+          type: integer
+        startedAt:
+          type: integer
+        completedAt:
+          type: integer
+        expiresAt:
+          type: integer
+        fileSize:
+          type: integer
+        availableFormats:
+          type: array
+          items:
+            type: string
+            enum:
+              - json
+              - csv
+        errorMessage:
+          type: string
+    DataExportArtifactManifest:
+      type: object
+      additionalProperties: true
+      properties:
+        artifactId:
+          type: string
+        requestId:
+          type: string
+        format:
+          type: string
+        downloadUrl:
+          type: string
+        chunks:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    DataExportArtifactChunk:
+      type: object
+      additionalProperties: true
+      properties:
+        artifactId:
+          type: string
+        index:
+          type: integer
+        data: {}
+        nextChunk:
           type: string

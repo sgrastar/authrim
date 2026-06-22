@@ -55,6 +55,8 @@ import {
   resolveConsentRequirements,
   checkUserConsentSatisfaction,
   getUserClaimsForRules,
+  resolveClientTrustPolicy,
+  resolveSignInConfirmationPolicy,
   // Settings Manager
   createSettingsManager,
   CLIENT_CATEGORY_META,
@@ -114,6 +116,15 @@ function splitScopes(scope: string | undefined | null): string[] {
     .split(/\s+/)
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+}
+
+function collectRequestedClaimNames(
+  request: ReturnType<typeof parseClaimsRequest>['request']
+): string[] {
+  if (!request) return [];
+  return Array.from(
+    new Set([...Object.keys(request.userinfo ?? {}), ...Object.keys(request.id_token ?? {})])
+  );
 }
 
 function getClientAllowedScopes(clientMetadata: {
@@ -2951,10 +2962,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (_consent_confirmed !== 'true') {
     // Get client metadata for logging (request-level cached)
     const clientMetadata = await getClientCached(c, c.env, validClientId);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Get client settings from KV (replaces legacy D1 is_trusted/skip_consent fields)
     let consentRequired = true; // Default: require consent (security-first)
     let firstParty = false;
+    let clientTrustPolicySource: string | null = null;
+    let signInConfirmationMode: string | null = null;
+    let signInConfirmationRememberDurationDays: number | null = null;
+    let requiresFirstTimeSignInConfirmation = false;
 
     try {
       // Use cached SettingsManager for better performance
@@ -2984,12 +3000,48 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       consentRequired = true; // fail-safe: require consent
     }
 
+    try {
+      const clientTrustPolicy = await resolveClientTrustPolicy(
+        authCtx.coreAdapter,
+        tenantId,
+        'oidc_client',
+        validClientId
+      );
+      if (clientTrustPolicy) {
+        firstParty = clientTrustPolicy.first_party;
+        consentRequired = !(
+          clientTrustPolicy.trusted || clientTrustPolicy.skip_authorization_consent
+        );
+        clientTrustPolicySource = 'client';
+      }
+
+      const signInConfirmationPolicy = await resolveSignInConfirmationPolicy(
+        authCtx.coreAdapter,
+        tenantId
+      );
+      signInConfirmationMode = signInConfirmationPolicy?.mode ?? null;
+      signInConfirmationRememberDurationDays =
+        signInConfirmationPolicy?.remember_duration_days ?? null;
+      if (signInConfirmationPolicy?.mode === 'every_time') {
+        consentRequired = true;
+      } else if (signInConfirmationPolicy?.mode === 'first_time') {
+        requiresFirstTimeSignInConfirmation = true;
+      }
+    } catch (error) {
+      log.warn('Failed to apply consent policy settings', {
+        action: 'consent_policy_settings',
+        clientId: validClientId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     const attributeReleaseConsentPolicy = normalizeAttributeReleaseConsentPolicy(
       clientMetadata?.attribute_release_consent
     );
     const requiresPerAuthorizationAttributeReleaseConsent =
       attributeReleaseConsentPolicy?.enabled === true &&
       attributeReleaseConsentPolicy.mode === 'every_time';
+    const requiresEveryTimeSignInConfirmation = signInConfirmationMode === 'every_time';
 
     // Debug: Log consent decision factors
     log.info('Consent check - settings', {
@@ -2997,6 +3049,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       clientId: validClientId,
       consentRequired,
       firstParty,
+      clientTrustPolicySource,
+      signInConfirmationMode,
       attributeReleaseConsentMode: attributeReleaseConsentPolicy?.mode ?? null,
       requiresPerAuthorizationAttributeReleaseConsent,
       // Legacy D1 fields (for migration tracking)
@@ -3016,16 +3070,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       willSkipConsent:
         isTrustedClient &&
         !prompt?.includes('consent') &&
-        !requiresPerAuthorizationAttributeReleaseConsent,
+        !requiresPerAuthorizationAttributeReleaseConsent &&
+        !requiresFirstTimeSignInConfirmation &&
+        !requiresEveryTimeSignInConfirmation,
     });
-
-    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (
       isTrustedClient &&
       !prompt?.includes('consent') &&
-      !requiresPerAuthorizationAttributeReleaseConsent
+      !requiresPerAuthorizationAttributeReleaseConsent &&
+      !requiresFirstTimeSignInConfirmation &&
+      !requiresEveryTimeSignInConfirmation
     ) {
       // Check if consent already exists (using cache)
       const existingConsent = await getCachedConsent(
@@ -3130,6 +3186,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
         if (requiresPerAuthorizationAttributeReleaseConsent) {
           consentRequired = true;
+        }
+        if (requiresEveryTimeSignInConfirmation) {
+          consentRequired = true;
+        }
+        if (requiresFirstTimeSignInConfirmation && signInConfirmationRememberDurationDays === 0) {
+          consentRequired = true;
+        }
+        if (
+          requiresFirstTimeSignInConfirmation &&
+          existingConsent &&
+          signInConfirmationRememberDurationDays !== null &&
+          signInConfirmationRememberDurationDays > 0
+        ) {
+          const rememberMs = signInConfirmationRememberDurationDays * 24 * 60 * 60 * 1000;
+          if (existingConsent.granted_at + rememberMs < Date.now()) {
+            consentRequired = true;
+          }
         }
       } catch (error) {
         log.error('Failed to check consent', { action: 'consent_check' }, error as Error);
@@ -3247,16 +3320,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         consentMgmtEnabled = envVal === 'true' || envVal === '1';
       }
 
-      if (consentMgmtEnabled) {
-        const authCtx = createAuthContextFromHono(c, tenantId);
-        const userClaims = await getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub);
-        const requirements = await resolveConsentRequirements(
-          authCtx.coreAdapter,
-          tenantId,
-          validClientId,
-          userClaims
-        );
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const userClaims = await getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub);
+      const requirements = await resolveConsentRequirements(
+        authCtx.coreAdapter,
+        tenantId,
+        validClientId,
+        userClaims,
+        {
+          target_type: 'oidc_client',
+          target_id: validClientId,
+          requested_scopes: splitScopes(scope),
+          requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
+        }
+      );
 
+      if (consentMgmtEnabled || requirements.length > 0) {
         if (requirements.length > 0) {
           const { satisfied, unsatisfied } = await checkUserConsentSatisfaction(
             authCtx.coreAdapter,

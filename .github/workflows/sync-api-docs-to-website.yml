@@ -8,7 +8,7 @@ on:
     paths:
       - 'docs/api/specs.json'
       - 'packages/*/openapi/**'
-      - 'scripts/build-scalar-docs.mjs'
+      - 'scripts/build-api-docs.mjs'
       - 'scripts/openapi-route-inventory.mjs'
       - 'scripts/sync-api-docs-to-website.mjs'
       - 'scripts/validate-openapi.mjs'
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   sync:
-    name: Generate Scalar docs and open website PR
+    name: Sync OpenAPI docs and open website PR
     runs-on: ubuntu-latest
     if: github.repository == 'sgrastar/authrim'
 
@@ -57,7 +57,7 @@ jobs:
         working-directory: authrim
         run: pnpm openapi:routes -- --fail-on-missing
 
-      - name: Generate Scalar API docs
+      - name: Prepare OpenAPI docs
         working-directory: authrim
         run: pnpm docs:api
 

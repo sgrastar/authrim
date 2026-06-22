@@ -20,7 +20,7 @@ paths:
       summary: Return discovery Worker health.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DiscoveryHealth"
   /health/live:
     get:
       tags:
@@ -28,7 +28,7 @@ paths:
       summary: Return liveness probe status.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/ProbeHealth"
   /health/ready:
     get:
       tags:
@@ -36,7 +36,7 @@ paths:
       summary: Return readiness probe status.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/ProbeHealth"
   /.well-known/openid-configuration:
     get:
       tags:
@@ -44,7 +44,7 @@ paths:
       summary: Return OpenID Provider metadata.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/OidcProviderMetadata"
   /.well-known/oauth-authorization-server:
     get:
       tags:
@@ -52,7 +52,7 @@ paths:
       summary: Return OAuth Authorization Server metadata.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/OidcProviderMetadata"
   /.well-known/webfinger:
     get:
       tags:
@@ -66,7 +66,7 @@ paths:
             type: string
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/WebFinger"
   /.well-known/jwks.json:
     get:
       tags:
@@ -74,7 +74,7 @@ paths:
       summary: Return JSON Web Key Set.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/JWKS"
 components:
   responses:
     Ok:
@@ -84,3 +84,206 @@ components:
           schema:
             type: object
             additionalProperties: true
+    DiscoveryHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryHealth"
+          example:
+            status: ok
+            service: op-discovery
+            timestamp: 2026-06-19T00:00:00.000Z
+    ProbeHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProbeHealth"
+          example:
+            status: ok
+            service: op-discovery
+            version: 0.1.0
+            timestamp: 2026-06-19T00:00:00.000Z
+    OidcProviderMetadata:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OidcProviderMetadata"
+          example:
+            issuer: https://auth.example.com
+            authorization_endpoint: https://auth.example.com/authorize
+            token_endpoint: https://auth.example.com/token
+            jwks_uri: https://auth.example.com/.well-known/jwks.json
+            response_types_supported:
+              - code
+              - id_token
+              - code id_token
+            grant_types_supported:
+              - authorization_code
+              - refresh_token
+            subject_types_supported:
+              - public
+              - pairwise
+            code_challenge_methods_supported:
+              - S256
+    WebFinger:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WebFingerResponse"
+          example:
+            subject: acct:user@example.com
+            links:
+              - rel: http://openid.net/specs/connect/1.0/issuer
+                href: https://auth.example.com
+    JWKS:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JwksResponse"
+          example:
+            keys:
+              - kty: RSA
+                kid: signing-key-1
+                use: sig
+                alg: RS256
+  schemas:
+    DiscoveryHealth:
+      type: object
+      required:
+        - status
+        - service
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+        service:
+          type: string
+          enum:
+            - op-discovery
+        timestamp:
+          type: string
+          format: date-time
+    ProbeHealth:
+      type: object
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: true
+    OidcProviderMetadata:
+      type: object
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+        - jwks_uri
+        - response_types_supported
+        - grant_types_supported
+        - subject_types_supported
+      additionalProperties: true
+      properties:
+        issuer:
+          type: string
+          format: uri
+        authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
+        userinfo_endpoint:
+          type: string
+          format: uri
+        jwks_uri:
+          type: string
+          format: uri
+        registration_endpoint:
+          type: string
+          format: uri
+        introspection_endpoint:
+          type: string
+          format: uri
+        revocation_endpoint:
+          type: string
+          format: uri
+        pushed_authorization_request_endpoint:
+          type: string
+          format: uri
+        require_pushed_authorization_requests:
+          type: boolean
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+        scopes_supported:
+          type: array
+          items:
+            type: string
+        claims_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+    WebFingerResponse:
+      type: object
+      required:
+        - subject
+        - links
+      properties:
+        subject:
+          type: string
+        links:
+          type: array
+          items:
+            type: object
+            required:
+              - rel
+              - href
+            properties:
+              rel:
+                type: string
+              href:
+                type: string
+                format: uri
+    JwksResponse:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              kty:
+                type: string
+              kid:
+                type: string
+              use:
+                type: string
+              alg:
+                type: string

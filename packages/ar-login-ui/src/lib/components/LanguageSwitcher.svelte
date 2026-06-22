@@ -41,7 +41,7 @@
 		type="button"
 		class="theme-toggle"
 		onclick={() => themeStore.toggleMode()}
-		aria-label={themeStore.isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+		aria-label={themeStore.isDark ? $LL.theme_switchToLightMode() : $LL.theme_switchToDarkMode()}
 	>
 		{#if themeStore.isDark}
 			<div class="i-heroicons-sun h-4.5 w-4.5"></div>
@@ -55,7 +55,7 @@
 		<select
 			value={currentLang}
 			onchange={(e) => switchLanguage(e.currentTarget.value)}
-			aria-label="Language"
+			aria-label={$LL.language_switch()}
 			class="auth-lang-select"
 		>
 			{#each availableLocales as lang (lang)}

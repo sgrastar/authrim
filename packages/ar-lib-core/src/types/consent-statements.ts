@@ -21,6 +21,7 @@ export const ConsentCategory = {
   DATA_SHARING: 'data_sharing',
   ANALYTICS: 'analytics',
   DO_NOT_SELL: 'do_not_sell',
+  SAML_ATTRIBUTE_RELEASE_CONFIRMATION: 'saml_attribute_release_confirmation',
   CUSTOM: 'custom',
 } as const;
 export type ConsentCategory = (typeof ConsentCategory)[keyof typeof ConsentCategory];
@@ -92,6 +93,11 @@ export interface ConsentStatement {
   processing_purpose?: string;
   display_order: number;
   is_active: boolean;
+  record_retention_days?: number;
+  withdrawal_allowed?: boolean;
+  withdrawal_impact?: string;
+  reconsent_on_version_change?: boolean;
+  reconsent_interval_days?: number;
   created_at: number;
   updated_at: number;
 }
@@ -104,6 +110,7 @@ export interface ConsentStatementVersion {
   version: string; // YYYYMMDD
   content_type: ConsentContentType;
   effective_at: number;
+  effective_until?: number | null;
   content_hash?: string;
   is_current: boolean;
   status: ConsentVersionStatus;
@@ -119,6 +126,8 @@ export interface ConsentStatementLocalization {
   language: string; // BCP 47
   title: string;
   description: string;
+  processing_purpose?: string;
+  withdrawal_impact?: string;
   document_url?: string;
   inline_content?: string;
   created_at: number;
@@ -137,6 +146,10 @@ export interface ConsentStatementUserRecord {
   granted_at?: number;
   withdrawn_at?: number;
   expires_at?: number;
+  retain_until?: number;
+  consent_settings_snapshot_at?: number;
+  record_retention_days_snapshot?: number;
+  reconsent_interval_days_snapshot?: number;
   client_id?: string;
   ip_address_hash?: string;
   user_agent?: string;
@@ -224,6 +237,10 @@ export interface ConsentScreenItem {
   title: string;
   /** Display description (localized) */
   description: string;
+  /** User-facing processing purpose (localized) */
+  processing_purpose?: string;
+  /** User-facing withdrawal impact (localized) */
+  withdrawal_impact?: string;
   /** Document URL (if content_type='url') */
   document_url?: string;
   /** Inline content (if content_type='inline') */
@@ -246,6 +263,20 @@ export interface ConsentScreenItem {
   show_deletion_link: boolean;
   /** Deletion URL */
   deletion_url?: string;
+  /** Checkbox rendering behavior */
+  checkbox_mode?: 'none' | 'required' | 'optional';
+  /** Whether checkbox starts checked */
+  checkbox_default_checked?: boolean;
+  /** Optional binding to a scope, claim, SAML attribute, or destination field set */
+  binding_type?: 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
+  /** Binding identifier or space-delimited value */
+  binding_value?: string;
+  /** Evidence profile recorded for this item */
+  evidence_profile?: string;
+  /** Per-item language fallback hint */
+  language_fallback?: string;
+  /** Whether an existing grant may be withdrawn through this decision surface */
+  withdrawal_allowed?: boolean;
   /** Display order */
   display_order: number;
 }
@@ -276,10 +307,19 @@ export interface ConsentItemHistoryRecord {
   user_id: string;
   statement_id: string;
   action: ConsentItemAction;
+  version_id_before?: string;
+  version_id_after?: string;
   version_before?: string;
   version_after?: string;
   status_before?: string;
   status_after?: string;
+  granted_at?: number;
+  withdrawn_at?: number;
+  expires_at?: number;
+  retain_until?: number;
+  consent_settings_snapshot_at?: number;
+  record_retention_days_snapshot?: number;
+  reconsent_interval_days_snapshot?: number;
   ip_address_hash?: string;
   user_agent?: string;
   client_id?: string;
@@ -298,9 +338,17 @@ export interface ResolvedConsentRequirement {
   current_version: ConsentStatementVersion;
   is_required: boolean;
   min_version?: string;
+  fixed_version_id?: string;
+  reconsent_interval_days?: number;
   enforcement: ConsentEnforcement;
   show_deletion_link: boolean;
   deletion_url?: string;
+  checkbox_mode?: 'none' | 'required' | 'optional';
+  checkbox_default_checked?: boolean;
+  binding_type?: 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
+  binding_value?: string;
+  evidence_profile?: string;
+  language_fallback?: string;
   display_order: number;
 }
 
@@ -313,6 +361,11 @@ export interface CreateConsentStatementInput {
   category?: ConsentCategory;
   legal_basis?: LegalBasis;
   processing_purpose?: string;
+  record_retention_days?: number | null;
+  withdrawal_allowed?: boolean;
+  withdrawal_impact?: string | null;
+  reconsent_on_version_change?: boolean;
+  reconsent_interval_days?: number | null;
   display_order?: number;
 }
 
@@ -321,6 +374,11 @@ export interface UpdateConsentStatementInput {
   category?: ConsentCategory;
   legal_basis?: LegalBasis;
   processing_purpose?: string;
+  record_retention_days?: number | null;
+  withdrawal_allowed?: boolean;
+  withdrawal_impact?: string | null;
+  reconsent_on_version_change?: boolean;
+  reconsent_interval_days?: number | null;
   display_order?: number;
   is_active?: boolean;
 }

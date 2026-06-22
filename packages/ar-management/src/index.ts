@@ -116,6 +116,20 @@ import {
   adminUserConsentHistoryHandler,
   adminUserConsentWithdrawHandler,
 } from './admin-consent-statements';
+import {
+  adminClientTrustPoliciesListHandler,
+  adminClientTrustPolicyUpsertHandler,
+  adminConsentPoliciesListHandler,
+  adminConsentPolicyAssignmentUpsertHandler,
+  adminConsentPolicyAssignmentsListHandler,
+  adminConsentPolicyCreateHandler,
+  adminConsentPolicyDeleteHandler,
+  adminConsentPolicyGetHandler,
+  adminConsentPolicyItemsReplaceHandler,
+  adminConsentPolicyUpdateHandler,
+  adminSignInConfirmationPoliciesListHandler,
+  adminSignInConfirmationPolicyUpsertHandler,
+} from './admin-consent-policies';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
   serveAvatarHandler,
@@ -3019,6 +3033,18 @@ app.use('/api/admin/consent-statements/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
+app.use('/api/admin/consent-policies/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
+app.use('/api/admin/client-trust-policies/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
+app.use('/api/admin/sign-in-confirmation-policies/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
 app.use('/api/admin/consent-requirements/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
@@ -3049,6 +3075,20 @@ app.post(
   adminConsentVersionActivateHandler
 );
 app.delete('/api/admin/consent-statements/:sid/versions/:vid', adminConsentVersionDeleteHandler);
+
+// Consent policies, assignments, client/SP trust, and sign-in confirmation
+app.get('/api/admin/consent-policies', adminConsentPoliciesListHandler);
+app.post('/api/admin/consent-policies', adminConsentPolicyCreateHandler);
+app.get('/api/admin/consent-policies/:id', adminConsentPolicyGetHandler);
+app.put('/api/admin/consent-policies/:id', adminConsentPolicyUpdateHandler);
+app.delete('/api/admin/consent-policies/:id', adminConsentPolicyDeleteHandler);
+app.put('/api/admin/consent-policies/:id/items', adminConsentPolicyItemsReplaceHandler);
+app.get('/api/admin/consent-policy-assignments', adminConsentPolicyAssignmentsListHandler);
+app.put('/api/admin/consent-policy-assignments', adminConsentPolicyAssignmentUpsertHandler);
+app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
+app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
+app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);
+app.put('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPolicyUpsertHandler);
 
 // Localizations
 app.get(

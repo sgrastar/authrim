@@ -110,6 +110,11 @@ export interface SAMLAttributeReleaseRule {
 
 export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
 export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
+export type SAMLAttributeReleaseConfirmationCompatibility = 'uapprove' | 'custom';
+export type SAMLAttributeReleaseConfirmationValueDisplay =
+	| 'names'
+	| 'masked_values'
+	| 'full_values';
 
 export interface SAMLProviderConfig {
 	description?: string;
@@ -152,6 +157,12 @@ export interface SAMLProviderConfig {
 	attributeReleaseConsent?: {
 		enabled: boolean;
 		mode: AttributeReleaseConsentMode;
+	};
+	attributeReleaseConfirmation?: {
+		compatibilityMode?: SAMLAttributeReleaseConfirmationCompatibility;
+		valueDisplay?: SAMLAttributeReleaseConfirmationValueDisplay;
+		templateStatementId?: string;
+		buttonLabel?: string;
 	};
 	identityMapping?: {
 		fieldMappingSetId?: string;

@@ -25,13 +25,16 @@ import {
 } from '../../core/paths.js';
 import {
   deployAll,
+  deployUiWorkerComponent,
   uploadSecrets,
   deployAllUiWorkers,
   deployUiWorkerBindingTargets,
   updateLockWithDeployments,
   buildApiPackages,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
+  UI_WORKER_COMPONENTS,
   type DeployOptions,
+  type UiWorkerComponent,
 } from '../../core/deploy.js';
 import {
   isWranglerInstalled,
@@ -62,8 +65,10 @@ import {
   resolveDownstreamIntrospectionKeysDir,
 } from '../../core/downstream-introspection-deploy.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import { resolveApiBaseUrlCandidates, resolveIssuerUrl } from '../../core/url-config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
+import { getPackageVersion } from '../../core/version.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForRouterWorkerReady,
@@ -467,6 +472,163 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   }
   console.log(chalk.cyan(`Lock: ${lockPath}`));
   let currentLock = lock;
+
+  if (
+    options.component &&
+    (UI_WORKER_COMPONENTS as readonly string[]).includes(options.component)
+  ) {
+    const uiComponent = options.component as UiWorkerComponent;
+
+    console.log(chalk.cyan(`\nDeploying single UI component: ${uiComponent}`));
+
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: options.dryRun ? t('deploy.confirmDryRun') : t('deploy.confirmStart'),
+        default: true,
+      });
+
+      if (!confirmed) {
+        console.log(chalk.yellow(t('deploy.cancelled')));
+        return;
+      }
+    }
+
+    const apiBaseUrl = resolveIssuerUrl(config, { env });
+    let loginUiClientId: string | undefined;
+
+    if (uiComponent === 'ar-login-ui' && !options.dryRun) {
+      const loginUiUrl =
+        config.urls?.loginUi?.custom ||
+        config.urls?.loginUi?.auto ||
+        `https://${env}-ar-login-ui.workers.dev`;
+      const keysDir = resolveDownstreamIntrospectionKeysDir({
+        env,
+        rootDir: baseDir,
+        keysDir: options.keysDir || config.keys?.secretsPath || './keys/',
+        keysBaseDir: process.cwd(),
+      });
+      const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+
+      const readinessResult = await waitForRouterWorkerReady({
+        apiBaseUrl,
+        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+      });
+      if (!readinessResult.ready) {
+        console.error(
+          chalk.red(
+            `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
+          )
+        );
+        process.exit(1);
+      }
+
+      const setupMachineResult = await ensureSetupMachineAccessInD1(
+        env,
+        config,
+        keysDir,
+        (msg) => console.log(chalk.gray(`  ${msg}`))
+      );
+      if (!setupMachineResult.success) {
+        console.error(
+          chalk.red(
+            `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
+          )
+        );
+        process.exit(1);
+      }
+
+      try {
+        const clientResult = await ensureLoginUiClient({
+          apiBaseUrl,
+          apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+            env,
+            purpose: 'tenant-scoped-admin',
+          }),
+          loginUiUrl,
+          adminApiSecretPath,
+          keysDir,
+          tenantId: config.tenant?.name,
+          onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+        });
+
+        if (clientResult.success && clientResult.clientId) {
+          loginUiClientId = clientResult.clientId;
+          console.log(chalk.gray(`  ✓ Login UI client resolved: ${loginUiClientId}`));
+        } else {
+          console.error(
+            chalk.red(`Login UI client creation failed: ${clientResult.error || 'unknown error'}`)
+          );
+          process.exit(1);
+        }
+      } finally {
+        await cleanupSetupMachineAccessInD1(env, keysDir);
+      }
+    }
+
+    const uiSettings = resolveUiDeploymentSettings({
+      component: uiComponent,
+      config,
+      apiBaseUrl,
+      loginUiClientId,
+    });
+
+    if (uiComponent === 'ar-login-ui' && loginUiClientId) {
+      await mergeAndSaveUiEnv(getEnvironmentPaths({ baseDir, env }).uiEnv, uiSettings.uiEnv);
+      console.log(chalk.gray(`  ✓ Login UI env updated with client_id`));
+    }
+
+    const adminUiBffSecrets =
+      uiComponent === 'ar-admin-ui' && !options.dryRun
+        ? await loadAdminUiBffWorkerSecrets(
+            resolveDownstreamIntrospectionKeysDir({
+              env,
+              rootDir: baseDir,
+              keysDir: options.keysDir || config.keys?.secretsPath || './keys/',
+              keysBaseDir: process.cwd(),
+            })
+          )
+        : undefined;
+
+    const result = await deployUiWorkerComponent(uiComponent, {
+      env,
+      rootDir: resolve(rootDir),
+      dryRun: options.dryRun || false,
+      apiBaseUrl: uiSettings.apiBaseUrl,
+      runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
+      uiEnvConfig: uiSettings.uiEnv,
+      serviceBindingName: uiSettings.serviceBindingName,
+      workersDev: uiSettings.workersDev,
+      routes: uiSettings.routes,
+      adminUiBffSecrets,
+      onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+    });
+
+    if (!result.success) {
+      console.error(chalk.red(`\n${uiComponent} deployment failed: ${result.error}`));
+      process.exit(1);
+    }
+
+    if (!options.dryRun && result.deployedAt) {
+      const version = await getPackageVersion(join(rootDir, 'packages', uiComponent));
+      currentLock = {
+        ...currentLock,
+        workers: {
+          ...currentLock.workers,
+          [uiComponent]: {
+            name: result.projectName,
+            deployedAt: result.deployedAt,
+            version: version ?? undefined,
+          },
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      await saveLockFile(currentLock, lockPath);
+    }
+
+    console.log(chalk.green(`\n✓ ${uiComponent} deployed successfully`));
+    console.log(chalk.gray(`  Project: ${result.projectName}`));
+    return;
+  }
 
   // Determine what to deploy
   let componentsToDeply: WorkerComponent[] | undefined;
@@ -1326,6 +1488,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       apiBaseUrl,
       loginUiClientId,
     });
+    if (loginUiClientId) {
+      await mergeAndSaveUiEnv(getEnvironmentPaths({ baseDir, env }).uiEnv, loginUiSettings.uiEnv);
+      console.log(chalk.gray(`  ✓ Login UI env updated with client_id`));
+    }
     const adminUiSettings = resolveUiDeploymentSettings({
       component: 'ar-admin-ui',
       config,
