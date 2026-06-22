@@ -20,7 +20,12 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
@@ -1109,7 +1114,7 @@
 									</div>
 
 									{#if releasePreviewAttributes().length > 0}
-										<table>
+										<AdminDataTable compact>
 											<thead>
 												<tr>
 													<th>{tAttributeRelease('attribute')}</th>
@@ -1124,7 +1129,7 @@
 													</tr>
 												{/each}
 											</tbody>
-										</table>
+										</AdminDataTable>
 									{:else}
 										<p class="field-hint">{tAttributeRelease('noAttributes')}</p>
 									{/if}
@@ -1609,25 +1614,6 @@
 		color: var(--color-text);
 		font-size: 0.8125rem;
 		overflow-wrap: anywhere;
-	}
-
-	.attribute-release-preview table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.8125rem;
-	}
-
-	.attribute-release-preview th,
-	.attribute-release-preview td {
-		padding: 8px 10px;
-		border-bottom: 1px solid var(--color-border);
-		text-align: left;
-		vertical-align: top;
-	}
-
-	.attribute-release-preview th {
-		color: var(--color-text-muted);
-		font-weight: 700;
 	}
 
 	.preview-check {
