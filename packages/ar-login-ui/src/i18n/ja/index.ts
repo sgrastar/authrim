@@ -59,6 +59,8 @@ const ja = {
 	account_planned: '今後対応予定',
 	account_passkeyUnsupported: 'このブラウザはPasskey登録に対応していません。',
 	account_actionFailed: '操作に失敗しました',
+	account_remainingLoginMethodRequired:
+		'このPasskeyを削除する前に、別のログイン手段を追加してください。',
 	account_activityTitle: 'アクティビティ',
 	account_operationNameUpdated: '名前を変更',
 	account_operationPasskeyCreated: 'Passkeyを追加',

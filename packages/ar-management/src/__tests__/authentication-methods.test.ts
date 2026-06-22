@@ -170,6 +170,28 @@ describe('Authentication Methods API', () => {
       expect(body.ui.branding.logoUrl).toBeNull();
       expect(body.ui.branding.faviconUrl).toBeNull();
       expect(body.ui.supportedLocales).toEqual(['en', 'ja']);
+      expect(body.ui.selfService).toEqual({
+        accountPageEnabled: false,
+        accountPagePath: '/account',
+      });
+    });
+
+    it('should expose configured Account Page path in UI config', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:self-service': JSON.stringify({
+          'self-service.account_page_enabled': true,
+          'self-service.account_page_path': '/mypage',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.ui.selfService).toEqual({
+        accountPageEnabled: true,
+        accountPagePath: '/mypage',
+      });
     });
 
     it('should return default appearance config', async () => {

@@ -3,15 +3,24 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { Button } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { auth, isAuthenticated } from '$lib/stores/auth';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 
 	let mounted = $state(false);
+	let accountPagePath = $state('/account');
 
 	onMount(async () => {
 		auth.refresh();
 
-		await auth.refreshFromSession();
+		const [methodsResult] = await Promise.all([
+			fetchAuthenticationMethods(),
+			auth.refreshFromSession()
+		]);
+		const configuredAccountPath = methodsResult.data?.ui.selfService?.accountPagePath;
+		if (configuredAccountPath?.startsWith('/')) {
+			accountPagePath = configuredAccountPath;
+		}
 
 		// Stagger entrance animation
 		requestAnimationFrame(() => {
@@ -50,7 +59,7 @@
 				<LanguageSwitcher />
 
 				{#if $isAuthenticated}
-					<a href="/account">
+					<a href={accountPagePath}>
 						<Button variant="secondary">{$LL.account_openPage()}</Button>
 					</a>
 				{:else}
@@ -91,7 +100,7 @@
 				{#if $isAuthenticated}
 					<!-- Authenticated state -->
 					<div class="landing__cta">
-						<a href="/account" class="landing__cta-primary">
+						<a href={accountPagePath} class="landing__cta-primary">
 							<span>{$LL.account_openPage()}</span>
 							<div class="i-heroicons-arrow-right h-4 w-4"></div>
 						</a>

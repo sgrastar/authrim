@@ -59,6 +59,7 @@ const en = {
 	account_planned: 'Planned',
 	account_passkeyUnsupported: 'This browser does not support passkey registration.',
 	account_actionFailed: 'The operation failed',
+	account_remainingLoginMethodRequired: 'Add another login method before deleting this passkey.',
 	account_activityTitle: 'Activity',
 	account_operationNameUpdated: 'Name changed',
 	account_operationPasskeyCreated: 'Passkey added',

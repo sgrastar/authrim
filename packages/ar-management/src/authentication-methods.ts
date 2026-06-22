@@ -26,6 +26,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   resolveAuthCorePersistenceAdapterFromEnv,
+  validateAccountPagePath,
 } from '@authrim/ar-lib-core';
 import {
   decryptSecretFields,
@@ -139,6 +140,10 @@ interface UIConfig {
     }>;
   };
   supportedLocales: string[];
+  selfService: {
+    accountPageEnabled: boolean;
+    accountPagePath: string;
+  };
 }
 
 interface AuthenticationMethodsMeta {
@@ -223,6 +228,10 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     customBlocks: [],
   },
   supportedLocales: ['en', 'ja'],
+  selfService: {
+    accountPageEnabled: false,
+    accountPagePath: '/account',
+  },
 };
 
 // =============================================================================
@@ -1161,7 +1170,31 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       customBlocks: loginUI.customBlocks,
     },
     supportedLocales: loginUI.supportedLocales,
+    selfService: {
+      accountPageEnabled: false,
+      accountPagePath: '/account',
+    },
   };
+}
+
+async function resolveSelfServiceUIConfig(
+  env: Env,
+  tenantId: string
+): Promise<UIConfig['selfService']> {
+  try {
+    const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:self-service`);
+    if (!raw) {
+      return { accountPageEnabled: false, accountPagePath: '/account' };
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const configuredPath = parsed['self-service.account_page_path'];
+    return {
+      accountPageEnabled: parsed['self-service.account_page_enabled'] === true,
+      accountPagePath: validateAccountPagePath(configuredPath) ? configuredPath : '/account',
+    };
+  } catch {
+    return { accountPageEnabled: false, accountPagePath: '/account' };
+  }
 }
 
 /**
@@ -1303,11 +1336,15 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
-    const [loginUISettings, cacheTTL] = await Promise.all([
+    const [loginUISettings, selfServiceUI, cacheTTL] = await Promise.all([
       getLoginUISettings(env, tenantId, settings),
+      resolveSelfServiceUIConfig(env, tenantId),
       resolveCacheTTL(env, tenantId),
     ]);
-    const ui = buildUIConfig(loginUISettings);
+    const ui = {
+      ...buildUIConfig(loginUISettings),
+      selfService: selfServiceUI,
+    };
 
     const response: AuthenticationMethodsResponse = {
       methods,

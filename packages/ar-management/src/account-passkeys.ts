@@ -1,8 +1,10 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  CanonicalRuntimeUserStore,
   PasskeyRepository,
   createAuthContextFromHono,
+  createPIIContextFromHono,
   generateId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
@@ -18,6 +20,7 @@ import { recordAccountOperation } from './account-operation-log';
 const MAX_DEVICE_NAME_LENGTH = 100;
 const REAUTH_TTL_SECONDS = 5 * 60;
 const RP_NAME = 'Authrim';
+const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
 type AccountAuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
 const VALID_TRANSPORTS: AccountAuthenticatorTransport[] = [
@@ -167,6 +170,81 @@ function normalizeDeviceName(value: unknown): string | null {
   }
   const normalized = value.trim().replace(/\s+/g, ' ');
   return normalized || null;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return fallback;
+}
+
+async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {
+  let legacyDefault = true;
+  try {
+    const rawSystemSettings = await env.SETTINGS?.get('system_settings');
+    if (rawSystemSettings) {
+      const systemSettings = JSON.parse(rawSystemSettings) as Record<string, unknown>;
+      const advanced =
+        systemSettings.advanced &&
+        typeof systemSettings.advanced === 'object' &&
+        !Array.isArray(systemSettings.advanced)
+          ? (systemSettings.advanced as Record<string, unknown>)
+          : {};
+      legacyDefault = advanced.magicLinkEnabled !== false;
+    }
+  } catch {
+    legacyDefault = true;
+  }
+
+  try {
+    const raw = await env.SETTINGS?.get(
+      `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
+    );
+    if (!raw) {
+      return legacyDefault;
+    }
+    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const legacyEnabled = normalizeBoolean(
+      settings['authentication-methods.email_otp.enabled'],
+      legacyDefault
+    );
+    return normalizeBoolean(
+      settings['authentication-methods.email_otp.login_enabled'],
+      legacyEnabled
+    );
+  } catch {
+    return legacyDefault;
+  }
+}
+
+async function hasVerifiedEmailLoginMethod(
+  c: Context<{ Bindings: Env }>,
+  accountSession: AccountSession,
+  tenantId: string
+): Promise<boolean> {
+  if (!(await isEmailCodeLoginAvailable(c.env, tenantId))) {
+    return false;
+  }
+
+  try {
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    });
+    const user = await runtimeUsers.findById(accountSession.userId);
+    return Boolean(user?.email && user.email_verified === 1);
+  } catch {
+    return false;
+  }
 }
 
 export async function createAccountPasskeyOptionsHandler(
@@ -505,21 +583,35 @@ export async function deleteAccountPasskeyHandler(
     return c.json({ error: 'not_found', error_description: 'Passkey was not found' }, 404);
   }
 
-  const result = await authCtx.coreAdapter.execute(
-    `DELETE FROM passkeys
-      WHERE id = ? AND tenant_id = ? AND user_id = ?
-        AND (SELECT COUNT(*) FROM passkeys WHERE tenant_id = ? AND user_id = ?) > 1`,
-    [existing.id, tenantId, accountSession.userId, tenantId, accountSession.userId]
-  );
+  const registeredPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
+  const hasAnotherPasskey = registeredPasskeys.some((passkey) => passkey.id !== existing.id);
+  const hasOtherLoginMethod =
+    hasAnotherPasskey || (await hasVerifiedEmailLoginMethod(c, accountSession, tenantId));
 
-  if (result.rowsAffected <= 0) {
+  if (!hasOtherLoginMethod) {
     return c.json(
       {
-        error: 'last_passkey',
-        error_description: 'Cannot delete the last passkey.',
+        error: 'remaining_login_method_required',
+        error_description: 'Cannot delete the last available login method.',
       },
       400
     );
+  }
+
+  const result = hasAnotherPasskey
+    ? await authCtx.coreAdapter.execute(
+        `DELETE FROM passkeys
+          WHERE id = ? AND tenant_id = ? AND user_id = ?
+            AND (SELECT COUNT(*) FROM passkeys WHERE tenant_id = ? AND user_id = ?) > 1`,
+        [existing.id, tenantId, accountSession.userId, tenantId, accountSession.userId]
+      )
+    : await authCtx.coreAdapter.execute(
+        `DELETE FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?`,
+        [existing.id, tenantId, accountSession.userId]
+      );
+
+  if (result.rowsAffected <= 0) {
+    return c.json({ error: 'not_found', error_description: 'Passkey was not found' }, 404);
   }
 
   await recordAccountOperation(c, {

@@ -8,8 +8,11 @@ const {
   mockGetChallengeStoreByChallengeId,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
+  mockCreatePIIContextFromHono,
   mockCoreAdapter,
+  mockPiiAdapter,
   mockPasskeyRepo,
+  mockRuntimeUserStore,
   mockGenerateRegistrationOptions,
   mockVerifyRegistrationResponse,
 } = vi.hoisted(() => {
@@ -23,6 +26,7 @@ const {
   const coreAdapter = {
     execute: vi.fn(),
   };
+  const piiAdapter = {};
   const passkeyRepo = {
     findByUserId: vi.fn(),
     findById: vi.fn(),
@@ -37,8 +41,13 @@ const {
     mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue(challengeStore),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
+    mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: piiAdapter }),
     mockCoreAdapter: coreAdapter,
+    mockPiiAdapter: piiAdapter,
     mockPasskeyRepo: passkeyRepo,
+    mockRuntimeUserStore: {
+      findById: vi.fn(),
+    },
     mockGenerateRegistrationOptions: vi.fn(),
     mockVerifyRegistrationResponse: vi.fn(),
   };
@@ -57,10 +66,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createPIIContextFromHono: mockCreatePIIContextFromHono,
     generateId: vi.fn(() => 'challenge-001'),
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     PasskeyRepository: vi.fn(function PasskeyRepositoryMock() {
       return mockPasskeyRepo;
+    }),
+    CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
+      return mockRuntimeUserStore;
     }),
     getLogger: () => ({
       module: () => ({
@@ -97,6 +110,7 @@ function createMockContext(
     origin?: string;
     params?: Record<string, string>;
     body?: unknown;
+    settings?: Record<string, unknown>;
   } = {}
 ) {
   const headers = new Headers();
@@ -111,7 +125,14 @@ function createMockContext(
     headers: requestHeaders,
   });
   return {
-    env: {} as Env,
+    env: {
+      SETTINGS: {
+        get: vi.fn(async (key: string) => {
+          const value = options.settings?.[key];
+          return value === undefined ? null : JSON.stringify(value);
+        }),
+      },
+    } as unknown as Env,
     req: {
       method: 'GET',
       url: request.url,
@@ -159,6 +180,7 @@ describe('Account Page passkey management API', () => {
       device_name: 'Phone',
     });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockRuntimeUserStore.findById.mockResolvedValue(null);
     mockGenerateRegistrationOptions.mockResolvedValue({
       challenge: 'challenge-value',
       rp: { id: 'op.example.com', name: 'Authrim' },
@@ -516,6 +538,11 @@ describe('Account Page passkey management API', () => {
   });
 
   it('deletes an owned passkey only when another passkey remains', async () => {
+    mockPasskeyRepo.findByUserId.mockResolvedValueOnce([
+      basePasskey,
+      { ...basePasskey, id: 'pk_002', credential_id: 'credential-secret-2' },
+    ]);
+
     const response = await deleteAccountPasskeyHandler(
       createMockContext({
         cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
@@ -535,9 +562,7 @@ describe('Account Page passkey management API', () => {
     });
   });
 
-  it('blocks deleting the last passkey', async () => {
-    mockCoreAdapter.execute.mockResolvedValueOnce({ rowsAffected: 0 });
-
+  it('blocks deleting the last available login method', async () => {
     const response = await deleteAccountPasskeyHandler(
       createMockContext({
         cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
@@ -547,6 +572,60 @@ describe('Account Page passkey management API', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(400);
-    expect(body.error).toBe('last_passkey');
+    expect(body.error).toBe('remaining_login_method_required');
+    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows deleting the last passkey when verified email code login remains available', async () => {
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'user@example.com',
+      email_verified: 1,
+    });
+
+    const response = await deleteAccountPasskeyHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        params: { id: 'pk_001' },
+      })
+    );
+    const body = (await response.json()) as { passkey: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?',
+      ['pk_001', 'default', 'user-001']
+    );
+    expect(body.passkey).toEqual({
+      id: 'pk_001',
+      deleted: true,
+    });
+  });
+
+  it('does not treat email account linking as a remaining login method', async () => {
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'user@example.com',
+      email_verified: 1,
+    });
+
+    const response = await deleteAccountPasskeyHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        params: { id: 'pk_001' },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.email_otp.enabled': true,
+            'authentication-methods.email_otp.login_enabled': false,
+            'authentication-methods.email_otp.account_link_enabled': true,
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('remaining_login_method_required');
+    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
   });
 });

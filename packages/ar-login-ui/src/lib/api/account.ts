@@ -117,6 +117,21 @@ async function accountFetch<T>(endpoint: string, options: RequestInit = {}): Acc
 }
 
 export const accountAPI = {
+	createAccountReturn: (path: string) =>
+		accountFetch<{ account_return: string; expires_in: number }>('/api/account/return', {
+			method: 'POST',
+			body: JSON.stringify({ path })
+		}),
+
+	consumeAccountReturn: (id: string) =>
+		accountFetch<{ redirect_url: string }>(
+			`/api/account/return/${encodeURIComponent(id)}/consume`,
+			{
+				method: 'POST',
+				body: JSON.stringify({})
+			}
+		),
+
 	getProfile: () =>
 		accountFetch<{ profile: AccountProfile; session: Record<string, unknown> }>(
 			'/api/account/profile'

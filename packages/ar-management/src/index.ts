@@ -675,10 +675,7 @@ import {
 } from './account-page';
 import { getAccountCapabilitiesHandler } from './account-capabilities';
 import { listAccountOperationsHandler } from './account-operations';
-import {
-  listAccountSessionsHandler,
-  deleteAccountSessionHandler,
-} from './account-sessions';
+import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
 import {
   createAccountPasskeyOptionsHandler,
   completeAccountPasskeyRegistrationHandler,
@@ -686,6 +683,7 @@ import {
   updateAccountPasskeyHandler,
   deleteAccountPasskeyHandler,
 } from './account-passkeys';
+import { createAccountReturnHandler, consumeAccountReturnHandler } from './account-return';
 import {
   createWebhook,
   listWebhooks,
@@ -1177,6 +1175,8 @@ app.use('/api/account/*', async (c, next) => {
 });
 app.get('/api/account/profile', getAccountProfileHandler);
 app.patch('/api/account/profile', updateAccountProfileHandler);
+app.post('/api/account/return', createAccountReturnHandler);
+app.post('/api/account/return/:id/consume', consumeAccountReturnHandler);
 app.get('/api/account/capabilities', getAccountCapabilitiesHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);

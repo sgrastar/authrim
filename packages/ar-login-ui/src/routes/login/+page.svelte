@@ -9,6 +9,7 @@
 		externalIdpAPI,
 		loginChallengeAPI
 	} from '$lib/api/client';
+	import { accountAPI } from '$lib/api/account';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import {
 		isValidRedirectUrl,
@@ -81,6 +82,7 @@
 	let samlRequestId = $state('');
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
+	let accountReturn = $state('');
 
 	// External IdP error
 	function getExternalIdpErrorMessage(
@@ -200,6 +202,7 @@
 		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
 		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = $page.url.searchParams.get('return_to') || '';
+		accountReturn = $page.url.searchParams.get('account_return') || '';
 		const urlLoginHint = $page.url.searchParams.get('login_hint');
 		if (urlLoginHint) {
 			email = urlLoginHint;
@@ -338,7 +341,14 @@
 		queueMicrotask(() => resumeTurnstileTarget(target));
 	});
 
-	function buildPostAuthRedirect(redirectUrl?: string): string {
+	async function resolveAccountReturnRedirect(): Promise<string | null> {
+		if (!accountReturn) return null;
+		const result = await accountAPI.consumeAccountReturn(accountReturn);
+		const redirectUrl = result.data?.redirect_url;
+		return redirectUrl && isValidReturnUrl(redirectUrl) ? redirectUrl : null;
+	}
+
+	async function buildPostAuthRedirect(redirectUrl?: string): Promise<string> {
 		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
 			const params = new SvelteURLSearchParams({
 				saml_request_id: samlRequestId,
@@ -346,6 +356,11 @@
 				return_to: 'saml_sso'
 			});
 			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		const accountReturnRedirect = await resolveAccountReturnRedirect();
+		if (accountReturnRedirect) {
+			return accountReturnRedirect;
 		}
 
 		if (returnTo && isValidReturnUrl(returnTo)) {
@@ -389,7 +404,7 @@
 
 			await auth.refreshFromSession();
 
-			window.location.href = buildPostAuthRedirect(verifyData?.redirect_url);
+			window.location.href = await buildPostAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
 			error =
 				err instanceof Error ? err.message : 'An error occurred during passkey authentication';
@@ -425,6 +440,9 @@
 			const params = new SvelteURLSearchParams({ email });
 			if (authorizationChallengeId) {
 				params.set('challenge_id', authorizationChallengeId);
+			}
+			if (accountReturn) {
+				params.set('account_return', accountReturn);
 			}
 			if (returnTo && isValidReturnUrl(returnTo)) {
 				params.set('return_to', returnTo);
@@ -481,7 +499,7 @@
 			}
 
 			await auth.refreshFromSession();
-			window.location.href = buildPostAuthRedirect(data?.redirect_url);
+			window.location.href = await buildPostAuthRedirect(data?.redirect_url);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.login_errorDirectoryFailed();
 		} finally {
@@ -496,6 +514,13 @@
 		if (turnstileRequired && !cfTurnstileResponse) return;
 		externalIdpLoading = providerId;
 		try {
+			const accountReturnRedirect = await resolveAccountReturnRedirect();
+			if (accountReturnRedirect) {
+				setLoginUiSessionItem(
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,
+					accountReturnRedirect
+				);
+			}
 			const redirectUri =
 				provider.startMode === 'saml_sp'
 					? `${window.location.origin}/`

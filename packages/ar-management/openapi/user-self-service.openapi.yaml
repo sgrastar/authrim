@@ -27,12 +27,12 @@ paths:
       description: Returns the authenticated Account Page user's minimal profile and current Authrim
         browser session metadata. Authentication uses the `authrim_session` cookie.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountProfile"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountProfile'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security: &accountSession
         - accountSessionCookie: []
     patch:
@@ -40,19 +40,20 @@ paths:
         - Account Page
       operationId: patchApiAccountProfile
       summary: Update current Account Page profile.
-      description: Updates mutable profile fields for the authenticated Account Page user. The initial
+      description:
+        Updates mutable profile fields for the authenticated Account Page user. The initial
         implementation supports name changes.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountProfile"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountProfile'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       requestBody:
         required: true
         content:
@@ -75,12 +76,12 @@ paths:
       description: Returns the Account Page sections, available features, planned Phase 4E features,
         and the initial theme capability contract for the authenticated Account Page user.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountCapabilities"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountCapabilities'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/reauth/status:
     get:
@@ -88,15 +89,16 @@ paths:
         - Account Page
       operationId: getApiAccountReauthStatus
       summary: Read Account Page reauthentication status.
-      description: Returns whether sensitive Account Page operations currently require reauthentication.
+      description:
+        Returns whether sensitive Account Page operations currently require reauthentication.
         The initial reauthentication window is five minutes from the session auth_time.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountReauthStatus"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountReauthStatus'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/operations:
     get:
@@ -106,12 +108,12 @@ paths:
       summary: List current user's Account Page operation history.
       description: Returns non-sensitive Account Page operation events for the authenticated user.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountOperations"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountOperations'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: limit
           in: query
@@ -121,6 +123,52 @@ paths:
             minimum: 1
             maximum: 100
       security: *accountSession
+  /api/account/return:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReturn
+      summary: Create an Account Page return transaction.
+      description: Creates a short-lived return transaction for unauthenticated Account Page deep
+        links. The path must be a relative URL under the configured Account Page path.
+      responses:
+        '201':
+          $ref: '#/components/responses/AccountReturnCreate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - path
+              properties:
+                path:
+                  type: string
+                  example: /account/security?tab=passkeys
+      security: []
+  /api/account/return/{id}/consume:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReturnByIdConsume
+      summary: Consume an Account Page return transaction.
+      description: Consumes a short-lived Account Page return transaction and returns the validated
+        relative redirect URL. The transaction is single-use.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountReturnConsume'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      security: []
   /api/account/sessions:
     get:
       tags:
@@ -129,12 +177,12 @@ paths:
       summary: List current user's Authrim browser sessions.
       description: Returns active Authrim browser sessions owned by the authenticated Account Page user.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountSessions"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountSessions'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/sessions/{id}:
     delete:
@@ -145,18 +193,18 @@ paths:
       description: Invalidates a session owned by the authenticated Account Page user. Revoking the
         current session also clears the Account Page session cookie.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountSessionRevoke"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-        "503":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountSessionRevoke'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       security: *accountSession
   /api/account/passkeys:
     get:
@@ -164,15 +212,16 @@ paths:
         - Account Page
       operationId: getApiAccountPasskeys
       summary: List current user's passkeys.
-      description: Returns passkeys registered to the authenticated Account Page user without credential
+      description:
+        Returns passkeys registered to the authenticated Account Page user without credential
         IDs, public keys, or counters.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountPasskeys"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountPasskeys'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/passkeys/options:
     post:
@@ -180,17 +229,18 @@ paths:
         - Account Page
       operationId: postApiAccountPasskeyOptions
       summary: Create passkey registration options.
-      description: Starts a WebAuthn passkey registration ceremony for the authenticated Account Page
+      description:
+        Starts a WebAuthn passkey registration ceremony for the authenticated Account Page
         user. Recent authentication and a valid browser Origin are required.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountPasskeyOptions"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountPasskeyOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
         required: false
         content:
@@ -208,19 +258,20 @@ paths:
         - Account Page
       operationId: postApiAccountPasskeyComplete
       summary: Complete passkey registration.
-      description: Verifies a WebAuthn registration response against the stored challenge and registers
+      description:
+        Verifies a WebAuthn registration response against the stored challenge and registers
         the passkey for the authenticated Account Page user.
       responses:
-        "201":
-          $ref: "#/components/responses/AccountPasskeyCreate"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "409":
-          $ref: "#/components/responses/Error"
+        '201':
+          $ref: '#/components/responses/AccountPasskeyCreate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
       requestBody:
         required: true
         content:
@@ -248,18 +299,18 @@ paths:
       summary: Rename one current user's passkey.
       description: Updates the display name of a passkey owned by the authenticated Account Page user.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountPasskey"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountPasskey'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       requestBody:
         required: true
         content:
@@ -278,21 +329,22 @@ paths:
         - Account Page
       operationId: deleteApiAccountPasskeyById
       summary: Delete one current user's passkey.
-      description: Deletes a passkey owned by the authenticated Account Page user. The last passkey cannot
-        be removed in this initial implementation, and recent authentication is required.
+      description:
+        Deletes a passkey owned by the authenticated Account Page user. Recent authentication
+        is required, and at least one other login method must remain.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountPasskeyDelete"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountPasskeyDelete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       security: *accountSession
   /api/account/devices:
     get:
@@ -300,15 +352,16 @@ paths:
         - Account Page
       operationId: getApiAccountDevices
       summary: List current user's device inventory for Account Page.
-      description: Lists device installations visible to the authenticated Account Page user. This is
+      description:
+        Lists device installations visible to the authenticated Account Page user. This is
         the cookie-session Account Page alias for the existing self-service device inventory.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountDevices"
-        "401":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountDevices'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: cursor
           in: query
@@ -331,18 +384,18 @@ paths:
       summary: Rename one current user's device.
       description: Renames a device installation owned by the authenticated Account Page user.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountDevice"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountDevice'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       requestBody:
         required: true
         content:
@@ -363,16 +416,16 @@ paths:
       summary: Unlink one current user's device.
       description: Revokes or unlinks a device installation owned by the authenticated Account Page user.
       responses:
-        "200":
-          $ref: "#/components/responses/AccountDeviceUnlink"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AccountDeviceUnlink'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       security: *accountSession
   /api/user/consents:
     get:
@@ -380,17 +433,18 @@ paths:
         - User Consent
       operationId: getApiUserConsents
       summary: List the current user's OAuth consents.
-      description: Returns consent records granted by the authenticated end user, including client display
+      description:
+        Returns consent records granted by the authenticated end user, including client display
         metadata, scopes, grant time, expiry, and policy versions when available.
       responses:
-        "200":
-          $ref: "#/components/responses/UserConsents"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/UserConsents'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       security: &a1
         - userBearer: []
         - userSessionCookie: []
@@ -400,17 +454,18 @@ paths:
         - User Consent
       operationId: deleteApiUserConsentsByClientId
       summary: Revoke the current user's consent for a client.
-      description: Deletes the authenticated user's consent for the requested client, records consent
+      description:
+        Deletes the authenticated user's consent for the requested client, records consent
         history, optionally revokes related tokens, and publishes a consent revoked event.
       responses:
-        "200":
-          $ref: "#/components/responses/ConsentRevoke"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/ConsentRevoke'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: clientId
           in: path
@@ -424,21 +479,22 @@ paths:
         - User Data Export
       operationId: postApiUserDataExport
       summary: Request a personal data export.
-      description: Creates a GDPR data portability export for the authenticated user. Small exports can
+      description:
+        Creates a GDPR data portability export for the authenticated user. Small exports can
         complete synchronously; larger exports return a pending request for later polling.
       responses:
-        "200":
-          $ref: "#/components/responses/DataExportCreate"
-        "202":
-          $ref: "#/components/responses/DataExportCreate"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DataExportCreate'
+        '202':
+          $ref: '#/components/responses/DataExportCreate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DataExportCreate"
+        $ref: '#/components/requestBodies/DataExportCreate'
       security: *a1
   /api/user/data-export/{id}:
     get:
@@ -448,14 +504,14 @@ paths:
       summary: Read a personal data export request.
       description: Returns status and metadata for an export request owned by the authenticated user.
       responses:
-        "200":
-          $ref: "#/components/responses/DataExportStatus"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DataExportStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: id
           in: path
@@ -469,19 +525,21 @@ paths:
         - User Data Export
       operationId: getApiUserDataExportByIdDownload
       summary: Download a completed personal data export.
-      description: Downloads the completed export owned by the authenticated user as JSON or CSV. The
+      description:
+        Downloads the completed export owned by the authenticated user as JSON or CSV. The
         endpoint returns not_ready until asynchronous exports complete and expired when the export
         is no longer available.
       responses:
-        "200":
-          description: Export file download. Returns application/json or text/csv depending on the export
+        '200':
+          description:
+            Export file download. Returns application/json or text/csv depending on the export
             format.
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: id
           in: path
@@ -497,14 +555,14 @@ paths:
       summary: Read a materialized export artifact manifest.
       description: Returns the manifest for a materialized data export artifact owned by the authenticated user.
       responses:
-        "200":
-          $ref: "#/components/responses/DataExportArtifactManifest"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DataExportArtifactManifest'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: artifactId
           in: path
@@ -521,14 +579,14 @@ paths:
       description: Returns a single chunk from a materialized data export artifact owned by the
         authenticated user.
       responses:
-        "200":
-          $ref: "#/components/responses/DataExportArtifactChunk"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DataExportArtifactChunk'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: artifactId
           in: path
@@ -549,15 +607,16 @@ paths:
       summary: Download a materialized export artifact.
       description: Downloads a materialized data export artifact owned by the authenticated user as JSON or CSV.
       responses:
-        "200":
-          description: Artifact file download. Returns application/json or text/csv depending on the requested
+        '200':
+          description:
+            Artifact file download. Returns application/json or text/csv depending on the requested
             format.
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: artifactId
           in: path
@@ -570,7 +629,8 @@ components:
     userBearer:
       type: http
       scheme: bearer
-      description: End-user access token. Data export requires a data_export or authrim:data_export scope
+      description:
+        End-user access token. Data export requires a data_export or authrim:data_export scope
         when bearer authentication is used.
     userSessionCookie:
       type: apiKey
@@ -642,55 +702,55 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     AdminClientCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientCreate"
+            $ref: '#/components/schemas/AdminClientCreate'
     AdminClientUpdate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientUpdate"
+            $ref: '#/components/schemas/AdminClientUpdate'
     AdminUserCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserCreate"
+            $ref: '#/components/schemas/AdminUserCreate'
     AdminUserUpdate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserUpdate"
+            $ref: '#/components/schemas/AdminUserUpdate'
     AdminUserStatusChange:
       required: false
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserStatusChange"
+            $ref: '#/components/schemas/AdminUserStatusChange'
     WebhookCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/WebhookCreate"
+            $ref: '#/components/schemas/WebhookCreate'
     WebhookUpdate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/WebhookUpdate"
+            $ref: '#/components/schemas/WebhookUpdate'
     DataExportCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DataExportRequestBody"
+            $ref: '#/components/schemas/DataExportRequestBody'
           example:
             sections:
               - profile
@@ -702,145 +762,157 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     List:
       description: Successful JSON list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     AccountProfile:
       description: Account Page profile response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountProfileResponse"
+            $ref: '#/components/schemas/AccountProfileResponse'
     AccountReauthStatus:
       description: Account Page reauthentication status response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountReauthStatusResponse"
+            $ref: '#/components/schemas/AccountReauthStatusResponse'
     AccountCapabilities:
       description: Account Page feature capabilities response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountCapabilitiesResponse"
+            $ref: '#/components/schemas/AccountCapabilitiesResponse'
     AccountOperations:
       description: Account Page operation history response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountOperationsResponse"
+            $ref: '#/components/schemas/AccountOperationsResponse'
+    AccountReturnCreate:
+      description: Account Page return transaction creation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountReturnCreateResponse'
+    AccountReturnConsume:
+      description: Account Page return transaction consume response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountReturnConsumeResponse'
     AccountDevices:
       description: Account Page device inventory response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountDevicesResponse"
+            $ref: '#/components/schemas/AccountDevicesResponse'
     AccountSessions:
       description: Account Page session list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountSessionsResponse"
+            $ref: '#/components/schemas/AccountSessionsResponse'
     AccountSessionRevoke:
       description: Account Page session revoke response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountSessionRevokeResponse"
+            $ref: '#/components/schemas/AccountSessionRevokeResponse'
     AccountPasskeys:
       description: Account Page passkey list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountPasskeysResponse"
+            $ref: '#/components/schemas/AccountPasskeysResponse'
     AccountPasskeyOptions:
       description: Account Page passkey registration options response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountPasskeyOptionsResponse"
+            $ref: '#/components/schemas/AccountPasskeyOptionsResponse'
     AccountPasskeyCreate:
       description: Account Page passkey creation response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountPasskeyCreateResponse"
+            $ref: '#/components/schemas/AccountPasskeyCreateResponse'
     AccountPasskey:
       description: Account Page passkey response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountPasskeyResponse"
+            $ref: '#/components/schemas/AccountPasskeyResponse'
     AccountPasskeyDelete:
       description: Account Page passkey delete response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountPasskeyDeleteResponse"
+            $ref: '#/components/schemas/AccountPasskeyDeleteResponse'
     AccountDevice:
       description: Account Page device mutation response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountDeviceResponse"
+            $ref: '#/components/schemas/AccountDeviceResponse'
     AccountDeviceUnlink:
       description: Account Page device unlink response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccountDeviceUnlinkResponse"
+            $ref: '#/components/schemas/AccountDeviceUnlinkResponse'
     AdminClient:
       description: OAuth/OIDC client response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientResponse"
+            $ref: '#/components/schemas/AdminClientResponse'
     AdminClientMutation:
       description: OAuth/OIDC client mutation response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientMutationResponse"
+            $ref: '#/components/schemas/AdminClientMutationResponse'
     AdminClientList:
       description: OAuth/OIDC client list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientListResponse"
+            $ref: '#/components/schemas/AdminClientListResponse'
     AdminUser:
       description: Admin end-user response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserResponse"
+            $ref: '#/components/schemas/AdminUserResponse'
     AdminUserDetail:
       description: Admin end-user detail response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserDetailResponse"
+            $ref: '#/components/schemas/AdminUserDetailResponse'
     AdminUserList:
       description: Admin end-user list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserListResponse"
+            $ref: '#/components/schemas/AdminUserListResponse'
     Error:
       description: Error response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: '#/components/schemas/Error'
     UserConsents:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UserConsentsResponse"
+            $ref: '#/components/schemas/UserConsentsResponse'
           example:
             consents:
               - id: consent_123
@@ -856,7 +928,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ConsentRevokeResponse"
+            $ref: '#/components/schemas/ConsentRevokeResponse'
           example:
             success: true
             accessTokensRevoked: 0
@@ -867,7 +939,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DataExportCreateResponse"
+            $ref: '#/components/schemas/DataExportCreateResponse'
           example:
             status: pending
             requestId: export_123
@@ -878,7 +950,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DataExportStatus"
+            $ref: '#/components/schemas/DataExportStatus'
           example:
             id: export_123
             publicArtifactId: artifact_123
@@ -898,7 +970,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DataExportArtifactManifest"
+            $ref: '#/components/schemas/DataExportArtifactManifest'
           example:
             artifactId: artifact_123
             requestId: export_123
@@ -910,7 +982,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DataExportArtifactChunk"
+            $ref: '#/components/schemas/DataExportArtifactChunk'
           example:
             artifactId: artifact_123
             index: 0
@@ -938,30 +1010,30 @@ components:
             email:
               type:
                 - string
-                - "null"
+                - 'null'
               format: email
             email_verified:
               type: boolean
             name:
               type:
                 - string
-                - "null"
+                - 'null'
             given_name:
               type:
                 - string
-                - "null"
+                - 'null'
             family_name:
               type:
                 - string
-                - "null"
+                - 'null'
             locale:
               type:
                 - string
-                - "null"
+                - 'null'
             picture:
               type:
                 - string
-                - "null"
+                - 'null'
         session:
           type: object
           required:
@@ -1077,13 +1149,13 @@ components:
         capabilities:
           type: array
           items:
-            $ref: "#/components/schemas/AccountCapability"
+            $ref: '#/components/schemas/AccountCapability'
         sections:
           type: array
           items:
-            $ref: "#/components/schemas/AccountSectionCapability"
+            $ref: '#/components/schemas/AccountSectionCapability'
         theme:
-          $ref: "#/components/schemas/AccountThemeCapabilities"
+          $ref: '#/components/schemas/AccountThemeCapabilities'
     AccountOperation:
       type: object
       required:
@@ -1100,11 +1172,11 @@ components:
         resource_type:
           type:
             - string
-            - "null"
+            - 'null'
         resource_id:
           type:
             - string
-            - "null"
+            - 'null'
         created_at:
           type: integer
         metadata:
@@ -1118,7 +1190,7 @@ components:
         operations:
           type: array
           items:
-            $ref: "#/components/schemas/AccountOperation"
+            $ref: '#/components/schemas/AccountOperation'
     AccountDevice:
       type: object
       required:
@@ -1140,11 +1212,11 @@ components:
         last_seen_at:
           type:
             - string
-            - "null"
+            - 'null'
         last_seen_at_unix:
           type:
             - integer
-            - "null"
+            - 'null'
         client_id:
           type: string
         app_display_name:
@@ -1157,7 +1229,7 @@ components:
         devices:
           type: array
           items:
-            $ref: "#/components/schemas/AccountDevice"
+            $ref: '#/components/schemas/AccountDevice'
         next_cursor:
           type: string
     AccountSession:
@@ -1184,7 +1256,7 @@ components:
         sessions:
           type: array
           items:
-            $ref: "#/components/schemas/AccountSession"
+            $ref: '#/components/schemas/AccountSession'
     AccountSessionRevokeResponse:
       type: object
       required:
@@ -1223,13 +1295,13 @@ components:
         device_name:
           type:
             - string
-            - "null"
+            - 'null'
         created_at:
           type: integer
         last_used_at:
           type:
             - integer
-            - "null"
+            - 'null'
     AccountPasskeysResponse:
       type: object
       required:
@@ -1239,7 +1311,7 @@ components:
         passkeys:
           type: array
           items:
-            $ref: "#/components/schemas/AccountPasskey"
+            $ref: '#/components/schemas/AccountPasskey'
         total:
           type: integer
     AccountPasskeyResponse:
@@ -1248,7 +1320,7 @@ components:
         - passkey
       properties:
         passkey:
-          $ref: "#/components/schemas/AccountPasskey"
+          $ref: '#/components/schemas/AccountPasskey'
     AccountPasskeyOptionsResponse:
       type: object
       required:
@@ -1269,7 +1341,7 @@ components:
         ok:
           type: boolean
         passkey:
-          $ref: "#/components/schemas/AccountPasskey"
+          $ref: '#/components/schemas/AccountPasskey'
     AccountPasskeyDeleteResponse:
       type: object
       required:
@@ -1288,13 +1360,32 @@ components:
               type: string
             deleted:
               type: boolean
+    AccountReturnCreateResponse:
+      type: object
+      required:
+        - account_return
+        - expires_in
+      properties:
+        account_return:
+          type: string
+        expires_in:
+          type: integer
+          minimum: 1
+    AccountReturnConsumeResponse:
+      type: object
+      required:
+        - redirect_url
+      properties:
+        redirect_url:
+          type: string
+          example: /account/security?tab=passkeys
     AccountDeviceResponse:
       type: object
       required:
         - device
       properties:
         device:
-          $ref: "#/components/schemas/AccountDevice"
+          $ref: '#/components/schemas/AccountDevice'
     AccountDeviceUnlinkResponse:
       type: object
       required:
@@ -1370,12 +1461,12 @@ components:
         description:
           type:
             - string
-            - "null"
+            - 'null'
         redirect_uris:
           type: array
           minItems: 1
           items:
-            $ref: "#/components/schemas/UriString"
+            $ref: '#/components/schemas/UriString'
         grant_types:
           type: array
           items:
@@ -1398,15 +1489,15 @@ components:
         scope:
           type: string
         logo_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         client_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         policy_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         tos_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         contacts:
-          $ref: "#/components/schemas/StringArray"
+          $ref: '#/components/schemas/StringArray'
         token_endpoint_auth_method:
           type: string
           enum:
@@ -1421,7 +1512,7 @@ components:
             - public
             - pairwise
         sector_identifier_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         is_trusted:
           type: boolean
         skip_consent:
@@ -1431,11 +1522,11 @@ components:
         allowed_redirect_origins:
           type: array
           items:
-            $ref: "#/components/schemas/OriginString"
+            $ref: '#/components/schemas/OriginString'
         web_origin_registry:
           type:
             - object
-            - "null"
+            - 'null'
           additionalProperties: true
         require_pkce:
           type: boolean
@@ -1448,11 +1539,11 @@ components:
         trust_group:
           type:
             - string
-            - "null"
+            - 'null'
         browser_public_client_mode:
           type:
             - string
-            - "null"
+            - 'null'
           enum:
             - disabled
             - enabled
@@ -1461,7 +1552,7 @@ components:
         browser_refresh_token_policy:
           type:
             - string
-            - "null"
+            - 'null'
           enum:
             - disabled
             - rotation
@@ -1470,15 +1561,15 @@ components:
         native_sso_enabled:
           type:
             - boolean
-            - "null"
+            - 'null'
         native_channel_allowed:
           type:
             - boolean
-            - "null"
+            - 'null'
         allowed_channels:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         token_exchange_allowed:
@@ -1486,13 +1577,13 @@ components:
         allowed_subject_token_clients:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         allowed_token_exchange_resources:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         delegation_mode:
@@ -1506,40 +1597,40 @@ components:
         allowed_scopes:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         default_scope:
           type:
             - string
-            - "null"
+            - 'null'
         default_audience:
           type:
             - string
-            - "null"
+            - 'null'
         default_resource:
           type:
             - string
-            - "null"
+            - 'null'
     AdminClientCreate:
       allOf:
-        - $ref: "#/components/schemas/AdminClientBase"
+        - $ref: '#/components/schemas/AdminClientBase'
         - type: object
           required:
             - client_name
             - redirect_uris
     AdminClientUpdate:
       allOf:
-        - $ref: "#/components/schemas/AdminClientBase"
+        - $ref: '#/components/schemas/AdminClientBase'
         - type: object
           properties:
             initiate_login_uri:
-              $ref: "#/components/schemas/UriString"
+              $ref: '#/components/schemas/UriString'
             login_ui_url:
-              $ref: "#/components/schemas/UriString"
+              $ref: '#/components/schemas/UriString'
     AdminClient:
       allOf:
-        - $ref: "#/components/schemas/AdminClientBase"
+        - $ref: '#/components/schemas/AdminClientBase'
         - type: object
           additionalProperties: true
           required:
@@ -1571,7 +1662,7 @@ components:
         - client
       properties:
         client:
-          $ref: "#/components/schemas/AdminClient"
+          $ref: '#/components/schemas/AdminClient'
     AdminClientMutationResponse:
       type: object
       required:
@@ -1580,7 +1671,7 @@ components:
         success:
           type: boolean
         client:
-          $ref: "#/components/schemas/AdminClient"
+          $ref: '#/components/schemas/AdminClient'
     AdminClientListResponse:
       type: object
       required:
@@ -1590,9 +1681,9 @@ components:
         clients:
           type: array
           items:
-            $ref: "#/components/schemas/AdminClient"
+            $ref: '#/components/schemas/AdminClient'
         pagination:
-          $ref: "#/components/schemas/Pagination"
+          $ref: '#/components/schemas/Pagination'
     AdminUserCreate:
       type: object
       additionalProperties:
@@ -1600,7 +1691,7 @@ components:
           - type: string
           - type: number
           - type: boolean
-          - type: "null"
+          - type: 'null'
       required:
         - email
       properties:
@@ -1641,39 +1732,39 @@ components:
         email:
           type:
             - string
-            - "null"
+            - 'null'
           format: email
         name:
           type:
             - string
-            - "null"
+            - 'null'
         given_name:
           type:
             - string
-            - "null"
+            - 'null'
         family_name:
           type:
             - string
-            - "null"
+            - 'null'
         nickname:
           type:
             - string
-            - "null"
+            - 'null'
         preferred_username:
           type:
             - string
-            - "null"
+            - 'null'
         picture:
           type:
             - string
-            - "null"
+            - 'null'
           format: uri
         email_verified:
           type: boolean
         phone_number:
           type:
             - string
-            - "null"
+            - 'null'
         phone_number_verified:
           type: boolean
         user_type:
@@ -1697,11 +1788,11 @@ components:
       properties:
         user:
           oneOf:
-            - $ref: "#/components/schemas/AdminUser"
-            - type: "null"
+            - $ref: '#/components/schemas/AdminUser'
+            - type: 'null'
     AdminUserDetailResponse:
       allOf:
-        - $ref: "#/components/schemas/AdminUserResponse"
+        - $ref: '#/components/schemas/AdminUserResponse'
         - type: object
           properties:
             passkeys:
@@ -1717,17 +1808,17 @@ components:
                   device_name:
                     type:
                       - string
-                      - "null"
+                      - 'null'
                   created_at:
                     oneOf:
                       - type: integer
                       - type: string
-                      - type: "null"
+                      - type: 'null'
                   last_used_at:
                     oneOf:
                       - type: integer
                       - type: string
-                      - type: "null"
+                      - type: 'null'
             missing_required_fields:
               type: array
               items:
@@ -1747,9 +1838,9 @@ components:
         users:
           type: array
           items:
-            $ref: "#/components/schemas/AdminUser"
+            $ref: '#/components/schemas/AdminUser'
         pagination:
-          $ref: "#/components/schemas/Pagination"
+          $ref: '#/components/schemas/Pagination'
     AdminUserUpdate:
       type: object
       additionalProperties:
@@ -1757,7 +1848,7 @@ components:
           - type: string
           - type: number
           - type: boolean
-          - type: "null"
+          - type: 'null'
       properties:
         name:
           type: string
@@ -1834,7 +1925,7 @@ components:
           additionalProperties:
             type: string
         retryPolicy:
-          $ref: "#/components/schemas/WebhookRetryPolicy"
+          $ref: '#/components/schemas/WebhookRetryPolicy'
         timeoutMs:
           type: integer
           minimum: 1000
@@ -1863,7 +1954,7 @@ components:
           additionalProperties:
             type: string
         retryPolicy:
-          $ref: "#/components/schemas/WebhookRetryPolicy"
+          $ref: '#/components/schemas/WebhookRetryPolicy'
         timeoutMs:
           type: integer
           minimum: 1000
@@ -1881,7 +1972,7 @@ components:
         clientId:
           type:
             - string
-            - "null"
+            - 'null'
         scope:
           type: string
         name:
@@ -1900,7 +1991,7 @@ components:
           additionalProperties:
             type: string
         retryPolicy:
-          $ref: "#/components/schemas/WebhookRetryPolicy"
+          $ref: '#/components/schemas/WebhookRetryPolicy'
         timeoutMs:
           type: integer
         active:
@@ -1912,11 +2003,11 @@ components:
         lastSuccessAt:
           type:
             - string
-            - "null"
+            - 'null'
         lastFailureAt:
           type:
             - string
-            - "null"
+            - 'null'
     WebhookMutationResponse:
       type: object
       required:
@@ -1926,8 +2017,8 @@ components:
           type: boolean
         webhook:
           oneOf:
-            - $ref: "#/components/schemas/Webhook"
-            - type: "null"
+            - $ref: '#/components/schemas/Webhook'
+            - type: 'null'
     Error:
       type: object
       additionalProperties: true
@@ -1985,7 +2076,7 @@ components:
         consents:
           type: array
           items:
-            $ref: "#/components/schemas/UserConsent"
+            $ref: '#/components/schemas/UserConsent'
         total:
           type: integer
     ConsentRevokeResponse:

@@ -231,6 +231,10 @@ type RootTranslation = {
 	 */
 	account_actionFailed: string
 	/**
+	 * A​d​d​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​b​e​f​o​r​e​ ​d​e​l​e​t​i​n​g​ ​t​h​i​s​ ​p​a​s​s​k​e​y​.
+	 */
+	account_remainingLoginMethodRequired: string
+	/**
 	 * A​c​t​i​v​i​t​y
 	 */
 	account_activityTitle: string
@@ -1226,6 +1230,10 @@ export type TranslationFunctions = {
 	 * The operation failed
 	 */
 	account_actionFailed: () => LocalizedString
+	/**
+	 * Add another login method before deleting this passkey.
+	 */
+	account_remainingLoginMethodRequired: () => LocalizedString
 	/**
 	 * Activity
 	 */

@@ -2,6 +2,7 @@
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { brandingStore } from '$lib/stores/branding.svelte';
@@ -24,6 +25,7 @@
 	let samlRequestId = $state('');
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
+	let accountReturn = $state('');
 	let error = $state('');
 	let success = $state('');
 	let loading = $state(false);
@@ -89,6 +91,7 @@
 		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
 		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = $page.url.searchParams.get('return_to') || '';
+		accountReturn = $page.url.searchParams.get('account_return') || '';
 
 		// If no email, redirect to login
 		if (!email) {
@@ -174,7 +177,9 @@
 
 			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
-				window.location.href = buildPostAuthRedirect(verifyData?.redirect_url);
+				void buildPostAuthRedirect(verifyData?.redirect_url).then((url) => {
+					window.location.href = url;
+				});
 			}, 2000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
@@ -184,7 +189,14 @@
 		}
 	}
 
-	function buildPostAuthRedirect(redirectUrl?: string): string {
+	async function resolveAccountReturnRedirect(): Promise<string | null> {
+		if (!accountReturn) return null;
+		const result = await accountAPI.consumeAccountReturn(accountReturn);
+		const redirectUrl = result.data?.redirect_url;
+		return redirectUrl && isValidReturnUrl(redirectUrl) ? redirectUrl : null;
+	}
+
+	async function buildPostAuthRedirect(redirectUrl?: string): Promise<string> {
 		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
 			const params = new URLSearchParams({
 				saml_request_id: samlRequestId,
@@ -192,6 +204,11 @@
 				return_to: 'saml_sso'
 			});
 			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		const accountReturnRedirect = await resolveAccountReturnRedirect();
+		if (accountReturnRedirect) {
+			return accountReturnRedirect;
 		}
 
 		if (returnTo && isValidReturnUrl(returnTo)) {

@@ -38,7 +38,11 @@
 		await auth.refreshFromSession();
 		if (!auth.checkAuth()) {
 			const returnTo = `${window.location.pathname}${window.location.search}`;
-			window.location.href = `/login?return_to=${encodeURIComponent(returnTo)}`;
+			const result = await accountAPI.createAccountReturn(returnTo);
+			const accountReturn = result.data?.account_return;
+			window.location.href = accountReturn
+				? `/login?account_return=${encodeURIComponent(accountReturn)}`
+				: '/login';
 			return;
 		}
 		passkeySupported = await detectPasskeySupport();
@@ -123,7 +127,12 @@
 
 	function reauth() {
 		const returnTo = `${window.location.pathname}${window.location.search}`;
-		window.location.href = `/login?return_to=${encodeURIComponent(returnTo)}`;
+		void accountAPI.createAccountReturn(returnTo).then((result) => {
+			const accountReturn = result.data?.account_return;
+			window.location.href = accountReturn
+				? `/login?account_return=${encodeURIComponent(accountReturn)}`
+				: '/login';
+		});
 	}
 
 	function handleApiError(message: string | undefined, fallback: string): string {
@@ -219,6 +228,10 @@
 				if (result.error.error === 'reauth_required') {
 					securityError = $LL.account_reauthRequired();
 					reauthNeeded = true;
+					return;
+				}
+				if (result.error.error === 'remaining_login_method_required') {
+					securityError = $LL.account_remainingLoginMethodRequired();
 					return;
 				}
 				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
