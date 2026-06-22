@@ -3,36 +3,21 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { Button } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
-	import { auth, isAuthenticated, currentUser } from '$lib/stores/auth';
+	import { auth, isAuthenticated } from '$lib/stores/auth';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 
 	let mounted = $state(false);
-	let logoutLoading = $state(false);
 
 	onMount(async () => {
 		auth.refresh();
 
-		const user = $currentUser;
-		if (!user?.email || user.email === '') {
-			await auth.refreshFromSession();
-		}
+		await auth.refreshFromSession();
 
 		// Stagger entrance animation
 		requestAnimationFrame(() => {
 			mounted = true;
 		});
 	});
-
-	async function handleLogout() {
-		if (logoutLoading) return;
-		logoutLoading = true;
-		try {
-			await auth.logout();
-			window.location.href = '/';
-		} catch {
-			logoutLoading = false;
-		}
-	}
 </script>
 
 <svelte:head>
@@ -65,27 +50,9 @@
 				<LanguageSwitcher />
 
 				{#if $isAuthenticated}
-					<div class="landing__user-pill">
-						<div class="landing__user-avatar">
-							<div class="i-heroicons-user-circle h-5 w-5"></div>
-						</div>
-						<span class="landing__user-email">
-							{$currentUser?.email || $currentUser?.name || $LL.common_userFallback()}
-						</span>
-						<button
-							class="landing__logout-btn"
-							onclick={handleLogout}
-							disabled={logoutLoading}
-							aria-label={$LL.header_logout()}
-						>
-							{#if logoutLoading}
-								<span class="landing__button-spinner" aria-hidden="true"></span>
-							{:else}
-								<div class="i-heroicons-arrow-right-on-rectangle h-4 w-4"></div>
-							{/if}
-							<span class="landing__logout-text">{$LL.header_logout()}</span>
-						</button>
-					</div>
+					<a href="/account">
+						<Button variant="secondary">{$LL.account_openPage()}</Button>
+					</a>
 				{:else}
 					<div class="landing__auth-buttons">
 						<a href="/signup">
@@ -123,32 +90,11 @@
 
 				{#if $isAuthenticated}
 					<!-- Authenticated state -->
-					<div class="landing__auth-card">
-						<div class="landing__auth-card-header">
-							<div class="landing__auth-card-icon">
-								<div class="i-heroicons-shield-check h-6 w-6"></div>
-							</div>
-							<div>
-								<p class="landing__auth-card-label">{$LL.landing_signedInAs()}</p>
-								<p class="landing__auth-card-value">
-									{$currentUser?.email || $currentUser?.name || $LL.common_userFallback()}
-								</p>
-							</div>
-						</div>
-						<div class="landing__auth-card-actions">
-							<button
-								class="landing__auth-card-btn landing__auth-card-btn--logout"
-								onclick={handleLogout}
-								disabled={logoutLoading}
-							>
-								{#if logoutLoading}
-									<span class="landing__button-spinner" aria-hidden="true"></span>
-								{:else}
-									<div class="i-heroicons-arrow-right-on-rectangle h-4 w-4"></div>
-								{/if}
-								{$LL.header_logout()}
-							</button>
-						</div>
+					<div class="landing__cta">
+						<a href="/account" class="landing__cta-primary">
+							<span>{$LL.account_openPage()}</span>
+							<div class="i-heroicons-arrow-right h-4 w-4"></div>
+						</a>
 					</div>
 				{:else}
 					<!-- Unauthenticated state -->
@@ -263,73 +209,6 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-	}
-
-	/* === User Pill === */
-	.landing__user-pill {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 4px 4px 4px 8px;
-		border-radius: var(--radius-full);
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-	}
-
-	.landing__user-avatar {
-		color: var(--primary);
-		display: flex;
-		align-items: center;
-		flex-shrink: 0;
-	}
-
-	.landing__user-email {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		max-width: 180px;
-	}
-
-	.landing__logout-btn {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 6px 10px;
-		border: none;
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--text-muted);
-		font-size: 0.75rem;
-		transition: all var(--transition-fast);
-		cursor: pointer;
-	}
-
-	.landing__logout-btn:hover:not(:disabled) {
-		background: var(--danger-light);
-		color: var(--danger);
-	}
-
-	.landing__logout-btn:disabled,
-	.landing__auth-card-btn:disabled {
-		cursor: wait;
-		opacity: 0.7;
-	}
-
-	.landing__button-spinner {
-		width: 1rem;
-		height: 1rem;
-		border-radius: 50%;
-		border: 2px solid currentColor;
-		border-top-color: transparent;
-		animation: landing-spin 0.8s linear infinite;
-	}
-
-	@keyframes landing-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	/* === Main / Hero === */
@@ -514,91 +393,6 @@
 		background: var(--primary-light);
 	}
 
-	/* === Auth Card (Authenticated) === */
-	.landing__auth-card {
-		max-width: 380px;
-		margin: 0 auto;
-		padding: 20px;
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		box-shadow: var(--shadow-md);
-		text-align: left;
-		opacity: 0;
-		transform: translateY(16px) scale(0.98);
-		transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.3s;
-	}
-
-	.landing--mounted .landing__auth-card {
-		opacity: 1;
-		transform: translateY(0) scale(1);
-	}
-
-	.landing__auth-card-header {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-		margin-bottom: 16px;
-	}
-
-	.landing__auth-card-icon {
-		width: 44px;
-		height: 44px;
-		border-radius: var(--radius-md);
-		background: var(--primary-light);
-		color: var(--primary);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.landing__auth-card-label {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		margin: 0 0 2px 0;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		font-weight: 500;
-	}
-
-	.landing__auth-card-value {
-		font-size: 0.9375rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin: 0;
-		word-break: break-all;
-	}
-
-	.landing__auth-card-actions {
-		display: flex;
-		gap: 8px;
-		padding-top: 16px;
-		border-top: 1px solid var(--border);
-	}
-
-	.landing__auth-card-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px 14px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: transparent;
-		color: var(--text-secondary);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		font-family: inherit;
-	}
-
-	.landing__auth-card-btn--logout:hover:not(:disabled) {
-		border-color: var(--danger);
-		color: var(--danger);
-		background: var(--danger-light);
-	}
-
 	/* === Footer === */
 	.landing__footer {
 		position: relative;
@@ -620,20 +414,6 @@
 		}
 
 		.landing__logo-mark {
-			display: none;
-		}
-
-		.landing__user-pill {
-			padding: 4px;
-			gap: 4px;
-		}
-
-		.landing__user-email {
-			max-width: 100px;
-			font-size: 0.75rem;
-		}
-
-		.landing__logout-text {
 			display: none;
 		}
 
@@ -665,10 +445,6 @@
 	}
 
 	@media (max-width: 400px) {
-		.landing__user-email {
-			display: none;
-		}
-
 		.landing__auth-buttons {
 			gap: 4px;
 		}
@@ -684,8 +460,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.landing__badge,
 		.landing__title,
-		.landing__cta,
-		.landing__auth-card {
+		.landing__cta {
 			opacity: 1;
 			transform: none;
 			transition: none;

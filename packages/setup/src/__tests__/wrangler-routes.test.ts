@@ -1305,9 +1305,21 @@ id = "kv-id"
       profile: 'basic-op',
     } satisfies AuthrimConfig;
 
-    const resourceIds = { d1: {}, kv: {} };
+    const resourceIds = {
+      d1: {},
+      kv: {
+        SETTINGS: { id: 'kv-settings', name: 'TEST-SETTINGS' },
+        AUTHRIM_CONFIG: { id: 'kv-authrim-config', name: 'TEST-AUTHRIM_CONFIG' },
+      },
+    };
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
+    expect(routerConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        { binding: 'SETTINGS', id: 'kv-settings' },
+        { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
+      ])
+    );
     expect(routerConfig.services).toEqual(
       expect.arrayContaining([
         { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },

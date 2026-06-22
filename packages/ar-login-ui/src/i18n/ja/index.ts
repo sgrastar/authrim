@@ -37,6 +37,7 @@ const ja = {
 	account_manage: '管理',
 	account_passkeys: 'Passkey',
 	account_socialAccounts: 'ソーシャルアカウント',
+	account_openPage: 'アカウントページへ',
 
 	login_title: 'おかえりなさい',
 	login_subtitle: 'アカウントにサインイン',

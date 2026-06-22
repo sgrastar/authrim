@@ -1356,6 +1356,7 @@ describe('Router Worker', () => {
       expect(body.worker).toBe('LOGIN_UI_WORKER');
       expect(body.path).toBe('/account/security');
       expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).search).toBe('?tab=passkeys');
+      expect(res.headers.get('Content-Security-Policy')).toBeNull();
     });
 
     it('should leave Account Page prefixes to 404 when self-service is disabled', async () => {

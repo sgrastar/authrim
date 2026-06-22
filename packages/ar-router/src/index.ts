@@ -416,6 +416,16 @@ app.use('*', async (c, next) => {
     return next();
   }
 
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    const accountPageSettings = await resolveAccountPageSettings(c);
+    if (
+      accountPageSettings.enabled &&
+      getAccountPageInternalPath(path, accountPageSettings.path) !== null
+    ) {
+      return next();
+    }
+  }
+
   return secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"],

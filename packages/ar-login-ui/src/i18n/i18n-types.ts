@@ -143,6 +143,10 @@ type RootTranslation = {
 	 */
 	account_socialAccounts: string
 	/**
+	 * A​c​c​o​u​n​t​ ​p​a​g​e
+	 */
+	account_openPage: string
+	/**
 	 * W​e​l​c​o​m​e​ ​b​a​c​k
 	 */
 	login_title: string
@@ -1026,6 +1030,10 @@ export type TranslationFunctions = {
 	 * Social accounts
 	 */
 	account_socialAccounts: () => LocalizedString
+	/**
+	 * Account page
+	 */
+	account_openPage: () => LocalizedString
 	/**
 	 * Welcome back
 	 */

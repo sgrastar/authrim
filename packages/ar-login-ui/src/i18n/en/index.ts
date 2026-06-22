@@ -37,6 +37,7 @@ const en = {
 	account_manage: 'Manage',
 	account_passkeys: 'Passkeys',
 	account_socialAccounts: 'Social accounts',
+	account_openPage: 'Account page',
 
 	login_title: 'Welcome back',
 	login_subtitle: 'Sign in to your account',

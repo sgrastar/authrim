@@ -6,6 +6,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
+	let logoutLoading = $state(false);
 
 	onMount(async () => {
 		await auth.refreshFromSession();
@@ -16,6 +17,17 @@
 		}
 		loading = false;
 	});
+
+	async function handleLogout() {
+		if (logoutLoading) return;
+		logoutLoading = true;
+		try {
+			await auth.logout();
+			window.location.href = '/';
+		} catch {
+			logoutLoading = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -38,6 +50,9 @@
 					<p class="account-kicker">Authrim</p>
 					<h1>{$LL.account_title()}</h1>
 				</div>
+				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
+					{$LL.header_logout()}
+				</Button>
 			</header>
 
 			<section class="account-grid">

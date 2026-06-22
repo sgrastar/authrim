@@ -749,6 +749,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/ar-router/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+update_wrangler_toml "packages/ar-router/wrangler.${DEPLOY_ENV}.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
 update_wrangler_toml "packages/ar-router/wrangler.${DEPLOY_ENV}.toml" "AUTHRIM_CONFIG" "$AUTHRIM_CONFIG_ID" "$PREVIEW_AUTHRIM_CONFIG_ID"
 echo "✅ ar-router updated"
 
