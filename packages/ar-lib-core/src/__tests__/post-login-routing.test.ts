@@ -82,4 +82,49 @@ describe('post-login routing helpers', () => {
       behavior: 'home',
     });
   });
+
+  it('resolves App Login behavior to an authorize request', async () => {
+    const kv = createSettingsKV({
+      'settings:tenant:tenant_123:login-entry': {
+        'login-entry.post_login_behavior': 'app_login',
+        'login-entry.app_login_client_id': 'service_app',
+        'login-entry.app_login_redirect_uri': 'https://service.example/callback',
+        'login-entry.app_login_final_return_to': '/mypage',
+        'login-entry.app_login_scope': 'openid profile email',
+      },
+    });
+
+    const result = await resolvePostLoginRedirectUrl({ SETTINGS: kv }, 'tenant_123');
+    expect(result.behavior).toBe('app_login');
+    expect(result.redirectUrl).toMatch(/^\/authorize\?/);
+
+    const parsed = new URL(result.redirectUrl, 'https://login.example');
+    expect(parsed.searchParams.get('response_type')).toBe('code');
+    expect(parsed.searchParams.get('client_id')).toBe('service_app');
+    expect(parsed.searchParams.get('redirect_uri')).toBe('https://service.example/callback');
+    expect(parsed.searchParams.get('scope')).toBe('openid profile email');
+    expect(parsed.searchParams.has('prompt')).toBe(false);
+    const state = parsed.searchParams.get('state') ?? '';
+    expect(state).toMatch(/^ar_app_login\./);
+    const encodedState = state.slice('ar_app_login.'.length);
+    const decodedState = JSON.parse(Buffer.from(encodedState, 'base64url').toString('utf8')) as {
+      return_to?: string;
+    };
+    expect(decodedState.return_to).toBe('/mypage');
+    expect(parsed.searchParams.get('nonce')).toBeTruthy();
+    expect(parsed.searchParams.has('ar_return_to')).toBe(false);
+  });
+
+  it('falls back to home when App Login is missing its target client', async () => {
+    const kv = createSettingsKV({
+      'settings:tenant:tenant_123:login-entry': {
+        'login-entry.post_login_behavior': 'app_login',
+      },
+    });
+
+    await expect(resolvePostLoginRedirectUrl({ SETTINGS: kv }, 'tenant_123')).resolves.toEqual({
+      redirectUrl: '/',
+      behavior: 'home',
+    });
+  });
 });

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { getTenantInfo } from '$lib/api/admin-info';
+	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
 	import {
 		adminSettingsAPI,
 		adminUiConfigAPI,
@@ -51,14 +52,29 @@
 	let serviceSiteError = $state('');
 	let serviceSiteSuccessMessage = $state('');
 	let serviceSiteSaving = $state(false);
-	type PostLoginBehavior = 'home' | 'account' | 'custom_url';
+	type PostLoginBehavior = 'home' | 'account' | 'custom_url' | 'app_login';
+	type AppLoginClientOption = {
+		clientId: string;
+		name: string;
+		redirectUris: string[];
+	};
 	let postLoginBehavior = $state<PostLoginBehavior>('home');
 	let postLoginRedirectUrl = $state('/');
+	let appLoginClientId = $state('');
+	let appLoginRedirectUri = $state('');
+	let appLoginFinalReturnTo = $state('');
+	let appLoginScope = $state('openid profile email');
+	let appLoginClientOptions = $state<AppLoginClientOption[]>([]);
+	let appLoginClientOptionsError = $state('');
 	let accountPageEnabled = $state(false);
 	let accountPagePath = $state('/account');
 	let initialPostLoginForm = $state<{
 		behavior: PostLoginBehavior;
 		redirectUrl: string;
+		appLoginClientId: string;
+		appLoginRedirectUri: string;
+		appLoginFinalReturnTo: string;
+		appLoginScope: string;
 		accountPageEnabled: boolean;
 		accountPagePath: string;
 	} | null>(null);
@@ -113,6 +129,10 @@
 		initialPostLoginForm
 			? postLoginBehavior !== initialPostLoginForm.behavior ||
 					postLoginRedirectUrl !== initialPostLoginForm.redirectUrl ||
+					appLoginClientId !== initialPostLoginForm.appLoginClientId ||
+					appLoginRedirectUri !== initialPostLoginForm.appLoginRedirectUri ||
+					appLoginFinalReturnTo !== initialPostLoginForm.appLoginFinalReturnTo ||
+					appLoginScope !== initialPostLoginForm.appLoginScope ||
 					accountPageEnabled !== initialPostLoginForm.accountPageEnabled ||
 					accountPagePath !== initialPostLoginForm.accountPagePath
 			: false
@@ -121,6 +141,9 @@
 		serviceSiteFallbackEnabled !== initialServiceSiteFallbackEnabled
 	);
 	const trustedOriginsDraft = $derived.by(() => parseTrustedOriginsDraft(trustedOriginsInput));
+	const selectedAppLoginRedirectUris = $derived(
+		appLoginClientOptions.find((option) => option.clientId === appLoginClientId)?.redirectUris ?? []
+	);
 
 	// Load data on mount
 	onMount(async () => {
@@ -146,6 +169,7 @@
 		error = '';
 		trustedOriginsError = '';
 		postLoginError = '';
+		appLoginClientOptionsError = '';
 		serviceSiteError = '';
 		uiConfigError = '';
 		pendingPatches = [];
@@ -183,6 +207,23 @@
 				typeof postLoginSettingsResult.values['login-entry.post_login_redirect_url'] === 'string'
 					? postLoginSettingsResult.values['login-entry.post_login_redirect_url']
 					: '/';
+			appLoginClientId =
+				typeof postLoginSettingsResult.values['login-entry.app_login_client_id'] === 'string'
+					? postLoginSettingsResult.values['login-entry.app_login_client_id']
+					: '';
+			appLoginRedirectUri =
+				typeof postLoginSettingsResult.values['login-entry.app_login_redirect_uri'] === 'string'
+					? postLoginSettingsResult.values['login-entry.app_login_redirect_uri']
+					: '';
+			appLoginFinalReturnTo =
+				typeof postLoginSettingsResult.values['login-entry.app_login_final_return_to'] ===
+				'string'
+					? postLoginSettingsResult.values['login-entry.app_login_final_return_to']
+					: '';
+			appLoginScope =
+				typeof postLoginSettingsResult.values['login-entry.app_login_scope'] === 'string'
+					? postLoginSettingsResult.values['login-entry.app_login_scope']
+					: 'openid profile email';
 			accountPageEnabled =
 				selfServiceSettingsResult.values['self-service.account_page_enabled'] === true;
 			accountPagePath =
@@ -192,6 +233,10 @@
 			initialPostLoginForm = {
 				behavior: postLoginBehavior,
 				redirectUrl: postLoginRedirectUrl,
+				appLoginClientId,
+				appLoginRedirectUri,
+				appLoginFinalReturnTo,
+				appLoginScope,
 				accountPageEnabled,
 				accountPagePath
 			};
@@ -214,6 +259,7 @@
 				: loginUiConfigured
 					? ''
 					: $LL.admin_login_ui_status_not_configured();
+			await loadAppLoginClientOptions();
 
 			// Fetch meta
 			const metaResult = await adminSettingsAPI.getMeta(CATEGORY);
@@ -248,7 +294,46 @@
 	}
 
 	function readPostLoginBehavior(value: unknown): PostLoginBehavior {
-		return value === 'account' || value === 'custom_url' || value === 'home' ? value : 'home';
+		return value === 'account' || value === 'custom_url' || value === 'app_login' || value === 'home'
+			? value
+			: 'home';
+	}
+
+	async function loadAppLoginClientOptions() {
+		appLoginClientOptionsError = '';
+		try {
+			const clientsResult = await adminClientsAPI.list({ limit: 100 });
+			const candidates = await Promise.all(
+				clientsResult.clients.map(async (client: Client): Promise<AppLoginClientOption | null> => {
+					try {
+						const clientSettings = await scopedSettingsAPI.getClientSettings(
+							client.client_id,
+							'client'
+						);
+						if (
+							clientSettings.values['client.first_party'] !== true ||
+							clientSettings.values['client.app_login_enabled'] !== true
+						) {
+							return null;
+						}
+						return {
+							clientId: client.client_id,
+							name: client.client_name,
+							redirectUris: Array.isArray(client.redirect_uris) ? client.redirect_uris : []
+						};
+					} catch {
+						return null;
+					}
+				})
+			);
+			appLoginClientOptions = candidates.filter(
+				(candidate): candidate is AppLoginClientOption => candidate !== null
+			);
+		} catch (err) {
+			appLoginClientOptions = [];
+			appLoginClientOptionsError =
+				err instanceof Error ? err.message : $LL.admin_login_ui_app_login_clients_error();
+		}
 	}
 
 	// Get current value (considering pending patches)
@@ -395,10 +480,22 @@
 		}
 	}
 
+	function selectAppLoginClient(clientId: string) {
+		appLoginClientId = clientId;
+		const selected = appLoginClientOptions.find((client) => client.clientId === clientId);
+		if (selected?.redirectUris.length && !selected.redirectUris.includes(appLoginRedirectUri)) {
+			appLoginRedirectUri = selected.redirectUris[0] ?? '';
+		}
+	}
+
 	function discardPostLoginChanges() {
 		if (!initialPostLoginForm) return;
 		postLoginBehavior = initialPostLoginForm.behavior;
 		postLoginRedirectUrl = initialPostLoginForm.redirectUrl;
+		appLoginClientId = initialPostLoginForm.appLoginClientId;
+		appLoginRedirectUri = initialPostLoginForm.appLoginRedirectUri;
+		appLoginFinalReturnTo = initialPostLoginForm.appLoginFinalReturnTo;
+		appLoginScope = initialPostLoginForm.appLoginScope;
 		accountPageEnabled = initialPostLoginForm.accountPageEnabled;
 		accountPagePath = initialPostLoginForm.accountPagePath;
 		postLoginError = '';
@@ -416,6 +513,21 @@
 		}
 		if (!initialPostLoginForm || postLoginRedirectUrl !== initialPostLoginForm.redirectUrl) {
 			set['login-entry.post_login_redirect_url'] = postLoginRedirectUrl.trim();
+		}
+		if (!initialPostLoginForm || appLoginClientId !== initialPostLoginForm.appLoginClientId) {
+			set['login-entry.app_login_client_id'] = appLoginClientId.trim();
+		}
+		if (!initialPostLoginForm || appLoginRedirectUri !== initialPostLoginForm.appLoginRedirectUri) {
+			set['login-entry.app_login_redirect_uri'] = appLoginRedirectUri.trim();
+		}
+		if (
+			!initialPostLoginForm ||
+			appLoginFinalReturnTo !== initialPostLoginForm.appLoginFinalReturnTo
+		) {
+			set['login-entry.app_login_final_return_to'] = appLoginFinalReturnTo.trim();
+		}
+		if (!initialPostLoginForm || appLoginScope !== initialPostLoginForm.appLoginScope) {
+			set['login-entry.app_login_scope'] = appLoginScope.trim();
 		}
 		return Object.keys(set).length > 0 ? { set } : {};
 	}
@@ -448,6 +560,13 @@
 
 		if (postLoginBehavior === 'account' && !accountPageEnabled) {
 			postLoginError = $LL.admin_login_ui_account_page_required();
+			return;
+		}
+		if (
+			postLoginBehavior === 'app_login' &&
+			(!appLoginClientId.trim() || !appLoginRedirectUri.trim() || !appLoginScope.trim())
+		) {
+			postLoginError = $LL.admin_login_ui_app_login_required();
 			return;
 		}
 
@@ -999,6 +1118,20 @@
 											<small>{$LL.admin_login_ui_post_login_custom_desc()}</small>
 										</span>
 									</label>
+									<label class="radio-card" class:selected={postLoginBehavior === 'app_login'}>
+										<input
+											type="radio"
+											name="post-login-behavior"
+											value="app_login"
+											checked={postLoginBehavior === 'app_login'}
+											disabled={!canEditLoginUiSettings}
+											onchange={() => selectPostLoginBehavior('app_login')}
+										/>
+										<span>
+											<strong>{$LL.admin_login_ui_post_login_app_login()}</strong>
+											<small>{$LL.admin_login_ui_post_login_app_login_desc()}</small>
+										</span>
+									</label>
 								</div>
 							</div>
 						</div>
@@ -1033,6 +1166,144 @@
 							</div>
 						</div>
 					</div>
+
+					{#if postLoginBehavior === 'app_login'}
+						<div class="setting-item" class:modified={hasPostLoginChanges}>
+							<div class="setting-item-content">
+								<div class="setting-info">
+									<label for="app-login-client-id" class="setting-label"
+										>{$LL.admin_login_ui_app_login_client()}</label
+									>
+									<p class="setting-description">
+										{$LL.admin_login_ui_app_login_client_description()}
+										{#if appLoginClientId}
+											<a href={`/admin/clients/${encodeURIComponent(appLoginClientId)}`}>
+												{$LL.admin_login_ui_app_login_client_link()}
+											</a>
+										{/if}
+									</p>
+									{#if appLoginClientOptionsError}
+										<p class="setting-description error-text">{appLoginClientOptionsError}</p>
+									{/if}
+								</div>
+
+								<div class="setting-control">
+									<select
+										id="app-login-client-id"
+										class="settings-input"
+										value={appLoginClientId}
+										disabled={!canEditLoginUiSettings}
+										onchange={(e) => selectAppLoginClient(e.currentTarget.value)}
+									>
+										<option value="">{$LL.admin_login_ui_app_login_client_placeholder()}</option>
+										{#each appLoginClientOptions as option}
+											<option value={option.clientId}>{option.name} ({option.clientId})</option>
+										{/each}
+									</select>
+									<input
+										type="text"
+										value={appLoginClientId}
+										disabled={!canEditLoginUiSettings}
+										placeholder="service-web"
+										oninput={(e) => {
+											appLoginClientId = e.currentTarget.value;
+										}}
+										class="settings-input stacked-input"
+									/>
+								</div>
+							</div>
+						</div>
+
+						<div class="setting-item" class:modified={hasPostLoginChanges}>
+							<div class="setting-item-content">
+								<div class="setting-info">
+									<label for="app-login-redirect-uri" class="setting-label"
+										>{$LL.admin_login_ui_app_login_redirect_uri()}</label
+									>
+									<p class="setting-description">
+										{$LL.admin_login_ui_app_login_redirect_uri_description()}
+									</p>
+								</div>
+
+								<div class="setting-control">
+									<input
+										type="url"
+										id="app-login-redirect-uri"
+										value={appLoginRedirectUri}
+										disabled={!canEditLoginUiSettings}
+										placeholder="https://service.example/callback"
+										list="app-login-redirect-uri-options"
+										oninput={(e) => {
+											appLoginRedirectUri = e.currentTarget.value;
+										}}
+										class="settings-input"
+									/>
+									<datalist id="app-login-redirect-uri-options">
+										{#each selectedAppLoginRedirectUris as redirectUri}
+											<option value={redirectUri}></option>
+										{/each}
+									</datalist>
+								</div>
+							</div>
+						</div>
+
+						<div class="setting-item" class:modified={hasPostLoginChanges}>
+							<div class="setting-item-content">
+								<div class="setting-info">
+									<label for="app-login-scope" class="setting-label"
+										>{$LL.admin_login_ui_app_login_scope()}</label
+									>
+									<p class="setting-description">
+										{$LL.admin_login_ui_app_login_scope_description()}
+									</p>
+								</div>
+
+								<div class="setting-control">
+									<input
+										type="text"
+										id="app-login-scope"
+										value={appLoginScope}
+										disabled={!canEditLoginUiSettings}
+										placeholder="openid profile email"
+										oninput={(e) => {
+											appLoginScope = e.currentTarget.value;
+										}}
+										class="settings-input"
+									/>
+								</div>
+							</div>
+						</div>
+
+						<div class="setting-item" class:modified={hasPostLoginChanges}>
+							<div class="setting-item-content">
+								<div class="setting-info">
+									<label for="app-login-final-return-to" class="setting-label"
+										>{$LL.admin_login_ui_app_login_final_return_to()}</label
+									>
+									<p class="setting-description">
+										{$LL.admin_login_ui_app_login_final_return_to_description()}
+										<a href="/admin/settings/security#security.trusted_redirect_origins">
+											{$LL.admin_login_ui_trusted_redirect_origins_link()}
+										</a>
+									</p>
+								</div>
+
+								<div class="setting-control">
+									<input
+										type="text"
+										id="app-login-final-return-to"
+										value={appLoginFinalReturnTo}
+										disabled={!canEditLoginUiSettings}
+										placeholder="/mypage"
+										oninput={(e) => {
+											appLoginFinalReturnTo = e.currentTarget.value;
+										}}
+										class="settings-input"
+									/>
+								</div>
+							</div>
+						</div>
+					{/if}
 
 					<div class="setting-item" class:modified={hasPostLoginChanges}>
 						<div class="setting-item-content">
@@ -1487,6 +1758,14 @@
 		margin-left: 6px;
 		color: var(--color-warning);
 		font-weight: 600;
+	}
+
+	.stacked-input {
+		margin-top: 8px;
+	}
+
+	.error-text {
+		color: var(--color-danger);
 	}
 
 	.form-actions {

@@ -2938,6 +2938,14 @@ type RootTranslation = {
 	 */
 	admin_client_detail_first_party_app_desc: string
 	/**
+	 * A​p​p​ ​L​o​g​i​n​ ​E​n​a​b​l​e​d
+	 */
+	admin_client_detail_app_login_enabled: string
+	/**
+	 * A​l​l​o​w​ ​L​o​g​i​n​ ​U​I​ ​d​i​r​e​c​t​ ​s​i​g​n​-​i​n​ ​t​o​ ​s​t​a​r​t​ ​t​h​i​s​ ​c​l​i​e​n​t​ ​a​f​t​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	admin_client_detail_app_login_enabled_desc: string
+	/**
 	 * S​t​r​i​c​t​ ​R​e​d​i​r​e​c​t​ ​M​a​t​c​h​i​n​g
 	 */
 	admin_client_detail_strict_redirect_matching: string
@@ -26857,6 +26865,14 @@ type RootTranslation = {
 	 */
 	admin_login_ui_post_login_custom_desc: string
 	/**
+	 * A​p​p​ ​L​o​g​i​n
+	 */
+	admin_login_ui_post_login_app_login: string
+	/**
+	 * S​t​a​r​t​ ​a​n​ ​e​n​a​b​l​e​d​ ​f​i​r​s​t​-​p​a​r​t​y​ ​O​I​D​C​ ​c​l​i​e​n​t​ ​s​o​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​a​p​p​ ​c​r​e​a​t​e​s​ ​i​t​s​ ​o​w​n​ ​s​e​s​s​i​o​n​.
+	 */
+	admin_login_ui_post_login_app_login_desc: string
+	/**
 	 * C​u​s​t​o​m​ ​R​e​d​i​r​e​c​t​ ​U​R​L
 	 */
 	admin_login_ui_post_login_redirect_url: string
@@ -26864,6 +26880,54 @@ type RootTranslation = {
 	 * U​s​e​ ​a​ ​n​o​n​-​r​e​s​e​r​v​e​d​ ​r​e​l​a​t​i​v​e​ ​p​a​t​h​ ​s​u​c​h​ ​a​s​ ​/​m​y​p​a​g​e​,​ ​o​r​ ​a​n​ ​H​T​T​P​S​ ​U​R​L​ ​w​h​o​s​e​ ​o​r​i​g​i​n​ ​i​s​ ​t​r​u​s​t​e​d​.
 	 */
 	admin_login_ui_post_login_redirect_url_description: string
+	/**
+	 * A​p​p​ ​L​o​g​i​n​ ​C​l​i​e​n​t
+	 */
+	admin_login_ui_app_login_client: string
+	/**
+	 * C​h​o​o​s​e​ ​a​ ​s​a​m​e​-​t​e​n​a​n​t​ ​C​l​i​e​n​t​ ​t​h​a​t​ ​h​a​s​ ​F​i​r​s​t​ ​P​a​r​t​y​ ​A​p​p​ ​a​n​d​ ​A​p​p​ ​L​o​g​i​n​ ​e​n​a​b​l​e​d​.
+	 */
+	admin_login_ui_app_login_client_description: string
+	/**
+	 * S​e​l​e​c​t​ ​a​n​ ​e​n​a​b​l​e​d​ ​c​l​i​e​n​t
+	 */
+	admin_login_ui_app_login_client_placeholder: string
+	/**
+	 * O​p​e​n​ ​c​l​i​e​n​t​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_login_ui_app_login_client_link: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​A​p​p​ ​L​o​g​i​n​ ​c​l​i​e​n​t​ ​c​a​n​d​i​d​a​t​e​s​.
+	 */
+	admin_login_ui_app_login_clients_error: string
+	/**
+	 * A​p​p​ ​L​o​g​i​n​ ​R​e​d​i​r​e​c​t​ ​U​R​I
+	 */
+	admin_login_ui_app_login_redirect_uri: string
+	/**
+	 * M​u​s​t​ ​e​x​a​c​t​l​y​ ​m​a​t​c​h​ ​o​n​e​ ​o​f​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​C​l​i​e​n​t​ ​r​e​d​i​r​e​c​t​ ​U​R​I​s​.
+	 */
+	admin_login_ui_app_login_redirect_uri_description: string
+	/**
+	 * A​p​p​ ​L​o​g​i​n​ ​S​c​o​p​e
+	 */
+	admin_login_ui_app_login_scope: string
+	/**
+	 * S​p​a​c​e​-​s​e​p​a​r​a​t​e​d​ ​O​I​D​C​ ​s​c​o​p​e​s​.​ ​A​p​p​ ​L​o​g​i​n​ ​m​u​s​t​ ​i​n​c​l​u​d​e​ ​o​p​e​n​i​d​.
+	 */
+	admin_login_ui_app_login_scope_description: string
+	/**
+	 * F​i​n​a​l​ ​R​e​t​u​r​n​ ​T​o
+	 */
+	admin_login_ui_app_login_final_return_to: string
+	/**
+	 * O​p​t​i​o​n​a​l​ ​p​a​t​h​ ​o​r​ ​t​r​u​s​t​e​d​ ​H​T​T​P​S​ ​U​R​L​ ​f​o​r​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​a​p​p​ ​t​o​ ​u​s​e​ ​a​f​t​e​r​ ​i​t​s​ ​c​a​l​l​b​a​c​k​ ​c​o​m​p​l​e​t​e​s​.
+	 */
+	admin_login_ui_app_login_final_return_to_description: string
+	/**
+	 * A​p​p​ ​L​o​g​i​n​ ​r​e​q​u​i​r​e​s​ ​a​ ​C​l​i​e​n​t​ ​I​D​,​ ​r​e​d​i​r​e​c​t​ ​U​R​I​,​ ​a​n​d​ ​s​c​o​p​e​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
+	 */
+	admin_login_ui_app_login_required: string
 	/**
 	 * M​a​n​a​g​e​ ​t​r​u​s​t​e​d​ ​r​e​d​i​r​e​c​t​ ​o​r​i​g​i​n​s
 	 */
@@ -30695,6 +30759,14 @@ export type TranslationFunctions = {
 	 * Mark this client as a first-party application
 	 */
 	admin_client_detail_first_party_app_desc: () => LocalizedString
+	/**
+	 * App Login Enabled
+	 */
+	admin_client_detail_app_login_enabled: () => LocalizedString
+	/**
+	 * Allow Login UI direct sign-in to start this client after authentication.
+	 */
+	admin_client_detail_app_login_enabled_desc: () => LocalizedString
 	/**
 	 * Strict Redirect Matching
 	 */
@@ -54250,6 +54322,14 @@ Remove this role from {email}?
 	 */
 	admin_login_ui_post_login_custom_desc: () => LocalizedString
 	/**
+	 * App Login
+	 */
+	admin_login_ui_post_login_app_login: () => LocalizedString
+	/**
+	 * Start an enabled first-party OIDC client so the service app creates its own session.
+	 */
+	admin_login_ui_post_login_app_login_desc: () => LocalizedString
+	/**
 	 * Custom Redirect URL
 	 */
 	admin_login_ui_post_login_redirect_url: () => LocalizedString
@@ -54257,6 +54337,54 @@ Remove this role from {email}?
 	 * Use a non-reserved relative path such as /mypage, or an HTTPS URL whose origin is trusted.
 	 */
 	admin_login_ui_post_login_redirect_url_description: () => LocalizedString
+	/**
+	 * App Login Client
+	 */
+	admin_login_ui_app_login_client: () => LocalizedString
+	/**
+	 * Choose a same-tenant Client that has First Party App and App Login enabled.
+	 */
+	admin_login_ui_app_login_client_description: () => LocalizedString
+	/**
+	 * Select an enabled client
+	 */
+	admin_login_ui_app_login_client_placeholder: () => LocalizedString
+	/**
+	 * Open client settings
+	 */
+	admin_login_ui_app_login_client_link: () => LocalizedString
+	/**
+	 * Failed to load App Login client candidates.
+	 */
+	admin_login_ui_app_login_clients_error: () => LocalizedString
+	/**
+	 * App Login Redirect URI
+	 */
+	admin_login_ui_app_login_redirect_uri: () => LocalizedString
+	/**
+	 * Must exactly match one of the selected Client redirect URIs.
+	 */
+	admin_login_ui_app_login_redirect_uri_description: () => LocalizedString
+	/**
+	 * App Login Scope
+	 */
+	admin_login_ui_app_login_scope: () => LocalizedString
+	/**
+	 * Space-separated OIDC scopes. App Login must include openid.
+	 */
+	admin_login_ui_app_login_scope_description: () => LocalizedString
+	/**
+	 * Final Return To
+	 */
+	admin_login_ui_app_login_final_return_to: () => LocalizedString
+	/**
+	 * Optional path or trusted HTTPS URL for the service app to use after its callback completes.
+	 */
+	admin_login_ui_app_login_final_return_to_description: () => LocalizedString
+	/**
+	 * App Login requires a Client ID, redirect URI, and scope before saving.
+	 */
+	admin_login_ui_app_login_required: () => LocalizedString
 	/**
 	 * Manage trusted redirect origins
 	 */

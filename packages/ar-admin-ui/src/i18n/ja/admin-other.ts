@@ -376,9 +376,29 @@ const adminOther = {
 	admin_login_ui_post_login_account_desc: 'Authrim管理のアカウントページへ移動します。',
 	admin_login_ui_post_login_custom: '任意URL',
 	admin_login_ui_post_login_custom_desc: '相対パスまたは信頼済みHTTPS originへ移動します。',
+	admin_login_ui_post_login_app_login: 'App Login',
+	admin_login_ui_post_login_app_login_desc:
+		'有効化済みのfirst-party OIDC Clientを開始し、サービスアプリ側のsessionを作成します。',
 	admin_login_ui_post_login_redirect_url: '任意のリダイレクトURL',
 	admin_login_ui_post_login_redirect_url_description:
 		'/mypage のような予約されていない相対パス、または信頼済みoriginのHTTPS URLを指定します。',
+	admin_login_ui_app_login_client: 'App Login Client',
+	admin_login_ui_app_login_client_description:
+		'同一テナントで First Party App と App Login が有効な Client を選択します。',
+	admin_login_ui_app_login_client_placeholder: '有効なClientを選択',
+	admin_login_ui_app_login_client_link: 'Client設定を開く',
+	admin_login_ui_app_login_clients_error: 'App Login候補Clientを読み込めませんでした。',
+	admin_login_ui_app_login_redirect_uri: 'App Login Redirect URI',
+	admin_login_ui_app_login_redirect_uri_description:
+		'選択したClientに登録済みのredirect URIと完全一致する必要があります。',
+	admin_login_ui_app_login_scope: 'App Login Scope',
+	admin_login_ui_app_login_scope_description:
+		'スペース区切りのOIDC scopeです。App Loginではopenidが必須です。',
+	admin_login_ui_app_login_final_return_to: 'Final Return To',
+	admin_login_ui_app_login_final_return_to_description:
+		'サービスアプリのcallback完了後に使う任意のパス、または信頼済みHTTPS URLです。',
+	admin_login_ui_app_login_required:
+		'App Loginを保存するにはClient ID、redirect URI、scopeが必要です。',
 	admin_login_ui_trusted_redirect_origins_link: '信頼済みredirect originを管理',
 	admin_login_ui_account_page_enabled: 'アカウントページを有効化',
 	admin_login_ui_account_page_enabled_description:

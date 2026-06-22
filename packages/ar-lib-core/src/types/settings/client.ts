@@ -25,6 +25,7 @@ export interface ClientSettings {
   // Consent Settings
   'client.consent_required': boolean;
   'client.first_party': boolean;
+  'client.app_login_enabled': boolean;
 
   // SSO Override
   'client.sso_enabled': boolean;
@@ -205,6 +206,15 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_FIRST_PARTY',
     label: 'First Party App',
     description: 'Mark this client as a first-party application',
+    visibility: 'admin',
+  },
+  'client.app_login_enabled': {
+    key: 'client.app_login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'App Login Enabled',
+    description:
+      'Allow Login UI direct sign-in to start this first-party OIDC client after authentication.',
     visibility: 'admin',
   },
   'client.sso_enabled': {
@@ -858,6 +868,7 @@ export const CLIENT_DEFAULTS: ClientSettings = {
   'client.dpop_required': false,
   'client.consent_required': true,
   'client.first_party': false,
+  'client.app_login_enabled': false,
   'client.sso_enabled': false,
   'client.refresh_token_rotation': true,
   'client.reuse_refresh_token': false,

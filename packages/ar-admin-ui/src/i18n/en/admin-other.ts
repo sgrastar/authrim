@@ -383,9 +383,29 @@ const adminOther = {
 	admin_login_ui_post_login_account_desc: 'Send users to the Authrim-managed account page.',
 	admin_login_ui_post_login_custom: 'Custom URL',
 	admin_login_ui_post_login_custom_desc: 'Send users to a relative path or trusted HTTPS origin.',
+	admin_login_ui_post_login_app_login: 'App Login',
+	admin_login_ui_post_login_app_login_desc:
+		'Start an enabled first-party OIDC client so the service app creates its own session.',
 	admin_login_ui_post_login_redirect_url: 'Custom Redirect URL',
 	admin_login_ui_post_login_redirect_url_description:
 		'Use a non-reserved relative path such as /mypage, or an HTTPS URL whose origin is trusted.',
+	admin_login_ui_app_login_client: 'App Login Client',
+	admin_login_ui_app_login_client_description:
+		'Choose a same-tenant Client that has First Party App and App Login enabled.',
+	admin_login_ui_app_login_client_placeholder: 'Select an enabled client',
+	admin_login_ui_app_login_client_link: 'Open client settings',
+	admin_login_ui_app_login_clients_error: 'Failed to load App Login client candidates.',
+	admin_login_ui_app_login_redirect_uri: 'App Login Redirect URI',
+	admin_login_ui_app_login_redirect_uri_description:
+		'Must exactly match one of the selected Client redirect URIs.',
+	admin_login_ui_app_login_scope: 'App Login Scope',
+	admin_login_ui_app_login_scope_description:
+		'Space-separated OIDC scopes. App Login must include openid.',
+	admin_login_ui_app_login_final_return_to: 'Final Return To',
+	admin_login_ui_app_login_final_return_to_description:
+		'Optional path or trusted HTTPS URL for the service app to use after its callback completes.',
+	admin_login_ui_app_login_required:
+		'App Login requires a Client ID, redirect URI, and scope before saving.',
 	admin_login_ui_trusted_redirect_origins_link: 'Manage trusted redirect origins',
 	admin_login_ui_account_page_enabled: 'Account Page Enabled',
 	admin_login_ui_account_page_enabled_description:

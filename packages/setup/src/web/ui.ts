@@ -2182,6 +2182,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.serviceSiteConfirm': 'Save Service Site binding settings and deploy ar-router?',
           'web.envDetail.serviceSiteSaving': 'Saving Service Site binding settings...',
           'web.envDetail.serviceSiteDeployComplete': 'Service Site binding deployed.',
+          'web.envDetail.appLoginGuideTitle': 'App Login next steps',
+          'web.envDetail.appLoginGuideDesc': 'To send direct Login UI sign-ins into your service app, register the service as an OIDC Client in Admin UI, enable First Party App and App Login on that Client, then select App Login in Admin UI > Login UI post-login settings.',
+          'web.envDetail.appLoginGuideLink': 'Open Admin UI Login UI settings',
           'web.envDetail.versionComparison': 'Version comparison',
           'web.envDetail.uiUpdates': 'UI Updates',
           'web.envDetail.origin': 'Origin',
@@ -2277,6 +2280,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.serviceSiteConfirm': 'Service Site binding設定を保存し、ar-routerをデプロイしますか？',
           'web.envDetail.serviceSiteSaving': 'Service Site binding設定を保存中...',
           'web.envDetail.serviceSiteDeployComplete': 'Service Site bindingをデプロイしました。',
+          'web.envDetail.appLoginGuideTitle': 'App Login の次の手順',
+          'web.envDetail.appLoginGuideDesc': 'Login UIの直ログイン後にサービスアプリのsessionを作成したい場合は、Admin UIでサービスをOIDC Clientとして登録し、そのClientの First Party App と App Login を有効化してから、Admin UI > Login UI のログイン後設定で App Login を選択してください。',
+          'web.envDetail.appLoginGuideLink': 'Admin UI の Login UI 設定を開く',
           'web.envDetail.versionComparison': 'バージョン比較',
           'web.envDetail.uiUpdates': 'UIの個別更新',
           'web.envDetail.origin': '配信元',
@@ -5451,6 +5457,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div class="inline-form service-site-actions">
           <button class="btn btn-next" id="btn-save-service-site"><span data-i18n="web.envDetail.serviceSiteSaveDeploy">Save and Deploy Router</span> <span class="arr">→</span></button>
           <button class="btn btn-ghost" id="btn-refresh-service-site" data-i18n="web.envDetail.refreshVersions">Refresh</button>
+        </div>
+        <div class="secdesc">
+          <strong data-i18n="web.envDetail.appLoginGuideTitle">App Login next steps</strong><br>
+          <span data-i18n="web.envDetail.appLoginGuideDesc">To send direct Login UI sign-ins into your service app, register the service as an OIDC Client in Admin UI, enable First Party App and App Login on that Client, then select App Login in Admin UI &gt; Login UI post-login settings.</span>
+          <a href="/admin/login-ui#post-login" target="_blank" rel="noopener noreferrer" data-i18n="web.envDetail.appLoginGuideLink">Open Admin UI Login UI settings</a>
         </div>
         <div id="env-service-site-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.serviceSiteProgress">Service Site Progress</span></div><pre id="env-service-site-log"></pre></div>
       </div>

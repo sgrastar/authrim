@@ -145,6 +145,9 @@ const adminClients = {
 	admin_client_detail_sso_enabled_hint: 'Single Sign-On（session sharing）を有効化します',
 	admin_client_detail_first_party_app: 'First Party App',
 	admin_client_detail_first_party_app_desc: 'このclientをfirst-party applicationとして扱います',
+	admin_client_detail_app_login_enabled: 'App Login Enabled',
+	admin_client_detail_app_login_enabled_desc:
+		'Login UIの直ログイン後にこのclientを開始できるようにします。',
 	admin_client_detail_strict_redirect_matching: 'Strict Redirect Matching',
 	admin_client_detail_strict_redirect_matching_desc: 'redirect URIの完全一致を要求します',
 	admin_client_detail_allow_localhost_redirect: 'Allow Localhost Redirect',

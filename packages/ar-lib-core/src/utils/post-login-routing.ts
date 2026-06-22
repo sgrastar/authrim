@@ -1,8 +1,9 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { LOGIN_ENTRY_DEFAULTS, type LoginEntrySettings } from '../types/settings/login-entry';
 import { SELF_SERVICE_DEFAULTS } from '../types/settings/self-service';
+import { arrayBufferToBase64Url, generateSecureRandomString } from './crypto';
 
-export type PostLoginBehavior = 'home' | 'account' | 'custom_url';
+export type PostLoginBehavior = 'home' | 'account' | 'custom_url' | 'app_login';
 
 const RESERVED_RELATIVE_PATH_PREFIXES = [
   '/admin',
@@ -204,7 +205,57 @@ export function validatePostLoginRedirectUrl(
 }
 
 function readPostLoginBehavior(value: unknown): PostLoginBehavior {
-  return value === 'account' || value === 'custom_url' || value === 'home' ? value : 'home';
+  return value === 'account' || value === 'custom_url' || value === 'app_login' || value === 'home'
+    ? value
+    : 'home';
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function encodeBase64Url(value: string): string {
+  return arrayBufferToBase64Url(new TextEncoder().encode(value));
+}
+
+function createAppLoginState(finalReturnTo: string | null): string {
+  return `ar_app_login.${encodeBase64Url(
+    JSON.stringify({
+      id: generateSecureRandomString(32),
+      ...(finalReturnTo ? { return_to: finalReturnTo } : {}),
+    })
+  )}`;
+}
+
+function buildAppLoginAuthorizeUrl(loginEntry: Record<string, unknown>): string | null {
+  const clientId = readNonEmptyString(
+    loginEntry['login-entry.app_login_client_id'] ??
+      LOGIN_ENTRY_DEFAULTS['login-entry.app_login_client_id']
+  );
+  const redirectUri = readNonEmptyString(
+    loginEntry['login-entry.app_login_redirect_uri'] ??
+      LOGIN_ENTRY_DEFAULTS['login-entry.app_login_redirect_uri']
+  );
+  const scope =
+    readNonEmptyString(
+      loginEntry['login-entry.app_login_scope'] ?? LOGIN_ENTRY_DEFAULTS['login-entry.app_login_scope']
+    ) ?? LOGIN_ENTRY_DEFAULTS['login-entry.app_login_scope'];
+  if (!clientId || !redirectUri) {
+    return null;
+  }
+
+  const finalReturnTo = readNonEmptyString(loginEntry['login-entry.app_login_final_return_to']);
+  const state = createAppLoginState(finalReturnTo);
+  const nonce = generateSecureRandomString(32);
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope,
+    state,
+    nonce,
+  });
+  return `/authorize?${params.toString()}`;
 }
 
 export async function resolvePostLoginRedirectUrl(
@@ -247,6 +298,14 @@ export async function resolvePostLoginRedirectUrl(
     return { redirectUrl: '/', behavior: 'home' };
   }
 
+  if (behavior === 'app_login' && loginEntry) {
+    const authorizeUrl = buildAppLoginAuthorizeUrl(loginEntry);
+    if (authorizeUrl) {
+      return { redirectUrl: authorizeUrl, behavior };
+    }
+    return { redirectUrl: '/', behavior: 'home' };
+  }
+
   return { redirectUrl: '/', behavior: 'home' };
 }
 
@@ -260,15 +319,26 @@ export function validateLoginEntryPostLoginSettings(
     behavior !== undefined &&
     behavior !== 'home' &&
     behavior !== 'account' &&
-    behavior !== 'custom_url'
+    behavior !== 'custom_url' &&
+    behavior !== 'app_login'
   ) {
-    rejected['login-entry.post_login_behavior'] = 'Value must be one of: home, account, custom_url';
+    rejected['login-entry.post_login_behavior'] =
+      'Value must be one of: home, account, custom_url, app_login';
   }
 
   const redirectUrl = values['login-entry.post_login_redirect_url'];
   if (redirectUrl !== undefined && !validatePostLoginRedirectUrl(redirectUrl, trustedOrigins)) {
     rejected['login-entry.post_login_redirect_url'] =
       'Must be a non-reserved relative path or an HTTPS URL whose origin is trusted';
+  }
+  const finalReturnTo = values['login-entry.app_login_final_return_to'];
+  if (
+    finalReturnTo !== undefined &&
+    finalReturnTo !== '' &&
+    !validatePostLoginRedirectUrl(finalReturnTo, trustedOrigins)
+  ) {
+    rejected['login-entry.app_login_final_return_to'] =
+      'Must be empty, a non-reserved relative path, or an HTTPS URL whose origin is trusted';
   }
   return rejected;
 }

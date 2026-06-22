@@ -30,8 +30,12 @@ export interface LoginEntrySettings {
   'login-entry.require_common_discovery_before_login': boolean;
   'login-entry.skip_discovery_if_only_one_tenant': boolean;
   'login-entry.redirect_tenant_discover_to_common_entry': boolean;
-  'login-entry.post_login_behavior': 'home' | 'account' | 'custom_url';
+  'login-entry.post_login_behavior': 'home' | 'account' | 'custom_url' | 'app_login';
   'login-entry.post_login_redirect_url': string;
+  'login-entry.app_login_client_id': string;
+  'login-entry.app_login_redirect_uri': string;
+  'login-entry.app_login_final_return_to': string;
+  'login-entry.app_login_scope': string;
 }
 
 /**
@@ -143,7 +147,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     label: 'Post Login Behavior',
     description:
       'Controls where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
-    enum: ['home', 'account', 'custom_url'],
+    enum: ['home', 'account', 'custom_url', 'app_login'],
     visibility: 'admin',
   },
   'login-entry.post_login_redirect_url': {
@@ -153,6 +157,40 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     label: 'Post Login Redirect URL',
     description:
       'Relative path or trusted HTTPS URL used when post-login behavior is set to custom_url.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_client_id': {
+    key: 'login-entry.app_login_client_id',
+    type: 'string',
+    default: '',
+    label: 'App Login Client ID',
+    description:
+      'OIDC client started after direct Login UI sign-in when post-login behavior is app_login.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_redirect_uri': {
+    key: 'login-entry.app_login_redirect_uri',
+    type: 'string',
+    default: '',
+    label: 'App Login Redirect URI',
+    description: 'Registered redirect_uri for the App Login target OIDC client.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_final_return_to': {
+    key: 'login-entry.app_login_final_return_to',
+    type: 'string',
+    default: '',
+    label: 'App Login Final Return To',
+    description:
+      'Optional relative path or trusted HTTPS URL passed in state for service-side post-callback routing.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_scope': {
+    key: 'login-entry.app_login_scope',
+    type: 'string',
+    default: 'openid profile email',
+    label: 'App Login Scope',
+    description: 'OIDC scope used when Login UI starts the App Login client.',
     visibility: 'admin',
   },
 };
@@ -184,4 +222,8 @@ export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.redirect_tenant_discover_to_common_entry': true,
   'login-entry.post_login_behavior': 'home',
   'login-entry.post_login_redirect_url': '/',
+  'login-entry.app_login_client_id': '',
+  'login-entry.app_login_redirect_uri': '',
+  'login-entry.app_login_final_return_to': '',
+  'login-entry.app_login_scope': 'openid profile email',
 };
