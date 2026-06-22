@@ -216,8 +216,7 @@
 					? postLoginSettingsResult.values['login-entry.app_login_redirect_uri']
 					: '';
 			appLoginFinalReturnTo =
-				typeof postLoginSettingsResult.values['login-entry.app_login_final_return_to'] ===
-				'string'
+				typeof postLoginSettingsResult.values['login-entry.app_login_final_return_to'] === 'string'
 					? postLoginSettingsResult.values['login-entry.app_login_final_return_to']
 					: '';
 			appLoginScope =
@@ -294,7 +293,10 @@
 	}
 
 	function readPostLoginBehavior(value: unknown): PostLoginBehavior {
-		return value === 'account' || value === 'custom_url' || value === 'app_login' || value === 'home'
+		return value === 'account' ||
+			value === 'custom_url' ||
+			value === 'app_login' ||
+			value === 'home'
 			? value
 			: 'home';
 	}
@@ -1196,7 +1198,7 @@
 										onchange={(e) => selectAppLoginClient(e.currentTarget.value)}
 									>
 										<option value="">{$LL.admin_login_ui_app_login_client_placeholder()}</option>
-										{#each appLoginClientOptions as option}
+										{#each appLoginClientOptions as option (option.clientId)}
 											<option value={option.clientId}>{option.name} ({option.clientId})</option>
 										{/each}
 									</select>
@@ -1239,7 +1241,7 @@
 										class="settings-input"
 									/>
 									<datalist id="app-login-redirect-uri-options">
-										{#each selectedAppLoginRedirectUris as redirectUri}
+										{#each selectedAppLoginRedirectUris as redirectUri (redirectUri)}
 											<option value={redirectUri}></option>
 										{/each}
 									</datalist>

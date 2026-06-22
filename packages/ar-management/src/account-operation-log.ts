@@ -1,10 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createAuthContextFromHono,
-  getLogger,
-  getTenantIdFromContext,
-} from '@authrim/ar-lib-core';
+import { createAuthContextFromHono, getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 export async function recordAccountOperation(
   c: Context<{ Bindings: Env }>,

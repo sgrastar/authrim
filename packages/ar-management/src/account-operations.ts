@@ -1,9 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createAuthContextFromHono,
-  getTenantIdFromContext,
-} from '@authrim/ar-lib-core';
+import { createAuthContextFromHono, getTenantIdFromContext } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
 
 type AccountOperationRow = {

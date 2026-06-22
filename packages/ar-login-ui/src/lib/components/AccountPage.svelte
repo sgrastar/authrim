@@ -351,7 +351,7 @@
 	}
 
 	.account-layout {
-		width: min(960px, 100%);
+		width: min(720px, 100%);
 		margin: 0 auto;
 	}
 
@@ -378,7 +378,7 @@
 
 	.account-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+		grid-template-columns: 1fr;
 		gap: 16px;
 	}
 

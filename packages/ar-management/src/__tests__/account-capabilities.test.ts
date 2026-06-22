@@ -1,20 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
-const {
-  mockSessionStore,
-  mockGetSessionStoreBySessionId,
-  mockGetTenantIdFromContext,
-} = vi.hoisted(() => {
-  const sessionStore = {
-    getSessionRpc: vi.fn(),
-  };
-  return {
-    mockSessionStore: sessionStore,
-    mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
-    mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
-  };
-});
+const { mockSessionStore, mockGetSessionStoreBySessionId, mockGetTenantIdFromContext } = vi.hoisted(
+  () => {
+    const sessionStore = {
+      getSessionRpc: vi.fn(),
+    };
+    return {
+      mockSessionStore: sessionStore,
+      mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
+      mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
+    };
+  }
+);
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();

@@ -223,10 +223,7 @@ async function requireSessionSelfServiceAccess(
   const sessionId = getCookie(c, 'authrim_session');
   if (!sessionId || !isShardedSessionId(sessionId)) {
     setNoStore(c);
-    return c.json(
-      { error: 'unauthorized', error_description: 'Authentication required' },
-      401
-    );
+    return c.json({ error: 'unauthorized', error_description: 'Authentication required' }, 401);
   }
 
   try {

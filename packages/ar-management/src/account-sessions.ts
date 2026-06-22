@@ -48,9 +48,7 @@ function currentSessionRow(accountSession: {
   };
 }
 
-export async function listAccountSessionsHandler(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
+export async function listAccountSessionsHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   setNoStore(c);
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) {

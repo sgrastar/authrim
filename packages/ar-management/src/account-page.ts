@@ -104,9 +104,7 @@ export async function getAccountProfileHandler(c: Context<{ Bindings: Env }>): P
     return accountSession;
   }
 
-  let user:
-    | Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>>
-    | null = null;
+  let user: Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>> | null = null;
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -155,7 +153,9 @@ export async function getAccountProfileHandler(c: Context<{ Bindings: Env }>): P
   });
 }
 
-export async function updateAccountProfileHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function updateAccountProfileHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
   setNoStore(c);
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) {
@@ -166,7 +166,10 @@ export async function updateAccountProfileHandler(c: Context<{ Bindings: Env }>)
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: 'invalid_request', error_description: 'Request body must be JSON' }, 400);
+    return c.json(
+      { error: 'invalid_request', error_description: 'Request body must be JSON' },
+      400
+    );
   }
 
   if (typeof body.name !== 'string') {

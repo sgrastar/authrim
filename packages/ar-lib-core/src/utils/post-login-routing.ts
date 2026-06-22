@@ -238,7 +238,8 @@ function buildAppLoginAuthorizeUrl(loginEntry: Record<string, unknown>): string 
   );
   const scope =
     readNonEmptyString(
-      loginEntry['login-entry.app_login_scope'] ?? LOGIN_ENTRY_DEFAULTS['login-entry.app_login_scope']
+      loginEntry['login-entry.app_login_scope'] ??
+        LOGIN_ENTRY_DEFAULTS['login-entry.app_login_scope']
     ) ?? LOGIN_ENTRY_DEFAULTS['login-entry.app_login_scope'];
   if (!clientId || !redirectUri) {
     return null;

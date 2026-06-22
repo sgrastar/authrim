@@ -16,11 +16,7 @@
 		saved?: boolean;
 		onSave: (name: string) => void;
 	}>();
-	let name = $state('');
-
-	$effect(() => {
-		name = profile?.name ?? '';
-	});
+	let name = $derived(profile?.name ?? '');
 
 	function submit() {
 		onSave(name);

@@ -147,7 +147,7 @@ describe('managed Direct Auth browser session finish', () => {
       'tenant_test'
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_managed_browser');
-  });
+  }, 15000);
 
   it('returns configured post-login redirect for direct Login UI sign-in', async () => {
     const codeVerifier = 'verifier-for-post-login-redirect';

@@ -157,9 +157,7 @@ describe('Account Page session management API', () => {
     const body = (await response.json()) as { session: Record<string, unknown> };
 
     expect(response.status).toBe(200);
-    expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith(
-      'g1:apac:3:session_other'
-    );
+    expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_other');
     expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM sessions WHERE id = ? AND tenant_id = ?',
       ['g1:apac:3:session_other', 'default']
@@ -227,9 +225,7 @@ describe('Account Page session management API', () => {
 
     expect(response.status).toBe(200);
     expect(body.session.current).toBe(true);
-    expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith(
-      'g1:apac:3:session_current'
-    );
+    expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_current');
     expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM sessions WHERE id = ? AND tenant_id = ?',
       ['g1:apac:3:session_current', 'default']
