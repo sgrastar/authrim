@@ -580,6 +580,28 @@ export const SecurityConfigSchema = z.object({
 });
 
 // =============================================================================
+// Service Site Configuration
+// =============================================================================
+
+export const ServiceSiteConfigSchema = z.object({
+  /** Whether the service-site connection is enabled in setup-managed config */
+  enabled: z.boolean().default(false),
+  /** Router service binding name. Phase 2 uses SERVICE_SITE. */
+  binding: z
+    .string()
+    .regex(/^[A-Z][A-Z0-9_]*$/)
+    .default('SERVICE_SITE'),
+  /** Cloudflare Worker service name for the user's service app */
+  workerName: z.string().min(1).optional(),
+  /** Fallback implementation mode */
+  fallbackMode: z.enum(['worker_service_binding']).default('worker_service_binding'),
+  /** Optional public service URL for operator notes and future App Login guidance */
+  publicUrl: urlOrHostname.optional(),
+  /** Operator note shown by setup surfaces */
+  note: z.string().optional(),
+});
+
+// =============================================================================
 // Profile Types
 // =============================================================================
 
@@ -645,6 +667,9 @@ export const AuthrimConfigSchema = z.object({
 
   /** Security configuration (PII encryption, domain hashing) */
   security: SecurityConfigSchema.default({}),
+
+  /** User-owned service site fallback configuration */
+  serviceSite: ServiceSiteConfigSchema.optional(),
 });
 
 export type AuthrimConfig = z.infer<typeof AuthrimConfigSchema>;
@@ -673,6 +698,7 @@ export type ProfileReferencesConfig = z.infer<typeof ProfileReferencesConfigSche
 export type ProfileSeedConfig = z.infer<typeof ProfileSeedConfigSchema>;
 export type ProfilesConfig = z.infer<typeof ProfilesConfigSchema>;
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
+export type ServiceSiteConfig = z.infer<typeof ServiceSiteConfigSchema>;
 
 // =============================================================================
 // Helper Functions

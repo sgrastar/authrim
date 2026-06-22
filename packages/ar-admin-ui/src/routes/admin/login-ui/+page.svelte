@@ -37,6 +37,7 @@
 	let tenantSettings = $state<CategorySettings | null>(null);
 	let postLoginSettings = $state<CategorySettings | null>(null);
 	let selfServiceSettings = $state<CategorySettings | null>(null);
+	let serviceSiteSettings = $state<CategorySettings | null>(null);
 	let trustedOriginsInput = $state('');
 	let initialTrustedOriginsInput = $state('');
 	let trustedOriginsError = $state('');
@@ -45,6 +46,11 @@
 	let postLoginError = $state('');
 	let postLoginSuccessMessage = $state('');
 	let postLoginSaving = $state(false);
+	let serviceSiteFallbackEnabled = $state(false);
+	let initialServiceSiteFallbackEnabled = $state(false);
+	let serviceSiteError = $state('');
+	let serviceSiteSuccessMessage = $state('');
+	let serviceSiteSaving = $state(false);
 	type PostLoginBehavior = 'home' | 'account' | 'custom_url';
 	let postLoginBehavior = $state<PostLoginBehavior>('home');
 	let postLoginRedirectUrl = $state('/');
@@ -111,6 +117,9 @@
 					accountPagePath !== initialPostLoginForm.accountPagePath
 			: false
 	);
+	const hasServiceSiteChanges = $derived(
+		serviceSiteFallbackEnabled !== initialServiceSiteFallbackEnabled
+	);
 	const trustedOriginsDraft = $derived.by(() => parseTrustedOriginsDraft(trustedOriginsInput));
 
 	// Load data on mount
@@ -137,6 +146,7 @@
 		error = '';
 		trustedOriginsError = '';
 		postLoginError = '';
+		serviceSiteError = '';
 		uiConfigError = '';
 		pendingPatches = [];
 
@@ -153,6 +163,10 @@
 				'self-service',
 				selectedTenantId
 			);
+			const serviceSiteSettingsResult = await adminSettingsAPI.getSettings(
+				'service-site',
+				selectedTenantId
+			);
 			const nextUiConfigForm: UIConfigForm = {
 				baseUrl: uiConfigResult.config.baseUrl ?? '',
 				paths: { ...uiConfigResult.config.paths }
@@ -161,6 +175,7 @@
 			tenantSettings = tenantSettingsResult;
 			postLoginSettings = postLoginSettingsResult;
 			selfServiceSettings = selfServiceSettingsResult;
+			serviceSiteSettings = serviceSiteSettingsResult;
 			postLoginBehavior = readPostLoginBehavior(
 				postLoginSettingsResult.values['login-entry.post_login_behavior']
 			);
@@ -180,6 +195,9 @@
 				accountPageEnabled,
 				accountPagePath
 			};
+			serviceSiteFallbackEnabled =
+				serviceSiteSettingsResult.values['service-site.fallback_enabled'] === true;
+			initialServiceSiteFallbackEnabled = serviceSiteFallbackEnabled;
 			trustedOriginsInput = formatOriginsForEditor(
 				tenantSettingsResult.values['tenant.allowed_origins']
 			);
@@ -386,6 +404,11 @@
 		postLoginError = '';
 	}
 
+	function discardServiceSiteChanges() {
+		serviceSiteFallbackEnabled = initialServiceSiteFallbackEnabled;
+		serviceSiteError = '';
+	}
+
 	function buildPostLoginPatch(): Omit<SettingsPatchRequest, 'ifMatch'> {
 		const set: Record<string, unknown> = {};
 		if (!initialPostLoginForm || postLoginBehavior !== initialPostLoginForm.behavior) {
@@ -482,6 +505,44 @@
 			}
 		} finally {
 			postLoginSaving = false;
+		}
+	}
+
+	async function saveServiceSiteSettings() {
+		if (!serviceSiteSettings) return;
+		if (!canEditLoginUiSettings) {
+			serviceSiteError = $LL.admin_login_ui_error_no_settings_permission();
+			return;
+		}
+
+		serviceSiteSaving = true;
+		serviceSiteError = '';
+		serviceSiteSuccessMessage = '';
+
+		try {
+			await adminSettingsAPI.updateSettings(
+				'service-site',
+				{
+					ifMatch: serviceSiteSettings.version,
+					set: { 'service-site.fallback_enabled': serviceSiteFallbackEnabled }
+				},
+				resolveSelectedTenantId()
+			);
+
+			serviceSiteSuccessMessage = $LL.admin_login_ui_service_site_updated();
+			await loadData();
+			setTimeout(() => {
+				serviceSiteSuccessMessage = '';
+			}, 3000);
+		} catch (err) {
+			if (err instanceof SettingsConflictError) {
+				serviceSiteError = $LL.admin_login_ui_settings_conflict();
+			} else {
+				serviceSiteError =
+					err instanceof Error ? err.message : $LL.admin_login_ui_error_save_service_site();
+			}
+		} finally {
+			serviceSiteSaving = false;
 		}
 	}
 
@@ -678,6 +739,14 @@
 
 		{#if postLoginSuccessMessage}
 			<div class="alert alert-success">{postLoginSuccessMessage}</div>
+		{/if}
+
+		{#if serviceSiteError}
+			<div class="alert alert-error">{serviceSiteError}</div>
+		{/if}
+
+		{#if serviceSiteSuccessMessage}
+			<div class="alert alert-success">{serviceSiteSuccessMessage}</div>
 		{/if}
 
 		{#if !loading && uiConfig}
@@ -1035,6 +1104,74 @@
 						class="btn btn-primary"
 					>
 						{postLoginSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_save_post_login()}
+					</button>
+				</div>
+			</section>
+		{/if}
+
+		{#if !loading && serviceSiteSettings}
+			<section class="panel" id="service-site-fallback">
+				<div class="section-header">
+					<div>
+						<h2 class="section-title">{$LL.admin_login_ui_service_site_title()}</h2>
+						<p class="section-description">
+							{$LL.admin_login_ui_service_site_description()}
+						</p>
+					</div>
+					<span class="config-source-badge">{$LL.admin_login_ui_tenant_setting()}</span>
+				</div>
+
+				<div class="settings-form-card">
+					<div class="setting-item" class:modified={hasServiceSiteChanges}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<div class="setting-label-row">
+									<label for="service-site-fallback-enabled" class="setting-label"
+										>{$LL.admin_login_ui_service_site_enabled()}</label
+									>
+									{#if hasServiceSiteChanges}
+										<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
+									{/if}
+								</div>
+								<p class="setting-description">
+									{$LL.admin_login_ui_service_site_enabled_description()}
+								</p>
+								<p class="setting-description">
+									{$LL.admin_login_ui_service_site_setup_note()}
+								</p>
+							</div>
+
+							<div class="setting-control">
+								<ToggleSwitch
+									checked={serviceSiteFallbackEnabled}
+									disabled={!canEditLoginUiSettings}
+									id="service-site-fallback-enabled"
+									onchange={(newValue) => {
+										serviceSiteFallbackEnabled = newValue;
+									}}
+								/>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="form-actions">
+					<span class="cache-notice">{$LL.admin_login_ui_cache_notice()}</span>
+					<button
+						onclick={discardServiceSiteChanges}
+						disabled={!hasServiceSiteChanges || serviceSiteSaving || !canEditLoginUiSettings}
+						class="btn btn-secondary"
+					>
+						{$LL.admin_login_ui_discard_changes()}
+					</button>
+					<button
+						onclick={saveServiceSiteSettings}
+						disabled={!hasServiceSiteChanges || serviceSiteSaving || !canEditLoginUiSettings}
+						class="btn btn-primary"
+					>
+						{serviceSiteSaving
+							? $LL.admin_login_ui_saving()
+							: $LL.admin_login_ui_save_service_site()}
 					</button>
 				</div>
 			</section>

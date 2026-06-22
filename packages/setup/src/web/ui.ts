@@ -2164,6 +2164,24 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.verified': 'verified ✓',
           'web.envDetail.adminAccount': 'Admin Account',
           'web.envDetail.workerUpdateHint': 'Compare deployed and local builds',
+          'web.envDetail.serviceSiteFallback': 'Service Site Binding',
+          'web.envDetail.serviceSiteFallbackHint': 'Bind ar-router to your service Worker',
+          'web.envDetail.serviceSiteFallbackDesc': 'Use this when Authrim, Admin UI, Login UI, and the service site share one domain. This screen adds the Service Binding and deploys ar-router; enable the runtime fallback later from Admin UI > Login UI.',
+          'web.envDetail.serviceSiteEnabled': 'Add Service Binding',
+          'web.envDetail.serviceSiteEnabledHint': 'Adds the configured Worker as a Service Binding on ar-router. Runtime fallback remains controlled by Admin UI settings.',
+          'web.envDetail.serviceSiteWorkerName': 'Service Worker name',
+          'web.envDetail.serviceSiteBinding': 'Binding name',
+          'web.envDetail.serviceSiteSaveDeploy': 'Save and Deploy Router',
+          'web.envDetail.serviceSiteProgress': 'Service Site Progress',
+          'web.envDetail.serviceSiteLoading': 'Loading Service Site binding status...',
+          'web.envDetail.serviceSiteEnabledSummary': 'Binding configured: {{binding}} -> {{worker}}',
+          'web.envDetail.serviceSiteDisabledSummary': 'No Service Site binding is configured on ar-router.',
+          'web.envDetail.serviceSiteWorkerRequired': 'Enter the service Worker name before adding the binding.',
+          'web.envDetail.serviceSiteWorkerInvalid': 'Worker name must use lowercase letters, numbers, and hyphens.',
+          'web.envDetail.serviceSiteBindingInvalid': 'Binding name must use uppercase letters, numbers, and underscores.',
+          'web.envDetail.serviceSiteConfirm': 'Save Service Site binding settings and deploy ar-router?',
+          'web.envDetail.serviceSiteSaving': 'Saving Service Site binding settings...',
+          'web.envDetail.serviceSiteDeployComplete': 'Service Site binding deployed.',
           'web.envDetail.versionComparison': 'Version comparison',
           'web.envDetail.uiUpdates': 'UI Updates',
           'web.envDetail.origin': 'Origin',
@@ -2241,6 +2259,24 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.verified': '稼働確認済み ✓',
           'web.envDetail.adminAccount': '管理者アカウント',
           'web.envDetail.workerUpdateHint': 'デプロイ済みバージョンとローカルのビルドを比較',
+          'web.envDetail.serviceSiteFallback': 'Service Site Binding',
+          'web.envDetail.serviceSiteFallbackHint': 'ar-routerにサービス用Workerをbinding',
+          'web.envDetail.serviceSiteFallbackDesc': 'Authrim、Admin UI、Login UI、サービスサイトを同一ドメインで共存させる場合に使います。この画面ではService Bindingを追加してar-routerをデプロイします。runtime fallbackの有効化はAdmin UI > Login UIで行います。',
+          'web.envDetail.serviceSiteEnabled': 'Service Bindingを追加',
+          'web.envDetail.serviceSiteEnabledHint': '設定したWorkerをar-routerのService Bindingとして追加します。runtime fallbackのON/OFFはAdmin UI設定で制御します。',
+          'web.envDetail.serviceSiteWorkerName': 'サービスWorker名',
+          'web.envDetail.serviceSiteBinding': 'Binding名',
+          'web.envDetail.serviceSiteSaveDeploy': '保存してRouterをデプロイ',
+          'web.envDetail.serviceSiteProgress': 'Service Siteの進行状況',
+          'web.envDetail.serviceSiteLoading': 'Service Site binding の状態を読み込み中...',
+          'web.envDetail.serviceSiteEnabledSummary': 'Binding設定済み: {{binding}} -> {{worker}}',
+          'web.envDetail.serviceSiteDisabledSummary': 'ar-routerにService Site bindingは設定されていません。',
+          'web.envDetail.serviceSiteWorkerRequired': 'bindingを追加する場合はサービスWorker名を入力してください。',
+          'web.envDetail.serviceSiteWorkerInvalid': 'Worker名は英小文字、数字、ハイフンで入力してください。',
+          'web.envDetail.serviceSiteBindingInvalid': 'Binding名は英大文字、数字、アンダースコアで入力してください。',
+          'web.envDetail.serviceSiteConfirm': 'Service Site binding設定を保存し、ar-routerをデプロイしますか？',
+          'web.envDetail.serviceSiteSaving': 'Service Site binding設定を保存中...',
+          'web.envDetail.serviceSiteDeployComplete': 'Service Site bindingをデプロイしました。',
           'web.envDetail.versionComparison': 'バージョン比較',
           'web.envDetail.uiUpdates': 'UIの個別更新',
           'web.envDetail.origin': '配信元',
@@ -5386,6 +5422,37 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </div>
         </div>
         <div id="ui-update-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.updateProgress">Update Progress:</span></div><pre id="ui-update-log"></pre></div>
+
+        <div class="sechead">
+          <span class="idx">APP</span><h3 data-i18n="web.envDetail.serviceSiteFallback">Service Site Binding</h3>
+          <span class="hint" id="env-service-site-summary" data-i18n="web.envDetail.serviceSiteLoading">Loading Service Site binding status...</span>
+        </div>
+        <div class="secdesc" data-i18n="web.envDetail.serviceSiteFallbackDesc">
+          Use this when Authrim, Admin UI, Login UI, and the service site share one domain. This screen adds the Service Binding and deploys ar-router; enable the runtime fallback later from Admin UI > Login UI.
+        </div>
+        <div class="twocol service-site-form">
+          <label class="switchline" id="env-service-site-enabled-line">
+            <input type="checkbox" id="env-service-site-enabled">
+            <span class="sw"></span>
+            <span class="nm">
+              <span data-i18n="web.envDetail.serviceSiteEnabled">Add Service Binding</span>
+              <small data-i18n="web.envDetail.serviceSiteEnabledHint">Adds the configured Worker as a Service Binding on ar-router. Runtime fallback remains controlled by Admin UI settings.</small>
+            </span>
+          </label>
+          <div>
+            <label class="f-label" for="env-service-site-worker-name" data-i18n="web.envDetail.serviceSiteWorkerName">Service Worker name</label>
+            <input class="f-input sm" type="text" id="env-service-site-worker-name" placeholder="customer-service-site" autocomplete="off" spellcheck="false">
+          </div>
+          <div>
+            <label class="f-label" for="env-service-site-binding" data-i18n="web.envDetail.serviceSiteBinding">Binding name</label>
+            <input class="f-input sm" type="text" id="env-service-site-binding" value="SERVICE_SITE" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="inline-form service-site-actions">
+          <button class="btn btn-next" id="btn-save-service-site"><span data-i18n="web.envDetail.serviceSiteSaveDeploy">Save and Deploy Router</span> <span class="arr">→</span></button>
+          <button class="btn btn-ghost" id="btn-refresh-service-site" data-i18n="web.envDetail.refreshVersions">Refresh</button>
+        </div>
+        <div id="env-service-site-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.serviceSiteProgress">Service Site Progress</span></div><pre id="env-service-site-log"></pre></div>
       </div>
 
       <div id="pane-storage" class="tabpane" data-env-pane="storage">
@@ -10436,8 +10503,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
       renderEnvDetailUrls(env);
       loadEnvEmailStatus(env.env);
+      loadServiceSiteStatus(env.env);
       document.getElementById('env-email-progress').classList.add('hidden');
       document.getElementById('env-email-log').textContent = '';
+      document.getElementById('env-service-site-progress').classList.add('hidden');
+      document.getElementById('env-service-site-log').textContent = '';
+      document.getElementById('btn-save-service-site').disabled = false;
       document.getElementById('btn-enable-cloudflare-email').disabled = false;
       document.getElementById('btn-enable-resend-email').disabled = false;
       document.getElementById('env-email-resend-api-key').value = '';
@@ -10807,6 +10878,143 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       renderEnvEmailStatus(null);
+    }
+
+    function renderServiceSiteStatus(configResponse) {
+      const summaryEl = document.getElementById('env-service-site-summary');
+      const enabledInput = document.getElementById('env-service-site-enabled');
+      const enabledLine = document.getElementById('env-service-site-enabled-line');
+      const workerInput = document.getElementById('env-service-site-worker-name');
+      const bindingInput = document.getElementById('env-service-site-binding');
+      const serviceSite = configResponse?.config?.serviceSite || {};
+      const enabled = serviceSite.enabled === true;
+      const binding = serviceSite.binding || 'SERVICE_SITE';
+      const workerName = serviceSite.workerName || '';
+
+      selectedEnvDetailConfig = configResponse?.config || selectedEnvDetailConfig;
+      enabledInput.checked = enabled;
+      enabledLine.classList.toggle('on', enabled);
+      workerInput.value = workerName;
+      bindingInput.value = binding;
+      summaryEl.textContent = enabled
+        ? t('web.envDetail.serviceSiteEnabledSummary', { binding, worker: workerName || '-' })
+        : t('web.envDetail.serviceSiteDisabledSummary');
+    }
+
+    async function loadServiceSiteStatus(envName) {
+      const summaryEl = document.getElementById('env-service-site-summary');
+      summaryEl.textContent = t('web.envDetail.serviceSiteLoading');
+      try {
+        const configResponse = await api('/config?env=' + encodeURIComponent(envName));
+        if (configResponse.exists && configResponse.config) {
+          renderServiceSiteStatus(configResponse);
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to load Service Site config:', error);
+      }
+
+      renderServiceSiteStatus(null);
+    }
+
+    async function configureServiceSiteForEnv() {
+      if (!selectedEnvForDetail) {
+        alert(t('web.envDetail.noEnvironmentSelected'));
+        return;
+      }
+
+      const envName = selectedEnvForDetail.env;
+      const enabled = document.getElementById('env-service-site-enabled').checked;
+      const workerName = String(
+        document.getElementById('env-service-site-worker-name').value || ''
+      ).trim();
+      const binding = String(
+        document.getElementById('env-service-site-binding').value || 'SERVICE_SITE'
+      ).trim();
+
+      if (enabled && !workerName) {
+        alert(t('web.envDetail.serviceSiteWorkerRequired'));
+        return;
+      }
+      if (enabled && !/^[a-z][a-z0-9-]*$/.test(workerName)) {
+        alert(t('web.envDetail.serviceSiteWorkerInvalid'));
+        return;
+      }
+      if (!/^[A-Z][A-Z0-9_]*$/.test(binding)) {
+        alert(t('web.envDetail.serviceSiteBindingInvalid'));
+        return;
+      }
+      if (!confirm(t('web.envDetail.serviceSiteConfirm'))) return;
+
+      const btn = document.getElementById('btn-save-service-site');
+      const progressDiv = document.getElementById('env-service-site-progress');
+      const logDiv = document.getElementById('env-service-site-log');
+      const btnLabel = btn.querySelector('span');
+      const originalLabel = btnLabel?.textContent || '';
+
+      btn.disabled = true;
+      if (btnLabel) btnLabel.textContent = t('web.status.deploying') || 'Deploying...';
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (message) => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      let lastProgressLength = 0;
+      let pollInterval = null;
+      try {
+        addLog(t('web.envDetail.serviceSiteSaving'));
+        pollInterval = setInterval(async () => {
+          try {
+            const statusResult = await api('/deploy/status');
+            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
+              const newMessages = statusResult.progress.slice(lastProgressLength);
+              newMessages.forEach(msg => addLog(formatProgressMessageForDisplay(msg)));
+              lastProgressLength = statusResult.progress.length;
+            }
+          } catch (error) {
+            // The save/deploy request handles final errors.
+          }
+        }, 1000);
+
+        const response = await api('/service-site/configure', {
+          method: 'POST',
+          body: {
+            env: envName,
+            enabled,
+            binding,
+            workerName,
+            deployRouter: true,
+          },
+        });
+
+        if (response.progress && response.progress.length > lastProgressLength) {
+          response.progress
+            .slice(lastProgressLength)
+            .forEach(msg => addLog(formatProgressMessageForDisplay(msg)));
+          lastProgressLength = response.progress.length;
+        }
+
+        if (!response.success) {
+          throw new Error(response.error || t('web.status.error'));
+        }
+
+        addLog(t('web.envDetail.serviceSiteDeployComplete'));
+        await loadServiceSiteStatus(envName);
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        addLog(t('web.status.errorWithMessage', { error: error.message }));
+      } finally {
+        if (pollInterval !== null) {
+          clearInterval(pollInterval);
+        }
+        btn.disabled = false;
+        if (btnLabel) btnLabel.textContent = originalLabel || t('web.envDetail.serviceSiteSaveDeploy');
+      }
     }
 
     function renderTenantD1PoolStatus(response) {
@@ -11967,6 +12175,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // Event listeners for UI Update
     document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
     document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
+    document.getElementById('env-service-site-enabled')?.addEventListener('change', (event) => {
+      document
+        .getElementById('env-service-site-enabled-line')
+        ?.classList.toggle('on', event.currentTarget.checked);
+    });
+    document.getElementById('btn-refresh-service-site')?.addEventListener('click', () => {
+      if (selectedEnvForDetail) {
+        loadServiceSiteStatus(selectedEnvForDetail.env);
+      }
+    });
+    document.getElementById('btn-save-service-site')?.addEventListener('click', configureServiceSiteForEnv);
     document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
     document.getElementById('btn-enable-resend-email')?.addEventListener('click', enableResendEmailForEnv);
     document.getElementById('btn-refresh-tenant-d1-pool')?.addEventListener('click', () => {

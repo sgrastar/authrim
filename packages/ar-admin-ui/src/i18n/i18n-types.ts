@@ -26909,6 +26909,38 @@ type RootTranslation = {
 	 */
 	admin_login_ui_save_post_login: string
 	/**
+	 * S​e​r​v​i​c​e​ ​S​i​t​e​ ​F​a​l​l​b​a​c​k
+	 */
+	admin_login_ui_service_site_title: string
+	/**
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​L​o​g​i​n​ ​U​I​ ​d​o​m​a​i​n​s​ ​f​o​r​w​a​r​d​ ​u​n​m​a​t​c​h​e​d​ ​p​a​t​h​s​ ​t​o​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​s​i​t​e​ ​W​o​r​k​e​r​.
+	 */
+	admin_login_ui_service_site_description: string
+	/**
+	 * E​n​a​b​l​e​ ​S​e​r​v​i​c​e​ ​S​i​t​e​ ​f​a​l​l​b​a​c​k
+	 */
+	admin_login_ui_service_site_enabled: string
+	/**
+	 * W​h​e​n​ ​e​n​a​b​l​e​d​,​ ​a​r​-​r​o​u​t​e​r​ ​h​a​n​d​l​e​s​ ​A​u​t​h​r​i​m​ ​r​e​s​e​r​v​e​d​ ​p​a​t​h​s​ ​f​i​r​s​t​,​ ​t​h​e​n​ ​f​o​r​w​a​r​d​s​ ​u​n​m​a​t​c​h​e​d​ ​p​a​t​h​s​ ​t​o​ ​t​h​e​ ​S​e​r​v​i​c​e​ ​B​i​n​d​i​n​g​ ​c​o​n​f​i​g​u​r​e​d​ ​b​y​ ​t​h​e​ ​s​e​t​u​p​ ​t​o​o​l​.
+	 */
+	admin_login_ui_service_site_enabled_description: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​a​n​d​ ​d​e​p​l​o​y​ ​t​h​e​ ​S​e​r​v​i​c​e​ ​B​i​n​d​i​n​g​ ​f​r​o​m​ ​t​h​e​ ​s​e​t​u​p​ ​t​o​o​l​ ​e​x​i​s​t​i​n​g​ ​e​n​v​i​r​o​n​m​e​n​t​ ​d​e​t​a​i​l​ ​s​c​r​e​e​n​ ​b​e​f​o​r​e​ ​e​n​a​b​l​i​n​g​ ​t​h​i​s​.
+	 */
+	admin_login_ui_service_site_setup_note: string
+	/**
+	 * S​e​r​v​i​c​e​ ​S​i​t​e​ ​f​a​l​l​b​a​c​k​ ​s​e​t​t​i​n​g​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_login_ui_service_site_updated: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​S​e​r​v​i​c​e​ ​S​i​t​e​ ​f​a​l​l​b​a​c​k​ ​s​e​t​t​i​n​g​.
+	 */
+	admin_login_ui_error_save_service_site: string
+	/**
+	 * S​a​v​e​ ​S​e​r​v​i​c​e​ ​S​i​t​e​ ​S​e​t​t​i​n​g
+	 */
+	admin_login_ui_save_service_site: string
+	/**
 	 * R​e​l​o​a​d
 	 */
 	admin_login_ui_reload: string
@@ -54269,6 +54301,38 @@ Remove this role from {email}?
 	 * Save Post-login Settings
 	 */
 	admin_login_ui_save_post_login: () => LocalizedString
+	/**
+	 * Service Site Fallback
+	 */
+	admin_login_ui_service_site_title: () => LocalizedString
+	/**
+	 * Controls whether Login UI domains forward unmatched paths to the service site Worker.
+	 */
+	admin_login_ui_service_site_description: () => LocalizedString
+	/**
+	 * Enable Service Site fallback
+	 */
+	admin_login_ui_service_site_enabled: () => LocalizedString
+	/**
+	 * When enabled, ar-router handles Authrim reserved paths first, then forwards unmatched paths to the Service Binding configured by the setup tool.
+	 */
+	admin_login_ui_service_site_enabled_description: () => LocalizedString
+	/**
+	 * Configure and deploy the Service Binding from the setup tool existing environment detail screen before enabling this.
+	 */
+	admin_login_ui_service_site_setup_note: () => LocalizedString
+	/**
+	 * Service Site fallback setting updated.
+	 */
+	admin_login_ui_service_site_updated: () => LocalizedString
+	/**
+	 * Failed to save Service Site fallback setting.
+	 */
+	admin_login_ui_error_save_service_site: () => LocalizedString
+	/**
+	 * Save Service Site Setting
+	 */
+	admin_login_ui_save_service_site: () => LocalizedString
 	/**
 	 * Reload
 	 */

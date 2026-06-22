@@ -401,6 +401,17 @@ const adminOther = {
 	admin_login_ui_post_login_updated: 'Post-login settings updated.',
 	admin_login_ui_error_save_post_login: 'Failed to save post-login settings.',
 	admin_login_ui_save_post_login: 'Save Post-login Settings',
+	admin_login_ui_service_site_title: 'Service Site Fallback',
+	admin_login_ui_service_site_description:
+		'Controls whether Login UI domains forward unmatched paths to the service site Worker.',
+	admin_login_ui_service_site_enabled: 'Enable Service Site fallback',
+	admin_login_ui_service_site_enabled_description:
+		'When enabled, ar-router handles Authrim reserved paths first, then forwards unmatched paths to the Service Binding configured by the setup tool.',
+	admin_login_ui_service_site_setup_note:
+		'Configure and deploy the Service Binding from the setup tool existing environment detail screen before enabling this.',
+	admin_login_ui_service_site_updated: 'Service Site fallback setting updated.',
+	admin_login_ui_error_save_service_site: 'Failed to save Service Site fallback setting.',
+	admin_login_ui_save_service_site: 'Save Service Site Setting',
 	admin_login_ui_reload: 'Reload',
 	admin_login_ui_loading_settings: 'Loading settings...',
 	admin_login_ui_locked: 'Locked',

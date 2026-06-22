@@ -1387,6 +1387,102 @@ describe('Router Worker', () => {
       expect(loginUiWorker.fetch).not.toHaveBeenCalled();
     });
 
+    it('should fallback unknown paths to SERVICE_SITE only when explicitly enabled', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const settings = createMockKV({
+        'settings:tenant:svcsite:service-site': JSON.stringify({
+          'service-site.fallback_enabled': true,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcsite',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+      };
+
+      const res = await app.fetch(
+        new Request('https://example.com/mypage/assets/app.js'),
+        envWithServiceSite
+      );
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('SERVICE_SITE');
+      expect(body.path).toBe('/mypage/assets/app.js');
+    });
+
+    it('should keep unknown paths as 404 when SERVICE_SITE exists but fallback is disabled', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const settings = createMockKV({
+        'settings:tenant:svcdisabled:service-site': JSON.stringify({
+          'service-site.fallback_enabled': false,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcdisabled',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+      };
+
+      const res = await app.fetch(new Request('https://example.com/mypage'), envWithServiceSite);
+      const body = (await res.json()) as Record<string, string>;
+
+      expect(res.status).toBe(404);
+      expect(body.message).toBe('The requested resource was not found');
+      expect(serviceSite.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should route root to SERVICE_SITE when fallback is enabled', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV({
+        'settings:tenant:svcroot:service-site': JSON.stringify({
+          'service-site.fallback_enabled': true,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcroot',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const res = await app.fetch(new Request('https://example.com/'), envWithServiceSite);
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('SERVICE_SITE');
+      expect(body.path).toBe('/');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should keep Authrim reserved paths ahead of SERVICE_SITE fallback', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const settings = createMockKV({
+        'settings:tenant:svcauth:service-site': JSON.stringify({
+          'service-site.fallback_enabled': true,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcauth',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+      };
+
+      const res = await app.fetch(new Request('https://example.com/authorize'), envWithServiceSite);
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('OP_AUTH');
+      expect(serviceSite.fetch).not.toHaveBeenCalled();
+    });
+
     it('should keep admin root requests on Admin UI when both UI proxies are configured', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
       const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');

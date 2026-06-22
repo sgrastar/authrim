@@ -1225,6 +1225,99 @@ id = "kv-id"
     );
   });
 
+  it('adds service site binding to ar-router when configured', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      serviceSite: {
+        enabled: true,
+        binding: 'SERVICE_SITE',
+        workerName: 'customer-service-site',
+        fallbackMode: 'worker_service_binding',
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = { d1: {}, kv: {} };
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    expect(routerConfig.services).toEqual(
+      expect.arrayContaining([
+        { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },
+        { binding: 'ADMIN_UI_WORKER', service: 'test-ar-admin-ui' },
+        { binding: 'SERVICE_SITE', service: 'customer-service-site' },
+      ])
+    );
+    expect(routerConfig.vars.SERVICE_SITE_BINDING).toBe('SERVICE_SITE');
+  });
+
   it('binds import artifacts R2 only to ar-management', () => {
     const config = {
       version: '1.0.0',

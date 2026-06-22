@@ -283,7 +283,7 @@ function resolveProgressLogKeysDir(env: string): string {
 
 async function beginProgressLog(
   env: string,
-  operation: 'provision' | 'deploy' | 'delete' | 'update'
+  operation: 'provision' | 'deploy' | 'delete' | 'update' | 'service-site'
 ): Promise<string | null> {
   await flushProgressLog();
   progressLogState = null;
@@ -605,6 +605,7 @@ export function createApiRoutes(): Hono {
   api.use('/config/*', validateSession);
   api.use('/keys/*', validateSession);
   api.use('/email/*', validateSession);
+  api.use('/service-site/*', validateSession);
   api.use('/provision', validateSession);
   api.use('/wrangler/*', validateSession);
   api.use('/deploy', validateSession);
@@ -972,6 +973,26 @@ export function createApiRoutes(): Hono {
     fromName: z.string().optional(),
   });
 
+  const ServiceSiteConfigSchema = z.object({
+    env: EnvNameSchema,
+    enabled: z.boolean(),
+    binding: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Z][A-Z0-9_]*$/, 'Binding must use uppercase letters, numbers, and underscores')
+      .default('SERVICE_SITE'),
+    workerName: z
+      .string()
+      .trim()
+      .max(63)
+      .regex(/^[a-z][a-z0-9-]*$/, 'Worker name must use lowercase letters, numbers, and hyphens')
+      .optional()
+      .or(z.literal('')),
+    deployRouter: z.boolean().optional().default(true),
+  });
+
   api.post('/email/configure', async (c) => {
     return withLock(async () => {
       try {
@@ -1087,6 +1108,243 @@ export function createApiRoutes(): Hono {
       } catch (error) {
         state.error = sanitizeError(error);
         return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
+  api.post('/service-site/configure', async (c) => {
+    return withLock(async () => {
+      try {
+        const body = await c.req.json();
+        const parseResult = ServiceSiteConfigSchema.safeParse(body);
+        if (!parseResult.success) {
+          return c.json(
+            {
+              success: false,
+              error:
+                'Invalid request: ' + parseResult.error.issues.map((i) => i.message).join(', '),
+            },
+            400
+          );
+        }
+
+        const { env, enabled, binding, workerName, deployRouter } = parseResult.data;
+        const normalizedWorkerName = String(workerName || '').trim();
+        if (enabled && !normalizedWorkerName) {
+          return c.json(
+            {
+              success: false,
+              error: 'Worker name is required when Service Site fallback is enabled.',
+            },
+            400
+          );
+        }
+
+        state.status = 'deploying';
+        state.error = null;
+        clearProgress();
+        state.logPath = await beginProgressLog(env, 'service-site');
+        addProgress(`Configuring Service Site binding for environment: ${env}`);
+
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const envPaths = getEnvironmentPaths({ baseDir, env });
+        if (!existsSync(envPaths.config)) {
+          state.status = 'error';
+          state.error = `Config file not found: ${envPaths.config}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            404
+          );
+        }
+
+        const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);
+        if (!lock || !lockPath) {
+          state.status = 'error';
+          state.error = `Lock file not found for ${env}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            404
+          );
+        }
+
+        const config = parseEnvironmentConfigForEnv(
+          JSON.parse(await readFile(envPaths.config, 'utf-8')),
+          env
+        );
+        const updatedConfig: AuthrimConfig = {
+          ...config,
+          serviceSite: {
+            enabled,
+            binding,
+            workerName: normalizedWorkerName || config.serviceSite?.workerName,
+            fallbackMode: 'worker_service_binding',
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        await writeFile(envPaths.config, `${JSON.stringify(updatedConfig, null, 2)}\n`, 'utf-8');
+        state.config = updatedConfig;
+        addProgress(
+          enabled
+            ? `Service Site binding configured: ${binding} -> ${normalizedWorkerName}`
+            : 'Service Site binding disabled'
+        );
+
+        const resourceIds = buildResourceIdsFromLock(lock);
+        addProgress('Refreshing ar-router wrangler config...');
+        const masterResult = await saveMasterWranglerConfigs(updatedConfig, resourceIds, {
+          baseDir,
+          env,
+          dryRun: false,
+          includeDurableObjectMigrations: false,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
+        if (!masterResult.success) {
+          state.status = 'error';
+          state.error = `Wrangler config generation failed: ${masterResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        addProgress('Syncing ar-router wrangler config...');
+        const syncResult = await syncWranglerConfigs({
+          baseDir,
+          env,
+          packagesDir: join(baseDir, 'packages'),
+          force: true,
+          dryRun: false,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
+        if (!syncResult.success && syncResult.errors.length > 0) {
+          state.status = 'error';
+          state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+        addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
+
+        if (!deployRouter) {
+          state.status = 'complete';
+          addProgress('Router deploy skipped by request.');
+          await flushProgressLog();
+          return c.json({
+            success: true,
+            env,
+            configPath: envPaths.config,
+            deployRequired: true,
+            progress: state.progress,
+            logPath: state.logPath,
+          });
+        }
+
+        addProgress('Building ar-router...');
+        const buildResult = await buildApiPackages({
+          rootDir: baseDir,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
+        if (!buildResult.success) {
+          state.status = 'error';
+          state.error = `Build failed: ${buildResult.error}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        addProgress('Deploying ar-router...');
+        const deployResult = await deployWorker('ar-router', {
+          env,
+          rootDir: baseDir,
+          dryRun: false,
+          onProgress: addProgress,
+        });
+        if (!deployResult.success) {
+          state.status = 'error';
+          state.error = deployResult.error || 'ar-router deployment failed';
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        const packageVersion = await getPackageVersion(join(baseDir, 'packages', 'ar-router'));
+        await saveLockFile(
+          {
+            ...lock,
+            workers: {
+              ...lock.workers,
+              'ar-router': {
+                name: deployResult.workerName,
+                deployedAt: deployResult.deployedAt,
+                version: packageVersion ?? deployResult.version,
+              },
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          lockPath
+        );
+        addProgress('Lock file updated');
+        state.status = 'complete';
+        addProgress('✓ Service Site binding configuration deployed');
+        await flushProgressLog();
+
+        return c.json({
+          success: true,
+          env,
+          configPath: envPaths.config,
+          workerName: deployResult.workerName,
+          deployedAt: deployResult.deployedAt,
+          serviceSite: updatedConfig.serviceSite,
+          progress: state.progress,
+          logPath: state.logPath,
+        });
+      } catch (error) {
+        state.status = 'error';
+        state.error = sanitizeError(error);
+        await flushProgressLog();
+        return c.json({ success: false, error: state.error, progress: state.progress }, 500);
       }
     });
   });

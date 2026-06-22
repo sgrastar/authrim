@@ -244,6 +244,22 @@ describe('Settings API v2', () => {
         expect(body.values['self-service.account_page_path']).toBe('/account');
       });
 
+      it('should return service-site settings with default values', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/service-site',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('service-site');
+        expect(body.values['service-site.fallback_enabled']).toBe(false);
+      });
+
       it('should return tenant-discovery-ui settings for tenant scope', async () => {
         const { app, mockEnv } = createTestApp();
 

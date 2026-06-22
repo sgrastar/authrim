@@ -57,6 +57,10 @@ interface Env {
   LOGIN_UI_WORKER?: Fetcher;
   /** Admin UI Worker service binding */
   ADMIN_UI_WORKER?: Fetcher;
+  /** User-owned service site Worker service binding */
+  SERVICE_SITE?: Fetcher;
+  /** Name of the user-owned service site Worker binding */
+  SERVICE_SITE_BINDING?: string;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
@@ -67,6 +71,7 @@ const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
 const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
 const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
 const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
+const SERVICE_SITE_SETTINGS_CACHE_TTL_MS = 5_000;
 
 // Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
 const LOGIN_UI_PATHS = [
@@ -90,6 +95,7 @@ const accountPageSettingsCache = new Map<
   string,
   { enabled: boolean; path: string; expiresAt: number }
 >();
+const serviceSiteSettingsCache = new Map<string, { enabled: boolean; expiresAt: number }>();
 
 const BEARER_TOKEN_CANONICAL_PATHS = [
   '/authorize',
@@ -201,6 +207,14 @@ function getRequestTenantId(c: Context<{ Bindings: Env }>): string {
   return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
 }
 
+function getServiceSiteBinding(env: Env): Fetcher | undefined {
+  const bindingName = env.SERVICE_SITE_BINDING?.trim() || 'SERVICE_SITE';
+  const candidate = (env as unknown as Record<string, unknown>)[bindingName];
+  return candidate && typeof (candidate as { fetch?: unknown }).fetch === 'function'
+    ? (candidate as Fetcher)
+    : undefined;
+}
+
 function parseSettingsRecord(raw: string | null): Record<string, unknown> {
   if (!raw) {
     return {};
@@ -224,7 +238,9 @@ async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
   }
 
   const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
-  const raw = kv ? await kv.get(`settings:tenant:${tenantId}:self-service`).catch(() => null) : null;
+  const raw = kv
+    ? await kv.get(`settings:tenant:${tenantId}:self-service`).catch(() => null)
+    : null;
   const record = parseSettingsRecord(raw);
   const configuredPath = record['self-service.account_page_path'];
   const accountPath = validateAccountPagePath(configuredPath) ? configuredPath : '/account';
@@ -234,6 +250,26 @@ async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
     expiresAt: Date.now() + ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS,
   };
   accountPageSettingsCache.set(tenantId, settings);
+  return settings;
+}
+
+async function resolveServiceSiteFallbackSettings(c: Context<{ Bindings: Env }>) {
+  const tenantId = getRequestTenantId(c);
+  const cached = serviceSiteSettingsCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+  const raw = kv
+    ? await kv.get(`settings:tenant:${tenantId}:service-site`).catch(() => null)
+    : null;
+  const record = parseSettingsRecord(raw);
+  const settings = {
+    enabled: record['service-site.fallback_enabled'] === true,
+    expiresAt: Date.now() + SERVICE_SITE_SETTINGS_CACHE_TTL_MS,
+  };
+  serviceSiteSettingsCache.set(tenantId, settings);
   return settings;
 }
 
@@ -1214,6 +1250,12 @@ app.all(`${ADMIN_UI_ASSET_PREFIX}/*`, async (c) => {
 
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
 app.get('/', async (c) => {
+  const serviceSiteFallback = await resolveServiceSiteFallbackSettings(c);
+  const serviceSite = getServiceSiteBinding(c.env);
+  if (serviceSiteFallback.enabled && serviceSite) {
+    return serviceSite.fetch(c.req.raw);
+  }
+
   const requestHost = new URL(c.req.url).hostname.toLowerCase();
   const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
   const adminUiHost =
@@ -1264,6 +1306,17 @@ app.all('*', async (c, next) => {
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
+});
+
+// Optional service-site fallback. Authrim-owned routes are registered above, so only unknown
+// non-reserved paths reach this point.
+app.all('*', async (c, next) => {
+  const settings = await resolveServiceSiteFallbackSettings(c);
+  const serviceSite = getServiceSiteBinding(c.env);
+  if (!settings.enabled || !serviceSite) {
+    return next();
+  }
+  return serviceSite.fetch(c.req.raw);
 });
 
 // 404 handler

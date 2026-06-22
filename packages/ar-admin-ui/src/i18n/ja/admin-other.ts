@@ -394,6 +394,17 @@ const adminOther = {
 	admin_login_ui_post_login_updated: 'ログイン後設定を更新しました。',
 	admin_login_ui_error_save_post_login: 'ログイン後設定を保存できませんでした。',
 	admin_login_ui_save_post_login: 'ログイン後設定を保存',
+	admin_login_ui_service_site_title: 'Service Site Fallback',
+	admin_login_ui_service_site_description:
+		'Login UIと同じドメインで、Authrimに一致しないパスをサービスサイト用Workerへ転送するかを制御します。',
+	admin_login_ui_service_site_enabled: 'Service Site fallbackを有効化',
+	admin_login_ui_service_site_enabled_description:
+		'有効にすると、ar-routerはAuthrimの予約パスを先に処理し、未一致のパスをsetupツールで設定したService Bindingへ転送します。',
+	admin_login_ui_service_site_setup_note:
+		'有効化する前に、setupツールの既存環境詳細画面でService Bindingを設定し、Routerをデプロイしてください。',
+	admin_login_ui_service_site_updated: 'Service Site fallback設定を更新しました。',
+	admin_login_ui_error_save_service_site: 'Service Site fallback設定を保存できませんでした。',
+	admin_login_ui_save_service_site: 'Service Site設定を保存',
 	admin_login_ui_reload: '再読み込み',
 	admin_login_ui_loading_settings: '設定を読み込んでいます...',
 	admin_login_ui_locked: 'ロック中',
