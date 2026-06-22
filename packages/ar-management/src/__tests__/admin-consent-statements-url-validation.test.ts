@@ -130,6 +130,8 @@ describe('admin consent statement URL validation', () => {
     expect(vi.mocked(coreAdapter.execute).mock.calls[0]?.[1]).toEqual([
       'Privacy notice',
       'Read this notice',
+      null,
+      null,
       'https://example.com/privacy',
       null,
       expect.any(Number),
