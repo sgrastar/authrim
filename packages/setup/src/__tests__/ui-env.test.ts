@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import {
   buildInitialUiEnvConfig,
   generateUiEnvContent,
+  mergeAndSaveUiEnv,
+  parseUiEnvContent,
   saveUiEnv,
   copyUiEnvToPackage,
   cleanupPackageEnv,
@@ -112,6 +114,25 @@ describe('ui-env module', () => {
     });
   });
 
+  describe('parseUiEnvContent', () => {
+    it('should parse generated quoted and unquoted values', () => {
+      const parsed = parseUiEnvContent(
+        [
+          '# comment',
+          'PUBLIC_API_BASE_URL=https://example.com',
+          'PUBLIC_AUTHRIM_ISSUER="https://example.com/path with spaces"',
+          'PUBLIC_LOGIN_UI_CLIENT_ID=client-123',
+        ].join('\n')
+      );
+
+      expect(parsed).toEqual({
+        PUBLIC_API_BASE_URL: 'https://example.com',
+        PUBLIC_AUTHRIM_ISSUER: 'https://example.com/path with spaces',
+        PUBLIC_LOGIN_UI_CLIENT_ID: 'client-123',
+      });
+    });
+  });
+
   describe('buildInitialUiEnvConfig', () => {
     it('should prefer custom API domain', () => {
       const config = createDefaultConfig('test');
@@ -194,6 +215,30 @@ describe('ui-env module', () => {
       const content = readFileSync(envPath, 'utf-8');
       expect(content).toContain('PUBLIC_API_BASE_URL=https://new-url.com');
       expect(content).not.toContain('https://old-url.com');
+    });
+  });
+
+  describe('mergeAndSaveUiEnv', () => {
+    it('should preserve existing settings while persisting the Login UI client id', async () => {
+      const envPath = join(testDir, 'ui.env');
+
+      await saveUiEnv(envPath, {
+        PUBLIC_API_BASE_URL: 'https://old.example.com',
+        PUBLIC_AUTHRIM_ISSUER: 'https://old.example.com',
+        PUBLIC_DIAGNOSTIC_LOGGING_ENABLED: 'false',
+      });
+
+      await mergeAndSaveUiEnv(envPath, {
+        PUBLIC_API_BASE_URL: '',
+        PUBLIC_AUTHRIM_ISSUER: 'https://conformance.authrim.com',
+        PUBLIC_LOGIN_UI_CLIENT_ID: 'login-client-123',
+      });
+
+      const content = readFileSync(envPath, 'utf-8');
+      expect(content).not.toContain('PUBLIC_API_BASE_URL=https://old.example.com');
+      expect(content).toContain('PUBLIC_AUTHRIM_ISSUER=https://conformance.authrim.com');
+      expect(content).toContain('PUBLIC_LOGIN_UI_CLIENT_ID=login-client-123');
+      expect(content).toContain('PUBLIC_DIAGNOSTIC_LOGGING_ENABLED=false');
     });
   });
 

@@ -188,6 +188,7 @@ program
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
       await import('./core/paths.js');
     const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
+    const { mergeAndSaveUiEnv } = await import('./core/ui-env.js');
 
     console.log(chalk.bold('\n🔧 Authrim Component Upgrade\n'));
 
@@ -374,6 +375,9 @@ program
           apiBaseUrl,
           loginUiClientId,
         });
+        if (componentName === 'ar-login-ui' && resolved.type === 'new' && loginUiClientId) {
+          await mergeAndSaveUiEnv((resolved.paths as { uiEnv: string }).uiEnv, uiSettings.uiEnv);
+        }
 
         const result = await deployUiWorkerComponent(
           componentName as 'ar-admin-ui' | 'ar-login-ui',

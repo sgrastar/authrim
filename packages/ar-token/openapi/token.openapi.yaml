@@ -20,7 +20,7 @@ paths:
       summary: Return token Worker health.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/TokenHealth"
   /health/live:
     get:
       tags:
@@ -28,7 +28,7 @@ paths:
       summary: Return liveness probe status.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/ProbeHealth"
   /health/ready:
     get:
       tags:
@@ -36,7 +36,7 @@ paths:
       summary: Return readiness probe status.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/ProbeHealth"
   /token:
     post:
       tags:
@@ -64,7 +64,7 @@ paths:
                   type: string
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/OAuthToken"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -90,3 +90,104 @@ components:
                 type: string
               error_description:
                 type: string
+    TokenHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TokenHealth"
+          example:
+            status: ok
+            service: op-token
+            timestamp: 2026-06-19T00:00:00.000Z
+    ProbeHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProbeHealth"
+          example:
+            status: ok
+            service: op-token
+            version: 0.1.0
+            timestamp: 2026-06-19T00:00:00.000Z
+    OAuthToken:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OAuthTokenResponse"
+          example:
+            access_token: eyJhbGciOiJSUzI1NiJ9...
+            token_type: Bearer
+            expires_in: 3600
+            id_token: eyJhbGciOiJSUzI1NiJ9...
+            refresh_token: refresh_123
+            scope: openid profile
+  schemas:
+    TokenHealth:
+      type: object
+      required:
+        - status
+        - service
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+        service:
+          type: string
+          enum:
+            - op-token
+        timestamp:
+          type: string
+          format: date-time
+    ProbeHealth:
+      type: object
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: true
+    OAuthTokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      additionalProperties: true
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum:
+            - Bearer
+            - DPoP
+        expires_in:
+          type: integer
+        id_token:
+          type: string
+        refresh_token:
+          type: string
+        refresh_token_expires_in:
+          type: integer
+        refresh_token_expires_at:
+          type: string
+          format: date-time
+        refresh_token_expires_at_unix:
+          type: integer
+        scope:
+          type: string
+        issued_token_type:
+          type: string

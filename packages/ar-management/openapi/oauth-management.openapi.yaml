@@ -32,10 +32,10 @@ paths:
       security:
         - initialAccessToken: []
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/ClientRegistration"
       responses:
         "201":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/ClientRegistration"
         "400":
           $ref: "#/components/responses/OAuthError"
         "401":
@@ -49,12 +49,6 @@ paths:
         - registrationAccessToken: []
       parameters:
         - $ref: "#/components/parameters/ClientId"
-        - &a1
-          name: client_id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
           $ref: "#/components/responses/Json"
@@ -68,12 +62,11 @@ paths:
         - registrationAccessToken: []
       parameters:
         - $ref: "#/components/parameters/ClientId"
-        - *a1
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/ClientRegistration"
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/ClientRegistration"
         "400":
           $ref: "#/components/responses/OAuthError"
     delete:
@@ -84,7 +77,6 @@ paths:
         - registrationAccessToken: []
       parameters:
         - $ref: "#/components/parameters/ClientId"
-        - *a1
       responses:
         "204":
           description: Client deleted.
@@ -146,10 +138,10 @@ paths:
       security:
         - clientAuth: []
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/BatchRevoke"
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/BatchRevoke"
   /me/devices:
     get:
       tags:
@@ -169,17 +161,11 @@ paths:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/Id"
-        - &a2
-          name: id
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/MyDeviceUpdate"
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/MyDevice"
     delete:
       tags:
         - Devices
@@ -188,27 +174,21 @@ paths:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/Id"
-        - *a2
       responses:
         "200":
           $ref: "#/components/responses/Json"
   /clients/{client_id}/config:
     get:
       tags:
-        - Admin Route Coverage
+        - Dynamic Client Registration
       operationId: getClientsByClientIdConfig
-      summary: GET /clients/{client_id}/config
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Read public OAuth client configuration.
+      description: Returns non-sensitive public client metadata for SDK initialization before
+        authentication. Client secrets and private registration metadata are never returned.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
-        "400":
-          $ref: "#/components/responses/OAuthError"
-        "401":
-          $ref: "#/components/responses/OAuthError"
-        "403":
+          $ref: "#/components/responses/PublicClientConfig"
+        "404":
           $ref: "#/components/responses/OAuthError"
       parameters:
         - name: client_id
@@ -216,6 +196,7 @@ paths:
           required: true
           schema:
             type: string
+      security: []
 components:
   securitySchemes:
     initialAccessToken:
@@ -255,6 +236,41 @@ components:
           schema:
             type: object
             additionalProperties: true
+    ClientRegistration:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ClientRegistrationRequest"
+          example:
+            redirect_uris:
+              - https://app.example.com/callback
+            client_name: Example App
+            grant_types:
+              - authorization_code
+              - refresh_token
+            response_types:
+              - code
+            scope: openid profile email
+            require_pkce: true
+    BatchRevoke:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BatchRevokeRequest"
+          example:
+            tokens:
+              - token: eyJhbGciOiJSUzI1NiJ9...
+                token_type_hint: access_token
+    MyDeviceUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MyDeviceUpdateRequest"
+          example:
+            display_name: Work MacBook
   responses:
     Json:
       description: Successful JSON response.
@@ -275,3 +291,254 @@ components:
                 type: string
               error_description:
                 type: string
+    ClientRegistration:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ClientRegistrationResponse"
+          example:
+            client_id: client_123
+            client_secret: secret_123
+            client_id_issued_at: 1770000000
+            client_secret_expires_at: 0
+            registration_access_token: reg_access_123
+            registration_client_uri: https://auth.example.com/clients/client_123
+            redirect_uris:
+              - https://app.example.com/callback
+            require_pkce: true
+    BatchRevoke:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BatchRevokeResponse"
+          example:
+            results:
+              - token_hint: eyJhbGci...abcd
+                status: revoked
+            summary:
+              total: 1
+              revoked: 1
+              invalid: 0
+    MyDevice:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MyDeviceResponse"
+          example:
+            device:
+              id: inst_123
+              display_name: Work MacBook
+              is_current: true
+              app_display_name: Example App
+    PublicClientConfig:
+      description: Public client configuration.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PublicClientConfig"
+  schemas:
+    ClientRegistrationRequest:
+      type: object
+      required:
+        - redirect_uris
+      properties:
+        redirect_uris:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uri
+        client_name:
+          type: string
+        grant_types:
+          type: array
+          items:
+            type: string
+        response_types:
+          type: array
+          items:
+            type: string
+        scope:
+          type: string
+        token_endpoint_auth_method:
+          type: string
+        require_pkce:
+          type: boolean
+        jwks:
+          type: object
+          additionalProperties: true
+        jwks_uri:
+          type: string
+          format: uri
+        sector_identifier_uri:
+          type: string
+          format: uri
+        logo_uri:
+          type: string
+          format: uri
+        policy_uri:
+          type: string
+          format: uri
+        tos_uri:
+          type: string
+          format: uri
+        logout_webhook_uri:
+          type: string
+          format: uri
+      additionalProperties: true
+    ClientRegistrationResponse:
+      type: object
+      required:
+        - client_id
+        - client_id_issued_at
+        - redirect_uris
+        - require_pkce
+      additionalProperties: true
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        client_id_issued_at:
+          type: integer
+        client_secret_expires_at:
+          type: integer
+        registration_access_token:
+          type: string
+        registration_client_uri:
+          type: string
+          format: uri
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        require_pkce:
+          type: boolean
+    BatchRevokeRequest:
+      type: object
+      required:
+        - tokens
+      properties:
+        tokens:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - token
+            properties:
+              token:
+                type: string
+              token_type_hint:
+                type: string
+                enum:
+                  - access_token
+                  - refresh_token
+                  - device_secret
+    BatchRevokeResponse:
+      type: object
+      required:
+        - results
+        - summary
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - token_hint
+              - status
+            properties:
+              token_hint:
+                type: string
+              status:
+                type: string
+                enum:
+                  - revoked
+                  - invalid
+        summary:
+          type: object
+          required:
+            - total
+            - revoked
+            - invalid
+          properties:
+            total:
+              type: integer
+            revoked:
+              type: integer
+            invalid:
+              type: integer
+    MyDeviceUpdateRequest:
+      type: object
+      required:
+        - display_name
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+    MyDeviceItem:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        fallback_display_name:
+          type: string
+        app_display_name:
+          type: string
+        is_current:
+          type: boolean
+        last_used_at:
+          type: integer
+        created_at:
+          type: integer
+    MyDeviceResponse:
+      type: object
+      required:
+        - device
+      properties:
+        device:
+          $ref: "#/components/schemas/MyDeviceItem"
+    PublicClientConfig:
+      type: object
+      required:
+        - client_id
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        client_name:
+          type: string
+          example: Example App
+        logo_uri:
+          type: string
+          format: uri
+          example: https://app.example.com/logo.png
+        client_uri:
+          type: string
+          format: uri
+          example: https://app.example.com/
+        policy_uri:
+          type: string
+          format: uri
+          example: https://app.example.com/privacy
+        tos_uri:
+          type: string
+          format: uri
+          example: https://app.example.com/terms
+        login_ui_url:
+          type: string
+          format: uri
+          example: https://auth.example.com/login
+        initiate_login_uri:
+          type: string
+          format: uri
+          example: https://app.example.com/login/start

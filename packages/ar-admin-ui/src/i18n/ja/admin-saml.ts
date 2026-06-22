@@ -284,7 +284,7 @@ const adminSaml = {
 	admin_saml_detail_allowed_bindings_hint:
 		'このproviderがSSO/SLOメッセージで使えるSAML protocol bindingを制御します。',
 	admin_saml_detail_at_least_one_binding: '少なくとも1つのbindingが必要です',
-	admin_saml_detail_sp_login_policy: 'SP Login Policy',
+	admin_saml_detail_sp_login_policy: '外部IdPログインポリシー',
 	admin_saml_detail_sp_display_name: 'SP表示名',
 	admin_saml_detail_jit_linking_policy: 'JIT Linking Policy',
 	admin_saml_detail_jit_existing_or_create: '既存の検証済みemailにlink、またはJIT作成',
@@ -299,15 +299,28 @@ const adminSaml = {
 	admin_saml_detail_signature_required_hint:
 		'デフォルトはRequiredです。OptionalまたはDisabledは明示的なlegacy IdP互換性が必要な場合だけ使ってください。',
 	admin_saml_detail_authn_context_policy: 'AuthnContext Policy',
+	admin_saml_detail_authn_context_policy_hint:
+		'SPのAuthnRequestに含まれるRequestedAuthnContextをAuthrimがどう扱うかを制御します。Observeは記録のみでブロックせず、Require allowedは下の一覧にないAuthnContextClassRefを要求するリクエストを拒否します。',
 	admin_saml_detail_allowed_authn_context: 'Allowed AuthnContextClassRef',
-	admin_saml_detail_sp_policy: 'SP Policy',
-	admin_saml_detail_profile: 'Profile',
+	admin_saml_detail_allowed_authn_context_hint:
+		'1行に1つのAuthnContextClassRef URIを指定します。AuthnContext PolicyがRequire allowedの場合だけ使われ、このSPに要求を許可する認証コンテキストをすべて含めてください。',
+	admin_saml_detail_sp_policy: 'SAML SP属性送信ポリシー',
+	admin_saml_detail_profile: 'SP互換性プロファイル',
+	admin_saml_detail_profile_hint_baseline:
+		'Baselineは標準的なSAML SP向けの推奨設定です。署名・NameID・bindingなどを安全な既定値に寄せます。',
+	admin_saml_detail_profile_hint_strict:
+		'Strictは署名検証や互換性条件をより厳格に扱う設定です。相手SPが標準仕様に沿っている場合に使います。',
+	admin_saml_detail_profile_hint_academic_publisher:
+		'出版社・図書館系SP向けにStrict相当の既定値を使います。Assertion署名、AuthnRequest/Logout署名必須、Persistent NameIDを設定します。SPがmail、displayName、eduPersonScopedAffiliation、eduPersonEntitlementを求める場合は属性マッピングも合わせて設定してください。',
+	admin_saml_detail_profile_hint_legacy:
+		'Legacyは古いSPとの互換性が必要な場合だけ使う緩和設定です。',
 	admin_saml_detail_attribute_preset: 'Attribute Preset',
 	admin_saml_detail_none: 'なし',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
-	admin_saml_detail_identity_mapping_policy_default: 'テナント既定 / legacy release',
+	admin_saml_detail_identity_mapping_policy_default: '選択してください',
 	admin_saml_detail_identity_mapping_policy_hint:
-		'このSPへSAML Attributeをreleaseする時に使うactiveなField Mapping Setを選択します。',
+		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
+	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
 	admin_saml_detail_attribute_release_consent: '属性提供の同意',
 	admin_saml_detail_attribute_release_consent_disabled: '属性提供前に確認しない',
 	admin_saml_detail_attribute_release_consent_once: '初回だけ確認し、以後は記憶する',
@@ -316,12 +329,18 @@ const adminSaml = {
 		'提供する属性が変わった時に再確認する',
 	admin_saml_detail_attribute_release_consent_hint:
 		'このSPへSAML assertionを送信する前に、Authrimが属性提供の確認を必須にするかを制御します。同じpolicy形状をOIDC clientにも再利用できます。',
-	admin_saml_detail_authn_request_signature: 'AuthnRequest Signature',
-	admin_saml_detail_logout_request_signature: 'LogoutRequest Signature',
+	admin_saml_detail_authn_request_signature: 'AuthnRequest署名検証',
+	admin_saml_detail_authn_request_signature_hint:
+		'SPから届くAuthnRequestの署名を必須にするかを制御します。通常はOptionalまたはRequiredを使い、Disabledは明示的な例外時だけ使ってください。',
+	admin_saml_detail_logout_request_signature: 'LogoutRequest署名検証',
 	admin_saml_detail_sp_signature_hint:
-		'デフォルトはRequiredです。明示的なlegacy SP例外がある場合だけ緩和してください。',
-	admin_saml_detail_authn_context_mode: 'AuthnContext Mode',
-	admin_saml_detail_default_authn_context: 'Default AuthnContext',
+		'SPから届くLogoutRequestの署名を必須にするかを制御します。デフォルトはRequiredです。',
+	admin_saml_detail_authn_context_mode: 'AuthnContext送信方式',
+	admin_saml_detail_authn_context_mode_hint:
+		'Assertionに入れるAuthnContextClassRefを、実際のログインセッションに合わせるか、固定値で送るかを選択します。',
+	admin_saml_detail_default_authn_context: '通常ログイン時のAuthnContext',
+	admin_saml_detail_default_authn_context_hint:
+		'固定送信または通常ログイン時に使うAuthnContextClassRefです。多くのSPではPasswordProtectedTransportを受け付けます。',
 	admin_saml_detail_passkey_authn_context: 'Passkey AuthnContext',
 	admin_saml_detail_sign_assertions: 'Assertionsに署名',
 	admin_saml_detail_sign_assertions_desc:

@@ -25,7 +25,7 @@ paths:
       summary: Return policy API health.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/PolicyHealth"
   /api/policy/flags:
     get:
       tags:
@@ -34,6 +34,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/List"
+      security:
+        - bearerAuth: []
   /api/policy/flags/{name}:
     put:
       tags:
@@ -41,67 +43,72 @@ paths:
       summary: Upsert a policy feature flag.
       parameters:
         - $ref: "#/components/parameters/Name"
-        - &a1
-          name: name
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/PolicyFlagUpdate"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/PolicyFlagUpdate"
+      security:
+        - bearerAuth: []
     delete:
       tags:
         - Policy
       summary: Delete a policy feature flag.
       parameters:
         - $ref: "#/components/parameters/Name"
-        - *a1
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/PolicyFlagDelete"
+      security:
+        - bearerAuth: []
   /api/policy/evaluate:
     post:
       tags:
         - Policy
       summary: Evaluate policy input.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/PolicyContext"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/PolicyDecision"
+      security:
+        - bearerAuth: []
   /api/policy/check-role:
     post:
       tags:
         - Policy
       summary: Check role membership.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RoleCheck"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/RoleCheck"
+      security:
+        - bearerAuth: []
   /api/policy/check-access:
     post:
       tags:
         - Policy
       summary: Check access against policy.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/AccessCheck"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/AccessCheck"
+      security:
+        - bearerAuth: []
   /api/policy/is-admin:
     post:
       tags:
         - Policy
       summary: Check whether a subject is an admin.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/IsAdmin"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/IsAdmin"
+      security:
+        - bearerAuth: []
   /api/rebac/health:
     get:
       tags:
@@ -110,57 +117,67 @@ paths:
       summary: Return ReBAC API health.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/RebacHealth"
   /api/rebac/check:
     post:
       tags:
         - ReBAC
       summary: Check a relationship-based authorization decision.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RebacCheck"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/RebacCheck"
+      security:
+        - bearerAuth: []
   /api/rebac/batch-check:
     post:
       tags:
         - ReBAC
       summary: Check relationship-based authorization decisions in batch.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RebacBatchCheck"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/RebacBatchCheck"
+      security:
+        - bearerAuth: []
   /api/rebac/list-objects:
     post:
       tags:
         - ReBAC
       summary: List objects reachable by a subject and relation.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RebacListObjects"
       responses:
         "200":
-          $ref: "#/components/responses/List"
+          $ref: "#/components/responses/RebacListObjects"
+      security:
+        - bearerAuth: []
   /api/rebac/list-users:
     post:
       tags:
         - ReBAC
       summary: List users reachable by an object and relation.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RebacListUsers"
       responses:
         "200":
-          $ref: "#/components/responses/List"
+          $ref: "#/components/responses/RebacListUsers"
+      security:
+        - bearerAuth: []
   /api/rebac/invalidate:
     post:
       tags:
         - ReBAC
       summary: Invalidate ReBAC cache entries.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RebacInvalidate"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/Success"
+      security:
+        - bearerAuth: []
   /api/check/health:
     get:
       tags:
@@ -169,77 +186,86 @@ paths:
       summary: Return check API health.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/CheckHealth"
   /api/check:
     post:
       tags:
         - Check
       summary: Run an authorization check.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/CheckApi"
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/CheckApi"
+      security:
+        - bearerAuth: []
   /api/check/batch:
     post:
       tags:
         - Check
       summary: Run authorization checks in batch.
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/BatchCheckApi"
       responses:
         "200":
-          $ref: "#/components/responses/List"
+          $ref: "#/components/responses/BatchCheckApi"
+      security:
+        - bearerAuth: []
   /api/check/subscribe:
     get:
       tags:
         - Subscriptions
       operationId: getApiCheckSubscribe
-      summary: GET /api/check/subscribe
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Open a permission-change subscription WebSocket.
+      description: Upgrades the request to a WebSocket used by clients to receive permission and policy
+        change notifications. The caller must be authorized for the subscribe operation.
       responses:
-        "200":
-          $ref: "#/components/responses/Ok"
+        "101":
+          $ref: "#/components/responses/SubscribeUpgrade"
+      security:
+        - bearerAuth: []
   /api/check/subscribe/stats:
     get:
       tags:
         - Subscriptions
       operationId: getApiCheckSubscribeStats
-      summary: GET /api/check/subscribe/stats
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Return permission subscription hub statistics.
+      description: Returns operational statistics from the subscription Durable Object, including current
+        connection and subscription counters when available.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/SubscribeStats"
+      security:
+        - bearerAuth: []
   /api/rebac/tuples:
     delete:
       tags:
         - ReBAC
       operationId: deleteApiRebacTuples
-      summary: DELETE /api/rebac/tuples
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Delete a ReBAC relationship tuple.
+      description: Deletes the specified relationship tuple and invalidates related authorization cache entries.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/RebacDelete"
+      requestBody:
+        $ref: "#/components/requestBodies/RebacTuple"
+      security:
+        - bearerAuth: []
   /api/rebac/write:
     post:
       tags:
         - ReBAC
       operationId: postApiRebacWrite
-      summary: POST /api/rebac/write
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Write a ReBAC relationship tuple.
+      description: Creates or updates a relationship tuple used by relationship-based authorization checks
+        and invalidates related cache entries.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/RebacWrite"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/RebacTuple"
+      security:
+        - bearerAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -260,6 +286,158 @@ components:
           schema:
             type: object
             additionalProperties: true
+    PolicyFlagUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyFlagUpdateRequest"
+          example:
+            value: true
+    PolicyContext:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyContextRequest"
+          example:
+            subject:
+              id: user_123
+              roles:
+                - name: admin
+                  scope: global
+            resource:
+              type: document
+              id: doc_123
+            action:
+              name: read
+    RoleCheck:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RoleCheckRequest"
+          example:
+            subject:
+              claims:
+                sub: user_123
+                roles:
+                  - admin
+            role: admin
+    AccessCheck:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccessCheckRequest"
+          example:
+            subjectId: user_123
+            roles:
+              - name: editor
+                scope: global
+            resourceType: document
+            resourceId: doc_123
+            action: read
+    IsAdmin:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/IsAdminRequest"
+          example:
+            roles:
+              - admin
+    RebacCheck:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacCheckRequest"
+          example:
+            tenant_id: tenant_123
+            user_id: user:user_123
+            relation: viewer
+            object: document:doc_123
+    RebacBatchCheck:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacBatchCheckRequest"
+          example:
+            checks:
+              - tenant_id: tenant_123
+                user_id: user:user_123
+                relation: viewer
+                object: document:doc_123
+    RebacListObjects:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacListObjectsRequest"
+          example:
+            tenant_id: tenant_123
+            user_id: user:user_123
+            relation: viewer
+            object_type: document
+            limit: 100
+    RebacListUsers:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacListUsersRequest"
+          example:
+            tenant_id: tenant_123
+            object: document:doc_123
+            relation: viewer
+            limit: 100
+    RebacInvalidate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacInvalidateRequest"
+          example:
+            tenant_id: tenant_123
+            type: object
+            object_type: document
+            object_id: doc_123
+    CheckApi:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CheckApiRequest"
+          example:
+            subject_id: user_123
+            permission: documents:doc_123:read
+            tenant_id: tenant_123
+    BatchCheckApi:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BatchCheckApiRequest"
+          example:
+            checks:
+              - subject_id: user_123
+                permission: documents:doc_123:read
+                tenant_id: tenant_123
+    RebacTuple:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacTupleRequest"
+          example:
+            tenant_id: tenant_123
+            object_type: document
+            object_id: doc_123
+            relation: viewer
+            subject_type: user
+            subject_id: user_123
   responses:
     Ok:
       description: Successful JSON response.
@@ -275,3 +453,711 @@ components:
           schema:
             type: object
             additionalProperties: true
+    PolicyHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyHealth"
+          example:
+            status: ok
+            service: ar-policy
+            version: 0.1.0
+            timestamp: 2026-06-19T00:00:00.000Z
+            features:
+              abac: true
+              rebac: true
+              logging: true
+              verifiedAttributes: false
+              customRules: false
+    PolicyFlagUpdate:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyFlagUpdateResponse"
+          example:
+            success: true
+            flag: ENABLE_REBAC
+            value: true
+    PolicyFlagDelete:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyFlagDeleteResponse"
+          example:
+            success: true
+            flag: ENABLE_REBAC
+            message: Flag override cleared. Now using environment/default value.
+    PolicyDecision:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PolicyDecision"
+          example:
+            allowed: true
+            reason: Matched allow rule
+            effect: allow
+    RoleCheck:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RoleCheckResponse"
+          example:
+            hasRole: true
+            activeRoles:
+              - admin
+    AccessCheck:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccessCheckResponse"
+          example:
+            allowed: true
+            reason: Matched allow rule
+    IsAdmin:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/IsAdminResponse"
+          example:
+            isAdmin: true
+    RebacHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ServiceHealth"
+          example:
+            status: ok
+            service: ar-policy-rebac
+            version: 0.1.0
+            timestamp: 2026-06-19T00:00:00.000Z
+            enabled: true
+            database: true
+            cache: true
+    RebacCheck:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacCheckResponse"
+          example:
+            allowed: true
+            cached: false
+    RebacBatchCheck:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacBatchCheckResponse"
+          example:
+            results:
+              - allowed: true
+                cached: false
+    RebacListObjects:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacListObjectsResponse"
+          example:
+            objects:
+              - document:doc_123
+            next_cursor: cursor_123
+    RebacListUsers:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacListUsersResponse"
+          example:
+            users:
+              - user:user_123
+            next_cursor: cursor_123
+    Success:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SuccessResponse"
+          example:
+            success: true
+    CheckHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ServiceHealth"
+          example:
+            status: ok
+            service: check-api
+            version: 0.1.0
+            timestamp: 2026-06-19T00:00:00.000Z
+            enabled: true
+            database: true
+            cache: true
+            debug_mode: false
+            batch_size_limit: 100
+    CheckApi:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CheckApiResponse"
+          example:
+            allowed: true
+            resolved_via:
+              - rebac
+            final_decision: allow
+            cache_ttl: 60
+    BatchCheckApi:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BatchCheckApiResponse"
+          example:
+            results:
+              - allowed: true
+                resolved_via:
+                  - rebac
+                final_decision: allow
+                cache_ttl: 60
+            allowed: true
+            final_decision: allow
+    SubscribeUpgrade:
+      description: WebSocket upgrade response. Non-WebSocket requests are rejected.
+    SubscribeStats:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SubscribeStatsResponse"
+          example:
+            tenant_id: tenant_123
+            websocket_enabled: true
+            connections: 2
+            subscribers: 2
+    RebacWrite:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacWriteResponse"
+          example:
+            success: true
+            tuple:
+              id: rel_123
+              tenant_id: tenant_123
+              object_type: document
+              object_id: doc_123
+              relation: viewer
+              subject_type: user
+              subject_id: user_123
+              created_at: 1770000000
+    RebacDelete:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RebacDeleteResponse"
+          example:
+            success: true
+            deleted: true
+  schemas:
+    ServiceHealth:
+      type: object
+      required:
+        - status
+        - service
+        - version
+        - timestamp
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    PolicyHealth:
+      allOf:
+        - $ref: "#/components/schemas/ServiceHealth"
+        - type: object
+          properties:
+            features:
+              type: object
+              properties:
+                abac:
+                  type: boolean
+                rebac:
+                  type: boolean
+                logging:
+                  type: boolean
+                verifiedAttributes:
+                  type: boolean
+                customRules:
+                  type: boolean
+    PolicyFlagUpdateRequest:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: boolean
+    PolicyFlagUpdateResponse:
+      type: object
+      required:
+        - success
+        - flag
+        - value
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        flag:
+          type: string
+        value:
+          type: boolean
+    PolicyFlagDeleteResponse:
+      type: object
+      required:
+        - success
+        - flag
+        - message
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        flag:
+          type: string
+        message:
+          type: string
+    PolicySubject:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        roles:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    PolicyContextRequest:
+      type: object
+      required:
+        - subject
+        - resource
+        - action
+      properties:
+        subject:
+          $ref: "#/components/schemas/PolicySubject"
+        resource:
+          type: object
+          additionalProperties: true
+        action:
+          type: object
+          additionalProperties: true
+        environment:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: integer
+    PolicyDecision:
+      type: object
+      required:
+        - allowed
+      additionalProperties: true
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+        ruleId:
+          type: string
+        effect:
+          type: string
+          enum:
+            - allow
+            - deny
+    RoleCheckRequest:
+      type: object
+      required:
+        - subject
+      properties:
+        subject:
+          oneOf:
+            - $ref: "#/components/schemas/PolicySubject"
+            - type: object
+              required:
+                - claims
+              properties:
+                claims:
+                  type: object
+                  additionalProperties: true
+        role:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        mode:
+          type: string
+          enum:
+            - any
+            - all
+        scope:
+          type: string
+        scopeTarget:
+          type: string
+    RoleCheckResponse:
+      type: object
+      required:
+        - hasRole
+        - activeRoles
+      properties:
+        hasRole:
+          type: boolean
+        activeRoles:
+          type: array
+          items:
+            type: string
+    AccessCheckRequest:
+      type: object
+      required:
+        - resourceType
+        - resourceId
+        - action
+      properties:
+        subjectId:
+          type: string
+        claims:
+          type: object
+          additionalProperties: true
+        roles:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        resourceType:
+          type: string
+        resourceId:
+          type: string
+        resourceOwnerId:
+          type: string
+        resourceOrgId:
+          type: string
+        action:
+          type: string
+        operation:
+          type: string
+    AccessCheckResponse:
+      type: object
+      required:
+        - allowed
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+    IsAdminRequest:
+      type: object
+      properties:
+        claims:
+          type: object
+          additionalProperties: true
+        roles:
+          type: array
+          items:
+            type: string
+    IsAdminResponse:
+      type: object
+      required:
+        - isAdmin
+      properties:
+        isAdmin:
+          type: boolean
+    RebacCheckRequest:
+      type: object
+      required:
+        - tenant_id
+        - user_id
+        - relation
+        - object
+      properties:
+        tenant_id:
+          type: string
+        user_id:
+          type: string
+        relation:
+          type: string
+        object:
+          type: string
+        object_type:
+          type: string
+    RebacCheckResponse:
+      type: object
+      required:
+        - allowed
+      additionalProperties: true
+      properties:
+        allowed:
+          type: boolean
+        cached:
+          type: boolean
+        reason:
+          type: string
+    RebacBatchCheckRequest:
+      type: object
+      required:
+        - checks
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RebacCheckRequest"
+    RebacBatchCheckResponse:
+      type: object
+      required:
+        - results
+      additionalProperties: true
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RebacCheckResponse"
+    RebacListObjectsRequest:
+      type: object
+      required:
+        - tenant_id
+        - user_id
+        - relation
+        - object_type
+      properties:
+        tenant_id:
+          type: string
+        user_id:
+          type: string
+        relation:
+          type: string
+        object_type:
+          type: string
+        limit:
+          type: integer
+        cursor:
+          type: string
+    RebacListObjectsResponse:
+      type: object
+      required:
+        - objects
+      additionalProperties: true
+      properties:
+        objects:
+          type: array
+          items:
+            type: string
+        next_cursor:
+          type: string
+    RebacListUsersRequest:
+      type: object
+      required:
+        - tenant_id
+        - object
+        - relation
+      properties:
+        tenant_id:
+          type: string
+        object:
+          type: string
+        object_type:
+          type: string
+        relation:
+          type: string
+        limit:
+          type: integer
+        cursor:
+          type: string
+    RebacListUsersResponse:
+      type: object
+      required:
+        - users
+      additionalProperties: true
+      properties:
+        users:
+          type: array
+          items:
+            type: string
+        next_cursor:
+          type: string
+    RebacInvalidateRequest:
+      type: object
+      required:
+        - tenant_id
+        - type
+      properties:
+        tenant_id:
+          type: string
+        type:
+          type: string
+          enum:
+            - user
+            - object
+        object_type:
+          type: string
+        object_id:
+          type: string
+        user_id:
+          type: string
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+    CheckApiRequest:
+      type: object
+      required:
+        - subject_id
+        - permission
+      properties:
+        subject_id:
+          type: string
+        subject_type:
+          type: string
+        permission:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+        tenant_id:
+          type: string
+        resource_context:
+          type: object
+          additionalProperties: true
+        rebac:
+          type: object
+          additionalProperties: true
+    CheckApiResponse:
+      type: object
+      required:
+        - allowed
+        - final_decision
+      additionalProperties: true
+      properties:
+        allowed:
+          type: boolean
+        resolved_via:
+          type: array
+          items:
+            type: string
+        final_decision:
+          type: string
+          enum:
+            - allow
+            - deny
+        cache_ttl:
+          type: integer
+    BatchCheckApiRequest:
+      type: object
+      required:
+        - checks
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckApiRequest"
+        stop_on_deny:
+          type: boolean
+    BatchCheckApiResponse:
+      type: object
+      required:
+        - results
+      additionalProperties: true
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckApiResponse"
+        allowed:
+          type: boolean
+        final_decision:
+          type: string
+    RebacTupleRequest:
+      type: object
+      required:
+        - tenant_id
+        - object_type
+        - object_id
+        - relation
+        - subject_type
+        - subject_id
+      properties:
+        tenant_id:
+          type: string
+        object_type:
+          type: string
+        object_id:
+          type: string
+        relation:
+          type: string
+        subject_type:
+          type: string
+        subject_id:
+          type: string
+        expires_at:
+          type: integer
+    RebacWriteResponse:
+      type: object
+      required:
+        - success
+        - tuple
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        tuple:
+          type: object
+          additionalProperties: true
+    RebacDeleteResponse:
+      type: object
+      required:
+        - success
+        - deleted
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        deleted:
+          type: boolean
+    SubscribeStatsResponse:
+      type: object
+      required:
+        - tenant_id
+        - websocket_enabled
+      additionalProperties: true
+      properties:
+        tenant_id:
+          type: string
+        websocket_enabled:
+          type: boolean
+        connections:
+          type: integer
+        subscribers:
+          type: integer

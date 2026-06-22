@@ -11,7 +11,7 @@ const websiteRoot =
 const root = process.cwd();
 const sourceDir = path.join(root, 'docs/api');
 const targetDir = path.join(websiteRoot, 'public/api');
-const publishEntries = ['index.html', 'scalar.html', 'generated', 'openapi'];
+const publishEntries = ['openapi'];
 
 async function assertDirectory(label, directory) {
   try {

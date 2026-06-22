@@ -117,7 +117,7 @@ import {
 import { completeInitialSetup } from '../core/admin.js';
 import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
-import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
+import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
 import {
   buildWorkerHttpReadinessTargets,
@@ -2220,6 +2220,13 @@ export function createApiRoutes(): Hono {
             apiBaseUrl,
             loginUiClientId,
           });
+          if (loginUiClientId) {
+            await mergeAndSaveUiEnv(
+              getEnvironmentPaths({ baseDir: rootDir, env }).uiEnv,
+              loginUiSettings.uiEnv
+            );
+            addProgress('Login UI env updated with client_id');
+          }
           const adminUiSettings = resolveUiDeploymentSettings({
             component: 'ar-admin-ui',
             config: cfg as AuthrimConfig,
@@ -3581,6 +3588,13 @@ export function createApiRoutes(): Hono {
               apiBaseUrl,
               loginUiClientId,
             });
+            if (componentName === 'ar-login-ui' && loginUiClientId) {
+              await mergeAndSaveUiEnv(
+                getEnvironmentPaths({ baseDir: rootDir, env }).uiEnv,
+                uiSettings.uiEnv
+              );
+              addProgress('Login UI env updated with client_id');
+            }
             if (componentName === 'ar-admin-ui' && uiSettings.adminUiApiMode) {
               addProgress(
                 `Admin UI API mode: ${uiSettings.adminUiApiMode} - ${describeAdminUiApiMode(

@@ -144,10 +144,10 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLSettingsUpdate"
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLSettings"
   /api/admin/saml-providers:
     get:
       tags:
@@ -167,10 +167,12 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLProviderCreate"
       responses:
+        "200":
+          $ref: "#/components/responses/SAMLProvider"
         "201":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLProvider"
   /api/admin/saml-providers/{id}:
     get:
       tags:
@@ -181,12 +183,6 @@ paths:
         - adminSessionCookie: []
       parameters:
         - $ref: "#/components/parameters/Id"
-        - &a1
-          name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
           $ref: "#/components/responses/Json"
@@ -199,12 +195,11 @@ paths:
         - adminSessionCookie: []
       parameters:
         - $ref: "#/components/parameters/Id"
-        - *a1
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLProviderUpdate"
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLProvider"
     delete:
       tags:
         - SAML Admin
@@ -214,7 +209,6 @@ paths:
         - adminSessionCookie: []
       parameters:
         - $ref: "#/components/parameters/Id"
-        - *a1
       responses:
         "200":
           $ref: "#/components/responses/Json"
@@ -237,10 +231,12 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLAttributePresetCreate"
       responses:
+        "200":
+          $ref: "#/components/responses/SAMLAttributePreset"
         "201":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLAttributePreset"
   /api/admin/saml-metadata/preview:
     post:
       tags:
@@ -250,266 +246,317 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLMetadataInput"
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLMetadataPreview"
   /api/admin/saml-attribute-presets/{id}:
     delete:
       tags:
         - SAML Admin
       operationId: deleteApiAdminSamlAttributePresetsById
-      summary: DELETE /api/admin/saml-attribute-presets/{id}
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Delete SAML attribute preset.
+      description: Deletes a custom SAML attribute preset for the current tenant. Only presets whose id
+        starts with `custom:` are deletable; built-in presets are rejected.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLDeleteSuccess"
       parameters:
         - name: id
           in: path
           required: true
+          description: Custom SAML attribute preset id.
           schema:
             type: string
+      security: &a1
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/saml-metadata/batches/{batchId}:
     get:
       tags:
         - SAML Admin
       operationId: getApiAdminSamlMetadataBatchesByBatchId
-      summary: GET /api/admin/saml-metadata/batches/{batchId}
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Get aggregate metadata batch status.
+      description: Returns the status, progress counters, and per-entity results for an aggregate SAML
+        metadata batch-create job.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLBatchStatus"
       parameters:
         - name: batchId
           in: path
           required: true
+          description: Aggregate metadata batch id.
           schema:
             type: string
+      security: *a1
   /api/admin/saml-metadata/certificate-preview:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlMetadataCertificatePreview
-      summary: POST /api/admin/saml-metadata/certificate-preview
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Preview federation trust certificate.
+      description: Parses a PEM certificate or fetches a certificate from an HTTPS URL, then returns
+        normalized certificate metadata and validation diagnostics.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLTrustCertificatePreview"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLTrustCertificatePreview"
+      security: *a1
   /api/admin/saml-metadata/previews/{previewId}/batch-create:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlMetadataPreviewsByPreviewIdBatchCreate
-      summary: POST /api/admin/saml-metadata/previews/{previewId}/batch-create
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Start aggregate metadata batch create.
+      description: Starts an asynchronous provider creation job from selected EntityDescriptor entries in
+        an aggregate metadata preview.
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        "202":
+          $ref: "#/components/responses/SAMLBatchStatus"
       parameters:
         - name: previewId
           in: path
           required: true
+          description: Aggregate metadata preview id.
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLMetadataBatchCreate"
+      security: *a1
   /api/admin/saml-metadata/previews/{previewId}/entities:
     get:
       tags:
         - SAML Admin
       operationId: getApiAdminSamlMetadataPreviewsByPreviewIdEntities
-      summary: GET /api/admin/saml-metadata/previews/{previewId}/entities
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: List aggregate metadata preview entities.
+      description: Lists EntityDescriptor summaries discovered in an aggregate metadata preview, with
+        optional text and keyword filtering.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLMetadataEntityList"
       parameters:
         - name: previewId
           in: path
           required: true
+          description: Aggregate metadata preview id.
           schema:
             type: string
+        - name: query
+          in: query
+          required: false
+          description: Free-text search over entity identifiers and display names.
+          schema:
+            type: string
+        - name: keyword
+          in: query
+          required: false
+          description: Keyword facet filter. Repeat the parameter to apply multiple keywords.
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          description: Pagination offset.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of entities to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      security: *a1
   /api/admin/saml-providers/{id}/import-metadata:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdImportMetadata
-      summary: POST /api/admin/saml-providers/{id}/import-metadata
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Import SAML provider metadata.
+      description: Imports single-entity SAML metadata into an existing provider, preserving custom
+        settings while updating metadata-derived configuration and refresh status.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLMetadataImport"
       parameters:
         - name: id
           in: path
           required: true
+          description: SAML provider id.
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLMetadataInput"
+      security: *a1
   /api/admin/saml-providers/{id}/refresh-metadata:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdRefreshMetadata
-      summary: POST /api/admin/saml-providers/{id}/refresh-metadata
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Refresh SAML provider metadata.
+      description: Fetches metadata from the configured or supplied HTTPS metadata URL and updates the
+        provider configuration, certificate validation state, and metadata refresh status.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLMetadataRefresh"
       parameters:
         - name: id
           in: path
           required: true
+          description: SAML provider id.
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLMetadataRefresh"
+      security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/promote-next:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdSigningRolloverPromoteNext
-      summary: POST /api/admin/saml-providers/{id}/signing-rollover/promote-next
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Promote next SAML signing certificate.
+      description: Promotes the provider signing policy next certificate to active and can retain the
+        previous active certificate as backup.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLSigningRollover"
       parameters:
         - name: id
           in: path
           required: true
+          description: SAML provider id.
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLSigningRollover"
+      security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/publish-next:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdSigningRolloverPublishNext
-      summary: POST /api/admin/saml-providers/{id}/signing-rollover/publish-next
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Publish next SAML signing certificate.
+      description: Adds a next signing certificate to the provider signing policy for metadata publication
+        before activation.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLSigningRollover"
       parameters:
         - name: id
           in: path
           required: true
+          description: SAML provider id.
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLSigningRollover"
+      security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/retire-backup:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdSigningRolloverRetireBackup
-      summary: POST /api/admin/saml-providers/{id}/signing-rollover/retire-backup
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Retire backup SAML signing certificate.
+      description: Removes the backup signing certificate from the provider signing policy after a
+        rollover has completed.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLSigningRollover"
       parameters:
         - name: id
           in: path
           required: true
+          description: SAML provider id.
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLSigningRollover"
+      security: *a1
   /api/admin/saml-settings/local-signing:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlSettingsLocalSigning
-      summary: POST /api/admin/saml-settings/local-signing
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Update local SAML signing keys.
+      description: Creates, publishes, promotes, deletes, or retires tenant-local SAML signing keys for
+        the IdP or SP role and returns the updated SAML settings.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLSettings"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLLocalSigning"
+      security: *a1
   /api/admin/saml-settings/local-signing/dr-bundle:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlSettingsLocalSigningDrBundle
-      summary: POST /api/admin/saml-settings/local-signing/dr-bundle
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Export local SAML signing DR bundle.
+      description: Exports a passphrase-encrypted disaster recovery bundle containing tenant-local SAML
+        signing settings and private signing keys. The response is marked no-store.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLDRBundle"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLDRBundleExport"
+      security: *a1
   /api/admin/saml-settings/local-signing/dr-bundle/import:
     post:
       tags:
         - SAML Admin
       operationId: postApiAdminSamlSettingsLocalSigningDrBundleImport
-      summary: POST /api/admin/saml-settings/local-signing/dr-bundle/import
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Import local SAML signing DR bundle.
+      description: Decrypts and imports a local SAML signing disaster recovery bundle into the current
+        tenant, then returns the reloaded SAML settings.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/SAMLSettings"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLDRBundleImport"
+      security: *a1
   /saml/idp/attribute-release-consent:
     post:
       tags:
         - SAML IdP
       operationId: postSamlIdpAttributeReleaseConsent
-      summary: POST /saml/idp/attribute-release-consent
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Submit SAML attribute release consent.
+      description: Processes the browser form submitted from the SAML attribute release consent challenge.
+        Approval stores consent and redirects back to the SSO resume URL; denial returns a SAML
+        protocol error response to the Service Provider.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/Html"
+        "302":
+          $ref: "#/components/responses/Redirect"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/SAMLAttributeReleaseConsentForm"
   /saml/idp/init:
     get:
       tags:
         - SAML IdP
       operationId: getSamlIdpInit
-      summary: GET /saml/idp/init
-      description: Route coverage stub generated from the Worker route table. Replace this with a detailed
-        request and response contract when changing this API.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Start IdP-initiated SAML SSO.
+      description: Starts IdP-initiated SSO for the `sp` EntityID. Without `sp`, returns an HTML Service
+        Provider selection page. If the user is not authenticated, redirects to the configured login
+        URL.
       responses:
         "200":
-          $ref: "#/components/responses/Json"
+          $ref: "#/components/responses/Html"
+        "302":
+          $ref: "#/components/responses/Redirect"
+      parameters:
+        - name: sp
+          in: query
+          required: false
+          description: Service Provider EntityID to start IdP-initiated SSO for.
+          schema:
+            type: string
 components:
   securitySchemes:
     adminBearer:
@@ -548,6 +595,145 @@ components:
                 type: string
               RelayState:
                 type: string
+    SAMLSettingsUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLSettingsUpdateRequest"
+          example:
+            entityIdStyle: tenant_path
+            interactiveLoginUrlPolicy: tenant_login_url
+    SAMLProviderCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLProviderCreateRequest"
+          example:
+            name: Example SAML IdP
+            providerType: saml_idp
+            config:
+              entityId: https://idp.example.com/metadata
+              ssoUrl: https://idp.example.com/sso
+              certificate: -----BEGIN CERTIFICATE-----...
+    SAMLProviderUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLProviderUpdateRequest"
+          example:
+            name: Example SAML IdP
+            enabled: true
+            config:
+              ssoUrl: https://idp.example.com/sso
+    SAMLAttributePresetCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLAttributePresetCreateRequest"
+          example:
+            label: Custom profile attributes
+            attributeReleasePolicy:
+              attributes:
+                - name: email
+                  source: email
+    SAMLMetadataInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataInput"
+          example:
+            metadataUrl: https://idp.example.com/metadata.xml
+    SAMLTrustCertificatePreview:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLTrustCertificatePreviewRequest"
+          example:
+            certificate: -----BEGIN CERTIFICATE-----...
+    SAMLMetadataBatchCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataBatchCreateRequest"
+          example:
+            entityIds:
+              - https://idp.example.com/metadata
+            providerType: saml_idp
+            enabled: true
+    SAMLMetadataRefresh:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataRefreshRequest"
+          example:
+            metadataUrl: https://idp.example.com/metadata.xml
+    SAMLSigningRollover:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLSigningRolloverRequest"
+          example:
+            certificate: -----BEGIN CERTIFICATE-----...
+            metadataCertificatePublication: active_next
+    SAMLLocalSigning:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLLocalSigningRequest"
+          example:
+            role: idp
+            action: publish_next
+    SAMLDRBundleExport:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLDRBundleExportRequest"
+          example:
+            passphrase: correct horse battery staple
+    SAMLDRBundleImport:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLDRBundleImportRequest"
+          example:
+            bundle:
+              version: saml-local-signing-dr-bundle-v1
+            passphrase: correct horse battery staple
+    SAMLAttributeReleaseConsent:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLAttributeReleaseConsentRequest"
+          example:
+            requestId: consent_123
+            decision: approve
+            releasedAttributes:
+              - email
+    SAMLAttributeReleaseConsentForm:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: "#/components/schemas/SAMLAttributeReleaseConsentForm"
+          example:
+            saml_request_id: saml_req_123
+            saml_sp_entity_id: https://sp.example.com/metadata
+            challenge_id: challenge_123
+            attribute_set_hash: sha256:abcdef
+            decision: approve
   responses:
     Json:
       description: Successful JSON response.
@@ -568,3 +754,1000 @@ components:
         text/html:
           schema:
             type: string
+    SAMLSettings:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLSettingsResponse"
+          example:
+            tenantId: tenant_123
+            entityIdStyle: tenant_path
+            interactiveLoginUrlPolicy: tenant_login_url
+            certificateSubject:
+              commonName: Authrim SAML
+            certificateSubjectAlternativeNames: []
+            signingKeyPolicies: {}
+            metadata:
+              publicationEnabled: true
+            localSigning:
+              certificateSubject:
+                commonName: Authrim SAML
+              certificateSubjectAlternativeNames: []
+              idpSigningKeyPolicy: {}
+              spSigningKeyPolicy: {}
+            generated:
+              issuerUrl: https://auth.example.com
+              idpEntityId: https://auth.example.com/saml/idp/metadata
+              spEntityId: https://auth.example.com/saml/sp/metadata
+              idpMetadataUrl: https://auth.example.com/saml/idp/metadata
+              spMetadataUrl: https://auth.example.com/saml/sp/metadata
+    SAMLProvider:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLProviderResponse"
+          example:
+            id: provider_123
+            name: Example SAML IdP
+            providerType: saml_idp
+            config:
+              entityId: https://idp.example.com/metadata
+              ssoUrl: https://idp.example.com/sso
+            enabled: true
+            createdAt: 2026-06-19T00:00:00.000Z
+            updatedAt: 2026-06-19T00:00:00.000Z
+    SAMLAttributePreset:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLAttributePresetResponse"
+          example:
+            preset:
+              id: custom:preset_123
+              version: custom:1770000000000
+              profile: custom
+              label: Custom profile attributes
+              stability: custom
+              applicationMode: clone_edit
+              appliesTo: sp_attribute_release
+              isCustom: true
+              attributeReleasePolicy:
+                attributes:
+                  - name: email
+                    source: email
+    SAMLMetadataPreview:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataPreviewResponse"
+          example:
+            kind: single
+            providerType: saml_idp
+            config:
+              entityId: https://idp.example.com/metadata
+              ssoUrl: https://idp.example.com/sso
+              metadataHash: sha256:...
+    SAMLTrustCertificatePreview:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLTrustCertificatePreviewResponse"
+          example:
+            fingerprintSha256: AB:CD:EF
+            subject: CN=Example
+            issuer: CN=Example CA
+            notBefore: 2026-01-01T00:00:00.000Z
+            notAfter: 2027-01-01T00:00:00.000Z
+            source: pem
+    SAMLBatchStatus:
+      description: Aggregate metadata batch creation status.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLBatchStatus"
+          example:
+            batchId: batch_123
+            tenantId: tenant_123
+            status: running
+            total: 10
+            processed: 2
+            succeeded: 2
+            failed: 0
+            startedAt: 1770000000000
+            results:
+              - entityId: https://sp.example.com/metadata
+                success: true
+                providerId: saml_provider_123
+                providerType: saml_sp
+                name: Example SP
+    SAMLMetadataImport:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataImportResponse"
+          example:
+            success: true
+            config:
+              entityId: https://idp.example.com/metadata
+            enabled: true
+            metadataRefreshStatus:
+              diff:
+                changed: true
+    SAMLMetadataRefresh:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataRefreshResponse"
+          example:
+            success: true
+            changed: true
+            config:
+              entityId: https://idp.example.com/metadata
+            enabled: true
+            metadataRefreshStatus:
+              diff:
+                changed: true
+    SAMLSigningRollover:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLSigningRolloverResponse"
+          example:
+            success: true
+            config:
+              entityId: https://idp.example.com/metadata
+            signingKeyPolicy:
+              next:
+                kid: saml-next-key
+            updatedAt: 2026-06-19T00:00:00.000Z
+    SAMLDRBundle:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLDRBundleResponse"
+          example:
+            kind: authrim.saml_local_signing_secret_dr_bundle.encrypted.v1
+            version: 1
+            tenantId: tenant_123
+            generatedAt: 2026-06-19T00:00:00.000Z
+            encrypted: true
+            sensitive: true
+            warning: This bundle is passphrase-encrypted and contains SAML private signing keys after
+              decryption. Store it offline.
+            kdf:
+              name: PBKDF2
+              hash: SHA-256
+              iterations: 100000
+              salt: base64-salt
+            cipher:
+              name: AES-GCM
+              iv: base64-iv
+            payload: base64-ciphertext
+            payloadEncoding: base64
+    SAMLAttributeReleaseConsent:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLAttributeReleaseConsentResponse"
+          example:
+            success: true
+            status: approved
+            redirectUrl: https://sp.example.com/acs
+    Success:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SuccessResponse"
+          example:
+            success: true
+    SAMLDeleteSuccess:
+      description: Resource deleted successfully.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLDeleteResponse"
+          example:
+            success: true
+    SAMLMetadataEntityList:
+      description: Aggregate metadata entities for a preview.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLMetadataEntityListResponse"
+          example:
+            previewId: preview_123
+            total: 1
+            offset: 0
+            limit: 50
+            entities:
+              - entityId: https://sp.example.com/metadata
+                role: saml_sp
+                displayName: Example SP
+                acsUrl: https://sp.example.com/saml/acs
+                certificateCount: 1
+                keywords:
+                  - education
+    Redirect:
+      description: Redirect response.
+      headers:
+        Location:
+          description: Redirect target URL.
+          schema:
+            type: string
+            format: uri
+  schemas:
+    SAMLSettingsUpdateRequest:
+      type: object
+      properties:
+        entityIdStyle:
+          type: string
+          enum:
+            - legacy
+            - tenant_path
+            - tenant_subdomain
+        interactiveLoginUrlPolicy:
+          type: string
+        certificateSubject:
+          type: object
+          additionalProperties: true
+        certificateSubjectAlternativeNames:
+          type: array
+          items:
+            type: string
+    SAMLSettingsResponse:
+      type: object
+      required:
+        - tenantId
+        - entityIdStyle
+        - interactiveLoginUrlPolicy
+        - metadata
+        - localSigning
+        - generated
+      additionalProperties: true
+      properties:
+        tenantId:
+          type: string
+        entityIdStyle:
+          type: string
+        interactiveLoginUrlPolicy:
+          type: string
+        certificateSubject:
+          type: object
+          additionalProperties: true
+        certificateSubjectAlternativeNames:
+          type: array
+          items:
+            type: string
+        signingKeyPolicies:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        localSigning:
+          type: object
+          additionalProperties: true
+        generated:
+          type: object
+          required:
+            - issuerUrl
+            - idpEntityId
+            - spEntityId
+            - idpMetadataUrl
+            - spMetadataUrl
+          properties:
+            issuerUrl:
+              type: string
+              format: uri
+            idpEntityId:
+              type: string
+            spEntityId:
+              type: string
+            idpMetadataUrl:
+              type: string
+              format: uri
+            spMetadataUrl:
+              type: string
+              format: uri
+    SAMLProviderConfig:
+      type: object
+      additionalProperties: true
+      properties:
+        entityId:
+          type: string
+        ssoUrl:
+          type: string
+          format: uri
+        acsUrl:
+          type: string
+          format: uri
+        certificate:
+          type: string
+        metadataUrl:
+          type: string
+          format: uri
+        metadataXml:
+          type: string
+    SAMLProviderCreateRequest:
+      type: object
+      required:
+        - name
+        - providerType
+      properties:
+        name:
+          type: string
+        providerType:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+        config:
+          $ref: "#/components/schemas/SAMLProviderConfig"
+        enabled:
+          type: boolean
+        metadataUrl:
+          type: string
+          format: uri
+        metadataXml:
+          type: string
+        samlProfile:
+          type: string
+        attributePresetId:
+          type: string
+    SAMLProviderUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        config:
+          $ref: "#/components/schemas/SAMLProviderConfig"
+        enabled:
+          type: boolean
+    SAMLProviderResponse:
+      type: object
+      required:
+        - id
+        - name
+        - providerType
+        - config
+        - enabled
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        providerType:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+        config:
+          $ref: "#/components/schemas/SAMLProviderConfig"
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SAMLAttributePresetCreateRequest:
+      type: object
+      required:
+        - label
+        - attributeReleasePolicy
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+        profile:
+          type: string
+        appliesTo:
+          type: string
+          enum:
+            - sp_attribute_release
+        attributeReleasePolicy:
+          type: object
+          required:
+            - attributes
+          properties:
+            attributes:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+    SAMLAttributePresetResponse:
+      type: object
+      required:
+        - preset
+      properties:
+        preset:
+          type: object
+          required:
+            - id
+            - version
+            - profile
+            - label
+            - attributeReleasePolicy
+          additionalProperties: true
+          properties:
+            id:
+              type: string
+            version:
+              type: string
+            profile:
+              type: string
+            label:
+              type: string
+            description:
+              type: string
+            stability:
+              type: string
+            applicationMode:
+              type: string
+            appliesTo:
+              type: string
+            isCustom:
+              type: boolean
+            attributeReleasePolicy:
+              type: object
+              additionalProperties: true
+    SAMLMetadataInput:
+      type: object
+      properties:
+        metadataXml:
+          type: string
+        metadataUrl:
+          type: string
+          format: uri
+        samlProfile:
+          type: string
+        attributePresetId:
+          type: string
+    SAMLMetadataPreviewResponse:
+      oneOf:
+        - type: object
+          required:
+            - kind
+            - providerType
+            - config
+          properties:
+            kind:
+              type: string
+              enum:
+                - single
+            providerType:
+              type: string
+              enum:
+                - saml_idp
+                - saml_sp
+            config:
+              $ref: "#/components/schemas/SAMLProviderConfig"
+        - type: object
+          required:
+            - kind
+            - previewId
+            - entityCount
+            - expiresAt
+            - verification
+          properties:
+            kind:
+              type: string
+              enum:
+                - aggregate
+            previewId:
+              type: string
+            metadataUrl:
+              type: string
+              format: uri
+            entityCount:
+              type: integer
+            expiresAt:
+              type: integer
+            verification:
+              type: object
+              additionalProperties: true
+    SAMLTrustCertificatePreviewRequest:
+      type: object
+      properties:
+        certificate:
+          type: string
+        certificateUrl:
+          type: string
+          format: uri
+    SAMLTrustCertificatePreviewResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        fingerprintSha256:
+          type: string
+        subject:
+          type: string
+        issuer:
+          type: string
+        notBefore:
+          type: string
+        notAfter:
+          type: string
+        source:
+          type: string
+          enum:
+            - url
+            - pem
+    SAMLMetadataBatchCreateRequest:
+      type: object
+      required:
+        - entityIds
+      properties:
+        entityIds:
+          type: array
+          items:
+            type: string
+        providerType:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+        samlProfile:
+          type: string
+        attributePresetId:
+          type: string
+        enabled:
+          type: boolean
+    SAMLBatchStatus:
+      type: object
+      required:
+        - batchId
+        - tenantId
+        - status
+        - total
+        - processed
+        - succeeded
+        - failed
+        - startedAt
+        - results
+      properties:
+        batchId:
+          type: string
+        tenantId:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - completed
+            - failed
+        total:
+          type: integer
+        processed:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        startedAt:
+          type: integer
+        completedAt:
+          type: integer
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - entityId
+              - success
+            properties:
+              entityId:
+                type: string
+              success:
+                type: boolean
+              providerId:
+                type: string
+              providerType:
+                type: string
+                enum:
+                  - saml_idp
+                  - saml_sp
+              name:
+                type: string
+              error:
+                type: string
+        error:
+          type: string
+    SAMLMetadataImportResponse:
+      type: object
+      required:
+        - success
+        - config
+        - enabled
+        - metadataRefreshStatus
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        config:
+          $ref: "#/components/schemas/SAMLProviderConfig"
+        enabled:
+          type: boolean
+        metadataRefreshStatus:
+          type: object
+          additionalProperties: true
+    SAMLMetadataRefreshRequest:
+      type: object
+      properties:
+        metadataUrl:
+          type: string
+          format: uri
+    SAMLMetadataRefreshResponse:
+      type: object
+      required:
+        - success
+        - changed
+        - config
+        - enabled
+        - metadataRefreshStatus
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        changed:
+          type: boolean
+        expired:
+          type: boolean
+        config:
+          $ref: "#/components/schemas/SAMLProviderConfig"
+        enabled:
+          type: boolean
+        metadataRefreshStatus:
+          type: object
+          additionalProperties: true
+    SAMLSigningRolloverRequest:
+      type: object
+      properties:
+        keyRef:
+          type: string
+        kid:
+          type: string
+        certificate:
+          type: string
+        metadataPublishFrom:
+          type: integer
+        plannedActivationAt:
+          type: integer
+        metadataCertificatePublication:
+          type: string
+          enum:
+            - active_next
+            - active_next_backup
+        promotedAt:
+          type: integer
+        keepPreviousAsBackup:
+          type: boolean
+    SAMLSigningRolloverResponse:
+      type: object
+      required:
+        - success
+        - config
+        - signingKeyPolicy
+        - updatedAt
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        config:
+          $ref: "#/components/schemas/SAMLProviderConfig"
+        signingKeyPolicy:
+          type: object
+          additionalProperties: true
+        updatedAt:
+          type: string
+          format: date-time
+    SAMLLocalSigningRequest:
+      type: object
+      required:
+        - role
+        - action
+      properties:
+        role:
+          type: string
+          enum:
+            - idp
+            - sp
+        action:
+          type: string
+          enum:
+            - recreate_active
+            - publish_next
+            - promote_next
+            - retire_backup
+            - delete_next
+        certificateSubject:
+          type: object
+          additionalProperties: true
+        certificateSubjectAlternativeNames:
+          type: array
+          items:
+            type: string
+        keepPreviousAsBackup:
+          type: boolean
+        targetKid:
+          type: string
+        targetKeyRef:
+          type: string
+        validFrom:
+          type: integer
+        validTo:
+          type: integer
+        publicKeyAlgorithm:
+          type: string
+          enum:
+            - RSA
+        publicKeySizeBits:
+          type: integer
+    SAMLDRBundleExportRequest:
+      type: object
+      properties:
+        passphrase:
+          type: string
+    SAMLDRBundleImportRequest:
+      type: object
+      required:
+        - bundle
+      properties:
+        bundle:
+          type: object
+          additionalProperties: true
+        passphrase:
+          type: string
+    SAMLDRBundleResponse:
+      type: object
+      required:
+        - kind
+        - version
+        - tenantId
+        - generatedAt
+        - encrypted
+        - sensitive
+        - warning
+        - kdf
+        - cipher
+        - payload
+        - payloadEncoding
+      properties:
+        kind:
+          type: string
+          enum:
+            - authrim.saml_local_signing_secret_dr_bundle.encrypted.v1
+        version:
+          type: integer
+          enum:
+            - 1
+        tenantId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        encrypted:
+          type: boolean
+          enum:
+            - true
+        sensitive:
+          type: boolean
+          enum:
+            - true
+        warning:
+          type: string
+        kdf:
+          type: object
+          required:
+            - name
+            - hash
+            - iterations
+            - salt
+          properties:
+            name:
+              type: string
+              enum:
+                - PBKDF2
+            hash:
+              type: string
+              enum:
+                - SHA-256
+            iterations:
+              type: integer
+            salt:
+              type: string
+        cipher:
+          type: object
+          required:
+            - name
+            - iv
+          properties:
+            name:
+              type: string
+              enum:
+                - AES-GCM
+            iv:
+              type: string
+        payload:
+          type: string
+        payloadEncoding:
+          type: string
+          enum:
+            - base64
+    SAMLAttributeReleaseConsentRequest:
+      type: object
+      required:
+        - requestId
+        - decision
+      properties:
+        requestId:
+          type: string
+        decision:
+          type: string
+          enum:
+            - approve
+            - deny
+        releasedAttributes:
+          type: array
+          items:
+            type: string
+    SAMLAttributeReleaseConsentResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        success:
+          type: boolean
+        redirectUrl:
+          type: string
+          format: uri
+        status:
+          type: string
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+    SAMLMetadataEntityListResponse:
+      type: object
+      required:
+        - previewId
+        - total
+        - offset
+        - limit
+        - entities
+      properties:
+        previewId:
+          type: string
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/SAMLMetadataEntitySummary"
+        keywordFacets:
+          type: array
+          items:
+            $ref: "#/components/schemas/SAMLMetadataKeywordFacet"
+    SAMLMetadataEntitySummary:
+      type: object
+      required:
+        - entityId
+        - role
+        - certificateCount
+      properties:
+        entityId:
+          type: string
+        role:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+            - ambiguous
+            - unknown
+        displayName:
+          type: string
+        acsUrl:
+          type: string
+          format: uri
+        ssoUrl:
+          type: string
+          format: uri
+        sloUrl:
+          type: string
+          format: uri
+        certificateCount:
+          type: integer
+        validUntil:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        logoUrl:
+          type: string
+          format: uri
+    SAMLMetadataKeywordFacet:
+      type: object
+      required:
+        - category
+        - label
+        - values
+      properties:
+        category:
+          type: string
+        label:
+          type: string
+        values:
+          type: array
+          items:
+            type: object
+            required:
+              - keyword
+              - label
+              - count
+            properties:
+              keyword:
+                type: string
+              label:
+                type: string
+              count:
+                type: integer
+    SAMLDeleteResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+    SAMLAttributeReleaseConsentForm:
+      type: object
+      required:
+        - saml_request_id
+        - saml_sp_entity_id
+        - challenge_id
+        - attribute_set_hash
+        - decision
+      properties:
+        saml_request_id:
+          type: string
+        saml_sp_entity_id:
+          type: string
+        challenge_id:
+          type: string
+        attribute_set_hash:
+          type: string
+        decision:
+          type: string
+          enum:
+            - approve
+            - deny
+    RedirectResponse:
+      type: string
+      description: Redirect response with a Location header.

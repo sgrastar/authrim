@@ -2213,6 +2213,16 @@ function formatMigrationFileSummary(files: string[], limit = 8): string {
   return remaining > 0 ? `${visible}, +${remaining} more` : visible;
 }
 
+export function getBlockingChangedMigrationFiles(
+  migrations: D1MigrationFileState[],
+  onlyFiles?: ReadonlySet<string>
+): string[] {
+  return migrations
+    .filter((item) => item.status === 'changed')
+    .filter((item) => !onlyFiles || onlyFiles.has(item.filename))
+    .map((item) => item.filename);
+}
+
 async function recordMigration(
   dbName: string,
   input: { filename: string; checksum: string; executionTimeMs?: number | null }
@@ -2345,9 +2355,7 @@ export async function runD1Migrations(
   // Ensure tracking table exists; if it fails we continue without tracking
   await ensureMigrationsTable(dbName, onProgress);
   const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', options);
-  const changedFiles = status.migrations
-    .filter((item) => item.status === 'changed')
-    .map((item) => item.filename);
+  const changedFiles = getBlockingChangedMigrationFiles(status.migrations, options.onlyFiles);
   if (changedFiles.length > 0) {
     return {
       success: false,

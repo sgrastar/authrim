@@ -39,6 +39,18 @@ function createHarness(permissions: string[]) {
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
   app.put('/api/admin/settings', (c) => c.json({ ok: true }));
   app.post('/api/admin/undocumented', (c) => c.json({ ok: true }));
+  app.get('/api/admin/consent-policies', (c) => c.json({ ok: true }));
+  app.post('/api/admin/consent-policies', (c) => c.json({ ok: true }));
+  app.get('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
+  app.put('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
+  app.delete('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
+  app.put('/api/admin/consent-policies/policy-1/items', (c) => c.json({ ok: true }));
+  app.get('/api/admin/consent-policy-assignments', (c) => c.json({ ok: true }));
+  app.put('/api/admin/consent-policy-assignments', (c) => c.json({ ok: true }));
+  app.get('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
+  app.put('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
+  app.get('/api/admin/sign-in-confirmation-policies', (c) => c.json({ ok: true }));
+  app.put('/api/admin/sign-in-confirmation-policies', (c) => c.json({ ok: true }));
 
   return app;
 }
@@ -86,6 +98,73 @@ describe('declared admin route access', () => {
     });
 
     expect(response.status).toBe(200);
+  });
+
+  it('enforces consent policy read and write permissions across policy controls', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]);
+    const writer = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
+
+    await expect(reader.request('/api/admin/consent-policies')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(reader.request('/api/admin/consent-policies/policy-1')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(reader.request('/api/admin/consent-policy-assignments')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(reader.request('/api/admin/client-trust-policies')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(reader.request('/api/admin/sign-in-confirmation-policies')).resolves.toMatchObject(
+      {
+        status: 200,
+      }
+    );
+
+    await expect(
+      reader.request('/api/admin/consent-policies', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/consent-policies/policy-1', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/consent-policies/policy-1', { method: 'DELETE' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/consent-policies/policy-1/items', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/consent-policy-assignments', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/client-trust-policies', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/sign-in-confirmation-policies', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+
+    await expect(
+      writer.request('/api/admin/consent-policies', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-policies/policy-1', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-policies/policy-1', { method: 'DELETE' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-policies/policy-1/items', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-policy-assignments', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/client-trust-policies', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/sign-in-confirmation-policies', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
   });
 
   it('keeps the production admin route table covered by declared access rules', () => {

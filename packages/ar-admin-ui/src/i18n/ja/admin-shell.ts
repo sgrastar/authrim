@@ -159,7 +159,7 @@ const adminShell = {
 	// Policy Settings
 	admin_sidebar_policy: 'ポリシー',
 	// Consent Statement Management
-	admin_sidebar_consent_statements: 'コンセント項目'
+	admin_sidebar_consent_statements: '同意文'
 } as const;
 
 export default adminShell;

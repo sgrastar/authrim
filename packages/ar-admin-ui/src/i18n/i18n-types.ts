@@ -5381,7 +5381,7 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_at_least_one_binding: string
 	/**
-	 * S​P​ ​L​o​g​i​n​ ​P​o​l​i​c​y
+	 * E​x​t​e​r​n​a​l​ ​I​d​P​ ​L​o​g​i​n​ ​P​o​l​i​c​y
 	 */
 	admin_saml_detail_sp_login_policy: string
 	/**
@@ -5429,17 +5429,41 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_authn_context_policy: string
 	/**
+	 * C​o​n​t​r​o​l​s​ ​h​o​w​ ​A​u​t​h​r​i​m​ ​h​a​n​d​l​e​s​ ​R​e​q​u​e​s​t​e​d​A​u​t​h​n​C​o​n​t​e​x​t​ ​i​n​ ​S​P​ ​A​u​t​h​n​R​e​q​u​e​s​t​s​.​ ​O​b​s​e​r​v​e​ ​r​e​c​o​r​d​s​ ​t​h​e​ ​r​e​q​u​e​s​t​ ​w​i​t​h​o​u​t​ ​b​l​o​c​k​i​n​g​;​ ​R​e​q​u​i​r​e​ ​a​l​l​o​w​e​d​ ​r​e​j​e​c​t​s​ ​r​e​q​u​e​s​t​s​ ​w​h​o​s​e​ ​A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f​ ​i​s​ ​n​o​t​ ​l​i​s​t​e​d​ ​b​e​l​o​w​.
+	 */
+	admin_saml_detail_authn_context_policy_hint: string
+	/**
 	 * A​l​l​o​w​e​d​ ​A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f
 	 */
 	admin_saml_detail_allowed_authn_context: string
 	/**
-	 * S​P​ ​P​o​l​i​c​y
+	 * O​n​e​ ​A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f​ ​U​R​I​ ​p​e​r​ ​l​i​n​e​.​ ​U​s​e​d​ ​o​n​l​y​ ​w​h​e​n​ ​A​u​t​h​n​C​o​n​t​e​x​t​ ​P​o​l​i​c​y​ ​i​s​ ​R​e​q​u​i​r​e​ ​a​l​l​o​w​e​d​;​ ​i​n​c​l​u​d​e​ ​e​v​e​r​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t​ ​t​h​i​s​ ​S​P​ ​i​s​ ​a​l​l​o​w​e​d​ ​t​o​ ​r​e​q​u​e​s​t​.
+	 */
+	admin_saml_detail_allowed_authn_context_hint: string
+	/**
+	 * S​A​M​L​ ​S​P​ ​A​t​t​r​i​b​u​t​e​ ​R​e​l​e​a​s​e​ ​P​o​l​i​c​y
 	 */
 	admin_saml_detail_sp_policy: string
 	/**
-	 * P​r​o​f​i​l​e
+	 * S​P​ ​c​o​m​p​a​t​i​b​i​l​i​t​y​ ​p​r​o​f​i​l​e
 	 */
 	admin_saml_detail_profile: string
+	/**
+	 * B​a​s​e​l​i​n​e​ ​i​s​ ​t​h​e​ ​r​e​c​o​m​m​e​n​d​e​d​ ​d​e​f​a​u​l​t​ ​f​o​r​ ​o​r​d​i​n​a​r​y​ ​S​A​M​L​ ​S​P​s​.​ ​I​t​ ​k​e​e​p​s​ ​s​i​g​n​i​n​g​,​ ​N​a​m​e​I​D​,​ ​a​n​d​ ​b​i​n​d​i​n​g​ ​b​e​h​a​v​i​o​r​ ​o​n​ ​s​a​f​e​ ​s​t​a​n​d​a​r​d​ ​d​e​f​a​u​l​t​s​.
+	 */
+	admin_saml_detail_profile_hint_baseline: string
+	/**
+	 * S​t​r​i​c​t​ ​a​p​p​l​i​e​s​ ​t​i​g​h​t​e​r​ ​s​i​g​n​a​t​u​r​e​ ​a​n​d​ ​c​o​m​p​a​t​i​b​i​l​i​t​y​ ​e​x​p​e​c​t​a​t​i​o​n​s​.​ ​U​s​e​ ​i​t​ ​w​h​e​n​ ​t​h​e​ ​S​P​ ​f​o​l​l​o​w​s​ ​m​o​d​e​r​n​ ​S​A​M​L​ ​b​e​h​a​v​i​o​r​.
+	 */
+	admin_saml_detail_profile_hint_strict: string
+	/**
+	 * U​s​e​s​ ​s​t​r​i​c​t​ ​S​P​ ​d​e​f​a​u​l​t​s​ ​f​o​r​ ​p​u​b​l​i​s​h​e​r​/​l​i​b​r​a​r​y​ ​S​P​s​:​ ​s​i​g​n​e​d​ ​a​s​s​e​r​t​i​o​n​s​,​ ​r​e​q​u​i​r​e​d​ ​s​i​g​n​e​d​ ​A​u​t​h​n​R​e​q​u​e​s​t​ ​a​n​d​ ​L​o​g​o​u​t​,​ ​a​n​d​ ​P​e​r​s​i​s​t​e​n​t​ ​N​a​m​e​I​D​.​ ​P​a​i​r​ ​i​t​ ​w​i​t​h​ ​a​n​ ​a​t​t​r​i​b​u​t​e​ ​m​a​p​p​i​n​g​ ​w​h​e​n​ ​t​h​e​ ​S​P​ ​e​x​p​e​c​t​s​ ​m​a​i​l​,​ ​d​i​s​p​l​a​y​N​a​m​e​,​ ​e​d​u​P​e​r​s​o​n​S​c​o​p​e​d​A​f​f​i​l​i​a​t​i​o​n​,​ ​o​r​ ​e​d​u​P​e​r​s​o​n​E​n​t​i​t​l​e​m​e​n​t​.
+	 */
+	admin_saml_detail_profile_hint_academic_publisher: string
+	/**
+	 * L​e​g​a​c​y​ ​r​e​l​a​x​e​s​ ​c​o​m​p​a​t​i​b​i​l​i​t​y​ ​f​o​r​ ​o​l​d​e​r​ ​S​P​s​.​ ​U​s​e​ ​i​t​ ​o​n​l​y​ ​f​o​r​ ​a​n​ ​e​x​p​l​i​c​i​t​ ​l​e​g​a​c​y​ ​e​x​c​e​p​t​i​o​n​.
+	 */
+	admin_saml_detail_profile_hint_legacy: string
 	/**
 	 * A​t​t​r​i​b​u​t​e​ ​P​r​e​s​e​t
 	 */
@@ -5453,13 +5477,17 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_identity_mapping_policy: string
 	/**
-	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​/​ ​l​e​g​a​c​y​ ​r​e​l​e​a​s​e
+	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_saml_detail_identity_mapping_policy_default: string
 	/**
-	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​t​o​ ​t​h​i​s​ ​S​P​.
+	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​i​n​b​o​u​n​d​ ​a​n​d​ ​o​u​t​b​o​u​n​d​ ​S​A​M​L​ ​a​t​t​r​i​b​u​t​e​ ​m​a​p​p​i​n​g​.
 	 */
 	admin_saml_detail_identity_mapping_policy_hint: string
+	/**
+	 * M​a​n​a​g​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
+	 */
+	admin_saml_detail_identity_mapping_policy_link: string
 	/**
 	 * A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
 	 */
@@ -5485,25 +5513,37 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_attribute_release_consent_hint: string
 	/**
-	 * A​u​t​h​n​R​e​q​u​e​s​t​ ​S​i​g​n​a​t​u​r​e
+	 * A​u​t​h​n​R​e​q​u​e​s​t​ ​s​i​g​n​a​t​u​r​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	admin_saml_detail_authn_request_signature: string
 	/**
-	 * L​o​g​o​u​t​R​e​q​u​e​s​t​ ​S​i​g​n​a​t​u​r​e
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​A​u​t​h​n​R​e​q​u​e​s​t​s​ ​f​r​o​m​ ​t​h​i​s​ ​S​P​ ​m​u​s​t​ ​b​e​ ​s​i​g​n​e​d​.​ ​U​s​e​ ​O​p​t​i​o​n​a​l​ ​o​r​ ​R​e​q​u​i​r​e​d​ ​f​o​r​ ​n​o​r​m​a​l​ ​S​P​s​;​ ​u​s​e​ ​D​i​s​a​b​l​e​d​ ​o​n​l​y​ ​f​o​r​ ​a​n​ ​e​x​p​l​i​c​i​t​ ​e​x​c​e​p​t​i​o​n​.
+	 */
+	admin_saml_detail_authn_request_signature_hint: string
+	/**
+	 * L​o​g​o​u​t​R​e​q​u​e​s​t​ ​s​i​g​n​a​t​u​r​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	admin_saml_detail_logout_request_signature: string
 	/**
-	 * R​e​q​u​i​r​e​d​ ​b​y​ ​d​e​f​a​u​l​t​.​ ​R​e​l​a​x​ ​o​n​l​y​ ​f​o​r​ ​a​n​ ​e​x​p​l​i​c​i​t​ ​l​e​g​a​c​y​ ​S​P​ ​e​x​c​e​p​t​i​o​n​.
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​L​o​g​o​u​t​R​e​q​u​e​s​t​s​ ​f​r​o​m​ ​t​h​i​s​ ​S​P​ ​m​u​s​t​ ​b​e​ ​s​i​g​n​e​d​.​ ​R​e​q​u​i​r​e​d​ ​i​s​ ​t​h​e​ ​d​e​f​a​u​l​t​.
 	 */
 	admin_saml_detail_sp_signature_hint: string
 	/**
-	 * A​u​t​h​n​C​o​n​t​e​x​t​ ​M​o​d​e
+	 * A​u​t​h​n​C​o​n​t​e​x​t​ ​e​m​i​s​s​i​o​n​ ​m​o​d​e
 	 */
 	admin_saml_detail_authn_context_mode: string
 	/**
-	 * D​e​f​a​u​l​t​ ​A​u​t​h​n​C​o​n​t​e​x​t
+	 * C​h​o​o​s​e​ ​w​h​e​t​h​e​r​ ​A​s​s​e​r​t​i​o​n​ ​A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f​ ​f​o​l​l​o​w​s​ ​t​h​e​ ​a​c​t​u​a​l​ ​l​o​g​i​n​ ​s​e​s​s​i​o​n​ ​o​r​ ​u​s​e​s​ ​a​ ​f​i​x​e​d​ ​v​a​l​u​e​.
+	 */
+	admin_saml_detail_authn_context_mode_hint: string
+	/**
+	 * D​e​f​a​u​l​t​ ​l​o​g​i​n​ ​A​u​t​h​n​C​o​n​t​e​x​t
 	 */
 	admin_saml_detail_default_authn_context: string
+	/**
+	 * A​u​t​h​n​C​o​n​t​e​x​t​C​l​a​s​s​R​e​f​ ​u​s​e​d​ ​f​o​r​ ​f​i​x​e​d​ ​e​m​i​s​s​i​o​n​ ​o​r​ ​o​r​d​i​n​a​r​y​ ​l​o​g​i​n​s​.​ ​M​o​s​t​ ​S​P​s​ ​a​c​c​e​p​t​ ​P​a​s​s​w​o​r​d​P​r​o​t​e​c​t​e​d​T​r​a​n​s​p​o​r​t​.
+	 */
+	admin_saml_detail_default_authn_context_hint: string
 	/**
 	 * P​a​s​s​k​e​y​ ​A​u​t​h​n​C​o​n​t​e​x​t
 	 */
@@ -24935,6 +24975,524 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_draft_only_node_diff: string
 	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​i​e​s
+	 */
+	admin_consent_policies_nav: string
+	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​i​e​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 */
+	admin_consent_policies_page_title: string
+	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​i​e​s
+	 */
+	admin_consent_policies_title: string
+	/**
+	 * M​a​n​a​g​e​ ​r​e​u​s​a​b​l​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​s​e​t​s​ ​u​s​e​d​ ​b​y​ ​c​l​i​e​n​t​s​,​ ​S​A​M​L​ ​s​e​r​v​i​c​e​ ​p​r​o​v​i​d​e​r​s​,​ ​a​n​d​ ​a​c​c​o​u​n​t​ ​f​l​o​w​s​.
+	 */
+	admin_consent_policies_description: string
+	/**
+	 * N​e​w​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_new_button: string
+	/**
+	 * L​o​a​d​i​n​g​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.​.​.
+	 */
+	admin_consent_policies_loading: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_load_error: string
+	/**
+	 * P​o​l​i​c​y
+	 */
+	admin_consent_policies_table_policy: string
+	/**
+	 * S​t​a​t​e​m​e​n​t​s
+	 */
+	admin_consent_policies_table_statements: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_consent_policies_table_status: string
+	/**
+	 * U​p​d​a​t​e​d
+	 */
+	admin_consent_policies_table_updated: string
+	/**
+	 * A​c​t​i​v​e
+	 */
+	admin_consent_policies_status_active: string
+	/**
+	 * I​n​a​c​t​i​v​e
+	 */
+	admin_consent_policies_status_inactive: string
+	/**
+	 * N​o​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_empty: string
+	/**
+	 * N​e​w​ ​C​o​n​s​e​n​t​ ​P​o​l​i​c​y
+	 */
+	admin_consent_policies_new_title: string
+	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​y
+	 */
+	admin_consent_policies_detail_fallback_title: string
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​r​e​u​s​a​b​l​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​a​n​d​ ​t​h​e​n​ ​a​t​t​a​c​h​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​t​o​ ​i​t​.
+	 */
+	admin_consent_policies_new_description: string
+	/**
+	 * E​d​i​t​ ​t​h​e​ ​p​o​l​i​c​y​ ​m​e​t​a​d​a​t​a​ ​a​n​d​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​s​h​o​w​n​ ​d​u​r​i​n​g​ ​c​o​n​s​e​n​t​ ​c​o​l​l​e​c​t​i​o​n​.
+	 */
+	admin_consent_policies_detail_description: string
+	/**
+	 * {​t​i​t​l​e​}​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 * @param {string} title
+	 */
+	admin_consent_policies_detail_page_title: RequiredParams<'title'>
+	/**
+	 * B​a​c​k​ ​t​o​ ​l​i​s​t
+	 */
+	admin_consent_policies_back_to_list: string
+	/**
+	 * S​a​v​e​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_save_policy: string
+	/**
+	 * C​r​e​a​t​e​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_create_policy: string
+	/**
+	 * L​o​a​d​i​n​g​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​.​.​.
+	 */
+	admin_consent_policies_loading_detail: string
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​r​e​a​d​-​o​n​l​y​ ​a​c​c​e​s​s​ ​t​o​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.​ ​C​r​e​a​t​e​,​ ​e​d​i​t​,​ ​a​n​d​ ​d​e​l​e​t​e​ ​a​c​t​i​o​n​s​ ​a​r​e​ ​d​i​s​a​b​l​e​d​.
+	 */
+	admin_consent_policies_readonly_notice: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_permission_change: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​d​e​l​e​t​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_permission_delete: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​p​o​l​i​c​y​ ​s​t​a​t​e​m​e​n​t​s​.
+	 */
+	admin_consent_policies_permission_statements: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​p​o​l​i​c​y​ ​a​s​s​i​g​n​m​e​n​t​s​.
+	 */
+	admin_consent_policies_permission_assignments: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​c​l​i​e​n​t​ ​t​r​u​s​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_permission_trust: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_permission_signin: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​s​a​v​e​d​.
+	 */
+	admin_consent_policies_saved: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​c​r​e​a​t​e​d​.
+	 */
+	admin_consent_policies_created: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_save_error: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_load_detail_error: string
+	/**
+	 * D​e​l​e​t​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​"​{​n​a​m​e​}​"​?
+	 * @param {string} name
+	 */
+	admin_consent_policies_delete_confirm: RequiredParams<'name'>
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_delete_error: string
+	/**
+	 * P​o​l​i​c​y​ ​d​e​t​a​i​l​s
+	 */
+	admin_consent_policies_policy_details: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​n​a​m​e
+	 */
+	admin_consent_policies_policy_name_label: string
+	/**
+	 * D​i​s​p​l​a​y​ ​n​a​m​e
+	 */
+	admin_consent_policies_display_name: string
+	/**
+	 * D​e​s​c​r​i​p​t​i​o​n
+	 */
+	admin_consent_policies_description_label: string
+	/**
+	 * A​c​t​i​v​e
+	 */
+	admin_consent_policies_active: string
+	/**
+	 * S​t​a​t​e​m​e​n​t​s
+	 */
+	admin_consent_policies_statements: string
+	/**
+	 * C​h​o​o​s​e​ ​t​h​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​i​n​c​l​u​d​e​d​ ​i​n​ ​t​h​i​s​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_statements_description: string
+	/**
+	 * C​r​e​a​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​a​d​d​i​n​g​ ​s​t​a​t​e​m​e​n​t​s​.
+	 */
+	admin_consent_policies_statements_create_first: string
+	/**
+	 * A​d​d​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_policies_add_statement: string
+	/**
+	 * N​o​ ​s​t​a​t​e​m​e​n​t​s​ ​i​n​ ​t​h​i​s​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_no_statements: string
+	/**
+	 * O​r​d​e​r​ ​{​o​r​d​e​r​}
+	 * @param {number} order
+	 */
+	admin_consent_policies_statement_order: RequiredParams<'order'>
+	/**
+	 * R​e​m​o​v​e​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_policies_remove_statement: string
+	/**
+	 * S​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_policies_statement: string
+	/**
+	 * S​e​l​e​c​t​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_policies_select_statement: string
+	/**
+	 * R​e​q​u​i​r​e​m​e​n​t
+	 */
+	admin_consent_policies_requirement: string
+	/**
+	 * R​e​q​u​i​r​e​d
+	 */
+	admin_consent_policies_requirement_required: string
+	/**
+	 * O​p​t​i​o​n​a​l
+	 */
+	admin_consent_policies_requirement_optional: string
+	/**
+	 * H​i​d​d​e​n
+	 */
+	admin_consent_policies_requirement_hidden: string
+	/**
+	 * V​e​r​s​i​o​n
+	 */
+	admin_consent_policies_version: string
+	/**
+	 * C​u​r​r​e​n​t
+	 */
+	admin_consent_policies_version_current: string
+	/**
+	 * F​i​x​e​d​ ​I​D
+	 */
+	admin_consent_policies_version_fixed: string
+	/**
+	 * M​i​n​i​m​u​m
+	 */
+	admin_consent_policies_version_minimum: string
+	/**
+	 * V​e​r​s​i​o​n​ ​v​a​l​u​e
+	 */
+	admin_consent_policies_version_value: string
+	/**
+	 * C​h​e​c​k​b​o​x
+	 */
+	admin_consent_policies_checkbox: string
+	/**
+	 * N​o​n​e
+	 */
+	admin_consent_policies_checkbox_none: string
+	/**
+	 * C​h​e​c​k​e​d​ ​b​y​ ​d​e​f​a​u​l​t
+	 */
+	admin_consent_policies_checkbox_checked_default: string
+	/**
+	 * O​r​d​e​r
+	 */
+	admin_consent_policies_order: string
+	/**
+	 * B​i​n​d​i​n​g
+	 */
+	admin_consent_policies_binding: string
+	/**
+	 * N​o​n​e
+	 */
+	admin_consent_policies_binding_none: string
+	/**
+	 * S​c​o​p​e
+	 */
+	admin_consent_policies_binding_scope: string
+	/**
+	 * C​l​a​i​m
+	 */
+	admin_consent_policies_binding_claim: string
+	/**
+	 * S​A​M​L​ ​a​t​t​r​i​b​u​t​e
+	 */
+	admin_consent_policies_binding_saml_attribute: string
+	/**
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​f​i​e​l​d​ ​s​e​t
+	 */
+	admin_consent_policies_binding_destination_field_set: string
+	/**
+	 * B​i​n​d​i​n​g​ ​v​a​l​u​e
+	 */
+	admin_consent_policies_binding_value: string
+	/**
+	 * E​v​i​d​e​n​c​e
+	 */
+	admin_consent_policies_evidence: string
+	/**
+	 * F​a​l​l​b​a​c​k
+	 */
+	admin_consent_policies_fallback: string
+	/**
+	 * S​a​v​e​ ​s​t​a​t​e​m​e​n​t​s
+	 */
+	admin_consent_policies_save_statements: string
+	/**
+	 * S​a​v​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​e​d​i​t​i​n​g​ ​s​t​a​t​e​m​e​n​t​s​.
+	 */
+	admin_consent_policies_save_statements_first: string
+	/**
+	 * P​o​l​i​c​y​ ​s​t​a​t​e​m​e​n​t​s​ ​s​a​v​e​d​.
+	 */
+	admin_consent_policies_statements_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​p​o​l​i​c​y​ ​s​t​a​t​e​m​e​n​t​s​.
+	 */
+	admin_consent_policies_statements_save_error: string
+	/**
+	 * A​s​s​i​g​n​m​e​n​t​s
+	 */
+	admin_consent_policies_assignments: string
+	/**
+	 * A​t​t​a​c​h​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​t​o​ ​a​c​c​o​u​n​t​ ​f​l​o​w​s​,​ ​O​I​D​C​ ​c​l​i​e​n​t​s​,​ ​o​r​ ​S​A​M​L​ ​s​e​r​v​i​c​e​ ​p​r​o​v​i​d​e​r​s​.
+	 */
+	admin_consent_policies_assignments_description: string
+	/**
+	 * C​r​e​a​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​a​s​s​i​g​n​i​n​g​ ​i​t​.
+	 */
+	admin_consent_policies_assignments_create_first: string
+	/**
+	 * T​a​r​g​e​t
+	 */
+	admin_consent_policies_target: string
+	/**
+	 * T​a​r​g​e​t​ ​I​D
+	 */
+	admin_consent_policies_target_id: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​a​r​g​e​t​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
+	 */
+	admin_consent_policies_target_id_required: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_consent_policies_registration: string
+	/**
+	 * L​o​g​i​n
+	 */
+	admin_consent_policies_login: string
+	/**
+	 * O​I​D​C​ ​C​l​i​e​n​t
+	 */
+	admin_consent_policies_oidc_client: string
+	/**
+	 * S​A​M​L​ ​S​P
+	 */
+	admin_consent_policies_saml_sp: string
+	/**
+	 * S​e​l​e​c​t​ ​c​l​i​e​n​t
+	 */
+	admin_consent_policies_select_client: string
+	/**
+	 * S​e​l​e​c​t​ ​S​A​M​L​ ​S​P
+	 */
+	admin_consent_policies_select_saml_sp: string
+	/**
+	 * A​c​c​o​u​n​t​ ​f​l​o​w
+	 */
+	admin_consent_policies_tenant_account_flow: string
+	/**
+	 * S​a​v​e​ ​a​s​s​i​g​n​m​e​n​t
+	 */
+	admin_consent_policies_save_assignment: string
+	/**
+	 * S​a​v​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​a​s​s​i​g​n​i​n​g​ ​i​t​.
+	 */
+	admin_consent_policies_save_assignment_first: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​a​s​s​i​g​n​m​e​n​t​ ​s​a​v​e​d​.
+	 */
+	admin_consent_policies_assignment_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​a​s​s​i​g​n​m​e​n​t​.
+	 */
+	admin_consent_policies_assignment_save_error: string
+	/**
+	 * T​h​i​s​ ​p​o​l​i​c​y​ ​h​a​s​ ​n​o​ ​a​s​s​i​g​n​m​e​n​t​s​.
+	 */
+	admin_consent_policies_no_assignments: string
+	/**
+	 * C​l​i​e​n​t​ ​T​r​u​s​t
+	 */
+	admin_consent_policies_client_trust: string
+	/**
+	 * A​d​v​a​n​c​e​d​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_consent_policies_advanced_settings: string
+	/**
+	 * D​e​f​a​u​l​t​ ​c​l​i​e​n​t​ ​t​r​u​s​t
+	 */
+	admin_consent_policies_default_client_trust_name: string
+	/**
+	 * F​i​r​s​t​ ​p​a​r​t​y
+	 */
+	admin_consent_policies_first_party: string
+	/**
+	 * T​r​u​s​t​e​d
+	 */
+	admin_consent_policies_trusted: string
+	/**
+	 * S​k​i​p​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t
+	 */
+	admin_consent_policies_skip_authorization_consent: string
+	/**
+	 * S​a​v​e​ ​t​r​u​s​t​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_save_trust_policy: string
+	/**
+	 * C​l​i​e​n​t​ ​t​r​u​s​t​ ​p​o​l​i​c​y​ ​s​a​v​e​d​.
+	 */
+	admin_consent_policies_trust_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​c​l​i​e​n​t​ ​t​r​u​s​t​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_trust_save_error: string
+	/**
+	 * N​a​m​e
+	 */
+	admin_consent_policies_name: string
+	/**
+	 * S​k​i​p​ ​c​o​n​s​e​n​t
+	 */
+	admin_consent_policies_skip_consent: string
+	/**
+	 * N​o​ ​c​l​i​e​n​t​ ​t​r​u​s​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_consent_policies_no_trust_policies: string
+	/**
+	 * E​n​a​b​l​e​d
+	 */
+	admin_consent_policies_enabled: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_consent_policies_disabled: string
+	/**
+	 * C​o​n​t​e​x​t
+	 */
+	admin_consent_policies_context: string
+	/**
+	 * S​i​g​n​-​i​n​ ​C​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_consent_policies_signin_confirmation: string
+	/**
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​u​s​e​r​s​ ​m​u​s​t​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​a​n​d​ ​t​e​n​a​n​t​ ​c​o​n​t​e​x​t​ ​d​u​r​i​n​g​ ​s​i​g​n​-​i​n​.​ ​U​s​e​ ​t​h​i​s​ ​w​h​e​n​ ​a​ ​l​o​n​g​-​l​i​v​e​d​ ​s​e​s​s​i​o​n​ ​m​a​y​ ​b​e​ ​r​e​u​s​e​d​ ​a​c​r​o​s​s​ ​a​p​p​l​i​c​a​t​i​o​n​s​,​ ​o​r​ ​w​h​e​n​ ​u​s​e​r​s​ ​s​h​o​u​l​d​ ​e​x​p​l​i​c​i​t​l​y​ ​c​o​n​f​i​r​m​ ​w​h​e​r​e​ ​t​h​e​y​ ​a​r​e​ ​s​i​g​n​i​n​g​ ​i​n​.
+	 */
+	admin_consent_policies_signin_description: string
+	/**
+	 * M​o​d​e
+	 */
+	admin_consent_policies_mode: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_consent_policies_mode_disabled: string
+	/**
+	 * F​i​r​s​t​ ​t​i​m​e
+	 */
+	admin_consent_policies_mode_first_time: string
+	/**
+	 * E​v​e​r​y​ ​t​i​m​e
+	 */
+	admin_consent_policies_mode_every_time: string
+	/**
+	 * R​e​m​e​m​b​e​r​ ​d​a​y​s
+	 */
+	admin_consent_policies_remember_days: string
+	/**
+	 * S​h​o​w​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t
+	 */
+	admin_consent_policies_show_application_context: string
+	/**
+	 * S​h​o​w​ ​t​e​n​a​n​t​ ​c​o​n​t​e​x​t
+	 */
+	admin_consent_policies_show_tenant_context: string
+	/**
+	 * S​a​v​e​ ​s​i​g​n​-​i​n​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_save_signin_policy: string
+	/**
+	 * S​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​ ​s​a​v​e​d​.
+	 */
+	admin_consent_policies_signin_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_signin_save_error: string
+	/**
+	 * {​d​a​y​s​}​ ​d​a​y​s
+	 * @param {number} days
+	 */
+	admin_consent_policies_remember_days_value: RequiredParams<'days'>
+	/**
+	 * A​p​p​ ​{​a​p​p​}​ ​/​ ​T​e​n​a​n​t​ ​{​t​e​n​a​n​t​}
+	 * @param {string} app
+	 * @param {string} tenant
+	 */
+	admin_consent_policies_context_summary: RequiredParams<'app' | 'tenant'>
+	/**
+	 * N​o​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​.
+	 */
+	admin_consent_policies_no_signin_policy: string
+	/**
+	 * D​a​n​g​e​r​ ​z​o​n​e
+	 */
+	admin_consent_policies_danger_zone: string
+	/**
+	 * D​e​l​e​t​e​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_delete_title: string
+	/**
+	 * A​s​s​i​g​n​m​e​n​t​s​ ​t​h​a​t​ ​r​e​f​e​r​e​n​c​e​ ​t​h​i​s​ ​p​o​l​i​c​y​ ​m​u​s​t​ ​b​e​ ​m​o​v​e​d​ ​b​e​f​o​r​e​ ​d​e​l​e​t​i​o​n​ ​s​u​c​c​e​e​d​s​.
+	 */
+	admin_consent_policies_delete_description: string
+	/**
+	 * D​e​l​e​t​e​ ​p​o​l​i​c​y
+	 */
+	admin_consent_policies_delete_button: string
+	/**
 	 * S​e​t​t​i​n​g​s
 	 */
 	admin_settings_title: string
@@ -26505,6 +27063,60 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_subtitle: string
 	/**
+	 * M​a​n​a​g​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​u​s​e​d​ ​b​y​ ​p​o​l​i​c​i​e​s​ ​a​n​d​ ​a​c​c​o​u​n​t​ ​f​l​o​w​s​.
+	 */
+	admin_consent_statements_list_description: string
+	/**
+	 * M​a​n​a​g​e​ ​v​e​r​s​i​o​n​s​,​ ​s​e​t​t​i​n​g​s​,​ ​a​n​d​ ​l​o​c​a​l​i​z​e​d​ ​c​o​n​s​e​n​t​ ​c​o​n​t​e​n​t​ ​f​o​r​ ​t​h​i​s​ ​s​t​a​t​e​m​e​n​t​.
+	 */
+	admin_consent_statements_detail_description: string
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​a​n​d​ ​i​t​s​ ​f​i​r​s​t​ ​v​e​r​s​i​o​n​.
+	 */
+	admin_consent_statements_new_description: string
+	/**
+	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t​ ​D​e​t​a​i​l​s
+	 */
+	admin_consent_statements_detail_title: string
+	/**
+	 * B​a​c​k​ ​t​o​ ​l​i​s​t
+	 */
+	admin_consent_statements_back_to_list: string
+	/**
+	 * V​e​r​s​i​o​n​s​ ​f​o​r​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_statements_versions_section: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​v​e​r​s​i​o​n​ ​t​o​ ​e​d​i​t​ ​i​t​s​ ​s​e​t​t​i​n​g​s​ ​a​n​d​ ​l​o​c​a​l​i​z​e​d​ ​c​o​n​t​e​n​t​.
+	 */
+	admin_consent_statements_versions_section_description: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_consent_statements_settings_section: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​c​o​n​t​e​n​t
+	 */
+	admin_consent_statements_content_section: string
+	/**
+	 * L​o​c​a​l​i​z​e​d​ ​c​o​n​t​e​n​t​ ​f​o​r​ ​v​e​r​s​i​o​n​ ​{​v​e​r​s​i​o​n​}​.
+	 * @param {string} version
+	 */
+	admin_consent_statements_content_section_description: RequiredParams<'version'>
+	/**
+	 * S​e​t​t​i​n​g​s​ ​f​o​r​ ​v​e​r​s​i​o​n​ ​{​v​e​r​s​i​o​n​}​.
+	 * @param {string} version
+	 */
+	admin_consent_statements_selected_version_settings: RequiredParams<'version'>
+	/**
+	 * S​e​t​t​i​n​g​s​ ​f​o​r​ ​a​ ​n​e​w​ ​v​e​r​s​i​o​n​.
+	 */
+	admin_consent_statements_new_version_settings: string
+	/**
+	 * S​a​v​e​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_consent_statements_save_settings: string
+	/**
 	 * S​t​a​t​e​m​e​n​t​s
 	 */
 	admin_consent_statements_tab_statements: string
@@ -26517,17 +27129,21 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_tab_localizations: string
 	/**
-	 * R​e​q​u​i​r​e​m​e​n​t​s
-	 */
-	admin_consent_statements_tab_requirements: string
-	/**
 	 * N​e​w​ ​S​t​a​t​e​m​e​n​t
 	 */
 	admin_consent_statements_new: string
 	/**
-	 * E​d​i​t​ ​S​t​a​t​e​m​e​n​t
+	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t​ ​D​e​t​a​i​l​s
 	 */
 	admin_consent_statements_edit: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​n​a​m​e
+	 */
+	admin_consent_statements_name: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​d​e​n​t​i​f​i​e​r
+	 */
+	admin_consent_statements_identifier: string
 	/**
 	 * S​l​u​g
 	 */
@@ -26593,6 +27209,10 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_delete_action: string
 	/**
+	 * D​e​a​c​t​i​v​a​t​e​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_statements_deactivate_action: string
+	/**
 	 * L​o​a​d​i​n​g​.​.​.
 	 */
 	admin_consent_statements_loading: string
@@ -26601,18 +27221,107 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_empty: string
 	/**
-	 * S​e​l​e​c​t​e​d​:​ ​{​s​l​u​g​}​.​ ​S​w​i​t​c​h​ ​t​o​ ​V​e​r​s​i​o​n​s​ ​t​a​b​ ​t​o​ ​m​a​n​a​g​e​ ​v​e​r​s​i​o​n​s​.
-	 * @param {string} slug
+	 * S​e​l​e​c​t​e​d​ ​s​t​a​t​e​m​e​n​t​.​ ​S​w​i​t​c​h​ ​t​o​ ​V​e​r​s​i​o​n​s​ ​t​a​b​ ​t​o​ ​m​a​n​a​g​e​ ​v​e​r​s​i​o​n​s​.
 	 */
-	admin_consent_statements_selected: RequiredParams<'slug'>
+	admin_consent_statements_selected: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​t​i​t​l​e
+	 */
+	admin_consent_statements_placeholder_title: string
 	/**
 	 * e​.​g​.​,​ ​m​a​r​k​e​t​i​n​g​_​e​m​a​i​l​s
 	 */
 	admin_consent_statements_placeholder_slug: string
 	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​d​e​n​t​i​f​i​e​r
+	 */
+	admin_consent_statements_placeholder_identifier: string
+	/**
 	 * G​D​P​R​ ​A​r​t​1​3​/​1​4​:​ ​D​a​t​a​ ​p​r​o​c​e​s​s​i​n​g​ ​p​u​r​p​o​s​e​ ​d​e​s​c​r​i​p​t​i​o​n
 	 */
 	admin_consent_statements_placeholder_purpose: string
+	/**
+	 * R​e​c​o​r​d​ ​r​e​t​e​n​t​i​o​n​ ​d​a​y​s
+	 */
+	admin_consent_statements_record_retention_days: string
+	/**
+	 * I​n​d​e​f​i​n​i​t​e
+	 */
+	admin_consent_statements_record_retention_indefinite: string
+	/**
+	 * S​p​e​c​i​f​y
+	 */
+	admin_consent_statements_record_retention_specified: string
+	/**
+	 * {​d​a​y​s​}​ ​d​a​y​s
+	 * @param {unknown} days
+	 */
+	admin_consent_statements_record_retention_preset: RequiredParams<'days'>
+	/**
+	 * 3​6​5​ ​d​a​y​s​ ​(​1​ ​y​e​a​r​)
+	 */
+	admin_consent_statements_record_retention_preset_365: string
+	/**
+	 * 1​0​9​5​ ​d​a​y​s​ ​(​3​ ​y​e​a​r​s​)
+	 */
+	admin_consent_statements_record_retention_preset_1095: string
+	/**
+	 * 1​8​2​5​ ​d​a​y​s​ ​(​5​ ​y​e​a​r​s​)
+	 */
+	admin_consent_statements_record_retention_preset_1825: string
+	/**
+	 * 2​5​5​5​ ​d​a​y​s​ ​(​7​ ​y​e​a​r​s​)
+	 */
+	admin_consent_statements_record_retention_preset_2555: string
+	/**
+	 * 3​6​5​0​ ​d​a​y​s​ ​(​1​0​ ​y​e​a​r​s​)
+	 */
+	admin_consent_statements_record_retention_preset_3650: string
+	/**
+	 * S​e​t​ ​c​o​n​s​e​n​t​ ​v​a​l​i​d​i​t​y​ ​p​e​r​i​o​d
+	 */
+	admin_consent_statements_reconsent_interval_enabled: string
+	/**
+	 * C​o​n​s​e​n​t​s​ ​o​l​d​e​r​ ​t​h​a​n​ ​t​h​i​s​ ​p​e​r​i​o​d​ ​w​i​l​l​ ​b​e​ ​c​o​l​l​e​c​t​e​d​ ​a​g​a​i​n​.​ ​U​s​e​ ​o​n​e​ ​y​e​a​r​ ​a​s​ ​t​h​e​ ​d​e​f​a​u​l​t​ ​w​h​e​n​ ​u​n​s​u​r​e​.
+	 */
+	admin_consent_statements_reconsent_interval_description: string
+	/**
+	 * C​o​n​s​e​n​t​ ​v​a​l​i​d​i​t​y​ ​p​e​r​i​o​d​ ​i​n​ ​d​a​y​s
+	 */
+	admin_consent_statements_reconsent_interval_days: string
+	/**
+	 * {​d​a​y​s​}​ ​d​a​y​s
+	 * @param {unknown} days
+	 */
+	admin_consent_statements_reconsent_interval_preset: RequiredParams<'days'>
+	/**
+	 * 1​8​0​ ​d​a​y​s​ ​(​a​b​o​u​t​ ​6​ ​m​o​n​t​h​s​)
+	 */
+	admin_consent_statements_reconsent_interval_preset_180: string
+	/**
+	 * 3​6​5​ ​d​a​y​s​ ​(​1​ ​y​e​a​r​)
+	 */
+	admin_consent_statements_reconsent_interval_preset_365: string
+	/**
+	 * 7​3​0​ ​d​a​y​s​ ​(​2​ ​y​e​a​r​s​)
+	 */
+	admin_consent_statements_reconsent_interval_preset_730: string
+	/**
+	 * 1​0​9​5​ ​d​a​y​s​ ​(​3​ ​y​e​a​r​s​)
+	 */
+	admin_consent_statements_reconsent_interval_preset_1095: string
+	/**
+	 * R​e​-​c​o​n​s​e​n​t​ ​o​n​ ​v​e​r​s​i​o​n​ ​c​h​a​n​g​e
+	 */
+	admin_consent_statements_reconsent_on_version_change: string
+	/**
+	 * W​i​t​h​d​r​a​w​a​l​ ​a​l​l​o​w​e​d
+	 */
+	admin_consent_statements_withdrawal_allowed: string
+	/**
+	 * W​i​t​h​d​r​a​w​a​l​ ​i​m​p​a​c​t
+	 */
+	admin_consent_statements_withdrawal_impact: string
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​s​t​a​t​e​m​e​n​t​s
 	 */
@@ -26642,10 +27351,13 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_deleted_success: string
 	/**
-	 * D​e​l​e​t​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​"​{​s​l​u​g​}​"​?
-	 * @param {string} slug
+	 * D​e​l​e​t​e​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​?
 	 */
-	admin_consent_statements_delete_confirm: RequiredParams<'slug'>
+	admin_consent_statements_delete_confirm: string
+	/**
+	 * D​e​a​c​t​i​v​a​t​e​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​?​ ​I​t​ ​w​i​l​l​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​u​s​e​d​ ​f​o​r​ ​n​e​w​ ​c​o​n​s​e​n​t​ ​c​o​l​l​e​c​t​i​o​n​.
+	 */
+	admin_consent_statements_deactivate_confirm: string
 	/**
 	 * T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e
 	 */
@@ -26675,7 +27387,7 @@ type RootTranslation = {
 	 */
 	admin_consent_category_do_not_sell: string
 	/**
-	 * C​u​s​t​o​m
+	 * O​t​h​e​r
 	 */
 	admin_consent_category_custom: string
 	/**
@@ -26699,10 +27411,9 @@ type RootTranslation = {
 	 */
 	admin_consent_versions_new: string
 	/**
-	 * V​e​r​s​i​o​n​s​ ​-​ ​{​s​l​u​g​}
-	 * @param {string} slug
+	 * V​e​r​s​i​o​n​s
 	 */
-	admin_consent_versions_title: RequiredParams<'slug'>
+	admin_consent_versions_title: string
 	/**
 	 * V​e​r​s​i​o​n​ ​(​Y​Y​Y​Y​M​M​D​D​)
 	 */
@@ -26715,6 +27426,26 @@ type RootTranslation = {
 	 * E​f​f​e​c​t​i​v​e​ ​D​a​t​e
 	 */
 	admin_consent_versions_effective: string
+	/**
+	 * S​t​a​r​t​ ​d​a​t​e​ ​a​n​d​ ​t​i​m​e
+	 */
+	admin_consent_versions_effective_start: string
+	/**
+	 * E​n​d​ ​d​a​t​e​ ​a​n​d​ ​t​i​m​e
+	 */
+	admin_consent_versions_effective_end: string
+	/**
+	 * N​o​ ​p​l​a​n​n​e​d​ ​e​n​d
+	 */
+	admin_consent_versions_effective_end_open: string
+	/**
+	 * S​t​a​r​t​ ​d​a​t​e​ ​a​n​d​ ​t​i​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_consent_versions_effective_start_required: string
+	/**
+	 * E​n​d​ ​d​a​t​e​ ​a​n​d​ ​t​i​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_consent_versions_effective_end_required: string
 	/**
 	 * A​c​t​i​v​a​t​e
 	 */
@@ -26760,6 +27491,10 @@ type RootTranslation = {
 	 */
 	admin_consent_versions_error_activate: string
 	/**
+	 * A​d​d​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​l​o​c​a​l​i​z​e​d​ ​t​i​t​l​e​ ​a​n​d​ ​d​e​s​c​r​i​p​t​i​o​n​ ​i​n​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​c​o​n​t​e​n​t​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​n​g​ ​t​h​i​s​ ​v​e​r​s​i​o​n​.
+	 */
+	admin_consent_versions_activation_requires_content: string
+	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​v​e​r​s​i​o​n
 	 */
 	admin_consent_versions_error_delete: string
@@ -26779,6 +27514,10 @@ type RootTranslation = {
 	 * D​e​l​e​t​e​ ​t​h​i​s​ ​d​r​a​f​t​ ​v​e​r​s​i​o​n​?
 	 */
 	admin_consent_versions_delete_confirm: string
+	/**
+	 * E​n​t​e​r​ ​t​h​e​ ​n​e​w​ ​v​e​r​s​i​o​n​ ​s​e​t​t​i​n​g​s​,​ ​t​h​e​n​ ​s​a​v​e​ ​s​e​t​t​i​n​g​s​ ​t​o​ ​c​r​e​a​t​e​ ​i​t​.
+	 */
+	admin_consent_versions_new_draft_ready: string
 	/**
 	 * D​r​a​f​t
 	 */
@@ -26849,6 +27588,14 @@ type RootTranslation = {
 	 */
 	admin_consent_localizations_placeholder_description: string
 	/**
+	 * D​a​t​a​ ​p​r​o​c​e​s​s​i​n​g​ ​p​u​r​p​o​s​e​ ​s​h​o​w​n​ ​t​o​ ​u​s​e​r​s
+	 */
+	admin_consent_localizations_placeholder_purpose: string
+	/**
+	 * I​m​p​a​c​t​ ​s​h​o​w​n​ ​t​o​ ​u​s​e​r​s​ ​w​h​e​n​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​i​s​ ​w​i​t​h​d​r​a​w​n
+	 */
+	admin_consent_localizations_placeholder_withdrawal_impact: string
+	/**
 	 * F​u​l​l​ ​t​e​x​t​ ​c​o​n​t​e​n​t​ ​(​w​h​e​n​ ​c​o​n​t​e​n​t​_​t​y​p​e​ ​i​s​ ​i​n​l​i​n​e​)
 	 */
 	admin_consent_localizations_placeholder_inline: string
@@ -26882,25 +27629,33 @@ type RootTranslation = {
 	 */
 	admin_consent_localizations_delete_confirm: RequiredParams<'language'>
 	/**
-	 * A​d​d​ ​R​e​q​u​i​r​e​m​e​n​t
+	 * S​a​v​e​ ​t​h​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​s​e​t​t​i​n​g​s​ ​a​n​d​ ​s​e​l​e​c​t​ ​a​ ​v​e​r​s​i​o​n​ ​b​e​f​o​r​e​ ​e​d​i​t​i​n​g​ ​c​o​n​t​e​n​t​.
 	 */
-	admin_consent_requirements_add: string
+	admin_consent_localizations_save_settings_first: string
 	/**
-	 * T​e​n​a​n​t​ ​C​o​n​s​e​n​t​ ​R​e​q​u​i​r​e​m​e​n​t​s
+	 * R​e​q​u​i​r​e​m​e​n​t
 	 */
 	admin_consent_requirements_title: string
 	/**
-	 * N​e​w​ ​R​e​q​u​i​r​e​m​e​n​t
+	 * A​d​v​a​n​c​e​d​ ​s​e​t​t​i​n​g​s
 	 */
-	admin_consent_requirements_new: string
+	admin_consent_requirements_advanced_title: string
 	/**
-	 * E​d​i​t​ ​R​e​q​u​i​r​e​m​e​n​t
+	 * C​o​n​f​i​g​u​r​e​ ​r​e​q​u​i​r​e​m​e​n​t
 	 */
-	admin_consent_requirements_edit: string
+	admin_consent_requirements_enabled: string
 	/**
-	 * S​t​a​t​e​m​e​n​t
+	 * C​o​n​s​e​n​t​ ​c​o​l​l​e​c​t​i​o​n
 	 */
-	admin_consent_requirements_statement: string
+	admin_consent_requirements_collection_mode: string
+	/**
+	 * C​o​l​l​e​c​t​ ​a​s​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_consent_requirements_collection_required: string
+	/**
+	 * C​o​l​l​e​c​t​ ​a​s​ ​o​p​t​i​o​n​a​l
+	 */
+	admin_consent_requirements_collection_optional: string
 	/**
 	 * R​e​q​u​i​r​e​d
 	 */
@@ -26914,19 +27669,19 @@ type RootTranslation = {
 	 */
 	admin_consent_requirements_enforcement: string
 	/**
-	 * M​i​n​ ​V​e​r​s​i​o​n
-	 */
-	admin_consent_requirements_min_version: string
-	/**
 	 * M​i​n​ ​V​e​r​s​i​o​n​ ​(​Y​Y​Y​Y​M​M​D​D​)
 	 */
 	admin_consent_requirements_min_version_yyyymmdd: string
 	/**
-	 * S​h​o​w​ ​D​e​l​e​t​i​o​n​ ​L​i​n​k
+	 * S​h​o​w​ ​a​c​c​o​u​n​t​ ​d​e​l​e​t​i​o​n​ ​l​i​n​k
 	 */
 	admin_consent_requirements_deletion_link: string
 	/**
-	 * D​e​l​e​t​i​o​n​ ​U​R​L
+	 * S​h​o​w​s​ ​a​ ​s​i​g​n​-​o​u​t​,​ ​a​c​c​o​u​n​t​ ​d​e​l​e​t​i​o​n​,​ ​o​r​ ​d​a​t​a​ ​d​e​l​e​t​i​o​n​ ​r​e​q​u​e​s​t​ ​U​R​L​ ​o​n​ ​t​h​e​ ​c​o​n​s​e​n​t​ ​s​c​r​e​e​n​ ​f​o​r​ ​u​s​e​r​s​ ​w​h​o​ ​d​o​ ​n​o​t​ ​c​o​n​s​e​n​t​.
+	 */
+	admin_consent_requirements_deletion_link_description: string
+	/**
+	 * A​c​c​o​u​n​t​ ​d​e​l​e​t​i​o​n​ ​U​R​L
 	 */
 	admin_consent_requirements_deletion_url: string
 	/**
@@ -26934,9 +27689,9 @@ type RootTranslation = {
 	 */
 	admin_consent_requirements_rules: string
 	/**
-	 * -​-​ ​S​e​l​e​c​t​ ​-​-
+	 * N​o​t​ ​c​o​n​f​i​g​u​r​e​d
 	 */
-	admin_consent_requirements_select_placeholder: string
+	admin_consent_requirements_not_configured: string
 	/**
 	 * B​l​o​c​k​ ​(​m​u​s​t​ ​c​o​n​s​e​n​t​)
 	 */
@@ -26945,38 +27700,6 @@ type RootTranslation = {
 	 * A​l​l​o​w​ ​C​o​n​t​i​n​u​e
 	 */
 	admin_consent_requirements_enforcement_allow_continue: string
-	/**
-	 * N​o​ ​r​e​q​u​i​r​e​m​e​n​t​s​ ​c​o​n​f​i​g​u​r​e​d​.​ ​A​d​d​ ​o​n​e​ ​t​o​ ​e​n​f​o​r​c​e​ ​c​o​n​s​e​n​t​ ​o​n​ ​l​o​g​i​n​.
-	 */
-	admin_consent_requirements_empty: string
-	/**
-	 * S​a​v​e
-	 */
-	admin_consent_requirements_save: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​r​e​q​u​i​r​e​m​e​n​t​s
-	 */
-	admin_consent_requirements_error_load: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​r​e​q​u​i​r​e​m​e​n​t
-	 */
-	admin_consent_requirements_error_save: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​r​e​q​u​i​r​e​m​e​n​t
-	 */
-	admin_consent_requirements_error_delete: string
-	/**
-	 * R​e​q​u​i​r​e​m​e​n​t​ ​s​a​v​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
-	 */
-	admin_consent_requirements_saved_success: string
-	/**
-	 * R​e​q​u​i​r​e​m​e​n​t​ ​r​e​m​o​v​e​d
-	 */
-	admin_consent_requirements_deleted_success: string
-	/**
-	 * R​e​m​o​v​e​ ​t​h​i​s​ ​r​e​q​u​i​r​e​m​e​n​t​?
-	 */
-	admin_consent_requirements_delete_confirm: string
 }
 
 export type TranslationFunctions = {
@@ -32269,7 +32992,7 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_at_least_one_binding: () => LocalizedString
 	/**
-	 * SP Login Policy
+	 * External IdP Login Policy
 	 */
 	admin_saml_detail_sp_login_policy: () => LocalizedString
 	/**
@@ -32317,17 +33040,41 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_authn_context_policy: () => LocalizedString
 	/**
+	 * Controls how Authrim handles RequestedAuthnContext in SP AuthnRequests. Observe records the request without blocking; Require allowed rejects requests whose AuthnContextClassRef is not listed below.
+	 */
+	admin_saml_detail_authn_context_policy_hint: () => LocalizedString
+	/**
 	 * Allowed AuthnContextClassRef
 	 */
 	admin_saml_detail_allowed_authn_context: () => LocalizedString
 	/**
-	 * SP Policy
+	 * One AuthnContextClassRef URI per line. Used only when AuthnContext Policy is Require allowed; include every authentication context this SP is allowed to request.
+	 */
+	admin_saml_detail_allowed_authn_context_hint: () => LocalizedString
+	/**
+	 * SAML SP Attribute Release Policy
 	 */
 	admin_saml_detail_sp_policy: () => LocalizedString
 	/**
-	 * Profile
+	 * SP compatibility profile
 	 */
 	admin_saml_detail_profile: () => LocalizedString
+	/**
+	 * Baseline is the recommended default for ordinary SAML SPs. It keeps signing, NameID, and binding behavior on safe standard defaults.
+	 */
+	admin_saml_detail_profile_hint_baseline: () => LocalizedString
+	/**
+	 * Strict applies tighter signature and compatibility expectations. Use it when the SP follows modern SAML behavior.
+	 */
+	admin_saml_detail_profile_hint_strict: () => LocalizedString
+	/**
+	 * Uses strict SP defaults for publisher/library SPs: signed assertions, required signed AuthnRequest and Logout, and Persistent NameID. Pair it with an attribute mapping when the SP expects mail, displayName, eduPersonScopedAffiliation, or eduPersonEntitlement.
+	 */
+	admin_saml_detail_profile_hint_academic_publisher: () => LocalizedString
+	/**
+	 * Legacy relaxes compatibility for older SPs. Use it only for an explicit legacy exception.
+	 */
+	admin_saml_detail_profile_hint_legacy: () => LocalizedString
 	/**
 	 * Attribute Preset
 	 */
@@ -32341,13 +33088,17 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_identity_mapping_policy: () => LocalizedString
 	/**
-	 * Tenant default / legacy release
+	 * Select a Field Mapping Set
 	 */
 	admin_saml_detail_identity_mapping_policy_default: () => LocalizedString
 	/**
-	 * Selects the active Field Mapping Set used for SAML Attribute release to this SP.
+	 * Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.
 	 */
 	admin_saml_detail_identity_mapping_policy_hint: () => LocalizedString
+	/**
+	 * Manage Field Mapping Sets
+	 */
+	admin_saml_detail_identity_mapping_policy_link: () => LocalizedString
 	/**
 	 * Attribute release consent
 	 */
@@ -32373,25 +33124,37 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_attribute_release_consent_hint: () => LocalizedString
 	/**
-	 * AuthnRequest Signature
+	 * AuthnRequest signature verification
 	 */
 	admin_saml_detail_authn_request_signature: () => LocalizedString
 	/**
-	 * LogoutRequest Signature
+	 * Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.
+	 */
+	admin_saml_detail_authn_request_signature_hint: () => LocalizedString
+	/**
+	 * LogoutRequest signature verification
 	 */
 	admin_saml_detail_logout_request_signature: () => LocalizedString
 	/**
-	 * Required by default. Relax only for an explicit legacy SP exception.
+	 * Controls whether LogoutRequests from this SP must be signed. Required is the default.
 	 */
 	admin_saml_detail_sp_signature_hint: () => LocalizedString
 	/**
-	 * AuthnContext Mode
+	 * AuthnContext emission mode
 	 */
 	admin_saml_detail_authn_context_mode: () => LocalizedString
 	/**
-	 * Default AuthnContext
+	 * Choose whether Assertion AuthnContextClassRef follows the actual login session or uses a fixed value.
+	 */
+	admin_saml_detail_authn_context_mode_hint: () => LocalizedString
+	/**
+	 * Default login AuthnContext
 	 */
 	admin_saml_detail_default_authn_context: () => LocalizedString
+	/**
+	 * AuthnContextClassRef used for fixed emission or ordinary logins. Most SPs accept PasswordProtectedTransport.
+	 */
+	admin_saml_detail_default_authn_context_hint: () => LocalizedString
 	/**
 	 * Passkey AuthnContext
 	 */
@@ -51507,6 +52270,518 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_draft_only_node_diff: () => LocalizedString
 	/**
+	 * Consent Policies
+	 */
+	admin_consent_policies_nav: () => LocalizedString
+	/**
+	 * Consent Policies - Authrim Admin
+	 */
+	admin_consent_policies_page_title: () => LocalizedString
+	/**
+	 * Consent Policies
+	 */
+	admin_consent_policies_title: () => LocalizedString
+	/**
+	 * Manage reusable consent policy sets used by clients, SAML service providers, and account flows.
+	 */
+	admin_consent_policies_description: () => LocalizedString
+	/**
+	 * New consent policy
+	 */
+	admin_consent_policies_new_button: () => LocalizedString
+	/**
+	 * Loading consent policies...
+	 */
+	admin_consent_policies_loading: () => LocalizedString
+	/**
+	 * Failed to load consent policies.
+	 */
+	admin_consent_policies_load_error: () => LocalizedString
+	/**
+	 * Policy
+	 */
+	admin_consent_policies_table_policy: () => LocalizedString
+	/**
+	 * Statements
+	 */
+	admin_consent_policies_table_statements: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_consent_policies_table_status: () => LocalizedString
+	/**
+	 * Updated
+	 */
+	admin_consent_policies_table_updated: () => LocalizedString
+	/**
+	 * Active
+	 */
+	admin_consent_policies_status_active: () => LocalizedString
+	/**
+	 * Inactive
+	 */
+	admin_consent_policies_status_inactive: () => LocalizedString
+	/**
+	 * No consent policies.
+	 */
+	admin_consent_policies_empty: () => LocalizedString
+	/**
+	 * New Consent Policy
+	 */
+	admin_consent_policies_new_title: () => LocalizedString
+	/**
+	 * Consent Policy
+	 */
+	admin_consent_policies_detail_fallback_title: () => LocalizedString
+	/**
+	 * Create a reusable consent policy and then attach consent statements to it.
+	 */
+	admin_consent_policies_new_description: () => LocalizedString
+	/**
+	 * Edit the policy metadata and consent statements shown during consent collection.
+	 */
+	admin_consent_policies_detail_description: () => LocalizedString
+	/**
+	 * {title} - Authrim Admin
+	 */
+	admin_consent_policies_detail_page_title: (arg: { title: string }) => LocalizedString
+	/**
+	 * Back to list
+	 */
+	admin_consent_policies_back_to_list: () => LocalizedString
+	/**
+	 * Save policy
+	 */
+	admin_consent_policies_save_policy: () => LocalizedString
+	/**
+	 * Create policy
+	 */
+	admin_consent_policies_create_policy: () => LocalizedString
+	/**
+	 * Loading consent policy...
+	 */
+	admin_consent_policies_loading_detail: () => LocalizedString
+	/**
+	 * You have read-only access to consent policies. Create, edit, and delete actions are disabled.
+	 */
+	admin_consent_policies_readonly_notice: () => LocalizedString
+	/**
+	 * You do not have permission to change consent policies.
+	 */
+	admin_consent_policies_permission_change: () => LocalizedString
+	/**
+	 * You do not have permission to delete consent policies.
+	 */
+	admin_consent_policies_permission_delete: () => LocalizedString
+	/**
+	 * You do not have permission to change policy statements.
+	 */
+	admin_consent_policies_permission_statements: () => LocalizedString
+	/**
+	 * You do not have permission to change policy assignments.
+	 */
+	admin_consent_policies_permission_assignments: () => LocalizedString
+	/**
+	 * You do not have permission to change client trust policies.
+	 */
+	admin_consent_policies_permission_trust: () => LocalizedString
+	/**
+	 * You do not have permission to change sign-in confirmation policies.
+	 */
+	admin_consent_policies_permission_signin: () => LocalizedString
+	/**
+	 * Consent policy saved.
+	 */
+	admin_consent_policies_saved: () => LocalizedString
+	/**
+	 * Consent policy created.
+	 */
+	admin_consent_policies_created: () => LocalizedString
+	/**
+	 * Failed to save consent policy.
+	 */
+	admin_consent_policies_save_error: () => LocalizedString
+	/**
+	 * Failed to load consent policy.
+	 */
+	admin_consent_policies_load_detail_error: () => LocalizedString
+	/**
+	 * Delete consent policy "{name}"?
+	 */
+	admin_consent_policies_delete_confirm: (arg: { name: string }) => LocalizedString
+	/**
+	 * Failed to delete consent policy.
+	 */
+	admin_consent_policies_delete_error: () => LocalizedString
+	/**
+	 * Policy details
+	 */
+	admin_consent_policies_policy_details: () => LocalizedString
+	/**
+	 * Consent policy name
+	 */
+	admin_consent_policies_policy_name_label: () => LocalizedString
+	/**
+	 * Display name
+	 */
+	admin_consent_policies_display_name: () => LocalizedString
+	/**
+	 * Description
+	 */
+	admin_consent_policies_description_label: () => LocalizedString
+	/**
+	 * Active
+	 */
+	admin_consent_policies_active: () => LocalizedString
+	/**
+	 * Statements
+	 */
+	admin_consent_policies_statements: () => LocalizedString
+	/**
+	 * Choose the consent statements included in this policy.
+	 */
+	admin_consent_policies_statements_description: () => LocalizedString
+	/**
+	 * Create the policy before adding statements.
+	 */
+	admin_consent_policies_statements_create_first: () => LocalizedString
+	/**
+	 * Add statement
+	 */
+	admin_consent_policies_add_statement: () => LocalizedString
+	/**
+	 * No statements in this policy.
+	 */
+	admin_consent_policies_no_statements: () => LocalizedString
+	/**
+	 * Order {order}
+	 */
+	admin_consent_policies_statement_order: (arg: { order: number }) => LocalizedString
+	/**
+	 * Remove statement
+	 */
+	admin_consent_policies_remove_statement: () => LocalizedString
+	/**
+	 * Statement
+	 */
+	admin_consent_policies_statement: () => LocalizedString
+	/**
+	 * Select statement
+	 */
+	admin_consent_policies_select_statement: () => LocalizedString
+	/**
+	 * Requirement
+	 */
+	admin_consent_policies_requirement: () => LocalizedString
+	/**
+	 * Required
+	 */
+	admin_consent_policies_requirement_required: () => LocalizedString
+	/**
+	 * Optional
+	 */
+	admin_consent_policies_requirement_optional: () => LocalizedString
+	/**
+	 * Hidden
+	 */
+	admin_consent_policies_requirement_hidden: () => LocalizedString
+	/**
+	 * Version
+	 */
+	admin_consent_policies_version: () => LocalizedString
+	/**
+	 * Current
+	 */
+	admin_consent_policies_version_current: () => LocalizedString
+	/**
+	 * Fixed ID
+	 */
+	admin_consent_policies_version_fixed: () => LocalizedString
+	/**
+	 * Minimum
+	 */
+	admin_consent_policies_version_minimum: () => LocalizedString
+	/**
+	 * Version value
+	 */
+	admin_consent_policies_version_value: () => LocalizedString
+	/**
+	 * Checkbox
+	 */
+	admin_consent_policies_checkbox: () => LocalizedString
+	/**
+	 * None
+	 */
+	admin_consent_policies_checkbox_none: () => LocalizedString
+	/**
+	 * Checked by default
+	 */
+	admin_consent_policies_checkbox_checked_default: () => LocalizedString
+	/**
+	 * Order
+	 */
+	admin_consent_policies_order: () => LocalizedString
+	/**
+	 * Binding
+	 */
+	admin_consent_policies_binding: () => LocalizedString
+	/**
+	 * None
+	 */
+	admin_consent_policies_binding_none: () => LocalizedString
+	/**
+	 * Scope
+	 */
+	admin_consent_policies_binding_scope: () => LocalizedString
+	/**
+	 * Claim
+	 */
+	admin_consent_policies_binding_claim: () => LocalizedString
+	/**
+	 * SAML attribute
+	 */
+	admin_consent_policies_binding_saml_attribute: () => LocalizedString
+	/**
+	 * Destination field set
+	 */
+	admin_consent_policies_binding_destination_field_set: () => LocalizedString
+	/**
+	 * Binding value
+	 */
+	admin_consent_policies_binding_value: () => LocalizedString
+	/**
+	 * Evidence
+	 */
+	admin_consent_policies_evidence: () => LocalizedString
+	/**
+	 * Fallback
+	 */
+	admin_consent_policies_fallback: () => LocalizedString
+	/**
+	 * Save statements
+	 */
+	admin_consent_policies_save_statements: () => LocalizedString
+	/**
+	 * Save the policy before editing statements.
+	 */
+	admin_consent_policies_save_statements_first: () => LocalizedString
+	/**
+	 * Policy statements saved.
+	 */
+	admin_consent_policies_statements_saved: () => LocalizedString
+	/**
+	 * Failed to save policy statements.
+	 */
+	admin_consent_policies_statements_save_error: () => LocalizedString
+	/**
+	 * Assignments
+	 */
+	admin_consent_policies_assignments: () => LocalizedString
+	/**
+	 * Attach this consent policy to account flows, OIDC clients, or SAML service providers.
+	 */
+	admin_consent_policies_assignments_description: () => LocalizedString
+	/**
+	 * Create the policy before assigning it.
+	 */
+	admin_consent_policies_assignments_create_first: () => LocalizedString
+	/**
+	 * Target
+	 */
+	admin_consent_policies_target: () => LocalizedString
+	/**
+	 * Target ID
+	 */
+	admin_consent_policies_target_id: () => LocalizedString
+	/**
+	 * Select a target before saving.
+	 */
+	admin_consent_policies_target_id_required: () => LocalizedString
+	/**
+	 * Registration
+	 */
+	admin_consent_policies_registration: () => LocalizedString
+	/**
+	 * Login
+	 */
+	admin_consent_policies_login: () => LocalizedString
+	/**
+	 * OIDC Client
+	 */
+	admin_consent_policies_oidc_client: () => LocalizedString
+	/**
+	 * SAML SP
+	 */
+	admin_consent_policies_saml_sp: () => LocalizedString
+	/**
+	 * Select client
+	 */
+	admin_consent_policies_select_client: () => LocalizedString
+	/**
+	 * Select SAML SP
+	 */
+	admin_consent_policies_select_saml_sp: () => LocalizedString
+	/**
+	 * Account flow
+	 */
+	admin_consent_policies_tenant_account_flow: () => LocalizedString
+	/**
+	 * Save assignment
+	 */
+	admin_consent_policies_save_assignment: () => LocalizedString
+	/**
+	 * Save the policy before assigning it.
+	 */
+	admin_consent_policies_save_assignment_first: () => LocalizedString
+	/**
+	 * Consent policy assignment saved.
+	 */
+	admin_consent_policies_assignment_saved: () => LocalizedString
+	/**
+	 * Failed to save assignment.
+	 */
+	admin_consent_policies_assignment_save_error: () => LocalizedString
+	/**
+	 * This policy has no assignments.
+	 */
+	admin_consent_policies_no_assignments: () => LocalizedString
+	/**
+	 * Client Trust
+	 */
+	admin_consent_policies_client_trust: () => LocalizedString
+	/**
+	 * Advanced settings
+	 */
+	admin_consent_policies_advanced_settings: () => LocalizedString
+	/**
+	 * Default client trust
+	 */
+	admin_consent_policies_default_client_trust_name: () => LocalizedString
+	/**
+	 * First party
+	 */
+	admin_consent_policies_first_party: () => LocalizedString
+	/**
+	 * Trusted
+	 */
+	admin_consent_policies_trusted: () => LocalizedString
+	/**
+	 * Skip authorization consent
+	 */
+	admin_consent_policies_skip_authorization_consent: () => LocalizedString
+	/**
+	 * Save trust policy
+	 */
+	admin_consent_policies_save_trust_policy: () => LocalizedString
+	/**
+	 * Client trust policy saved.
+	 */
+	admin_consent_policies_trust_saved: () => LocalizedString
+	/**
+	 * Failed to save client trust policy.
+	 */
+	admin_consent_policies_trust_save_error: () => LocalizedString
+	/**
+	 * Name
+	 */
+	admin_consent_policies_name: () => LocalizedString
+	/**
+	 * Skip consent
+	 */
+	admin_consent_policies_skip_consent: () => LocalizedString
+	/**
+	 * No client trust policies.
+	 */
+	admin_consent_policies_no_trust_policies: () => LocalizedString
+	/**
+	 * Enabled
+	 */
+	admin_consent_policies_enabled: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_consent_policies_disabled: () => LocalizedString
+	/**
+	 * Context
+	 */
+	admin_consent_policies_context: () => LocalizedString
+	/**
+	 * Sign-in Confirmation
+	 */
+	admin_consent_policies_signin_confirmation: () => LocalizedString
+	/**
+	 * Controls whether users must confirm the application and tenant context during sign-in. Use this when a long-lived session may be reused across applications, or when users should explicitly confirm where they are signing in.
+	 */
+	admin_consent_policies_signin_description: () => LocalizedString
+	/**
+	 * Mode
+	 */
+	admin_consent_policies_mode: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_consent_policies_mode_disabled: () => LocalizedString
+	/**
+	 * First time
+	 */
+	admin_consent_policies_mode_first_time: () => LocalizedString
+	/**
+	 * Every time
+	 */
+	admin_consent_policies_mode_every_time: () => LocalizedString
+	/**
+	 * Remember days
+	 */
+	admin_consent_policies_remember_days: () => LocalizedString
+	/**
+	 * Show application context
+	 */
+	admin_consent_policies_show_application_context: () => LocalizedString
+	/**
+	 * Show tenant context
+	 */
+	admin_consent_policies_show_tenant_context: () => LocalizedString
+	/**
+	 * Save sign-in policy
+	 */
+	admin_consent_policies_save_signin_policy: () => LocalizedString
+	/**
+	 * Sign-in confirmation policy saved.
+	 */
+	admin_consent_policies_signin_saved: () => LocalizedString
+	/**
+	 * Failed to save sign-in confirmation policy.
+	 */
+	admin_consent_policies_signin_save_error: () => LocalizedString
+	/**
+	 * {days} days
+	 */
+	admin_consent_policies_remember_days_value: (arg: { days: number }) => LocalizedString
+	/**
+	 * App {app} / Tenant {tenant}
+	 */
+	admin_consent_policies_context_summary: (arg: { app: string, tenant: string }) => LocalizedString
+	/**
+	 * No sign-in confirmation policy.
+	 */
+	admin_consent_policies_no_signin_policy: () => LocalizedString
+	/**
+	 * Danger zone
+	 */
+	admin_consent_policies_danger_zone: () => LocalizedString
+	/**
+	 * Delete this consent policy
+	 */
+	admin_consent_policies_delete_title: () => LocalizedString
+	/**
+	 * Assignments that reference this policy must be moved before deletion succeeds.
+	 */
+	admin_consent_policies_delete_description: () => LocalizedString
+	/**
+	 * Delete policy
+	 */
+	admin_consent_policies_delete_button: () => LocalizedString
+	/**
 	 * Settings
 	 */
 	admin_settings_title: () => LocalizedString
@@ -53051,6 +54326,58 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_subtitle: () => LocalizedString
 	/**
+	 * Manage consent statements used by policies and account flows.
+	 */
+	admin_consent_statements_list_description: () => LocalizedString
+	/**
+	 * Manage versions, settings, and localized consent content for this statement.
+	 */
+	admin_consent_statements_detail_description: () => LocalizedString
+	/**
+	 * Create a consent statement and its first version.
+	 */
+	admin_consent_statements_new_description: () => LocalizedString
+	/**
+	 * Consent Statement Details
+	 */
+	admin_consent_statements_detail_title: () => LocalizedString
+	/**
+	 * Back to list
+	 */
+	admin_consent_statements_back_to_list: () => LocalizedString
+	/**
+	 * Versions for this consent statement
+	 */
+	admin_consent_statements_versions_section: () => LocalizedString
+	/**
+	 * Select a version to edit its settings and localized content.
+	 */
+	admin_consent_statements_versions_section_description: () => LocalizedString
+	/**
+	 * Consent statement settings
+	 */
+	admin_consent_statements_settings_section: () => LocalizedString
+	/**
+	 * Consent statement content
+	 */
+	admin_consent_statements_content_section: () => LocalizedString
+	/**
+	 * Localized content for version {version}.
+	 */
+	admin_consent_statements_content_section_description: (arg: { version: string }) => LocalizedString
+	/**
+	 * Settings for version {version}.
+	 */
+	admin_consent_statements_selected_version_settings: (arg: { version: string }) => LocalizedString
+	/**
+	 * Settings for a new version.
+	 */
+	admin_consent_statements_new_version_settings: () => LocalizedString
+	/**
+	 * Save settings
+	 */
+	admin_consent_statements_save_settings: () => LocalizedString
+	/**
 	 * Statements
 	 */
 	admin_consent_statements_tab_statements: () => LocalizedString
@@ -53063,17 +54390,21 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_tab_localizations: () => LocalizedString
 	/**
-	 * Requirements
-	 */
-	admin_consent_statements_tab_requirements: () => LocalizedString
-	/**
 	 * New Statement
 	 */
 	admin_consent_statements_new: () => LocalizedString
 	/**
-	 * Edit Statement
+	 * Consent Statement Details
 	 */
 	admin_consent_statements_edit: () => LocalizedString
+	/**
+	 * Consent statement name
+	 */
+	admin_consent_statements_name: () => LocalizedString
+	/**
+	 * Consent statement identifier
+	 */
+	admin_consent_statements_identifier: () => LocalizedString
 	/**
 	 * Slug
 	 */
@@ -53139,6 +54470,10 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_delete_action: () => LocalizedString
 	/**
+	 * Deactivate statement
+	 */
+	admin_consent_statements_deactivate_action: () => LocalizedString
+	/**
 	 * Loading...
 	 */
 	admin_consent_statements_loading: () => LocalizedString
@@ -53147,17 +54482,105 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_empty: () => LocalizedString
 	/**
-	 * Selected: {slug}. Switch to Versions tab to manage versions.
+	 * Selected statement. Switch to Versions tab to manage versions.
 	 */
-	admin_consent_statements_selected: (arg: { slug: string }) => LocalizedString
+	admin_consent_statements_selected: () => LocalizedString
+	/**
+	 * Consent statement title
+	 */
+	admin_consent_statements_placeholder_title: () => LocalizedString
 	/**
 	 * e.g., marketing_emails
 	 */
 	admin_consent_statements_placeholder_slug: () => LocalizedString
 	/**
+	 * Consent statement identifier
+	 */
+	admin_consent_statements_placeholder_identifier: () => LocalizedString
+	/**
 	 * GDPR Art13/14: Data processing purpose description
 	 */
 	admin_consent_statements_placeholder_purpose: () => LocalizedString
+	/**
+	 * Record retention days
+	 */
+	admin_consent_statements_record_retention_days: () => LocalizedString
+	/**
+	 * Indefinite
+	 */
+	admin_consent_statements_record_retention_indefinite: () => LocalizedString
+	/**
+	 * Specify
+	 */
+	admin_consent_statements_record_retention_specified: () => LocalizedString
+	/**
+	 * {days} days
+	 */
+	admin_consent_statements_record_retention_preset: (arg: { days: unknown }) => LocalizedString
+	/**
+	 * 365 days (1 year)
+	 */
+	admin_consent_statements_record_retention_preset_365: () => LocalizedString
+	/**
+	 * 1095 days (3 years)
+	 */
+	admin_consent_statements_record_retention_preset_1095: () => LocalizedString
+	/**
+	 * 1825 days (5 years)
+	 */
+	admin_consent_statements_record_retention_preset_1825: () => LocalizedString
+	/**
+	 * 2555 days (7 years)
+	 */
+	admin_consent_statements_record_retention_preset_2555: () => LocalizedString
+	/**
+	 * 3650 days (10 years)
+	 */
+	admin_consent_statements_record_retention_preset_3650: () => LocalizedString
+	/**
+	 * Set consent validity period
+	 */
+	admin_consent_statements_reconsent_interval_enabled: () => LocalizedString
+	/**
+	 * Consents older than this period will be collected again. Use one year as the default when unsure.
+	 */
+	admin_consent_statements_reconsent_interval_description: () => LocalizedString
+	/**
+	 * Consent validity period in days
+	 */
+	admin_consent_statements_reconsent_interval_days: () => LocalizedString
+	/**
+	 * {days} days
+	 */
+	admin_consent_statements_reconsent_interval_preset: (arg: { days: unknown }) => LocalizedString
+	/**
+	 * 180 days (about 6 months)
+	 */
+	admin_consent_statements_reconsent_interval_preset_180: () => LocalizedString
+	/**
+	 * 365 days (1 year)
+	 */
+	admin_consent_statements_reconsent_interval_preset_365: () => LocalizedString
+	/**
+	 * 730 days (2 years)
+	 */
+	admin_consent_statements_reconsent_interval_preset_730: () => LocalizedString
+	/**
+	 * 1095 days (3 years)
+	 */
+	admin_consent_statements_reconsent_interval_preset_1095: () => LocalizedString
+	/**
+	 * Re-consent on version change
+	 */
+	admin_consent_statements_reconsent_on_version_change: () => LocalizedString
+	/**
+	 * Withdrawal allowed
+	 */
+	admin_consent_statements_withdrawal_allowed: () => LocalizedString
+	/**
+	 * Withdrawal impact
+	 */
+	admin_consent_statements_withdrawal_impact: () => LocalizedString
 	/**
 	 * Failed to load statements
 	 */
@@ -53187,9 +54610,13 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_deleted_success: () => LocalizedString
 	/**
-	 * Delete consent statement "{slug}"?
+	 * Delete this consent statement?
 	 */
-	admin_consent_statements_delete_confirm: (arg: { slug: string }) => LocalizedString
+	admin_consent_statements_delete_confirm: () => LocalizedString
+	/**
+	 * Deactivate this consent statement? It will no longer be used for new consent collection.
+	 */
+	admin_consent_statements_deactivate_confirm: () => LocalizedString
 	/**
 	 * Terms of Service
 	 */
@@ -53219,7 +54646,7 @@ Remove this role from {email}?
 	 */
 	admin_consent_category_do_not_sell: () => LocalizedString
 	/**
-	 * Custom
+	 * Other
 	 */
 	admin_consent_category_custom: () => LocalizedString
 	/**
@@ -53243,9 +54670,9 @@ Remove this role from {email}?
 	 */
 	admin_consent_versions_new: () => LocalizedString
 	/**
-	 * Versions - {slug}
+	 * Versions
 	 */
-	admin_consent_versions_title: (arg: { slug: string }) => LocalizedString
+	admin_consent_versions_title: () => LocalizedString
 	/**
 	 * Version (YYYYMMDD)
 	 */
@@ -53258,6 +54685,26 @@ Remove this role from {email}?
 	 * Effective Date
 	 */
 	admin_consent_versions_effective: () => LocalizedString
+	/**
+	 * Start date and time
+	 */
+	admin_consent_versions_effective_start: () => LocalizedString
+	/**
+	 * End date and time
+	 */
+	admin_consent_versions_effective_end: () => LocalizedString
+	/**
+	 * No planned end
+	 */
+	admin_consent_versions_effective_end_open: () => LocalizedString
+	/**
+	 * Start date and time is required
+	 */
+	admin_consent_versions_effective_start_required: () => LocalizedString
+	/**
+	 * End date and time is required
+	 */
+	admin_consent_versions_effective_end_required: () => LocalizedString
 	/**
 	 * Activate
 	 */
@@ -53303,6 +54750,10 @@ Remove this role from {email}?
 	 */
 	admin_consent_versions_error_activate: () => LocalizedString
 	/**
+	 * Add at least one localized title and description in consent statement content before activating this version.
+	 */
+	admin_consent_versions_activation_requires_content: () => LocalizedString
+	/**
 	 * Failed to delete version
 	 */
 	admin_consent_versions_error_delete: () => LocalizedString
@@ -53322,6 +54773,10 @@ Remove this role from {email}?
 	 * Delete this draft version?
 	 */
 	admin_consent_versions_delete_confirm: () => LocalizedString
+	/**
+	 * Enter the new version settings, then save settings to create it.
+	 */
+	admin_consent_versions_new_draft_ready: () => LocalizedString
 	/**
 	 * Draft
 	 */
@@ -53391,6 +54846,14 @@ Remove this role from {email}?
 	 */
 	admin_consent_localizations_placeholder_description: () => LocalizedString
 	/**
+	 * Data processing purpose shown to users
+	 */
+	admin_consent_localizations_placeholder_purpose: () => LocalizedString
+	/**
+	 * Impact shown to users when this consent is withdrawn
+	 */
+	admin_consent_localizations_placeholder_withdrawal_impact: () => LocalizedString
+	/**
 	 * Full text content (when content_type is inline)
 	 */
 	admin_consent_localizations_placeholder_inline: () => LocalizedString
@@ -53423,25 +54886,33 @@ Remove this role from {email}?
 	 */
 	admin_consent_localizations_delete_confirm: (arg: { language: string }) => LocalizedString
 	/**
-	 * Add Requirement
+	 * Save the consent statement settings and select a version before editing content.
 	 */
-	admin_consent_requirements_add: () => LocalizedString
+	admin_consent_localizations_save_settings_first: () => LocalizedString
 	/**
-	 * Tenant Consent Requirements
+	 * Requirement
 	 */
 	admin_consent_requirements_title: () => LocalizedString
 	/**
-	 * New Requirement
+	 * Advanced settings
 	 */
-	admin_consent_requirements_new: () => LocalizedString
+	admin_consent_requirements_advanced_title: () => LocalizedString
 	/**
-	 * Edit Requirement
+	 * Configure requirement
 	 */
-	admin_consent_requirements_edit: () => LocalizedString
+	admin_consent_requirements_enabled: () => LocalizedString
 	/**
-	 * Statement
+	 * Consent collection
 	 */
-	admin_consent_requirements_statement: () => LocalizedString
+	admin_consent_requirements_collection_mode: () => LocalizedString
+	/**
+	 * Collect as required
+	 */
+	admin_consent_requirements_collection_required: () => LocalizedString
+	/**
+	 * Collect as optional
+	 */
+	admin_consent_requirements_collection_optional: () => LocalizedString
 	/**
 	 * Required
 	 */
@@ -53455,19 +54926,19 @@ Remove this role from {email}?
 	 */
 	admin_consent_requirements_enforcement: () => LocalizedString
 	/**
-	 * Min Version
-	 */
-	admin_consent_requirements_min_version: () => LocalizedString
-	/**
 	 * Min Version (YYYYMMDD)
 	 */
 	admin_consent_requirements_min_version_yyyymmdd: () => LocalizedString
 	/**
-	 * Show Deletion Link
+	 * Show account deletion link
 	 */
 	admin_consent_requirements_deletion_link: () => LocalizedString
 	/**
-	 * Deletion URL
+	 * Shows a sign-out, account deletion, or data deletion request URL on the consent screen for users who do not consent.
+	 */
+	admin_consent_requirements_deletion_link_description: () => LocalizedString
+	/**
+	 * Account deletion URL
 	 */
 	admin_consent_requirements_deletion_url: () => LocalizedString
 	/**
@@ -53475,9 +54946,9 @@ Remove this role from {email}?
 	 */
 	admin_consent_requirements_rules: () => LocalizedString
 	/**
-	 * -- Select --
+	 * Not configured
 	 */
-	admin_consent_requirements_select_placeholder: () => LocalizedString
+	admin_consent_requirements_not_configured: () => LocalizedString
 	/**
 	 * Block (must consent)
 	 */
@@ -53486,38 +54957,6 @@ Remove this role from {email}?
 	 * Allow Continue
 	 */
 	admin_consent_requirements_enforcement_allow_continue: () => LocalizedString
-	/**
-	 * No requirements configured. Add one to enforce consent on login.
-	 */
-	admin_consent_requirements_empty: () => LocalizedString
-	/**
-	 * Save
-	 */
-	admin_consent_requirements_save: () => LocalizedString
-	/**
-	 * Failed to load requirements
-	 */
-	admin_consent_requirements_error_load: () => LocalizedString
-	/**
-	 * Failed to save requirement
-	 */
-	admin_consent_requirements_error_save: () => LocalizedString
-	/**
-	 * Failed to delete requirement
-	 */
-	admin_consent_requirements_error_delete: () => LocalizedString
-	/**
-	 * Requirement saved successfully
-	 */
-	admin_consent_requirements_saved_success: () => LocalizedString
-	/**
-	 * Requirement removed
-	 */
-	admin_consent_requirements_deleted_success: () => LocalizedString
-	/**
-	 * Remove this requirement?
-	 */
-	admin_consent_requirements_delete_confirm: () => LocalizedString
 }
 
 export type Formatters = {}

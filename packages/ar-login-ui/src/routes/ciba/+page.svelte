@@ -31,12 +31,12 @@
 		try {
 			const { data, error: apiError } = await cibaAPI.getPending();
 			if (apiError) {
-				error = apiError.error_description || 'Failed to load pending requests';
+				error = apiError.error_description || $LL.ciba_errorLoadPending();
 			} else {
 				pendingRequests = (data as typeof pendingRequests) || [];
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred';
+			error = err instanceof Error ? err.message : $LL.ciba_errorGeneric();
 		} finally {
 			loading = false;
 		}
@@ -46,7 +46,7 @@
 		if (processingId !== null) return;
 		const request = pendingRequests.find((r) => r.auth_req_id === authReqId);
 		if (!request || isExpired(request.expires_at)) {
-			error = 'This authentication request has expired';
+			error = $LL.ciba_expired();
 			return;
 		}
 		processingId = authReqId;
@@ -54,9 +54,9 @@
 			const { error: apiError } = await cibaAPI.approve(authReqId);
 
 			if (apiError) {
-				error = apiError.error_description || 'Failed to approve request';
+				error = apiError.error_description || $LL.ciba_errorApproveFailed();
 			} else {
-				successMessage = 'Authentication request approved successfully';
+				successMessage = $LL.ciba_approvedSuccess();
 				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
 
 				setTimeout(() => {
@@ -64,7 +64,7 @@
 				}, 3000);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred';
+			error = err instanceof Error ? err.message : $LL.ciba_errorGeneric();
 		} finally {
 			processingId = null;
 		}
@@ -74,7 +74,7 @@
 		if (processingId !== null) return;
 		const request = pendingRequests.find((r) => r.auth_req_id === authReqId);
 		if (!request || isExpired(request.expires_at)) {
-			error = 'This authentication request has expired';
+			error = $LL.ciba_expired();
 			return;
 		}
 		processingId = authReqId;
@@ -82,9 +82,9 @@
 			const { error: apiError } = await cibaAPI.reject(authReqId);
 
 			if (apiError) {
-				error = apiError.error_description || 'Failed to deny request';
+				error = apiError.error_description || $LL.ciba_errorDenyFailed();
 			} else {
-				successMessage = 'Authentication request denied successfully';
+				successMessage = $LL.ciba_rejectedSuccess();
 				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
 
 				setTimeout(() => {
@@ -92,7 +92,7 @@
 				}, 3000);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred';
+			error = err instanceof Error ? err.message : $LL.ciba_errorGeneric();
 		} finally {
 			processingId = null;
 		}
@@ -114,16 +114,16 @@
 </script>
 
 <svelte:head>
-	<title>CIBA Authentication Requests - {brandingStore.brandName || $LL.app_title()}</title>
+	<title>{$LL.ciba_title()} - {brandingStore.brandName || $LL.app_title()}</title>
 </svelte:head>
 
 <div class="container mx-auto max-w-4xl px-4 py-8">
 	<div class="space-y-6">
 		<!-- Page header -->
 		<div class="text-center">
-			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Authentication Requests</h1>
+			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">{$LL.ciba_title()}</h1>
 			<p class="mt-2 text-gray-600 dark:text-gray-400">
-				Review and approve pending authentication requests
+				{$LL.ciba_subtitle()}
 			</p>
 		</div>
 
@@ -162,10 +162,10 @@
 						class="i-heroicons-check-badge mx-auto h-16 w-16 text-gray-400 dark:text-gray-600"
 					></div>
 					<h3 class="mt-4 text-lg font-medium text-gray-900 dark:text-white">
-						No Pending Requests
+						{$LL.ciba_noPendingRequests()}
 					</h3>
 					<p class="mt-2 text-gray-600 dark:text-gray-400">
-						You don't have any pending authentication requests at the moment.
+						{$LL.ciba_noPendingDescription()}
 					</p>
 				</div>
 			</Card>
@@ -195,12 +195,16 @@
 								<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
 									{request.client_name}
 								</h3>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Authentication Request</p>
+								<p class="text-sm text-gray-600 dark:text-gray-400">
+									{$LL.ciba_authenticationRequest()}
+								</p>
 							</div>
 							<div class="text-right">
-								<p class="text-xs text-gray-500 dark:text-gray-400">Expires in</p>
+								<p class="text-xs text-gray-500 dark:text-gray-400">{$LL.ciba_expiresIn()}</p>
 								<p class="text-sm font-medium text-gray-900 dark:text-white">
-									{formatTimeRemaining(request.expires_at)}
+									{isExpired(request.expires_at)
+										? $LL.ciba_expired()
+										: formatTimeRemaining(request.expires_at)}
 								</p>
 							</div>
 						</div>
@@ -214,7 +218,7 @@
 									></div>
 									<div>
 										<p class="text-sm font-medium text-blue-900 dark:text-blue-200">
-											Binding Message
+											{$LL.ciba_bindingMessage()}
 										</p>
 										<p class="mt-1 text-sm text-blue-800 dark:text-blue-300">
 											{request.binding_message}
@@ -228,7 +232,7 @@
 						{#if request.user_code}
 							<div>
 								<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
-									Verification Code
+									{$LL.ciba_verificationCode()}
 								</p>
 								<div class="mt-1 font-mono text-2xl font-bold text-gray-900 dark:text-white">
 									{request.user_code}
@@ -238,7 +242,9 @@
 
 						<!-- Requested Scopes -->
 						<div>
-							<p class="text-sm font-medium text-gray-700 dark:text-gray-300">Requested Access</p>
+							<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+								{$LL.ciba_requestedAccess()}
+							</p>
 							<div class="mt-2 flex flex-wrap gap-2">
 								{#each request.scope.split(' ') as scope (scope)}
 									<span
@@ -261,7 +267,7 @@
 								onclick={() => handleApprove(request.auth_req_id)}
 							>
 								<div class="i-heroicons-check h-5 w-5"></div>
-								Approve
+								{$LL.ciba_approveButton()}
 							</Button>
 							<Button
 								variant="secondary"
@@ -270,7 +276,7 @@
 								onclick={() => handleDeny(request.auth_req_id)}
 							>
 								<div class="i-heroicons-x-mark h-5 w-5"></div>
-								Deny
+								{$LL.ciba_rejectButton()}
 							</Button>
 						</div>
 					</div>
@@ -283,7 +289,7 @@
 			<div class="text-center">
 				<Button variant="secondary" onclick={loadPendingRequests}>
 					<div class="i-heroicons-arrow-path h-4 w-4"></div>
-					Refresh
+					{$LL.ciba_refresh()}
 				</Button>
 			</div>
 		{/if}

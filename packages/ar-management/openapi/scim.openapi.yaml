@@ -4,9 +4,7 @@ info:
   version: 0.3.2
   summary: SCIM 2.0 user and group provisioning API.
   description: >
-    Initial OpenAPI contract for the SCIM 2.0 endpoints implemented by `@authrim/ar-management`.
-    SCIM resource schemas are represented at a high level here; detailed semantics are governed by
-    RFC 7643, RFC 7644, and the implementation tests.
+    Initial OpenAPI contract for the SCIM 2.0 endpoints implemented by `@authrim/ar-management`. SCIM resource schemas are represented at a high level here; detailed semantics are governed by RFC 7643, RFC 7644, and the implementation tests.
 servers:
   - name: Tenant runtime
     url: https://{tenant_domain}
@@ -109,6 +107,8 @@ paths:
           $ref: "#/components/responses/ScimJson"
         "401":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     post:
       tags:
         - SCIM Users
@@ -122,6 +122,8 @@ paths:
           $ref: "#/components/responses/ScimError"
         "409":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
   /scim/v2/Users/{id}:
     get:
       tags:
@@ -129,17 +131,13 @@ paths:
       summary: Get a SCIM user.
       parameters:
         - $ref: "#/components/parameters/Id"
-        - &a1
-          name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
           $ref: "#/components/responses/ScimJson"
         "404":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     put:
       tags:
         - SCIM Users
@@ -147,7 +145,6 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/IfMatch"
-        - *a1
       requestBody:
         $ref: "#/components/requestBodies/ScimUser"
       responses:
@@ -157,6 +154,8 @@ paths:
           $ref: "#/components/responses/ScimError"
         "412":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     patch:
       tags:
         - SCIM Users
@@ -164,7 +163,6 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/IfMatch"
-        - *a1
       requestBody:
         $ref: "#/components/requestBodies/ScimPatchOp"
       responses:
@@ -174,6 +172,8 @@ paths:
           $ref: "#/components/responses/ScimError"
         "412":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     delete:
       tags:
         - SCIM Users
@@ -181,12 +181,13 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/IfMatch"
-        - *a1
       responses:
         "204":
           description: User deleted.
         "404":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
   /scim/v2/Groups:
     get:
       tags:
@@ -201,6 +202,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/ScimJson"
+      security:
+        - scimBearer: []
     post:
       tags:
         - SCIM Groups
@@ -214,6 +217,8 @@ paths:
           $ref: "#/components/responses/ScimError"
         "409":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
   /scim/v2/Groups/{id}:
     get:
       tags:
@@ -221,17 +226,13 @@ paths:
       summary: Get a SCIM group.
       parameters:
         - $ref: "#/components/parameters/Id"
-        - &a2
-          name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
           $ref: "#/components/responses/ScimJson"
         "404":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     put:
       tags:
         - SCIM Groups
@@ -239,7 +240,6 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/IfMatch"
-        - *a2
       requestBody:
         $ref: "#/components/requestBodies/ScimGroup"
       responses:
@@ -249,6 +249,8 @@ paths:
           $ref: "#/components/responses/ScimError"
         "412":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     patch:
       tags:
         - SCIM Groups
@@ -256,7 +258,6 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/IfMatch"
-        - *a2
       requestBody:
         $ref: "#/components/requestBodies/ScimPatchOp"
       responses:
@@ -266,6 +267,8 @@ paths:
           $ref: "#/components/responses/ScimError"
         "412":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
     delete:
       tags:
         - SCIM Groups
@@ -273,12 +276,13 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/IfMatch"
-        - *a2
       responses:
         "204":
           description: Group deleted.
         "404":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
   /scim/v2/Bulk:
     post:
       tags:
@@ -291,6 +295,8 @@ paths:
           $ref: "#/components/responses/ScimJson"
         "400":
           $ref: "#/components/responses/ScimError"
+      security:
+        - scimBearer: []
 components:
   securitySchemes:
     scimBearer:

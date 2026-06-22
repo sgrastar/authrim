@@ -405,6 +405,164 @@ CREATE INDEX IF NOT EXISTS idx_oauth_client_consents_user
 CREATE INDEX IF NOT EXISTS idx_oauth_client_consents_client
   ON oauth_client_consents(tenant_id, client_id);
 
+CREATE TABLE IF NOT EXISTS consent_statements (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  slug TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'custom',
+  legal_basis TEXT NOT NULL DEFAULT 'consent',
+  processing_purpose TEXT,
+  display_order BIGINT NOT NULL DEFAULT 0,
+  is_active BIGINT NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT consent_statements_unique_slug UNIQUE(tenant_id, slug)
+);
+
+ALTER TABLE consent_statements ADD COLUMN IF NOT EXISTS record_retention_days BIGINT;
+ALTER TABLE consent_statements ADD COLUMN IF NOT EXISTS withdrawal_allowed BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE consent_statements ADD COLUMN IF NOT EXISTS withdrawal_impact TEXT;
+ALTER TABLE consent_statements ADD COLUMN IF NOT EXISTS reconsent_on_version_change BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE consent_statements ADD COLUMN IF NOT EXISTS reconsent_interval_days BIGINT;
+
+CREATE TABLE IF NOT EXISTS consent_statement_versions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  statement_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  content_type TEXT NOT NULL DEFAULT 'url',
+  effective_at BIGINT NOT NULL,
+  effective_until BIGINT,
+  content_hash TEXT,
+  is_current BIGINT NOT NULL DEFAULT 0,
+  current_statement_guard TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT consent_statement_versions_unique_version UNIQUE(tenant_id, statement_id, version),
+  CONSTRAINT consent_statement_versions_statement_fk FOREIGN KEY (statement_id) REFERENCES consent_statements(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_statement_versions_statement
+  ON consent_statement_versions(tenant_id, statement_id, is_current);
+CREATE INDEX IF NOT EXISTS idx_consent_statement_versions_effective
+  ON consent_statement_versions(effective_at);
+ALTER TABLE consent_statement_versions ADD COLUMN IF NOT EXISTS effective_until BIGINT;
+
+CREATE TABLE IF NOT EXISTS consent_statement_localizations (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  version_id TEXT NOT NULL,
+  language TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  processing_purpose TEXT,
+  withdrawal_impact TEXT,
+  document_url TEXT,
+  inline_content TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT consent_statement_localizations_unique_language UNIQUE(version_id, language),
+  CONSTRAINT consent_statement_localizations_version_fk FOREIGN KEY (version_id) REFERENCES consent_statement_versions(id) ON DELETE CASCADE
+);
+
+ALTER TABLE consent_statement_localizations ADD COLUMN IF NOT EXISTS processing_purpose TEXT;
+ALTER TABLE consent_statement_localizations ADD COLUMN IF NOT EXISTS withdrawal_impact TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_consent_statement_localizations_version
+  ON consent_statement_localizations(version_id, language);
+
+CREATE TABLE IF NOT EXISTS consent_policies (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  description TEXT,
+  is_active BIGINT NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT consent_policies_unique_name UNIQUE(tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS consent_policy_items (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  policy_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  requirement TEXT NOT NULL DEFAULT 'required',
+  version_mode TEXT NOT NULL DEFAULT 'current',
+  version_id TEXT,
+  min_version TEXT,
+  checkbox_mode TEXT NOT NULL DEFAULT 'required',
+  checkbox_default_checked BIGINT NOT NULL DEFAULT 0,
+  binding_type TEXT,
+  binding_value TEXT,
+  evidence_profile TEXT,
+  language_fallback TEXT,
+  display_order BIGINT NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT consent_policy_items_unique_statement UNIQUE(tenant_id, policy_id, statement_id),
+  CONSTRAINT consent_policy_items_policy_fk FOREIGN KEY (policy_id) REFERENCES consent_policies(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_policy_items_policy
+  ON consent_policy_items(tenant_id, policy_id, display_order);
+
+CREATE TABLE IF NOT EXISTS consent_policy_assignments (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  assignment_type TEXT NOT NULL,
+  target_id TEXT NOT NULL DEFAULT '',
+  policy_id TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT consent_policy_assignments_unique_target UNIQUE(tenant_id, assignment_type, target_id),
+  CONSTRAINT consent_policy_assignments_policy_fk FOREIGN KEY (policy_id) REFERENCES consent_policies(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_policy_assignments_policy
+  ON consent_policy_assignments(tenant_id, policy_id);
+
+CREATE TABLE IF NOT EXISTS client_trust_policies (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  description TEXT,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL DEFAULT '',
+  first_party BIGINT NOT NULL DEFAULT 0,
+  trusted BIGINT NOT NULL DEFAULT 0,
+  skip_authorization_consent BIGINT NOT NULL DEFAULT 0,
+  is_active BIGINT NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT client_trust_policies_unique_name UNIQUE(tenant_id, name),
+  CONSTRAINT client_trust_policies_unique_target UNIQUE(tenant_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_trust_policies_target
+  ON client_trust_policies(tenant_id, target_type, target_id);
+
+CREATE TABLE IF NOT EXISTS sign_in_confirmation_policies (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  description TEXT,
+  trigger_type TEXT NOT NULL DEFAULT 'login',
+  mode TEXT NOT NULL DEFAULT 'disabled',
+  remember_duration_days BIGINT NOT NULL DEFAULT 365,
+  show_application_context BIGINT NOT NULL DEFAULT 1,
+  show_tenant_context BIGINT NOT NULL DEFAULT 1,
+  is_active BIGINT NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  CONSTRAINT sign_in_confirmation_policies_unique_name UNIQUE(tenant_id, name),
+  CONSTRAINT sign_in_confirmation_policies_unique_trigger UNIQUE(tenant_id, trigger_type)
+);
+
 CREATE TABLE IF NOT EXISTS user_consent_records (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -416,6 +574,10 @@ CREATE TABLE IF NOT EXISTS user_consent_records (
   granted_at BIGINT,
   withdrawn_at BIGINT,
   expires_at BIGINT,
+  retain_until BIGINT,
+  consent_settings_snapshot_at BIGINT,
+  record_retention_days_snapshot BIGINT,
+  reconsent_interval_days_snapshot BIGINT,
   client_id TEXT,
   ip_address_hash TEXT,
   user_agent TEXT,
@@ -430,6 +592,40 @@ CREATE INDEX IF NOT EXISTS idx_user_consent_records_user
   ON user_consent_records(tenant_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_user_consent_records_status
   ON user_consent_records(tenant_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_user_consent_records_retain_until
+  ON user_consent_records(retain_until);
+
+CREATE TABLE IF NOT EXISTS consent_item_history (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  version_id_before TEXT,
+  version_id_after TEXT,
+  version_before TEXT,
+  version_after TEXT,
+  status_before TEXT,
+  status_after TEXT,
+  granted_at BIGINT,
+  withdrawn_at BIGINT,
+  expires_at BIGINT,
+  retain_until BIGINT,
+  consent_settings_snapshot_at BIGINT,
+  record_retention_days_snapshot BIGINT,
+  reconsent_interval_days_snapshot BIGINT,
+  ip_address_hash TEXT,
+  user_agent TEXT,
+  client_id TEXT,
+  metadata_json TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_consent_item_history_user
+  ON consent_item_history(tenant_id, user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_consent_item_history_statement
+  ON consent_item_history(statement_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_consent_item_history_retain_until
+  ON consent_item_history(retain_until);
 
 CREATE TABLE IF NOT EXISTS user_custom_fields (
   user_id TEXT NOT NULL,

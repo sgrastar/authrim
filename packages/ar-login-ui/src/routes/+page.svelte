@@ -36,11 +36,8 @@
 </script>
 
 <svelte:head>
-	<title>{brandingStore.brandName || 'Authrim'} - OpenID Connect Provider</title>
-	<meta
-		name="description"
-		content="Authrim - A modern OpenID Connect Provider built with Cloudflare Workers."
-	/>
+	<title>{brandingStore.brandName || $LL.app_title()} - {$LL.landing_providerBadge()}</title>
+	<meta name="description" content={$LL.landing_metaDescription()} />
 </svelte:head>
 
 <div class="landing" class:landing--mounted={mounted}>
@@ -73,7 +70,7 @@
 							<div class="i-heroicons-user-circle h-5 w-5"></div>
 						</div>
 						<span class="landing__user-email">
-							{$currentUser?.email || $currentUser?.name || 'User'}
+							{$currentUser?.email || $currentUser?.name || $LL.common_userFallback()}
 						</span>
 						<button
 							class="landing__logout-btn"
@@ -117,7 +114,7 @@
 			<div class="landing__hero-content">
 				<div class="landing__badge">
 					<span class="landing__badge-dot"></span>
-					OpenID Connect Provider
+					{$LL.landing_providerBadge()}
 				</div>
 
 				<h1 class="home-header__brand landing__title">
@@ -132,9 +129,9 @@
 								<div class="i-heroicons-shield-check h-6 w-6"></div>
 							</div>
 							<div>
-								<p class="landing__auth-card-label">Signed in as</p>
+								<p class="landing__auth-card-label">{$LL.landing_signedInAs()}</p>
 								<p class="landing__auth-card-value">
-									{$currentUser?.email || $currentUser?.name || 'User'}
+									{$currentUser?.email || $currentUser?.name || $LL.common_userFallback()}
 								</p>
 							</div>
 						</div>

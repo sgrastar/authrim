@@ -50,6 +50,7 @@ import adminExternalTokenRefresh from './admin-external-token-refresh';
 import adminIatTokens from './admin-iat-tokens';
 import adminPlugins from './admin-plugins';
 import adminIdentityMapping from './admin-identity-mapping';
+import adminConsentPolicies from './admin-consent-policies';
 import adminOther from './admin-other';
 
 const ja: Translation = {
@@ -104,6 +105,7 @@ const ja: Translation = {
 	...adminIatTokens,
 	...adminPlugins,
 	...adminIdentityMapping,
+	...adminConsentPolicies,
 	...adminOther
 } satisfies Translation;
 

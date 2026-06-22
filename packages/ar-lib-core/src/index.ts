@@ -178,6 +178,20 @@ export {
   ConsentItemAction,
   ConditionalRuleOperator,
 } from './types/consent-statements';
+export type {
+  ConsentPolicy,
+  ConsentPolicyItem,
+  ConsentPolicyAssignment,
+  ConsentPolicyAssignmentType,
+  ConsentPolicyCheckboxMode,
+  ConsentPolicyItemBindingType,
+  ConsentPolicyRequirement,
+  ConsentPolicyVersionMode,
+  ClientTrustPolicy,
+  ClientTrustPolicyTargetType,
+  SignInConfirmationMode,
+  SignInConfirmationPolicy,
+} from './types/consent-policies';
 export * from './utils/consent-statements';
 
 // Initial Setup (Admin Account Setup)

@@ -1281,16 +1281,13 @@ async function resolveSAMLRuntimeIdentityMapping(
     partnerEntityId: spConfig.entityId,
   });
   if (!binding) {
-    if (configured?.fieldMappingSetId) {
-      throw new SAMLIdentityMappingRuntimeError([
-        {
-          category: 'policy',
-          code: 'policy.missing_identity_mapping_binding',
-          severity: 'critical',
-        },
-      ]);
-    }
-    return configured;
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.missing_identity_mapping_binding',
+        severity: 'critical',
+      },
+    ]);
   }
 
   return {

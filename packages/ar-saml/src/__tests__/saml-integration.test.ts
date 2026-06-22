@@ -40,6 +40,7 @@ const {
   mockGetSPConfig,
   mockSessionStoreFetch,
   mockCreateAuditLog,
+  mockResolveRuntimeIdentityMappingBinding,
 } = vi.hoisted(() => ({
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -62,12 +63,23 @@ const {
     .fn()
     .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
+  mockResolveRuntimeIdentityMappingBinding: vi.fn(),
 }));
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../admin/providers', () => ({
-  getIdPConfigByEntityId: (...args: any[]) => mockGetIdPConfigByEntityId(...args),
+  getIdPConfigByEntityId: async (...args: any[]) => {
+    const config = await mockGetIdPConfigByEntityId(...args);
+    return config
+      ? {
+          ...config,
+          identityMapping: config.identityMapping ?? {
+            fieldMappingSetId: 'test-saml-inbound',
+          },
+        }
+      : config;
+  },
   getSPConfig: (...args: any[]) => mockGetSPConfig(...args),
 }));
 
@@ -111,6 +123,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     syncUserLifecycleState: mockSyncUserLifecycleState,
     createAuditLog: mockCreateAuditLog,
     resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    resolveRuntimeIdentityMappingBinding: mockResolveRuntimeIdentityMappingBinding,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         return mockRuntimeUsersById.get(userId) ?? null;
@@ -191,6 +204,106 @@ function createMockAdapter(
     isHealthy: vi.fn().mockResolvedValue(true),
     getType: vi.fn().mockReturnValue('mock'),
     close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function createTestSAMLInboundMappingBinding() {
+  const catalog = {
+    identity: {
+      id: 'test-saml-inbound-catalog',
+      version: '1',
+      contentHash: 'test-saml-inbound-catalog',
+      compatibilityRange: '^0.3.0',
+    },
+    entries: [
+      fieldCatalogEntry('field.saml.subject.nameId', 'saml.subject', 'nameId', 'source'),
+      fieldCatalogEntry('field.saml.attribute.email', 'saml.attribute', 'email', 'source'),
+      fieldCatalogEntry(
+        'field.saml.attribute.displayName',
+        'saml.attribute',
+        'displayName',
+        'source'
+      ),
+      fieldCatalogEntry(
+        'field.saml.attribute.department',
+        'saml.attribute',
+        'department',
+        'source'
+      ),
+      fieldCatalogEntry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
+      fieldCatalogEntry('field.profile.name', 'authrim.profile', 'name', 'canonical'),
+      fieldCatalogEntry(
+        'field.customClaims.department',
+        'authrim.custom_claims',
+        'department',
+        'custom'
+      ),
+    ],
+  };
+  return {
+    id: 'test-saml-inbound-activation',
+    tenantId: 'default',
+    fieldMappingSetId: 'test-saml-inbound',
+    fieldMappingVersionId: 'test-saml-inbound-v1',
+    catalog,
+    edges: [
+      mappingEdge('edge.nameId.email', 'saml.subject', 'nameId', 'authrim.profile', 'email'),
+      mappingEdge('edge.attribute.email', 'saml.attribute', 'email', 'authrim.profile', 'email'),
+      mappingEdge(
+        'edge.displayName.name',
+        'saml.attribute',
+        'displayName',
+        'authrim.profile',
+        'name'
+      ),
+      mappingEdge(
+        'edge.department.customClaim',
+        'saml.attribute',
+        'department',
+        'authrim.custom_claims',
+        'department'
+      ),
+    ],
+    transforms: [],
+    validationRules: [],
+    fieldMappingSet: {
+      id: 'test-saml-inbound-v1',
+      rules: [],
+    },
+  };
+}
+
+function createTestSAMLInboundNoEmailMappingBinding() {
+  return {
+    ...createTestSAMLInboundMappingBinding(),
+    edges: [],
+  };
+}
+
+function fieldCatalogEntry(id: string, namespace: string, path: string, targetType: string) {
+  return {
+    id,
+    namespace,
+    path,
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    targetType,
+  };
+}
+
+function mappingEdge(
+  id: string,
+  sourceNamespace: string,
+  sourcePath: string,
+  targetNamespace: string,
+  targetPath: string
+) {
+  return {
+    id,
+    sourceRef: { side: 'source', namespace: sourceNamespace, path: sourcePath },
+    targetRef: { side: 'destination', namespace: targetNamespace, path: targetPath },
+    edgeKind: 'direct',
   };
 }
 
@@ -425,6 +538,9 @@ describe('SAML Integration', () => {
     mockSessionStoreFetch
       .mockReset()
       .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    mockResolveRuntimeIdentityMappingBinding
+      .mockReset()
+      .mockResolvedValue(createTestSAMLInboundMappingBinding());
     mockGetSPConfig
       .mockReset()
       .mockImplementation(async (_env: unknown, _tenantId: string, entityId: string) => {
@@ -1064,6 +1180,9 @@ describe('SAML Integration', () => {
           run: vi.fn().mockResolvedValue({ success: true }),
         })),
       } as any;
+      mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
+        createTestSAMLInboundNoEmailMappingBinding()
+      );
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
@@ -1151,6 +1270,9 @@ describe('SAML Integration', () => {
           run: vi.fn().mockResolvedValue({ success: true }),
         })),
       } as any;
+      mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
+        createTestSAMLInboundNoEmailMappingBinding()
+      );
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
@@ -1177,6 +1299,9 @@ describe('SAML Integration', () => {
           name: 'displayName',
         },
       });
+      mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
+        createTestSAMLInboundNoEmailMappingBinding()
+      );
       mockEnv.DB_PII = {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
@@ -1214,6 +1339,9 @@ describe('SAML Integration', () => {
           name: 'displayName',
         },
       });
+      mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
+        createTestSAMLInboundNoEmailMappingBinding()
+      );
       const coreAdapter = createMockAdapter();
       const piiAdapter = createMockAdapter();
       mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({

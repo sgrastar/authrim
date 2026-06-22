@@ -23,6 +23,7 @@ import type {
   ConsentChallengeMetadata,
   ExtendedConsentScreenData,
   ExtendedConsentEventData,
+  ConsentScreenItem,
 } from '@authrim/ar-lib-core';
 import {
   getConsentRBACData,
@@ -49,6 +50,7 @@ import {
   processConsentItemDecisions,
   hashIpAddress,
   upsertOAuthClientConsent,
+  parseClaimsRequest,
   // Logger
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -124,6 +126,24 @@ function parseScopesToInfo(scope: string): ConsentScopeInfo[] {
       required: scopeName === 'openid',
     };
   });
+}
+
+function splitScopes(scope: string | undefined | null): string[] {
+  return (scope ?? '')
+    .split(/\s+/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+function collectRequestedClaimNames(claims: unknown): string[] {
+  const parsed = parseClaimsRequest(typeof claims === 'string' ? claims : undefined);
+  if (!parsed.ok || !parsed.request) return [];
+  return Array.from(
+    new Set([
+      ...Object.keys(parsed.request.userinfo ?? {}),
+      ...Object.keys(parsed.request.id_token ?? {}),
+    ])
+  );
 }
 
 /**
@@ -232,12 +252,27 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    let consentItems: ConsentScreenItem[] = [];
+    try {
+      consentItems = await loadConsentScreenItems(c, {
+        tenantId,
+        clientId: clientRow.client_id,
+        userId,
+        metadata,
+        language: 'en',
+        defaultLanguage: 'en',
+      });
+    } catch {
+      consentItems = [];
+    }
+
     // Otherwise, return HTML (legacy fallback)
     return renderHtmlConsent(c, {
       challenge_id,
       clientRow,
       scopeDetails,
       client_id,
+      consentItems,
     });
   } catch (error) {
     log.error('Consent get error', { action: 'get_consent' }, error as Error);
@@ -414,35 +449,37 @@ async function handleJsonConsentGet(
       mgmtEnabled = envVal === 'true' || envVal === '1';
     }
 
-    if (mgmtEnabled) {
-      consentManagementEnabled = true;
+    // Determine language from ui_locales or Accept-Language
+    const uiLocales = metadata.ui_locales as string | undefined;
+    const acceptLang = c.req.header('Accept-Language');
+    consentLanguage = uiLocales?.split(' ')[0] || acceptLang?.split(',')[0]?.split('-')[0] || 'en';
 
-      // Determine language from ui_locales or Accept-Language
-      const uiLocales = metadata.ui_locales as string | undefined;
-      const acceptLang = c.req.header('Accept-Language');
-      consentLanguage =
-        uiLocales?.split(' ')[0] || acceptLang?.split(',')[0]?.split('-')[0] || 'en';
-
-      // Get default language from settings
-      let defaultLang = 'en';
-      if (c.env.KV) {
-        try {
-          const kvLang = await c.env.KV.get('consent:default_language');
-          if (kvLang) defaultLang = kvLang;
-        } catch {
-          /* use default */
-        }
+    // Get default language from settings
+    let defaultLang = 'en';
+    if (c.env.KV) {
+      try {
+        const kvLang = await c.env.KV.get('consent:default_language');
+        if (kvLang) defaultLang = kvLang;
+      } catch {
+        /* use default */
       }
-
-      consentItems = await getConsentItemsForScreen(
-        authCtx.coreAdapter,
-        tenantId,
-        clientRow.client_id,
-        userId,
-        consentLanguage,
-        defaultLang
-      );
     }
+
+    consentItems = await getConsentItemsForScreen(
+      authCtx.coreAdapter,
+      tenantId,
+      clientRow.client_id,
+      userId,
+      consentLanguage,
+      defaultLang,
+      {
+        target_type: 'oidc_client',
+        target_id: clientRow.client_id,
+        requested_scopes: splitScopes(metadata.scope as string | undefined),
+        requested_claims: collectRequestedClaimNames(metadata.claims),
+      }
+    );
+    consentManagementEnabled = mgmtEnabled || (consentItems?.length ?? 0) > 0;
   } catch (err) {
     // Non-blocking: consent management items are optional
   }
@@ -495,6 +532,50 @@ function safeHttpsDisplayUrl(value: string | null | undefined): string | null {
   }
 }
 
+async function loadConsentScreenItems(
+  c: Context<{ Bindings: Env }>,
+  params: {
+    tenantId: string;
+    clientId: string;
+    userId: string;
+    metadata: ConsentChallengeMetadata;
+    language?: string;
+    defaultLanguage?: string;
+  }
+): Promise<ConsentScreenItem[]> {
+  const authCtx = createAuthContextFromHono(c, params.tenantId);
+  return getConsentItemsForScreen(
+    authCtx.coreAdapter,
+    params.tenantId,
+    params.clientId,
+    params.userId,
+    params.language ?? 'en',
+    params.defaultLanguage ?? 'en',
+    {
+      target_type: 'oidc_client',
+      target_id: params.clientId,
+      requested_scopes: splitScopes(params.metadata.scope as string | undefined),
+      requested_claims: collectRequestedClaimNames(params.metadata.claims),
+    }
+  );
+}
+
+function parseConsentItemDecisionsFromForm(
+  body: Record<string, string | File | Array<string | File>>
+): Record<string, 'granted' | 'denied'> | undefined {
+  const decisions: Record<string, 'granted' | 'denied'> = {};
+  const prefix = 'consent_item_decision:';
+  for (const [key, value] of Object.entries(body)) {
+    if (!key.startsWith(prefix)) continue;
+    const rawValue = Array.isArray(value)
+      ? value.filter((item) => typeof item === 'string').at(-1)
+      : value;
+    if (rawValue !== 'granted' && rawValue !== 'denied') continue;
+    decisions[key.slice(prefix.length)] = rawValue;
+  }
+  return Object.keys(decisions).length > 0 ? decisions : undefined;
+}
+
 /**
  * Render HTML consent page (legacy fallback)
  * OIDC Dynamic OP conformance: displays logo_uri, policy_uri, tos_uri
@@ -512,12 +593,45 @@ function renderHtmlConsent(
     };
     scopeDetails: ConsentScopeInfo[];
     client_id: string;
+    consentItems?: ConsentScreenItem[];
   }
 ): Response {
-  const { challenge_id, clientRow, scopeDetails, client_id } = params;
+  const { challenge_id, clientRow, scopeDetails, client_id, consentItems = [] } = params;
   const safeLogoUri = safeHttpsDisplayUrl(clientRow.logo_uri);
   const safePolicyUri = safeHttpsDisplayUrl(clientRow.policy_uri);
   const safeTosUri = safeHttpsDisplayUrl(clientRow.tos_uri);
+  const consentItemsHtml =
+    consentItems.length > 0
+      ? `<p>Additional consent is required:</p>
+    <ul class="scopes">
+      ${consentItems
+        .map((item) => {
+          const hiddenInput =
+            item.checkbox_mode === 'none'
+              ? `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted">`
+              : `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="denied">`;
+          const checkbox =
+            item.checkbox_mode === 'none'
+              ? ''
+              : `<label class="consent-checkbox">
+                   <input form="approve-consent-form" type="checkbox" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted" ${
+                     item.checkbox_default_checked ? 'checked' : ''
+                   } ${item.is_required && item.enforcement === 'block' ? 'required' : ''}>
+                   <span>${item.is_required ? 'Required' : 'Optional'}</span>
+                 </label>`;
+          return `
+        <li class="scope-item">
+          ${hiddenInput}
+          <div class="scope-title">${escapeHtml(item.title)}</div>
+          <div class="scope-desc">${escapeHtml(item.description || item.slug)}</div>
+          ${item.document_url ? `<div class="scope-desc"><a href="${escapeHtml(item.document_url)}" target="_blank" rel="noopener noreferrer">Read document</a></div>` : ''}
+          ${checkbox}
+        </li>
+      `;
+        })
+        .join('')}
+    </ul>`
+      : '';
 
   // Build client info section with logo (OIDC Dynamic OP conformance)
   const clientInfoHtml = safeLogoUri
@@ -615,6 +729,14 @@ function renderHtmlConsent(
       color: #666;
       margin-top: 0.25rem;
     }
+    .consent-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      color: #333;
+      font-size: 0.875rem;
+    }
     .button-group {
       display: flex;
       gap: 1rem;
@@ -663,13 +785,14 @@ function renderHtmlConsent(
         )
         .join('')}
     </ul>
+    ${consentItemsHtml}
     <div class="button-group">
       <form method="POST" action="/auth/consent" style="flex: 1;">
         <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
         <input type="hidden" name="approved" value="false">
         <button type="submit" class="deny">Deny</button>
       </form>
-      <form method="POST" action="/auth/consent" style="flex: 1;">
+      <form id="approve-consent-form" method="POST" action="/auth/consent" style="flex: 1;">
         <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
         <input type="hidden" name="approved" value="true">
         <button type="submit" class="approve">Approve</button>
@@ -731,6 +854,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       selected_org_id = typeof body.selected_org_id === 'string' ? body.selected_org_id : undefined;
       acting_as_user_id =
         typeof body.acting_as_user_id === 'string' ? body.acting_as_user_id : undefined;
+      consent_item_decisions = parseConsentItemDecisionsFromForm(body);
       // Form data doesn't support selected_scopes (use JSON for granular consent)
     }
 
@@ -868,6 +992,54 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       selectedScopesJson = JSON.stringify(validSelectedScopes);
     }
 
+    const consentItems = await loadConsentScreenItems(c, {
+      tenantId,
+      clientId: client_id,
+      userId,
+      metadata,
+      language: 'en',
+      defaultLanguage: 'en',
+    });
+    const targets = Object.fromEntries(
+      consentItems.map((item) => [
+        item.statement_id,
+        {
+          version_id: item.version_id,
+          version: item.version,
+          withdrawal_allowed: item.withdrawal_allowed,
+        },
+      ])
+    );
+    const submittedConsentItemDecisions = consent_item_decisions ?? {};
+    const validConsentItemDecisions = Object.fromEntries(
+      consentItems.map((item) => {
+        const submittedDecision = submittedConsentItemDecisions[item.statement_id];
+        return [
+          item.statement_id,
+          submittedDecision === 'granted' || submittedDecision === 'denied'
+            ? submittedDecision
+            : item.checkbox_mode === 'none'
+              ? 'granted'
+              : 'denied',
+        ];
+      })
+    ) as Record<string, 'granted' | 'denied'>;
+    const missingRequiredConsentItems = consentItems.filter(
+      (item) =>
+        item.is_required &&
+        item.enforcement === 'block' &&
+        validConsentItemDecisions[item.statement_id] !== 'granted'
+    );
+    if (missingRequiredConsentItems.length > 0) {
+      return c.json(
+        {
+          error: 'consent_required',
+          error_description: 'Required consent items must be granted',
+        },
+        400
+      );
+    }
+
     // Calculate expiration if enabled
     let expiresAt: number | null = null;
     if (expirationEnabled && defaultExpirationDays > 0) {
@@ -896,7 +1068,10 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     await invalidateConsentCache(c.env, userId, tenantId, client_id);
 
     // Process consent item decisions (consent management)
-    if (consent_item_decisions && Object.keys(consent_item_decisions).length > 0) {
+    if (consentItems.length > 0) {
+      const hasBlockingConsentItems = consentItems.some(
+        (item) => item.is_required && item.enforcement === 'block'
+      );
       try {
         const ipAddress = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '';
         const ipHash = ipAddress
@@ -907,17 +1082,18 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           authCtx.coreAdapter,
           tenantId,
           userId,
-          consent_item_decisions,
+          validConsentItemDecisions,
           {
             ip_address: ipAddress || undefined,
             user_agent: c.req.header('User-Agent'),
             client_id,
           },
-          ipHash
+          ipHash,
+          targets
         );
 
         // Publish events for each decision
-        for (const [statementId, decision] of Object.entries(consent_item_decisions)) {
+        for (const [statementId, decision] of Object.entries(validConsentItemDecisions)) {
           const eventType =
             decision === 'granted' ? CONSENT_EVENTS.ITEM_GRANTED : CONSENT_EVENTS.ITEM_DENIED;
           if (eventType) {
@@ -942,7 +1118,15 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         }
       } catch (err) {
         log.warn('Failed to process consent item decisions', { action: 'consent_items' });
-        // Non-blocking - don't fail the consent flow
+        if (hasBlockingConsentItems) {
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Failed to record required consent items',
+            },
+            500
+          );
+        }
       }
     }
 

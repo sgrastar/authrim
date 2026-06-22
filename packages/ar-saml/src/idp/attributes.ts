@@ -189,47 +189,13 @@ export function buildSAMLAttributesForSPWithDiagnostics(
     });
   }
 
-  const rules = spConfig.attributeReleasePolicy?.attributes ?? [];
-  if (rules.length === 0) {
-    return {
-      attributes: buildSAMLAttributesFromMapping(subject, spConfig.attributeMapping),
-      optionalMissingAttributes: [],
-    };
-  }
-
-  const attributes: SAMLAttribute[] = [];
-  const missingAttributes: MissingRequiredSAMLAttribute[] = [];
-  const optionalMissingAttributes: MissingRequiredSAMLAttribute[] = [];
-
-  for (const rule of rules) {
-    const attribute = buildAttributeFromRule(subject, rule);
-    if (attribute) {
-      attributes.push(attribute);
-      continue;
-    }
-
-    if (rule.required) {
-      missingAttributes.push({
-        name: rule.name,
-        friendlyName: rule.friendlyName,
-        source: rule.source,
-        claim: rule.claim,
-      });
-    } else {
-      optionalMissingAttributes.push({
-        name: rule.name,
-        friendlyName: rule.friendlyName,
-        source: rule.source,
-        claim: rule.claim,
-      });
-    }
-  }
-
-  if (missingAttributes.length > 0) {
-    throw new MissingRequiredSAMLAttributeError(missingAttributes);
-  }
-
-  return { attributes, optionalMissingAttributes };
+  throw new SAMLIdentityMappingRuntimeError([
+    {
+      category: 'policy',
+      code: 'policy.missing_identity_mapping_binding',
+      severity: 'critical',
+    },
+  ]);
 }
 
 export function hasSAMLIdentityMappingRuntimeConfig(

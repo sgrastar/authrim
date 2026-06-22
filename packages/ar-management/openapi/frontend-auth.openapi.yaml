@@ -10,9 +10,6 @@ servers:
       tenant_domain:
         default: auth.example.com
         description: Tenant runtime domain serving `/api/admin/*`.
-security:
-  - adminBearer: []
-  - adminSessionCookie: []
 tags:
   - name: Frontend Auth Discovery
 paths:
@@ -21,48 +18,48 @@ paths:
       tags:
         - Frontend Auth Discovery
       operationId: getApiAuthAuthenticationMethods
-      summary: List Authentication Methods.
-      description: List Authentication Methods in the Frontend Auth Discovery area. Use this operation to
-        retrieve authentication method data without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: List public login authentication methods.
+      description: Returns the enabled login methods and Login UI configuration for the current tenant,
+        including passkey, email code, directory password, human verification, SAML, and external
+        provider options when configured.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/AuthMethods"
         "400":
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
+      security: []
   /api/auth/discovery:
     get:
       tags:
         - Frontend Auth Discovery
       operationId: getApiAuthDiscovery
-      summary: List Discovery.
-      description: List Discovery in the Frontend Auth Discovery area. Use this operation to retrieve
-        discovery data without mutating tenant state.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Read tenant discovery configuration.
+      description: Returns common-login discovery settings, Login UI branding, and candidate tenant hints
+        for the current host.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DiscoveryConfig"
         "400":
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
+      security: []
     post:
       tags:
         - Frontend Auth Discovery
       operationId: postApiAuthDiscovery
-      summary: Create Discovery.
-      description: Create Discovery in the Frontend Auth Discovery area. The request body is JSON unless
-        the detailed schema for this operation states otherwise.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Resolve a tenant discovery input.
+      description: Resolves an email domain, tenant code, tenant slug, invitation token, WAYF choice, or
+        app hint into one or more tenant login candidates.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/Discovery"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -70,19 +67,19 @@ paths:
         "403":
           $ref: "#/components/responses/Error"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/Discovery"
+      security: []
   /api/auth/discovery/grant:
     post:
       tags:
         - Frontend Auth Discovery
       operationId: postApiAuthDiscoveryGrant
-      summary: Create Grant.
-      description: Create Grant in the Frontend Auth Discovery area. The request body is JSON unless the
-        detailed schema for this operation states otherwise.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Create a tenant discovery grant.
+      description: Issues a short-lived signed grant that allows the Login UI to continue from common
+        discovery to the selected tenant login surface.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DiscoveryGrant"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -90,19 +87,19 @@ paths:
         "403":
           $ref: "#/components/responses/Error"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/DiscoveryGrant"
+      security: []
   /api/auth/discovery/grant/verify:
     post:
       tags:
         - Frontend Auth Discovery
       operationId: postApiAuthDiscoveryGrantVerify
-      summary: Verify Grant.
-      description: Verify Grant in the Frontend Auth Discovery area. The request body is JSON unless the
-        detailed schema for this operation states otherwise.
-      x-authrim-route-coverage: inferred-from-source
+      summary: Verify a tenant discovery grant.
+      description: Validates a discovery grant for the current URL and returns the selected tenant login
+        target when the grant is still valid.
       responses:
         "200":
-          $ref: "#/components/responses/Ok"
+          $ref: "#/components/responses/DiscoveryGrantVerify"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -110,7 +107,8 @@ paths:
         "403":
           $ref: "#/components/responses/Error"
       requestBody:
-        $ref: "#/components/requestBodies/JsonObject"
+        $ref: "#/components/requestBodies/DiscoveryGrantVerify"
+      security: []
 components:
   securitySchemes:
     adminBearer:
@@ -225,6 +223,33 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/WebhookUpdate"
+    Discovery:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryRequest"
+          example:
+            mode: email
+            value: user@example.com
+    DiscoveryGrant:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryGrantRequest"
+          example:
+            tenant_id: tenant_123
+            return_to: https://app.example.com/
+    DiscoveryGrantVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryGrantVerifyRequest"
+          example:
+            grant: eyJhbGciOiJIUzI1NiJ9...
+            current_url: https://auth.example.com/login
   responses:
     Ok:
       description: Successful JSON response.
@@ -280,6 +305,93 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    AuthMethods:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AuthMethodsResponse"
+          example:
+            methods:
+              passkey:
+                enabled: true
+                loginEnabled: true
+                signupEnabled: true
+                capabilities:
+                  - conditional
+                  - discoverable
+              emailCode:
+                enabled: true
+                steps:
+                  - email
+                  - code
+              external:
+                enabled: false
+                providers: []
+            ui:
+              theme: light
+              variant: beige
+              branding:
+                brandName: Authrim
+            meta:
+              cacheTTL: 180
+              revision: 2026-06-19T00:00:00.000Z
+    DiscoveryConfig:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryConfigResponse"
+          example:
+            config:
+              tenant_id: default
+              mode: direct
+              discovery_methods:
+                - email_domain
+                - tenant_code
+              allow_manual_tenant_entry: true
+            ui:
+              theme: light
+              variant: beige
+              brand_name: Authrim
+            single_tenant_mode: false
+            is_common_entry_host: true
+            common_discover_url: https://auth.example.com/discover
+    Discovery:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryResponse"
+          example:
+            result: resolved
+            candidate:
+              tenant_id: tenant_123
+              tenant_code: acme
+              display_name: Acme
+              logo_url: null
+              login_url: https://acme.auth.example.com/login
+              source: email_domain
+    DiscoveryGrant:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryGrantResponse"
+          example:
+            grant: eyJhbGciOiJIUzI1NiJ9...
+            login_url: https://acme.auth.example.com/login?discovery_grant=...
+            expires_in: 300
+    DiscoveryGrantVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DiscoveryGrantVerifyResponse"
+          example:
+            valid: true
+            tenant_id: tenant_123
+            target_url: https://acme.auth.example.com/login
   schemas:
     JsonObject:
       type: object
@@ -897,4 +1009,240 @@ components:
         message:
           type: string
         error_description:
+          type: string
+    AuthMethodsResponse:
+      type: object
+      required:
+        - methods
+        - ui
+        - meta
+      properties:
+        methods:
+          type: object
+          additionalProperties: true
+          properties:
+            passkey:
+              type: object
+              additionalProperties: true
+            emailCode:
+              type: object
+              additionalProperties: true
+            directoryPassword:
+              type: object
+              additionalProperties: true
+            humanVerification:
+              type: object
+              additionalProperties: true
+            external:
+              type: object
+              additionalProperties: true
+        ui:
+          type: object
+          additionalProperties: true
+        meta:
+          type: object
+          required:
+            - cacheTTL
+            - revision
+          properties:
+            cacheTTL:
+              type: integer
+            revision:
+              type: string
+              format: date-time
+    DiscoveryCandidate:
+      type: object
+      required:
+        - tenant_id
+        - tenant_code
+        - display_name
+        - login_url
+        - source
+      properties:
+        tenant_id:
+          type: string
+        tenant_code:
+          type: string
+        display_name:
+          type: string
+        logo_url:
+          type:
+            - string
+            - "null"
+          format: uri
+        login_url:
+          type: string
+          format: uri
+        source:
+          type: string
+          enum:
+            - email_domain
+            - tenant_code
+            - tenant_slug
+            - wayf
+            - invitation
+            - app_hint
+    DiscoveryConfigResponse:
+      type: object
+      required:
+        - config
+        - ui
+        - single_tenant_mode
+        - is_common_entry_host
+      properties:
+        config:
+          type: object
+          additionalProperties: true
+        ui:
+          type: object
+          additionalProperties: true
+        single_tenant_mode:
+          type: boolean
+        is_common_entry_host:
+          type: boolean
+        common_discover_url:
+          type:
+            - string
+            - "null"
+          format: uri
+        wayf_candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiscoveryCandidate"
+        single_active_tenant_candidate:
+          $ref: "#/components/schemas/DiscoveryCandidate"
+        default_candidate:
+          $ref: "#/components/schemas/DiscoveryCandidate"
+    DiscoveryRequest:
+      type: object
+      required:
+        - mode
+        - value
+      properties:
+        mode:
+          type: string
+          enum:
+            - email
+            - tenant_code
+            - tenant_slug
+            - wayf
+            - invite_token
+            - app_hint
+        value:
+          type: string
+          maxLength: 2048
+    DiscoveryResponse:
+      oneOf:
+        - type: object
+          required:
+            - result
+            - candidate
+          properties:
+            result:
+              type: string
+              enum:
+                - resolved
+            candidate:
+              $ref: "#/components/schemas/DiscoveryCandidate"
+            invited_email:
+              type:
+                - string
+                - "null"
+        - type: object
+          required:
+            - result
+            - candidates
+          properties:
+            result:
+              type: string
+              enum:
+                - multiple
+            candidates:
+              type: array
+              items:
+                $ref: "#/components/schemas/DiscoveryCandidate"
+        - type: object
+          required:
+            - result
+            - methods
+            - allow_manual_tenant_entry
+          properties:
+            result:
+              type: string
+              enum:
+                - manual_required
+            methods:
+              type: array
+              items:
+                type: string
+            allow_manual_tenant_entry:
+              type: boolean
+        - type: object
+          required:
+            - result
+            - code
+          properties:
+            result:
+              type: string
+              enum:
+                - not_found
+            code:
+              type: string
+    DiscoveryGrantRequest:
+      type: object
+      required:
+        - tenant_id
+      properties:
+        tenant_id:
+          type: string
+        expected_tenant_id:
+          type: string
+        return_to:
+          type: string
+          format: uri
+        login_hint:
+          type: string
+          maxLength: 320
+    DiscoveryGrantResponse:
+      type: object
+      required:
+        - grant
+        - login_url
+        - expires_in
+      properties:
+        grant:
+          type: string
+        login_url:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+    DiscoveryGrantVerifyRequest:
+      type: object
+      required:
+        - grant
+        - current_url
+      properties:
+        grant:
+          type: string
+        current_url:
+          type: string
+          format: uri
+    DiscoveryGrantVerifyResponse:
+      type: object
+      required:
+        - valid
+        - tenant_id
+        - target_url
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - true
+        tenant_id:
+          type: string
+        target_url:
+          type: string
+          format: uri
+        login_hint:
           type: string

@@ -3,6 +3,7 @@ import { processPendingGenericAdminJobs } from './admin-job-executor';
 import { processPendingDataExportRequests } from './data-export';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import { processPendingSupportOpsSnapshotJobs } from './support-ops';
+import { processConsentRetentionJobs } from './consent-retention-jobs';
 import { processPendingTenantDeletionJobs } from './tenant-deletion-jobs';
 import {
   processPendingTenantDatabaseHealthCheckJobs,
@@ -50,6 +51,12 @@ export async function processScheduledAdminJobQueues(
     await processPendingSupportOpsSnapshotJobs(env, log);
   } catch (jobsError) {
     log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
+  }
+
+  try {
+    await processConsentRetentionJobs(env, log);
+  } catch (jobsError) {
+    log.error('Consent retention job processing failed', {}, jobsError as Error);
   }
 
   try {

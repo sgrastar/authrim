@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const authCodeStore = {
@@ -285,6 +285,10 @@ function tenantProxyHeaders() {
 }
 
 describe('Direct Auth primary passkey and email-code flows', () => {
+  beforeAll(async () => {
+    await import('../direct-auth');
+  }, 20_000);
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getTenantSettings.mockResolvedValue(null);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildSAMLResponse } from '../assertion';
 import { buildSAMLAttributesForSP } from '../attributes';
-import { buildEnterpriseSaaSAttributeReleaseRules } from '../attribute-presets';
 import {
+  buildIdentityMappingConfig,
   enterpriseSaaSAttributeReleaseConfigFixture,
   enterpriseSaaSSubjectFixture,
   researchFederationAttributeReleaseConfigFixture,
@@ -54,12 +54,9 @@ describe('major SAML attribute presets', () => {
   it('allows enterprise SaaS group attribute aliases per SP', () => {
     const attributes = buildSAMLAttributesForSP(enterpriseSaaSSubjectFixture, {
       attributeMapping: {},
-      attributeReleasePolicy: {
-        attributes: buildEnterpriseSaaSAttributeReleaseRules({
-          groupsAttributeName: 'Groups',
-          groupsFriendlyName: 'Groups',
-        }),
-      },
+      identityMapping: buildIdentityMappingConfig([
+        ['groups', 'authrim.custom_claims', 'groups', 'Groups', 'Groups'],
+      ]),
     });
 
     expect(attributes.at(-1)).toEqual({
