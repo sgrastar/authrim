@@ -7,18 +7,25 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockCreatePIIContextFromHono,
+  mockCoreAdapter,
   mockFindById,
+  mockSyncUser,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
+  };
+  const coreAdapter = {
+    execute: vi.fn(),
   };
   return {
     mockSessionStore: sessionStore,
     mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
-    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter: {} }),
+    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
+    mockCoreAdapter: coreAdapter,
     mockFindById: vi.fn(),
+    mockSyncUser: vi.fn(),
   };
 });
 
@@ -34,19 +41,27 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: () => ({
       module: () => ({
         error: vi.fn(),
+        warn: vi.fn(),
       }),
     }),
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         return mockFindById(userId);
       }
+      async syncUser(input: unknown) {
+        return mockSyncUser(input);
+      }
     },
   };
 });
 
-import { getAccountProfileHandler, getAccountReauthStatusHandler } from '../account-page';
+import {
+  getAccountProfileHandler,
+  getAccountReauthStatusHandler,
+  updateAccountProfileHandler,
+} from '../account-page';
 
-function createMockContext(cookie?: string) {
+function createMockContext(cookie?: string, body?: unknown) {
   const headers = new Headers();
   const request = new Request('https://op.example.com/api/account/profile', {
     headers: cookie ? { Cookie: cookie } : {},
@@ -58,6 +73,7 @@ function createMockContext(cookie?: string) {
       url: request.url,
       raw: request,
       header: (name: string) => request.headers.get(name) ?? undefined,
+      json: vi.fn().mockResolvedValue(body),
     },
     header: (name: string, value: string) => {
       headers.set(name, value);
@@ -104,6 +120,8 @@ describe('Account Page API', () => {
       locale: 'ja',
       picture: null,
     });
+    mockSyncUser.mockResolvedValue({ created: false });
+    mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
   });
 
   afterEach(() => {
@@ -179,6 +197,91 @@ describe('Account Page API', () => {
       ttl_seconds: 300,
       methods: ['pwd'],
     });
+  });
+
+  it('updates the profile name and records an account operation without old/new name metadata', async () => {
+    mockFindById
+      .mockResolvedValueOnce({
+        id: 'user-001',
+        tenant_id: 'default',
+        subject_id: 'sub-001',
+        account_id: 'acct-001',
+        account_type: 'end_user',
+        lifecycle_state: 'active',
+        email: 'person@example.test',
+        email_verified: 1,
+        name: 'Old Name',
+        given_name: null,
+        family_name: null,
+        locale: 'ja',
+        picture: null,
+        active: 1,
+      })
+      .mockResolvedValueOnce({
+        id: 'user-001',
+        tenant_id: 'default',
+        subject_id: 'sub-001',
+        account_id: 'acct-001',
+        account_type: 'end_user',
+        lifecycle_state: 'active',
+        email: 'person@example.test',
+        email_verified: 1,
+        name: 'New Name',
+        given_name: null,
+        family_name: null,
+        locale: 'ja',
+        picture: null,
+        active: 1,
+      });
+
+    const response = await updateAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123', {
+        name: '  New   Name  ',
+      })
+    );
+    const body = (await response.json()) as { profile: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(mockSyncUser).toHaveBeenCalledWith({
+      userId: 'user-001',
+      name: 'New Name',
+      active: true,
+      userType: 'end_user',
+    });
+    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_log'),
+      expect.arrayContaining([
+        'default',
+        'user-001',
+        'account.profile.name_updated',
+        'account_profile',
+        'user-001',
+        null,
+        null,
+        JSON.stringify({ fields: ['name'] }),
+      ])
+    );
+    expect(body.profile.name).toBe('New Name');
+  });
+
+  it('does not fail profile updates when account operation logging fails', async () => {
+    mockCoreAdapter.execute.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    const response = await updateAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123', {
+        name: 'Updated Name',
+      })
+    );
+    const body = (await response.json()) as { profile: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(mockSyncUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-001',
+        name: 'Updated Name',
+      })
+    );
+    expect(body.profile.name).toBe('Example Person');
   });
 
   it('rejects expired sessions', async () => {

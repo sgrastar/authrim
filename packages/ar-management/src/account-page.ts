@@ -10,8 +10,10 @@ import {
   getTenantIdFromContext,
   isShardedSessionId,
 } from '@authrim/ar-lib-core';
+import { recordAccountOperation } from './account-operation-log';
 
 const REAUTH_TTL_SECONDS = 5 * 60;
+const MAX_NAME_LENGTH = 100;
 
 export type AccountSession = {
   sessionId: string;
@@ -149,6 +151,79 @@ export async function getAccountProfileHandler(c: Context<{ Bindings: Env }>): P
       auth_time: accountSession.authTime,
       ...(accountSession.acr && { acr: accountSession.acr }),
       ...(accountSession.amr && { amr: accountSession.amr }),
+    },
+  });
+}
+
+export async function updateAccountProfileHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  setNoStore(c);
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+
+  let body: { name?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'invalid_request', error_description: 'Request body must be JSON' }, 400);
+  }
+
+  if (typeof body.name !== 'string') {
+    return c.json({ error: 'invalid_request', error_description: 'name is required' }, 400);
+  }
+  const name = body.name.trim().replace(/\s+/g, ' ');
+  if (name.length === 0) {
+    return c.json({ error: 'invalid_request', error_description: 'name must not be empty' }, 400);
+  }
+  if (name.length > MAX_NAME_LENGTH) {
+    return c.json(
+      { error: 'invalid_request', error_description: 'name must not exceed 100 characters' },
+      400
+    );
+  }
+
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+  const existingUser = await runtimeUsers.findById(accountSession.userId);
+  if (!existingUser) {
+    return unauthorized(c, 'Session user was not found');
+  }
+
+  await runtimeUsers.syncUser({
+    userId: accountSession.userId,
+    name,
+    active: existingUser.active === 1,
+    userType: existingUser.account_type,
+  });
+
+  await recordAccountOperation(c, {
+    userId: accountSession.userId,
+    action: 'account.profile.name_updated',
+    resourceType: 'account_profile',
+    resourceId: accountSession.userId,
+    metadata: {
+      fields: ['name'],
+    },
+  });
+
+  const updatedUser = await runtimeUsers.findById(accountSession.userId);
+  return c.json({
+    profile: {
+      user_id: accountSession.userId,
+      email: updatedUser?.email ?? existingUser.email,
+      email_verified: (updatedUser?.email_verified ?? existingUser.email_verified) === 1,
+      name: updatedUser?.name ?? name,
+      given_name: updatedUser?.given_name ?? existingUser.given_name,
+      family_name: updatedUser?.family_name ?? existingUser.family_name,
+      locale: updatedUser?.locale ?? existingUser.locale,
+      picture: updatedUser?.picture ?? existingUser.picture,
     },
   });
 }

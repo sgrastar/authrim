@@ -13,6 +13,7 @@ import type {
   AuthenticatorTransportFuture,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
+import { recordAccountOperation } from './account-operation-log';
 
 const MAX_DEVICE_NAME_LENGTH = 100;
 const REAUTH_TTL_SECONDS = 5 * 60;
@@ -359,6 +360,13 @@ export async function completeAccountPasskeyRegistrationHandler(
       requestedDeviceName || challengeData.metadata?.deviceName || `Passkey ${Date.now()}`,
   });
 
+  await recordAccountOperation(c, {
+    userId: accountSession.userId,
+    action: 'account.passkey.created',
+    resourceType: 'passkey',
+    resourceId: passkey.id,
+  });
+
   return c.json(
     {
       ok: true,
@@ -431,6 +439,15 @@ export async function updateAccountPasskeyHandler(
   }
 
   const updated = await passkeyRepo.rename(existing.id, deviceName);
+  await recordAccountOperation(c, {
+    userId: accountSession.userId,
+    action: 'account.passkey.updated',
+    resourceType: 'passkey',
+    resourceId: existing.id,
+    metadata: {
+      fields: ['device_name'],
+    },
+  });
   return c.json({
     passkey: sanitizePasskey(updated ?? { ...existing, device_name: deviceName }),
   });
@@ -473,6 +490,13 @@ export async function deleteAccountPasskeyHandler(
       400
     );
   }
+
+  await recordAccountOperation(c, {
+    userId: accountSession.userId,
+    action: 'account.passkey.deleted',
+    resourceType: 'passkey',
+    resourceId: existing.id,
+  });
 
   return c.json({
     ok: true,

@@ -670,8 +670,10 @@ import {
 } from './self-service-devices';
 import {
   getAccountProfileHandler,
+  updateAccountProfileHandler,
   getAccountReauthStatusHandler,
 } from './account-page';
+import { listAccountOperationsHandler } from './account-operations';
 import {
   listAccountSessionsHandler,
   deleteAccountSessionHandler,
@@ -1173,7 +1175,9 @@ app.use('/api/account/*', async (c, next) => {
   })(c, next);
 });
 app.get('/api/account/profile', getAccountProfileHandler);
+app.patch('/api/account/profile', updateAccountProfileHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
+app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
 app.get('/api/account/passkeys', listAccountPasskeysHandler);

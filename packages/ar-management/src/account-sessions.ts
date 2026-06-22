@@ -9,6 +9,7 @@ import {
   isShardedSessionId,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
+import { recordAccountOperation } from './account-operation-log';
 
 type SessionRow = {
   id: string;
@@ -142,6 +143,17 @@ export async function deleteAccountSessionHandler(
       maxAge: 0,
     });
   }
+
+  await recordAccountOperation(c, {
+    userId: accountSession.userId,
+    action: 'account.session.revoked',
+    resourceType: 'session',
+    resourceId: sessionId,
+    metadata: {
+      current,
+      store_status: storeStatus,
+    },
+  });
 
   return c.json({
     ok: true,

@@ -35,6 +35,37 @@ paths:
           $ref: "#/components/responses/Error"
       security: &accountSession
         - accountSessionCookie: []
+    patch:
+      tags:
+        - Account Page
+      operationId: patchApiAccountProfile
+      summary: Update current Account Page profile.
+      description: Updates mutable profile fields for the authenticated Account Page user. The initial
+        implementation supports name changes.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountProfile"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+      security: *accountSession
   /api/account/reauth/status:
     get:
       tags:
@@ -50,6 +81,29 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+      security: *accountSession
+  /api/account/operations:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountOperations
+      summary: List current user's Account Page operation history.
+      description: Returns non-sensitive Account Page operation events for the authenticated user.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountOperations"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
       security: *accountSession
   /api/account/sessions:
     get:
@@ -651,6 +705,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/AccountReauthStatusResponse"
+    AccountOperations:
+      description: Account Page operation history response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountOperationsResponse"
     AccountDevices:
       description: Account Page device inventory response.
       content:
@@ -928,6 +988,41 @@ components:
               type: array
               items:
                 type: string
+    AccountOperation:
+      type: object
+      required:
+        - id
+        - action
+        - resource_type
+        - resource_id
+        - created_at
+      properties:
+        id:
+          type: string
+        action:
+          type: string
+        resource_type:
+          type:
+            - string
+            - "null"
+        resource_id:
+          type:
+            - string
+            - "null"
+        created_at:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties: true
+    AccountOperationsResponse:
+      type: object
+      required:
+        - operations
+      properties:
+        operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountOperation"
     AccountDevice:
       type: object
       required:
