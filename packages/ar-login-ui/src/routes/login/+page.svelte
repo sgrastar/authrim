@@ -426,6 +426,9 @@
 			if (authorizationChallengeId) {
 				params.set('challenge_id', authorizationChallengeId);
 			}
+			if (returnTo && isValidReturnUrl(returnTo)) {
+				params.set('return_to', returnTo);
+			}
 			if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
 				params.set('saml_request_id', samlRequestId);
 				params.set('saml_sp_entity_id', samlSpEntityId);

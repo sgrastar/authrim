@@ -147,6 +147,114 @@ type RootTranslation = {
 	 */
 	account_openPage: string
 	/**
+	 * V​e​r​i​f​i​e​d
+	 */
+	account_verified: string
+	/**
+	 * E​d​i​t​ ​n​a​m​e
+	 */
+	account_editName: string
+	/**
+	 * S​a​v​e
+	 */
+	account_save: string
+	/**
+	 * S​a​v​e​d
+	 */
+	account_saved: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​c​h​a​n​g​e​s
+	 */
+	account_saveFailed: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​a​c​c​o​u​n​t​ ​d​a​t​a
+	 */
+	account_loadFailed: string
+	/**
+	 * R​e​f​r​e​s​h
+	 */
+	account_refresh: string
+	/**
+	 * S​i​g​n​ ​i​n​ ​a​g​a​i​n
+	 */
+	account_reauth: string
+	/**
+	 * R​e​c​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​i​r​e​d​.​ ​S​i​g​n​ ​i​n​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+	 */
+	account_reauthRequired: string
+	/**
+	 * D​e​v​i​c​e​s
+	 */
+	account_devices: string
+	/**
+	 * C​u​r​r​e​n​t
+	 */
+	account_currentDevice: string
+	/**
+	 * S​e​s​s​i​o​n​s
+	 */
+	account_sessions: string
+	/**
+	 * C​u​r​r​e​n​t​ ​s​e​s​s​i​o​n
+	 */
+	account_currentSession: string
+	/**
+	 * L​o​g​ ​o​u​t
+	 */
+	account_logoutSession: string
+	/**
+	 * P​a​s​s​k​e​y​ ​n​a​m​e
+	 */
+	account_passkeyName: string
+	/**
+	 * A​d​d​ ​p​a​s​s​k​e​y
+	 */
+	account_addPasskey: string
+	/**
+	 * D​e​l​e​t​e
+	 */
+	account_delete: string
+	/**
+	 * N​o​ ​i​t​e​m​s
+	 */
+	account_empty: string
+	/**
+	 * P​l​a​n​n​e​d
+	 */
+	account_planned: string
+	/**
+	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
+	 */
+	account_passkeyUnsupported: string
+	/**
+	 * T​h​e​ ​o​p​e​r​a​t​i​o​n​ ​f​a​i​l​e​d
+	 */
+	account_actionFailed: string
+	/**
+	 * A​c​t​i​v​i​t​y
+	 */
+	account_activityTitle: string
+	/**
+	 * N​a​m​e​ ​c​h​a​n​g​e​d
+	 */
+	account_operationNameUpdated: string
+	/**
+	 * P​a​s​s​k​e​y​ ​a​d​d​e​d
+	 */
+	account_operationPasskeyCreated: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​n​a​m​e​d
+	 */
+	account_operationPasskeyUpdated: string
+	/**
+	 * P​a​s​s​k​e​y​ ​d​e​l​e​t​e​d
+	 */
+	account_operationPasskeyDeleted: string
+	/**
+	 * S​e​s​s​i​o​n​ ​l​o​g​g​e​d​ ​o​u​t
+	 */
+	account_operationSessionRevoked: string
+	/**
 	 * W​e​l​c​o​m​e​ ​b​a​c​k
 	 */
 	login_title: string
@@ -1034,6 +1142,114 @@ export type TranslationFunctions = {
 	 * Account page
 	 */
 	account_openPage: () => LocalizedString
+	/**
+	 * Verified
+	 */
+	account_verified: () => LocalizedString
+	/**
+	 * Edit name
+	 */
+	account_editName: () => LocalizedString
+	/**
+	 * Save
+	 */
+	account_save: () => LocalizedString
+	/**
+	 * Saved
+	 */
+	account_saved: () => LocalizedString
+	/**
+	 * Could not save changes
+	 */
+	account_saveFailed: () => LocalizedString
+	/**
+	 * Could not load account data
+	 */
+	account_loadFailed: () => LocalizedString
+	/**
+	 * Refresh
+	 */
+	account_refresh: () => LocalizedString
+	/**
+	 * Sign in again
+	 */
+	account_reauth: () => LocalizedString
+	/**
+	 * Recent authentication is required. Sign in again and retry.
+	 */
+	account_reauthRequired: () => LocalizedString
+	/**
+	 * Devices
+	 */
+	account_devices: () => LocalizedString
+	/**
+	 * Current
+	 */
+	account_currentDevice: () => LocalizedString
+	/**
+	 * Sessions
+	 */
+	account_sessions: () => LocalizedString
+	/**
+	 * Current session
+	 */
+	account_currentSession: () => LocalizedString
+	/**
+	 * Log out
+	 */
+	account_logoutSession: () => LocalizedString
+	/**
+	 * Passkey name
+	 */
+	account_passkeyName: () => LocalizedString
+	/**
+	 * Add passkey
+	 */
+	account_addPasskey: () => LocalizedString
+	/**
+	 * Delete
+	 */
+	account_delete: () => LocalizedString
+	/**
+	 * No items
+	 */
+	account_empty: () => LocalizedString
+	/**
+	 * Planned
+	 */
+	account_planned: () => LocalizedString
+	/**
+	 * This browser does not support passkey registration.
+	 */
+	account_passkeyUnsupported: () => LocalizedString
+	/**
+	 * The operation failed
+	 */
+	account_actionFailed: () => LocalizedString
+	/**
+	 * Activity
+	 */
+	account_activityTitle: () => LocalizedString
+	/**
+	 * Name changed
+	 */
+	account_operationNameUpdated: () => LocalizedString
+	/**
+	 * Passkey added
+	 */
+	account_operationPasskeyCreated: () => LocalizedString
+	/**
+	 * Passkey renamed
+	 */
+	account_operationPasskeyUpdated: () => LocalizedString
+	/**
+	 * Passkey deleted
+	 */
+	account_operationPasskeyDeleted: () => LocalizedString
+	/**
+	 * Session logged out
+	 */
+	account_operationSessionRevoked: () => LocalizedString
 	/**
 	 * Welcome back
 	 */

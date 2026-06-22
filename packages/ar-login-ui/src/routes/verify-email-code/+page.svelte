@@ -6,7 +6,7 @@
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { auth } from '$lib/stores/auth';
-	import { isValidRedirectUrl } from '$lib/utils/url-validation';
+	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { createPinInput, melt } from '@melt-ui/svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
@@ -192,6 +192,10 @@
 				return_to: 'saml_sso'
 			});
 			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		if (returnTo && isValidReturnUrl(returnTo)) {
+			return returnTo;
 		}
 
 		if (redirectUrl && isValidRedirectUrl(redirectUrl)) {

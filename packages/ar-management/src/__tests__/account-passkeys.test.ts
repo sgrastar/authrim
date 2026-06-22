@@ -153,7 +153,11 @@ describe('Account Page passkey management API', () => {
     mockPasskeyRepo.findById.mockResolvedValue(basePasskey);
     mockPasskeyRepo.rename.mockResolvedValue({ ...basePasskey, device_name: 'Work Mac' });
     mockPasskeyRepo.findByCredentialId.mockResolvedValue(null);
-    mockPasskeyRepo.create.mockResolvedValue({ ...basePasskey, id: 'pk_new', device_name: 'Phone' });
+    mockPasskeyRepo.create.mockResolvedValue({
+      ...basePasskey,
+      id: 'pk_new',
+      device_name: 'Phone',
+    });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockGenerateRegistrationOptions.mockResolvedValue({
       challenge: 'challenge-value',
@@ -260,6 +264,46 @@ describe('Account Page passkey management API', () => {
     expect(response.status).toBe(400);
     expect(body.error).toBe('invalid_request');
     expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-local HTTP origins for registration options', async () => {
+    const response = await createAccountPasskeyOptionsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'http://op.example.com',
+        body: { device_name: 'Phone' },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_request');
+    expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('allows localhost HTTP origins for local registration testing', async () => {
+    const response = await createAccountPasskeyOptionsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'http://localhost:5173',
+        body: { device_name: 'Phone' },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockGenerateRegistrationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpID: 'localhost',
+      })
+    );
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          origin: 'http://localhost:5173',
+          rpID: 'localhost',
+        }),
+      })
+    );
   });
 
   it('requires recent authentication before creating registration options', async () => {

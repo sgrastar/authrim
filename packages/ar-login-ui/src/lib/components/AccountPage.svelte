@@ -1,6 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { startRegistration } from '@simplewebauthn/browser';
 	import { Button, Spinner } from '$lib/components';
+	import {
+		accountAPI,
+		type AccountDevice,
+		type AccountOperation,
+		type AccountPasskey,
+		type AccountProfile,
+		type AccountSession
+	} from '$lib/api/account';
+	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
@@ -9,6 +19,20 @@
 
 	let loading = $state(true);
 	let logoutLoading = $state(false);
+	let profile = $state<AccountProfile | null>(null);
+	let devices = $state<AccountDevice[]>([]);
+	let sessions = $state<AccountSession[]>([]);
+	let passkeys = $state<AccountPasskey[]>([]);
+	let operations = $state<AccountOperation[]>([]);
+	let accountError = $state('');
+	let profileError = $state('');
+	let profileSaved = $state(false);
+	let profileSaving = $state(false);
+	let securityError = $state('');
+	let reauthNeeded = $state(false);
+	let securityLoading = $state(false);
+	let actionLoading = $state('');
+	let passkeySupported = $state(false);
 
 	onMount(async () => {
 		await auth.refreshFromSession();
@@ -17,8 +41,194 @@
 			window.location.href = `/login?return_to=${encodeURIComponent(returnTo)}`;
 			return;
 		}
+		passkeySupported = await detectPasskeySupport();
+		await loadAccountPage();
 		loading = false;
 	});
+
+	async function detectPasskeySupport(): Promise<boolean> {
+		return window.isSecureContext && window.PublicKeyCredential !== undefined;
+	}
+
+	async function loadAccountPage() {
+		accountError = '';
+		securityError = '';
+		reauthNeeded = false;
+		const [
+			profileResult,
+			devicesResult,
+			sessionsResult,
+			passkeysResult,
+			operationsResult,
+			capabilitiesResult
+		] = await Promise.all([
+			accountAPI.getProfile(),
+			accountAPI.getDevices(),
+			accountAPI.getSessions(),
+			accountAPI.getPasskeys(),
+			accountAPI.getOperations(),
+			accountAPI.getCapabilities()
+		]);
+
+		if (profileResult.error) {
+			accountError = profileResult.error.error_description || profileResult.error.error;
+			return;
+		}
+		profile = profileResult.data?.profile ?? null;
+		devices = devicesResult.data?.devices ?? [];
+		sessions = sessionsResult.data?.sessions ?? [];
+		passkeys = passkeysResult.data?.passkeys ?? [];
+		operations = operationsResult.data?.operations ?? [];
+		if (
+			devicesResult.error ||
+			sessionsResult.error ||
+			passkeysResult.error ||
+			operationsResult.error ||
+			capabilitiesResult.error
+		) {
+			securityError =
+				devicesResult.error?.error_description ||
+				sessionsResult.error?.error_description ||
+				passkeysResult.error?.error_description ||
+				operationsResult.error?.error_description ||
+				capabilitiesResult.error?.error_description ||
+				$LL.account_loadFailed();
+		}
+	}
+
+	async function refreshSecurity() {
+		securityLoading = true;
+		try {
+			reauthNeeded = false;
+			const [devicesResult, sessionsResult, passkeysResult, operationsResult] = await Promise.all([
+				accountAPI.getDevices(),
+				accountAPI.getSessions(),
+				accountAPI.getPasskeys(),
+				accountAPI.getOperations()
+			]);
+			devices = devicesResult.data?.devices ?? devices;
+			sessions = sessionsResult.data?.sessions ?? sessions;
+			passkeys = passkeysResult.data?.passkeys ?? passkeys;
+			operations = operationsResult.data?.operations ?? operations;
+			securityError =
+				devicesResult.error?.error_description ||
+				sessionsResult.error?.error_description ||
+				passkeysResult.error?.error_description ||
+				operationsResult.error?.error_description ||
+				'';
+		} finally {
+			securityLoading = false;
+		}
+	}
+
+	function reauth() {
+		const returnTo = `${window.location.pathname}${window.location.search}`;
+		window.location.href = `/login?return_to=${encodeURIComponent(returnTo)}`;
+	}
+
+	function handleApiError(message: string | undefined, fallback: string): string {
+		return message || fallback;
+	}
+
+	async function saveProfileName(name: string) {
+		profileError = '';
+		profileSaved = false;
+		profileSaving = true;
+		try {
+			const result = await accountAPI.updateProfileName(name);
+			if (result.error) {
+				profileError = handleApiError(result.error.error_description, $LL.account_saveFailed());
+				return;
+			}
+			profile = result.data?.profile ?? profile;
+			profileSaved = true;
+			await auth.refreshFromSession();
+			await refreshSecurity();
+		} finally {
+			profileSaving = false;
+		}
+	}
+
+	async function revokeSession(id: string) {
+		actionLoading = `session:${id}`;
+		securityError = '';
+		try {
+			const result = await accountAPI.revokeSession(id);
+			if (result.error) {
+				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			if (result.data?.session.current) {
+				await auth.logout();
+				window.location.href = '/';
+				return;
+			}
+			await refreshSecurity();
+		} finally {
+			actionLoading = '';
+		}
+	}
+
+	async function addPasskey(deviceName: string) {
+		if (!passkeySupported) return;
+		actionLoading = 'passkey:add';
+		securityError = '';
+		try {
+			const optionsResult = await accountAPI.createPasskeyOptions(deviceName.trim());
+			if (optionsResult.error) {
+				if (optionsResult.error.error === 'reauth_required') {
+					securityError = $LL.account_reauthRequired();
+					reauthNeeded = true;
+					return;
+				}
+				securityError = handleApiError(
+					optionsResult.error.error_description,
+					$LL.account_actionFailed()
+				);
+				return;
+			}
+			const credential = await startRegistration({
+				optionsJSON: optionsResult.data!.options
+			});
+			const completeResult = await accountAPI.completePasskeyRegistration(
+				optionsResult.data!.challenge_id,
+				credential,
+				deviceName.trim()
+			);
+			if (completeResult.error) {
+				securityError = handleApiError(
+					completeResult.error.error_description,
+					$LL.account_actionFailed()
+				);
+				return;
+			}
+			await refreshSecurity();
+		} catch (error) {
+			securityError = error instanceof Error ? error.message : $LL.account_actionFailed();
+		} finally {
+			actionLoading = '';
+		}
+	}
+
+	async function deletePasskey(id: string) {
+		actionLoading = `passkey:${id}`;
+		securityError = '';
+		try {
+			const result = await accountAPI.deletePasskey(id);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					securityError = $LL.account_reauthRequired();
+					reauthNeeded = true;
+					return;
+				}
+				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			await refreshSecurity();
+		} finally {
+			actionLoading = '';
+		}
+	}
 
 	async function handleLogout() {
 		if (logoutLoading) return;
@@ -45,6 +255,19 @@
 		<div class="account-loading">
 			<Spinner size="lg" />
 		</div>
+	{:else if accountError}
+		<div class="account-layout">
+			<header class="account-header">
+				<div>
+					<p class="account-kicker">Authrim</p>
+					<h1>{$LL.account_title()}</h1>
+				</div>
+				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
+					{$LL.header_logout()}
+				</Button>
+			</header>
+			<p class="account-error">{accountError}</p>
+		</div>
 	{:else}
 		<div class="account-layout">
 			<header class="account-header">
@@ -58,8 +281,29 @@
 			</header>
 
 			<section class="account-grid">
-				<AccountProfileSection user={$auth.user} />
-				<AccountSecuritySection />
+				<AccountProfileSection
+					{profile}
+					saving={profileSaving}
+					error={profileError}
+					saved={profileSaved}
+					onSave={saveProfileName}
+				/>
+				<AccountSecuritySection
+					{devices}
+					{sessions}
+					{passkeys}
+					loading={securityLoading}
+					{actionLoading}
+					error={securityError}
+					{reauthNeeded}
+					{passkeySupported}
+					onRefresh={refreshSecurity}
+					onRevokeSession={revokeSession}
+					onAddPasskey={addPasskey}
+					onDeletePasskey={deletePasskey}
+					onReauth={reauth}
+				/>
+				<AccountActivitySection {operations} />
 			</section>
 		</div>
 	{/if}
@@ -115,5 +359,10 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 		gap: 16px;
+	}
+
+	.account-error {
+		margin: 0;
+		color: var(--danger);
 	}
 </style>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { LL } from '$i18n/i18n-svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminAuditLogsAPI,
@@ -127,7 +127,18 @@
 	}
 
 	function formatAction(action: string): string {
+		const ja = getLocale() === 'ja';
 		switch (action) {
+			case 'account.profile.name_updated':
+				return ja ? 'アカウントページ: 名前変更' : 'Account Page: Name changed';
+			case 'account.passkey.created':
+				return ja ? 'アカウントページ: Passkey追加' : 'Account Page: Passkey added';
+			case 'account.passkey.updated':
+				return ja ? 'アカウントページ: Passkey名変更' : 'Account Page: Passkey renamed';
+			case 'account.passkey.deleted':
+				return ja ? 'アカウントページ: Passkey削除' : 'Account Page: Passkey deleted';
+			case 'account.session.revoked':
+				return ja ? 'アカウントページ: セッションログアウト' : 'Account Page: Session logged out';
 			case 'user.login':
 				return $LL.admin_audit_logs_action_user_login();
 			case 'user.logout':

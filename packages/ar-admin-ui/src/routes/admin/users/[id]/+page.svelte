@@ -616,6 +616,19 @@
 	}
 
 	function auditActionLabel(action: string): string {
+		const ja = getLocale() === 'ja';
+		switch (action) {
+			case 'account.profile.name_updated':
+				return ja ? 'アカウントページ: 名前変更' : 'Account Page: Name changed';
+			case 'account.passkey.created':
+				return ja ? 'アカウントページ: Passkey追加' : 'Account Page: Passkey added';
+			case 'account.passkey.updated':
+				return ja ? 'アカウントページ: Passkey名変更' : 'Account Page: Passkey renamed';
+			case 'account.passkey.deleted':
+				return ja ? 'アカウントページ: Passkey削除' : 'Account Page: Passkey deleted';
+			case 'account.session.revoked':
+				return ja ? 'アカウントページ: セッションログアウト' : 'Account Page: Session logged out';
+		}
 		return action
 			.split('.')
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))

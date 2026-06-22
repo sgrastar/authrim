@@ -1,32 +1,69 @@
 <script lang="ts">
-	import { Button, Card } from '$lib/components';
+	import { Button, Card, Input } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import type { AccountProfile } from '$lib/api/account';
 
-	type AccountUser = {
-		name?: string | null;
-		email?: string | null;
-	};
+	let {
+		profile,
+		saving = false,
+		error = '',
+		saved = false,
+		onSave
+	} = $props<{
+		profile: AccountProfile | null;
+		saving?: boolean;
+		error?: string;
+		saved?: boolean;
+		onSave: (name: string) => void;
+	}>();
+	let name = $state('');
 
-	let { user } = $props<{ user: AccountUser | null | undefined }>();
+	$effect(() => {
+		name = profile?.name ?? '';
+	});
+
+	function submit() {
+		onSave(name);
+	}
 </script>
 
 <Card>
-	<div class="account-panel">
+	<form
+		class="account-panel"
+		onsubmit={(event) => {
+			event.preventDefault();
+			submit();
+		}}
+	>
 		<div class="panel-heading">
 			<h2>{$LL.account_profileTitle()}</h2>
 		</div>
 		<dl class="profile-list">
 			<div>
 				<dt>{$LL.account_name()}</dt>
-				<dd>{user?.name ?? '-'}</dd>
+				<dd>{profile?.name ?? '-'}</dd>
 			</div>
 			<div>
 				<dt>{$LL.account_email()}</dt>
-				<dd>{user?.email ?? '-'}</dd>
+				<dd>
+					{profile?.email ?? '-'}
+					{#if profile?.email_verified}
+						<span class="verified">{$LL.account_verified()}</span>
+					{/if}
+				</dd>
 			</div>
 		</dl>
-		<Button variant="secondary" disabled>{$LL.account_manage()}</Button>
-	</div>
+
+		<Input label={$LL.account_editName()} bind:value={name} disabled={saving} maxlength={100} />
+		{#if error}
+			<p class="panel-error">{error}</p>
+		{:else if saved}
+			<p class="panel-success">{$LL.account_saved()}</p>
+		{/if}
+		<Button variant="primary" type="submit" loading={saving} disabled={!profile}>
+			{$LL.account_save()}
+		</Button>
+	</form>
 </Card>
 
 <style>
@@ -67,5 +104,26 @@
 		margin: 0;
 		font-size: 0.9375rem;
 		overflow-wrap: anywhere;
+	}
+
+	.verified {
+		display: inline-flex;
+		margin-left: 8px;
+		font-size: 0.75rem;
+		color: var(--success);
+	}
+
+	.panel-error,
+	.panel-success {
+		margin: 0;
+		font-size: 0.8125rem;
+	}
+
+	.panel-error {
+		color: var(--danger);
+	}
+
+	.panel-success {
+		color: var(--success);
 	}
 </style>

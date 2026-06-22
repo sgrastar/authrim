@@ -85,6 +85,27 @@ function normalizeOrigin(value: string | undefined | null): string | null {
   }
   try {
     const url = new URL(value);
+    if (url.protocol === 'https:') {
+      return url.origin === 'null' ? null : url.origin;
+    }
+    if (
+      url.protocol === 'http:' &&
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
+    ) {
+      return url.origin === 'null' ? null : url.origin;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeExpectedOrigin(value: string | undefined | null): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       return null;
     }
@@ -173,7 +194,10 @@ export async function createAccountPasskeyOptionsHandler(
 
   const origin = normalizeOrigin(c.req.header('Origin'));
   if (!origin) {
-    return c.json({ error: 'invalid_request', error_description: 'Origin header is required' }, 400);
+    return c.json(
+      { error: 'invalid_request', error_description: 'Origin header is required' },
+      400
+    );
   }
   const rpID = new URL(origin).hostname;
   const tenantId = getTenantIdFromContext(c);
@@ -246,12 +270,18 @@ export async function completeAccountPasskeyRegistrationHandler(
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: 'invalid_request', error_description: 'Request body must be JSON' }, 400);
+    return c.json(
+      { error: 'invalid_request', error_description: 'Request body must be JSON' },
+      400
+    );
   }
 
   if (typeof body.challenge_id !== 'string' || !body.passkey_response) {
     return c.json(
-      { error: 'invalid_request', error_description: 'challenge_id and passkey_response are required' },
+      {
+        error: 'invalid_request',
+        error_description: 'challenge_id and passkey_response are required',
+      },
       400
     );
   }
@@ -286,7 +316,7 @@ export async function completeAccountPasskeyRegistrationHandler(
     challengeData.userId !== accountSession.userId ||
     !expectedOrigin ||
     !expectedRPID ||
-    normalizeOrigin(c.req.header('Origin')) !== expectedOrigin
+    normalizeExpectedOrigin(c.req.header('Origin')) !== expectedOrigin
   ) {
     return c.json(
       { error: 'invalid_challenge', error_description: 'Challenge does not match this session' },
@@ -376,9 +406,7 @@ export async function completeAccountPasskeyRegistrationHandler(
   );
 }
 
-export async function listAccountPasskeysHandler(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
+export async function listAccountPasskeysHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   setNoStore(c);
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) {
@@ -409,7 +437,10 @@ export async function updateAccountPasskeyHandler(
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: 'invalid_request', error_description: 'Request body must be JSON' }, 400);
+    return c.json(
+      { error: 'invalid_request', error_description: 'Request body must be JSON' },
+      400
+    );
   }
 
   if (typeof body.device_name !== 'string') {
