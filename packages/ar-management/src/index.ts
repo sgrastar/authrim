@@ -673,6 +673,7 @@ import {
   updateAccountProfileHandler,
   getAccountReauthStatusHandler,
 } from './account-page';
+import { getAccountCapabilitiesHandler } from './account-capabilities';
 import { listAccountOperationsHandler } from './account-operations';
 import {
   listAccountSessionsHandler,
@@ -1176,6 +1177,7 @@ app.use('/api/account/*', async (c, next) => {
 });
 app.get('/api/account/profile', getAccountProfileHandler);
 app.patch('/api/account/profile', updateAccountProfileHandler);
+app.get('/api/account/capabilities', getAccountCapabilitiesHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);

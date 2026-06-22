@@ -66,6 +66,22 @@ paths:
                   type: string
                   maxLength: 100
       security: *accountSession
+  /api/account/capabilities:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountCapabilities
+      summary: Read Account Page feature capabilities.
+      description: Returns the Account Page sections, available features, planned Phase 4E features,
+        and the initial theme capability contract for the authenticated Account Page user.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountCapabilities"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security: *accountSession
   /api/account/reauth/status:
     get:
       tags:
@@ -705,6 +721,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/AccountReauthStatusResponse"
+    AccountCapabilities:
+      description: Account Page feature capabilities response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountCapabilitiesResponse"
     AccountOperations:
       description: Account Page operation history response.
       content:
@@ -988,6 +1010,80 @@ components:
               type: array
               items:
                 type: string
+    AccountCapability:
+      type: object
+      required:
+        - id
+        - status
+        - requires_reauth
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - available
+            - planned
+        requires_reauth:
+          type: boolean
+        planned_phase:
+          type: string
+    AccountSectionCapability:
+      type: object
+      required:
+        - id
+        - status
+        - capabilities
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - available
+            - planned
+        capabilities:
+          type: array
+          items:
+            type: string
+    AccountThemeCapabilities:
+      type: object
+      required:
+        - version
+        - scope
+        - source
+        - account_page_overrides_supported
+        - planned_tokens
+      properties:
+        version:
+          type: integer
+        scope:
+          type: string
+        source:
+          type: string
+        account_page_overrides_supported:
+          type: boolean
+        planned_tokens:
+          type: array
+          items:
+            type: string
+    AccountCapabilitiesResponse:
+      type: object
+      required:
+        - capabilities
+        - sections
+        - theme
+      properties:
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountCapability"
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountSectionCapability"
+        theme:
+          $ref: "#/components/schemas/AccountThemeCapabilities"
     AccountOperation:
       type: object
       required:
