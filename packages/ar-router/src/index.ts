@@ -1021,6 +1021,11 @@ app.all('/me/devices/*', async (c) => {
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
+app.all('/api/account/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
 app.get('/api/avatars/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);

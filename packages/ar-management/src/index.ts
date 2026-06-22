@@ -669,6 +669,10 @@ import {
   deleteMyDeviceHandler,
 } from './self-service-devices';
 import {
+  getAccountProfileHandler,
+  getAccountReauthStatusHandler,
+} from './account-page';
+import {
   createWebhook,
   listWebhooks,
   getWebhook,
@@ -1147,6 +1151,21 @@ app.post('/revoke/batch', batchRevokeHandler);
 app.get('/me/devices', listMyDevicesHandler);
 app.patch('/me/devices/:id', updateMyDeviceHandler);
 app.delete('/me/devices/:id', deleteMyDeviceHandler);
+
+// Account Page API
+app.use('/api/account/*', csrfProtectionMiddleware({ skipForBearerToken: false }));
+app.use('/api/account/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/account/*'],
+  })(c, next);
+});
+app.get('/api/account/profile', getAccountProfileHandler);
+app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
+app.get('/api/account/devices', listMyDevicesHandler);
+app.patch('/api/account/devices/:id', updateMyDeviceHandler);
+app.delete('/api/account/devices/:id', deleteMyDeviceHandler);
 
 // Removed Admin API endpoint compatibility surface
 app.get('/api/admin/sessions/me', () =>

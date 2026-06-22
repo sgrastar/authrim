@@ -443,6 +443,18 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route Account Page API requests to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/account/profile', {
+          headers: {
+            Cookie: 'authrim_session=g1:apac:3:session_123',
+          },
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route self-service /me/devices/:id mutations without router CSRF rejection', async () => {
         const req = new Request('https://example.com/me/devices/ins_123', {
           method: 'PATCH',

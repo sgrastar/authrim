@@ -1,13 +1,17 @@
 import type { Context } from 'hono';
-import type { Env, DeviceInstallation, DeviceSecret } from '@authrim/ar-lib-core';
+import { getCookie } from 'hono/cookie';
+import type { Env, DeviceInstallation, DeviceSecret, Session } from '@authrim/ar-lib-core';
 import {
   DeviceInstallationRepository,
   DeviceSecretRepository,
   createAuthContextFromHono,
   createPhase1ErrorDetails,
   getDeviceSecretInstallationId,
+  getLogger,
+  getSessionStoreBySessionId,
   getTenantIdFromContext,
   introspectTokenFromContext,
+  isShardedSessionId,
 } from '@authrim/ar-lib-core';
 
 const DEFAULT_LIMIT = 50;
@@ -151,6 +155,16 @@ function setNoStore(c: Context<{ Bindings: Env }>): void {
 async function requireSelfServiceAccess(
   c: Context<{ Bindings: Env }>
 ): Promise<SelfServiceAccess | Response> {
+  const pathname = new URL(c.req.url).pathname;
+  if (pathname.startsWith('/api/account/')) {
+    return requireSessionSelfServiceAccess(c);
+  }
+
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return bearerTokenRequired(c);
+  }
+
   const introspection = await introspectTokenFromContext(c);
   if (!introspection.valid || !introspection.claims) {
     const error = introspection.error;
@@ -189,6 +203,65 @@ async function requireSelfServiceAccess(
         ? introspection.claims.authrim_installation_id
         : undefined,
   };
+}
+
+function bearerTokenRequired(c: Context<{ Bindings: Env }>): Response {
+  setNoStore(c);
+  c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+  return c.json(
+    {
+      error: 'invalid_token',
+      error_description: 'Access token is required',
+    },
+    401
+  );
+}
+
+async function requireSessionSelfServiceAccess(
+  c: Context<{ Bindings: Env }>
+): Promise<SelfServiceAccess | Response> {
+  const sessionId = getCookie(c, 'authrim_session');
+  if (!sessionId || !isShardedSessionId(sessionId)) {
+    setNoStore(c);
+    return c.json(
+      { error: 'unauthorized', error_description: 'Authentication required' },
+      401
+    );
+  }
+
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+    if (
+      !session ||
+      !session.userId ||
+      session.expiresAt <= Date.now() ||
+      (session.tenantId !== undefined && session.tenantId !== tenantId)
+    ) {
+      setNoStore(c);
+      return c.json(
+        { error: 'unauthorized', error_description: 'Session has expired or is invalid' },
+        401
+      );
+    }
+
+    return {
+      sub: session.userId,
+      sessionId: session.id,
+    };
+  } catch (error) {
+    const log = getLogger(c).module('SELF-SERVICE-DEVICES');
+    log.error('Session validation failed', { action: 'session_validate' }, error as Error);
+    setNoStore(c);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to validate session',
+      },
+      500
+    );
+  }
 }
 
 function normalizePlatform(platform: unknown): string {

@@ -14,9 +14,123 @@ security:
   - userBearer: []
   - userSessionCookie: []
 tags:
+  - name: Account Page
   - name: User Consent
   - name: User Data Export
 paths:
+  /api/account/profile:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountProfile
+      summary: Read the current Account Page profile.
+      description: Returns the authenticated Account Page user's minimal profile and current Authrim
+        browser session metadata. Authentication uses the `authrim_session` cookie.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountProfile"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security: &accountSession
+        - accountSessionCookie: []
+  /api/account/reauth/status:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountReauthStatus
+      summary: Read Account Page reauthentication status.
+      description: Returns whether sensitive Account Page operations currently require reauthentication.
+        The initial reauthentication window is five minutes from the session auth_time.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountReauthStatus"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security: *accountSession
+  /api/account/devices:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountDevices
+      summary: List current user's device inventory for Account Page.
+      description: Lists device installations visible to the authenticated Account Page user. This is
+        the cookie-session Account Page alias for the existing self-service device inventory.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountDevices"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      security: *accountSession
+  /api/account/devices/{id}:
+    patch:
+      tags:
+        - Account Page
+      operationId: patchApiAccountDeviceById
+      summary: Rename one current user's device.
+      description: Renames a device installation owned by the authenticated Account Page user.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountDevice"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - display_name
+              properties:
+                display_name:
+                  type: string
+                  maxLength: 64
+      security: *accountSession
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountDeviceById
+      summary: Unlink one current user's device.
+      description: Revokes or unlinks a device installation owned by the authenticated Account Page user.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountDeviceUnlink"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      security: *accountSession
   /api/user/consents:
     get:
       tags:
@@ -220,6 +334,11 @@ components:
       in: cookie
       name: sid
       description: End-user browser session cookie.
+    accountSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_session
+      description: LoginUI Account Page browser session cookie.
   parameters:
     TenantIdHeader:
       name: X-Tenant-Id
@@ -347,6 +466,36 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/JsonObject"
+    AccountProfile:
+      description: Account Page profile response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountProfileResponse"
+    AccountReauthStatus:
+      description: Account Page reauthentication status response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountReauthStatusResponse"
+    AccountDevices:
+      description: Account Page device inventory response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountDevicesResponse"
+    AccountDevice:
+      description: Account Page device mutation response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountDeviceResponse"
+    AccountDeviceUnlink:
+      description: Account Page device unlink response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountDeviceUnlinkResponse"
     AdminClient:
       description: OAuth/OIDC client response.
       content:
@@ -475,6 +624,172 @@ components:
     JsonObject:
       type: object
       additionalProperties: true
+    AccountProfileResponse:
+      type: object
+      required:
+        - profile
+        - session
+      properties:
+        profile:
+          type: object
+          required:
+            - user_id
+            - email_verified
+          properties:
+            user_id:
+              type: string
+            email:
+              type:
+                - string
+                - "null"
+              format: email
+            email_verified:
+              type: boolean
+            name:
+              type:
+                - string
+                - "null"
+            given_name:
+              type:
+                - string
+                - "null"
+            family_name:
+              type:
+                - string
+                - "null"
+            locale:
+              type:
+                - string
+                - "null"
+            picture:
+              type:
+                - string
+                - "null"
+        session:
+          type: object
+          required:
+            - id
+            - created_at
+            - expires_at
+            - auth_time
+          properties:
+            id:
+              type: string
+            created_at:
+              type: integer
+            expires_at:
+              type: integer
+            auth_time:
+              type: integer
+            acr:
+              type: string
+            amr:
+              type: array
+              items:
+                type: string
+    AccountReauthStatusResponse:
+      type: object
+      required:
+        - reauth
+      properties:
+        reauth:
+          type: object
+          required:
+            - required
+            - authenticated_at
+            - expires_at
+            - ttl_seconds
+            - methods
+          properties:
+            required:
+              type: boolean
+            authenticated_at:
+              type: integer
+            expires_at:
+              type: integer
+            ttl_seconds:
+              type: integer
+            methods:
+              type: array
+              items:
+                type: string
+    AccountDevice:
+      type: object
+      required:
+        - id
+        - display_name
+        - platform
+        - current
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        fallback_display_name:
+          type: string
+        platform:
+          type: string
+        current:
+          type: boolean
+        last_seen_at:
+          type:
+            - string
+            - "null"
+        last_seen_at_unix:
+          type:
+            - integer
+            - "null"
+        client_id:
+          type: string
+        app_display_name:
+          type: string
+    AccountDevicesResponse:
+      type: object
+      required:
+        - devices
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountDevice"
+        next_cursor:
+          type: string
+    AccountDeviceResponse:
+      type: object
+      required:
+        - device
+      properties:
+        device:
+          $ref: "#/components/schemas/AccountDevice"
+    AccountDeviceUnlinkResponse:
+      type: object
+      required:
+        - ok
+        - device_unlink_result
+      properties:
+        ok:
+          type: boolean
+        device_unlink_result:
+          type: object
+          required:
+            - action
+            - target_id
+            - signed_out_required
+            - status
+          properties:
+            action:
+              type: string
+              enum:
+                - device_unlinked
+            target_id:
+              type: string
+            signed_out_required:
+              type: boolean
+            status:
+              type: string
+              enum:
+                - completed
+                - already_applied
     UriString:
       type: string
       format: uri
