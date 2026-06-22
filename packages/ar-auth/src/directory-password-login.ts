@@ -18,6 +18,7 @@ import {
   getSessionStoreForNewSession,
   getTenantIdFromContext,
   publishEvent,
+  resolvePostLoginRedirectUrl,
   type AuthEventData,
   type Env,
   type SessionEventData,
@@ -328,6 +329,10 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       maxAge: SESSION_TTL_SECONDS,
     });
 
+    const postLoginRedirect = authorizationContinuation
+      ? authorizationContinuation.redirectUrl
+      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json({
@@ -352,9 +357,9 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
               challenge_id: authorizationChallengeId,
               type: authorizationContinuation.type,
             },
-            redirect_url: authorizationContinuation.redirectUrl,
           }
         : {}),
+      redirect_url: postLoginRedirect,
     });
   };
 }

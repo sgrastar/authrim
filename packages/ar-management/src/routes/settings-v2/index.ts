@@ -64,6 +64,10 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   getTenantIdFromContext,
   validateTenantStorageProfileOverride,
+  parseTrustedRedirectOrigins,
+  validateAccountPagePath,
+  validatePostLoginRedirectUrl,
+  validateTrustedRedirectOrigins,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 
@@ -382,6 +386,414 @@ async function validateTenantRuntimeProfilePatch(
   };
 }
 
+function settingsKVKey(category: string, scope: SettingScope): string {
+  if (scope.type === 'platform') {
+    return `settings:platform:${category}`;
+  }
+  if (scope.type === 'client') {
+    return `settings:client:${scope.tenantId}:${scope.id}:${category}`;
+  }
+  return `settings:${scope.type}:${scope.id}:${category}`;
+}
+
+async function readScopedSettingsRecord(
+  env: Env,
+  category: string,
+  scope: SettingScope
+): Promise<Record<string, unknown>> {
+  try {
+    const raw = await env.SETTINGS?.get(settingsKVKey(category, scope));
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function ensureTenantAccountPageEnabled(env: Env, tenantId: string): Promise<void> {
+  if (!env.SETTINGS) {
+    return;
+  }
+  const scope: SettingScope = { type: 'tenant', id: tenantId };
+  const current = await readScopedSettingsRecord(env, 'self-service', scope);
+  if (current['self-service.account_page_enabled'] === true) {
+    return;
+  }
+  await env.SETTINGS.put(
+    settingsKVKey('self-service', scope),
+    JSON.stringify({
+      ...current,
+      'self-service.account_page_enabled': true,
+      'self-service.account_page_path':
+        typeof current['self-service.account_page_path'] === 'string'
+          ? current['self-service.account_page_path']
+          : '/account',
+    })
+  );
+}
+
+function parseStringArraySetting(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+}
+
+function validateAppLoginScope(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const scope = value.trim();
+  return (
+    scope.length > 0 &&
+    scope.length <= 512 &&
+    scope.split(/\s+/).every((part) => /^[\x21\x23-\x5B\x5D-\x7E]+$/.test(part)) &&
+    scope.split(/\s+/).includes('openid')
+  );
+}
+
+async function getAppLoginClientProfile(
+  env: Env,
+  tenantId: string,
+  clientId: string
+): Promise<{
+  clientId: string;
+  redirectUris: string[];
+  firstParty: boolean;
+  appLoginEnabled: boolean;
+} | null> {
+  const trimmedClientId = clientId.trim();
+  if (!trimmedClientId) {
+    return null;
+  }
+
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'settings-v2-app-login', {
+    tenantId,
+  });
+  const client = await adapter.queryOne<{
+    client_id: string;
+    redirect_uris: string | string[] | null;
+  }>('SELECT client_id, redirect_uris FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [
+    tenantId,
+    trimmedClientId,
+  ]);
+  if (!client) {
+    return null;
+  }
+
+  const clientSettings = await readScopedSettingsRecord(env, 'client', {
+    type: 'client',
+    tenantId,
+    id: trimmedClientId,
+  });
+
+  return {
+    clientId: client.client_id,
+    redirectUris: parseStringArraySetting(client.redirect_uris),
+    firstParty: clientSettings['client.first_party'] === true,
+    appLoginEnabled: clientSettings['client.app_login_enabled'] === true,
+  };
+}
+
+async function validateAppLoginTarget(
+  env: Env,
+  tenantId: string,
+  input: {
+    clientId: unknown;
+    redirectUri: unknown;
+    scope: unknown;
+    finalReturnTo: unknown;
+    trustedOrigins: readonly string[];
+  }
+): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      message: string;
+      details?: Record<string, unknown>;
+    }
+> {
+  if (typeof input.clientId !== 'string' || !input.clientId.trim()) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: 'login-entry.app_login_client_id is required when App Login is selected',
+    };
+  }
+  if (typeof input.redirectUri !== 'string' || !input.redirectUri.trim()) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: 'login-entry.app_login_redirect_uri is required when App Login is selected',
+    };
+  }
+  if (!validateAppLoginScope(input.scope)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: 'login-entry.app_login_scope must include openid and contain valid scope tokens',
+    };
+  }
+  if (
+    input.finalReturnTo !== undefined &&
+    input.finalReturnTo !== '' &&
+    !validatePostLoginRedirectUrl(input.finalReturnTo, input.trustedOrigins)
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message:
+        'login-entry.app_login_final_return_to must be empty, a non-reserved relative path, or a trusted HTTPS URL',
+    };
+  }
+
+  const client = await getAppLoginClientProfile(env, tenantId, input.clientId);
+  if (!client) {
+    return {
+      ok: false,
+      status: 404,
+      error: 'not_found',
+      message: `App Login client "${input.clientId.trim()}" was not found in this tenant`,
+    };
+  }
+  if (!client.firstParty || !client.appLoginEnabled) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message:
+        'App Login target client must be same-tenant, first-party, and have App Login enabled in Client settings',
+      details: { clientId: client.clientId, resolutionLink: `/admin/clients/${client.clientId}` },
+    };
+  }
+  const redirectUri = input.redirectUri.trim();
+  if (!client.redirectUris.includes(redirectUri)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: 'login-entry.app_login_redirect_uri must be registered on the App Login client',
+      details: { clientId: client.clientId, resolutionLink: `/admin/clients/${client.clientId}` },
+    };
+  }
+
+  return { ok: true };
+}
+
+async function validateClientAppLoginPatch(
+  env: Env,
+  tenantId: string,
+  clientId: string,
+  body: SettingsPatchRequest
+): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      message: string;
+      details?: Record<string, unknown>;
+    }
+> {
+  const set = body.set ?? {};
+  const current = await readScopedSettingsRecord(env, 'client', {
+    type: 'client',
+    tenantId,
+    id: clientId,
+  });
+  const effectiveAppLoginEnabled =
+    set['client.app_login_enabled'] ?? current['client.app_login_enabled'] ?? false;
+  const effectiveFirstParty = set['client.first_party'] ?? current['client.first_party'] ?? false;
+  if (effectiveAppLoginEnabled === true && effectiveFirstParty !== true) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: 'App Login can only be enabled for first-party clients',
+      details: { clientId, requiredSetting: 'client.first_party' },
+    };
+  }
+
+  const disablesAppLogin =
+    set['client.app_login_enabled'] === false ||
+    set['client.first_party'] === false ||
+    body.disable?.includes('client.app_login_enabled') ||
+    body.disable?.includes('client.first_party') ||
+    body.clear?.includes('client.app_login_enabled') ||
+    body.clear?.includes('client.first_party');
+  if (!disablesAppLogin) {
+    return { ok: true };
+  }
+
+  const loginEntry = await readScopedSettingsRecord(env, 'login-entry', {
+    type: 'tenant',
+    id: tenantId,
+  });
+  if (
+    loginEntry['login-entry.post_login_behavior'] === 'app_login' &&
+    loginEntry['login-entry.app_login_client_id'] === clientId
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message:
+        'This client is used by Login UI App Login. Change /admin/login-ui#post-login before disabling First Party App or App Login.',
+      details: { resolutionLink: '/admin/login-ui#post-login' },
+    };
+  }
+
+  return { ok: true };
+}
+
+async function validatePostLoginRelatedPatch(
+  env: Env,
+  tenantId: string,
+  category: CategoryName,
+  body: SettingsPatchRequest
+): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      message: string;
+      details?: Record<string, unknown>;
+    }
+> {
+  const set = body.set ?? {};
+
+  if (category === 'security' && 'security.trusted_redirect_origins' in set) {
+    if (!validateTrustedRedirectOrigins(set['security.trusted_redirect_origins'])) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'bad_request',
+        message: 'security.trusted_redirect_origins must contain HTTPS origins only',
+      };
+    }
+  }
+
+  if (category === 'self-service') {
+    if (
+      'self-service.account_page_path' in set &&
+      !validateAccountPagePath(set['self-service.account_page_path'])
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'bad_request',
+        message:
+          'self-service.account_page_path must be a non-reserved relative path prefix such as /account',
+      };
+    }
+
+    const disablesAccountPage =
+      set['self-service.account_page_enabled'] === false ||
+      body.disable?.includes('self-service.account_page_enabled') ||
+      body.clear?.includes('self-service.account_page_enabled');
+    if (disablesAccountPage) {
+      const loginEntry = await readScopedSettingsRecord(env, 'login-entry', {
+        type: 'tenant',
+        id: tenantId,
+      });
+      if (loginEntry['login-entry.post_login_behavior'] === 'account') {
+        return {
+          ok: false,
+          status: 400,
+          error: 'bad_request',
+          message:
+            'Account Page cannot be disabled while Login UI post-login behavior is account. Change /admin/login-ui#post-login first.',
+          details: { resolutionLink: '/admin/login-ui#post-login' },
+        };
+      }
+    }
+  }
+
+  if (category === 'login-entry') {
+    const loginEntry = await readScopedSettingsRecord(env, 'login-entry', {
+      type: 'tenant',
+      id: tenantId,
+    });
+    const effectiveBehavior =
+      set['login-entry.post_login_behavior'] ?? loginEntry['login-entry.post_login_behavior'];
+    const effectiveRedirectUrl =
+      set['login-entry.post_login_redirect_url'] ??
+      loginEntry['login-entry.post_login_redirect_url'] ??
+      '/';
+    const security = await readScopedSettingsRecord(env, 'security', {
+      type: 'tenant',
+      id: tenantId,
+    });
+    const trustedOrigins = parseTrustedRedirectOrigins(
+      security['security.trusted_redirect_origins']
+    );
+    if (
+      effectiveBehavior === 'custom_url' &&
+      !validatePostLoginRedirectUrl(effectiveRedirectUrl, trustedOrigins)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'bad_request',
+        message:
+          'login-entry.post_login_redirect_url must be a non-reserved relative path or a trusted HTTPS URL',
+      };
+    }
+
+    if (effectiveBehavior === 'app_login') {
+      const validation = await validateAppLoginTarget(env, tenantId, {
+        clientId:
+          set['login-entry.app_login_client_id'] ??
+          loginEntry['login-entry.app_login_client_id'] ??
+          '',
+        redirectUri:
+          set['login-entry.app_login_redirect_uri'] ??
+          loginEntry['login-entry.app_login_redirect_uri'] ??
+          '',
+        finalReturnTo:
+          set['login-entry.app_login_final_return_to'] ??
+          loginEntry['login-entry.app_login_final_return_to'] ??
+          '',
+        scope:
+          set['login-entry.app_login_scope'] ??
+          loginEntry['login-entry.app_login_scope'] ??
+          'openid profile email',
+        trustedOrigins,
+      });
+      if (!validation.ok) {
+        return validation;
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
 // =============================================================================
 // Rate Limiting for Settings Endpoints
 // =============================================================================
@@ -545,6 +957,28 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
+    const postLoginValidation = await validatePostLoginRelatedPatch(
+      c.env,
+      tenantId,
+      category,
+      body
+    );
+    if (!postLoginValidation.ok) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'post_login_validation_failed',
+        metadata: postLoginValidation.details,
+      });
+      return errorResponse(
+        c,
+        postLoginValidation.error,
+        postLoginValidation.message,
+        postLoginValidation.status,
+        postLoginValidation.details
+      );
+    }
+
     const runtimeProfileValidation = await validateTenantRuntimeProfilePatch(c.env, category, body);
     if (!runtimeProfileValidation.ok) {
       return errorResponse(
@@ -560,6 +994,14 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     const actor = adminAuth?.userId ?? 'unknown';
 
     const result = await manager.patch(category, scope, body, actor);
+
+    if (
+      category === 'login-entry' &&
+      body.set?.['login-entry.post_login_behavior'] === 'account' &&
+      result.applied.includes('login-entry.post_login_behavior')
+    ) {
+      await ensureTenantAccountPageEnabled(c.env, tenantId);
+    }
 
     // Check if there were any rejections
     const hasRejections = Object.keys(result.rejected).length > 0;
@@ -789,6 +1231,28 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
+    const appLoginValidation = await validateClientAppLoginPatch(
+      c.env,
+      clientTenantId,
+      clientId,
+      body
+    );
+    if (!appLoginValidation.ok) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'app_login_validation_failed',
+        metadata: appLoginValidation.details,
+      });
+      return errorResponse(
+        c,
+        appLoginValidation.error,
+        appLoginValidation.message,
+        appLoginValidation.status,
+        appLoginValidation.details
+      );
+    }
+
     const actor = adminAuth?.userId ?? 'unknown';
     const result = await manager.patch('client', scope, body, actor);
 
@@ -904,6 +1368,30 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     if (!body.ifMatch) {
       await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+    }
+
+    if (category === 'client') {
+      const appLoginValidation = await validateClientAppLoginPatch(
+        c.env,
+        clientTenantId,
+        clientId,
+        body
+      );
+      if (!appLoginValidation.ok) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'app_login_validation_failed',
+          metadata: appLoginValidation.details,
+        });
+        return errorResponse(
+          c,
+          appLoginValidation.error,
+          appLoginValidation.message,
+          appLoginValidation.status,
+          appLoginValidation.details
+        );
+      }
     }
 
     const actor = adminAuth?.userId ?? 'unknown';

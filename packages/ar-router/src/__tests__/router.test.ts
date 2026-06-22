@@ -23,6 +23,14 @@ const createMockFetcher = (name: string) => ({
   }),
 });
 
+const createMockKV = (data: Record<string, string> = {}) => ({
+  get: vi.fn(async (key: string) => data[key] ?? null),
+  put: vi.fn(),
+  delete: vi.fn(),
+  list: vi.fn(),
+  getWithMetadata: vi.fn(),
+});
+
 // Create mock environment with service bindings
 const createMockEnv = () => ({
   OP_DISCOVERY: createMockFetcher('OP_DISCOVERY'),
@@ -427,6 +435,18 @@ describe('Router Worker', () => {
           headers: {
             Origin: 'https://app.example.test',
             Authorization: 'Bearer user-token',
+          },
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route Account Page API requests to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/account/profile', {
+          headers: {
+            Cookie: 'authrim_session=g1:apac:3:session_123',
           },
         });
         const res = await app.fetch(req, mockEnv);
@@ -1237,12 +1257,67 @@ describe('Router Worker', () => {
       );
     });
 
-    it('should try static assets against the UI indicated by Referer before falling back', async () => {
-      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
-      adminUiWorker.fetch.mockResolvedValueOnce(
-        new Response(JSON.stringify({ worker: 'ADMIN_UI_WORKER' }), { status: 404 })
-      );
+    it('should proxy Login UI static assets through the dedicated namespace', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithLoginAssetProxy = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://example.com/_authrim_login/immutable/chunk.js');
+      const res = await app.fetch(req, envWithLoginAssetProxy);
+      const body = (await res.json()) as { worker: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('LOGIN_UI_WORKER');
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(adminUiWorker.fetch).not.toHaveBeenCalled();
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).pathname).toBe(
+        '/_authrim_login/immutable/chunk.js'
+      );
+    });
+
+    it('should proxy Admin UI static assets through the dedicated namespace', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithAdminAssetProxy = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://example.com/_authrim_admin/immutable/chunk.js');
+      const res = await app.fetch(req, envWithAdminAssetProxy);
+      const body = (await res.json()) as { worker: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('ADMIN_UI_WORKER');
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
+        'https://phase9-ar-admin-ui.example.workers.dev'
+      );
+      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).pathname).toBe(
+        '/_authrim_admin/immutable/chunk.js'
+      );
+    });
+
+    it('should not proxy /_app assets to Authrim UI workers', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
       const envWithUis = {
         ...mockEnv,
         ENABLE_LOGIN_UI_PROXY: 'true',
@@ -1253,35 +1328,172 @@ describe('Router Worker', () => {
         ADMIN_UI_WORKER: adminUiWorker,
       };
 
-      const req = new Request('https://admin.example.com/_app/immutable/chunk.js', {
-        headers: {
-          Referer: 'https://admin.example.com/admin/clients',
-        },
-      });
-      const res = await app.fetch(req, envWithUis);
-      const body = (await res.json()) as { worker: string };
-
-      expect(res.status).toBe(200);
-      expect(body.worker).toBe('LOGIN_UI_WORKER');
-      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
-      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
-      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
-        'https://phase9-ar-admin-ui.example.workers.dev'
-      );
-      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
-        'https://phase9-ar-login-ui.example.workers.dev'
-      );
-    });
-
-    it('should return static asset not found when no UI proxy can serve the asset', async () => {
       const res = await app.fetch(
         new Request('https://example.com/_app/immutable/missing.js'),
-        mockEnv
+        envWithUis
       );
       const body = (await res.json()) as Record<string, string>;
 
       expect(res.status).toBe(404);
-      expect(body.message).toBe('Static asset not found in any UI');
+      expect(body.message).toBe('The requested resource was not found');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(adminUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should rewrite enabled Account Page prefixes to the Login UI account route', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV({
+        'settings:tenant:acct:self-service': JSON.stringify({
+          'self-service.account_page_enabled': true,
+          'self-service.account_page_path': '/mypage',
+        }),
+      });
+      const envWithAccountPage = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'acct',
+        SETTINGS: settings,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const res = await app.fetch(
+        new Request('https://acct.example.com/mypage/security?tab=passkeys'),
+        envWithAccountPage
+      );
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('LOGIN_UI_WORKER');
+      expect(body.path).toBe('/account/security');
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).search).toBe('?tab=passkeys');
+      expect(res.headers.get('Content-Security-Policy')).toBeNull();
+    });
+
+    it('should leave Account Page prefixes to 404 when self-service is disabled', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV({
+        'settings:tenant:acctdisabled:self-service': JSON.stringify({
+          'self-service.account_page_enabled': false,
+          'self-service.account_page_path': '/mypage',
+        }),
+      });
+      const envWithDisabledAccountPage = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'acctdisabled',
+        SETTINGS: settings,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const res = await app.fetch(
+        new Request('https://acctdisabled.example.com/mypage/security'),
+        envWithDisabledAccountPage
+      );
+      const body = (await res.json()) as Record<string, string>;
+
+      expect(res.status).toBe(404);
+      expect(body.message).toBe('The requested resource was not found');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should fallback unknown paths to SERVICE_SITE only when explicitly enabled', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const settings = createMockKV({
+        'settings:tenant:svcsite:service-site': JSON.stringify({
+          'service-site.fallback_enabled': true,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcsite',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+      };
+
+      const res = await app.fetch(
+        new Request('https://example.com/mypage/assets/app.js'),
+        envWithServiceSite
+      );
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('SERVICE_SITE');
+      expect(body.path).toBe('/mypage/assets/app.js');
+    });
+
+    it('should keep unknown paths as 404 when SERVICE_SITE exists but fallback is disabled', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const settings = createMockKV({
+        'settings:tenant:svcdisabled:service-site': JSON.stringify({
+          'service-site.fallback_enabled': false,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcdisabled',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+      };
+
+      const res = await app.fetch(new Request('https://example.com/mypage'), envWithServiceSite);
+      const body = (await res.json()) as Record<string, string>;
+
+      expect(res.status).toBe(404);
+      expect(body.message).toBe('The requested resource was not found');
+      expect(serviceSite.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should route root to SERVICE_SITE when fallback is enabled', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV({
+        'settings:tenant:svcroot:service-site': JSON.stringify({
+          'service-site.fallback_enabled': true,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcroot',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const res = await app.fetch(new Request('https://example.com/'), envWithServiceSite);
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('SERVICE_SITE');
+      expect(body.path).toBe('/');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should keep Authrim reserved paths ahead of SERVICE_SITE fallback', async () => {
+      const serviceSite = createMockFetcher('SERVICE_SITE');
+      const settings = createMockKV({
+        'settings:tenant:svcauth:service-site': JSON.stringify({
+          'service-site.fallback_enabled': true,
+        }),
+      });
+      const envWithServiceSite = {
+        ...mockEnv,
+        DEFAULT_TENANT_ID: 'svcauth',
+        SETTINGS: settings,
+        SERVICE_SITE: serviceSite,
+      };
+
+      const res = await app.fetch(new Request('https://example.com/authorize'), envWithServiceSite);
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('OP_AUTH');
+      expect(serviceSite.fetch).not.toHaveBeenCalled();
     });
 
     it('should keep admin root requests on Admin UI when both UI proxies are configured', async () => {

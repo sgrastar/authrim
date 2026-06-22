@@ -97,6 +97,10 @@ export interface LoginUIConfig {
 		brandName: string;
 	};
 	supportedLocales: string[];
+	selfService?: {
+		accountPageEnabled: boolean;
+		accountPagePath: string;
+	};
 }
 
 export interface AuthenticationMethodsMeta {

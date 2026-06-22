@@ -2637,7 +2637,8 @@ const settings = new Map<string, DevSettings>([
 				'client.dpop_required': false,
 				'client.login_ui_url': '',
 				'client.consent_required': true,
-				'client.first_party': false
+				'client.first_party': false,
+				'client.app_login_enabled': false
 			},
 			sources: {
 				'client.pkce_required': 'kv',
@@ -2645,7 +2646,8 @@ const settings = new Map<string, DevSettings>([
 				'client.dpop_required': 'default',
 				'client.login_ui_url': 'default',
 				'client.consent_required': 'kv',
-				'client.first_party': 'default'
+				'client.first_party': 'default',
+				'client.app_login_enabled': 'default'
 			}
 		}
 	],
@@ -3657,6 +3659,13 @@ function settingsMetaResponse(category: string) {
 					false,
 					'First-party client',
 					'Treat this client as a first-party application.'
+				),
+				'client.app_login_enabled': settingMeta(
+					'client.app_login_enabled',
+					'boolean',
+					false,
+					'App Login enabled',
+					'Allow Login UI direct sign-in to start this client.'
 				)
 			}
 		};

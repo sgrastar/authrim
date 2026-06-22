@@ -4032,6 +4032,67 @@ export function parseR2BucketRows(stdout: string): Array<{ name: string }> {
     });
 }
 
+function normalizeR2BucketRows(rows: unknown): Array<{ name: string }> {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows
+    .map((row) => {
+      if (row && typeof row === 'object' && 'name' in row) {
+        const name = (row as { name?: unknown }).name;
+        return typeof name === 'string' ? name.trim() : '';
+      }
+      return '';
+    })
+    .filter((name) => name.length > 0)
+    .map((name) => ({ name }));
+}
+
+function extractR2BucketRowsFromApiPayload(payload: unknown): Array<{ name: string }> {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const data = payload as {
+    result?: unknown;
+    buckets?: unknown;
+  };
+  if (data.result && typeof data.result === 'object' && !Array.isArray(data.result)) {
+    const result = data.result as { buckets?: unknown };
+    return normalizeR2BucketRows(result.buckets);
+  }
+  return normalizeR2BucketRows(data.result ?? data.buckets);
+}
+
+async function listR2BucketsViaApi(): Promise<Array<{ name: string }> | null> {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+  ) {
+    return null;
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  const tokenInfo = await getCloudflareApiToken();
+  if (!accountId || !tokenInfo?.token) {
+    return null;
+  }
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets?per_page=1000`,
+    {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Cloudflare R2 bucket list failed (${response.status})`);
+  }
+
+  return extractR2BucketRowsFromApiPayload(await response.json());
+}
+
 async function listR2BucketNamesStrict(): Promise<Set<string>> {
   return new Set((await listR2Buckets({ throwOnError: true })).map((bucket) => bucket.name));
 }
@@ -4455,12 +4516,22 @@ export async function listWorkers(): Promise<Array<{ name: string; id?: string }
 export async function listR2Buckets(
   options: { throwOnError?: boolean } = {}
 ): Promise<Array<{ name: string }>> {
+  let apiError: unknown;
+  try {
+    const apiBuckets = await listR2BucketsViaApi();
+    if (apiBuckets) {
+      return apiBuckets;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout } = await wrangler(['r2', 'bucket', 'list']);
     return parseR2BucketRows(stdout);
   } catch (error) {
     if (options.throwOnError) {
-      throw error;
+      throw error ?? apiError;
     }
     return [];
   }

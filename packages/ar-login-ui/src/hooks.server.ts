@@ -223,7 +223,7 @@ export function buildContentSecurityPolicy(
 	const cloudflareInsightsOrigin = 'https://static.cloudflareinsights.com';
 	const hcaptchaOrigins = ['https://hcaptcha.com', 'https://*.hcaptcha.com'];
 	const recaptchaOrigins = ['https://www.google.com', 'https://www.gstatic.com'];
-	const scriptOrigins = [];
+	const scriptOrigins = [cloudflareInsightsOrigin];
 	const frameOrigins = [];
 	const connectOrigins = [];
 	const styleOrigins = [];

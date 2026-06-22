@@ -6,6 +6,8 @@ const {
   mockInstallationRepo,
   mockClientRepository,
   mockIntrospectTokenFromContext,
+  mockGetSessionStoreBySessionId,
+  mockSessionStore,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
 } = vi.hoisted(() => {
@@ -26,12 +28,17 @@ const {
   const clientRepository = {
     findByClientId: vi.fn(),
   };
+  const sessionStore = {
+    getSessionRpc: vi.fn(),
+  };
 
   return {
     mockRepo: repo,
     mockInstallationRepo: installationRepo,
     mockClientRepository: clientRepository,
     mockIntrospectTokenFromContext: vi.fn(),
+    mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
+    mockSessionStore: sessionStore,
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
       coreAdapter: {},
@@ -53,10 +60,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return mockInstallationRepo;
     }),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
+    getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
+    isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getDeviceSecretInstallationId: (device: { id: string; installation_id?: string }) =>
       device.installation_id ?? device.id,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    getLogger: () => ({
+      module: () => ({
+        error: vi.fn(),
+      }),
+    }),
   };
 });
 
@@ -70,11 +84,24 @@ type MockContextOptions = {
   query?: Record<string, string | undefined>;
   params?: Record<string, string>;
   body?: unknown;
+  authHeader?: string | null;
+  cookie?: string;
+  url?: string;
   env?: Partial<Env>;
 };
 
 function createMockContext(options: MockContextOptions = {}) {
   const headers = new Headers();
+  const requestHeaders: Record<string, string> = {};
+  if (options.authHeader !== null) {
+    requestHeaders.Authorization = options.authHeader ?? 'Bearer access-token';
+  }
+  if (options.cookie) {
+    requestHeaders.Cookie = options.cookie;
+  }
+  const request = new Request(options.url ?? 'https://op.example.com/me/devices', {
+    headers: requestHeaders,
+  });
   return {
     env: {
       KEY_MANAGER_SECRET: 'cursor-secret',
@@ -82,11 +109,9 @@ function createMockContext(options: MockContextOptions = {}) {
     } as Env,
     req: {
       method: 'GET',
-      url: 'https://op.example.com/me/devices',
-      raw: new Request('https://op.example.com/me/devices', {
-        headers: { Authorization: 'Bearer access-token' },
-      }),
-      header: (name: string) => (name === 'Authorization' ? 'Bearer access-token' : undefined),
+      url: request.url,
+      raw: request,
+      header: (name: string) => request.headers.get(name) ?? undefined,
       query: (name: string) => options.query?.[name],
       param: (name: string) => options.params?.[name] ?? '',
       json: vi.fn().mockResolvedValue(options.body),
@@ -97,7 +122,10 @@ function createMockContext(options: MockContextOptions = {}) {
     json: (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
         status,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...Object.fromEntries(headers.entries()),
+        },
       }),
     get: vi.fn().mockReturnValue(undefined),
   } as any;
@@ -184,6 +212,13 @@ describe('/me/devices handlers', () => {
       valid: true,
       claims: accessClaims,
     });
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      id: 'g1:apac:3:session_cookie',
+      userId: 'user-001',
+      createdAt: 1_777_000_000_000,
+      expiresAt: Date.now() + 60_000,
+      data: {},
+    });
     mockRepo.findByUserId.mockResolvedValue([otherDevice, currentDevice]);
     mockRepo.findByInstallationId.mockResolvedValue(currentDevice);
     mockRepo.findById.mockResolvedValue(currentDevice);
@@ -252,6 +287,61 @@ describe('/me/devices handlers', () => {
     });
     expect(secondBody.devices[0].fallback_display_name).toBeUndefined();
     expect(secondBody.next_cursor).toBeUndefined();
+  });
+
+  it('lists devices with an Account Page cookie session', async () => {
+    const response = await listMyDevicesHandler(
+      createMockContext({
+        authHeader: null,
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_cookie',
+        url: 'https://op.example.com/api/account/devices',
+      })
+    );
+    const body = (await response.json()) as {
+      devices: Array<Record<string, unknown>>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(mockIntrospectTokenFromContext).not.toHaveBeenCalled();
+    expect(mockGetSessionStoreBySessionId).toHaveBeenCalledWith(
+      expect.anything(),
+      'g1:apac:3:session_cookie',
+      'default'
+    );
+    expect(body.devices[0]).toMatchObject({
+      id: 'inst-current',
+      current: false,
+      fallback_display_name: 'ios device',
+    });
+  });
+
+  it('keeps /me/devices bearer-only when no Authorization header is present', async () => {
+    const response = await listMyDevicesHandler(
+      createMockContext({
+        authHeader: null,
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_cookie',
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toContain('Bearer');
+    expect(body.error).toBe('invalid_token');
+    expect(mockGetSessionStoreBySessionId).not.toHaveBeenCalled();
+  });
+
+  it('keeps /api/account/devices cookie-only even when Authorization is present', async () => {
+    const response = await listMyDevicesHandler(
+      createMockContext({
+        authHeader: 'Bearer access-token',
+        url: 'https://op.example.com/api/account/devices',
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(401);
+    expect(body.error).toBe('unauthorized');
+    expect(mockIntrospectTokenFromContext).not.toHaveBeenCalled();
   });
 
   it('lists canonical installations from the current trust_group', async () => {

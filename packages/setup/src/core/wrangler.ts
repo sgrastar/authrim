@@ -204,7 +204,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
-  'ar-router': ['AUTHRIM_CONFIG'],
+  'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
   'ar-async': ['AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
@@ -656,6 +656,12 @@ export function generateWranglerConfig(
     if (config.components.adminUi) {
       services.push({ binding: 'ADMIN_UI_WORKER', service: `${env}-ar-admin-ui` });
     }
+    if (config.serviceSite?.enabled && config.serviceSite.workerName) {
+      services.push({
+        binding: config.serviceSite.binding || 'SERVICE_SITE',
+        service: config.serviceSite.workerName,
+      });
+    }
 
     wranglerConfig.services = services;
 
@@ -946,6 +952,9 @@ export function generateEnvVars(
       if (loginUiWorkerUrl) {
         vars['AR_LOGIN_UI_URL'] = loginUiWorkerUrl;
       }
+    }
+    if (config.serviceSite?.enabled && config.serviceSite.workerName) {
+      vars['SERVICE_SITE_BINDING'] = config.serviceSite.binding || 'SERVICE_SITE';
     }
   }
 

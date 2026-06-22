@@ -34,6 +34,7 @@ import {
   validateDPoPProof,
   createPhase1ErrorDetails,
   getSessionCookieSameSite,
+  resolvePostLoginRedirectUrl,
 } from '@authrim/ar-lib-core';
 
 type HandoffInclude = {
@@ -564,11 +565,15 @@ export async function handleHandoffFinalize(c: Context<{ Bindings: Env }>): Prom
       maxAge: handoffSession.rpTokenTTL,
     });
 
+    const tenantId = getTenantIdFromContext(c);
+    const postLoginRedirect = await resolvePostLoginRedirectUrl(c.env, tenantId);
+
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json({
       ok: true,
       expires_in: handoffSession.rpTokenTTL,
+      redirect_url: postLoginRedirect.redirectUrl,
     });
   } catch (error) {
     log.error('Handoff finalize error', {

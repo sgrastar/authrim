@@ -39,6 +39,8 @@ export * from './dr-backup';
 export * from './login-entry';
 export * from './tenant-discovery-ui';
 export * from './support-ops';
+export * from './self-service';
+export * from './service-site';
 
 // Re-export SettingsManager types
 export type {
@@ -99,6 +101,8 @@ import { DR_BACKUP_CATEGORY_META } from './dr-backup';
 import { LOGIN_ENTRY_CATEGORY_META } from './login-entry';
 import { TENANT_DISCOVERY_UI_CATEGORY_META } from './tenant-discovery-ui';
 import { SUPPORT_OPS_CATEGORY_META } from './support-ops';
+import { SELF_SERVICE_CATEGORY_META } from './self-service';
+import { SERVICE_SITE_CATEGORY_META } from './service-site';
 
 // Export commonly used category metadata
 export { CLIENT_CATEGORY_META, OAUTH_CATEGORY_META };
@@ -154,6 +158,8 @@ export const ALL_CATEGORY_META = {
   'login-entry': LOGIN_ENTRY_CATEGORY_META,
   'tenant-discovery-ui': TENANT_DISCOVERY_UI_CATEGORY_META,
   'support-ops': SUPPORT_OPS_CATEGORY_META,
+  'self-service': SELF_SERVICE_CATEGORY_META,
+  'service-site': SERVICE_SITE_CATEGORY_META,
 } as const;
 
 /**
@@ -285,6 +291,12 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['platform', 'tenant'],
   },
   'support-ops': {
+    allowedScopes: ['tenant'],
+  },
+  'self-service': {
+    allowedScopes: ['tenant'],
+  },
+  'service-site': {
     allowedScopes: ['tenant'],
   },
 

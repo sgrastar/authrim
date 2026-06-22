@@ -9,6 +9,7 @@ const config = {
 	preprocess: sequence([vitePreprocess(), preprocessMeltUI()]),
 
 	kit: {
+		appDir: '_authrim_login',
 		// Cloudflare Workers static-assets adapter configuration
 		adapter: adapter({
 			// Keep OAuth/OIDC API endpoints on the core Authrim Workers.

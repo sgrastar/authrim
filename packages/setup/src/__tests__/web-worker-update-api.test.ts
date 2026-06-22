@@ -6,6 +6,7 @@ import { createDefaultConfig } from '../core/config.js';
 
 const buildApiPackagesMock = vi.hoisted(() => vi.fn());
 const deployAllMock = vi.hoisted(() => vi.fn());
+const deployWorkerMock = vi.hoisted(() => vi.fn());
 const deployUiWorkerBindingTargetsMock = vi.hoisted(() => vi.fn());
 const getWorkersSubdomainMock = vi.hoisted(() => vi.fn());
 const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
@@ -22,6 +23,7 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     ...actual,
     buildApiPackages: buildApiPackagesMock,
     deployAll: deployAllMock,
+    deployWorker: deployWorkerMock,
     deployUiWorkerBindingTargets: deployUiWorkerBindingTargetsMock,
   };
 });
@@ -111,6 +113,13 @@ async function writeEnvironment(env: string) {
     join(packageDir, 'package.json'),
     `${JSON.stringify({ name: '@authrim/ar-auth', version: '0.2.0' }, null, 2)}\n`
   );
+
+  const routerPackageDir = join(tempDir!, 'packages', 'ar-router');
+  await mkdir(routerPackageDir, { recursive: true });
+  await writeFile(
+    join(routerPackageDir, 'package.json'),
+    `${JSON.stringify({ name: '@authrim/ar-router', version: '0.3.0' }, null, 2)}\n`
+  );
 }
 
 async function addVersionedWorkerPackage(
@@ -143,6 +152,7 @@ describe('setup web worker update API', () => {
 
     buildApiPackagesMock.mockReset();
     deployAllMock.mockReset();
+    deployWorkerMock.mockReset();
     deployUiWorkerBindingTargetsMock.mockReset();
     getWorkersSubdomainMock.mockReset();
     saveMasterWranglerConfigsMock.mockReset();
@@ -154,6 +164,12 @@ describe('setup web worker update API', () => {
     configureDownstreamIntrospectionDeploymentMock.mockReset();
 
     buildApiPackagesMock.mockResolvedValue({ success: true });
+    deployWorkerMock.mockResolvedValue({
+      success: true,
+      workerName: 'test-ar-router',
+      version: '0.3.0',
+      deployedAt: '2026-06-18T00:00:00.000Z',
+    });
     deployUiWorkerBindingTargetsMock.mockResolvedValue({
       successCount: 0,
       failedCount: 0,
@@ -238,6 +254,133 @@ describe('setup web worker update API', () => {
     expect(updateResponse.status).toBe(200);
     expect(updateBody.success).toBe(true);
     expect(updateBody.progress).toContain('✓ test-ar-auth deployed');
+  });
+
+  it('configures Service Site fallback and deploys ar-router', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    syncWranglerConfigsMock.mockResolvedValue({
+      success: true,
+      errors: [],
+      synced: ['ar-router'],
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/service-site/configure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({
+        env,
+        enabled: true,
+        binding: 'SERVICE_SITE',
+        workerName: 'customer-service-site',
+      }),
+    });
+    const body = (await response.json()) as {
+      success: boolean;
+      serviceSite: { enabled: boolean; binding: string; workerName: string };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.serviceSite).toEqual({
+      enabled: true,
+      binding: 'SERVICE_SITE',
+      workerName: 'customer-service-site',
+      fallbackMode: 'worker_service_binding',
+    });
+    expect(saveMasterWranglerConfigsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceSite: expect.objectContaining({
+          enabled: true,
+          binding: 'SERVICE_SITE',
+          workerName: 'customer-service-site',
+        }),
+      }),
+      expect.any(Object),
+      expect.objectContaining({ components: ['ar-router'] })
+    );
+    expect(syncWranglerConfigsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ components: ['ar-router'] })
+    );
+    expect(buildApiPackagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ components: ['ar-router'] })
+    );
+    expect(deployWorkerMock).toHaveBeenCalledWith(
+      'ar-router',
+      expect.objectContaining({ env, dryRun: false })
+    );
+
+    const config = JSON.parse(
+      await readFile(join(tempDir!, '.authrim', env, 'config.json'), 'utf-8')
+    );
+    expect(config.serviceSite).toEqual({
+      enabled: true,
+      binding: 'SERVICE_SITE',
+      workerName: 'customer-service-site',
+      fallbackMode: 'worker_service_binding',
+    });
+
+    const lock = JSON.parse(await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8'));
+    expect(lock.workers['ar-router']).toEqual(
+      expect.objectContaining({
+        name: 'test-ar-router',
+        version: '0.3.0',
+      })
+    );
+  });
+
+  it('rejects enabling Service Site fallback without a worker name', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/service-site/configure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({
+        env,
+        enabled: true,
+        binding: 'SERVICE_SITE',
+      }),
+    });
+    const body = (await response.json()) as { success: boolean; error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.success).toBe(false);
+    expect(body.error).toContain('Worker name is required');
+    expect(deployWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it('requires a session token before configuring Service Site fallback', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+
+    const app = createApiRoutes();
+    const response = await app.request('/service-site/configure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        env,
+        enabled: false,
+        binding: 'SERVICE_SITE',
+      }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(401);
+    expect(body.error).toBe('Invalid or missing session token');
+    expect(deployWorkerMock).not.toHaveBeenCalled();
   });
 
   it('does not run downstream introspection setup during bulk worker updates', async () => {

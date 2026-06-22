@@ -78,9 +78,9 @@ describe('Login UI proxy hooks', () => {
 		const enabled = buildContentSecurityPolicy(undefined, 'turnstile');
 
 		expect(disabled).not.toContain('https://challenges.cloudflare.com');
-		expect(disabled).not.toContain('https://static.cloudflareinsights.com');
+		expect(disabled).toContain('https://static.cloudflareinsights.com');
 		expect(enabled).toContain(
-			"script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com"
+			"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com"
 		);
 		expect(enabled).toContain('https://static.cloudflareinsights.com');
 		expect(enabled).toContain('frame-src https://challenges.cloudflare.com');
@@ -130,6 +130,6 @@ describe('Login UI proxy hooks', () => {
 
 		expect(provider).toBeNull();
 		expect(csp).not.toContain('https://challenges.cloudflare.com');
-		expect(csp).not.toContain('https://static.cloudflareinsights.com');
+		expect(csp).toContain('https://static.cloudflareinsights.com');
 	});
 });

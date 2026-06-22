@@ -72,6 +72,7 @@
 		// Security tab
 		consent_required?: boolean;
 		first_party?: boolean;
+		app_login_enabled?: boolean;
 		sso_enabled?: boolean;
 		strict_redirect_matching?: boolean;
 		allow_localhost_redirect?: boolean;
@@ -208,6 +209,7 @@
 		// Security tab
 		consent_required?: boolean;
 		first_party?: boolean;
+		app_login_enabled?: boolean;
 		sso_enabled?: boolean;
 		strict_redirect_matching?: boolean;
 		allow_localhost_redirect?: boolean;
@@ -972,6 +974,8 @@
 			// Security tab
 			consent_required: (clientSettings.values['client.consent_required'] as boolean) ?? false,
 			first_party: (clientSettings.values['client.first_party'] as boolean) ?? false,
+			app_login_enabled:
+				(clientSettings.values['client.app_login_enabled'] as boolean) ?? false,
 			sso_enabled: (clientSettings.values['client.sso_enabled'] as boolean) ?? false,
 			strict_redirect_matching:
 				(clientSettings.values['client.strict_redirect_matching'] as boolean) ?? false,
@@ -1129,6 +1133,7 @@
 							// Security tab
 							'client.consent_required': settingsEditForm.consent_required,
 							'client.first_party': settingsEditForm.first_party,
+							'client.app_login_enabled': settingsEditForm.app_login_enabled,
 							'client.sso_enabled': settingsEditForm.sso_enabled,
 							'client.strict_redirect_matching': settingsEditForm.strict_redirect_matching,
 							'client.allow_localhost_redirect': settingsEditForm.allow_localhost_redirect,
@@ -2151,6 +2156,11 @@
 										bind:checked={settingsEditForm.first_party}
 										label={$LL.admin_client_detail_first_party_app()}
 										description={$LL.admin_client_detail_first_party_app_desc()}
+										onchange={(newValue) => {
+											if (!newValue) {
+												settingsEditForm.app_login_enabled = false;
+											}
+										}}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
@@ -2159,6 +2169,25 @@
 										{formatEnabled(clientSettings?.values['client.first_party'] as boolean)}
 									</p>
 									<p class="form-hint">{$LL.admin_client_detail_first_party_app_desc()}</p>
+								{/if}
+							</div>
+
+							<!-- App Login Enabled -->
+							<div class="form-group">
+								{#if isEditing}
+									<ToggleSwitch
+										bind:checked={settingsEditForm.app_login_enabled}
+										label={$LL.admin_client_detail_app_login_enabled()}
+										description={$LL.admin_client_detail_app_login_enabled_desc()}
+										disabled={!settingsEditForm.first_party}
+									/>
+								{:else}
+									<!-- svelte-ignore a11y_label_has_associated_control -->
+									<label class="form-label">{$LL.admin_client_detail_app_login_enabled()}</label>
+									<p class="display-text">
+										{formatEnabled(clientSettings?.values['client.app_login_enabled'] as boolean)}
+									</p>
+									<p class="form-hint">{$LL.admin_client_detail_app_login_enabled_desc()}</p>
 								{/if}
 							</div>
 

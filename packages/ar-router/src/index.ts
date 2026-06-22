@@ -9,6 +9,7 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  validateAccountPagePath,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -32,6 +33,7 @@ interface Env {
   // KV Namespace for configuration (optional)
   // Used for dynamic configuration from Admin UI without redeployment
   AUTHRIM_CONFIG?: KVNamespace;
+  SETTINGS?: KVNamespace;
   // CORS configuration (optional, fallback if KV not set)
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
@@ -55,11 +57,21 @@ interface Env {
   LOGIN_UI_WORKER?: Fetcher;
   /** Admin UI Worker service binding */
   ADMIN_UI_WORKER?: Fetcher;
+  /** User-owned service site Worker service binding */
+  SERVICE_SITE?: Fetcher;
+  /** Name of the user-owned service site Worker binding */
+  SERVICE_SITE_BINDING?: string;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
   ENABLE_ADMIN_UI_PROXY?: string;
 }
+
+const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
+const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
+const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
+const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
+const SERVICE_SITE_SETTINGS_CACHE_TTL_MS = 5_000;
 
 // Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
 const LOGIN_UI_PATHS = [
@@ -78,6 +90,12 @@ const LOGIN_UI_PATHS = [
 ];
 
 const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
+
+const accountPageSettingsCache = new Map<
+  string,
+  { enabled: boolean; path: string; expiresAt: number }
+>();
+const serviceSiteSettingsCache = new Map<string, { enabled: boolean; expiresAt: number }>();
 
 const BEARER_TOKEN_CANONICAL_PATHS = [
   '/authorize',
@@ -182,6 +200,85 @@ function getConfiguredUrlHostname(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function getRequestTenantId(c: Context<{ Bindings: Env }>): string {
+  const hostResult = validateHostHeader(c.req.header('Host'), c.env);
+  return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
+}
+
+function getServiceSiteBinding(env: Env): Fetcher | undefined {
+  const bindingName = env.SERVICE_SITE_BINDING?.trim() || 'SERVICE_SITE';
+  const candidate = (env as unknown as Record<string, unknown>)[bindingName];
+  return candidate && typeof (candidate as { fetch?: unknown }).fetch === 'function'
+    ? (candidate as Fetcher)
+    : undefined;
+}
+
+function parseSettingsRecord(raw: string | null): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
+  const tenantId = getRequestTenantId(c);
+  const cached = accountPageSettingsCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+  const raw = kv
+    ? await kv.get(`settings:tenant:${tenantId}:self-service`).catch(() => null)
+    : null;
+  const record = parseSettingsRecord(raw);
+  const configuredPath = record['self-service.account_page_path'];
+  const accountPath = validateAccountPagePath(configuredPath) ? configuredPath : '/account';
+  const settings = {
+    enabled: record['self-service.account_page_enabled'] === true,
+    path: accountPath,
+    expiresAt: Date.now() + ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS,
+  };
+  accountPageSettingsCache.set(tenantId, settings);
+  return settings;
+}
+
+async function resolveServiceSiteFallbackSettings(c: Context<{ Bindings: Env }>) {
+  const tenantId = getRequestTenantId(c);
+  const cached = serviceSiteSettingsCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+  const raw = kv
+    ? await kv.get(`settings:tenant:${tenantId}:service-site`).catch(() => null)
+    : null;
+  const record = parseSettingsRecord(raw);
+  const settings = {
+    enabled: record['service-site.fallback_enabled'] === true,
+    expiresAt: Date.now() + SERVICE_SITE_SETTINGS_CACHE_TTL_MS,
+  };
+  serviceSiteSettingsCache.set(tenantId, settings);
+  return settings;
+}
+
+function getAccountPageInternalPath(requestPath: string, accountPagePath: string): string | null {
+  if (requestPath !== accountPagePath && !requestPath.startsWith(`${accountPagePath}/`)) {
+    return null;
+  }
+  const suffix = requestPath.slice(accountPagePath.length);
+  return `${ACCOUNT_PAGE_INTERNAL_PATH}${suffix}`;
 }
 
 /**
@@ -312,10 +409,21 @@ app.use('*', async (c, next) => {
     path.startsWith('/error') ||
     path.startsWith('/api/set-language') ||
     path.startsWith('/callback') ||
-    path.startsWith('/_app') || // SvelteKit static assets
+    path.startsWith(`${LOGIN_UI_ASSET_PREFIX}/`) || // Login UI SvelteKit static assets
+    path.startsWith(`${ADMIN_UI_ASSET_PREFIX}/`) || // Admin UI SvelteKit static assets
     path === '/' // Root path for Login UI (external auth callbacks)
   ) {
     return next();
+  }
+
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    const accountPageSettings = await resolveAccountPageSettings(c);
+    if (
+      accountPageSettings.enabled &&
+      getAccountPageInternalPath(path, accountPageSettings.path) !== null
+    ) {
+      return next();
+    }
   }
 
   return secureHeaders({
@@ -913,6 +1021,11 @@ app.all('/me/devices/*', async (c) => {
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
+app.all('/api/account/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
 app.get('/api/avatars/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
@@ -1126,7 +1239,6 @@ for (const uiPath of LOGIN_UI_PATHS) {
   });
 }
 
-// Static assets proxy for UI (when either proxy is enabled)
 // This handles /geo/* paths for WorldMap GeoJSON data (Admin UI only)
 app.get('/geo/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
@@ -1135,52 +1247,30 @@ app.get('/geo/*', async (c) => {
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
-// This handles /_app/* paths for SvelteKit static assets
-app.all('/_app/*', async (c) => {
-  // Determine which UI to serve static assets from based on Referer
-  // Each UI has different chunk names, so we need to route to the correct one
-  const referer = c.req.header('Referer');
-  let isAdminRequest = false;
-
-  try {
-    if (referer) {
-      const refererUrl = new URL(referer);
-      isAdminRequest = refererUrl.pathname.startsWith('/admin');
-    }
-  } catch {
-    // Invalid referer URL, will try both UIs
+// Login UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
+app.all(`${LOGIN_UI_ASSET_PREFIX}/*`, async (c) => {
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
   }
+  return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
+});
 
-  // Try primary UI first (based on referer), then fallback to the other
-  const adminEnabled = c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL;
-  const loginEnabled = c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL;
-
-  // Determine order to try UIs
-  const uisToTry: Array<{ url: string; name: string }> = [];
-  if (isAdminRequest && adminEnabled) {
-    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
-    if (loginEnabled) uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
-  } else if (loginEnabled) {
-    uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
-    if (adminEnabled) uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
-  } else if (adminEnabled) {
-    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
+// Admin UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
+app.all(`${ADMIN_UI_ASSET_PREFIX}/*`, async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path, c.env.ADMIN_UI_WORKER);
   }
-
-  // Try each UI in order, return first successful response
-  for (const ui of uisToTry) {
-    const serviceBinding = ui.name === 'admin' ? c.env.ADMIN_UI_WORKER : c.env.LOGIN_UI_WORKER;
-    const response = await proxyToUiWorker(c.req.raw.clone(), ui.url, c.req.path, serviceBinding);
-    if (response.ok) {
-      return response;
-    }
-  }
-
-  return c.json({ error: 'not_found', message: 'Static asset not found in any UI' }, 404);
+  return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
 app.get('/', async (c) => {
+  const serviceSiteFallback = await resolveServiceSiteFallbackSettings(c);
+  const serviceSite = getServiceSiteBinding(c.env);
+  if (serviceSiteFallback.enabled && serviceSite) {
+    return serviceSite.fetch(c.req.raw);
+  }
+
   const requestHost = new URL(c.req.url).hostname.toLowerCase();
   const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
   const adminUiHost =
@@ -1213,6 +1303,35 @@ app.get('/', async (c) => {
       userinfo: '/userinfo',
     },
   });
+});
+
+// Configured Account Page prefixes are public URLs but served by Login UI's /account route.
+app.all('*', async (c, next) => {
+  const settings = await resolveAccountPageSettings(c);
+  if (!settings.enabled) {
+    return next();
+  }
+
+  const internalPath = getAccountPageInternalPath(c.req.path, settings.path);
+  if (!internalPath) {
+    return next();
+  }
+
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
+  }
+  return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
+});
+
+// Optional service-site fallback. Authrim-owned routes are registered above, so only unknown
+// non-reserved paths reach this point.
+app.all('*', async (c, next) => {
+  const settings = await resolveServiceSiteFallbackSettings(c);
+  const serviceSite = getServiceSiteBinding(c.env);
+  if (!settings.enabled || !serviceSite) {
+    return next();
+  }
+  return serviceSite.fetch(c.req.raw);
 });
 
 // 404 handler

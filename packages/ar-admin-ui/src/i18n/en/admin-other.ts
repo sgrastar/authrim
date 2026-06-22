@@ -371,6 +371,67 @@ const adminOther = {
 		'Use host-only origins. Paths are not allowed. `http://localhost` is allowed for local development.',
 	admin_login_ui_normalized_entries: 'Normalized entries',
 	admin_login_ui_save_trusted_origins: 'Save Trusted Origins',
+	admin_login_ui_post_login_title: 'Post-login Destination',
+	admin_login_ui_post_login_description:
+		'Choose where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
+	admin_login_ui_post_login_behavior: 'Direct Login Destination',
+	admin_login_ui_post_login_behavior_description:
+		'This applies only when Login UI itself starts the sign-in flow.',
+	admin_login_ui_post_login_home: 'Home',
+	admin_login_ui_post_login_home_desc: 'Send users to / on this domain.',
+	admin_login_ui_post_login_account: 'Account Page',
+	admin_login_ui_post_login_account_desc: 'Send users to the Authrim-managed account page.',
+	admin_login_ui_post_login_custom: 'Custom URL',
+	admin_login_ui_post_login_custom_desc: 'Send users to a relative path or trusted HTTPS origin.',
+	admin_login_ui_post_login_app_login: 'App Login',
+	admin_login_ui_post_login_app_login_desc:
+		'Start an enabled first-party OIDC client so the service app creates its own session.',
+	admin_login_ui_post_login_redirect_url: 'Custom Redirect URL',
+	admin_login_ui_post_login_redirect_url_description:
+		'Use a non-reserved relative path such as /mypage, or an HTTPS URL whose origin is trusted.',
+	admin_login_ui_app_login_client: 'App Login Client',
+	admin_login_ui_app_login_client_description:
+		'Choose a same-tenant Client that has First Party App and App Login enabled.',
+	admin_login_ui_app_login_client_placeholder: 'Select an enabled client',
+	admin_login_ui_app_login_client_link: 'Open client settings',
+	admin_login_ui_app_login_clients_error: 'Failed to load App Login client candidates.',
+	admin_login_ui_app_login_redirect_uri: 'App Login Redirect URI',
+	admin_login_ui_app_login_redirect_uri_description:
+		'Must exactly match one of the selected Client redirect URIs.',
+	admin_login_ui_app_login_scope: 'App Login Scope',
+	admin_login_ui_app_login_scope_description:
+		'Space-separated OIDC scopes. App Login must include openid.',
+	admin_login_ui_app_login_final_return_to: 'Final Return To',
+	admin_login_ui_app_login_final_return_to_description:
+		'Optional path or trusted HTTPS URL for the service app to use after its callback completes.',
+	admin_login_ui_app_login_required:
+		'App Login requires a Client ID, redirect URI, and scope before saving.',
+	admin_login_ui_trusted_redirect_origins_link: 'Manage trusted redirect origins',
+	admin_login_ui_account_page_enabled: 'Account Page Enabled',
+	admin_login_ui_account_page_enabled_description:
+		'Routes the configured public path prefix to Login UI account pages.',
+	admin_login_ui_account_page_forced_on:
+		'Required while the direct login destination is Account Page.',
+	admin_login_ui_account_page_path: 'Account Page Public Path',
+	admin_login_ui_account_page_path_description:
+		'Use a non-reserved path prefix such as /account or /mypage. All child paths under this prefix are owned by Login UI.',
+	admin_login_ui_account_page_required:
+		'Account Page must stay enabled while the direct login destination is Account Page.',
+	admin_login_ui_post_login_link: 'Review post-login settings',
+	admin_login_ui_post_login_updated: 'Post-login settings updated.',
+	admin_login_ui_error_save_post_login: 'Failed to save post-login settings.',
+	admin_login_ui_save_post_login: 'Save Post-login Settings',
+	admin_login_ui_service_site_title: 'Service Site Fallback',
+	admin_login_ui_service_site_description:
+		'Controls whether Login UI domains forward unmatched paths to the service site Worker.',
+	admin_login_ui_service_site_enabled: 'Enable Service Site fallback',
+	admin_login_ui_service_site_enabled_description:
+		'When enabled, ar-router handles Authrim reserved paths first, then forwards unmatched paths to the Service Binding configured by the setup tool.',
+	admin_login_ui_service_site_setup_note:
+		'Configure and deploy the Service Binding from the setup tool existing environment detail screen before enabling this.',
+	admin_login_ui_service_site_updated: 'Service Site fallback setting updated.',
+	admin_login_ui_error_save_service_site: 'Failed to save Service Site fallback setting.',
+	admin_login_ui_save_service_site: 'Save Service Site Setting',
 	admin_login_ui_reload: 'Reload',
 	admin_login_ui_loading_settings: 'Loading settings...',
 	admin_login_ui_locked: 'Locked',

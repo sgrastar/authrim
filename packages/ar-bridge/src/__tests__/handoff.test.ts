@@ -93,6 +93,10 @@ vi.mock('@authrim/ar-lib-core', () => ({
   extractDPoPProof: mocks.extractDPoPProof,
   validateDPoPProof: mocks.validateDPoPProof,
   getSessionCookieSameSite: vi.fn().mockReturnValue('Lax'),
+  resolvePostLoginRedirectUrl: vi.fn().mockResolvedValue({
+    redirectUrl: '/',
+    behavior: 'home',
+  }),
 }));
 
 import { handleHandoffFinalize, handleHandoffVerify } from '../handlers/handoff';
@@ -318,6 +322,7 @@ describe('handleHandoffVerify', () => {
     expect(body).toMatchObject({
       ok: true,
       expires_in: 3600,
+      redirect_url: '/',
     });
     expect(body.access_token).toBeUndefined();
     expect(body.refresh_token).toBeUndefined();
