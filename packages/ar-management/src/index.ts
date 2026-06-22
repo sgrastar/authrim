@@ -677,6 +677,13 @@ import {
   deleteAccountSessionHandler,
 } from './account-sessions';
 import {
+  createAccountPasskeyOptionsHandler,
+  completeAccountPasskeyRegistrationHandler,
+  listAccountPasskeysHandler,
+  updateAccountPasskeyHandler,
+  deleteAccountPasskeyHandler,
+} from './account-passkeys';
+import {
   createWebhook,
   listWebhooks,
   getWebhook,
@@ -1169,6 +1176,11 @@ app.get('/api/account/profile', getAccountProfileHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
+app.get('/api/account/passkeys', listAccountPasskeysHandler);
+app.post('/api/account/passkeys/options', createAccountPasskeyOptionsHandler);
+app.post('/api/account/passkeys/complete', completeAccountPasskeyRegistrationHandler);
+app.patch('/api/account/passkeys/:id', updateAccountPasskeyHandler);
+app.delete('/api/account/passkeys/:id', deleteAccountPasskeyHandler);
 app.get('/api/account/devices', listMyDevicesHandler);
 app.patch('/api/account/devices/:id', updateMyDeviceHandler);
 app.delete('/api/account/devices/:id', deleteMyDeviceHandler);

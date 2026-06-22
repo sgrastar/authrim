@@ -88,6 +88,142 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Id"
       security: *accountSession
+  /api/account/passkeys:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountPasskeys
+      summary: List current user's passkeys.
+      description: Returns passkeys registered to the authenticated Account Page user without credential
+        IDs, public keys, or counters.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountPasskeys"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security: *accountSession
+  /api/account/passkeys/options:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountPasskeyOptions
+      summary: Create passkey registration options.
+      description: Starts a WebAuthn passkey registration ceremony for the authenticated Account Page
+        user. Recent authentication and a valid browser Origin are required.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountPasskeyOptions"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device_name:
+                  type: string
+                  maxLength: 100
+      security: *accountSession
+  /api/account/passkeys/complete:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountPasskeyComplete
+      summary: Complete passkey registration.
+      description: Verifies a WebAuthn registration response against the stored challenge and registers
+        the passkey for the authenticated Account Page user.
+      responses:
+        "201":
+          $ref: "#/components/responses/AccountPasskeyCreate"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - passkey_response
+              properties:
+                challenge_id:
+                  type: string
+                passkey_response:
+                  type: object
+                  additionalProperties: true
+                device_name:
+                  type: string
+                  maxLength: 100
+      security: *accountSession
+  /api/account/passkeys/{id}:
+    patch:
+      tags:
+        - Account Page
+      operationId: patchApiAccountPasskeyById
+      summary: Rename one current user's passkey.
+      description: Updates the display name of a passkey owned by the authenticated Account Page user.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountPasskey"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - device_name
+              properties:
+                device_name:
+                  type: string
+                  maxLength: 100
+      security: *accountSession
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountPasskeyById
+      summary: Delete one current user's passkey.
+      description: Deletes a passkey owned by the authenticated Account Page user. The last passkey cannot
+        be removed in this initial implementation, and recent authentication is required.
+      responses:
+        "200":
+          $ref: "#/components/responses/AccountPasskeyDelete"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      security: *accountSession
   /api/account/devices:
     get:
       tags:
@@ -533,6 +669,36 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/AccountSessionRevokeResponse"
+    AccountPasskeys:
+      description: Account Page passkey list response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountPasskeysResponse"
+    AccountPasskeyOptions:
+      description: Account Page passkey registration options response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountPasskeyOptionsResponse"
+    AccountPasskeyCreate:
+      description: Account Page passkey creation response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountPasskeyCreateResponse"
+    AccountPasskey:
+      description: Account Page passkey response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountPasskeyResponse"
+    AccountPasskeyDelete:
+      description: Account Page passkey delete response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountPasskeyDeleteResponse"
     AccountDevice:
       description: Account Page device mutation response.
       content:
@@ -853,6 +1019,84 @@ components:
                 - revoked
                 - not_found
                 - not_applicable
+    AccountPasskey:
+      type: object
+      required:
+        - id
+        - device_name
+        - created_at
+        - last_used_at
+      properties:
+        id:
+          type: string
+        device_name:
+          type:
+            - string
+            - "null"
+        created_at:
+          type: integer
+        last_used_at:
+          type:
+            - integer
+            - "null"
+    AccountPasskeysResponse:
+      type: object
+      required:
+        - passkeys
+        - total
+      properties:
+        passkeys:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountPasskey"
+        total:
+          type: integer
+    AccountPasskeyResponse:
+      type: object
+      required:
+        - passkey
+      properties:
+        passkey:
+          $ref: "#/components/schemas/AccountPasskey"
+    AccountPasskeyOptionsResponse:
+      type: object
+      required:
+        - options
+        - challenge_id
+      properties:
+        options:
+          type: object
+          additionalProperties: true
+        challenge_id:
+          type: string
+    AccountPasskeyCreateResponse:
+      type: object
+      required:
+        - ok
+        - passkey
+      properties:
+        ok:
+          type: boolean
+        passkey:
+          $ref: "#/components/schemas/AccountPasskey"
+    AccountPasskeyDeleteResponse:
+      type: object
+      required:
+        - ok
+        - passkey
+      properties:
+        ok:
+          type: boolean
+        passkey:
+          type: object
+          required:
+            - id
+            - deleted
+          properties:
+            id:
+              type: string
+            deleted:
+              type: boolean
     AccountDeviceResponse:
       type: object
       required:
