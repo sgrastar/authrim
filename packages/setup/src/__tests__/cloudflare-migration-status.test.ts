@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  type D1MigrationFileState,
-  getBlockingChangedMigrationFiles,
-} from '../core/cloudflare.js';
+import { type D1MigrationFileState, getBlockingChangedMigrationFiles } from '../core/cloudflare.js';
 
 describe('getBlockingChangedMigrationFiles', () => {
   const migrations: D1MigrationFileState[] = [

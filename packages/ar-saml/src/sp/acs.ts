@@ -1299,10 +1299,7 @@ function buildSAMLInboundSourceValues(assertion: SAMLAssertion): SourceValueEnve
   return values;
 }
 
-function applySAMLInboundMappedValues(
-  userInfo: UserInfo,
-  values: SourceValueEnvelope[]
-): void {
+function applySAMLInboundMappedValues(userInfo: UserInfo, values: SourceValueEnvelope[]): void {
   for (const mappedValue of values) {
     const value = firstMappedScalar(mappedValue.value);
     if (value === undefined) continue;

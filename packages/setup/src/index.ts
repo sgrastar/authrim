@@ -376,10 +376,7 @@ program
           loginUiClientId,
         });
         if (componentName === 'ar-login-ui' && resolved.type === 'new' && loginUiClientId) {
-          await mergeAndSaveUiEnv(
-            (resolved.paths as { uiEnv: string }).uiEnv,
-            uiSettings.uiEnv
-          );
+          await mergeAndSaveUiEnv((resolved.paths as { uiEnv: string }).uiEnv, uiSettings.uiEnv);
         }
 
         const result = await deployUiWorkerComponent(

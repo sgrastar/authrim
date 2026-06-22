@@ -522,11 +522,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         process.exit(1);
       }
 
-      const setupMachineResult = await ensureSetupMachineAccessInD1(
-        env,
-        config,
-        keysDir,
-        (msg) => console.log(chalk.gray(`  ${msg}`))
+      const setupMachineResult = await ensureSetupMachineAccessInD1(env, config, keysDir, (msg) =>
+        console.log(chalk.gray(`  ${msg}`))
       );
       if (!setupMachineResult.success) {
         console.error(

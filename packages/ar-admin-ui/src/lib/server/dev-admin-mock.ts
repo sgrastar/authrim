@@ -8904,8 +8904,7 @@ async function handleConsentStatements(
 					? input.content_type.trim()
 					: 'url',
 			effective_at: typeof input.effective_at === 'number' ? input.effective_at : now,
-			effective_until:
-				typeof input.effective_until === 'number' ? input.effective_until : null,
+			effective_until: typeof input.effective_until === 'number' ? input.effective_until : null,
 			content_hash: `devhash${now}`,
 			is_current: 0,
 			status: 'draft',

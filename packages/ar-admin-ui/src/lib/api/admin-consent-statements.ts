@@ -235,13 +235,12 @@ export const adminConsentStatementsAPI = {
 			effective_until?: number | null;
 		}
 	): Promise<{ version: ConsentStatementVersion }> {
-		const response = await apiRequest<ConsentStatementVersion | { version: ConsentStatementVersion }>(
-			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions`,
-			{
-				method: 'POST',
-				body: JSON.stringify(data)
-			}
-		);
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions`, {
+			method: 'POST',
+			body: JSON.stringify(data)
+		});
 		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
 	},
 
@@ -249,7 +248,9 @@ export const adminConsentStatementsAPI = {
 		statementId: string,
 		versionId: string
 	): Promise<{ version: ConsentStatementVersion }> {
-		const response = await apiRequest<ConsentStatementVersion | { version: ConsentStatementVersion }>(
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}`
 		);
 		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
@@ -265,7 +266,9 @@ export const adminConsentStatementsAPI = {
 			effective_until?: number | null;
 		}
 	): Promise<{ version: ConsentStatementVersion }> {
-		const response = await apiRequest<ConsentStatementVersion | { version: ConsentStatementVersion }>(
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}`,
 			{
 				method: 'PUT',
@@ -279,7 +282,9 @@ export const adminConsentStatementsAPI = {
 		statementId: string,
 		versionId: string
 	): Promise<{ version: ConsentStatementVersion }> {
-		const response = await apiRequest<ConsentStatementVersion | { version: ConsentStatementVersion }>(
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}/activate`,
 			{ method: 'POST' }
 		);
@@ -358,13 +363,12 @@ export const adminConsentStatementsAPI = {
 			display_order?: number;
 		}
 	): Promise<{ requirement: TenantConsentRequirement }> {
-		const response = await apiRequest<TenantConsentRequirement | { requirement: TenantConsentRequirement }>(
-			`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`,
-			{
-				method: 'PUT',
-				body: JSON.stringify(data)
-			}
-		);
+		const response = await apiRequest<
+			TenantConsentRequirement | { requirement: TenantConsentRequirement }
+		>(`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`, {
+			method: 'PUT',
+			body: JSON.stringify(data)
+		});
 		return { requirement: unwrapResource<TenantConsentRequirement>(response, 'requirement') };
 	},
 
