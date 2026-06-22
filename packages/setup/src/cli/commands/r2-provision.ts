@@ -111,7 +111,9 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
     }
     process.exit(1);
   }
-  console.log(chalk.green(`✓ Refreshed ${wranglerResult.files.length} generated wrangler config(s).`));
+  console.log(
+    chalk.green(`✓ Refreshed ${wranglerResult.files.length} generated wrangler config(s).`)
+  );
 
   if (options.skipDeploy) {
     console.log(chalk.yellow('Skipped deploy. Run authrim-setup deploy to publish bindings.'));

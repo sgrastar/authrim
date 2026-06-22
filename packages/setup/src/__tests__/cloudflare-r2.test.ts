@@ -72,10 +72,7 @@ describe('Cloudflare R2 helpers', () => {
       json: async () => ({
         success: true,
         result: {
-          buckets: [
-            { name: 'test-authrim-avatars' },
-            { name: 'test-sensitive-details' },
-          ],
+          buckets: [{ name: 'test-authrim-avatars' }, { name: 'test-sensitive-details' }],
         },
       }),
     });
