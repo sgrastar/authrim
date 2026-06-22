@@ -14,6 +14,7 @@
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { auth } from '$lib/stores/auth';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -35,7 +36,14 @@
 	let passkeySupported = $state(false);
 
 	onMount(async () => {
-		await auth.refreshFromSession();
+		const [methodsResult] = await Promise.all([
+			fetchAuthenticationMethods(),
+			auth.refreshFromSession()
+		]);
+		if (methodsResult.data?.ui.selfService?.accountPageEnabled !== true) {
+			window.location.href = '/';
+			return;
+		}
 		if (!auth.checkAuth()) {
 			const returnTo = `${window.location.pathname}${window.location.search}`;
 			const result = await accountAPI.createAccountReturn(returnTo);

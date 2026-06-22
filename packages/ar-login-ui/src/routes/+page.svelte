@@ -8,6 +8,7 @@
 	import { brandingStore } from '$lib/stores/branding.svelte';
 
 	let mounted = $state(false);
+	let accountPageEnabled = $state(false);
 	let accountPagePath = $state('/account');
 
 	onMount(async () => {
@@ -17,8 +18,10 @@
 			fetchAuthenticationMethods(),
 			auth.refreshFromSession()
 		]);
-		const configuredAccountPath = methodsResult.data?.ui.selfService?.accountPagePath;
-		if (configuredAccountPath?.startsWith('/')) {
+		const selfService = methodsResult.data?.ui.selfService;
+		const configuredAccountPath = selfService?.accountPagePath;
+		accountPageEnabled = selfService?.accountPageEnabled === true;
+		if (accountPageEnabled && configuredAccountPath?.startsWith('/')) {
 			accountPagePath = configuredAccountPath;
 		}
 
@@ -59,9 +62,11 @@
 				<LanguageSwitcher />
 
 				{#if $isAuthenticated}
-					<a href={accountPagePath}>
-						<Button variant="secondary">{$LL.account_openPage()}</Button>
-					</a>
+					{#if accountPageEnabled}
+						<a href={accountPagePath}>
+							<Button variant="secondary">{$LL.account_openPage()}</Button>
+						</a>
+					{/if}
 				{:else}
 					<div class="landing__auth-buttons">
 						<a href="/signup">
@@ -99,12 +104,14 @@
 
 				{#if $isAuthenticated}
 					<!-- Authenticated state -->
-					<div class="landing__cta">
-						<a href={accountPagePath} class="landing__cta-primary">
-							<span>{$LL.account_openPage()}</span>
-							<div class="i-heroicons-arrow-right h-4 w-4"></div>
-						</a>
-					</div>
+					{#if accountPageEnabled}
+						<div class="landing__cta">
+							<a href={accountPagePath} class="landing__cta-primary">
+								<span>{$LL.account_openPage()}</span>
+								<div class="i-heroicons-arrow-right h-4 w-4"></div>
+							</a>
+						</div>
+					{/if}
 				{:else}
 					<!-- Unauthenticated state -->
 					<div class="landing__cta">

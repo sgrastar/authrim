@@ -112,6 +112,7 @@ describe('Account Page return transaction API', () => {
         body: { path: '/admin/users' },
         settings: {
           'settings:tenant:default:self-service': {
+            'self-service.account_page_enabled': true,
             'self-service.account_page_path': '/mypage',
           },
         },
@@ -124,12 +125,32 @@ describe('Account Page return transaction API', () => {
     expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
   });
 
+  it('rejects creating return transactions when Account Page is disabled', async () => {
+    const response = await createAccountReturnHandler(
+      createMockContext({
+        body: { path: '/account/security' },
+        settings: {
+          'settings:tenant:default:self-service': {
+            'self-service.account_page_enabled': false,
+            'self-service.account_page_path': '/account',
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(404);
+    expect(body.error).toBe('account_page_disabled');
+    expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
   it('consumes a return transaction once and returns the validated redirect URL', async () => {
     const response = await consumeAccountReturnHandler(
       createMockContext({
         params: { id: 'ret_001' },
         settings: {
           'settings:tenant:default:self-service': {
+            'self-service.account_page_enabled': true,
             'self-service.account_page_path': '/mypage',
           },
         },
@@ -144,5 +165,23 @@ describe('Account Page return transaction API', () => {
       tenantId: 'default',
       type: 'account_page_return',
     });
+  });
+
+  it('rejects consuming return transactions when Account Page is disabled', async () => {
+    const response = await consumeAccountReturnHandler(
+      createMockContext({
+        params: { id: 'ret_001' },
+        settings: {
+          'settings:tenant:default:self-service': {
+            'self-service.account_page_enabled': false,
+            'self-service.account_page_path': '/mypage',
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(404);
+    expect(body.error).toBe('account_page_disabled');
   });
 });

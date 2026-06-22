@@ -29,11 +29,17 @@ function parseSettingsRecord(raw: string | null | undefined): Record<string, unk
   }
 }
 
-async function resolveAccountPagePath(env: Env, tenantId: string): Promise<string> {
+async function resolveAccountPageSettings(
+  env: Env,
+  tenantId: string
+): Promise<{ enabled: boolean; path: string }> {
   const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:self-service`);
   const record = parseSettingsRecord(raw);
   const configuredPath = record['self-service.account_page_path'];
-  return validateAccountPagePath(configuredPath) ? configuredPath : DEFAULT_ACCOUNT_PAGE_PATH;
+  return {
+    enabled: record['self-service.account_page_enabled'] === true,
+    path: validateAccountPagePath(configuredPath) ? configuredPath : DEFAULT_ACCOUNT_PAGE_PATH,
+  };
 }
 
 function normalizePath(value: unknown): string | null {
@@ -75,8 +81,14 @@ export async function createAccountReturnHandler(c: Context<{ Bindings: Env }>):
 
   const path = normalizePath(body.path);
   const tenantId = getTenantIdFromContext(c);
-  const accountPagePath = await resolveAccountPagePath(c.env, tenantId);
-  if (!path || !isAllowedAccountReturnPath(path, accountPagePath)) {
+  const accountPage = await resolveAccountPageSettings(c.env, tenantId);
+  if (!accountPage.enabled) {
+    return c.json(
+      { error: 'account_page_disabled', error_description: 'Account Page is not enabled' },
+      404
+    );
+  }
+  if (!path || !isAllowedAccountReturnPath(path, accountPage.path)) {
     return c.json(
       { error: 'invalid_request', error_description: 'path must be under Account Page path' },
       400
@@ -93,7 +105,7 @@ export async function createAccountReturnHandler(c: Context<{ Bindings: Env }>):
     ttl: ACCOUNT_RETURN_TTL_SECONDS,
     metadata: {
       path,
-      accountPagePath,
+      accountPagePath: accountPage.path,
     },
   });
 
@@ -137,9 +149,15 @@ export async function consumeAccountReturnHandler(
     );
   }
 
-  const accountPagePath = await resolveAccountPagePath(c.env, tenantId);
+  const accountPage = await resolveAccountPageSettings(c.env, tenantId);
+  if (!accountPage.enabled) {
+    return c.json(
+      { error: 'account_page_disabled', error_description: 'Account Page is not enabled' },
+      404
+    );
+  }
   const path = typeof data.metadata?.path === 'string' ? data.metadata.path : null;
-  if (!path || !isAllowedAccountReturnPath(path, accountPagePath)) {
+  if (!path || !isAllowedAccountReturnPath(path, accountPage.path)) {
     return c.json(
       { error: 'invalid_account_return', error_description: 'Account return is no longer valid' },
       400
