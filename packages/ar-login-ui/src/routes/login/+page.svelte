@@ -12,6 +12,7 @@
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import {
 		isValidRedirectUrl,
+		isValidReturnUrl,
 		isValidImageUrl,
 		isValidLinkUrl,
 		sanitizeColor
@@ -345,6 +346,10 @@
 				return_to: 'saml_sso'
 			});
 			return `/saml/idp/sso?${params.toString()}`;
+		}
+
+		if (returnTo && isValidReturnUrl(returnTo)) {
+			return returnTo;
 		}
 
 		if (redirectUrl && isValidRedirectUrl(redirectUrl)) {

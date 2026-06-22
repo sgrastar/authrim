@@ -80,6 +80,7 @@ function createContext(body: Record<string, unknown>, settings?: Record<string, 
       },
       ...settings,
     }),
+    SETTINGS: createKV(settings ?? {}),
     WORDWARDEN_SECRET: 'active-secret',
   };
   return {
@@ -236,6 +237,51 @@ describe('directory password login handler', () => {
       })
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_directory');
+    expect(body.redirect_url).toBe('/');
+  });
+
+  it('returns configured post-login redirect after direct directory password login', async () => {
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        ok: true,
+        connector_id: 'ww_tenant_a',
+        result: 'success',
+        subject: {
+          directory_id: 'uid=alice,ou=People,dc=example,dc=com',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+          displayName: ['Alice Example'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:authentication-methods': {
+            'authentication-methods.directory_password.enabled': true,
+            'authentication-methods.directory_password.connector_id': 'campus',
+            'authentication-methods.directory_password.auto_provision': true,
+          },
+          'settings:tenant:tenant-a:login-entry': {
+            'login-entry.post_login_behavior': 'custom_url',
+            'login-entry.post_login_redirect_url': '/mypage',
+          },
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.redirect_url).toBe('/mypage');
   });
 
   it('returns 401 without creating a session when Wordwarden rejects credentials', async () => {

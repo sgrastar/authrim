@@ -68,6 +68,7 @@ import {
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
   getBrowserStateCookieSameSite,
+  resolvePostLoginRedirectUrl,
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
   CanonicalRuntimeUserStore,
@@ -2415,6 +2416,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       maxAge: sessionTTL,
     });
 
+    const postLoginRedirect = authorizationContinuation
+      ? authorizationContinuation.redirectUrl
+      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json({
@@ -2439,9 +2444,9 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
               challenge_id: authorization_challenge_id,
               type: authorizationContinuation.type,
             },
-            redirect_url: authorizationContinuation.redirectUrl,
           }
         : {}),
+      redirect_url: postLoginRedirect,
     });
   } catch (error) {
     log.error('Direct Auth session finish error', {

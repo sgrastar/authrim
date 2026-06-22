@@ -13,6 +13,7 @@
 		type CategoryMetaFull,
 		type SettingMetaItem,
 		type UIPatch,
+		type SettingsPatchRequest,
 		type SettingSource,
 		type UIConfigResponse,
 		type ScopeContext
@@ -34,11 +35,27 @@
 	let error = $state('');
 	let successMessage = $state('');
 	let tenantSettings = $state<CategorySettings | null>(null);
+	let postLoginSettings = $state<CategorySettings | null>(null);
+	let selfServiceSettings = $state<CategorySettings | null>(null);
 	let trustedOriginsInput = $state('');
 	let initialTrustedOriginsInput = $state('');
 	let trustedOriginsError = $state('');
 	let trustedOriginsSuccessMessage = $state('');
 	let trustedOriginsSaving = $state(false);
+	let postLoginError = $state('');
+	let postLoginSuccessMessage = $state('');
+	let postLoginSaving = $state(false);
+	type PostLoginBehavior = 'home' | 'account' | 'custom_url';
+	let postLoginBehavior = $state<PostLoginBehavior>('home');
+	let postLoginRedirectUrl = $state('/');
+	let accountPageEnabled = $state(false);
+	let accountPagePath = $state('/account');
+	let initialPostLoginForm = $state<{
+		behavior: PostLoginBehavior;
+		redirectUrl: string;
+		accountPageEnabled: boolean;
+		accountPagePath: string;
+	} | null>(null);
 	let uiConfigError = $state('');
 	let uiConfigSuccessMessage = $state('');
 	let uiConfigSaving = $state(false);
@@ -86,6 +103,14 @@
 			? JSON.stringify(uiConfigForm) !== JSON.stringify(initialUiConfigForm)
 			: false
 	);
+	const hasPostLoginChanges = $derived(
+		initialPostLoginForm
+			? postLoginBehavior !== initialPostLoginForm.behavior ||
+					postLoginRedirectUrl !== initialPostLoginForm.redirectUrl ||
+					accountPageEnabled !== initialPostLoginForm.accountPageEnabled ||
+					accountPagePath !== initialPostLoginForm.accountPagePath
+			: false
+	);
 	const trustedOriginsDraft = $derived.by(() => parseTrustedOriginsDraft(trustedOriginsInput));
 
 	// Load data on mount
@@ -111,6 +136,7 @@
 		loading = true;
 		error = '';
 		trustedOriginsError = '';
+		postLoginError = '';
 		uiConfigError = '';
 		pendingPatches = [];
 
@@ -119,12 +145,41 @@
 			const tenantInfo = await getTenantInfo(selectedTenantId);
 			const uiConfigResult = await adminUiConfigAPI.get();
 			const tenantSettingsResult = await adminSettingsAPI.getSettings('tenant', selectedTenantId);
+			const postLoginSettingsResult = await adminSettingsAPI.getSettings(
+				'login-entry',
+				selectedTenantId
+			);
+			const selfServiceSettingsResult = await adminSettingsAPI.getSettings(
+				'self-service',
+				selectedTenantId
+			);
 			const nextUiConfigForm: UIConfigForm = {
 				baseUrl: uiConfigResult.config.baseUrl ?? '',
 				paths: { ...uiConfigResult.config.paths }
 			};
 			uiConfig = uiConfigResult;
 			tenantSettings = tenantSettingsResult;
+			postLoginSettings = postLoginSettingsResult;
+			selfServiceSettings = selfServiceSettingsResult;
+			postLoginBehavior = readPostLoginBehavior(
+				postLoginSettingsResult.values['login-entry.post_login_behavior']
+			);
+			postLoginRedirectUrl =
+				typeof postLoginSettingsResult.values['login-entry.post_login_redirect_url'] === 'string'
+					? postLoginSettingsResult.values['login-entry.post_login_redirect_url']
+					: '/';
+			accountPageEnabled =
+				selfServiceSettingsResult.values['self-service.account_page_enabled'] === true;
+			accountPagePath =
+				typeof selfServiceSettingsResult.values['self-service.account_page_path'] === 'string'
+					? selfServiceSettingsResult.values['self-service.account_page_path']
+					: '/account';
+			initialPostLoginForm = {
+				behavior: postLoginBehavior,
+				redirectUrl: postLoginRedirectUrl,
+				accountPageEnabled,
+				accountPagePath
+			};
 			trustedOriginsInput = formatOriginsForEditor(
 				tenantSettingsResult.values['tenant.allowed_origins']
 			);
@@ -172,6 +227,10 @@
 			throw new Error($LL.admin_login_ui_error_tenant_required());
 		}
 		return selectedTenantId;
+	}
+
+	function readPostLoginBehavior(value: unknown): PostLoginBehavior {
+		return value === 'account' || value === 'custom_url' || value === 'home' ? value : 'home';
 	}
 
 	// Get current value (considering pending patches)
@@ -309,6 +368,121 @@
 	function discardTrustedOriginsChanges() {
 		trustedOriginsInput = initialTrustedOriginsInput;
 		trustedOriginsError = '';
+	}
+
+	function selectPostLoginBehavior(value: PostLoginBehavior) {
+		postLoginBehavior = value;
+		if (value === 'account') {
+			accountPageEnabled = true;
+		}
+	}
+
+	function discardPostLoginChanges() {
+		if (!initialPostLoginForm) return;
+		postLoginBehavior = initialPostLoginForm.behavior;
+		postLoginRedirectUrl = initialPostLoginForm.redirectUrl;
+		accountPageEnabled = initialPostLoginForm.accountPageEnabled;
+		accountPagePath = initialPostLoginForm.accountPagePath;
+		postLoginError = '';
+	}
+
+	function buildPostLoginPatch(): Omit<SettingsPatchRequest, 'ifMatch'> {
+		const set: Record<string, unknown> = {};
+		if (!initialPostLoginForm || postLoginBehavior !== initialPostLoginForm.behavior) {
+			set['login-entry.post_login_behavior'] = postLoginBehavior;
+		}
+		if (!initialPostLoginForm || postLoginRedirectUrl !== initialPostLoginForm.redirectUrl) {
+			set['login-entry.post_login_redirect_url'] = postLoginRedirectUrl.trim();
+		}
+		return Object.keys(set).length > 0 ? { set } : {};
+	}
+
+	function buildSelfServicePatch(): Omit<SettingsPatchRequest, 'ifMatch'> {
+		const finalAccountPageEnabled = postLoginBehavior === 'account' ? true : accountPageEnabled;
+		const set: Record<string, unknown> = {};
+		if (
+			!initialPostLoginForm ||
+			finalAccountPageEnabled !== initialPostLoginForm.accountPageEnabled
+		) {
+			set['self-service.account_page_enabled'] = finalAccountPageEnabled;
+		}
+		if (!initialPostLoginForm || accountPagePath !== initialPostLoginForm.accountPagePath) {
+			set['self-service.account_page_path'] = accountPagePath.trim();
+		}
+		return Object.keys(set).length > 0 ? { set } : {};
+	}
+
+	function hasPatchChanges(patch: Omit<SettingsPatchRequest, 'ifMatch'>): boolean {
+		return !!patch.set || !!patch.clear || !!patch.disable;
+	}
+
+	async function savePostLoginSettings() {
+		if (!postLoginSettings || !selfServiceSettings) return;
+		if (!canEditLoginUiSettings) {
+			postLoginError = $LL.admin_login_ui_error_no_settings_permission();
+			return;
+		}
+
+		if (postLoginBehavior === 'account' && !accountPageEnabled) {
+			postLoginError = $LL.admin_login_ui_account_page_required();
+			return;
+		}
+
+		postLoginSaving = true;
+		postLoginError = '';
+		postLoginSuccessMessage = '';
+
+		const postLoginPatch = buildPostLoginPatch();
+		const selfServicePatch = buildSelfServicePatch();
+
+		try {
+			if (postLoginBehavior === 'account') {
+				if (hasPatchChanges(selfServicePatch)) {
+					await adminSettingsAPI.updateSettings(
+						'self-service',
+						{ ifMatch: selfServiceSettings.version, ...selfServicePatch },
+						resolveSelectedTenantId()
+					);
+				}
+				if (hasPatchChanges(postLoginPatch)) {
+					await adminSettingsAPI.updateSettings(
+						'login-entry',
+						{ ifMatch: postLoginSettings.version, ...postLoginPatch },
+						resolveSelectedTenantId()
+					);
+				}
+			} else {
+				if (hasPatchChanges(postLoginPatch)) {
+					await adminSettingsAPI.updateSettings(
+						'login-entry',
+						{ ifMatch: postLoginSettings.version, ...postLoginPatch },
+						resolveSelectedTenantId()
+					);
+				}
+				if (hasPatchChanges(selfServicePatch)) {
+					await adminSettingsAPI.updateSettings(
+						'self-service',
+						{ ifMatch: selfServiceSettings.version, ...selfServicePatch },
+						resolveSelectedTenantId()
+					);
+				}
+			}
+
+			postLoginSuccessMessage = $LL.admin_login_ui_post_login_updated();
+			await loadData();
+			setTimeout(() => {
+				postLoginSuccessMessage = '';
+			}, 3000);
+		} catch (err) {
+			if (err instanceof SettingsConflictError) {
+				postLoginError = $LL.admin_login_ui_settings_conflict();
+			} else {
+				postLoginError =
+					err instanceof Error ? err.message : $LL.admin_login_ui_error_save_post_login();
+			}
+		} finally {
+			postLoginSaving = false;
+		}
 	}
 
 	async function saveTrustedOrigins() {
@@ -493,6 +667,19 @@
 			<div class="alert alert-success">{trustedOriginsSuccessMessage}</div>
 		{/if}
 
+		{#if postLoginError}
+			<div class="alert alert-error">
+				{postLoginError}
+				{#if postLoginError === $LL.admin_login_ui_account_page_required()}
+					<a class="alert-link" href="#post-login">{$LL.admin_login_ui_post_login_link()}</a>
+				{/if}
+			</div>
+		{/if}
+
+		{#if postLoginSuccessMessage}
+			<div class="alert alert-success">{postLoginSuccessMessage}</div>
+		{/if}
+
 		{#if !loading && uiConfig}
 			<section class="panel">
 				<div class="section-header">
@@ -667,6 +854,187 @@
 						{trustedOriginsSaving
 							? $LL.admin_login_ui_saving()
 							: $LL.admin_login_ui_save_trusted_origins()}
+					</button>
+				</div>
+			</section>
+		{/if}
+
+		{#if !loading && postLoginSettings && selfServiceSettings}
+			<section class="panel" id="post-login">
+				<div class="section-header">
+					<div>
+						<h2 class="section-title">{$LL.admin_login_ui_post_login_title()}</h2>
+						<p class="section-description">
+							{$LL.admin_login_ui_post_login_description()}
+						</p>
+					</div>
+					<span class="config-source-badge">{$LL.admin_login_ui_tenant_setting()}</span>
+				</div>
+
+				<div class="settings-form-card">
+					<div class="setting-item" class:modified={hasPostLoginChanges}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<div class="setting-label-row">
+									<span class="setting-label">{$LL.admin_login_ui_post_login_behavior()}</span>
+									{#if hasPostLoginChanges}
+										<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
+									{/if}
+								</div>
+								<p class="setting-description">
+									{$LL.admin_login_ui_post_login_behavior_description()}
+								</p>
+							</div>
+
+							<div class="setting-control wide">
+								<div class="radio-card-group">
+									<label class="radio-card" class:selected={postLoginBehavior === 'home'}>
+										<input
+											type="radio"
+											name="post-login-behavior"
+											value="home"
+											checked={postLoginBehavior === 'home'}
+											disabled={!canEditLoginUiSettings}
+											onchange={() => selectPostLoginBehavior('home')}
+										/>
+										<span>
+											<strong>{$LL.admin_login_ui_post_login_home()}</strong>
+											<small>{$LL.admin_login_ui_post_login_home_desc()}</small>
+										</span>
+									</label>
+									<label class="radio-card" class:selected={postLoginBehavior === 'account'}>
+										<input
+											type="radio"
+											name="post-login-behavior"
+											value="account"
+											checked={postLoginBehavior === 'account'}
+											disabled={!canEditLoginUiSettings}
+											onchange={() => selectPostLoginBehavior('account')}
+										/>
+										<span>
+											<strong>{$LL.admin_login_ui_post_login_account()}</strong>
+											<small>{$LL.admin_login_ui_post_login_account_desc()}</small>
+										</span>
+									</label>
+									<label class="radio-card" class:selected={postLoginBehavior === 'custom_url'}>
+										<input
+											type="radio"
+											name="post-login-behavior"
+											value="custom_url"
+											checked={postLoginBehavior === 'custom_url'}
+											disabled={!canEditLoginUiSettings}
+											onchange={() => selectPostLoginBehavior('custom_url')}
+										/>
+										<span>
+											<strong>{$LL.admin_login_ui_post_login_custom()}</strong>
+											<small>{$LL.admin_login_ui_post_login_custom_desc()}</small>
+										</span>
+									</label>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="setting-item" class:modified={hasPostLoginChanges}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<label for="post-login-redirect-url" class="setting-label"
+									>{$LL.admin_login_ui_post_login_redirect_url()}</label
+								>
+								<p class="setting-description">
+									{$LL.admin_login_ui_post_login_redirect_url_description()}
+									<a href="/admin/settings/security#security.trusted_redirect_origins">
+										{$LL.admin_login_ui_trusted_redirect_origins_link()}
+									</a>
+								</p>
+							</div>
+
+							<div class="setting-control">
+								<input
+									type="text"
+									id="post-login-redirect-url"
+									value={postLoginRedirectUrl}
+									disabled={!canEditLoginUiSettings || postLoginBehavior !== 'custom_url'}
+									placeholder="/mypage"
+									oninput={(e) => {
+										postLoginRedirectUrl = e.currentTarget.value;
+									}}
+									class="settings-input"
+								/>
+							</div>
+						</div>
+					</div>
+
+					<div class="setting-item" class:modified={hasPostLoginChanges}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<label for="account-page-enabled" class="setting-label"
+									>{$LL.admin_login_ui_account_page_enabled()}</label
+								>
+								<p class="setting-description">
+									{$LL.admin_login_ui_account_page_enabled_description()}
+									{#if postLoginBehavior === 'account'}
+										<span class="inline-note">{$LL.admin_login_ui_account_page_forced_on()}</span>
+									{/if}
+								</p>
+							</div>
+
+							<div class="setting-control">
+								<ToggleSwitch
+									checked={postLoginBehavior === 'account' ? true : accountPageEnabled}
+									disabled={!canEditLoginUiSettings || postLoginBehavior === 'account'}
+									id="account-page-enabled"
+									onchange={(newValue) => {
+										accountPageEnabled = newValue;
+									}}
+								/>
+							</div>
+						</div>
+					</div>
+
+					<div class="setting-item" class:modified={hasPostLoginChanges}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<label for="account-page-path" class="setting-label"
+									>{$LL.admin_login_ui_account_page_path()}</label
+								>
+								<p class="setting-description">
+									{$LL.admin_login_ui_account_page_path_description()}
+								</p>
+							</div>
+
+							<div class="setting-control">
+								<input
+									type="text"
+									id="account-page-path"
+									value={accountPagePath}
+									disabled={!canEditLoginUiSettings}
+									placeholder="/account"
+									oninput={(e) => {
+										accountPagePath = e.currentTarget.value;
+									}}
+									class="settings-input"
+								/>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="form-actions">
+					<span class="cache-notice">{$LL.admin_login_ui_cache_notice()}</span>
+					<button
+						onclick={discardPostLoginChanges}
+						disabled={!hasPostLoginChanges || postLoginSaving || !canEditLoginUiSettings}
+						class="btn btn-secondary"
+					>
+						{$LL.admin_login_ui_discard_changes()}
+					</button>
+					<button
+						onclick={savePostLoginSettings}
+						disabled={!hasPostLoginChanges || postLoginSaving || !canEditLoginUiSettings}
+						class="btn btn-primary"
+					>
+						{postLoginSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_save_post_login()}
 					</button>
 				</div>
 			</section>
@@ -909,6 +1277,79 @@
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		white-space: nowrap;
+	}
+
+	.alert-link {
+		margin-left: 10px;
+		color: inherit;
+		font-weight: 700;
+		text-decoration: underline;
+	}
+
+	.setting-control.wide {
+		min-width: min(100%, 420px);
+	}
+
+	.radio-card-group {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: 10px;
+		width: 100%;
+	}
+
+	.radio-card {
+		display: flex;
+		gap: 10px;
+		align-items: flex-start;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--color-surface);
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background-color 0.15s ease;
+	}
+
+	.radio-card.selected {
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
+	}
+
+	.radio-card:has(input:disabled) {
+		cursor: not-allowed;
+		opacity: 0.7;
+	}
+
+	.radio-card input {
+		margin-top: 2px;
+		flex: 0 0 auto;
+	}
+
+	.radio-card span {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.radio-card strong {
+		font-size: 13px;
+		line-height: 1.3;
+		color: var(--color-text);
+	}
+
+	.radio-card small {
+		font-size: 12px;
+		line-height: 1.35;
+		color: var(--color-text-muted);
+	}
+
+	.inline-note {
+		display: inline-block;
+		margin-left: 6px;
+		color: var(--color-warning);
+		font-weight: 600;
 	}
 
 	.form-actions {

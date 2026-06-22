@@ -9,6 +9,7 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  validateAccountPagePath,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -32,6 +33,7 @@ interface Env {
   // KV Namespace for configuration (optional)
   // Used for dynamic configuration from Admin UI without redeployment
   AUTHRIM_CONFIG?: KVNamespace;
+  SETTINGS?: KVNamespace;
   // CORS configuration (optional, fallback if KV not set)
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
@@ -63,6 +65,8 @@ interface Env {
 
 const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
 const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
+const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
+const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
 
 // Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
 const LOGIN_UI_PATHS = [
@@ -81,6 +85,11 @@ const LOGIN_UI_PATHS = [
 ];
 
 const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
+
+const accountPageSettingsCache = new Map<
+  string,
+  { enabled: boolean; path: string; expiresAt: number }
+>();
 
 const BEARER_TOKEN_CANONICAL_PATHS = [
   '/authorize',
@@ -185,6 +194,55 @@ function getConfiguredUrlHostname(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function getRequestTenantId(c: Context<{ Bindings: Env }>): string {
+  const hostResult = validateHostHeader(c.req.header('Host'), c.env);
+  return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
+}
+
+function parseSettingsRecord(raw: string | null): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
+  const tenantId = getRequestTenantId(c);
+  const cached = accountPageSettingsCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+  const raw = kv ? await kv.get(`settings:tenant:${tenantId}:self-service`).catch(() => null) : null;
+  const record = parseSettingsRecord(raw);
+  const configuredPath = record['self-service.account_page_path'];
+  const accountPath = validateAccountPagePath(configuredPath) ? configuredPath : '/account';
+  const settings = {
+    enabled: record['self-service.account_page_enabled'] === true,
+    path: accountPath,
+    expiresAt: Date.now() + ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS,
+  };
+  accountPageSettingsCache.set(tenantId, settings);
+  return settings;
+}
+
+function getAccountPageInternalPath(requestPath: string, accountPagePath: string): string | null {
+  if (requestPath !== accountPagePath && !requestPath.startsWith(`${accountPagePath}/`)) {
+    return null;
+  }
+  const suffix = requestPath.slice(accountPagePath.length);
+  return `${ACCOUNT_PAGE_INTERNAL_PATH}${suffix}`;
 }
 
 /**
@@ -1188,6 +1246,24 @@ app.get('/', async (c) => {
       userinfo: '/userinfo',
     },
   });
+});
+
+// Configured Account Page prefixes are public URLs but served by Login UI's /account route.
+app.all('*', async (c, next) => {
+  const settings = await resolveAccountPageSettings(c);
+  if (!settings.enabled) {
+    return next();
+  }
+
+  const internalPath = getAccountPageInternalPath(c.req.path, settings.path);
+  if (!internalPath) {
+    return next();
+  }
+
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
+  }
+  return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
 });
 
 // 404 handler

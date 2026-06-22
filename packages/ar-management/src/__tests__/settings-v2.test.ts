@@ -223,6 +223,25 @@ describe('Settings API v2', () => {
         expect(body.values['login-entry.require_common_discovery_before_login']).toBe(true);
         expect(body.values['login-entry.skip_discovery_if_only_one_tenant']).toBe(false);
         expect(body.values['login-entry.redirect_tenant_discover_to_common_entry']).toBe(true);
+        expect(body.values['login-entry.post_login_behavior']).toBe('home');
+        expect(body.values['login-entry.post_login_redirect_url']).toBe('/');
+      });
+
+      it('should return self-service settings with default values', async () => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/self-service',
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+
+        expect(body.category).toBe('self-service');
+        expect(body.values['self-service.account_page_enabled']).toBe(false);
+        expect(body.values['self-service.account_page_path']).toBe('/account');
       });
 
       it('should return tenant-discovery-ui settings for tenant scope', async () => {
@@ -316,6 +335,165 @@ describe('Settings API v2', () => {
 
         expect(body.applied).toContain('oauth.access_token_expiry');
         expect(body.version).toBeDefined();
+      });
+
+      it('rejects untrusted external post-login redirect URLs', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: {
+                'login-entry.post_login_behavior': 'custom_url',
+                'login-entry.post_login_redirect_url': 'https://evil.example/mypage',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('bad_request');
+      });
+
+      it('rejects trusted redirect origins that include paths', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/security',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/security',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'security.trusted_redirect_origins': '["https://app.example/path"]' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('bad_request');
+      });
+
+      it('rejects switching to custom_url when the effective redirect URL is invalid', async () => {
+        const mockKV = createMockKV({
+          'settings:tenant:tenant_123:login-entry': JSON.stringify({
+            'login-entry.post_login_behavior': 'home',
+            'login-entry.post_login_redirect_url': 'https://evil.example/mypage',
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-entry.post_login_behavior': 'custom_url' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('bad_request');
+      });
+
+      it('enables self-service account page when post-login behavior is account', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-entry',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-entry.post_login_behavior': 'account' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const rawSelfService = await mockKV.get('settings:tenant:tenant_123:self-service');
+        expect(JSON.parse(String(rawSelfService))).toMatchObject({
+          'self-service.account_page_enabled': true,
+          'self-service.account_page_path': '/account',
+        });
+      });
+
+      it('rejects disabling account page while post-login behavior is account', async () => {
+        const mockKV = createMockKV({
+          'settings:tenant:tenant_123:login-entry': JSON.stringify({
+            'login-entry.post_login_behavior': 'account',
+          }),
+          'settings:tenant:tenant_123:self-service': JSON.stringify({
+            'self-service.account_page_enabled': true,
+            'self-service.account_page_path': '/account',
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/self-service',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/self-service',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'self-service.account_page_enabled': false },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.resolutionLink).toBe('/admin/login-ui#post-login');
       });
 
       it('rejects tenant storage profile overrides that change the auth core plane', async () => {
@@ -932,7 +1110,7 @@ describe('Settings API v2', () => {
         expect(typeof body.settings).toBe('object');
       });
 
-      it('should return login-entry metadata with eleven settings', async () => {
+      it('should return login-entry metadata with thirteen settings', async () => {
         const { app, mockEnv } = createTestApp();
 
         const res = await app.request(
@@ -947,7 +1125,7 @@ describe('Settings API v2', () => {
         };
 
         expect(body.category).toBe('login-entry');
-        expect(Object.keys(body.settings)).toHaveLength(11);
+        expect(Object.keys(body.settings)).toHaveLength(13);
       });
 
       it('should return 404 for unknown category', async () => {

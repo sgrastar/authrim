@@ -4,7 +4,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { brandingStore } from '$lib/stores/branding.svelte';
-	import { isValidReturnUrl } from '$lib/utils/url-validation';
+	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { getAuthConfig } from '$lib/auth';
 	import { auth } from '$lib/stores/auth';
 	import { API_BASE_URL } from '$lib/api/client';
@@ -137,12 +137,16 @@
 				[LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl]
 			);
 			const callbackReturnUrl = params.get('return_url');
+			const finalizeRedirectUrl =
+				typeof finalizeData?.redirect_url === 'string' ? finalizeData.redirect_url : null;
 			const returnUrl =
 				storedReturnUrl && isValidReturnUrl(storedReturnUrl)
 					? storedReturnUrl
 					: callbackReturnUrl && isValidReturnUrl(callbackReturnUrl)
 						? callbackReturnUrl
-						: '/';
+						: finalizeRedirectUrl && isValidRedirectUrl(finalizeRedirectUrl)
+							? finalizeRedirectUrl
+							: '/';
 
 			setTimeout(() => {
 				window.location.href = returnUrl;

@@ -28,6 +28,16 @@ const ja = {
 	common_loading: '読み込み中...',
 	common_userFallback: 'ユーザー',
 
+	account_pageTitle: 'アカウント - Authrim',
+	account_title: 'アカウント',
+	account_profileTitle: 'プロフィール',
+	account_securityTitle: 'セキュリティ',
+	account_name: '名前',
+	account_email: 'メールアドレス',
+	account_manage: '管理',
+	account_passkeys: 'Passkey',
+	account_socialAccounts: 'ソーシャルアカウント',
+
 	login_title: 'おかえりなさい',
 	login_subtitle: 'アカウントにサインイン',
 	login_signInWithPasskey: 'Passkeyでサインイン',

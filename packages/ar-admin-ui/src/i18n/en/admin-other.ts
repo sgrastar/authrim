@@ -371,6 +371,36 @@ const adminOther = {
 		'Use host-only origins. Paths are not allowed. `http://localhost` is allowed for local development.',
 	admin_login_ui_normalized_entries: 'Normalized entries',
 	admin_login_ui_save_trusted_origins: 'Save Trusted Origins',
+	admin_login_ui_post_login_title: 'Post-login Destination',
+	admin_login_ui_post_login_description:
+		'Choose where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
+	admin_login_ui_post_login_behavior: 'Direct Login Destination',
+	admin_login_ui_post_login_behavior_description:
+		'This applies only when Login UI itself starts the sign-in flow.',
+	admin_login_ui_post_login_home: 'Home',
+	admin_login_ui_post_login_home_desc: 'Send users to / on this domain.',
+	admin_login_ui_post_login_account: 'Account Page',
+	admin_login_ui_post_login_account_desc: 'Send users to the Authrim-managed account page.',
+	admin_login_ui_post_login_custom: 'Custom URL',
+	admin_login_ui_post_login_custom_desc: 'Send users to a relative path or trusted HTTPS origin.',
+	admin_login_ui_post_login_redirect_url: 'Custom Redirect URL',
+	admin_login_ui_post_login_redirect_url_description:
+		'Use a non-reserved relative path such as /mypage, or an HTTPS URL whose origin is trusted.',
+	admin_login_ui_trusted_redirect_origins_link: 'Manage trusted redirect origins',
+	admin_login_ui_account_page_enabled: 'Account Page Enabled',
+	admin_login_ui_account_page_enabled_description:
+		'Routes the configured public path prefix to Login UI account pages.',
+	admin_login_ui_account_page_forced_on:
+		'Required while the direct login destination is Account Page.',
+	admin_login_ui_account_page_path: 'Account Page Public Path',
+	admin_login_ui_account_page_path_description:
+		'Use a non-reserved path prefix such as /account or /mypage. All child paths under this prefix are owned by Login UI.',
+	admin_login_ui_account_page_required:
+		'Account Page must stay enabled while the direct login destination is Account Page.',
+	admin_login_ui_post_login_link: 'Review post-login settings',
+	admin_login_ui_post_login_updated: 'Post-login settings updated.',
+	admin_login_ui_error_save_post_login: 'Failed to save post-login settings.',
+	admin_login_ui_save_post_login: 'Save Post-login Settings',
 	admin_login_ui_reload: 'Reload',
 	admin_login_ui_loading_settings: 'Loading settings...',
 	admin_login_ui_locked: 'Locked',

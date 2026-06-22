@@ -28,6 +28,16 @@ const en = {
 	common_loading: 'Loading...',
 	common_userFallback: 'User',
 
+	account_pageTitle: 'Account - Authrim',
+	account_title: 'Account',
+	account_profileTitle: 'Profile',
+	account_securityTitle: 'Security',
+	account_name: 'Name',
+	account_email: 'Email',
+	account_manage: 'Manage',
+	account_passkeys: 'Passkeys',
+	account_socialAccounts: 'Social accounts',
+
 	login_title: 'Welcome back',
 	login_subtitle: 'Sign in to your account',
 	login_signInWithPasskey: 'Sign in with Passkey',

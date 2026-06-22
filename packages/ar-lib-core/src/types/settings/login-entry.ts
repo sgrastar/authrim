@@ -30,6 +30,8 @@ export interface LoginEntrySettings {
   'login-entry.require_common_discovery_before_login': boolean;
   'login-entry.skip_discovery_if_only_one_tenant': boolean;
   'login-entry.redirect_tenant_discover_to_common_entry': boolean;
+  'login-entry.post_login_behavior': 'home' | 'account' | 'custom_url';
+  'login-entry.post_login_redirect_url': string;
 }
 
 /**
@@ -134,6 +136,25 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
       'Redirect tenant-host /discover requests to the shared common-entry /discover page.',
     visibility: 'admin',
   },
+  'login-entry.post_login_behavior': {
+    key: 'login-entry.post_login_behavior',
+    type: 'enum',
+    default: 'home',
+    label: 'Post Login Behavior',
+    description:
+      'Controls where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
+    enum: ['home', 'account', 'custom_url'],
+    visibility: 'admin',
+  },
+  'login-entry.post_login_redirect_url': {
+    key: 'login-entry.post_login_redirect_url',
+    type: 'string',
+    default: '/',
+    label: 'Post Login Redirect URL',
+    description:
+      'Relative path or trusted HTTPS URL used when post-login behavior is set to custom_url.',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -161,4 +182,6 @@ export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.require_common_discovery_before_login': true,
   'login-entry.skip_discovery_if_only_one_tenant': false,
   'login-entry.redirect_tenant_discover_to_common_entry': true,
+  'login-entry.post_login_behavior': 'home',
+  'login-entry.post_login_redirect_url': '/',
 };

@@ -59,6 +59,9 @@ export interface SecuritySettings {
   // IP Filtering
   'security.ip_allowlist_enabled': boolean;
   'security.ip_blocklist_enabled': boolean;
+
+  // Redirect Safety
+  'security.trusted_redirect_origins': string;
 }
 
 /**
@@ -372,6 +375,15 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     description: 'Enable IP blocklist filtering',
     visibility: 'admin',
   },
+  'security.trusted_redirect_origins': {
+    key: 'security.trusted_redirect_origins',
+    type: 'string',
+    default: '[]',
+    label: 'Trusted Redirect Origins',
+    description:
+      'JSON array or comma-separated list of HTTPS origins allowed for Login UI post-login redirects.',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -419,4 +431,5 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.require_encrypted_request_object': false,
   'security.ip_allowlist_enabled': false,
   'security.ip_blocklist_enabled': false,
+  'security.trusted_redirect_origins': '[]',
 };

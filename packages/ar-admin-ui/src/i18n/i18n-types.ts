@@ -26817,6 +26817,98 @@ type RootTranslation = {
 	 */
 	admin_login_ui_save_trusted_origins: string
 	/**
+	 * P​o​s​t​-​l​o​g​i​n​ ​D​e​s​t​i​n​a​t​i​o​n
+	 */
+	admin_login_ui_post_login_title: string
+	/**
+	 * C​h​o​o​s​e​ ​w​h​e​r​e​ ​u​s​e​r​s​ ​g​o​ ​a​f​t​e​r​ ​s​i​g​n​i​n​g​ ​i​n​ ​d​i​r​e​c​t​l​y​ ​f​r​o​m​ ​L​o​g​i​n​ ​U​I​.​ ​O​I​D​C​ ​a​n​d​ ​S​A​M​L​ ​i​n​i​t​i​a​t​e​d​ ​l​o​g​i​n​s​ ​k​e​e​p​ ​t​h​e​i​r​ ​p​r​o​t​o​c​o​l​ ​r​e​t​u​r​n​ ​d​e​s​t​i​n​a​t​i​o​n​s​.
+	 */
+	admin_login_ui_post_login_description: string
+	/**
+	 * D​i​r​e​c​t​ ​L​o​g​i​n​ ​D​e​s​t​i​n​a​t​i​o​n
+	 */
+	admin_login_ui_post_login_behavior: string
+	/**
+	 * T​h​i​s​ ​a​p​p​l​i​e​s​ ​o​n​l​y​ ​w​h​e​n​ ​L​o​g​i​n​ ​U​I​ ​i​t​s​e​l​f​ ​s​t​a​r​t​s​ ​t​h​e​ ​s​i​g​n​-​i​n​ ​f​l​o​w​.
+	 */
+	admin_login_ui_post_login_behavior_description: string
+	/**
+	 * H​o​m​e
+	 */
+	admin_login_ui_post_login_home: string
+	/**
+	 * S​e​n​d​ ​u​s​e​r​s​ ​t​o​ ​/​ ​o​n​ ​t​h​i​s​ ​d​o​m​a​i​n​.
+	 */
+	admin_login_ui_post_login_home_desc: string
+	/**
+	 * A​c​c​o​u​n​t​ ​P​a​g​e
+	 */
+	admin_login_ui_post_login_account: string
+	/**
+	 * S​e​n​d​ ​u​s​e​r​s​ ​t​o​ ​t​h​e​ ​A​u​t​h​r​i​m​-​m​a​n​a​g​e​d​ ​a​c​c​o​u​n​t​ ​p​a​g​e​.
+	 */
+	admin_login_ui_post_login_account_desc: string
+	/**
+	 * C​u​s​t​o​m​ ​U​R​L
+	 */
+	admin_login_ui_post_login_custom: string
+	/**
+	 * S​e​n​d​ ​u​s​e​r​s​ ​t​o​ ​a​ ​r​e​l​a​t​i​v​e​ ​p​a​t​h​ ​o​r​ ​t​r​u​s​t​e​d​ ​H​T​T​P​S​ ​o​r​i​g​i​n​.
+	 */
+	admin_login_ui_post_login_custom_desc: string
+	/**
+	 * C​u​s​t​o​m​ ​R​e​d​i​r​e​c​t​ ​U​R​L
+	 */
+	admin_login_ui_post_login_redirect_url: string
+	/**
+	 * U​s​e​ ​a​ ​n​o​n​-​r​e​s​e​r​v​e​d​ ​r​e​l​a​t​i​v​e​ ​p​a​t​h​ ​s​u​c​h​ ​a​s​ ​/​m​y​p​a​g​e​,​ ​o​r​ ​a​n​ ​H​T​T​P​S​ ​U​R​L​ ​w​h​o​s​e​ ​o​r​i​g​i​n​ ​i​s​ ​t​r​u​s​t​e​d​.
+	 */
+	admin_login_ui_post_login_redirect_url_description: string
+	/**
+	 * M​a​n​a​g​e​ ​t​r​u​s​t​e​d​ ​r​e​d​i​r​e​c​t​ ​o​r​i​g​i​n​s
+	 */
+	admin_login_ui_trusted_redirect_origins_link: string
+	/**
+	 * A​c​c​o​u​n​t​ ​P​a​g​e​ ​E​n​a​b​l​e​d
+	 */
+	admin_login_ui_account_page_enabled: string
+	/**
+	 * R​o​u​t​e​s​ ​t​h​e​ ​c​o​n​f​i​g​u​r​e​d​ ​p​u​b​l​i​c​ ​p​a​t​h​ ​p​r​e​f​i​x​ ​t​o​ ​L​o​g​i​n​ ​U​I​ ​a​c​c​o​u​n​t​ ​p​a​g​e​s​.
+	 */
+	admin_login_ui_account_page_enabled_description: string
+	/**
+	 * R​e​q​u​i​r​e​d​ ​w​h​i​l​e​ ​t​h​e​ ​d​i​r​e​c​t​ ​l​o​g​i​n​ ​d​e​s​t​i​n​a​t​i​o​n​ ​i​s​ ​A​c​c​o​u​n​t​ ​P​a​g​e​.
+	 */
+	admin_login_ui_account_page_forced_on: string
+	/**
+	 * A​c​c​o​u​n​t​ ​P​a​g​e​ ​P​u​b​l​i​c​ ​P​a​t​h
+	 */
+	admin_login_ui_account_page_path: string
+	/**
+	 * U​s​e​ ​a​ ​n​o​n​-​r​e​s​e​r​v​e​d​ ​p​a​t​h​ ​p​r​e​f​i​x​ ​s​u​c​h​ ​a​s​ ​/​a​c​c​o​u​n​t​ ​o​r​ ​/​m​y​p​a​g​e​.​ ​A​l​l​ ​c​h​i​l​d​ ​p​a​t​h​s​ ​u​n​d​e​r​ ​t​h​i​s​ ​p​r​e​f​i​x​ ​a​r​e​ ​o​w​n​e​d​ ​b​y​ ​L​o​g​i​n​ ​U​I​.
+	 */
+	admin_login_ui_account_page_path_description: string
+	/**
+	 * A​c​c​o​u​n​t​ ​P​a​g​e​ ​m​u​s​t​ ​s​t​a​y​ ​e​n​a​b​l​e​d​ ​w​h​i​l​e​ ​t​h​e​ ​d​i​r​e​c​t​ ​l​o​g​i​n​ ​d​e​s​t​i​n​a​t​i​o​n​ ​i​s​ ​A​c​c​o​u​n​t​ ​P​a​g​e​.
+	 */
+	admin_login_ui_account_page_required: string
+	/**
+	 * R​e​v​i​e​w​ ​p​o​s​t​-​l​o​g​i​n​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_login_ui_post_login_link: string
+	/**
+	 * P​o​s​t​-​l​o​g​i​n​ ​s​e​t​t​i​n​g​s​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_login_ui_post_login_updated: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​p​o​s​t​-​l​o​g​i​n​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_login_ui_error_save_post_login: string
+	/**
+	 * S​a​v​e​ ​P​o​s​t​-​l​o​g​i​n​ ​S​e​t​t​i​n​g​s
+	 */
+	admin_login_ui_save_post_login: string
+	/**
 	 * R​e​l​o​a​d
 	 */
 	admin_login_ui_reload: string
@@ -54085,6 +54177,98 @@ Remove this role from {email}?
 	 * Save Trusted Origins
 	 */
 	admin_login_ui_save_trusted_origins: () => LocalizedString
+	/**
+	 * Post-login Destination
+	 */
+	admin_login_ui_post_login_title: () => LocalizedString
+	/**
+	 * Choose where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.
+	 */
+	admin_login_ui_post_login_description: () => LocalizedString
+	/**
+	 * Direct Login Destination
+	 */
+	admin_login_ui_post_login_behavior: () => LocalizedString
+	/**
+	 * This applies only when Login UI itself starts the sign-in flow.
+	 */
+	admin_login_ui_post_login_behavior_description: () => LocalizedString
+	/**
+	 * Home
+	 */
+	admin_login_ui_post_login_home: () => LocalizedString
+	/**
+	 * Send users to / on this domain.
+	 */
+	admin_login_ui_post_login_home_desc: () => LocalizedString
+	/**
+	 * Account Page
+	 */
+	admin_login_ui_post_login_account: () => LocalizedString
+	/**
+	 * Send users to the Authrim-managed account page.
+	 */
+	admin_login_ui_post_login_account_desc: () => LocalizedString
+	/**
+	 * Custom URL
+	 */
+	admin_login_ui_post_login_custom: () => LocalizedString
+	/**
+	 * Send users to a relative path or trusted HTTPS origin.
+	 */
+	admin_login_ui_post_login_custom_desc: () => LocalizedString
+	/**
+	 * Custom Redirect URL
+	 */
+	admin_login_ui_post_login_redirect_url: () => LocalizedString
+	/**
+	 * Use a non-reserved relative path such as /mypage, or an HTTPS URL whose origin is trusted.
+	 */
+	admin_login_ui_post_login_redirect_url_description: () => LocalizedString
+	/**
+	 * Manage trusted redirect origins
+	 */
+	admin_login_ui_trusted_redirect_origins_link: () => LocalizedString
+	/**
+	 * Account Page Enabled
+	 */
+	admin_login_ui_account_page_enabled: () => LocalizedString
+	/**
+	 * Routes the configured public path prefix to Login UI account pages.
+	 */
+	admin_login_ui_account_page_enabled_description: () => LocalizedString
+	/**
+	 * Required while the direct login destination is Account Page.
+	 */
+	admin_login_ui_account_page_forced_on: () => LocalizedString
+	/**
+	 * Account Page Public Path
+	 */
+	admin_login_ui_account_page_path: () => LocalizedString
+	/**
+	 * Use a non-reserved path prefix such as /account or /mypage. All child paths under this prefix are owned by Login UI.
+	 */
+	admin_login_ui_account_page_path_description: () => LocalizedString
+	/**
+	 * Account Page must stay enabled while the direct login destination is Account Page.
+	 */
+	admin_login_ui_account_page_required: () => LocalizedString
+	/**
+	 * Review post-login settings
+	 */
+	admin_login_ui_post_login_link: () => LocalizedString
+	/**
+	 * Post-login settings updated.
+	 */
+	admin_login_ui_post_login_updated: () => LocalizedString
+	/**
+	 * Failed to save post-login settings.
+	 */
+	admin_login_ui_error_save_post_login: () => LocalizedString
+	/**
+	 * Save Post-login Settings
+	 */
+	admin_login_ui_save_post_login: () => LocalizedString
 	/**
 	 * Reload
 	 */

@@ -23,6 +23,14 @@ const createMockFetcher = (name: string) => ({
   }),
 });
 
+const createMockKV = (data: Record<string, string> = {}) => ({
+  get: vi.fn(async (key: string) => data[key] ?? null),
+  put: vi.fn(),
+  delete: vi.fn(),
+  list: vi.fn(),
+  getWithMetadata: vi.fn(),
+});
+
 // Create mock environment with service bindings
 const createMockEnv = () => ({
   OP_DISCOVERY: createMockFetcher('OP_DISCOVERY'),
@@ -1318,6 +1326,65 @@ describe('Router Worker', () => {
       expect(body.message).toBe('The requested resource was not found');
       expect(loginUiWorker.fetch).not.toHaveBeenCalled();
       expect(adminUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should rewrite enabled Account Page prefixes to the Login UI account route', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV({
+        'settings:tenant:acct:self-service': JSON.stringify({
+          'self-service.account_page_enabled': true,
+          'self-service.account_page_path': '/mypage',
+        }),
+      });
+      const envWithAccountPage = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'acct',
+        SETTINGS: settings,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const res = await app.fetch(
+        new Request('https://acct.example.com/mypage/security?tab=passkeys'),
+        envWithAccountPage
+      );
+      const body = (await res.json()) as { worker: string; path: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('LOGIN_UI_WORKER');
+      expect(body.path).toBe('/account/security');
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).search).toBe('?tab=passkeys');
+    });
+
+    it('should leave Account Page prefixes to 404 when self-service is disabled', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV({
+        'settings:tenant:acctdisabled:self-service': JSON.stringify({
+          'self-service.account_page_enabled': false,
+          'self-service.account_page_path': '/mypage',
+        }),
+      });
+      const envWithDisabledAccountPage = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'acctdisabled',
+        SETTINGS: settings,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const res = await app.fetch(
+        new Request('https://acctdisabled.example.com/mypage/security'),
+        envWithDisabledAccountPage
+      );
+      const body = (await res.json()) as Record<string, string>;
+
+      expect(res.status).toBe(404);
+      expect(body.message).toBe('The requested resource was not found');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
     });
 
     it('should keep admin root requests on Admin UI when both UI proxies are configured', async () => {

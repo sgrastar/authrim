@@ -364,6 +364,36 @@ const adminOther = {
 		'ホストのみのoriginを使用してください。パスは使用できません。ローカル開発では `http://localhost` を許可します。',
 	admin_login_ui_normalized_entries: '正規化済みエントリ',
 	admin_login_ui_save_trusted_origins: '信頼済みoriginを保存',
+	admin_login_ui_post_login_title: 'ログイン後の移動先',
+	admin_login_ui_post_login_description:
+		'Login UIから直接ログインしたユーザーの移動先を選択します。OIDC/SAML起点のログインは各プロトコルの戻り先を優先します。',
+	admin_login_ui_post_login_behavior: '直ログイン後の移動先',
+	admin_login_ui_post_login_behavior_description:
+		'Login UI自身がログインフローを開始した場合にだけ適用されます。',
+	admin_login_ui_post_login_home: 'トップページ',
+	admin_login_ui_post_login_home_desc: 'このドメインの / へ移動します。',
+	admin_login_ui_post_login_account: 'アカウントページ',
+	admin_login_ui_post_login_account_desc: 'Authrim管理のアカウントページへ移動します。',
+	admin_login_ui_post_login_custom: '任意URL',
+	admin_login_ui_post_login_custom_desc: '相対パスまたは信頼済みHTTPS originへ移動します。',
+	admin_login_ui_post_login_redirect_url: '任意のリダイレクトURL',
+	admin_login_ui_post_login_redirect_url_description:
+		'/mypage のような予約されていない相対パス、または信頼済みoriginのHTTPS URLを指定します。',
+	admin_login_ui_trusted_redirect_origins_link: '信頼済みredirect originを管理',
+	admin_login_ui_account_page_enabled: 'アカウントページを有効化',
+	admin_login_ui_account_page_enabled_description:
+		'設定した公開パスprefixをLogin UIのアカウントページへルーティングします。',
+	admin_login_ui_account_page_forced_on:
+		'直ログイン後の移動先がアカウントページの場合は有効化が必須です。',
+	admin_login_ui_account_page_path: 'アカウントページ公開パス',
+	admin_login_ui_account_page_path_description:
+		'/account や /mypage のような予約されていないパスprefixを指定します。このprefix配下はすべてLogin UIが持ちます。',
+	admin_login_ui_account_page_required:
+		'直ログイン後の移動先がアカウントページの場合、アカウントページは無効化できません。',
+	admin_login_ui_post_login_link: 'ログイン後設定を確認',
+	admin_login_ui_post_login_updated: 'ログイン後設定を更新しました。',
+	admin_login_ui_error_save_post_login: 'ログイン後設定を保存できませんでした。',
+	admin_login_ui_save_post_login: 'ログイン後設定を保存',
 	admin_login_ui_reload: '再読み込み',
 	admin_login_ui_loading_settings: '設定を読み込んでいます...',
 	admin_login_ui_locked: 'ロック中',

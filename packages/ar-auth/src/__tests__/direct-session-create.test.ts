@@ -77,14 +77,14 @@ async function s256Challenge(verifier: string): Promise<string> {
     .replace(/=/g, '');
 }
 
-function createContext(body: Record<string, unknown>) {
+function createContext(body: Record<string, unknown>, env: Record<string, unknown> = {}) {
   const headers = new Headers();
   return {
     req: {
       url: 'https://auth.example.com/api/v1/auth/direct/session',
       json: vi.fn(async () => body),
     },
-    env: {},
+    env,
     get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant_test' : undefined)),
     header: (name: string, value: string) => {
       headers.append(name, value);
@@ -147,6 +147,48 @@ describe('managed Direct Auth browser session finish', () => {
       'tenant_test'
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_managed_browser');
+  });
+
+  it('returns configured post-login redirect for direct Login UI sign-in', async () => {
+    const codeVerifier = 'verifier-for-post-login-redirect';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey',
+      },
+    });
+    const settings = {
+      get: vi.fn(async (key: string) => {
+        if (key === 'settings:tenant:tenant_test:login-entry') {
+          return JSON.stringify({
+            'login-entry.post_login_behavior': 'custom_url',
+            'login-entry.post_login_redirect_url': '/mypage',
+          });
+        }
+        return null;
+      }),
+    };
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext(
+        {
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        },
+        { SETTINGS: settings }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.redirect_url).toBe('/mypage');
   });
 
   it('can resume an OAuth login challenge without returning browser token material', async () => {
