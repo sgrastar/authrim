@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deployCommandMock = vi.hoisted(() => vi.fn());
 const provisionR2BucketsMock = vi.hoisted(() => vi.fn());
+const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../cli/commands/deploy.js', () => ({
   deployCommand: deployCommandMock,
@@ -17,6 +18,10 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     provisionR2Buckets: provisionR2BucketsMock,
   };
 });
+
+vi.mock('../core/wrangler-sync.js', () => ({
+  saveMasterWranglerConfigs: saveMasterWranglerConfigsMock,
+}));
 
 import { r2ProvisionCommand } from '../cli/commands/r2-provision.js';
 
@@ -71,6 +76,12 @@ describe('r2-provision command', () => {
       { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
     ]);
+    saveMasterWranglerConfigsMock.mockReset();
+    saveMasterWranglerConfigsMock.mockResolvedValue({
+      success: true,
+      files: ['ar-management.toml'],
+      errors: [],
+    });
   });
 
   afterEach(async () => {
@@ -102,6 +113,16 @@ describe('r2-provision command', () => {
       'prod',
       expect.objectContaining({ existing: undefined })
     );
+    expect(saveMasterWranglerConfigsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ features: expect.objectContaining({ r2: { enabled: true } }) }),
+      expect.objectContaining({
+        r2: expect.objectContaining({
+          DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
+          SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
+        }),
+      }),
+      expect.objectContaining({ baseDir: tempDir, env: 'prod' })
+    );
     expect(deployCommandMock).toHaveBeenCalledWith({
       env: 'prod',
       config: join(tempDir!, '.authrim', 'prod', 'config.json'),
@@ -116,6 +137,7 @@ describe('r2-provision command', () => {
     await r2ProvisionCommand({ env: 'prod', yes: true, skipDeploy: true });
 
     expect(deployCommandMock).not.toHaveBeenCalled();
+    expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
     expect(Object.keys(lock.r2)).toHaveLength(6);
   });
