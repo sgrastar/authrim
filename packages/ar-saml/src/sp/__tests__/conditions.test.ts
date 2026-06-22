@@ -19,7 +19,17 @@ import type { Env } from '@authrim/ar-lib-core';
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../../admin/providers', () => ({
-  getIdPConfigByEntityId: (...args: unknown[]): unknown => mockGetIdPConfigByEntityId(...args),
+  getIdPConfigByEntityId: async (...args: unknown[]): Promise<unknown> => {
+    const config = await mockGetIdPConfigByEntityId(...args);
+    return config
+      ? {
+          ...(config as Record<string, unknown>),
+          identityMapping: {
+            fieldMappingSetId: 'test-saml-inbound',
+          },
+        }
+      : config;
+  },
 }));
 
 vi.mock('../../common/signature', () => ({
@@ -34,6 +44,47 @@ const mockLogger = {
   warn: vi.fn(),
   error: vi.fn(),
 };
+
+function createTestSAMLInboundMappingBinding() {
+  const entry = (id: string, namespace: string, path: string, targetType: string) => ({
+    id,
+    namespace,
+    path,
+    valueType: 'string',
+    cardinality: 'single',
+    classification: 'pii',
+    targetType,
+  });
+  return {
+    id: 'test-saml-inbound-activation',
+    tenantId: 'default',
+    fieldMappingSetId: 'test-saml-inbound',
+    fieldMappingVersionId: 'test-saml-inbound-v1',
+    catalog: {
+      identity: {
+        id: 'test-saml-inbound-catalog',
+        version: '1',
+        contentHash: 'test-saml-inbound-catalog',
+        compatibilityRange: '^0.3.0',
+      },
+      entries: [
+        entry('field.saml.subject.nameId', 'saml.subject', 'nameId', 'source'),
+        entry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
+      ],
+    },
+    edges: [
+      {
+        id: 'edge.nameId.email',
+        sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameId' },
+        targetRef: { side: 'destination', namespace: 'authrim.profile', path: 'email' },
+        edgeKind: 'direct',
+      },
+    ],
+    transforms: [],
+    validationRules: [],
+    fieldMappingSet: { id: 'test-saml-inbound-v1', rules: [] },
+  };
+}
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -42,6 +93,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       module: () => mockLogger,
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    resolveRuntimeIdentityMappingBinding: vi
+      .fn()
+      .mockResolvedValue(createTestSAMLInboundMappingBinding()),
   };
 });
 
