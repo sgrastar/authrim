@@ -1237,12 +1237,67 @@ describe('Router Worker', () => {
       );
     });
 
-    it('should try static assets against the UI indicated by Referer before falling back', async () => {
-      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
-      adminUiWorker.fetch.mockResolvedValueOnce(
-        new Response(JSON.stringify({ worker: 'ADMIN_UI_WORKER' }), { status: 404 })
-      );
+    it('should proxy Login UI static assets through the dedicated namespace', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithLoginAssetProxy = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://example.com/_authrim_login/immutable/chunk.js');
+      const res = await app.fetch(req, envWithLoginAssetProxy);
+      const body = (await res.json()) as { worker: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('LOGIN_UI_WORKER');
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(adminUiWorker.fetch).not.toHaveBeenCalled();
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev'
+      );
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).pathname).toBe(
+        '/_authrim_login/immutable/chunk.js'
+      );
+    });
+
+    it('should proxy Admin UI static assets through the dedicated namespace', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
+      const envWithAdminAssetProxy = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        ENABLE_ADMIN_UI_PROXY: 'true',
+        AR_ADMIN_UI_URL: 'https://phase9-ar-admin-ui.example.workers.dev',
+        ADMIN_UI_WORKER: adminUiWorker,
+      };
+
+      const req = new Request('https://example.com/_authrim_admin/immutable/chunk.js');
+      const res = await app.fetch(req, envWithAdminAssetProxy);
+      const body = (await res.json()) as { worker: string };
+
+      expect(res.status).toBe(200);
+      expect(body.worker).toBe('ADMIN_UI_WORKER');
+      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
+        'https://phase9-ar-admin-ui.example.workers.dev'
+      );
+      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).pathname).toBe(
+        '/_authrim_admin/immutable/chunk.js'
+      );
+    });
+
+    it('should not proxy /_app assets to Authrim UI workers', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const adminUiWorker = createMockFetcher('ADMIN_UI_WORKER');
       const envWithUis = {
         ...mockEnv,
         ENABLE_LOGIN_UI_PROXY: 'true',
@@ -1253,35 +1308,16 @@ describe('Router Worker', () => {
         ADMIN_UI_WORKER: adminUiWorker,
       };
 
-      const req = new Request('https://admin.example.com/_app/immutable/chunk.js', {
-        headers: {
-          Referer: 'https://admin.example.com/admin/clients',
-        },
-      });
-      const res = await app.fetch(req, envWithUis);
-      const body = (await res.json()) as { worker: string };
-
-      expect(res.status).toBe(200);
-      expect(body.worker).toBe('LOGIN_UI_WORKER');
-      expect(adminUiWorker.fetch).toHaveBeenCalledTimes(1);
-      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
-      expect(new URL(adminUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
-        'https://phase9-ar-admin-ui.example.workers.dev'
-      );
-      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).origin).toBe(
-        'https://phase9-ar-login-ui.example.workers.dev'
-      );
-    });
-
-    it('should return static asset not found when no UI proxy can serve the asset', async () => {
       const res = await app.fetch(
         new Request('https://example.com/_app/immutable/missing.js'),
-        mockEnv
+        envWithUis
       );
       const body = (await res.json()) as Record<string, string>;
 
       expect(res.status).toBe(404);
-      expect(body.message).toBe('Static asset not found in any UI');
+      expect(body.message).toBe('The requested resource was not found');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(adminUiWorker.fetch).not.toHaveBeenCalled();
     });
 
     it('should keep admin root requests on Admin UI when both UI proxies are configured', async () => {

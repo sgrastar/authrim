@@ -61,6 +61,9 @@ interface Env {
   ENABLE_ADMIN_UI_PROXY?: string;
 }
 
+const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
+const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
+
 // Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
 const LOGIN_UI_PATHS = [
   '/discover',
@@ -312,7 +315,8 @@ app.use('*', async (c, next) => {
     path.startsWith('/error') ||
     path.startsWith('/api/set-language') ||
     path.startsWith('/callback') ||
-    path.startsWith('/_app') || // SvelteKit static assets
+    path.startsWith(`${LOGIN_UI_ASSET_PREFIX}/`) || // Login UI SvelteKit static assets
+    path.startsWith(`${ADMIN_UI_ASSET_PREFIX}/`) || // Admin UI SvelteKit static assets
     path === '/' // Root path for Login UI (external auth callbacks)
   ) {
     return next();
@@ -1126,7 +1130,6 @@ for (const uiPath of LOGIN_UI_PATHS) {
   });
 }
 
-// Static assets proxy for UI (when either proxy is enabled)
 // This handles /geo/* paths for WorldMap GeoJSON data (Admin UI only)
 app.get('/geo/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
@@ -1135,48 +1138,20 @@ app.get('/geo/*', async (c) => {
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
-// This handles /_app/* paths for SvelteKit static assets
-app.all('/_app/*', async (c) => {
-  // Determine which UI to serve static assets from based on Referer
-  // Each UI has different chunk names, so we need to route to the correct one
-  const referer = c.req.header('Referer');
-  let isAdminRequest = false;
-
-  try {
-    if (referer) {
-      const refererUrl = new URL(referer);
-      isAdminRequest = refererUrl.pathname.startsWith('/admin');
-    }
-  } catch {
-    // Invalid referer URL, will try both UIs
+// Login UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
+app.all(`${LOGIN_UI_ASSET_PREFIX}/*`, async (c) => {
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
   }
+  return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
+});
 
-  // Try primary UI first (based on referer), then fallback to the other
-  const adminEnabled = c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL;
-  const loginEnabled = c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL;
-
-  // Determine order to try UIs
-  const uisToTry: Array<{ url: string; name: string }> = [];
-  if (isAdminRequest && adminEnabled) {
-    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
-    if (loginEnabled) uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
-  } else if (loginEnabled) {
-    uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
-    if (adminEnabled) uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
-  } else if (adminEnabled) {
-    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
+// Admin UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
+app.all(`${ADMIN_UI_ASSET_PREFIX}/*`, async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path, c.env.ADMIN_UI_WORKER);
   }
-
-  // Try each UI in order, return first successful response
-  for (const ui of uisToTry) {
-    const serviceBinding = ui.name === 'admin' ? c.env.ADMIN_UI_WORKER : c.env.LOGIN_UI_WORKER;
-    const response = await proxyToUiWorker(c.req.raw.clone(), ui.url, c.req.path, serviceBinding);
-    if (response.ok) {
-      return response;
-    }
-  }
-
-  return c.json({ error: 'not_found', message: 'Static asset not found in any UI' }, 404);
+  return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
