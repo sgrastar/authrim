@@ -31,6 +31,10 @@ import {
   type DirectoryPasswordSuccess,
 } from './directory-password';
 import {
+  DirectoryPasswordRelayClient,
+  type DirectoryPasswordRelayClientConfig,
+} from './directory-relay-client';
+import {
   consumeAuthorizationChallengeContinuation,
   readAuthorizationChallengeType,
   type AuthorizationChallengeContinuation,
@@ -63,7 +67,8 @@ interface DirectoryConnectorSettingsRecord {
 
 interface DirectoryConnectorSettingsItem {
   id: string;
-  endpoint_url: string;
+  transport: 'direct' | 'relay';
+  endpoint_url?: string;
   auth_mode: string;
   connector_id: string;
   key_id: string;
@@ -76,7 +81,10 @@ interface DirectoryConnectorSettingsItem {
 
 interface ResolvedDirectoryConnector {
   connectorId: string;
-  clientConfig: DirectoryPasswordConnectorConfig;
+  wordwardenConnectorId: string;
+  transport: 'direct' | 'relay';
+  clientConfig?: DirectoryPasswordConnectorConfig;
+  relayConfig?: DirectoryPasswordRelayClientConfig;
   attributeNames: string[];
   autoProvision: boolean;
 }
@@ -148,7 +156,21 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       );
     }
 
-    const client = new DirectoryPasswordClient(connector.clientConfig, fetcher);
+    const client =
+      connector.transport === 'relay' && connector.relayConfig
+        ? new DirectoryPasswordRelayClient(connector.relayConfig)
+        : connector.clientConfig
+          ? new DirectoryPasswordClient(connector.clientConfig, fetcher)
+          : null;
+    if (!client) {
+      return c.json(
+        {
+          error: 'directory_password_not_configured',
+          error_description: 'Directory password login is not configured for this tenant',
+        },
+        404
+      );
+    }
     let verdict;
     try {
       verdict = await client.verifyPassword({
@@ -319,7 +341,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       metadata: JSON.stringify({
         method: 'directory_password',
         connector_id: connector.connectorId,
-        wordwarden_connector_id: connector.clientConfig.connectorId,
+        wordwarden_connector_id: connector.wordwardenConnectorId,
+        transport: connector.transport,
         wordwarden_request_id: verdict.request_id,
         directory_status: verdict.directory_status,
       }),
@@ -436,18 +459,42 @@ async function resolveDirectoryConnector(
     return null;
   }
 
+  const transport = directoryConnector.transport;
   const endpoint = directoryConnector.endpoint_url;
   const authMode = directoryConnector.auth_mode || 'hmac';
   const wordwardenConnectorId = directoryConnector.connector_id;
   const keyId = directoryConnector.key_id;
   const secretRef = directoryConnector.secret_ref;
   const secret = secretRef ? resolveConnectorSecret(env, secretRef) : undefined;
-  if (authMode !== 'hmac' || !endpoint || !wordwardenConnectorId || !keyId || !secret) {
+  if (authMode !== 'hmac' || !wordwardenConnectorId || !keyId || !secret) {
+    return null;
+  }
+
+  if (transport === 'relay') {
+    if (!env.DIRECTORY_CONNECTOR_RELAY) return null;
+    return {
+      connectorId,
+      wordwardenConnectorId,
+      transport,
+      relayConfig: {
+        relay: env.DIRECTORY_CONNECTOR_RELAY,
+        tenantId,
+        connectorId: wordwardenConnectorId,
+        timeoutMs: directoryConnector.timeouts?.request_ms,
+      },
+      attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
+      autoProvision: normalizeBoolean(connectorSettings?.auto_provision),
+    };
+  }
+
+  if (!endpoint) {
     return null;
   }
 
   return {
     connectorId,
+    wordwardenConnectorId,
+    transport,
     clientConfig: {
       endpoint,
       tenantId,
@@ -485,11 +532,12 @@ function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettings
   const record = value as Record<string, unknown>;
   const id = stringSetting(record.id);
   const endpointURL = stringSetting(record.endpoint_url);
+  const transport = stringSetting(record.transport) === 'relay' ? 'relay' : 'direct';
   const authMode = stringSetting(record.auth_mode) || 'hmac';
   const connectorID = stringSetting(record.connector_id) || id;
   const keyID = stringSetting(record.key_id);
   const secretRef = stringSetting(record.secret_ref);
-  if (!id || !endpointURL || !connectorID || !keyID || !secretRef) {
+  if (!id || (transport === 'direct' && !endpointURL) || !connectorID || !keyID || !secretRef) {
     return null;
   }
 
@@ -501,6 +549,7 @@ function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettings
   const attributeNames = stringArraySetting(record.attribute_names);
   return {
     id,
+    transport,
     endpoint_url: endpointURL,
     auth_mode: authMode,
     connector_id: connectorID,

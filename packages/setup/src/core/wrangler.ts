@@ -273,6 +273,24 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-vc': ['KEY_MANAGER', 'VERSION_MANAGER'],
 };
 
+const COMPONENT_LOCAL_DO_BINDINGS: Partial<
+  Record<WorkerComponent, Array<{ name: string; className: string }>>
+> = {
+  'ar-auth': [{ name: 'DIRECTORY_CONNECTOR_RELAY', className: 'DirectoryConnectorRelay' }],
+};
+
+const COMPONENT_EXTERNAL_DO_BINDINGS: Partial<
+  Record<WorkerComponent, Array<{ name: string; className: string; scriptComponent: WorkerComponent }>>
+> = {
+  'ar-management': [
+    {
+      name: 'DIRECTORY_CONNECTOR_RELAY',
+      className: 'DirectoryConnectorRelay',
+      scriptComponent: 'ar-auth',
+    },
+  ],
+};
+
 // =============================================================================
 // Component Entry Points
 // =============================================================================
@@ -510,18 +528,39 @@ export function generateWranglerConfig(
   } else {
     // Other components reference DOs from ar-lib-core
     const doBindings = COMPONENT_DO_BINDINGS[component];
-    if (doBindings.length > 0) {
+    const localDOBindings = COMPONENT_LOCAL_DO_BINDINGS[component] ?? [];
+    const externalDOBindings = COMPONENT_EXTERNAL_DO_BINDINGS[component] ?? [];
+    if (doBindings.length > 0 || localDOBindings.length > 0 || externalDOBindings.length > 0) {
       const scriptName = getDOScriptName(env);
       wranglerConfig.durable_objects = {
-        bindings: doBindings.map((doName) => {
-          const doDef = DURABLE_OBJECTS.find((d) => d.name === doName);
-          return {
-            name: doName,
-            class_name: doDef?.className || doName,
-            script_name: scriptName,
-          };
-        }),
+        bindings: [
+          ...doBindings.map((doName) => {
+            const doDef = DURABLE_OBJECTS.find((d) => d.name === doName);
+            return {
+              name: doName,
+              class_name: doDef?.className || doName,
+              script_name: scriptName,
+            };
+          }),
+          ...localDOBindings.map((binding) => ({
+            name: binding.name,
+            class_name: binding.className,
+          })),
+          ...externalDOBindings.map((binding) => ({
+            name: binding.name,
+            class_name: binding.className,
+            script_name: getWorkerName(env, binding.scriptComponent),
+          })),
+        ],
       };
+    }
+    if (localDOBindings.length > 0) {
+      wranglerConfig.migrations = [
+        {
+          tag: `${component}-local-v1`,
+          new_sqlite_classes: localDOBindings.map((binding) => binding.className),
+        },
+      ];
     }
   }
 

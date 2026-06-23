@@ -45,6 +45,9 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_attributes: 'LDAP Attributes',
 	admin_directory_authentication_auth_mode: 'Auth Mode',
 	admin_directory_authentication_hmac: 'HMAC',
+	admin_directory_authentication_transport: '接続方式',
+	admin_directory_authentication_transport_direct: 'Direct HTTPS',
+	admin_directory_authentication_transport_relay: 'Outbound Relay',
 	admin_directory_authentication_attributes_hint: 'カンマ区切りのattribute names。',
 	admin_directory_authentication_secret_hint:
 		'env:WORDWARDEN_* または env:AUTHRIM_WORDWARDEN_* を使います。',

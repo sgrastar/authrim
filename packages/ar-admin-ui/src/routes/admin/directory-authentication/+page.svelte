@@ -16,6 +16,7 @@
 
 	interface DirectoryConnectorDraft {
 		id: string;
+		transport: 'direct' | 'relay';
 		endpoint_url: string;
 		auth_mode: 'hmac';
 		connector_id: string;
@@ -57,6 +58,7 @@
 	function defaultConnector(index: number): DirectoryConnectorDraft {
 		return {
 			id: index === 0 ? 'campus' : `campus-${index + 1}`,
+			transport: 'relay',
 			endpoint_url: 'https://wordwarden.example.com',
 			auth_mode: 'hmac',
 			connector_id: 'ww_tenant',
@@ -70,6 +72,7 @@
 	function toDraft(connector: DirectoryConnector): DirectoryConnectorDraft {
 		return {
 			id: connector.id,
+			transport: connector.transport || 'direct',
 			endpoint_url: connector.endpoint_url,
 			auth_mode: connector.auth_mode,
 			connector_id: connector.connector_id,
@@ -95,7 +98,8 @@
 	function buildConnectors(drafts: DirectoryConnectorDraft[]): DirectoryConnector[] {
 		return drafts.map((draft) => ({
 			id: draft.id.trim(),
-			endpoint_url: draft.endpoint_url.trim(),
+			transport: draft.transport,
+			endpoint_url: draft.transport === 'direct' ? draft.endpoint_url.trim() : '',
 			auth_mode: 'hmac',
 			connector_id: draft.connector_id.trim(),
 			key_id: draft.key_id.trim(),
@@ -151,11 +155,13 @@
 			}
 			if (ids.has(connector.id)) return $LL.admin_directory_authentication_validation_id_unique();
 			ids.add(connector.id);
-			if (!connector.endpoint_url) {
-				return $LL.admin_directory_authentication_validation_endpoint_required();
-			}
-			if (!validateEndpointURL(connector.endpoint_url)) {
-				return $LL.admin_directory_authentication_validation_endpoint_https();
+			if (connector.transport === 'direct') {
+				if (!connector.endpoint_url) {
+					return $LL.admin_directory_authentication_validation_endpoint_required();
+				}
+				if (!validateEndpointURL(connector.endpoint_url)) {
+					return $LL.admin_directory_authentication_validation_endpoint_https();
+				}
 			}
 			if (!connector.connector_id) {
 				return $LL.admin_directory_authentication_validation_connector_id_required();
@@ -432,7 +438,11 @@
 							<header class="connector-header">
 								<div>
 									<h3>{connector.id || $LL.admin_directory_authentication_id()}</h3>
-									<p>{connector.endpoint_url}</p>
+									<p>
+										{connector.transport === 'relay'
+											? $LL.admin_directory_authentication_transport_relay()
+											: connector.endpoint_url}
+									</p>
 								</div>
 								<div class="connector-actions">
 									<button
@@ -491,6 +501,26 @@
 								</div>
 
 								<div class="admin-field admin-field--full">
+									<label class="admin-field__label" for={`transport-${index}`}>
+										{$LL.admin_directory_authentication_transport()}
+									</label>
+									<select
+										id={`transport-${index}`}
+										class="admin-input"
+										bind:value={connector.transport}
+										disabled={!canEdit}
+									>
+										<option value="relay">
+											{$LL.admin_directory_authentication_transport_relay()}
+										</option>
+										<option value="direct">
+											{$LL.admin_directory_authentication_transport_direct()}
+										</option>
+									</select>
+								</div>
+
+								{#if connector.transport === 'direct'}
+									<div class="admin-field admin-field--full">
 									<label class="admin-field__label" for={`endpoint-url-${index}`}>
 										{$LL.admin_directory_authentication_endpoint_url()}
 									</label>
@@ -501,6 +531,7 @@
 										disabled={!canEdit}
 									/>
 								</div>
+								{/if}
 
 								<div class="admin-field">
 									<label class="admin-field__label" for={`auth-mode-${index}`}>

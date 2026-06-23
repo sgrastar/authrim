@@ -16760,7 +16760,7 @@ paths:
         - Tenants
       operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdHealth
       summary: Check directory connector health
-      description: Calls the configured connector `/healthz` endpoint and returns the check result.
+      description: Calls the configured connector `/healthz` endpoint for direct transport, or returns relay transport status metadata for outbound relay connectors.
       responses:
         '200':
           $ref: '#/components/responses/TenantDirectoryConnectorHealth'
@@ -16773,6 +16773,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '502':
+          $ref: '#/components/responses/TenantDirectoryConnectorHealth'
+        '503':
           $ref: '#/components/responses/TenantDirectoryConnectorHealth'
       parameters:
         - name: tenantId
@@ -26108,7 +26110,7 @@ components:
             auto_provision: false
             connectors:
               - id: campus
-                endpoint_url: 'https://wordwarden.example.com'
+                transport: relay
                 auth_mode: hmac
                 connector_id: ww_tenant_a
                 key_id: kid-active
@@ -33173,7 +33175,7 @@ components:
             tenantId: tenant_123
             connectors:
               - id: campus
-                endpoint_url: 'https://wordwarden.example.com'
+                transport: relay
                 auth_mode: hmac
                 connector_id: ww_tenant_a
                 key_id: kid-active
@@ -53807,7 +53809,7 @@ components:
       additionalProperties: false
       required:
         - id
-        - endpoint_url
+        - transport
         - auth_mode
         - connector_id
         - key_id
@@ -53818,10 +53820,17 @@ components:
         id:
           type: string
           pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        transport:
+          type: string
+          enum:
+            - direct
+            - relay
+          description: direct sends HTTPS requests to Wordwarden; relay uses outbound WebSocket registration from Wordwarden to Authrim.
         endpoint_url:
           type: string
           format: uri
           maxLength: 2048
+          description: Required for direct transport. Omitted or empty for relay transport.
         auth_mode:
           type: string
           enum:

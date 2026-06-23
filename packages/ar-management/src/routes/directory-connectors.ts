@@ -20,7 +20,8 @@ const MAX_CONNECTORS = 20;
 
 const DirectoryConnectorSchema = z.object({
   id: z.string().regex(CONNECTOR_ID_PATTERN),
-  endpoint_url: z.string().min(1).max(2048),
+  transport: z.enum(['direct', 'relay']).default('direct'),
+  endpoint_url: z.string().max(2048).optional().default(''),
   auth_mode: z.literal('hmac').default('hmac'),
   connector_id: z.string().regex(CONNECTOR_ID_PATTERN),
   key_id: z.string().min(1).max(128),
@@ -89,6 +90,7 @@ function normalizeConfig(config: DirectoryConnectorsConfig): DirectoryConnectors
     auto_provision: config.auto_provision,
     connectors: config.connectors.map((connector) => ({
       ...connector,
+      endpoint_url: connector.endpoint_url.trim(),
       auth_mode: 'hmac',
       attribute_names: normalizeAttributeNames(connector.attribute_names),
     })),
@@ -144,9 +146,11 @@ function validateConnectors(config: DirectoryConnectorsConfig): string | null {
     return `default connector does not exist: ${config.default_connector_id}`;
   }
   for (const connector of config.connectors) {
-    const endpointError = validateEndpointURL(connector.endpoint_url);
-    if (endpointError) {
-      return `${connector.id}: ${endpointError}`;
+    if (connector.transport === 'direct') {
+      const endpointError = validateEndpointURL(connector.endpoint_url);
+      if (endpointError) {
+        return `${connector.id}: ${endpointError}`;
+      }
     }
   }
   return null;
@@ -187,7 +191,8 @@ function redactForAudit(config: DirectoryConnectorsConfig) {
     auto_provision: config.auto_provision,
     connectors: config.connectors.map((connector) => ({
       id: connector.id,
-      endpoint_url: connector.endpoint_url,
+      transport: connector.transport,
+      endpoint_url_present: Boolean(connector.endpoint_url),
       auth_mode: connector.auth_mode,
       connector_id: connector.connector_id,
       key_id: connector.key_id,
@@ -205,6 +210,10 @@ function parseHealthBody(bodyText: string): unknown {
   } catch {
     return { raw: bodyText };
   }
+}
+
+function directoryRelayInstanceName(tenantId: string, connectorId: string): string {
+  return `${encodeURIComponent(tenantId)}:${encodeURIComponent(connectorId)}`;
 }
 
 function findConnector(
@@ -286,6 +295,45 @@ export async function checkDirectoryConnectorHealthHandler(c: Context<{ Bindings
   const connector = findConnector(config, connectorId);
   if (!connector) {
     return c.json({ error: 'directory_connector_not_found' }, 404);
+  }
+
+  if (connector.transport === 'relay') {
+    if (!c.env.DIRECTORY_CONNECTOR_RELAY) {
+      return c.json(
+        {
+          ok: false,
+          connector_id: connector.id,
+          error: 'relay_status_unavailable',
+          error_description: 'Directory connector relay binding is not configured',
+        },
+        503
+      );
+    }
+    try {
+      const stub = c.env.DIRECTORY_CONNECTOR_RELAY.get(
+        c.env.DIRECTORY_CONNECTOR_RELAY.idFromName(
+          directoryRelayInstanceName(tenantId, connector.connector_id)
+        )
+      );
+      const response = await stub.fetch('https://directory-relay.internal/status');
+      const bodyText = await readResponseTextWithLimit(response, 16 * 1024);
+      return c.json({
+        ok: response.ok,
+        connector_id: connector.id,
+        status: response.status,
+        body: parseHealthBody(bodyText),
+      });
+    } catch (error) {
+      return c.json(
+        {
+          ok: false,
+          connector_id: connector.id,
+          error: 'relay_status_failed',
+          error_description: error instanceof Error ? error.message : 'Relay status failed',
+        },
+        502
+      );
+    }
   }
 
   const endpointError = validateEndpointURL(connector.endpoint_url);

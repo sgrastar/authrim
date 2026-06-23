@@ -91,7 +91,8 @@ function directoryConnectors(
 function createContext(
   body: Record<string, unknown>,
   settings?: Record<string, unknown>,
-  authrimConfigOverrides?: Record<string, unknown>
+  authrimConfigOverrides?: Record<string, unknown>,
+  envOverrides: Record<string, unknown> = {}
 ) {
   const headers = new Headers();
   const authrimConfigSettings = {
@@ -106,6 +107,7 @@ function createContext(
     AUTHRIM_CONFIG: createKV(authrimConfigSettings),
     SETTINGS: createKV(settingsKV),
     WORDWARDEN_SECRET: 'active-secret',
+    ...envOverrides,
   };
   return {
     req: {
@@ -261,6 +263,73 @@ describe('directory password login handler', () => {
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_directory');
     expect(body.redirect_url).toBe('/');
+  });
+
+  it('verifies credentials through the relay transport and creates an Authrim session', async () => {
+    const relayFetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        tenant_id: 'tenant-a',
+        connector_id: 'ww_tenant_a',
+        username: 'alice',
+        password: 'correct',
+        attribute_names: ['mail', 'displayName'],
+      });
+
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'ww_tenant_a',
+        result: 'success',
+        subject: {
+          directory_id: 'uid=alice,ou=People,dc=example,dc=com',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+          displayName: ['Alice Example'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const relay = {
+      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
+      get: vi.fn(() => ({ fetch: relayFetch }) as unknown as DurableObjectStub),
+    } as unknown as DurableObjectNamespace;
+    const handler = createDirectoryPasswordLoginHandler();
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {
+              transport: 'relay',
+              endpoint_url: '',
+            },
+            { auto_provision: true }
+          ),
+        },
+        {},
+        {
+          DIRECTORY_CONNECTOR_RELAY: relay,
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:ww_tenant_a');
+    expect(mocks.sessionStore.createSessionRpc).toHaveBeenCalledWith(
+      'sess_directory',
+      'user_generated',
+      86400,
+      expect.objectContaining({
+        directory_connector_id: 'campus',
+      }),
+      'tenant-a'
+    );
   });
 
   it('returns configured post-login redirect after direct directory password login', async () => {

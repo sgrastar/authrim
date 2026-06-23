@@ -38,7 +38,8 @@ function createContext(
   tenantId: string,
   body?: unknown,
   initialSettings: Record<string, unknown> = {},
-  connectorId?: string
+  connectorId?: string,
+  envOverrides: Record<string, unknown> = {}
 ) {
   const settings = createKV(initialSettings);
   return {
@@ -52,6 +53,7 @@ function createContext(
     },
     env: {
       SETTINGS: settings,
+      ...envOverrides,
     },
     get: vi.fn((name: string) => {
       if (name !== 'adminAuth') return undefined;
@@ -73,6 +75,7 @@ const validConfig = {
   connectors: [
     {
       id: 'campus',
+      transport: 'direct',
       endpoint_url: 'https://wordwarden.example.com',
       auth_mode: 'hmac',
       connector_id: 'ww_tenant_a',
@@ -142,6 +145,30 @@ describe('directory connectors admin API', () => {
     expect(JSON.stringify(mocks.createAuditLogFromContext.mock.calls[0]?.[4])).not.toContain(
       'WORDWARDEN_SECRET'
     );
+  });
+
+  it('stores relay connector config without a public endpoint URL', async () => {
+    const context = createContext('tenant-a', {
+      ...validConfig,
+      connectors: [
+        {
+          ...validConfig.connectors[0],
+          transport: 'relay',
+          endpoint_url: '',
+        },
+      ],
+    }) as never;
+
+    const response = await updateDirectoryConnectorsHandler(context);
+    const body = (await response.json()) as {
+      connectors: Array<{ transport: string; endpoint_url: string }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.connectors[0]).toMatchObject({
+      transport: 'relay',
+      endpoint_url: '',
+    });
   });
 
   it('rejects non-HTTPS non-loopback connector endpoints', async () => {
@@ -230,6 +257,73 @@ describe('directory connectors admin API', () => {
       })
     );
     expect(JSON.stringify(body)).not.toContain('WORDWARDEN_SECRET');
+  });
+
+  it('reports relay connector health from the relay Durable Object', async () => {
+    const relayFetch = vi.fn(async () =>
+      Response.json({ ok: true, connections: 1, authenticated_connections: 1 })
+    );
+    mocks.readResponseTextWithLimit.mockResolvedValueOnce(
+      JSON.stringify({ ok: true, connections: 1, authenticated_connections: 1 })
+    );
+    const relay = {
+      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
+      get: vi.fn(() => ({ fetch: relayFetch }) as unknown as DurableObjectStub),
+    } as unknown as DurableObjectNamespace;
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      {
+        'settings:tenant:tenant-a:directory-connectors': {
+          connectors: [
+            {
+              ...validConfig.connectors[0],
+              transport: 'relay',
+              endpoint_url: '',
+            },
+          ],
+        },
+      },
+      'campus',
+      {
+        DIRECTORY_CONNECTOR_RELAY: relay,
+      }
+    ) as never;
+
+    const response = await checkDirectoryConnectorHealthHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.body).toMatchObject({ connections: 1, authenticated_connections: 1 });
+    expect(mocks.safeFetch).not.toHaveBeenCalled();
+    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:ww_tenant_a');
+    expect(relayFetch).toHaveBeenCalledWith('https://directory-relay.internal/status');
+  });
+
+  it('reports relay connector health unavailable when the relay binding is missing', async () => {
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      {
+        'settings:tenant:tenant-a:directory-connectors': {
+          connectors: [
+            {
+              ...validConfig.connectors[0],
+              transport: 'relay',
+              endpoint_url: '',
+            },
+          ],
+        },
+      },
+      'campus'
+    ) as never;
+
+    const response = await checkDirectoryConnectorHealthHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(503);
+    expect(body.error).toBe('relay_status_unavailable');
   });
 
   it('returns non-JSON health responses without failing the health check request', async () => {

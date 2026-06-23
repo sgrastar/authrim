@@ -4548,6 +4548,18 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_hmac: string
 	/**
+	 * T​r​a​n​s​p​o​r​t
+	 */
+	admin_directory_authentication_transport: string
+	/**
+	 * D​i​r​e​c​t​ ​H​T​T​P​S
+	 */
+	admin_directory_authentication_transport_direct: string
+	/**
+	 * O​u​t​b​o​u​n​d​ ​R​e​l​a​y
+	 */
+	admin_directory_authentication_transport_relay: string
+	/**
 	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​a​t​t​r​i​b​u​t​e​ ​n​a​m​e​s​.
 	 */
 	admin_directory_authentication_attributes_hint: string
@@ -32597,6 +32609,18 @@ export type TranslationFunctions = {
 	 * HMAC
 	 */
 	admin_directory_authentication_hmac: () => LocalizedString
+	/**
+	 * Transport
+	 */
+	admin_directory_authentication_transport: () => LocalizedString
+	/**
+	 * Direct HTTPS
+	 */
+	admin_directory_authentication_transport_direct: () => LocalizedString
+	/**
+	 * Outbound Relay
+	 */
+	admin_directory_authentication_transport_relay: () => LocalizedString
 	/**
 	 * Comma-separated attribute names.
 	 */

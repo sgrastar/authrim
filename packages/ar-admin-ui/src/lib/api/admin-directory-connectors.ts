@@ -6,6 +6,7 @@ export interface DirectoryConnectorTimeouts {
 
 export interface DirectoryConnector {
 	id: string;
+	transport: 'direct' | 'relay';
 	endpoint_url: string;
 	auth_mode: 'hmac';
 	connector_id: string;

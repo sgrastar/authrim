@@ -44,6 +44,7 @@ import {
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
 import { directoryPasswordLoginHandler } from './directory-password-login';
+import { directoryRelayConnectHandler } from './directory-relay-route';
 import { consentGetHandler, consentPostHandler } from './consent';
 import { loginChallengeGetHandler } from './login-challenge';
 import {
@@ -285,6 +286,13 @@ app.use('/api/auth/directory-password/login', async (c, next) => {
     endpoints: ['/api/auth/directory-password/login'],
   })(c, next);
 });
+app.use('/api/auth/directory-relay/connect/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-relay/connect'],
+  })(c, next);
+});
 
 // Rate limiting for upgrade endpoints (architecture-decisions.md §17)
 // Moderate profile: balance security and usability for account upgrade
@@ -372,6 +380,10 @@ app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
 
 // Directory Password endpoint
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
+app.get(
+  '/api/auth/directory-relay/connect/:tenantId/:connectorId',
+  directoryRelayConnectHandler
+);
 
 // DID Authentication endpoints (Phase 9)
 // Challenge-response pattern for DID-based authentication
@@ -713,3 +725,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { DirectoryConnectorRelay } from './directory-connector-relay';
