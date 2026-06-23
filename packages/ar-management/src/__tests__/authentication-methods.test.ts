@@ -335,6 +335,48 @@ describe('Authentication Methods API', () => {
       expect(JSON.stringify(body)).not.toContain('connector_id');
     });
 
+    it('should enable directory password from outbound relay directory connector settings', async () => {
+      const settingsKV = createMockKV({
+        system_settings: JSON.stringify({
+          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        }),
+        'settings:tenant:default:directory-connectors': JSON.stringify({
+          enabled: true,
+          default_connector_id: 'campus',
+          auto_provision: false,
+          connectors: [
+            {
+              id: 'campus',
+              transport: 'relay',
+              endpoint_url: '',
+              auth_mode: 'hmac',
+              connector_id: 'ww_tenant_a',
+              key_id: 'kid-active',
+              secret_ref: 'env:WORDWARDEN_SECRET',
+              timeouts: { request_ms: 2500 },
+              attribute_names: ['mail'],
+            },
+          ],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.passkey.enabled).toBe(false);
+      expect(body.methods.emailCode.enabled).toBe(false);
+      expect(body.methods.directoryPassword).toEqual({
+        enabled: true,
+        label: 'Organization ID',
+        steps: ['username', 'password'],
+      });
+      expect(JSON.stringify(body)).not.toContain('secret');
+      expect(JSON.stringify(body)).not.toContain('endpoint');
+      expect(JSON.stringify(body)).not.toContain('connector_id');
+    });
+
     it('should not enable directory password from legacy authentication-methods keys', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:authentication-methods': JSON.stringify({

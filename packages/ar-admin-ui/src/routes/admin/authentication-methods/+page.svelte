@@ -3,14 +3,12 @@
 	import {
 		adminAuthenticationMethodsAPI,
 		type AuthenticationMethodBuiltInSettings,
+		type AuthenticationMethodDirectoryPasswordSettings,
 		type AuthenticationMethodHumanVerificationSettings,
 		type AuthenticationMethodExternalProvider,
 		type AuthenticationMethodExternalProviderUsage
 	} from '$lib/api/admin-authentication-methods';
-	import {
-		adminPluginsAPI,
-		type PluginWithStatus
-	} from '$lib/api/admin-plugins';
+	import { adminPluginsAPI, type PluginWithStatus } from '$lib/api/admin-plugins';
 	import type { CategorySettings } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
@@ -32,6 +30,14 @@
 		loginEnabled: false,
 		signupEnabled: false,
 		reauthEnabled: false
+	};
+	const DEFAULT_DIRECTORY_PASSWORD: AuthenticationMethodDirectoryPasswordSettings = {
+		loginEnabled: false,
+		configured: false,
+		connectorCount: 0,
+		defaultConnectorId: 'campus',
+		autoProvision: false,
+		config: null
 	};
 	const HUMAN_VERIFICATION_PROVIDERS = [
 		{
@@ -58,6 +64,10 @@
 	let settings = $state<CategorySettings | null>(null);
 	let builtIn = $state<AuthenticationMethodBuiltInSettings>({ ...DEFAULT_BUILT_IN });
 	let initialBuiltInJson = $state(JSON.stringify(DEFAULT_BUILT_IN));
+	let directoryPassword = $state<AuthenticationMethodDirectoryPasswordSettings>({
+		...DEFAULT_DIRECTORY_PASSWORD
+	});
+	let initialDirectoryPasswordJson = $state(JSON.stringify(DEFAULT_DIRECTORY_PASSWORD));
 	let humanVerification = $state<AuthenticationMethodHumanVerificationSettings>({
 		...DEFAULT_HUMAN_VERIFICATION
 	});
@@ -71,6 +81,7 @@
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	const hasChanges = $derived(
 		JSON.stringify(builtIn) !== initialBuiltInJson ||
+			JSON.stringify(directoryPassword) !== initialDirectoryPasswordJson ||
 			JSON.stringify(humanVerification) !== initialHumanVerificationJson ||
 			JSON.stringify(externalProviderUsages) !== initialExternalProviderUsagesJson
 	);
@@ -99,6 +110,8 @@
 			settings = response.settings;
 			builtIn = response.builtIn;
 			initialBuiltInJson = JSON.stringify(response.builtIn);
+			directoryPassword = response.directoryPassword;
+			initialDirectoryPasswordJson = JSON.stringify(response.directoryPassword);
 			humanVerification = response.humanVerification;
 			initialHumanVerificationJson = JSON.stringify(response.humanVerification);
 			providers = response.providers;
@@ -138,13 +151,21 @@
 			const result = await adminAuthenticationMethodsAPI.update(
 				settings,
 				builtIn,
+				directoryPassword,
 				humanVerification,
 				providers,
 				externalProviderUsages,
 				currentTenantId
 			);
 			settings = { ...settings, version: result.version };
+			directoryPassword = {
+				...directoryPassword,
+				config: directoryPassword.config
+					? { ...directoryPassword.config, enabled: directoryPassword.loginEnabled }
+					: null
+			};
 			initialBuiltInJson = JSON.stringify(builtIn);
+			initialDirectoryPasswordJson = JSON.stringify(directoryPassword);
 			initialHumanVerificationJson = JSON.stringify(humanVerification);
 			initialExternalProviderUsagesJson = JSON.stringify(externalProviderUsages);
 			successMessage = $LL.admin_authentication_methods_saved();
@@ -303,6 +324,35 @@
 						disabled={!canEdit}
 						size="sm"
 					/>
+				</div>
+
+				<div class="method-title">
+					<div class="provider-title">
+						<strong>{$LL.admin_authentication_methods_directory_password()}</strong>
+						{#if !directoryPassword.configured}
+							<span class="badge muted">{$LL.admin_authentication_methods_not_configured()}</span>
+						{/if}
+					</div>
+					<span>{$LL.admin_authentication_methods_directory_password_description()}</span>
+					<a href="/admin/directory-authentication" class="inline-link method-config-link">
+						{$LL.admin_authentication_methods_configure_directory()}
+					</a>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch
+						bind:checked={directoryPassword.loginEnabled}
+						disabled={!canEdit || !directoryPassword.configured}
+						size="sm"
+					/>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
 				</div>
 			</div>
 		</AdminSection>
@@ -534,6 +584,18 @@
 		width: fit-content;
 		font-size: 0.8rem;
 		line-height: 1.35;
+	}
+
+	.method-config-link {
+		width: fit-content;
+		font-size: 0.8rem;
+		line-height: 1.35;
+	}
+
+	.unavailable {
+		color: var(--color-text-subtle);
+		font-size: 0.78rem;
+		font-weight: 650;
 	}
 
 	.provider-warning {

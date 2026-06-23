@@ -5,7 +5,7 @@ import {
   validateDirectoryPasswordVerifyResult,
 } from './directory-password';
 
-const DEFAULT_RELAY_TIMEOUT_MS = 3000;
+const DEFAULT_RELAY_TIMEOUT_MS = 5000;
 
 export interface DirectoryPasswordRelayClientConfig {
   relay: DurableObjectNamespace;
@@ -21,6 +21,37 @@ export class DirectoryPasswordRelayClient {
     input: DirectoryPasswordVerifyInput
   ): Promise<DirectoryPasswordVerifyResult> {
     const requestId = input.requestId || crypto.randomUUID();
+    let lastError: DirectoryPasswordError | null = null;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await this.verifyPasswordOnce(input, requestId);
+      } catch (error) {
+        if (!(error instanceof DirectoryPasswordError)) throw error;
+        lastError = error;
+        if (attempt > 0 || !shouldRetryRelayError(error.details)) {
+          throw error;
+        }
+      }
+    }
+
+    throw (
+      lastError ??
+      new DirectoryPasswordError({
+        requestId,
+        tenantId: this.config.tenantId,
+        connectorId: this.config.connectorId,
+        code: 'relay_unavailable',
+        retryable: true,
+        status: 0,
+      })
+    );
+  }
+
+  private async verifyPasswordOnce(
+    input: DirectoryPasswordVerifyInput,
+    requestId: string
+  ): Promise<DirectoryPasswordVerifyResult> {
     const stub = this.relayStub();
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -91,6 +122,22 @@ export class DirectoryPasswordRelayClient {
     const id = this.config.relay.idFromName(directoryRelayInstanceName(this.config));
     return this.config.relay.get(id);
   }
+}
+
+function shouldRetryRelayError(error: {
+  code: string;
+  retryable: boolean;
+  status: number;
+}): boolean {
+  if (!error.retryable) return false;
+  if (error.status === 429) return false;
+  return ![
+    'relay_connector_offline',
+    'relay_overloaded',
+    'relay_connector_not_configured',
+    'invalid_relay_request',
+    'relay_request_too_large',
+  ].includes(error.code);
 }
 
 export function directoryRelayInstanceName(input: {

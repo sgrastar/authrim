@@ -36,12 +36,36 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_health_ok: 'Healthy',
 	admin_directory_authentication_health_failed: 'Health check failed',
 	admin_directory_authentication_health_status: 'HTTP {status:number}',
+	admin_directory_authentication_load_events: 'Load Events',
+	admin_directory_authentication_loading_events: 'Loading...',
+	admin_directory_authentication_events_failed: 'Failed to load relay events',
+	admin_directory_authentication_recent_events: 'Recent relay events',
+	admin_directory_authentication_issue_secret: 'Issue Secret',
+	admin_directory_authentication_issuing_secret: 'Issuing...',
+	admin_directory_authentication_rotate_secret: 'Rotate Secret',
+	admin_directory_authentication_rotating_secret: 'Rotating...',
+	admin_directory_authentication_secret_issued: 'Connector secret issued.',
+	admin_directory_authentication_secret_rotated: 'Connector secret rotated.',
+	admin_directory_authentication_secret_failed: 'Failed to update connector secret',
+	admin_directory_authentication_one_time_secret: 'One-time secret',
+	admin_directory_authentication_one_time_secret_hint:
+		'Copy this value into Wordwarden. Authrim will not show it again.',
 	admin_directory_authentication_id: 'Connector ID',
 	admin_directory_authentication_endpoint_url: 'Endpoint URL',
 	admin_directory_authentication_connector_id: 'Wordwarden Tenant ID',
+	admin_directory_authentication_relay_url: 'Relay URL',
+	admin_directory_authentication_relay_url_copy: 'Copy',
+	admin_directory_authentication_relay_url_copied: 'Copied',
+	admin_directory_authentication_relay_url_copy_failed: 'Failed to copy relay URL',
 	admin_directory_authentication_key_id: 'Key ID',
 	admin_directory_authentication_secret_ref: 'Secret Reference',
 	admin_directory_authentication_timeout_ms: 'Timeout (ms)',
+	admin_directory_authentication_relay_verify_timeout_ms: 'Relay Verify Timeout (ms)',
+	admin_directory_authentication_relay_max_pending_requests: 'Max Pending Requests',
+	admin_directory_authentication_relay_challenge_ttl_ms: 'Challenge TTL (ms)',
+	admin_directory_authentication_relay_auth_failure_rate: 'Auth Failures / Minute',
+	admin_directory_authentication_relay_auth_failure_block_ms: 'Auth Failure Block (ms)',
+	admin_directory_authentication_rotation_grace_ms: 'Rotation Grace (ms)',
 	admin_directory_authentication_attributes: 'LDAP Attributes',
 	admin_directory_authentication_auth_mode: 'Auth Mode',
 	admin_directory_authentication_hmac: 'HMAC',
@@ -49,7 +73,8 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_transport_direct: 'Direct HTTPS',
 	admin_directory_authentication_transport_relay: 'Outbound Relay',
 	admin_directory_authentication_attributes_hint: 'Comma-separated attribute names.',
-	admin_directory_authentication_secret_hint: 'Use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.',
+	admin_directory_authentication_secret_hint:
+		'Use managed:<connector-id>, env:WORDWARDEN_*, or env:AUTHRIM_WORDWARDEN_*.',
 	admin_directory_authentication_validation_id_required: 'Connector ID is required.',
 	admin_directory_authentication_validation_id_format:
 		'Connector ID can contain letters, numbers, underscores, and hyphens.',
@@ -62,8 +87,20 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_validation_key_id_required: 'Key ID is required.',
 	admin_directory_authentication_validation_secret_required: 'Secret Reference is required.',
 	admin_directory_authentication_validation_secret_format:
-		'Secret Reference must use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.',
+		'Secret Reference must use managed:<connector-id>, env:WORDWARDEN_*, or env:AUTHRIM_WORDWARDEN_*.',
 	admin_directory_authentication_validation_timeout: 'Timeout must be between 100 and 30000 ms.',
+	admin_directory_authentication_validation_relay_verify_timeout:
+		'Relay Verify Timeout must be between 100 and 30000 ms.',
+	admin_directory_authentication_validation_relay_max_pending:
+		'Max Pending Requests must be between 1 and 256.',
+	admin_directory_authentication_validation_relay_challenge_ttl:
+		'Challenge TTL must be between 5000 and 300000 ms.',
+	admin_directory_authentication_validation_relay_auth_failure_rate:
+		'Auth Failures / Minute must be between 1 and 100.',
+	admin_directory_authentication_validation_relay_auth_failure_block:
+		'Auth Failure Block must be between 1000 and 3600000 ms.',
+	admin_directory_authentication_validation_rotation_grace:
+		'Rotation grace must be between 0 and 86400000 ms.',
 	admin_directory_authentication_validation_attributes:
 		'LDAP Attributes can contain up to 32 names.',
 	admin_directory_authentication_validation_connector_required_when_enabled:

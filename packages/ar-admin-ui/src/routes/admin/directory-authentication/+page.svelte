@@ -4,6 +4,8 @@
 		adminDirectoryConnectorsAPI,
 		type DirectoryConnector,
 		type DirectoryConnectorHealthResponse,
+		type DirectoryConnectorRelayEventsResponse,
+		type DirectoryConnectorSecretResponse,
 		type DirectoryConnectorsResponse
 	} from '$lib/api/admin-directory-connectors';
 	import { ToggleSwitch } from '$lib/components';
@@ -12,7 +14,8 @@
 	import { LL } from '$i18n/i18n-svelte';
 
 	const CONNECTOR_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
-	const SECRET_REF_PATTERN = /^env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+$/;
+	const SECRET_REF_PATTERN =
+		/^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$/;
 
 	interface DirectoryConnectorDraft {
 		id: string;
@@ -23,6 +26,12 @@
 		key_id: string;
 		secret_ref: string;
 		request_ms: number;
+		relay_verify_timeout_ms: number;
+		relay_max_pending_requests: number;
+		relay_challenge_ttl_ms: number;
+		relay_auth_failure_rate_limit_per_minute: number;
+		relay_auth_failure_block_ms: number;
+		relay_secret_rotation_grace_ms: number;
 		attributes_text: string;
 	}
 
@@ -30,6 +39,36 @@
 		loading: boolean;
 		result: DirectoryConnectorHealthResponse | null;
 		error: string;
+	}
+
+	interface SecretState {
+		loading: boolean;
+		result: DirectoryConnectorSecretResponse | null;
+		error: string;
+		action: 'issue' | 'rotate';
+	}
+
+	interface EventsState {
+		loading: boolean;
+		result: DirectoryConnectorRelayEventsResponse | null;
+		error: string;
+	}
+
+	interface RelayStatusBody {
+		connections?: number;
+		authenticated_connections?: number;
+		pending_requests?: number;
+		max_pending_requests?: number;
+		verify_timeout_ms?: number;
+		challenge_ttl_ms?: number;
+		relay_protocol?: string;
+		protocol_version?: number;
+		min_supported_version?: number;
+		authenticated_key_id?: string;
+		last_authenticated_at?: string;
+		last_verify_succeeded_at?: string;
+		last_verify_failed_at?: string;
+		last_disconnect_reason?: string;
 	}
 
 	let loading = $state(true);
@@ -50,6 +89,9 @@
 		})
 	);
 	let healthChecks = $state<Record<number, HealthState>>({});
+	let secrets = $state<Record<number, SecretState>>({});
+	let relayEvents = $state<Record<number, EventsState>>({});
+	let copiedRelayUrlIndex = $state<number | null>(null);
 
 	const currentTenantId = $derived(settingsContext.tenantId);
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
@@ -65,6 +107,12 @@
 			key_id: 'kid-active',
 			secret_ref: 'env:WORDWARDEN_SECRET',
 			request_ms: 2500,
+			relay_verify_timeout_ms: 5000,
+			relay_max_pending_requests: 16,
+			relay_challenge_ttl_ms: 30000,
+			relay_auth_failure_rate_limit_per_minute: 10,
+			relay_auth_failure_block_ms: 300000,
+			relay_secret_rotation_grace_ms: 300000,
 			attributes_text: 'mail, displayName, uid'
 		};
 	}
@@ -79,6 +127,13 @@
 			key_id: connector.key_id,
 			secret_ref: connector.secret_ref,
 			request_ms: connector.timeouts.request_ms,
+			relay_verify_timeout_ms: connector.relay?.verify_timeout_ms ?? 5000,
+			relay_max_pending_requests: connector.relay?.max_pending_requests ?? 16,
+			relay_challenge_ttl_ms: connector.relay?.challenge_ttl_ms ?? 30000,
+			relay_auth_failure_rate_limit_per_minute:
+				connector.relay?.auth_failure_rate_limit_per_minute ?? 10,
+			relay_auth_failure_block_ms: connector.relay?.auth_failure_block_ms ?? 300000,
+			relay_secret_rotation_grace_ms: connector.relay?.secret_rotation_grace_ms ?? 300000,
 			attributes_text: connector.attribute_names.join(', ')
 		};
 	}
@@ -107,8 +162,84 @@
 			timeouts: {
 				request_ms: Number(draft.request_ms)
 			},
+			relay: {
+				verify_timeout_ms: Number(draft.relay_verify_timeout_ms),
+				max_pending_requests: Number(draft.relay_max_pending_requests),
+				challenge_ttl_ms: Number(draft.relay_challenge_ttl_ms),
+				auth_failure_rate_limit_per_minute: Number(draft.relay_auth_failure_rate_limit_per_minute),
+				auth_failure_block_ms: Number(draft.relay_auth_failure_block_ms),
+				secret_rotation_grace_ms: Number(draft.relay_secret_rotation_grace_ms)
+			},
 			attribute_names: normalizeAttributes(draft.attributes_text)
 		}));
+	}
+
+	function isObject(value: unknown): value is Record<string, unknown> {
+		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+	}
+
+	function relayStatusBody(
+		result: DirectoryConnectorHealthResponse | null
+	): RelayStatusBody | null {
+		if (!result || !isObject(result.body)) return null;
+		return result.body as RelayStatusBody;
+	}
+
+	function relayStatusDetails(result: DirectoryConnectorHealthResponse | null) {
+		const body = relayStatusBody(result);
+		if (!body) return [];
+		return [
+			['connections', body.connections],
+			['authenticated', body.authenticated_connections],
+			['pending', `${body.pending_requests ?? '-'} / ${body.max_pending_requests ?? '-'}`],
+			['verify timeout', body.verify_timeout_ms ? `${body.verify_timeout_ms} ms` : undefined],
+			['challenge ttl', body.challenge_ttl_ms ? `${body.challenge_ttl_ms} ms` : undefined],
+			['protocol', body.relay_protocol],
+			[
+				'version',
+				body.protocol_version
+					? `${body.protocol_version} / min ${body.min_supported_version ?? '-'}`
+					: undefined
+			],
+			['key id', body.authenticated_key_id],
+			['last auth', body.last_authenticated_at],
+			['last success', body.last_verify_succeeded_at],
+			['last failure', body.last_verify_failed_at],
+			['disconnect', body.last_disconnect_reason]
+		].filter(
+			(item): item is [string, string | number] => item[1] !== undefined && item[1] !== null
+		);
+	}
+
+	function relayEventItems(index: number) {
+		return relayEvents[index]?.result?.body?.events ?? [];
+	}
+
+	function relayURL(connector: DirectoryConnectorDraft): string {
+		if (!tenantId || !connector.connector_id || typeof window === 'undefined') return '';
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		return `${protocol}//${window.location.host}/api/auth/directory-relay/connect/${encodeURIComponent(
+			tenantId
+		)}/${encodeURIComponent(connector.connector_id.trim())}`;
+	}
+
+	async function copyRelayURL(index: number) {
+		const connector = connectors[index];
+		if (!connector) return;
+		const url = relayURL(connector);
+		if (!url || typeof navigator === 'undefined' || !navigator.clipboard) {
+			error = $LL.admin_directory_authentication_relay_url_copy_failed();
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(url);
+			copiedRelayUrlIndex = index;
+			window.setTimeout(() => {
+				if (copiedRelayUrlIndex === index) copiedRelayUrlIndex = null;
+			}, 1800);
+		} catch {
+			error = $LL.admin_directory_authentication_relay_url_copy_failed();
+		}
 	}
 
 	function buildConfig(): Omit<DirectoryConnectorsResponse, 'tenantId'> {
@@ -180,6 +311,53 @@
 			) {
 				return $LL.admin_directory_authentication_validation_timeout();
 			}
+			if (
+				connector.transport === 'relay' &&
+				(!Number.isInteger(connector.relay.verify_timeout_ms) ||
+					connector.relay.verify_timeout_ms < 100 ||
+					connector.relay.verify_timeout_ms > 30000)
+			) {
+				return $LL.admin_directory_authentication_validation_relay_verify_timeout();
+			}
+			if (
+				connector.transport === 'relay' &&
+				(!Number.isInteger(connector.relay.max_pending_requests) ||
+					connector.relay.max_pending_requests < 1 ||
+					connector.relay.max_pending_requests > 256)
+			) {
+				return $LL.admin_directory_authentication_validation_relay_max_pending();
+			}
+			if (
+				connector.transport === 'relay' &&
+				(!Number.isInteger(connector.relay.challenge_ttl_ms) ||
+					connector.relay.challenge_ttl_ms < 5000 ||
+					connector.relay.challenge_ttl_ms > 300000)
+			) {
+				return $LL.admin_directory_authentication_validation_relay_challenge_ttl();
+			}
+			if (
+				connector.transport === 'relay' &&
+				(!Number.isInteger(connector.relay.auth_failure_rate_limit_per_minute) ||
+					connector.relay.auth_failure_rate_limit_per_minute < 1 ||
+					connector.relay.auth_failure_rate_limit_per_minute > 100)
+			) {
+				return $LL.admin_directory_authentication_validation_relay_auth_failure_rate();
+			}
+			if (
+				connector.transport === 'relay' &&
+				(!Number.isInteger(connector.relay.auth_failure_block_ms) ||
+					connector.relay.auth_failure_block_ms < 1000 ||
+					connector.relay.auth_failure_block_ms > 3600000)
+			) {
+				return $LL.admin_directory_authentication_validation_relay_auth_failure_block();
+			}
+			if (
+				!Number.isInteger(connector.relay.secret_rotation_grace_ms) ||
+				connector.relay.secret_rotation_grace_ms < 0 ||
+				connector.relay.secret_rotation_grace_ms > 86400000
+			) {
+				return $LL.admin_directory_authentication_validation_rotation_grace();
+			}
 			if (connector.attribute_names.length > 32) {
 				return $LL.admin_directory_authentication_validation_attributes();
 			}
@@ -192,6 +370,8 @@
 		error = '';
 		successMessage = '';
 		healthChecks = {};
+		secrets = {};
+		relayEvents = {};
 
 		try {
 			const response = await adminDirectoryConnectorsAPI.get(selectedTenantId);
@@ -241,6 +421,8 @@
 			});
 			successMessage = $LL.admin_directory_authentication_saved();
 			healthChecks = {};
+			secrets = {};
+			relayEvents = {};
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_directory_authentication_save_failed();
 		} finally {
@@ -259,6 +441,16 @@
 			nextHealthChecks[itemIndex] = healthChecks[itemIndex >= index ? itemIndex + 1 : itemIndex];
 		});
 		healthChecks = nextHealthChecks;
+		const nextSecrets: Record<number, SecretState> = {};
+		connectors.forEach((_, itemIndex) => {
+			nextSecrets[itemIndex] = secrets[itemIndex >= index ? itemIndex + 1 : itemIndex];
+		});
+		secrets = nextSecrets;
+		const nextRelayEvents: Record<number, EventsState> = {};
+		connectors.forEach((_, itemIndex) => {
+			nextRelayEvents[itemIndex] = relayEvents[itemIndex >= index ? itemIndex + 1 : itemIndex];
+		});
+		relayEvents = nextRelayEvents;
 	}
 
 	async function checkHealth(index: number) {
@@ -284,6 +476,92 @@
 					result: null,
 					error:
 						err instanceof Error ? err.message : $LL.admin_directory_authentication_health_failed()
+				}
+			};
+		}
+	}
+
+	async function loadRelayEvents(index: number) {
+		const connector = connectors[index];
+		if (!tenantId || !connector || connector.transport !== 'relay' || hasChanges || !canEdit)
+			return;
+
+		relayEvents = {
+			...relayEvents,
+			[index]: { loading: true, result: null, error: '' }
+		};
+
+		try {
+			const result = await adminDirectoryConnectorsAPI.listEvents(tenantId, connector.id);
+			relayEvents = {
+				...relayEvents,
+				[index]: { loading: false, result, error: '' }
+			};
+		} catch (err) {
+			relayEvents = {
+				...relayEvents,
+				[index]: {
+					loading: false,
+					result: null,
+					error:
+						err instanceof Error ? err.message : $LL.admin_directory_authentication_events_failed()
+				}
+			};
+		}
+	}
+
+	function markSecretSaved(index: number, result: DirectoryConnectorSecretResponse) {
+		const nextConnectors = connectors.map((connector, itemIndex) =>
+			itemIndex === index
+				? {
+						...connector,
+						key_id: result.key_id,
+						secret_ref: result.secret_ref
+					}
+				: connector
+		);
+		connectors = nextConnectors;
+		initialConfigJson = JSON.stringify({
+			enabled,
+			default_connector_id: defaultConnectorId.trim() || 'campus',
+			auto_provision: autoProvision,
+			connectors: buildConnectors(nextConnectors)
+		});
+	}
+
+	async function updateSecret(index: number, action: 'issue' | 'rotate') {
+		const connector = connectors[index];
+		if (!tenantId || !connector || connector.transport !== 'relay' || hasChanges || !canEdit)
+			return;
+
+		secrets = {
+			...secrets,
+			[index]: { loading: true, result: null, error: '', action }
+		};
+
+		try {
+			const result =
+				action === 'issue'
+					? await adminDirectoryConnectorsAPI.issueSecret(tenantId, connector.id)
+					: await adminDirectoryConnectorsAPI.rotateSecret(tenantId, connector.id);
+			markSecretSaved(index, result);
+			secrets = {
+				...secrets,
+				[index]: { loading: false, result, error: '', action }
+			};
+			successMessage =
+				action === 'issue'
+					? $LL.admin_directory_authentication_secret_issued()
+					: $LL.admin_directory_authentication_secret_rotated();
+		} catch (err) {
+			secrets = {
+				...secrets,
+				[index]: {
+					loading: false,
+					result: null,
+					error:
+						err instanceof Error ? err.message : $LL.admin_directory_authentication_secret_failed(),
+					action
 				}
 			};
 		}
@@ -454,6 +732,35 @@
 											? $LL.admin_directory_authentication_checking_health()
 											: $LL.admin_directory_authentication_check_health()}
 									</button>
+									{#if connector.transport === 'relay'}
+										<button
+											class="btn btn-secondary"
+											disabled={!canEdit || hasChanges || secrets[index]?.loading}
+											onclick={() => updateSecret(index, 'issue')}
+										>
+											{secrets[index]?.loading && secrets[index]?.action === 'issue'
+												? $LL.admin_directory_authentication_issuing_secret()
+												: $LL.admin_directory_authentication_issue_secret()}
+										</button>
+										<button
+											class="btn btn-secondary"
+											disabled={!canEdit || hasChanges || secrets[index]?.loading}
+											onclick={() => updateSecret(index, 'rotate')}
+										>
+											{secrets[index]?.loading && secrets[index]?.action === 'rotate'
+												? $LL.admin_directory_authentication_rotating_secret()
+												: $LL.admin_directory_authentication_rotate_secret()}
+										</button>
+										<button
+											class="btn btn-secondary"
+											disabled={!canEdit || hasChanges || relayEvents[index]?.loading}
+											onclick={() => loadRelayEvents(index)}
+										>
+											{relayEvents[index]?.loading
+												? $LL.admin_directory_authentication_loading_events()
+												: $LL.admin_directory_authentication_load_events()}
+										</button>
+									{/if}
 									<button
 										class="btn btn-danger"
 										disabled={!canEdit}
@@ -483,8 +790,45 @@
 										</span>
 									{/if}
 								</div>
+								{#if relayStatusDetails(healthChecks[index].result).length > 0}
+									<div class="relay-status-details">
+										{#each relayStatusDetails(healthChecks[index].result) as detail}
+											<div>
+												<span>{detail[0]}</span>
+												<code>{detail[1]}</code>
+											</div>
+										{/each}
+									</div>
+								{/if}
 							{:else if healthChecks[index]?.error}
 								<div class="health-status health-status--error">{healthChecks[index].error}</div>
+							{/if}
+
+							{#if secrets[index]?.result}
+								<div class="secret-output">
+									<div>
+										<strong>{$LL.admin_directory_authentication_one_time_secret()}</strong>
+										<p>{$LL.admin_directory_authentication_one_time_secret_hint()}</p>
+									</div>
+									<code>{secrets[index].result?.secret}</code>
+								</div>
+							{:else if secrets[index]?.error}
+								<div class="health-status health-status--error">{secrets[index].error}</div>
+							{/if}
+
+							{#if relayEventItems(index).length}
+								<div class="relay-events">
+									<h4>{$LL.admin_directory_authentication_recent_events()}</h4>
+									{#each relayEventItems(index) as event}
+										<div class="relay-event-row">
+											<span>{event.timestamp ?? '-'}</span>
+											<strong>{event.type}</strong>
+											<code>{event.code ?? event.result ?? event.requestId ?? '-'}</code>
+										</div>
+									{/each}
+								</div>
+							{:else if relayEvents[index]?.error}
+								<div class="health-status health-status--error">{relayEvents[index].error}</div>
 							{/if}
 
 							<div class="form-grid">
@@ -521,16 +865,16 @@
 
 								{#if connector.transport === 'direct'}
 									<div class="admin-field admin-field--full">
-									<label class="admin-field__label" for={`endpoint-url-${index}`}>
-										{$LL.admin_directory_authentication_endpoint_url()}
-									</label>
-									<input
-										id={`endpoint-url-${index}`}
-										class="admin-input"
-										bind:value={connector.endpoint_url}
-										disabled={!canEdit}
-									/>
-								</div>
+										<label class="admin-field__label" for={`endpoint-url-${index}`}>
+											{$LL.admin_directory_authentication_endpoint_url()}
+										</label>
+										<input
+											id={`endpoint-url-${index}`}
+											class="admin-input"
+											bind:value={connector.endpoint_url}
+											disabled={!canEdit}
+										/>
+									</div>
 								{/if}
 
 								<div class="admin-field">
@@ -556,6 +900,27 @@
 										disabled={!canEdit}
 									/>
 								</div>
+
+								{#if connector.transport === 'relay'}
+									<div class="admin-field admin-field--full">
+										<label class="admin-field__label" for={`relay-url-${index}`}>
+											{$LL.admin_directory_authentication_relay_url()}
+										</label>
+										<div class="relay-url-output">
+											<code id={`relay-url-${index}`}>{relayURL(connector)}</code>
+											<button
+												type="button"
+												class="btn btn-secondary"
+												disabled={!relayURL(connector)}
+												onclick={() => copyRelayURL(index)}
+											>
+												{copiedRelayUrlIndex === index
+													? $LL.admin_directory_authentication_relay_url_copied()
+													: $LL.admin_directory_authentication_relay_url_copy()}
+											</button>
+										</div>
+									</div>
+								{/if}
 
 								<div class="admin-field">
 									<label class="admin-field__label" for={`key-id-${index}`}>
@@ -596,6 +961,98 @@
 										disabled={!canEdit}
 									/>
 								</div>
+
+								{#if connector.transport === 'relay'}
+									<div class="admin-field">
+										<label class="admin-field__label" for={`relay-verify-timeout-ms-${index}`}>
+											{$LL.admin_directory_authentication_relay_verify_timeout_ms()}
+										</label>
+										<input
+											id={`relay-verify-timeout-ms-${index}`}
+											type="number"
+											min="100"
+											max="30000"
+											class="admin-input"
+											bind:value={connector.relay_verify_timeout_ms}
+											disabled={!canEdit}
+										/>
+									</div>
+
+									<div class="admin-field">
+										<label class="admin-field__label" for={`relay-max-pending-${index}`}>
+											{$LL.admin_directory_authentication_relay_max_pending_requests()}
+										</label>
+										<input
+											id={`relay-max-pending-${index}`}
+											type="number"
+											min="1"
+											max="256"
+											class="admin-input"
+											bind:value={connector.relay_max_pending_requests}
+											disabled={!canEdit}
+										/>
+									</div>
+
+									<div class="admin-field">
+										<label class="admin-field__label" for={`relay-challenge-ttl-ms-${index}`}>
+											{$LL.admin_directory_authentication_relay_challenge_ttl_ms()}
+										</label>
+										<input
+											id={`relay-challenge-ttl-ms-${index}`}
+											type="number"
+											min="5000"
+											max="300000"
+											class="admin-input"
+											bind:value={connector.relay_challenge_ttl_ms}
+											disabled={!canEdit}
+										/>
+									</div>
+
+									<div class="admin-field">
+										<label class="admin-field__label" for={`relay-auth-failure-rate-${index}`}>
+											{$LL.admin_directory_authentication_relay_auth_failure_rate()}
+										</label>
+										<input
+											id={`relay-auth-failure-rate-${index}`}
+											type="number"
+											min="1"
+											max="100"
+											class="admin-input"
+											bind:value={connector.relay_auth_failure_rate_limit_per_minute}
+											disabled={!canEdit}
+										/>
+									</div>
+
+									<div class="admin-field">
+										<label class="admin-field__label" for={`relay-auth-failure-block-ms-${index}`}>
+											{$LL.admin_directory_authentication_relay_auth_failure_block_ms()}
+										</label>
+										<input
+											id={`relay-auth-failure-block-ms-${index}`}
+											type="number"
+											min="1000"
+											max="3600000"
+											class="admin-input"
+											bind:value={connector.relay_auth_failure_block_ms}
+											disabled={!canEdit}
+										/>
+									</div>
+
+									<div class="admin-field">
+										<label class="admin-field__label" for={`rotation-grace-ms-${index}`}>
+											{$LL.admin_directory_authentication_rotation_grace_ms()}
+										</label>
+										<input
+											id={`rotation-grace-ms-${index}`}
+											type="number"
+											min="0"
+											max="86400000"
+											class="admin-input"
+											bind:value={connector.relay_secret_rotation_grace_ms}
+											disabled={!canEdit}
+										/>
+									</div>
+								{/if}
 
 								<div class="admin-field admin-field--full">
 									<label class="admin-field__label" for={`attributes-${index}`}>
@@ -797,6 +1254,112 @@
 		color: var(--color-danger);
 	}
 
+	.relay-status-details {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+		gap: 8px;
+		margin: -4px 0 14px;
+	}
+
+	.relay-status-details div,
+	.secret-output {
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated, var(--color-surface));
+		padding: 9px 10px;
+	}
+
+	.relay-status-details span {
+		display: block;
+		margin-bottom: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.relay-status-details code,
+	.secret-output code {
+		overflow-wrap: anywhere;
+		color: var(--color-text);
+		font-size: 0.8rem;
+	}
+
+	.relay-url-output {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 8px;
+		align-items: center;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated, var(--color-surface));
+		padding: 8px;
+	}
+
+	.relay-url-output code {
+		overflow-wrap: anywhere;
+		color: var(--color-text);
+		font-size: 0.8rem;
+	}
+
+	.secret-output {
+		display: grid;
+		gap: 8px;
+		margin-bottom: 14px;
+	}
+
+	.secret-output strong {
+		color: var(--color-text);
+		font-size: 0.85rem;
+	}
+
+	.secret-output p {
+		margin-top: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		line-height: 1.5;
+	}
+
+	.relay-events {
+		display: grid;
+		gap: 8px;
+		margin-bottom: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated, var(--color-surface));
+		padding: 10px;
+	}
+
+	.relay-events h4 {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 700;
+	}
+
+	.relay-event-row {
+		display: grid;
+		grid-template-columns: minmax(160px, 0.9fr) minmax(180px, 1fr) minmax(120px, 0.8fr);
+		gap: 8px;
+		align-items: center;
+		border-top: 1px solid var(--color-border);
+		padding-top: 8px;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+
+	.relay-event-row strong {
+		overflow-wrap: anywhere;
+		color: var(--color-text);
+		font-weight: 650;
+	}
+
+	.relay-event-row code {
+		overflow-wrap: anywhere;
+		color: var(--color-text);
+		font-size: 0.76rem;
+	}
+
 	.btn[disabled] {
 		opacity: 0.55;
 		cursor: not-allowed;
@@ -817,6 +1380,14 @@
 		}
 
 		.form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.relay-event-row {
+			grid-template-columns: 1fr;
+		}
+
+		.relay-url-output {
 			grid-template-columns: 1fr;
 		}
 	}

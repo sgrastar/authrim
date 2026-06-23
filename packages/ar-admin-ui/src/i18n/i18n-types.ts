@@ -4512,6 +4512,58 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_health_status: RequiredParams<'status'>
 	/**
+	 * L​o​a​d​ ​E​v​e​n​t​s
+	 */
+	admin_directory_authentication_load_events: string
+	/**
+	 * L​o​a​d​i​n​g​.​.​.
+	 */
+	admin_directory_authentication_loading_events: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​r​e​l​a​y​ ​e​v​e​n​t​s
+	 */
+	admin_directory_authentication_events_failed: string
+	/**
+	 * R​e​c​e​n​t​ ​r​e​l​a​y​ ​e​v​e​n​t​s
+	 */
+	admin_directory_authentication_recent_events: string
+	/**
+	 * I​s​s​u​e​ ​S​e​c​r​e​t
+	 */
+	admin_directory_authentication_issue_secret: string
+	/**
+	 * I​s​s​u​i​n​g​.​.​.
+	 */
+	admin_directory_authentication_issuing_secret: string
+	/**
+	 * R​o​t​a​t​e​ ​S​e​c​r​e​t
+	 */
+	admin_directory_authentication_rotate_secret: string
+	/**
+	 * R​o​t​a​t​i​n​g​.​.​.
+	 */
+	admin_directory_authentication_rotating_secret: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​s​e​c​r​e​t​ ​i​s​s​u​e​d​.
+	 */
+	admin_directory_authentication_secret_issued: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​s​e​c​r​e​t​ ​r​o​t​a​t​e​d​.
+	 */
+	admin_directory_authentication_secret_rotated: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​c​o​n​n​e​c​t​o​r​ ​s​e​c​r​e​t
+	 */
+	admin_directory_authentication_secret_failed: string
+	/**
+	 * O​n​e​-​t​i​m​e​ ​s​e​c​r​e​t
+	 */
+	admin_directory_authentication_one_time_secret: string
+	/**
+	 * C​o​p​y​ ​t​h​i​s​ ​v​a​l​u​e​ ​i​n​t​o​ ​W​o​r​d​w​a​r​d​e​n​.​ ​A​u​t​h​r​i​m​ ​w​i​l​l​ ​n​o​t​ ​s​h​o​w​ ​i​t​ ​a​g​a​i​n​.
+	 */
+	admin_directory_authentication_one_time_secret_hint: string
+	/**
 	 * C​o​n​n​e​c​t​o​r​ ​I​D
 	 */
 	admin_directory_authentication_id: string
@@ -4524,6 +4576,22 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_connector_id: string
 	/**
+	 * R​e​l​a​y​ ​U​R​L
+	 */
+	admin_directory_authentication_relay_url: string
+	/**
+	 * C​o​p​y
+	 */
+	admin_directory_authentication_relay_url_copy: string
+	/**
+	 * C​o​p​i​e​d
+	 */
+	admin_directory_authentication_relay_url_copied: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​c​o​p​y​ ​r​e​l​a​y​ ​U​R​L
+	 */
+	admin_directory_authentication_relay_url_copy_failed: string
+	/**
 	 * K​e​y​ ​I​D
 	 */
 	admin_directory_authentication_key_id: string
@@ -4535,6 +4603,30 @@ type RootTranslation = {
 	 * T​i​m​e​o​u​t​ ​(​m​s​)
 	 */
 	admin_directory_authentication_timeout_ms: string
+	/**
+	 * R​e​l​a​y​ ​V​e​r​i​f​y​ ​T​i​m​e​o​u​t​ ​(​m​s​)
+	 */
+	admin_directory_authentication_relay_verify_timeout_ms: string
+	/**
+	 * M​a​x​ ​P​e​n​d​i​n​g​ ​R​e​q​u​e​s​t​s
+	 */
+	admin_directory_authentication_relay_max_pending_requests: string
+	/**
+	 * C​h​a​l​l​e​n​g​e​ ​T​T​L​ ​(​m​s​)
+	 */
+	admin_directory_authentication_relay_challenge_ttl_ms: string
+	/**
+	 * A​u​t​h​ ​F​a​i​l​u​r​e​s​ ​/​ ​M​i​n​u​t​e
+	 */
+	admin_directory_authentication_relay_auth_failure_rate: string
+	/**
+	 * A​u​t​h​ ​F​a​i​l​u​r​e​ ​B​l​o​c​k​ ​(​m​s​)
+	 */
+	admin_directory_authentication_relay_auth_failure_block_ms: string
+	/**
+	 * R​o​t​a​t​i​o​n​ ​G​r​a​c​e​ ​(​m​s​)
+	 */
+	admin_directory_authentication_rotation_grace_ms: string
 	/**
 	 * L​D​A​P​ ​A​t​t​r​i​b​u​t​e​s
 	 */
@@ -4564,7 +4656,7 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_attributes_hint: string
 	/**
-	 * U​s​e​ ​e​n​v​:​W​O​R​D​W​A​R​D​E​N​_​*​ ​o​r​ ​e​n​v​:​A​U​T​H​R​I​M​_​W​O​R​D​W​A​R​D​E​N​_​*​.
+	 * U​s​e​ ​m​a​n​a​g​e​d​:​<​c​o​n​n​e​c​t​o​r​-​i​d​>​,​ ​e​n​v​:​W​O​R​D​W​A​R​D​E​N​_​*​,​ ​o​r​ ​e​n​v​:​A​U​T​H​R​I​M​_​W​O​R​D​W​A​R​D​E​N​_​*​.
 	 */
 	admin_directory_authentication_secret_hint: string
 	/**
@@ -4600,13 +4692,37 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_validation_secret_required: string
 	/**
-	 * S​e​c​r​e​t​ ​R​e​f​e​r​e​n​c​e​ ​m​u​s​t​ ​u​s​e​ ​e​n​v​:​W​O​R​D​W​A​R​D​E​N​_​*​ ​o​r​ ​e​n​v​:​A​U​T​H​R​I​M​_​W​O​R​D​W​A​R​D​E​N​_​*​.
+	 * S​e​c​r​e​t​ ​R​e​f​e​r​e​n​c​e​ ​m​u​s​t​ ​u​s​e​ ​m​a​n​a​g​e​d​:​<​c​o​n​n​e​c​t​o​r​-​i​d​>​,​ ​e​n​v​:​W​O​R​D​W​A​R​D​E​N​_​*​,​ ​o​r​ ​e​n​v​:​A​U​T​H​R​I​M​_​W​O​R​D​W​A​R​D​E​N​_​*​.
 	 */
 	admin_directory_authentication_validation_secret_format: string
 	/**
 	 * T​i​m​e​o​u​t​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​0​0​ ​a​n​d​ ​3​0​0​0​0​ ​m​s​.
 	 */
 	admin_directory_authentication_validation_timeout: string
+	/**
+	 * R​e​l​a​y​ ​V​e​r​i​f​y​ ​T​i​m​e​o​u​t​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​0​0​ ​a​n​d​ ​3​0​0​0​0​ ​m​s​.
+	 */
+	admin_directory_authentication_validation_relay_verify_timeout: string
+	/**
+	 * M​a​x​ ​P​e​n​d​i​n​g​ ​R​e​q​u​e​s​t​s​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​ ​a​n​d​ ​2​5​6​.
+	 */
+	admin_directory_authentication_validation_relay_max_pending: string
+	/**
+	 * C​h​a​l​l​e​n​g​e​ ​T​T​L​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​5​0​0​0​ ​a​n​d​ ​3​0​0​0​0​0​ ​m​s​.
+	 */
+	admin_directory_authentication_validation_relay_challenge_ttl: string
+	/**
+	 * A​u​t​h​ ​F​a​i​l​u​r​e​s​ ​/​ ​M​i​n​u​t​e​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​ ​a​n​d​ ​1​0​0​.
+	 */
+	admin_directory_authentication_validation_relay_auth_failure_rate: string
+	/**
+	 * A​u​t​h​ ​F​a​i​l​u​r​e​ ​B​l​o​c​k​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​0​0​0​ ​a​n​d​ ​3​6​0​0​0​0​0​ ​m​s​.
+	 */
+	admin_directory_authentication_validation_relay_auth_failure_block: string
+	/**
+	 * R​o​t​a​t​i​o​n​ ​g​r​a​c​e​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​0​ ​a​n​d​ ​8​6​4​0​0​0​0​0​ ​m​s​.
+	 */
+	admin_directory_authentication_validation_rotation_grace: string
 	/**
 	 * L​D​A​P​ ​A​t​t​r​i​b​u​t​e​s​ ​c​a​n​ ​c​o​n​t​a​i​n​ ​u​p​ ​t​o​ ​3​2​ ​n​a​m​e​s​.
 	 */
@@ -26336,6 +26452,74 @@ type RootTranslation = {
 	 */
 	admin_info_end_session: string
 	/**
+	 * S​e​s​s​i​o​n​ ​T​T​L​s
+	 */
+	admin_info_session_ttl_title: string
+	/**
+	 * E​d​i​t​ ​s​e​s​s​i​o​n​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_info_session_ttl_settings_link: string
+	/**
+	 * M​e​t​h​o​d​ ​/​ ​C​o​n​t​e​x​t
+	 */
+	admin_info_ttl_method: string
+	/**
+	 * T​T​L
+	 */
+	admin_info_ttl_value: string
+	/**
+	 * S​o​u​r​c​e
+	 */
+	admin_info_ttl_source: string
+	/**
+	 * E​m​a​i​l​ ​C​o​d​e
+	 */
+	admin_info_ttl_email_code: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​P​a​s​s​w​o​r​d
+	 */
+	admin_info_ttl_directory_password: string
+	/**
+	 * D​i​r​e​c​t​ ​A​u​t​h
+	 */
+	admin_info_ttl_direct_auth: string
+	/**
+	 * P​a​s​s​k​e​y
+	 */
+	admin_info_ttl_passkey: string
+	/**
+	 * P​a​s​s​k​e​y​ ​R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_info_ttl_passkey_registration: string
+	/**
+	 * A​d​m​i​n​ ​P​a​s​s​k​e​y
+	 */
+	admin_info_ttl_admin_passkey: string
+	/**
+	 * A​n​o​n​y​m​o​u​s
+	 */
+	admin_info_ttl_anonymous: string
+	/**
+	 * D​I​D
+	 */
+	admin_info_ttl_did: string
+	/**
+	 * T​o​k​e​n​ ​T​T​L​s
+	 */
+	admin_info_token_ttl_title: string
+	/**
+	 * R​e​f​r​e​s​h​ ​T​o​k​e​n​ ​T​T​L
+	 */
+	admin_info_refresh_token_ttl: string
+	/**
+	 * (​d​e​f​a​u​l​t​;​ ​c​l​i​e​n​t​-​s​p​e​c​i​f​i​c​ ​o​v​e​r​r​i​d​e​s​ ​m​a​y​ ​a​p​p​l​y​)
+	 */
+	admin_info_refresh_token_ttl_per_client: string
+	/**
+	 * O​p​e​n​ ​c​l​i​e​n​t​s
+	 */
+	admin_info_refresh_token_ttl_clients_link: string
+	/**
 	 * O​A​u​t​h​ ​2​.​0​ ​E​x​t​e​n​s​i​o​n​s
 	 */
 	admin_info_oauth_extensions: string
@@ -26684,6 +26868,26 @@ type RootTranslation = {
 	 * U​s​e​ ​e​m​a​i​l​ ​c​o​d​e​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​a​n​d​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
 	 */
 	admin_authentication_methods_email_otp_description: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​P​a​s​s​w​o​r​d
+	 */
+	admin_authentication_methods_directory_password: string
+	/**
+	 * U​s​e​ ​A​u​t​h​r​i​m​ ​W​o​r​d​w​a​r​d​e​n​ ​t​o​ ​v​e​r​i​f​y​ ​p​a​s​s​w​o​r​d​s​ ​a​g​a​i​n​s​t​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​d​i​r​e​c​t​o​r​y​.
+	 */
+	admin_authentication_methods_directory_password_description: string
+	/**
+	 * O​p​e​n​ ​d​i​r​e​c​t​o​r​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_authentication_methods_configure_directory: string
+	/**
+	 * N​o​t​ ​c​o​n​f​i​g​u​r​e​d
+	 */
+	admin_authentication_methods_not_configured: string
+	/**
+	 * N​/​A
+	 */
+	admin_authentication_methods_not_applicable: string
 	/**
 	 * S​e​c​u​r​i​t​y​ ​C​h​e​c​k
 	 */
@@ -32574,6 +32778,58 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_health_status: (arg: { status: number }) => LocalizedString
 	/**
+	 * Load Events
+	 */
+	admin_directory_authentication_load_events: () => LocalizedString
+	/**
+	 * Loading...
+	 */
+	admin_directory_authentication_loading_events: () => LocalizedString
+	/**
+	 * Failed to load relay events
+	 */
+	admin_directory_authentication_events_failed: () => LocalizedString
+	/**
+	 * Recent relay events
+	 */
+	admin_directory_authentication_recent_events: () => LocalizedString
+	/**
+	 * Issue Secret
+	 */
+	admin_directory_authentication_issue_secret: () => LocalizedString
+	/**
+	 * Issuing...
+	 */
+	admin_directory_authentication_issuing_secret: () => LocalizedString
+	/**
+	 * Rotate Secret
+	 */
+	admin_directory_authentication_rotate_secret: () => LocalizedString
+	/**
+	 * Rotating...
+	 */
+	admin_directory_authentication_rotating_secret: () => LocalizedString
+	/**
+	 * Connector secret issued.
+	 */
+	admin_directory_authentication_secret_issued: () => LocalizedString
+	/**
+	 * Connector secret rotated.
+	 */
+	admin_directory_authentication_secret_rotated: () => LocalizedString
+	/**
+	 * Failed to update connector secret
+	 */
+	admin_directory_authentication_secret_failed: () => LocalizedString
+	/**
+	 * One-time secret
+	 */
+	admin_directory_authentication_one_time_secret: () => LocalizedString
+	/**
+	 * Copy this value into Wordwarden. Authrim will not show it again.
+	 */
+	admin_directory_authentication_one_time_secret_hint: () => LocalizedString
+	/**
 	 * Connector ID
 	 */
 	admin_directory_authentication_id: () => LocalizedString
@@ -32586,6 +32842,22 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_connector_id: () => LocalizedString
 	/**
+	 * Relay URL
+	 */
+	admin_directory_authentication_relay_url: () => LocalizedString
+	/**
+	 * Copy
+	 */
+	admin_directory_authentication_relay_url_copy: () => LocalizedString
+	/**
+	 * Copied
+	 */
+	admin_directory_authentication_relay_url_copied: () => LocalizedString
+	/**
+	 * Failed to copy relay URL
+	 */
+	admin_directory_authentication_relay_url_copy_failed: () => LocalizedString
+	/**
 	 * Key ID
 	 */
 	admin_directory_authentication_key_id: () => LocalizedString
@@ -32597,6 +32869,30 @@ export type TranslationFunctions = {
 	 * Timeout (ms)
 	 */
 	admin_directory_authentication_timeout_ms: () => LocalizedString
+	/**
+	 * Relay Verify Timeout (ms)
+	 */
+	admin_directory_authentication_relay_verify_timeout_ms: () => LocalizedString
+	/**
+	 * Max Pending Requests
+	 */
+	admin_directory_authentication_relay_max_pending_requests: () => LocalizedString
+	/**
+	 * Challenge TTL (ms)
+	 */
+	admin_directory_authentication_relay_challenge_ttl_ms: () => LocalizedString
+	/**
+	 * Auth Failures / Minute
+	 */
+	admin_directory_authentication_relay_auth_failure_rate: () => LocalizedString
+	/**
+	 * Auth Failure Block (ms)
+	 */
+	admin_directory_authentication_relay_auth_failure_block_ms: () => LocalizedString
+	/**
+	 * Rotation Grace (ms)
+	 */
+	admin_directory_authentication_rotation_grace_ms: () => LocalizedString
 	/**
 	 * LDAP Attributes
 	 */
@@ -32626,7 +32922,7 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_attributes_hint: () => LocalizedString
 	/**
-	 * Use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.
+	 * Use managed:<connector-id>, env:WORDWARDEN_*, or env:AUTHRIM_WORDWARDEN_*.
 	 */
 	admin_directory_authentication_secret_hint: () => LocalizedString
 	/**
@@ -32662,13 +32958,37 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_validation_secret_required: () => LocalizedString
 	/**
-	 * Secret Reference must use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.
+	 * Secret Reference must use managed:<connector-id>, env:WORDWARDEN_*, or env:AUTHRIM_WORDWARDEN_*.
 	 */
 	admin_directory_authentication_validation_secret_format: () => LocalizedString
 	/**
 	 * Timeout must be between 100 and 30000 ms.
 	 */
 	admin_directory_authentication_validation_timeout: () => LocalizedString
+	/**
+	 * Relay Verify Timeout must be between 100 and 30000 ms.
+	 */
+	admin_directory_authentication_validation_relay_verify_timeout: () => LocalizedString
+	/**
+	 * Max Pending Requests must be between 1 and 256.
+	 */
+	admin_directory_authentication_validation_relay_max_pending: () => LocalizedString
+	/**
+	 * Challenge TTL must be between 5000 and 300000 ms.
+	 */
+	admin_directory_authentication_validation_relay_challenge_ttl: () => LocalizedString
+	/**
+	 * Auth Failures / Minute must be between 1 and 100.
+	 */
+	admin_directory_authentication_validation_relay_auth_failure_rate: () => LocalizedString
+	/**
+	 * Auth Failure Block must be between 1000 and 3600000 ms.
+	 */
+	admin_directory_authentication_validation_relay_auth_failure_block: () => LocalizedString
+	/**
+	 * Rotation grace must be between 0 and 86400000 ms.
+	 */
+	admin_directory_authentication_validation_rotation_grace: () => LocalizedString
 	/**
 	 * LDAP Attributes can contain up to 32 names.
 	 */
@@ -54052,6 +54372,74 @@ Remove this role from {email}?
 	 */
 	admin_info_end_session: () => LocalizedString
 	/**
+	 * Session TTLs
+	 */
+	admin_info_session_ttl_title: () => LocalizedString
+	/**
+	 * Edit session settings
+	 */
+	admin_info_session_ttl_settings_link: () => LocalizedString
+	/**
+	 * Method / Context
+	 */
+	admin_info_ttl_method: () => LocalizedString
+	/**
+	 * TTL
+	 */
+	admin_info_ttl_value: () => LocalizedString
+	/**
+	 * Source
+	 */
+	admin_info_ttl_source: () => LocalizedString
+	/**
+	 * Email Code
+	 */
+	admin_info_ttl_email_code: () => LocalizedString
+	/**
+	 * Directory Password
+	 */
+	admin_info_ttl_directory_password: () => LocalizedString
+	/**
+	 * Direct Auth
+	 */
+	admin_info_ttl_direct_auth: () => LocalizedString
+	/**
+	 * Passkey
+	 */
+	admin_info_ttl_passkey: () => LocalizedString
+	/**
+	 * Passkey Registration
+	 */
+	admin_info_ttl_passkey_registration: () => LocalizedString
+	/**
+	 * Admin Passkey
+	 */
+	admin_info_ttl_admin_passkey: () => LocalizedString
+	/**
+	 * Anonymous
+	 */
+	admin_info_ttl_anonymous: () => LocalizedString
+	/**
+	 * DID
+	 */
+	admin_info_ttl_did: () => LocalizedString
+	/**
+	 * Token TTLs
+	 */
+	admin_info_token_ttl_title: () => LocalizedString
+	/**
+	 * Refresh Token TTL
+	 */
+	admin_info_refresh_token_ttl: () => LocalizedString
+	/**
+	 * (default; client-specific overrides may apply)
+	 */
+	admin_info_refresh_token_ttl_per_client: () => LocalizedString
+	/**
+	 * Open clients
+	 */
+	admin_info_refresh_token_ttl_clients_link: () => LocalizedString
+	/**
 	 * OAuth 2.0 Extensions
 	 */
 	admin_info_oauth_extensions: () => LocalizedString
@@ -54399,6 +54787,26 @@ Remove this role from {email}?
 	 * Use email codes for login, signup, and re-authentication.
 	 */
 	admin_authentication_methods_email_otp_description: () => LocalizedString
+	/**
+	 * Directory Password
+	 */
+	admin_authentication_methods_directory_password: () => LocalizedString
+	/**
+	 * Use Authrim Wordwarden to verify passwords against an organization directory.
+	 */
+	admin_authentication_methods_directory_password_description: () => LocalizedString
+	/**
+	 * Open directory authentication settings
+	 */
+	admin_authentication_methods_configure_directory: () => LocalizedString
+	/**
+	 * Not configured
+	 */
+	admin_authentication_methods_not_configured: () => LocalizedString
+	/**
+	 * N/A
+	 */
+	admin_authentication_methods_not_applicable: () => LocalizedString
 	/**
 	 * Security Check
 	 */

@@ -107,6 +107,7 @@ function createContext(
     AUTHRIM_CONFIG: createKV(authrimConfigSettings),
     SETTINGS: createKV(settingsKV),
     WORDWARDEN_SECRET: 'active-secret',
+    EMAIL_DOMAIN_HASH_SECRET: 'audit-hash-secret',
     ...envOverrides,
   };
   return {
@@ -407,9 +408,11 @@ describe('directory password login handler', () => {
           connectorId: 'campus',
           requestId: expect.any(String),
           errorCode: 'invalid_credentials',
+          usernameHash: expect.any(String),
         }),
       })
     );
+    expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
 
   it('does not create a session for policy-required directory verdicts', async () => {
@@ -444,9 +447,11 @@ describe('directory password login handler', () => {
           method: 'directory_password',
           connectorId: 'campus',
           errorCode: 'must_change_password',
+          usernameHash: expect.any(String),
         }),
       })
     );
+    expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
 
   it('returns a generic connector error and publishes a failure event when Wordwarden is unavailable', async () => {
@@ -489,9 +494,11 @@ describe('directory password login handler', () => {
           connectorId: 'campus',
           requestId: expect.any(String),
           errorCode: 'directory_unavailable',
+          usernameHash: expect.any(String),
         }),
       })
     );
+    expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
 
   it('returns unmapped when a directory identity has no Authrim user and auto provision is disabled', async () => {

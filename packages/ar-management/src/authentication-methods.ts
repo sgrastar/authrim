@@ -870,10 +870,11 @@ async function resolveDirectoryPasswordMethod(
     const hasDefaultConnector = connectors.some((connector) => {
       if (!connector || typeof connector !== 'object' || Array.isArray(connector)) return false;
       const record = connector as Record<string, unknown>;
+      const transport = record.transport === 'relay' ? 'relay' : 'direct';
+      const endpointURL = typeof record.endpoint_url === 'string' ? record.endpoint_url.trim() : '';
       return (
         record.id === defaultConnectorId &&
-        typeof record.endpoint_url === 'string' &&
-        record.endpoint_url.trim().length > 0 &&
+        (transport === 'relay' || endpointURL.length > 0) &&
         record.auth_mode === 'hmac' &&
         typeof record.connector_id === 'string' &&
         record.connector_id.trim().length > 0 &&

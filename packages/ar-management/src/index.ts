@@ -815,6 +815,9 @@ import {
 import {
   checkDirectoryConnectorHealthHandler,
   getDirectoryConnectorsHandler,
+  issueDirectoryConnectorSecretHandler,
+  listDirectoryConnectorRelayEventsHandler,
+  rotateDirectoryConnectorSecretHandler,
   updateDirectoryConnectorsHandler,
 } from './routes/directory-connectors';
 
@@ -1428,8 +1431,20 @@ app.patch('/api/admin/tenants/:tenantId/email-settings', updateTenantEmailSettin
 app.get('/api/admin/tenants/:tenantId/directory-connectors', getDirectoryConnectorsHandler);
 app.put('/api/admin/tenants/:tenantId/directory-connectors', updateDirectoryConnectorsHandler);
 app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret',
+  issueDirectoryConnectorSecretHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret/rotate',
+  rotateDirectoryConnectorSecretHandler
+);
+app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/health',
   checkDirectoryConnectorHealthHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/events',
+  listDirectoryConnectorRelayEventsHandler
 );
 
 // Platform Tenant Domain Mappings API (system_admin only)

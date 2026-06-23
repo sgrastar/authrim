@@ -1,9 +1,13 @@
 export const DIRECTORY_RELAY_PROTOCOL = 'authrim.wordwarden.relay.v1';
+export const DIRECTORY_RELAY_PROTOCOL_VERSION = 1;
+export const DIRECTORY_RELAY_MIN_SUPPORTED_VERSION = 1;
 export const DIRECTORY_RELAY_HMAC_ALGORITHM = 'AUTHRIM-WORDWARDEN-RELAY-HMAC-SHA256';
 
 export interface DirectoryRelayChallengeMessage {
   type: 'auth.challenge';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: typeof DIRECTORY_RELAY_PROTOCOL_VERSION;
+  min_supported_version: typeof DIRECTORY_RELAY_MIN_SUPPORTED_VERSION;
   challenge_id: string;
   nonce: string;
   issued_at: string;
@@ -13,6 +17,8 @@ export interface DirectoryRelayChallengeMessage {
 export interface DirectoryRelayAuthResponseMessage {
   type: 'auth.response';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: number;
+  min_supported_version: number;
   tenant_id: string;
   connector_id: string;
   key_id: string;
@@ -25,6 +31,8 @@ export interface DirectoryRelayAuthResponseMessage {
 export interface DirectoryRelayAuthOkMessage {
   type: 'auth.ok';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: typeof DIRECTORY_RELAY_PROTOCOL_VERSION;
+  min_supported_version: typeof DIRECTORY_RELAY_MIN_SUPPORTED_VERSION;
   tenant_id: string;
   connector_id: string;
 }
@@ -32,6 +40,8 @@ export interface DirectoryRelayAuthOkMessage {
 export interface DirectoryRelayVerifyRequestMessage {
   type: 'verify.request';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: typeof DIRECTORY_RELAY_PROTOCOL_VERSION;
+  min_supported_version: typeof DIRECTORY_RELAY_MIN_SUPPORTED_VERSION;
   id: string;
   request_id: string;
   tenant_id: string;
@@ -44,6 +54,8 @@ export interface DirectoryRelayVerifyRequestMessage {
 export interface DirectoryRelayVerifyResponseMessage {
   type: 'verify.response';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: number;
+  min_supported_version: number;
   id: string;
   request_id: string;
   tenant_id: string;
@@ -61,6 +73,8 @@ export interface DirectoryRelayVerifyResponseMessage {
 export interface DirectoryRelayVerifyErrorMessage {
   type: 'verify.error';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: number;
+  min_supported_version: number;
   id: string;
   request_id?: string;
   tenant_id?: string;
@@ -74,6 +88,8 @@ export interface DirectoryRelayVerifyErrorMessage {
 export interface DirectoryRelayErrorMessage {
   type: 'error';
   protocol: typeof DIRECTORY_RELAY_PROTOCOL;
+  protocol_version: typeof DIRECTORY_RELAY_PROTOCOL_VERSION;
+  min_supported_version: typeof DIRECTORY_RELAY_MIN_SUPPORTED_VERSION;
   code: string;
   message: string;
 }
@@ -87,6 +103,8 @@ export function buildDirectoryRelayAuthCanonical(input: {
   tenantId: string;
   connectorId: string;
   keyId: string;
+  protocolVersion: number;
+  minSupportedVersion: number;
   challengeId: string;
   nonce: string;
   timestamp: string;
@@ -96,6 +114,8 @@ export function buildDirectoryRelayAuthCanonical(input: {
     input.tenantId,
     input.connectorId,
     input.keyId,
+    String(input.protocolVersion),
+    String(input.minSupportedVersion),
     input.challengeId,
     input.nonce,
     input.timestamp,
@@ -133,12 +153,25 @@ export function constantTimeHexEqual(left: string, right: string): boolean {
   return diff === 0;
 }
 
-export function isDirectoryRelayClientMessage(value: unknown): value is DirectoryRelayClientMessage {
+export function isDirectoryRelayClientMessage(
+  value: unknown
+): value is DirectoryRelayClientMessage {
   if (!isRecord(value) || value.protocol !== DIRECTORY_RELAY_PROTOCOL) return false;
+  if (!relayProtocolVersionsCompatible(value)) return false;
   return (
     value.type === 'auth.response' ||
     value.type === 'verify.response' ||
     value.type === 'verify.error'
+  );
+}
+
+export function relayProtocolVersionsCompatible(value: Record<string, unknown>): boolean {
+  const protocolVersion = value.protocol_version;
+  const minSupportedVersion = value.min_supported_version;
+  if (!Number.isInteger(protocolVersion) || !Number.isInteger(minSupportedVersion)) return false;
+  return (
+    (minSupportedVersion as number) <= DIRECTORY_RELAY_PROTOCOL_VERSION &&
+    (protocolVersion as number) >= DIRECTORY_RELAY_MIN_SUPPORTED_VERSION
   );
 }
 

@@ -40,10 +40,12 @@ import {
   type AuthorizationChallengeContinuation,
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
+import { resolveSessionTtl } from './session-ttl';
 
 const DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID = 'campus';
 const DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES = ['mail', 'displayName', 'uid'];
-const SESSION_TTL_SECONDS = 24 * 60 * 60;
+const MIN_RELAY_VERIFY_TIMEOUT_MS = 100;
+const MAX_RELAY_VERIFY_TIMEOUT_MS = 30_000;
 const ALLOWED_CONNECTOR_SECRET_ENV_PREFIXES = ['AUTHRIM_WORDWARDEN_', 'WORDWARDEN_'];
 
 interface DirectoryPasswordLoginRequest {
@@ -75,6 +77,9 @@ interface DirectoryConnectorSettingsItem {
   secret_ref: string;
   timeouts?: {
     request_ms?: number;
+  };
+  relay?: {
+    verify_timeout_ms?: number;
   };
   attribute_names?: string[];
 }
@@ -180,11 +185,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       });
     } catch (error) {
       if (error instanceof DirectoryPasswordError) {
-        publishDirectoryPasswordFailureEvent(
+        await publishDirectoryPasswordFailureEvent(
           c,
           connector.connectorId,
           error.details.code,
-          error.details.requestId
+          error.details.requestId,
+          username
         );
         log.warn('Directory connector verification failed', {
           action: 'directory_password_connector',
@@ -210,11 +216,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     }
 
     if (verdict.result !== 'success') {
-      publishDirectoryPasswordFailureEvent(
+      await publishDirectoryPasswordFailureEvent(
         c,
         connector.connectorId,
         verdict.reason || verdict.result,
-        verdict.request_id
+        verdict.request_id,
+        username
       );
       return c.json({ error: 'invalid_credentials' }, 401);
     }
@@ -232,7 +239,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     let runtimeUser = await runtimeUsers.findByEmail(email);
     if (!runtimeUser) {
       if (!connector.autoProvision) {
-        publishDirectoryPasswordFailureEvent(
+        await publishDirectoryPasswordFailureEvent(
           c,
           connector.connectorId,
           'directory_identity_unmapped',
@@ -265,6 +272,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
     const now = Date.now();
     const authTime = Math.floor(now / 1000);
+    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'directory_password');
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (authorizationChallengeId) {
       const continuation = await consumeAuthorizationChallengeContinuation(
@@ -285,7 +293,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     await sessionStore.createSessionRpc(
       sessionId,
       runtimeUser.id,
-      SESSION_TTL_SECONDS,
+      sessionTtl.seconds,
       {
         email: runtimeUser.email,
         name: runtimeUser.name,
@@ -321,7 +329,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       data: {
         sessionId,
         userId: runtimeUser.id,
-        ttlSeconds: SESSION_TTL_SECONDS,
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err) => {
       log.error('Failed to publish session.user.created event', {
@@ -361,7 +369,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       httpOnly: true,
       secure: isSecure,
       sameSite: getSessionCookieSameSite(c.env),
-      maxAge: SESSION_TTL_SECONDS,
+      maxAge: sessionTtl.seconds,
     });
 
     const browserState = await generateBrowserState(sessionId);
@@ -369,7 +377,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       path: '/',
       secure: isSecure,
       sameSite: getBrowserStateCookieSameSite(c.env),
-      maxAge: SESSION_TTL_SECONDS,
+      maxAge: sessionTtl.seconds,
     });
 
     const postLoginRedirect = authorizationContinuation
@@ -380,11 +388,11 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     c.header('Pragma', 'no-cache');
     return c.json({
       ok: true,
-      expires_in: SESSION_TTL_SECONDS,
+      expires_in: sessionTtl.seconds,
       session: {
         userId: runtimeUser.id,
         createdAt: now,
-        expiresAt: now + SESSION_TTL_SECONDS * 1000,
+        expiresAt: now + sessionTtl.milliseconds,
         authTime,
         acr: 'urn:mace:incommon:iap:bronze',
         amr: ['pwd', 'directory'],
@@ -409,31 +417,36 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
 export const directoryPasswordLoginHandler = createDirectoryPasswordLoginHandler();
 
-function publishDirectoryPasswordFailureEvent(
+async function publishDirectoryPasswordFailureEvent(
   c: Context<{ Bindings: Env }>,
   connectorId: string,
   errorCode: string,
-  requestId?: string
-): void {
+  requestId?: string,
+  username?: string
+): Promise<void> {
   const tenantId = getTenantIdFromContext(c);
   const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
-  publishEvent(c, {
-    type: AUTH_EVENTS.DIRECTORY_PASSWORD_FAILED,
-    tenantId,
-    data: {
-      method: 'directory_password',
-      clientId: 'directory-password-auth',
-      connectorId,
-      requestId,
-      errorCode,
-    } satisfies AuthEventData,
-  }).catch((err) => {
+  try {
+    const usernameHash = await tenantScopedIdentifierHmac(c.env, tenantId, username);
+    await publishEvent(c, {
+      type: AUTH_EVENTS.DIRECTORY_PASSWORD_FAILED,
+      tenantId,
+      data: {
+        method: 'directory_password',
+        clientId: 'directory-password-auth',
+        connectorId,
+        requestId,
+        errorCode,
+        ...(usernameHash ? { usernameHash } : {}),
+      } satisfies AuthEventData,
+    });
+  } catch (err) {
     log.error('Failed to publish auth.directory_password.failed event', {
       action: 'event_publish',
       connectorId,
       errorType: err instanceof Error ? err.name : 'Unknown',
     });
-  });
+  }
 }
 
 function requestIpAddress(c: Context<{ Bindings: Env }>): string {
@@ -443,6 +456,27 @@ function requestIpAddress(c: Context<{ Bindings: Env }>): string {
     c.req.header('X-Real-IP') ||
     'unknown'
   );
+}
+
+async function tenantScopedIdentifierHmac(
+  env: Env,
+  tenantId: string,
+  value?: string
+): Promise<string | undefined> {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const secret =
+    envString(env, 'AUTHRIM_AUDIT_HASH_SECRET') || envString(env, 'EMAIL_DOMAIN_HASH_SECRET');
+  if (!secret) return undefined;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(`${tenantId}:${secret}`),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(normalized));
+  return bytesToHex(new Uint8Array(signature));
 }
 
 async function resolveDirectoryConnector(
@@ -466,7 +500,7 @@ async function resolveDirectoryConnector(
   const keyId = directoryConnector.key_id;
   const secretRef = directoryConnector.secret_ref;
   const secret = secretRef ? resolveConnectorSecret(env, secretRef) : undefined;
-  if (authMode !== 'hmac' || !wordwardenConnectorId || !keyId || !secret) {
+  if (authMode !== 'hmac' || !wordwardenConnectorId || !keyId || !secretRef) {
     return null;
   }
 
@@ -480,7 +514,7 @@ async function resolveDirectoryConnector(
         relay: env.DIRECTORY_CONNECTOR_RELAY,
         tenantId,
         connectorId: wordwardenConnectorId,
-        timeoutMs: directoryConnector.timeouts?.request_ms,
+        timeoutMs: directoryConnector.relay?.verify_timeout_ms,
       },
       attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
       autoProvision: normalizeBoolean(connectorSettings?.auto_provision),
@@ -488,6 +522,9 @@ async function resolveDirectoryConnector(
   }
 
   if (!endpoint) {
+    return null;
+  }
+  if (!secret) {
     return null;
   }
 
@@ -546,6 +583,10 @@ function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettings
       ? (record.timeouts as Record<string, unknown>)
       : {};
   const requestMS = numberSetting(timeoutRecord.request_ms);
+  const relayRecord =
+    record.relay && typeof record.relay === 'object' && !Array.isArray(record.relay)
+      ? (record.relay as Record<string, unknown>)
+      : {};
   const attributeNames = stringArraySetting(record.attribute_names);
   return {
     id,
@@ -556,6 +597,13 @@ function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettings
     key_id: keyID,
     secret_ref: secretRef,
     timeouts: requestMS ? { request_ms: requestMS } : undefined,
+    relay: {
+      verify_timeout_ms: boundedNumberSetting(
+        relayRecord.verify_timeout_ms,
+        MIN_RELAY_VERIFY_TIMEOUT_MS,
+        MAX_RELAY_VERIFY_TIMEOUT_MS
+      ),
+    },
     attribute_names: attributeNames,
   };
 }
@@ -587,6 +635,11 @@ function stringSetting(value: unknown): string | undefined {
 
 function numberSetting(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function boundedNumberSetting(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return undefined;
+  return Math.min(max, Math.max(min, value));
 }
 
 function stringArraySetting(value: unknown): string[] | undefined {
@@ -635,4 +688,8 @@ function directoryEmail(verdict: DirectoryPasswordSuccess): string | null {
 function firstAttribute(verdict: DirectoryPasswordSuccess, name: string): string | undefined {
   const value = verdict.attributes?.[name]?.[0];
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

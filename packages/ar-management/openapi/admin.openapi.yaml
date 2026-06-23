@@ -16790,6 +16790,106 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/events':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdEvents
+      summary: List directory connector relay events
+      description: Returns a bounded recent event list for an outbound relay connector.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectorRelayEvents'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/TenantDirectoryConnectorRelayEvents'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/secret':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdSecret
+      summary: Issue a directory connector secret
+      description: Issues a new Authrim-managed one-time Wordwarden relay secret for a connector. The secret value is returned only in this response.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectorSecret'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/secret/rotate':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdSecretRotate
+      summary: Rotate a directory connector secret
+      description: Rotates the Authrim-managed Wordwarden relay secret and keeps the previous secret usable during the connector rotation grace period.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectorSecret'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/token-claim-rules:
     get:
       tags:
@@ -26117,6 +26217,13 @@ components:
                 secret_ref: env:WORDWARDEN_SECRET
                 timeouts:
                   request_ms: 2500
+                relay:
+                  verify_timeout_ms: 5000
+                  max_pending_requests: 16
+                  challenge_ttl_ms: 30000
+                  auth_failure_rate_limit_per_minute: 10
+                  auth_failure_block_ms: 300000
+                  secret_rotation_grace_ms: 300000
                 attribute_names:
                   - mail
                   - displayName
@@ -33182,9 +33289,29 @@ components:
                 secret_ref: env:WORDWARDEN_SECRET
                 timeouts:
                   request_ms: 2500
+                relay:
+                  verify_timeout_ms: 5000
+                  max_pending_requests: 16
+                  challenge_ttl_ms: 30000
+                  auth_failure_rate_limit_per_minute: 10
+                  auth_failure_block_ms: 300000
+                  secret_rotation_grace_ms: 300000
                 attribute_names:
                   - mail
                   - displayName
+    TenantDirectoryConnectorSecret:
+      description: One-time directory connector secret response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorSecretResponse'
+          example:
+            connector_id: campus
+            key_id: kid_qd71R-9bG5n4FOhb
+            secret_ref: managed:campus
+            secret: wwsec_YfQagNc3ulbPvgG9v7HHBJVZLrQKZhbyQbsM7jXKxgY
+            previous_retire_after: '2026-06-23T12:05:00.000Z'
+            one_time_display: true
     TenantDirectoryConnectorHealth:
       description: Directory connector health check result.
       content:
@@ -33197,6 +33324,35 @@ components:
             status: 200
             body:
               ok: true
+              connections: 1
+              authenticated_connections: 1
+              pending_requests: 0
+              max_pending_requests: 16
+              verify_timeout_ms: 5000
+              challenge_ttl_ms: 30000
+              relay_protocol: authrim.wordwarden.relay.v1
+    TenantDirectoryConnectorRelayEvents:
+      description: Recent directory connector relay events.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorRelayEventsResponse'
+          example:
+            ok: true
+            connector_id: campus
+            status: 200
+            body:
+              tenant_id: tenant_123
+              connector_id: ww_tenant_a
+              events:
+                - id: 9b8d7d7d-3c2f-4c8f-a5d1-bac67a81f4a1
+                  timestamp: '2026-06-23T12:00:00.000Z'
+                  tenantId: tenant_123
+                  connectorId: ww_tenant_a
+                  type: directory_relay.verify.failed
+                  requestId: req_123
+                  code: relay_verify_timeout
+                  retryable: true
     TokenClaimRuleList:
       description: Token claim rules for the tenant.
       content:
@@ -53804,6 +53960,47 @@ components:
           type: integer
           minimum: 100
           maximum: 30000
+    TenantDirectoryConnectorRelaySettings:
+      type: object
+      additionalProperties: false
+      required:
+        - verify_timeout_ms
+        - max_pending_requests
+        - challenge_ttl_ms
+        - auth_failure_rate_limit_per_minute
+        - auth_failure_block_ms
+        - secret_rotation_grace_ms
+      properties:
+        verify_timeout_ms:
+          type: integer
+          minimum: 100
+          maximum: 30000
+          default: 5000
+        max_pending_requests:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 16
+        challenge_ttl_ms:
+          type: integer
+          minimum: 5000
+          maximum: 300000
+          default: 30000
+        auth_failure_rate_limit_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        auth_failure_block_ms:
+          type: integer
+          minimum: 1000
+          maximum: 3600000
+          default: 300000
+        secret_rotation_grace_ms:
+          type: integer
+          minimum: 0
+          maximum: 86400000
+          default: 300000
     TenantDirectoryConnector:
       type: object
       additionalProperties: false
@@ -53815,6 +54012,7 @@ components:
         - key_id
         - secret_ref
         - timeouts
+        - relay
         - attribute_names
       properties:
         id:
@@ -53844,9 +54042,11 @@ components:
           maxLength: 128
         secret_ref:
           type: string
-          pattern: '^env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+$'
+          pattern: '^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$'
         timeouts:
           $ref: '#/components/schemas/TenantDirectoryConnectorTimeouts'
+        relay:
+          $ref: '#/components/schemas/TenantDirectoryConnectorRelaySettings'
         attribute_names:
           type: array
           maxItems: 32
@@ -53915,10 +54115,192 @@ components:
           type: string
         status:
           type: integer
-        body: {}
+        body:
+          oneOf:
+            - $ref: '#/components/schemas/TenantDirectoryConnectorRelayStatus'
+            - type: object
+              additionalProperties: true
+            - type: 'null'
         error:
           type: string
         error_description:
+          type: string
+    TenantDirectoryConnectorRelayEventsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - connector_id
+      properties:
+        ok:
+          type: boolean
+        connector_id:
+          type: string
+        status:
+          type: integer
+        body:
+          oneOf:
+            - $ref: '#/components/schemas/TenantDirectoryConnectorRelayEventList'
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+        error:
+          type: string
+        error_description:
+          type: string
+    TenantDirectoryConnectorRelayEventList:
+      type: object
+      additionalProperties: false
+      required:
+        - tenant_id
+        - connector_id
+        - events
+      properties:
+        tenant_id:
+          type: string
+        connector_id:
+          type: string
+        events:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/TenantDirectoryConnectorRelayEvent'
+    TenantDirectoryConnectorRelayEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - timestamp
+        - tenantId
+        - connectorId
+        - type
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        tenantId:
+          type: string
+        connectorId:
+          type: string
+        type:
+          type: string
+          enum:
+            - directory_relay.connection.challenge_issued
+            - directory_relay.connection.rejected
+            - directory_relay.connection.authenticated
+            - directory_relay.connection.closed
+            - directory_relay.overloaded
+            - directory_relay.verify.forwarded
+            - directory_relay.verify.succeeded
+            - directory_relay.verify.failed
+            - directory_relay.verify.timeout
+        requestId:
+          type: string
+        keyId:
+          type: string
+        code:
+          type: string
+        result:
+          type: string
+        retryable:
+          type: boolean
+    TenantDirectoryConnectorSecretResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - connector_id
+        - key_id
+        - secret_ref
+        - secret
+        - one_time_display
+      properties:
+        connector_id:
+          type: string
+        key_id:
+          type: string
+        secret_ref:
+          type: string
+          pattern: '^managed:[a-zA-Z0-9_-]{1,64}$'
+        secret:
+          type: string
+          pattern: '^wwsec_[A-Za-z0-9_-]+$'
+          description: One-time secret value for Wordwarden. Authrim does not expose this value again.
+        previous_retire_after:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        one_time_display:
+          type: boolean
+          enum:
+            - true
+    TenantDirectoryConnectorRelayStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - connections
+        - authenticated_connections
+        - pending_requests
+        - max_pending_requests
+        - verify_timeout_ms
+        - challenge_ttl_ms
+        - relay_protocol
+        - protocol_version
+        - min_supported_version
+      properties:
+        ok:
+          type: boolean
+        connections:
+          type: integer
+          minimum: 0
+        authenticated_connections:
+          type: integer
+          minimum: 0
+        pending_requests:
+          type: integer
+          minimum: 0
+        max_pending_requests:
+          type: integer
+          minimum: 1
+        verify_timeout_ms:
+          type: integer
+          minimum: 100
+        challenge_ttl_ms:
+          type: integer
+          minimum: 5000
+        relay_protocol:
+          type: string
+        protocol_version:
+          type: integer
+          minimum: 1
+        min_supported_version:
+          type: integer
+          minimum: 1
+        last_connected_at:
+          type: string
+          format: date-time
+        last_authenticated_at:
+          type: string
+          format: date-time
+        authenticated_key_id:
+          type: string
+        last_verify_started_at:
+          type: string
+          format: date-time
+        last_verify_succeeded_at:
+          type: string
+          format: date-time
+        last_verify_failed_at:
+          type: string
+          format: date-time
+        last_disconnect_at:
+          type: string
+          format: date-time
+        last_disconnect_reason:
           type: string
     TokenClaimCondition:
       type: object

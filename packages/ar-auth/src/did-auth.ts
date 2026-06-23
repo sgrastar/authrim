@@ -42,6 +42,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
+import { resolveSessionTtl } from './session-ttl';
 
 /**
  * Allowed JWT algorithms for DID authentication proofs.
@@ -49,9 +50,6 @@ import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
  * - EdDSA: For Ed25519 keys (did:key)
  */
 const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
-
-/** Default session TTL in seconds (24 hours) */
-const DEFAULT_SESSION_TTL = 86400;
 
 /**
  * POST /auth/did/challenge
@@ -310,12 +308,12 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
 
     // Create session
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-    const sessionTtl = DEFAULT_SESSION_TTL;
+    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'did');
 
     await sessionStore.createSessionRpc(
       sessionId,
       linkedIdentity.user_id,
-      sessionTtl,
+      sessionTtl.seconds,
       {
         amr: ['did'],
         acr: 'urn:authrim:acr:did',
@@ -347,7 +345,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       data: {
         sessionId,
         userId: linkedIdentity.user_id,
-        ttlSeconds: sessionTtl,
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
       log.warn('Failed to publish session.user.created event', { action: 'event_publish' });
@@ -383,7 +381,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     return c.json({
       session_id: sessionId,
       user_id: linkedIdentity.user_id,
-      expires_in: sessionTtl,
+      expires_in: sessionTtl.seconds,
     });
   } catch (error) {
     log.error('DID verification error', { action: 'verify' }, error as Error);

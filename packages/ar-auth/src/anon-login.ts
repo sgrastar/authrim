@@ -60,9 +60,9 @@ import {
   getBrowserStateCookieSameSite,
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
+import { resolveSessionTtl } from './session-ttl';
 
 const CHALLENGE_TTL = 5 * 60; // 5 minutes in seconds
-const SESSION_TTL = 24 * 60 * 60; // 24 hours in seconds
 
 /**
  * Minimum response time for anon-login operations (milliseconds)
@@ -558,6 +558,8 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         }
       }
 
+      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'anonymous');
+
       // Create session using SessionStore Durable Object
       let sessionId: string;
       try {
@@ -570,7 +572,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         await sessionStore.createSessionRpc(
           newSessionId,
           userId,
-          SESSION_TTL,
+          sessionTtl.seconds,
           {
             amr: ['anon'],
             acr: 'urn:mace:incommon:iap:anonymous',
@@ -601,7 +603,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         httpOnly: true,
         secure: true,
         sameSite: getSessionCookieSameSite(c.env),
-        maxAge: SESSION_TTL,
+        maxAge: sessionTtl.seconds,
       });
 
       // Set browser state cookie for OIDC Session Management
@@ -610,7 +612,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         path: '/',
         secure: true,
         sameSite: getBrowserStateCookieSameSite(c.env),
-        maxAge: SESSION_TTL,
+        maxAge: sessionTtl.seconds,
       });
 
       // Publish auth.login.succeeded event
@@ -638,7 +640,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         data: {
           sessionId,
           userId,
-          ttlSeconds: SESSION_TTL,
+          ttlSeconds: sessionTtl.seconds,
         } satisfies SessionEventData,
       }).catch((err) => {
         log.error(
