@@ -11,6 +11,7 @@
  *
  * Data sources:
  *   - SETTINGS KV ("settings:tenant:{tenantId}:authentication-methods") → built-in and external methods
+ *   - SETTINGS KV ("settings:tenant:{tenantId}:directory-connectors") → directory password method
  *   - SETTINGS KV ("settings:tenant:{tenantId}:login-ui") → UI theme
  *   - EXTERNAL_IDP service binding → enabled external login providers
  *
@@ -312,8 +313,12 @@ interface AuthenticationMethodKVSettings {
   'authentication-methods.human_verification.reauth_enabled'?: boolean | string;
   'authentication-methods.external_provider_usage'?: string | ExternalLoginProviderUsageConfig[];
   'authentication-methods.external_providers'?: string | ExternalLoginProviderConfig[];
-  'authentication-methods.directory_password.enabled'?: boolean | string;
-  'authentication-methods.directory_password.label'?: string;
+}
+
+interface DirectoryConnectorDiscoverySettings {
+  enabled?: unknown;
+  default_connector_id?: unknown;
+  connectors?: unknown;
 }
 
 interface ExternalLoginProviderConfig {
@@ -853,18 +858,35 @@ async function resolveDirectoryPasswordMethod(
   };
 
   try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:directory-connectors`);
     if (!kvJson) return defaults;
 
-    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+    const kvSettings = JSON.parse(kvJson) as DirectoryConnectorDiscoverySettings;
+    const defaultConnectorId =
+      typeof kvSettings.default_connector_id === 'string' && kvSettings.default_connector_id.trim()
+        ? kvSettings.default_connector_id.trim()
+        : 'campus';
+    const connectors = Array.isArray(kvSettings.connectors) ? kvSettings.connectors : [];
+    const hasDefaultConnector = connectors.some((connector) => {
+      if (!connector || typeof connector !== 'object' || Array.isArray(connector)) return false;
+      const record = connector as Record<string, unknown>;
+      return (
+        record.id === defaultConnectorId &&
+        typeof record.endpoint_url === 'string' &&
+        record.endpoint_url.trim().length > 0 &&
+        record.auth_mode === 'hmac' &&
+        typeof record.connector_id === 'string' &&
+        record.connector_id.trim().length > 0 &&
+        typeof record.key_id === 'string' &&
+        record.key_id.trim().length > 0 &&
+        typeof record.secret_ref === 'string' &&
+        record.secret_ref.trim().length > 0
+      );
+    });
+
     return {
-      enabled: normalizeBoolean(
-        kvSettings['authentication-methods.directory_password.enabled'],
-        defaults.enabled
-      ),
-      label:
-        truncateString(kvSettings['authentication-methods.directory_password.label'], 80) ||
-        defaults.label,
+      enabled: normalizeBoolean(kvSettings.enabled, defaults.enabled) && hasDefaultConnector,
+      label: defaults.label,
     };
   } catch {
     return defaults;

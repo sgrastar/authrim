@@ -38,14 +38,29 @@ const DirectoryConnectorSchema = z.object({
   attribute_names: z.array(z.string().min(1).max(128)).max(MAX_ATTRIBUTE_NAMES).default([]),
 });
 
-const DirectoryConnectorsConfigSchema = z.object({
+const DirectoryConnectorsStoredConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  default_connector_id: z.string().regex(CONNECTOR_ID_PATTERN).default('campus'),
+  auto_provision: z.boolean().default(false),
   connectors: z.array(DirectoryConnectorSchema).max(MAX_CONNECTORS).default([]),
 });
 
-const DirectoryConnectorsUpdateSchema = DirectoryConnectorsConfigSchema;
+const DirectoryConnectorsUpdateSchema = z.object({
+  enabled: z.boolean(),
+  default_connector_id: z.string().regex(CONNECTOR_ID_PATTERN),
+  auto_provision: z.boolean(),
+  connectors: z.array(DirectoryConnectorSchema).max(MAX_CONNECTORS),
+});
 
 type DirectoryConnectorConfig = z.infer<typeof DirectoryConnectorSchema>;
-type DirectoryConnectorsConfig = z.infer<typeof DirectoryConnectorsConfigSchema>;
+type DirectoryConnectorsConfig = z.infer<typeof DirectoryConnectorsStoredConfigSchema>;
+
+const DEFAULT_CONFIG: DirectoryConnectorsConfig = {
+  enabled: false,
+  default_connector_id: 'campus',
+  auto_provision: false,
+  connectors: [],
+};
 
 function configKey(tenantId: string): string {
   return `settings:tenant:${tenantId}:${CATEGORY}`;
@@ -69,6 +84,9 @@ function normalizeAttributeNames(values: string[]): string[] {
 
 function normalizeConfig(config: DirectoryConnectorsConfig): DirectoryConnectorsConfig {
   return {
+    enabled: config.enabled,
+    default_connector_id: config.default_connector_id.trim(),
+    auto_provision: config.auto_provision,
     connectors: config.connectors.map((connector) => ({
       ...connector,
       auth_mode: 'hmac',
@@ -118,6 +136,13 @@ function validateConnectors(config: DirectoryConnectorsConfig): string | null {
   if (duplicateId) {
     return `duplicate connector id: ${duplicateId}`;
   }
+  const connectorIds = new Set(config.connectors.map((connector) => connector.id));
+  if (config.enabled && config.connectors.length === 0) {
+    return 'at least one connector is required when directory password login is enabled';
+  }
+  if (config.enabled && !connectorIds.has(config.default_connector_id)) {
+    return `default connector does not exist: ${config.default_connector_id}`;
+  }
   for (const connector of config.connectors) {
     const endpointError = validateEndpointURL(connector.endpoint_url);
     if (endpointError) {
@@ -129,17 +154,17 @@ function validateConnectors(config: DirectoryConnectorsConfig): string | null {
 
 async function readConfig(env: Env, tenantId: string): Promise<DirectoryConnectorsConfig> {
   const kv = storage(env);
-  if (!kv) return { connectors: [] };
+  if (!kv) return DEFAULT_CONFIG;
 
   const raw = await kv.get(configKey(tenantId));
-  if (!raw) return { connectors: [] };
+  if (!raw) return DEFAULT_CONFIG;
 
   try {
-    const parsed = DirectoryConnectorsConfigSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success) return { connectors: [] };
+    const parsed = DirectoryConnectorsStoredConfigSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return DEFAULT_CONFIG;
     return normalizeConfig(parsed.data);
   } catch {
-    return { connectors: [] };
+    return DEFAULT_CONFIG;
   }
 }
 
@@ -157,6 +182,9 @@ async function writeConfig(
 
 function redactForAudit(config: DirectoryConnectorsConfig) {
   return {
+    enabled: config.enabled,
+    default_connector_id: config.default_connector_id,
+    auto_provision: config.auto_provision,
     connectors: config.connectors.map((connector) => ({
       id: connector.id,
       endpoint_url: connector.endpoint_url,

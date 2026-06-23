@@ -294,14 +294,27 @@ describe('Authentication Methods API', () => {
       });
     });
 
-    it('should enable directory password from authentication-methods settings without exposing connector secrets', async () => {
+    it('should enable directory password from directory connector settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           advanced: { passkeyEnabled: false, magicLinkEnabled: false },
         }),
-        'settings:tenant:default:authentication-methods': JSON.stringify({
-          'authentication-methods.directory_password.enabled': true,
-          'authentication-methods.directory_password.label': 'Campus ID',
+        'settings:tenant:default:directory-connectors': JSON.stringify({
+          enabled: true,
+          default_connector_id: 'campus',
+          auto_provision: false,
+          connectors: [
+            {
+              id: 'campus',
+              endpoint_url: 'https://wordwarden.example.com',
+              auth_mode: 'hmac',
+              connector_id: 'ww_tenant_a',
+              key_id: 'kid-active',
+              secret_ref: 'env:WORDWARDEN_SECRET',
+              timeouts: { request_ms: 2500 },
+              attribute_names: ['mail'],
+            },
+          ],
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
@@ -314,12 +327,53 @@ describe('Authentication Methods API', () => {
       expect(body.methods.emailCode.enabled).toBe(false);
       expect(body.methods.directoryPassword).toEqual({
         enabled: true,
-        label: 'Campus ID',
+        label: 'Organization ID',
         steps: ['username', 'password'],
       });
       expect(JSON.stringify(body)).not.toContain('secret');
       expect(JSON.stringify(body)).not.toContain('endpoint');
       expect(JSON.stringify(body)).not.toContain('connector_id');
+    });
+
+    it('should not enable directory password from legacy authentication-methods keys', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.directory_password.enabled': true,
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.directoryPassword).toEqual({
+        enabled: false,
+        label: 'Organization ID',
+        steps: [],
+      });
+    });
+
+    it('should not expose directory password when the configured connector is incomplete', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:directory-connectors': JSON.stringify({
+          enabled: true,
+          default_connector_id: 'campus',
+          auto_provision: false,
+          connectors: [{ id: 'campus' }],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp: null });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.directoryPassword).toEqual({
+        enabled: false,
+        label: 'Organization ID',
+        steps: [],
+      });
     });
 
     it('should expose Turnstile site key but never the secret key', async () => {

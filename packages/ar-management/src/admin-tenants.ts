@@ -573,7 +573,12 @@ async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId
     env.SETTINGS?.put(`settings:tenant:${tenantId}:authentication-methods`, JSON.stringify({})),
     env.SETTINGS?.put(
       `settings:tenant:${tenantId}:directory-connectors`,
-      JSON.stringify({ connectors: [] })
+      JSON.stringify({
+        enabled: false,
+        default_connector_id: 'campus',
+        auto_provision: false,
+        connectors: [],
+      })
     ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
   ]);

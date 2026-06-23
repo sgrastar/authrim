@@ -26103,6 +26103,9 @@ components:
           schema:
             $ref: '#/components/schemas/TenantDirectoryConnectorsConfig'
           example:
+            enabled: true
+            default_connector_id: campus
+            auto_provision: false
             connectors:
               - id: campus
                 endpoint_url: 'https://wordwarden.example.com'
@@ -53846,8 +53849,21 @@ components:
       type: object
       additionalProperties: false
       required:
+        - enabled
+        - default_connector_id
+        - auto_provision
         - connectors
       properties:
+        enabled:
+          type: boolean
+          description: Enables directory password login through Wordwarden.
+        default_connector_id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          description: Connector ID used for directory password verification.
+        auto_provision:
+          type: boolean
+          description: Creates Authrim users from verified directory identities when unmapped.
         connectors:
           type: array
           maxItems: 20
@@ -53858,10 +53874,20 @@ components:
       additionalProperties: false
       required:
         - tenantId
+        - enabled
+        - default_connector_id
+        - auto_provision
         - connectors
       properties:
         tenantId:
           type: string
+        enabled:
+          type: boolean
+        default_connector_id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        auto_provision:
+          type: boolean
         connectors:
           type: array
           maxItems: 20

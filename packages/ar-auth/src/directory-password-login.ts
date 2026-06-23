@@ -37,7 +37,7 @@ import {
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
 
-const DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID = 'default';
+const DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID = 'campus';
 const DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES = ['mail', 'displayName', 'uid'];
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
 const ALLOWED_CONNECTOR_SECRET_ENV_PREFIXES = ['AUTHRIM_WORDWARDEN_', 'WORDWARDEN_'];
@@ -55,6 +55,9 @@ interface DirectoryConnectorKVSettings {
 }
 
 interface DirectoryConnectorSettingsRecord {
+  enabled?: unknown;
+  default_connector_id?: unknown;
+  auto_provision?: unknown;
   connectors?: unknown;
 }
 
@@ -423,20 +426,11 @@ async function resolveDirectoryConnector(
   env: Env,
   tenantId: string
 ): Promise<ResolvedDirectoryConnector | null> {
-  const authenticationMethods = await readTenantSettings(env, tenantId, 'authentication-methods');
-  if (
-    !normalizeBoolean(authenticationMethods?.['authentication-methods.directory_password.enabled'])
-  ) {
-    return null;
-  }
-
+  const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors');
+  if (!normalizeBoolean(connectorSettings?.enabled)) return null;
   const connectorId =
-    stringSetting(
-      authenticationMethods?.['authentication-methods.directory_password.connector_id']
-    ) || DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
-  const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors', {
-    preferSettings: true,
-  });
+    stringSetting(connectorSettings?.default_connector_id) ||
+    DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
   const directoryConnector = resolveDirectoryConnectorSettings(connectorSettings, connectorId);
   if (!directoryConnector) {
     return null;
@@ -463,9 +457,7 @@ async function resolveDirectoryConnector(
       timeoutMs: directoryConnector.timeouts?.request_ms,
     },
     attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
-    autoProvision: normalizeBoolean(
-      authenticationMethods?.['authentication-methods.directory_password.auto_provision']
-    ),
+    autoProvision: normalizeBoolean(connectorSettings?.auto_provision),
   };
 }
 
@@ -522,14 +514,10 @@ function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettings
 async function readTenantSettings(
   env: Env,
   tenantId: string,
-  category: string,
-  options: { preferSettings?: boolean } = {}
+  category: string
 ): Promise<DirectoryConnectorKVSettings | null> {
   const key = `settings:tenant:${tenantId}:${category}`;
-  const first = options.preferSettings ? env.SETTINGS : env.AUTHRIM_CONFIG;
-  const second = options.preferSettings ? env.AUTHRIM_CONFIG : env.SETTINGS;
-  const raw =
-    (await first?.get(key).catch(() => null)) ?? (await second?.get(key).catch(() => null));
+  const raw = await env.SETTINGS?.get(key).catch(() => null);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as DirectoryConnectorKVSettings;

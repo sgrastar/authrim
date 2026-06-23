@@ -4439,6 +4439,46 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_empty: string
 	/**
+	 * R​u​n​t​i​m​e​ ​B​e​h​a​v​i​o​r
+	 */
+	admin_directory_authentication_runtime_title: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​w​h​e​n​ ​A​u​t​h​r​i​m​ ​u​s​e​s​ ​D​i​r​e​c​t​o​r​y​ ​C​o​n​n​e​c​t​o​r​s​ ​d​u​r​i​n​g​ ​l​o​g​i​n​.
+	 */
+	admin_directory_authentication_runtime_description: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​p​a​s​s​w​o​r​d​ ​l​o​g​i​n
+	 */
+	admin_directory_authentication_enable_login: string
+	/**
+	 * W​h​e​n​ ​e​n​a​b​l​e​d​,​ ​A​u​t​h​r​i​m​ ​v​e​r​i​f​i​e​s​ ​L​D​A​P​/​A​D​ ​p​a​s​s​w​o​r​d​s​ ​t​h​r​o​u​g​h​ ​W​o​r​d​w​a​r​d​e​n​ ​f​r​o​m​ ​t​h​e​ ​l​o​g​i​n​ ​s​c​r​e​e​n​.
+	 */
+	admin_directory_authentication_enable_login_description: string
+	/**
+	 * D​e​f​a​u​l​t​ ​C​o​n​n​e​c​t​o​r
+	 */
+	admin_directory_authentication_default_connector: string
+	/**
+	 * A​u​t​o​-​p​r​o​v​i​s​i​o​n​ ​u​s​e​r​s
+	 */
+	admin_directory_authentication_auto_provision: string
+	/**
+	 * C​r​e​a​t​e​ ​a​n​ ​A​u​t​h​r​i​m​ ​u​s​e​r​ ​f​r​o​m​ ​d​i​r​e​c​t​o​r​y​ ​a​t​t​r​i​b​u​t​e​s​ ​w​h​e​n​ ​a​ ​v​e​r​i​f​i​e​d​ ​d​i​r​e​c​t​o​r​y​ ​i​d​e​n​t​i​t​y​ ​i​s​ ​n​o​t​ ​m​a​p​p​e​d​ ​y​e​t​.
+	 */
+	admin_directory_authentication_auto_provision_description: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_directory_authentication_status: string
+	/**
+	 * E​n​a​b​l​e​d
+	 */
+	admin_directory_authentication_status_enabled: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_directory_authentication_status_disabled: string
+	/**
 	 * C​o​n​n​e​c​t​o​r​s
 	 */
 	admin_directory_authentication_connectors_title: string
@@ -4532,7 +4572,7 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_validation_endpoint_required: string
 	/**
-	 * E​n​d​p​o​i​n​t​ ​U​R​L​ ​m​u​s​t​ ​u​s​e​ ​H​T​T​P​S​ ​e​x​c​e​p​t​ ​l​o​o​p​b​a​c​k​ ​H​T​T​P​ ​f​o​r​ ​l​o​c​a​l​ ​d​e​v​e​l​o​p​m​e​n​t​.
+	 * E​n​d​p​o​i​n​t​ ​U​R​L​ ​m​u​s​t​ ​u​s​e​ ​H​T​T​P​S​ ​e​x​c​e​p​t​ ​h​t​t​p​:​/​/​l​o​c​a​l​h​o​s​t​ ​f​o​r​ ​l​o​c​a​l​ ​d​e​v​e​l​o​p​m​e​n​t​.
 	 */
 	admin_directory_authentication_validation_endpoint_https: string
 	/**
@@ -4559,6 +4599,14 @@ type RootTranslation = {
 	 * L​D​A​P​ ​A​t​t​r​i​b​u​t​e​s​ ​c​a​n​ ​c​o​n​t​a​i​n​ ​u​p​ ​t​o​ ​3​2​ ​n​a​m​e​s​.
 	 */
 	admin_directory_authentication_validation_attributes: string
+	/**
+	 * A​t​ ​l​e​a​s​t​ ​o​n​e​ ​c​o​n​n​e​c​t​o​r​ ​i​s​ ​r​e​q​u​i​r​e​d​ ​w​h​e​n​ ​d​i​r​e​c​t​o​r​y​ ​p​a​s​s​w​o​r​d​ ​l​o​g​i​n​ ​i​s​ ​e​n​a​b​l​e​d​.
+	 */
+	admin_directory_authentication_validation_connector_required_when_enabled: string
+	/**
+	 * D​e​f​a​u​l​t​ ​C​o​n​n​e​c​t​o​r​ ​m​u​s​t​ ​m​a​t​c​h​ ​o​n​e​ ​c​o​n​f​i​g​u​r​e​d​ ​c​o​n​n​e​c​t​o​r​.
+	 */
+	admin_directory_authentication_validation_default_connector: string
 	/**
 	 * T​e​n​a​n​t
 	 */
@@ -32442,6 +32490,46 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_empty: () => LocalizedString
 	/**
+	 * Runtime Behavior
+	 */
+	admin_directory_authentication_runtime_title: () => LocalizedString
+	/**
+	 * Configure when Authrim uses Directory Connectors during login.
+	 */
+	admin_directory_authentication_runtime_description: () => LocalizedString
+	/**
+	 * Directory password login
+	 */
+	admin_directory_authentication_enable_login: () => LocalizedString
+	/**
+	 * When enabled, Authrim verifies LDAP/AD passwords through Wordwarden from the login screen.
+	 */
+	admin_directory_authentication_enable_login_description: () => LocalizedString
+	/**
+	 * Default Connector
+	 */
+	admin_directory_authentication_default_connector: () => LocalizedString
+	/**
+	 * Auto-provision users
+	 */
+	admin_directory_authentication_auto_provision: () => LocalizedString
+	/**
+	 * Create an Authrim user from directory attributes when a verified directory identity is not mapped yet.
+	 */
+	admin_directory_authentication_auto_provision_description: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_directory_authentication_status: () => LocalizedString
+	/**
+	 * Enabled
+	 */
+	admin_directory_authentication_status_enabled: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_directory_authentication_status_disabled: () => LocalizedString
+	/**
 	 * Connectors
 	 */
 	admin_directory_authentication_connectors_title: () => LocalizedString
@@ -32534,7 +32622,7 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_validation_endpoint_required: () => LocalizedString
 	/**
-	 * Endpoint URL must use HTTPS except loopback HTTP for local development.
+	 * Endpoint URL must use HTTPS except http://localhost for local development.
 	 */
 	admin_directory_authentication_validation_endpoint_https: () => LocalizedString
 	/**
@@ -32561,6 +32649,14 @@ export type TranslationFunctions = {
 	 * LDAP Attributes can contain up to 32 names.
 	 */
 	admin_directory_authentication_validation_attributes: () => LocalizedString
+	/**
+	 * At least one connector is required when directory password login is enabled.
+	 */
+	admin_directory_authentication_validation_connector_required_when_enabled: () => LocalizedString
+	/**
+	 * Default Connector must match one configured connector.
+	 */
+	admin_directory_authentication_validation_default_connector: () => LocalizedString
 	/**
 	 * Tenant
 	 */

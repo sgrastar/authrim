@@ -14,6 +14,19 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_saving: '保存中...',
 	admin_directory_authentication_discard: '破棄',
 	admin_directory_authentication_empty: 'Directory Connectorは設定されていません。',
+	admin_directory_authentication_runtime_title: '認証動作',
+	admin_directory_authentication_runtime_description:
+		'AuthrimがDirectory Connectorをログイン時に使う条件を設定します。',
+	admin_directory_authentication_enable_login: 'ディレクトリパスワードログイン',
+	admin_directory_authentication_enable_login_description:
+		'有効にすると、Authrimのログイン画面からWordwarden経由でLDAP/ADのパスワード検証を行います。',
+	admin_directory_authentication_default_connector: '既定Connector',
+	admin_directory_authentication_auto_provision: '自動プロビジョニング',
+	admin_directory_authentication_auto_provision_description:
+		'Directoryで検証できたユーザーがAuthrimに未作成の場合、属性からユーザーを作成します。',
+	admin_directory_authentication_status: 'Status',
+	admin_directory_authentication_status_enabled: '有効',
+	admin_directory_authentication_status_disabled: '無効',
 	admin_directory_authentication_connectors_title: 'Connectors',
 	admin_directory_authentication_connectors_description:
 		'AuthrimはこれらのWordwarden endpointへパスワード検証リクエストを送信します。',
@@ -50,6 +63,10 @@ const adminDirectoryAuthentication = {
 		'Secret Referenceは env:WORDWARDEN_* または env:AUTHRIM_WORDWARDEN_* 形式にしてください。',
 	admin_directory_authentication_validation_timeout: 'Timeoutは100から30000 msの範囲です。',
 	admin_directory_authentication_validation_attributes: 'LDAP Attributesは最大32個です。',
+	admin_directory_authentication_validation_connector_required_when_enabled:
+		'ディレクトリパスワードログインを有効にするにはConnectorが必要です。',
+	admin_directory_authentication_validation_default_connector:
+		'既定ConnectorはConnector一覧に含まれている必要があります。',
 	admin_directory_authentication_tenant: 'Tenant',
 	admin_directory_authentication_not_selected: '未選択',
 	admin_directory_authentication_count: '{count} connectors'

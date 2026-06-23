@@ -178,6 +178,13 @@ interface DevDirectoryConnector {
 	attribute_names: string[];
 }
 
+interface DevDirectoryConnectorConfig {
+	enabled: boolean;
+	default_connector_id: string;
+	auto_provision: boolean;
+	connectors: DevDirectoryConnector[];
+}
+
 interface DevExternalIdPProvider {
 	id: string;
 	slug?: string;
@@ -2728,21 +2735,26 @@ const settings = new Map<string, DevSettings>([
 	]
 ]);
 
-const directoryConnectors = new Map<string, DevDirectoryConnector[]>([
+const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
 	[
 		TENANT_ID,
-		[
-			{
-				id: 'campus',
-				endpoint_url: 'http://localhost:8080',
-				auth_mode: 'hmac',
-				connector_id: 'ww_tenant_a',
-				key_id: 'kid-active',
-				secret_ref: 'env:WORDWARDEN_SECRET',
-				timeouts: { request_ms: 2500 },
-				attribute_names: ['mail', 'displayName', 'uid']
-			}
-		]
+		{
+			enabled: false,
+			default_connector_id: 'campus',
+			auto_provision: false,
+			connectors: [
+				{
+					id: 'campus',
+					endpoint_url: 'http://localhost:8080',
+					auth_mode: 'hmac',
+					connector_id: 'ww_tenant_a',
+					key_id: 'kid-active',
+					secret_ref: 'env:WORDWARDEN_SECRET',
+					timeouts: { request_ms: 2500 },
+					attribute_names: ['mail', 'displayName', 'uid']
+				}
+			]
+		}
 	]
 ]);
 
@@ -6857,10 +6869,15 @@ async function handleDirectoryConnectors(
 	if (segments[0] !== 'tenants' || segments[2] !== 'directory-connectors') return null;
 
 	const tenantId = segments[1] || getTenantId(event);
-	const connectors = directoryConnectors.get(tenantId) ?? [];
+	const config = directoryConnectors.get(tenantId) ?? {
+		enabled: false,
+		default_connector_id: 'campus',
+		auto_provision: false,
+		connectors: []
+	};
 
 	if (segments.length === 3 && method === 'GET') {
-		return json({ tenantId, connectors });
+		return json({ tenantId, ...config });
 	}
 
 	if (segments.length === 3 && method === 'PUT') {
@@ -6868,13 +6885,22 @@ async function handleDirectoryConnectors(
 		const nextConnectors = Array.isArray(input.connectors)
 			? input.connectors.map((connector, index) => normalizeDevDirectoryConnector(connector, index))
 			: [];
-		directoryConnectors.set(tenantId, nextConnectors);
-		return json({ tenantId, connectors: nextConnectors });
+		const nextConfig = {
+			enabled: Boolean(input.enabled),
+			default_connector_id:
+				typeof input.default_connector_id === 'string' && input.default_connector_id.trim()
+					? input.default_connector_id.trim()
+					: 'campus',
+			auto_provision: Boolean(input.auto_provision),
+			connectors: nextConnectors
+		};
+		directoryConnectors.set(tenantId, nextConfig);
+		return json({ tenantId, ...nextConfig });
 	}
 
 	if (segments.length === 5 && segments[4] === 'health' && method === 'POST') {
 		const connectorId = segments[3];
-		const connector = connectors.find((item) => item.id === connectorId);
+		const connector = config.connectors.find((item) => item.id === connectorId);
 		if (!connector) return json({ error: 'directory_connector_not_found' }, 404);
 		return json({
 			ok: true,

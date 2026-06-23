@@ -14,6 +14,19 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_saving: 'Saving...',
 	admin_directory_authentication_discard: 'Discard',
 	admin_directory_authentication_empty: 'No directory connectors configured.',
+	admin_directory_authentication_runtime_title: 'Runtime Behavior',
+	admin_directory_authentication_runtime_description:
+		'Configure when Authrim uses Directory Connectors during login.',
+	admin_directory_authentication_enable_login: 'Directory password login',
+	admin_directory_authentication_enable_login_description:
+		'When enabled, Authrim verifies LDAP/AD passwords through Wordwarden from the login screen.',
+	admin_directory_authentication_default_connector: 'Default Connector',
+	admin_directory_authentication_auto_provision: 'Auto-provision users',
+	admin_directory_authentication_auto_provision_description:
+		'Create an Authrim user from directory attributes when a verified directory identity is not mapped yet.',
+	admin_directory_authentication_status: 'Status',
+	admin_directory_authentication_status_enabled: 'Enabled',
+	admin_directory_authentication_status_disabled: 'Disabled',
 	admin_directory_authentication_connectors_title: 'Connectors',
 	admin_directory_authentication_connectors_description:
 		'Authrim sends password verification requests to these Wordwarden endpoints.',
@@ -50,6 +63,10 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_validation_timeout: 'Timeout must be between 100 and 30000 ms.',
 	admin_directory_authentication_validation_attributes:
 		'LDAP Attributes can contain up to 32 names.',
+	admin_directory_authentication_validation_connector_required_when_enabled:
+		'At least one connector is required when directory password login is enabled.',
+	admin_directory_authentication_validation_default_connector:
+		'Default Connector must match one configured connector.',
 	admin_directory_authentication_tenant: 'Tenant',
 	admin_directory_authentication_not_selected: 'Not selected',
 	admin_directory_authentication_count: '{count:number} connectors'

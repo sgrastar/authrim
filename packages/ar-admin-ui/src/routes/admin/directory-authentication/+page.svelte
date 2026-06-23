@@ -3,8 +3,10 @@
 	import {
 		adminDirectoryConnectorsAPI,
 		type DirectoryConnector,
-		type DirectoryConnectorHealthResponse
+		type DirectoryConnectorHealthResponse,
+		type DirectoryConnectorsResponse
 	} from '$lib/api/admin-directory-connectors';
+	import { ToggleSwitch } from '$lib/components';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
@@ -34,15 +36,23 @@
 	let error = $state('');
 	let successMessage = $state('');
 	let tenantId = $state('');
+	let enabled = $state(false);
+	let defaultConnectorId = $state('campus');
+	let autoProvision = $state(false);
 	let connectors = $state<DirectoryConnectorDraft[]>([]);
-	let initialConnectorsJson = $state('[]');
+	let initialConfigJson = $state(
+		JSON.stringify({
+			enabled: false,
+			default_connector_id: 'campus',
+			auto_provision: false,
+			connectors: []
+		})
+	);
 	let healthChecks = $state<Record<number, HealthState>>({});
 
 	const currentTenantId = $derived(settingsContext.tenantId);
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
-	const hasChanges = $derived(
-		JSON.stringify(buildConnectors(connectors)) !== initialConnectorsJson
-	);
+	const hasChanges = $derived(JSON.stringify(buildConfig()) !== initialConfigJson);
 
 	function defaultConnector(index: number): DirectoryConnectorDraft {
 		return {
@@ -97,6 +107,15 @@
 		}));
 	}
 
+	function buildConfig(): Omit<DirectoryConnectorsResponse, 'tenantId'> {
+		return {
+			enabled,
+			default_connector_id: defaultConnectorId.trim() || 'campus',
+			auto_provision: autoProvision,
+			connectors: buildConnectors(connectors)
+		};
+	}
+
 	function isLocalhostHostname(hostname: string): boolean {
 		return hostname === 'localhost';
 	}
@@ -114,8 +133,18 @@
 	}
 
 	function validateConnectors(): string {
+		const config = buildConfig();
+		if (config.enabled && config.connectors.length === 0) {
+			return $LL.admin_directory_authentication_validation_connector_required_when_enabled();
+		}
+		if (
+			config.enabled &&
+			!config.connectors.some((connector) => connector.id === config.default_connector_id)
+		) {
+			return $LL.admin_directory_authentication_validation_default_connector();
+		}
 		const ids = new Set<string>();
-		for (const connector of buildConnectors(connectors)) {
+		for (const connector of config.connectors) {
 			if (!connector.id) return $LL.admin_directory_authentication_validation_id_required();
 			if (!CONNECTOR_ID_PATTERN.test(connector.id)) {
 				return $LL.admin_directory_authentication_validation_id_format();
@@ -161,8 +190,16 @@
 		try {
 			const response = await adminDirectoryConnectorsAPI.get(selectedTenantId);
 			tenantId = response.tenantId;
+			enabled = response.enabled;
+			defaultConnectorId = response.default_connector_id || 'campus';
+			autoProvision = response.auto_provision;
 			connectors = response.connectors.map(toDraft);
-			initialConnectorsJson = JSON.stringify(response.connectors);
+			initialConfigJson = JSON.stringify({
+				enabled: response.enabled,
+				default_connector_id: response.default_connector_id || 'campus',
+				auto_provision: response.auto_provision,
+				connectors: response.connectors
+			});
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_directory_authentication_load_failed();
 		} finally {
@@ -184,10 +221,18 @@
 		successMessage = '';
 
 		try {
-			const payload = buildConnectors(connectors);
+			const payload = buildConfig();
 			const response = await adminDirectoryConnectorsAPI.update(tenantId, payload);
+			enabled = response.enabled;
+			defaultConnectorId = response.default_connector_id || 'campus';
+			autoProvision = response.auto_provision;
 			connectors = response.connectors.map(toDraft);
-			initialConnectorsJson = JSON.stringify(response.connectors);
+			initialConfigJson = JSON.stringify({
+				enabled: response.enabled,
+				default_connector_id: response.default_connector_id || 'campus',
+				auto_provision: response.auto_provision,
+				connectors: response.connectors
+			});
 			successMessage = $LL.admin_directory_authentication_saved();
 			healthChecks = {};
 		} catch (err) {
@@ -314,6 +359,59 @@
 				<div>
 					<h2>{$LL.admin_directory_authentication_connectors_title()}</h2>
 					<p>{$LL.admin_directory_authentication_count({ count: connectors.length })}</p>
+				</div>
+				<div>
+					<h2>{$LL.admin_directory_authentication_status()}</h2>
+					<p>
+						{enabled
+							? $LL.admin_directory_authentication_status_enabled()
+							: $LL.admin_directory_authentication_status_disabled()}
+					</p>
+				</div>
+			</div>
+		</AdminSection>
+
+		<AdminSection
+			title={$LL.admin_directory_authentication_runtime_title()}
+			description={$LL.admin_directory_authentication_runtime_description()}
+		>
+			<div class="runtime-settings">
+				<div class="runtime-row">
+					<div>
+						<h3>{$LL.admin_directory_authentication_enable_login()}</h3>
+						<p>{$LL.admin_directory_authentication_enable_login_description()}</p>
+					</div>
+					<ToggleSwitch bind:checked={enabled} disabled={!canEdit} size="sm" />
+				</div>
+
+				<div class="form-grid">
+					<div class="admin-field">
+						<label class="admin-field__label" for="default-connector-id">
+							{$LL.admin_directory_authentication_default_connector()}
+						</label>
+						<select
+							id="default-connector-id"
+							class="admin-input"
+							bind:value={defaultConnectorId}
+							disabled={!canEdit || connectors.length === 0}
+						>
+							{#if connectors.length === 0}
+								<option value="campus">campus</option>
+							{:else}
+								{#each connectors as connector}
+									<option value={connector.id}>{connector.id}</option>
+								{/each}
+							{/if}
+						</select>
+					</div>
+
+					<div class="runtime-row runtime-row--inline">
+						<div>
+							<h3>{$LL.admin_directory_authentication_auto_provision()}</h3>
+							<p>{$LL.admin_directory_authentication_auto_provision_description()}</p>
+						</div>
+						<ToggleSwitch bind:checked={autoProvision} disabled={!canEdit} size="sm" />
+					</div>
 				</div>
 			</div>
 		</AdminSection>
@@ -531,6 +629,39 @@
 		color: var(--color-text-muted);
 	}
 
+	.runtime-settings {
+		display: grid;
+		gap: 16px;
+	}
+
+	.runtime-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+		padding: 16px;
+	}
+
+	.runtime-row--inline {
+		min-height: 76px;
+	}
+
+	.runtime-row h3 {
+		font-size: 0.95rem;
+		font-weight: 700;
+		color: var(--color-text);
+	}
+
+	.runtime-row p {
+		margin-top: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
 	.connector-list {
 		display: grid;
 		gap: 16px;
@@ -643,6 +774,10 @@
 	@media (max-width: 760px) {
 		.connector-header {
 			flex-direction: column;
+		}
+
+		.runtime-row {
+			align-items: flex-start;
 		}
 
 		.connector-actions,

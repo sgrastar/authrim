@@ -57,13 +57,12 @@ function createKV(values: Record<string, unknown>) {
 function createContext() {
   const headers = new Headers();
   const env = {
-    AUTHRIM_CONFIG: createKV({
-      'settings:tenant:tenant-a:authentication-methods': {
-        'authentication-methods.directory_password.enabled': true,
-        'authentication-methods.directory_password.connector_id': 'campus',
-        'authentication-methods.directory_password.auto_provision': true,
-      },
+    AUTHRIM_CONFIG: createKV({}),
+    SETTINGS: createKV({
       'settings:tenant:tenant-a:directory-connectors': {
+        enabled: true,
+        default_connector_id: 'campus',
+        auto_provision: true,
         connectors: [
           {
             id: 'campus',

@@ -61,8 +61,14 @@ function createKV(values: Record<string, unknown>) {
   };
 }
 
-function directoryConnectors(overrides: Record<string, unknown> = {}) {
+function directoryConnectors(
+  connectorOverrides: Record<string, unknown> = {},
+  configOverrides: Record<string, unknown> = {}
+) {
   return {
+    enabled: true,
+    default_connector_id: 'campus',
+    auto_provision: false,
     connectors: [
       {
         id: 'campus',
@@ -75,9 +81,10 @@ function directoryConnectors(overrides: Record<string, unknown> = {}) {
           request_ms: 1000,
         },
         attribute_names: ['mail', 'displayName'],
-        ...overrides,
+        ...connectorOverrides,
       },
     ],
+    ...configOverrides,
   };
 }
 
@@ -88,10 +95,6 @@ function createContext(
 ) {
   const headers = new Headers();
   const authrimConfigSettings = {
-    'settings:tenant:tenant-a:authentication-methods': {
-      'authentication-methods.directory_password.enabled': true,
-      'authentication-methods.directory_password.connector_id': 'campus',
-    },
     ...settings,
     ...authrimConfigOverrides,
   };
@@ -188,11 +191,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': true,
-            'authentication-methods.directory_password.connector_id': 'campus',
-            'authentication-methods.directory_password.auto_provision': true,
-          },
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
         }
       ) as never
     );
@@ -287,11 +289,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': true,
-            'authentication-methods.directory_password.connector_id': 'campus',
-            'authentication-methods.directory_password.auto_provision': true,
-          },
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
           'settings:tenant:tenant-a:login-entry': {
             'login-entry.post_login_behavior': 'custom_url',
             'login-entry.post_login_redirect_url': '/mypage',
@@ -574,14 +575,12 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': true,
-            'authentication-methods.directory_password.connector_id': 'campus',
-            'authentication-methods.directory_password.auto_provision': true,
-          },
-          'settings:tenant:tenant-a:directory-connectors': directoryConnectors({
-            endpoint_url: 'https://wordwarden-current.example.com',
-          }),
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {
+              endpoint_url: 'https://wordwarden-current.example.com',
+            },
+            { auto_provision: true }
+          ),
         },
         {
           'settings:tenant:tenant-a:directory-connectors': {
@@ -611,9 +610,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': false,
-          },
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { enabled: false }
+          ),
         }
       ) as never
     );
@@ -631,6 +631,9 @@ describe('directory password login handler', () => {
         { username: 'alice', password: 'correct' },
         {
           'settings:tenant:tenant-a:directory-connectors': {
+            enabled: true,
+            default_connector_id: 'campus',
+            auto_provision: false,
             connectors: [
               {
                 id: 'campus',
@@ -659,6 +662,9 @@ describe('directory password login handler', () => {
         { username: 'alice', password: 'correct' },
         {
           'settings:tenant:tenant-a:directory-connectors': {
+            enabled: true,
+            default_connector_id: 'campus',
+            auto_provision: false,
             connectors: [
               {
                 id: 'campus',

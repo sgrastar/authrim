@@ -17,6 +17,9 @@ export interface DirectoryConnector {
 
 export interface DirectoryConnectorsResponse {
 	tenantId: string;
+	enabled: boolean;
+	default_connector_id: string;
+	auto_provision: boolean;
 	connectors: DirectoryConnector[];
 }
 
@@ -48,7 +51,7 @@ export const adminDirectoryConnectorsAPI = {
 
 	async update(
 		tenantId: string,
-		connectors: DirectoryConnector[]
+		config: Omit<DirectoryConnectorsResponse, 'tenantId'>
 	): Promise<DirectoryConnectorsResponse> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(tenantId)}/directory-connectors`,
@@ -56,7 +59,7 @@ export const adminDirectoryConnectorsAPI = {
 				method: 'PUT',
 				includeJsonContentType: true,
 				tenantId,
-				body: JSON.stringify({ connectors })
+				body: JSON.stringify(config)
 			}
 		);
 		if (!response.ok) {

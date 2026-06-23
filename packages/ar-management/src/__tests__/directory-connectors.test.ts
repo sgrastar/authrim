@@ -67,6 +67,9 @@ function createContext(
 }
 
 const validConfig = {
+  enabled: true,
+  default_connector_id: 'campus',
+  auto_provision: true,
   connectors: [
     {
       id: 'campus',
@@ -98,6 +101,9 @@ describe('directory connectors admin API', () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       tenantId: 'tenant-a',
+      enabled: false,
+      default_connector_id: 'campus',
+      auto_provision: false,
       connectors: [],
     });
   });
@@ -106,9 +112,17 @@ describe('directory connectors admin API', () => {
     const context = createContext('tenant-a', validConfig) as never;
 
     const response = await updateDirectoryConnectorsHandler(context);
-    const body = (await response.json()) as { connectors: Array<{ attribute_names: string[] }> };
+    const body = (await response.json()) as {
+      enabled: boolean;
+      default_connector_id: string;
+      auto_provision: boolean;
+      connectors: Array<{ attribute_names: string[] }>;
+    };
 
     expect(response.status).toBe(200);
+    expect(body.enabled).toBe(true);
+    expect(body.default_connector_id).toBe('campus');
+    expect(body.auto_provision).toBe(true);
     expect(body.connectors[0]?.attribute_names).toEqual(['mail', 'displayName']);
     expect(
       (context as { _settings: ReturnType<typeof createKV> })._settings.put
@@ -132,6 +146,7 @@ describe('directory connectors admin API', () => {
 
   it('rejects non-HTTPS non-loopback connector endpoints', async () => {
     const context = createContext('tenant-a', {
+      ...validConfig,
       connectors: [
         {
           ...validConfig.connectors[0],
@@ -147,8 +162,32 @@ describe('directory connectors admin API', () => {
     expect(body.error).toBe('invalid_directory_connector_config');
   });
 
+  it('requires explicit runtime settings on update', async () => {
+    const context = createContext('tenant-a', {
+      connectors: validConfig.connectors,
+    }) as never;
+
+    const response = await updateDirectoryConnectorsHandler(context);
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects enabled config when the default connector is missing', async () => {
+    const context = createContext('tenant-a', {
+      ...validConfig,
+      default_connector_id: 'missing',
+    }) as never;
+
+    const response = await updateDirectoryConnectorsHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_directory_connector_config');
+  });
+
   it('rejects secret refs outside the Wordwarden env namespace', async () => {
     const context = createContext('tenant-a', {
+      ...validConfig,
       connectors: [
         {
           ...validConfig.connectors[0],
