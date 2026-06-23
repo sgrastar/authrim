@@ -49,6 +49,7 @@ const adminShell = {
 	admin_nav_external_idp: 'External IdP',
 	admin_nav_token_refresh: 'Token Refresh',
 	admin_nav_saml: 'SAML',
+	admin_nav_directory_authentication: 'Directory Authentication',
 	admin_nav_consents: 'Consents',
 	admin_nav_consent_statements: 'Consent Statements',
 	admin_nav_schema_settings: 'Schema Settings',

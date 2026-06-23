@@ -54,6 +54,23 @@ interface DirectoryConnectorKVSettings {
   [key: string]: unknown;
 }
 
+interface DirectoryConnectorSettingsRecord {
+  connectors?: unknown;
+}
+
+interface DirectoryConnectorSettingsItem {
+  id: string;
+  endpoint_url: string;
+  auth_mode: string;
+  connector_id: string;
+  key_id: string;
+  secret_ref: string;
+  timeouts?: {
+    request_ms?: number;
+  };
+  attribute_names?: string[];
+}
+
 interface ResolvedDirectoryConnector {
   connectorId: string;
   clientConfig: DirectoryPasswordConnectorConfig;
@@ -417,18 +434,19 @@ async function resolveDirectoryConnector(
     stringSetting(
       authenticationMethods?.['authentication-methods.directory_password.connector_id']
     ) || DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
-  const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors');
-  const prefix = `directory-connectors.${connectorId}.`;
-  const endpoint =
-    stringSetting(connectorSettings?.[`${prefix}endpoint_url`]) ||
-    stringSetting(connectorSettings?.[`${prefix}endpoint`]);
-  const authMode = stringSetting(connectorSettings?.[`${prefix}auth_mode`]) || 'hmac';
-  const wordwardenConnectorId =
-    stringSetting(connectorSettings?.[`${prefix}connector_id`]) || connectorId;
-  const keyId = stringSetting(connectorSettings?.[`${prefix}key_id`]);
-  const secretRef =
-    stringSetting(connectorSettings?.[`${prefix}secret_ref`]) ||
-    stringSetting(connectorSettings?.[`${prefix}secret_env`]);
+  const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors', {
+    preferSettings: true,
+  });
+  const directoryConnector = resolveDirectoryConnectorSettings(connectorSettings, connectorId);
+  if (!directoryConnector) {
+    return null;
+  }
+
+  const endpoint = directoryConnector.endpoint_url;
+  const authMode = directoryConnector.auth_mode || 'hmac';
+  const wordwardenConnectorId = directoryConnector.connector_id;
+  const keyId = directoryConnector.key_id;
+  const secretRef = directoryConnector.secret_ref;
   const secret = secretRef ? resolveConnectorSecret(env, secretRef) : undefined;
   if (authMode !== 'hmac' || !endpoint || !wordwardenConnectorId || !keyId || !secret) {
     return null;
@@ -442,28 +460,76 @@ async function resolveDirectoryConnector(
       connectorId: wordwardenConnectorId,
       keyId,
       secret,
-      timeoutMs:
-        numberSetting(connectorSettings?.[`${prefix}timeouts.request_ms`]) ||
-        numberSetting(connectorSettings?.[`${prefix}timeout_ms`]),
+      timeoutMs: directoryConnector.timeouts?.request_ms,
     },
-    attributeNames:
-      stringArraySetting(connectorSettings?.[`${prefix}attribute_names`]) ??
-      DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
+    attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
     autoProvision: normalizeBoolean(
       authenticationMethods?.['authentication-methods.directory_password.auto_provision']
     ),
   };
 }
 
+function resolveDirectoryConnectorSettings(
+  settings: DirectoryConnectorKVSettings | null,
+  connectorId: string
+): DirectoryConnectorSettingsItem | null {
+  if (!settings) return null;
+  const record = settings as DirectoryConnectorSettingsRecord;
+  if (!Array.isArray(record.connectors)) return null;
+
+  for (const candidate of record.connectors) {
+    const connector = normalizeDirectoryConnector(candidate);
+    if (connector && connector.id === connectorId) {
+      return connector;
+    }
+  }
+  return null;
+}
+
+function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettingsItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = stringSetting(record.id);
+  const endpointURL = stringSetting(record.endpoint_url);
+  const authMode = stringSetting(record.auth_mode) || 'hmac';
+  const connectorID = stringSetting(record.connector_id) || id;
+  const keyID = stringSetting(record.key_id);
+  const secretRef = stringSetting(record.secret_ref);
+  if (!id || !endpointURL || !connectorID || !keyID || !secretRef) {
+    return null;
+  }
+
+  const timeoutRecord =
+    record.timeouts && typeof record.timeouts === 'object' && !Array.isArray(record.timeouts)
+      ? (record.timeouts as Record<string, unknown>)
+      : {};
+  const requestMS = numberSetting(timeoutRecord.request_ms);
+  const attributeNames = stringArraySetting(record.attribute_names);
+  return {
+    id,
+    endpoint_url: endpointURL,
+    auth_mode: authMode,
+    connector_id: connectorID,
+    key_id: keyID,
+    secret_ref: secretRef,
+    timeouts: requestMS ? { request_ms: requestMS } : undefined,
+    attribute_names: attributeNames,
+  };
+}
+
 async function readTenantSettings(
   env: Env,
   tenantId: string,
-  category: string
+  category: string,
+  options: { preferSettings?: boolean } = {}
 ): Promise<DirectoryConnectorKVSettings | null> {
   const key = `settings:tenant:${tenantId}:${category}`;
+  const first = options.preferSettings ? env.SETTINGS : env.AUTHRIM_CONFIG;
+  const second = options.preferSettings ? env.AUTHRIM_CONFIG : env.SETTINGS;
   const raw =
-    (await env.AUTHRIM_CONFIG?.get(key).catch(() => null)) ??
-    (await env.SETTINGS?.get(key).catch(() => null));
+    (await first?.get(key).catch(() => null)) ?? (await second?.get(key).catch(() => null));
   if (!raw) return null;
   try {
     return JSON.parse(raw) as DirectoryConnectorKVSettings;

@@ -16703,6 +16703,91 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryConnectors
+      summary: Get tenant directory connectors
+      description: Returns Wordwarden Directory Connector configuration for LDAP/AD password verification.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectors'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Tenants
+      operationId: putApiAdminTenantsByTenantIdDirectoryConnectors
+      summary: Update tenant directory connectors
+      description: Updates Wordwarden Directory Connector configuration for a tenant.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectors'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: '#/components/requestBodies/TenantDirectoryConnectorsUpdate'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/health':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdHealth
+      summary: Check directory connector health
+      description: Calls the configured connector `/healthz` endpoint and returns the check result.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectorHealth'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/TenantDirectoryConnectorHealth'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/token-claim-rules:
     get:
       tags:
@@ -26010,6 +26095,26 @@ components:
             providerOrder:
               - notifier-resend
               - notifier-sendgrid
+    TenantDirectoryConnectorsUpdate:
+      required: true
+      description: Directory connector configuration.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorsConfig'
+          example:
+            connectors:
+              - id: campus
+                endpoint_url: 'https://wordwarden.example.com'
+                auth_mode: hmac
+                connector_id: ww_tenant_a
+                key_id: kid-active
+                secret_ref: env:WORDWARDEN_SECRET
+                timeouts:
+                  request_ms: 2500
+                attribute_names:
+                  - mail
+                  - displayName
     TokenClaimRuleCreate:
       required: true
       content:
@@ -33055,6 +33160,38 @@ components:
                 configured: true
                 missingRequiredFields: []
                 defaultFrom: no-reply@example.com
+    TenantDirectoryConnectors:
+      description: Directory connector configuration for a tenant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorsResponse'
+          example:
+            tenantId: tenant_123
+            connectors:
+              - id: campus
+                endpoint_url: 'https://wordwarden.example.com'
+                auth_mode: hmac
+                connector_id: ww_tenant_a
+                key_id: kid-active
+                secret_ref: env:WORDWARDEN_SECRET
+                timeouts:
+                  request_ms: 2500
+                attribute_names:
+                  - mail
+                  - displayName
+    TenantDirectoryConnectorHealth:
+      description: Directory connector health check result.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorHealthResponse'
+          example:
+            ok: true
+            connector_id: campus
+            status: 200
+            body:
+              ok: true
     TokenClaimRuleList:
       description: Token claim rules for the tenant.
       content:
@@ -53652,6 +53789,102 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EmailProvider'
+    TenantDirectoryConnectorTimeouts:
+      type: object
+      additionalProperties: false
+      required:
+        - request_ms
+      properties:
+        request_ms:
+          type: integer
+          minimum: 100
+          maximum: 30000
+    TenantDirectoryConnector:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - endpoint_url
+        - auth_mode
+        - connector_id
+        - key_id
+        - secret_ref
+        - timeouts
+        - attribute_names
+      properties:
+        id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        endpoint_url:
+          type: string
+          format: uri
+          maxLength: 2048
+        auth_mode:
+          type: string
+          enum:
+            - hmac
+        connector_id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        key_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        secret_ref:
+          type: string
+          pattern: '^env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+$'
+        timeouts:
+          $ref: '#/components/schemas/TenantDirectoryConnectorTimeouts'
+        attribute_names:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+    TenantDirectoryConnectorsConfig:
+      type: object
+      additionalProperties: false
+      required:
+        - connectors
+      properties:
+        connectors:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/TenantDirectoryConnector'
+    TenantDirectoryConnectorsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - connectors
+      properties:
+        tenantId:
+          type: string
+        connectors:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/TenantDirectoryConnector'
+    TenantDirectoryConnectorHealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - connector_id
+      properties:
+        ok:
+          type: boolean
+        connector_id:
+          type: string
+        status:
+          type: integer
+        body: {}
+        error:
+          type: string
+        error_description:
+          type: string
     TokenClaimCondition:
       type: object
       additionalProperties: true

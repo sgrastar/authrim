@@ -812,6 +812,11 @@ import {
   getTenantEmailSettingsHandler,
   updateTenantEmailSettingsHandler,
 } from './routes/email-settings';
+import {
+  checkDirectoryConnectorHealthHandler,
+  getDirectoryConnectorsHandler,
+  updateDirectoryConnectorsHandler,
+} from './routes/directory-connectors';
 
 const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
 
@@ -1420,6 +1425,12 @@ app.get('/api/admin/tenants/:id/invitations', listTenantInvitationsHandler);
 app.delete('/api/admin/tenants/:id/invitations/:inv_id', cancelTenantInvitationHandler);
 app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHandler);
 app.patch('/api/admin/tenants/:tenantId/email-settings', updateTenantEmailSettingsHandler);
+app.get('/api/admin/tenants/:tenantId/directory-connectors', getDirectoryConnectorsHandler);
+app.put('/api/admin/tenants/:tenantId/directory-connectors', updateDirectoryConnectorsHandler);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/health',
+  checkDirectoryConnectorHealthHandler
+);
 
 // Platform Tenant Domain Mappings API (system_admin only)
 // - GET    /api/admin/platform/tenant-domain-mappings        - List mappings

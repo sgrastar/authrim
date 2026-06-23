@@ -788,6 +788,10 @@ type RootTranslation = {
 	 */
 	admin_nav_saml: string
 	/**
+	 * D​i​r​e​c​t​o​r​y​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	admin_nav_directory_authentication: string
+	/**
 	 * C​o​n​s​e​n​t​s
 	 */
 	admin_nav_consents: string
@@ -4382,6 +4386,192 @@ type RootTranslation = {
 	 * H​i​g​h​e​r​ ​p​r​i​o​r​i​t​y​ ​p​r​o​v​i​d​e​r​s​ ​a​r​e​ ​s​h​o​w​n​ ​f​i​r​s​t
 	 */
 	admin_external_idp_priority_hint: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 */
+	admin_directory_authentication_page_title: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	admin_directory_authentication_title: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​D​i​r​e​c​t​o​r​y​ ​C​o​n​n​e​c​t​o​r​s​ ​u​s​e​d​ ​f​o​r​ ​L​D​A​P​/​A​D​ ​p​a​s​s​w​o​r​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​.
+	 */
+	admin_directory_authentication_description: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​d​i​r​e​c​t​o​r​y​ ​c​o​n​n​e​c​t​o​r​s
+	 */
+	admin_directory_authentication_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​d​i​r​e​c​t​o​r​y​ ​c​o​n​n​e​c​t​o​r​s
+	 */
+	admin_directory_authentication_save_failed: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​c​o​n​n​e​c​t​o​r​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
+	 */
+	admin_directory_authentication_saved: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​e​n​a​n​t​ ​t​o​ ​m​a​n​a​g​e​ ​d​i​r​e​c​t​o​r​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	admin_directory_authentication_select_tenant: string
+	/**
+	 * L​o​a​d​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​c​o​n​n​e​c​t​o​r​s​.​.​.
+	 */
+	admin_directory_authentication_loading: string
+	/**
+	 * A​d​d​ ​C​o​n​n​e​c​t​o​r
+	 */
+	admin_directory_authentication_add_connector: string
+	/**
+	 * S​a​v​e
+	 */
+	admin_directory_authentication_save: string
+	/**
+	 * S​a​v​i​n​g​.​.​.
+	 */
+	admin_directory_authentication_saving: string
+	/**
+	 * D​i​s​c​a​r​d
+	 */
+	admin_directory_authentication_discard: string
+	/**
+	 * N​o​ ​d​i​r​e​c​t​o​r​y​ ​c​o​n​n​e​c​t​o​r​s​ ​c​o​n​f​i​g​u​r​e​d​.
+	 */
+	admin_directory_authentication_empty: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​s
+	 */
+	admin_directory_authentication_connectors_title: string
+	/**
+	 * A​u​t​h​r​i​m​ ​s​e​n​d​s​ ​p​a​s​s​w​o​r​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​r​e​q​u​e​s​t​s​ ​t​o​ ​t​h​e​s​e​ ​W​o​r​d​w​a​r​d​e​n​ ​e​n​d​p​o​i​n​t​s​.
+	 */
+	admin_directory_authentication_connectors_description: string
+	/**
+	 * R​e​m​o​v​e
+	 */
+	admin_directory_authentication_remove: string
+	/**
+	 * C​h​e​c​k​ ​H​e​a​l​t​h
+	 */
+	admin_directory_authentication_check_health: string
+	/**
+	 * C​h​e​c​k​i​n​g​.​.​.
+	 */
+	admin_directory_authentication_checking_health: string
+	/**
+	 * H​e​a​l​t​h​y
+	 */
+	admin_directory_authentication_health_ok: string
+	/**
+	 * H​e​a​l​t​h​ ​c​h​e​c​k​ ​f​a​i​l​e​d
+	 */
+	admin_directory_authentication_health_failed: string
+	/**
+	 * H​T​T​P​ ​{​s​t​a​t​u​s​}
+	 * @param {number} status
+	 */
+	admin_directory_authentication_health_status: RequiredParams<'status'>
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​I​D
+	 */
+	admin_directory_authentication_id: string
+	/**
+	 * E​n​d​p​o​i​n​t​ ​U​R​L
+	 */
+	admin_directory_authentication_endpoint_url: string
+	/**
+	 * W​o​r​d​w​a​r​d​e​n​ ​T​e​n​a​n​t​ ​I​D
+	 */
+	admin_directory_authentication_connector_id: string
+	/**
+	 * K​e​y​ ​I​D
+	 */
+	admin_directory_authentication_key_id: string
+	/**
+	 * S​e​c​r​e​t​ ​R​e​f​e​r​e​n​c​e
+	 */
+	admin_directory_authentication_secret_ref: string
+	/**
+	 * T​i​m​e​o​u​t​ ​(​m​s​)
+	 */
+	admin_directory_authentication_timeout_ms: string
+	/**
+	 * L​D​A​P​ ​A​t​t​r​i​b​u​t​e​s
+	 */
+	admin_directory_authentication_attributes: string
+	/**
+	 * A​u​t​h​ ​M​o​d​e
+	 */
+	admin_directory_authentication_auth_mode: string
+	/**
+	 * H​M​A​C
+	 */
+	admin_directory_authentication_hmac: string
+	/**
+	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​a​t​t​r​i​b​u​t​e​ ​n​a​m​e​s​.
+	 */
+	admin_directory_authentication_attributes_hint: string
+	/**
+	 * U​s​e​ ​e​n​v​:​W​O​R​D​W​A​R​D​E​N​_​*​ ​o​r​ ​e​n​v​:​A​U​T​H​R​I​M​_​W​O​R​D​W​A​R​D​E​N​_​*​.
+	 */
+	admin_directory_authentication_secret_hint: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_directory_authentication_validation_id_required: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​I​D​ ​c​a​n​ ​c​o​n​t​a​i​n​ ​l​e​t​t​e​r​s​,​ ​n​u​m​b​e​r​s​,​ ​u​n​d​e​r​s​c​o​r​e​s​,​ ​a​n​d​ ​h​y​p​h​e​n​s​.
+	 */
+	admin_directory_authentication_validation_id_format: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​I​D​ ​m​u​s​t​ ​b​e​ ​u​n​i​q​u​e​.
+	 */
+	admin_directory_authentication_validation_id_unique: string
+	/**
+	 * E​n​d​p​o​i​n​t​ ​U​R​L​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_directory_authentication_validation_endpoint_required: string
+	/**
+	 * E​n​d​p​o​i​n​t​ ​U​R​L​ ​m​u​s​t​ ​u​s​e​ ​H​T​T​P​S​ ​e​x​c​e​p​t​ ​l​o​o​p​b​a​c​k​ ​H​T​T​P​ ​f​o​r​ ​l​o​c​a​l​ ​d​e​v​e​l​o​p​m​e​n​t​.
+	 */
+	admin_directory_authentication_validation_endpoint_https: string
+	/**
+	 * W​o​r​d​w​a​r​d​e​n​ ​T​e​n​a​n​t​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_directory_authentication_validation_connector_id_required: string
+	/**
+	 * K​e​y​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_directory_authentication_validation_key_id_required: string
+	/**
+	 * S​e​c​r​e​t​ ​R​e​f​e​r​e​n​c​e​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_directory_authentication_validation_secret_required: string
+	/**
+	 * S​e​c​r​e​t​ ​R​e​f​e​r​e​n​c​e​ ​m​u​s​t​ ​u​s​e​ ​e​n​v​:​W​O​R​D​W​A​R​D​E​N​_​*​ ​o​r​ ​e​n​v​:​A​U​T​H​R​I​M​_​W​O​R​D​W​A​R​D​E​N​_​*​.
+	 */
+	admin_directory_authentication_validation_secret_format: string
+	/**
+	 * T​i​m​e​o​u​t​ ​m​u​s​t​ ​b​e​ ​b​e​t​w​e​e​n​ ​1​0​0​ ​a​n​d​ ​3​0​0​0​0​ ​m​s​.
+	 */
+	admin_directory_authentication_validation_timeout: string
+	/**
+	 * L​D​A​P​ ​A​t​t​r​i​b​u​t​e​s​ ​c​a​n​ ​c​o​n​t​a​i​n​ ​u​p​ ​t​o​ ​3​2​ ​n​a​m​e​s​.
+	 */
+	admin_directory_authentication_validation_attributes: string
+	/**
+	 * T​e​n​a​n​t
+	 */
+	admin_directory_authentication_tenant: string
+	/**
+	 * N​o​t​ ​s​e​l​e​c​t​e​d
+	 */
+	admin_directory_authentication_not_selected: string
+	/**
+	 * {​c​o​u​n​t​}​ ​c​o​n​n​e​c​t​o​r​s
+	 * @param {number} count
+	 */
+	admin_directory_authentication_count: RequiredParams<'count'>
 	/**
 	 * S​A​M​L​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -28656,6 +28846,10 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_saml: () => LocalizedString
 	/**
+	 * Directory Authentication
+	 */
+	admin_nav_directory_authentication: () => LocalizedString
+	/**
 	 * Consents
 	 */
 	admin_nav_consents: () => LocalizedString
@@ -32195,6 +32389,190 @@ export type TranslationFunctions = {
 	 * Higher priority providers are shown first
 	 */
 	admin_external_idp_priority_hint: () => LocalizedString
+	/**
+	 * Directory Authentication - Authrim Admin
+	 */
+	admin_directory_authentication_page_title: () => LocalizedString
+	/**
+	 * Directory Authentication
+	 */
+	admin_directory_authentication_title: () => LocalizedString
+	/**
+	 * Configure Directory Connectors used for LDAP/AD password verification.
+	 */
+	admin_directory_authentication_description: () => LocalizedString
+	/**
+	 * Failed to load directory connectors
+	 */
+	admin_directory_authentication_load_failed: () => LocalizedString
+	/**
+	 * Failed to save directory connectors
+	 */
+	admin_directory_authentication_save_failed: () => LocalizedString
+	/**
+	 * Directory connector settings saved.
+	 */
+	admin_directory_authentication_saved: () => LocalizedString
+	/**
+	 * Select a tenant to manage directory authentication.
+	 */
+	admin_directory_authentication_select_tenant: () => LocalizedString
+	/**
+	 * Loading directory connectors...
+	 */
+	admin_directory_authentication_loading: () => LocalizedString
+	/**
+	 * Add Connector
+	 */
+	admin_directory_authentication_add_connector: () => LocalizedString
+	/**
+	 * Save
+	 */
+	admin_directory_authentication_save: () => LocalizedString
+	/**
+	 * Saving...
+	 */
+	admin_directory_authentication_saving: () => LocalizedString
+	/**
+	 * Discard
+	 */
+	admin_directory_authentication_discard: () => LocalizedString
+	/**
+	 * No directory connectors configured.
+	 */
+	admin_directory_authentication_empty: () => LocalizedString
+	/**
+	 * Connectors
+	 */
+	admin_directory_authentication_connectors_title: () => LocalizedString
+	/**
+	 * Authrim sends password verification requests to these Wordwarden endpoints.
+	 */
+	admin_directory_authentication_connectors_description: () => LocalizedString
+	/**
+	 * Remove
+	 */
+	admin_directory_authentication_remove: () => LocalizedString
+	/**
+	 * Check Health
+	 */
+	admin_directory_authentication_check_health: () => LocalizedString
+	/**
+	 * Checking...
+	 */
+	admin_directory_authentication_checking_health: () => LocalizedString
+	/**
+	 * Healthy
+	 */
+	admin_directory_authentication_health_ok: () => LocalizedString
+	/**
+	 * Health check failed
+	 */
+	admin_directory_authentication_health_failed: () => LocalizedString
+	/**
+	 * HTTP {status}
+	 */
+	admin_directory_authentication_health_status: (arg: { status: number }) => LocalizedString
+	/**
+	 * Connector ID
+	 */
+	admin_directory_authentication_id: () => LocalizedString
+	/**
+	 * Endpoint URL
+	 */
+	admin_directory_authentication_endpoint_url: () => LocalizedString
+	/**
+	 * Wordwarden Tenant ID
+	 */
+	admin_directory_authentication_connector_id: () => LocalizedString
+	/**
+	 * Key ID
+	 */
+	admin_directory_authentication_key_id: () => LocalizedString
+	/**
+	 * Secret Reference
+	 */
+	admin_directory_authentication_secret_ref: () => LocalizedString
+	/**
+	 * Timeout (ms)
+	 */
+	admin_directory_authentication_timeout_ms: () => LocalizedString
+	/**
+	 * LDAP Attributes
+	 */
+	admin_directory_authentication_attributes: () => LocalizedString
+	/**
+	 * Auth Mode
+	 */
+	admin_directory_authentication_auth_mode: () => LocalizedString
+	/**
+	 * HMAC
+	 */
+	admin_directory_authentication_hmac: () => LocalizedString
+	/**
+	 * Comma-separated attribute names.
+	 */
+	admin_directory_authentication_attributes_hint: () => LocalizedString
+	/**
+	 * Use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.
+	 */
+	admin_directory_authentication_secret_hint: () => LocalizedString
+	/**
+	 * Connector ID is required.
+	 */
+	admin_directory_authentication_validation_id_required: () => LocalizedString
+	/**
+	 * Connector ID can contain letters, numbers, underscores, and hyphens.
+	 */
+	admin_directory_authentication_validation_id_format: () => LocalizedString
+	/**
+	 * Connector ID must be unique.
+	 */
+	admin_directory_authentication_validation_id_unique: () => LocalizedString
+	/**
+	 * Endpoint URL is required.
+	 */
+	admin_directory_authentication_validation_endpoint_required: () => LocalizedString
+	/**
+	 * Endpoint URL must use HTTPS except loopback HTTP for local development.
+	 */
+	admin_directory_authentication_validation_endpoint_https: () => LocalizedString
+	/**
+	 * Wordwarden Tenant ID is required.
+	 */
+	admin_directory_authentication_validation_connector_id_required: () => LocalizedString
+	/**
+	 * Key ID is required.
+	 */
+	admin_directory_authentication_validation_key_id_required: () => LocalizedString
+	/**
+	 * Secret Reference is required.
+	 */
+	admin_directory_authentication_validation_secret_required: () => LocalizedString
+	/**
+	 * Secret Reference must use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.
+	 */
+	admin_directory_authentication_validation_secret_format: () => LocalizedString
+	/**
+	 * Timeout must be between 100 and 30000 ms.
+	 */
+	admin_directory_authentication_validation_timeout: () => LocalizedString
+	/**
+	 * LDAP Attributes can contain up to 32 names.
+	 */
+	admin_directory_authentication_validation_attributes: () => LocalizedString
+	/**
+	 * Tenant
+	 */
+	admin_directory_authentication_tenant: () => LocalizedString
+	/**
+	 * Not selected
+	 */
+	admin_directory_authentication_not_selected: () => LocalizedString
+	/**
+	 * {count} connectors
+	 */
+	admin_directory_authentication_count: (arg: { count: number }) => LocalizedString
 	/**
 	 * SAML - Admin Dashboard - Authrim
 	 */

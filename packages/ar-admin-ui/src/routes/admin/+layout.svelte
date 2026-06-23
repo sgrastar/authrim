@@ -95,6 +95,11 @@
 				icon: 'i-ph-arrows-clockwise'
 			},
 			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
+			{
+				path: '/admin/directory-authentication',
+				label: $LL.admin_nav_directory_authentication(),
+				icon: 'i-ph-tree-structure'
+			},
 			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
 			{
 				path: '/admin/consent-policies',

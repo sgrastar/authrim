@@ -7,6 +7,7 @@ import adminAccount from './admin-account';
 import adminUsers from './admin-users';
 import adminClients from './admin-clients';
 import adminExternalIdp from './admin-external-idp';
+import adminDirectoryAuthentication from './admin-directory-authentication';
 import adminSaml from './admin-saml';
 import adminDrBackup from './admin-dr-backup';
 import adminScale from './admin-scale';
@@ -62,6 +63,7 @@ const ja: Translation = {
 	...adminUsers,
 	...adminClients,
 	...adminExternalIdp,
+	...adminDirectoryAuthentication,
 	...adminSaml,
 	...adminDrBackup,
 	...adminScale,
