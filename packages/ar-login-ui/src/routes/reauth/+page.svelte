@@ -10,6 +10,10 @@
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { startAuthentication } from '@simplewebauthn/browser';
+	import {
+		signalUnknownCredential,
+		shouldSignalUnknownCredentialAfterLoginFailure
+	} from '$lib/webauthn/signal';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -213,6 +217,9 @@
 			});
 
 			if (verifyError) {
+				if (shouldSignalUnknownCredentialAfterLoginFailure(verifyError)) {
+					await signalUnknownCredential(credential.id);
+				}
 				throw new Error(verifyError.error_description || 'Authentication failed');
 			}
 

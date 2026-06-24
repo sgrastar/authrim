@@ -279,6 +279,7 @@ interface RegistrationInfoCompat {
   credentialID?: Uint8Array;
   credentialPublicKey?: Uint8Array;
   counter?: number;
+  aaguid?: string;
   credential?: {
     id: Uint8Array;
     publicKey: Uint8Array;
@@ -1049,7 +1050,13 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         } satisfies AuthEventData,
       }).catch(() => {});
 
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
+        extensions: {
+          webauthn_signal: {
+            unknown_credential: true,
+          },
+        },
+      });
     }
 
     // Verify authentication response
@@ -1557,6 +1564,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       counter,
       transports: (credential.response.transports || []) as AuthenticatorTransport[],
       device_name: 'Direct Auth Passkey',
+      aaguid: regInfo.aaguid ?? null,
     });
 
     const now = Date.now();
@@ -2785,6 +2793,7 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
       counter,
       transports,
       device_name: device_name || challengeData.metadata?.display_name || 'Additional Passkey',
+      aaguid: regInfo.aaguid ?? null,
     });
 
     // Clean up challenge mapping

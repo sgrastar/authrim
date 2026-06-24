@@ -21,6 +21,7 @@ import type {
   HealthStatus,
 } from '../../core/types';
 import { CapabilityRegistry } from '../../core/registry';
+import { secretField } from '../../core/security';
 import { NOTIFIER_SECURITY_DEFAULTS, renderTemplate } from './types';
 
 const MAX_RESEND_HEALTH_RESPONSE_BYTES = 64 * 1024;
@@ -38,10 +39,12 @@ const MAX_RESEND_ERROR_RESPONSE_BYTES = 16 * 1024;
  * Each field uses .describe() for Admin UI display.
  */
 export const ResendNotifierConfigSchema = z.object({
-  apiKey: z
-    .string()
-    .min(1, 'API key is required')
-    .describe('Resend API key (starts with re_). Obtain from Resend dashboard'),
+  apiKey: secretField(
+    z
+      .string()
+      .min(1, 'API key is required')
+      .describe('Resend API key (starts with re_). Obtain from Resend dashboard')
+  ),
 
   defaultFrom: z
     .string()

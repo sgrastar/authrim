@@ -15,6 +15,10 @@
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import {
+		signalUnknownCredential,
+		shouldSignalUnknownCredentialAfterRegistrationFailure
+	} from '$lib/webauthn/signal';
+	import {
 		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 		LOGIN_UI_SESSION_STORAGE_KEYS,
 		removeLoginUiSessionItems,
@@ -388,6 +392,9 @@
 			});
 
 			if (verifyError) {
+				if (shouldSignalUnknownCredentialAfterRegistrationFailure(verifyError)) {
+					await signalUnknownCredential(credential.id);
+				}
 				throw new Error(getApiErrorMessage(verifyError));
 			}
 

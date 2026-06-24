@@ -25,6 +25,10 @@
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
+	import {
+		signalUnknownCredential,
+		shouldSignalUnknownCredentialAfterLoginFailure
+	} from '$lib/webauthn/signal';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
@@ -399,6 +403,9 @@
 			});
 
 			if (verifyError) {
+				if (shouldSignalUnknownCredentialAfterLoginFailure(verifyError)) {
+					await signalUnknownCredential(credential.id);
+				}
 				throw new Error(getApiErrorMessage(verifyError));
 			}
 

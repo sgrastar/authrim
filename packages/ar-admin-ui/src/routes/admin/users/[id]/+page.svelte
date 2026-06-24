@@ -608,6 +608,10 @@
 		return getLocale() === 'ja' ? '同期型' : 'Synced';
 	}
 
+	function passkeyProviderIcon(passkey: NonNullable<User['passkeys']>[number]): string | null {
+		return passkey.provider?.icon_light ?? passkey.provider?.icon_dark ?? null;
+	}
+
 	function fallbackMethodDescription(target: User): string {
 		const email = sanitizeText(target.email || '-');
 		return getLocale() === 'ja'
@@ -1153,6 +1157,14 @@
 										<div class="cell-primary">
 											{sanitizeText(passkey.device_name || $LL.admin_user_detail_unnamed_device())}
 										</div>
+										{#if passkey.provider?.name || passkey.aaguid}
+											<div class="passkey-provider">
+												{#if passkeyProviderIcon(passkey)}
+													<img src={passkeyProviderIcon(passkey) ?? ''} alt="" loading="lazy" />
+												{/if}
+												<span>{sanitizeText(passkey.provider?.name ?? passkey.aaguid ?? '-')}</span>
+											</div>
+										{/if}
 										<div class="cell-secondary mono">{passkey.id}</div>
 									</td>
 									<td class="muted">Passkey / WebAuthn</td>
@@ -1894,6 +1906,22 @@
 		color: var(--color-text-subtle);
 		font-family: var(--font-meta, var(--font-mono, monospace));
 		font-size: 0.72rem;
+	}
+
+	.passkey-provider {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+
+	.passkey-provider img {
+		width: 18px;
+		height: 18px;
+		border-radius: 4px;
+		object-fit: contain;
 	}
 
 	.user-detail-form-actions {

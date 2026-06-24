@@ -951,6 +951,9 @@ export function generateEnvVars(
   if (componentSecrets.includes('KEY_MANAGER_SECRET')) {
     vars['KEY_MANAGER_SECRET'] = ''; // Set via secret
   }
+  if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
+    vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
+  }
   if (componentSecrets.includes('VERSION_MANAGER_SECRET')) {
     vars['VERSION_MANAGER_SECRET'] = ''; // Set via secret
   }

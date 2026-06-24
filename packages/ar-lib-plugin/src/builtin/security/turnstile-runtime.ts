@@ -21,7 +21,6 @@ type HumanVerificationProvider = 'turnstile' | 'hcaptcha' | 'recaptcha';
 interface HumanVerificationRuntimeEnv {
   SETTINGS?: KVNamespace;
   PLUGIN_ENCRYPTION_KEY?: string;
-  KEY_MANAGER_SECRET?: string;
 }
 
 interface AuthenticationMethodKVSettings {
@@ -127,8 +126,12 @@ async function decryptConfigIfNeeded(
     const key = await getPluginEncryptionKey(env);
     return await decryptSecretFields(encrypted, key);
   } catch {
-    const { _encrypted, ...rest } = config as EncryptedConfig;
-    return rest;
+    const encryptedFields = new Set(encrypted._encrypted);
+    return Object.fromEntries(
+      Object.entries(config).filter(
+        ([field]) => field !== '_encrypted' && !encryptedFields.has(field)
+      )
+    );
   }
 }
 

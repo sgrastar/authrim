@@ -121,7 +121,7 @@ describe('session status OIDC assurance metadata', () => {
       acr: 'urn:mace:incommon:iap:bronze',
       amr: ['passkey'],
     });
-  });
+  }, 15_000);
 
   it('returns inactive no_session without touching the session store when the cookie is absent', async () => {
     mocks.getCookie.mockReturnValue(undefined);

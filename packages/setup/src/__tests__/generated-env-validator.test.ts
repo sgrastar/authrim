@@ -75,6 +75,7 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
     objectEncryptionRootKey: 'b'.repeat(64),
     versionManagerSecret: 'fixture_version_manager_secret_123',
     loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
+    pluginEncryptionKey: 'c'.repeat(64),
     adminApiSecret: 'fixture_admin_api_secret_123456',
     keyManagerSecret: 'fixture_key_manager_secret_1234',
     setupToken: 'fixture_setup_token_1234567890',

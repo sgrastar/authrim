@@ -16,6 +16,12 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { auth } from '$lib/stores/auth';
+	import {
+		signalAllAcceptedCredentials,
+		signalCurrentUserDetails,
+		signalUnknownCredential,
+		shouldSignalUnknownCredentialAfterRegistrationFailure
+	} from '$lib/webauthn/signal';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
@@ -91,6 +97,10 @@
 		sessions = sessionsResult.data?.sessions ?? [];
 		passkeys = passkeysResult.data?.passkeys ?? [];
 		operations = operationsResult.data?.operations ?? [];
+		await Promise.all([
+			signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal),
+			signalCurrentUserDetails(profile)
+		]);
 		if (
 			devicesResult.error ||
 			sessionsResult.error ||
@@ -122,6 +132,7 @@
 			sessions = sessionsResult.data?.sessions ?? sessions;
 			passkeys = passkeysResult.data?.passkeys ?? passkeys;
 			operations = operationsResult.data?.operations ?? operations;
+			await signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
 			securityError =
 				devicesResult.error?.error_description ||
 				sessionsResult.error?.error_description ||
@@ -160,6 +171,7 @@
 			profile = result.data?.profile ?? profile;
 			profileSaved = true;
 			await auth.refreshFromSession();
+			await signalCurrentUserDetails(profile);
 			await refreshSecurity();
 		} finally {
 			profileSaving = false;
@@ -213,12 +225,16 @@
 				deviceName.trim()
 			);
 			if (completeResult.error) {
+				if (shouldSignalUnknownCredentialAfterRegistrationFailure(completeResult.error)) {
+					await signalUnknownCredential(credential.id);
+				}
 				securityError = handleApiError(
 					completeResult.error.error_description,
 					$LL.account_actionFailed()
 				);
 				return;
 			}
+			await signalAllAcceptedCredentials(completeResult.data?.webauthn_signal);
 			await refreshSecurity();
 		} catch (error) {
 			securityError = error instanceof Error ? error.message : $LL.account_actionFailed();
@@ -245,6 +261,7 @@
 				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
 				return;
 			}
+			await signalAllAcceptedCredentials(result.data?.webauthn_signal);
 			await refreshSecurity();
 		} finally {
 			actionLoading = '';

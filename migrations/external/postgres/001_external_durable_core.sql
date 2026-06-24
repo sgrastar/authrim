@@ -306,6 +306,7 @@ CREATE TABLE IF NOT EXISTS passkeys (
   counter BIGINT NOT NULL DEFAULT 0,
   transports TEXT,
   device_name TEXT,
+  aaguid TEXT,
   created_at BIGINT NOT NULL,
   last_used_at BIGINT,
   CONSTRAINT passkeys_unique_credential UNIQUE(tenant_id, credential_id)

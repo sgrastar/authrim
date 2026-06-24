@@ -1037,6 +1037,7 @@ export class PasskeyStore implements IPasskeyStore {
       counter: passkey.counter || 0,
       transports: passkey.transports,
       device_name: passkey.device_name,
+      aaguid: passkey.aaguid ?? null,
       created_at: now,
       last_used_at: passkey.last_used_at,
     };
@@ -1044,8 +1045,8 @@ export class PasskeyStore implements IPasskeyStore {
     await this.adapter.execute(
       `INSERT INTO passkeys (
         id, tenant_id, user_id, credential_id, public_key, counter, transports,
-        device_name, created_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        device_name, aaguid, created_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newPasskey.id,
         tenantId,
@@ -1055,6 +1056,7 @@ export class PasskeyStore implements IPasskeyStore {
         newPasskey.counter,
         newPasskey.transports ? JSON.stringify(newPasskey.transports) : null,
         newPasskey.device_name,
+        newPasskey.aaguid,
         newPasskey.created_at,
         newPasskey.last_used_at,
       ]

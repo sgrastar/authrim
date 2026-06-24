@@ -91,6 +91,7 @@ interface RegistrationInfoCompat {
   credentialID?: Uint8Array;
   credentialPublicKey?: Uint8Array;
   counter?: number;
+  aaguid?: string;
   credential?: {
     id: Uint8Array;
     publicKey: Uint8Array;
@@ -469,7 +470,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         action: 'register_verify',
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
+        extensions: {
+          webauthn_signal: {
+            unknown_credential: true,
+          },
+        },
+      });
     }
 
     const { verified, registrationInfo } = verification;
@@ -535,6 +542,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       counter,
       transports: (credential.response.transports || []) as AuthenticatorTransport[],
       device_name: deviceName || 'Unknown Device',
+      aaguid: regInfo.aaguid ?? null,
     });
 
     // Registering a passkey proves possession of the authenticator, not the email address.

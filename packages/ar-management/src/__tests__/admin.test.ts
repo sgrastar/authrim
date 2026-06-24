@@ -55,6 +55,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
+      aaguid
+        ? {
+            aaguid,
+            name: 'Windows Hello',
+            icon_dark: null,
+            icon_light: 'data:image/svg+xml;base64,light',
+            known: true,
+          }
+        : null
+    ),
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',

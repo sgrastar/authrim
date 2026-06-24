@@ -42,6 +42,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { deriveEncryptionKey, encryptSecretFields } from '@authrim/ar-lib-plugin';
 import { getAuthenticationMethodsHandler } from '../authentication-methods';
 
 // =============================================================================
@@ -518,6 +519,41 @@ describe('Authentication Methods API', () => {
         },
       });
       expect(JSON.stringify(body)).not.toContain('hcaptcha-secret-key');
+    });
+
+    it('should not expose hCaptcha as configured when the encrypted secret cannot be decrypted', async () => {
+      const encryptionKey = await deriveEncryptionKey('a'.repeat(32));
+      const encryptedConfig = await encryptSecretFields(
+        {
+          siteKey: 'hcaptcha-site-key',
+          secretKey: 'hcaptcha-secret-key',
+        },
+        ['secretKey'],
+        encryptionKey
+      );
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+          'authentication-methods.human_verification.signup_enabled': true,
+        }),
+        'plugins:enabled:human-verification-hcaptcha:tenant:default': 'true',
+        'plugins:config:human-verification-hcaptcha:tenant:default':
+          JSON.stringify(encryptedConfig),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.methods.humanVerification).toMatchObject({
+        enabled: true,
+        provider: 'hcaptcha',
+        siteKey: null,
+        signupEnabled: true,
+      });
+      expect(JSON.stringify(body)).not.toContain('hcaptcha-secret-key');
+      expect(JSON.stringify(body)).not.toContain('enc:v1');
     });
   });
 

@@ -10,6 +10,14 @@
 
 import { API_BASE_URL, adminFetch } from './admin-request';
 
+export interface PasskeyProvider {
+	aaguid: string;
+	name: string | null;
+	icon_dark: string | null;
+	icon_light: string | null;
+	known: boolean;
+}
+
 /**
  * User entity
  */
@@ -41,6 +49,8 @@ export interface User {
 	passkeys?: Array<{
 		id: string;
 		device_name: string | null;
+		aaguid: string | null;
+		provider: PasskeyProvider | null;
 		created_at: number;
 		last_used_at: number | null;
 	}>;

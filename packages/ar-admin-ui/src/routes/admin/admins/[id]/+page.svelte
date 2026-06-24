@@ -325,6 +325,10 @@
 		return adminUser.roles.some((role) => role.name === 'super_admin');
 	}
 
+	function passkeyProviderIcon(passkey: AdminUserDetail['passkeys'][number]): string | null {
+		return passkey.provider?.icon_light ?? passkey.provider?.icon_dark ?? null;
+	}
+
 	// Filter available roles to exclude already assigned ones
 	let assignableRoles = $derived(
 		availableRoles.filter((r) => !admin?.roles.some((ar) => ar.role_id === r.id))
@@ -487,6 +491,48 @@
 							<span class="info-value">{formatDate(admin.updated_at)}</span>
 						</div>
 					</div>
+				</div>
+			</div>
+
+			<!-- Passkeys Card -->
+			<div class="card full-width">
+				<div class="card-header">
+					<h2>{$LL.admin_admins_passkeys()}</h2>
+				</div>
+				<div class="card-body">
+					{#if admin.passkeys.length === 0}
+						<p class="text-muted">{$LL.admin_account_no_passkeys()}</p>
+					{:else}
+						<div class="admin-passkeys-list">
+							{#each admin.passkeys as passkey (passkey.id)}
+								<div class="admin-passkey-item">
+									<div class="admin-passkey-icon">
+										{#if passkeyProviderIcon(passkey)}
+											<img src={passkeyProviderIcon(passkey) ?? ''} alt="" loading="lazy" />
+										{:else}
+											<i class="i-ph-key"></i>
+										{/if}
+									</div>
+									<div class="admin-passkey-info">
+										<span class="admin-passkey-name">
+											{passkey.device_name || $LL.admin_account_unnamed_passkey()}
+										</span>
+										{#if passkey.provider?.name || passkey.aaguid}
+											<span class="admin-passkey-provider">
+												{passkey.provider?.name ?? passkey.aaguid}
+											</span>
+										{/if}
+										<span class="text-muted">
+											{$LL.admin_account_passkey_meta({
+												created: formatDate(passkey.created_at),
+												lastUsed: formatDate(passkey.last_used_at)
+											})}
+										</span>
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			</div>
 
@@ -792,6 +838,66 @@
 		align-items: flex-end;
 		font-size: 0.75rem;
 		gap: 0.25rem;
+	}
+
+	.admin-passkeys-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.admin-passkey-item {
+		display: flex;
+		align-items: center;
+		gap: 0.875rem;
+		padding: 0.75rem;
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
+	}
+
+	.admin-passkey-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+		flex-shrink: 0;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+	}
+
+	.admin-passkey-icon img {
+		width: 24px;
+		height: 24px;
+		object-fit: contain;
+	}
+
+	.admin-passkey-icon :global(i) {
+		width: 22px;
+		height: 22px;
+		color: var(--color-accent);
+	}
+
+	.admin-passkey-info {
+		display: flex;
+		min-width: 0;
+		flex: 1;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.admin-passkey-name {
+		font-weight: 600;
+		color: var(--color-text);
+		overflow-wrap: anywhere;
+	}
+
+	.admin-passkey-provider {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		overflow-wrap: anywhere;
 	}
 
 	.scope-chip {

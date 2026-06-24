@@ -40,6 +40,14 @@ describe('adminUsersAPI', () => {
 						{
 							id: 'passkey_1',
 							device_name: 'Chrome on macOS',
+							aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+							provider: {
+								aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+								name: 'Windows Hello',
+								icon_dark: null,
+								icon_light: 'data:image/svg+xml;base64,light',
+								known: true
+							},
 							created_at: 3,
 							last_used_at: null
 						}
@@ -58,6 +66,14 @@ describe('adminUsersAPI', () => {
 			{
 				id: 'passkey_1',
 				device_name: 'Chrome on macOS',
+				aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+				provider: {
+					aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+					name: 'Windows Hello',
+					icon_dark: null,
+					icon_light: 'data:image/svg+xml;base64,light',
+					known: true
+				},
 				created_at: 3,
 				last_used_at: null
 			}

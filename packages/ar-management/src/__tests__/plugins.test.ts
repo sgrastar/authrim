@@ -54,6 +54,7 @@ import {
   registerPlugin,
   updatePluginHealth,
 } from '../routes/settings/plugins';
+import { getPluginEncryptionKey } from '@authrim/ar-lib-plugin';
 
 // =============================================================================
 // Test Fixtures
@@ -1020,6 +1021,43 @@ describe('Plugin Admin API - Update Plugin Config', () => {
           encryptedFields: ['customSecret'],
         })
       );
+    });
+
+    it('should reject secret config updates when plugin encryption key is unavailable', async () => {
+      vi.mocked(getPluginEncryptionKey).mockRejectedValueOnce(
+        new Error('Plugin encryption key not configured')
+      );
+
+      let savedConfig = '';
+      const registry = {
+        'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+        },
+        putCallback: (_key, value) => {
+          savedConfig = value;
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        body: {
+          config: {
+            apiKey: 'secret-value',
+          },
+        },
+        kv,
+      });
+
+      const response = (await updatePluginConfigHandler(c)) as Response;
+      const { status } = await getResponseData(response);
+
+      expect(status).toBe(500);
+      expect(savedConfig).toBe('');
     });
   });
 });
@@ -2234,9 +2272,9 @@ describe('Plugin Admin API - Security', () => {
       await getPluginHandler(c);
 
       const response = (c.json as any).mock.calls[0][0];
-      // The encrypted prefix should be masked
-      expect(response.config.apiKey).toContain('****');
-      expect(response.config.apiKey).not.toContain('enc:v1:');
+      // Undecryptable encrypted fields are omitted rather than exposing ciphertext.
+      expect(response.config).not.toHaveProperty('apiKey');
+      expect(JSON.stringify(response.config)).not.toContain('enc:v1:');
     });
   });
 

@@ -14,6 +14,10 @@
       "import": "./dist/utils/*.js",
       "default": "./src/utils/*.ts"
     },
+    "./webauthn/*": {
+      "import": "./dist/webauthn/*.js",
+      "default": "./src/webauthn/*.ts"
+    },
     "./types/*": {
       "import": "./dist/types/*.js",
       "default": "./src/types/*.ts"

@@ -1,4 +1,5 @@
 import { adminFetch } from '$lib/api/admin-request';
+import type { PasskeyProvider } from '$lib/api/admin-users';
 /**
  * Admin Users Management API Client
  *
@@ -35,6 +36,16 @@ export interface AdminUser {
 export interface AdminUserDetail extends AdminUser {
 	roles: AdminRoleAssignment[];
 	passkey_count: number;
+	passkeys: AdminUserPasskey[];
+}
+
+export interface AdminUserPasskey {
+	id: string;
+	device_name: string | null;
+	aaguid: string | null;
+	provider: PasskeyProvider | null;
+	created_at: number;
+	last_used_at: number | null;
 }
 
 /**

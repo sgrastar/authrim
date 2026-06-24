@@ -41,8 +41,22 @@ export type AccountDevice = {
 export type AccountPasskey = {
 	id: string;
 	device_name: string | null;
+	aaguid: string | null;
+	provider: {
+		aaguid: string;
+		name: string | null;
+		icon_dark: string | null;
+		icon_light: string | null;
+		known: boolean;
+	} | null;
 	created_at: number;
 	last_used_at: number | null;
+};
+
+export type WebAuthnCredentialSignal = {
+	rp_id: string;
+	user_id: string;
+	credential_ids: string[];
 };
 
 export type AccountOperation = {
@@ -158,7 +172,11 @@ export const accountAPI = {
 		),
 
 	getPasskeys: () =>
-		accountFetch<{ passkeys: AccountPasskey[]; total: number }>('/api/account/passkeys'),
+		accountFetch<{
+			passkeys: AccountPasskey[];
+			total: number;
+			webauthn_signal?: WebAuthnCredentialSignal;
+		}>('/api/account/passkeys'),
 
 	createPasskeyOptions: (deviceName?: string) =>
 		accountFetch<{ options: PublicKeyCredentialCreationOptionsJSON; challenge_id: string }>(
@@ -174,7 +192,11 @@ export const accountAPI = {
 		passkeyResponse: RegistrationResponseJSON,
 		deviceName?: string
 	) =>
-		accountFetch<{ ok: boolean; passkey: AccountPasskey }>('/api/account/passkeys/complete', {
+		accountFetch<{
+			ok: boolean;
+			passkey: AccountPasskey;
+			webauthn_signal?: WebAuthnCredentialSignal;
+		}>('/api/account/passkeys/complete', {
 			method: 'POST',
 			body: JSON.stringify({
 				challenge_id: challengeId,
@@ -184,12 +206,13 @@ export const accountAPI = {
 		}),
 
 	deletePasskey: (id: string) =>
-		accountFetch<{ ok: boolean; passkey: { id: string; deleted: boolean } }>(
-			`/api/account/passkeys/${encodeURIComponent(id)}`,
-			{
-				method: 'DELETE'
-			}
-		),
+		accountFetch<{
+			ok: boolean;
+			passkey: { id: string; deleted: boolean };
+			webauthn_signal?: WebAuthnCredentialSignal;
+		}>(`/api/account/passkeys/${encodeURIComponent(id)}`, {
+			method: 'DELETE'
+		}),
 
 	getOperations: () =>
 		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20')

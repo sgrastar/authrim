@@ -218,7 +218,8 @@ paths:
       summary: List current user's passkeys.
       description:
         Returns passkeys registered to the authenticated Account Page user without credential
-        IDs, public keys, or counters.
+        IDs, public keys, or counters on each display item. The response may include a separate
+        WebAuthn Signal API payload for browser-side passkey provider synchronization.
       responses:
         '200':
           $ref: '#/components/responses/AccountPasskeys'
@@ -1291,6 +1292,8 @@ components:
       required:
         - id
         - device_name
+        - aaguid
+        - provider
         - created_at
         - last_used_at
       properties:
@@ -1300,12 +1303,48 @@ components:
           type:
             - string
             - 'null'
+        aaguid:
+          type:
+            - string
+            - 'null'
+          description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+        provider:
+          oneOf:
+            - $ref: '#/components/schemas/PasskeyProvider'
+            - type: 'null'
         created_at:
           type: integer
         last_used_at:
           type:
             - integer
             - 'null'
+    PasskeyProvider:
+      type: object
+      required:
+        - aaguid
+        - name
+        - icon_dark
+        - icon_light
+        - known
+      properties:
+        aaguid:
+          type: string
+        name:
+          type:
+            - string
+            - 'null'
+        icon_dark:
+          type:
+            - string
+            - 'null'
+          description: Display-only data URI icon for dark backgrounds when available.
+        icon_light:
+          type:
+            - string
+            - 'null'
+          description: Display-only data URI icon for light backgrounds when available.
+        known:
+          type: boolean
     AccountPasskeysResponse:
       type: object
       required:
@@ -1318,6 +1357,8 @@ components:
             $ref: '#/components/schemas/AccountPasskey'
         total:
           type: integer
+        webauthn_signal:
+          $ref: '#/components/schemas/WebAuthnCredentialSignal'
     AccountPasskeyResponse:
       type: object
       required:
@@ -1346,6 +1387,8 @@ components:
           type: boolean
         passkey:
           $ref: '#/components/schemas/AccountPasskey'
+        webauthn_signal:
+          $ref: '#/components/schemas/WebAuthnCredentialSignal'
     AccountPasskeyDeleteResponse:
       type: object
       required:
@@ -1364,6 +1407,31 @@ components:
               type: string
             deleted:
               type: boolean
+        webauthn_signal:
+          $ref: '#/components/schemas/WebAuthnCredentialSignal'
+    WebAuthnCredentialSignal:
+      type: object
+      description:
+        Best-effort WebAuthn Signal API data for authenticated Account Page browser sessions.
+        Credential IDs are exposed only in this authenticated self-service response and are
+        intended for PublicKeyCredential.signalAllAcceptedCredentials().
+      required:
+        - rp_id
+        - user_id
+        - credential_ids
+      properties:
+        rp_id:
+          type: string
+          example: login.example.com
+        user_id:
+          type: string
+          description: Base64url-encoded WebAuthn user handle.
+          example: dXNlci0xMjM
+        credential_ids:
+          type: array
+          description: Base64url-encoded credential IDs accepted by the server for this user.
+          items:
+            type: string
     AccountReturnCreateResponse:
       type: object
       required:
