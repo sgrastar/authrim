@@ -7,6 +7,10 @@ import {
 	adminExternalProvidersAPI,
 	type ExternalIdPProvider
 } from '$lib/api/admin-external-providers';
+import {
+	adminDirectoryConnectorsAPI,
+	type DirectoryConnectorsResponse
+} from '$lib/api/admin-directory-connectors';
 import { adminSAMLAPI, type SAMLProvider } from '$lib/api/admin-saml';
 
 const CATEGORY = 'authentication-methods';
@@ -83,9 +87,19 @@ export interface AuthenticationMethodHumanVerificationSettings {
 	reauthEnabled: boolean;
 }
 
+export interface AuthenticationMethodDirectoryPasswordSettings {
+	loginEnabled: boolean;
+	configured: boolean;
+	connectorCount: number;
+	defaultConnectorId: string;
+	autoProvision: boolean;
+	config: DirectoryConnectorsResponse | null;
+}
+
 export interface AuthenticationMethodSettingsResponse {
 	settings: CategorySettings;
 	builtIn: AuthenticationMethodBuiltInSettings;
+	directoryPassword: AuthenticationMethodDirectoryPasswordSettings;
 	humanVerification: AuthenticationMethodHumanVerificationSettings;
 	providers: AuthenticationMethodExternalProvider[];
 	externalProviderUsages: AuthenticationMethodExternalProviderUsage[];
@@ -289,9 +303,33 @@ function parseBoolean(value: unknown, fallback: boolean): boolean {
 	return fallback;
 }
 
+function resolveDirectoryPassword(
+	config: DirectoryConnectorsResponse | null
+): AuthenticationMethodDirectoryPasswordSettings {
+	const defaultConnectorId = config?.default_connector_id || 'campus';
+	const connectors = config?.connectors ?? [];
+	const configured = connectors.some(
+		(connector) =>
+			connector.id === defaultConnectorId &&
+			(connector.transport === 'relay' || connector.endpoint_url.trim().length > 0) &&
+			connector.auth_mode === 'hmac' &&
+			connector.connector_id.trim().length > 0 &&
+			connector.key_id.trim().length > 0 &&
+			connector.secret_ref.trim().length > 0
+	);
+	return {
+		loginEnabled: Boolean(config?.enabled) && configured,
+		configured,
+		connectorCount: connectors.length,
+		defaultConnectorId,
+		autoProvision: Boolean(config?.auto_provision),
+		config
+	};
+}
+
 export const adminAuthenticationMethodsAPI = {
 	async get(tenantId?: string): Promise<AuthenticationMethodSettingsResponse> {
-		const [settings, externalProviders, samlProviders] = await Promise.all([
+		const [settings, externalProviders, samlProviders, directoryConnectors] = await Promise.all([
 			adminSettingsAPI.getSettings(CATEGORY, tenantId),
 			adminExternalProvidersAPI
 				.list(tenantId ? { tenant_id: tenantId } : {})
@@ -300,8 +338,10 @@ export const adminAuthenticationMethodsAPI = {
 			adminSAMLAPI
 				.listProviders()
 				.then((response) => response.providers)
-				.catch(() => [])
+				.catch(() => []),
+			tenantId ? adminDirectoryConnectorsAPI.get(tenantId).catch(() => null) : Promise.resolve(null)
 		]);
+		const directoryPassword = resolveDirectoryPassword(directoryConnectors);
 		const legacyPasskeyEnabled = parseBoolean(settings.values[LEGACY_PASSKEY_ENABLED_KEY], true);
 		const legacyEmailOtpEnabled = parseBoolean(settings.values[LEGACY_EMAIL_OTP_ENABLED_KEY], true);
 		const usageById = parseExternalProviderUsage(settings.values[EXTERNAL_PROVIDER_USAGE_KEY]);
@@ -341,6 +381,7 @@ export const adminAuthenticationMethodsAPI = {
 					legacyEmailOtpEnabled
 				)
 			},
+			directoryPassword,
 			humanVerification: {
 				provider: String(
 					settings.values[HUMAN_VERIFICATION_PROVIDER_KEY] || DEFAULT_HUMAN_VERIFICATION_PROVIDER
@@ -361,13 +402,14 @@ export const adminAuthenticationMethodsAPI = {
 	async update(
 		settings: CategorySettings,
 		builtIn: AuthenticationMethodBuiltInSettings,
+		directoryPassword: AuthenticationMethodDirectoryPasswordSettings,
 		humanVerification: AuthenticationMethodHumanVerificationSettings,
 		providers: AuthenticationMethodExternalProvider[],
 		externalProviderUsages: AuthenticationMethodExternalProviderUsage[],
 		tenantId?: string
 	) {
 		try {
-			return await adminSettingsAPI.updateSettings(
+			const result = await adminSettingsAPI.updateSettings(
 				CATEGORY,
 				{
 					ifMatch: settings.version,
@@ -391,6 +433,15 @@ export const adminAuthenticationMethodsAPI = {
 				},
 				tenantId
 			);
+			if (tenantId && directoryPassword.config) {
+				await adminDirectoryConnectorsAPI.update(tenantId, {
+					enabled: directoryPassword.loginEnabled,
+					default_connector_id: directoryPassword.config.default_connector_id,
+					auto_provision: directoryPassword.config.auto_provision,
+					connectors: directoryPassword.config.connectors
+				});
+			}
+			return result;
 		} catch (error) {
 			if (error instanceof SettingsConflictError) throw error;
 			throw error;

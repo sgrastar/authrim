@@ -150,6 +150,24 @@ describe('generateRoutes', () => {
         expect.objectContaining({ name: 'CIBA_REQUEST_STORE' }),
       ])
     );
+    expect(authConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'DIRECTORY_CONNECTOR_RELAY',
+          class_name: 'DirectoryConnectorRelay',
+        }),
+      ])
+    );
+    expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
+    expect(managementConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'DIRECTORY_CONNECTOR_RELAY',
+          class_name: 'DirectoryConnectorRelay',
+          script_name: 'emailtest-ar-auth',
+        }),
+      ])
+    );
     expect(authConfig.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(managementConfig.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(tokenConfig.send_email).toBeUndefined();
@@ -243,6 +261,76 @@ describe('generateRoutes', () => {
     );
     expect(updateConfig.migrations).toBeUndefined();
     expect(toToml(updateConfig, 'existing')).not.toContain('new_sqlite_classes');
+  });
+
+  it('keeps ar-auth local Durable Object migration during worker updates', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'existing' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://existing-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://existing-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://existing-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+        storageType: 'external',
+      },
+      cloudflare: {},
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      components: {
+        loginUi: true,
+        adminUi: true,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const updateConfig = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} }, undefined, {
+      includeDurableObjectMigrations: false,
+    });
+
+    expect(updateConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
   });
 
   it('serializes send_email bindings in env-scoped wrangler.toml output', () => {

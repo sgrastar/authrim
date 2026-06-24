@@ -57,20 +57,26 @@ function createKV(values: Record<string, unknown>) {
 function createContext() {
   const headers = new Headers();
   const env = {
-    AUTHRIM_CONFIG: createKV({
-      'settings:tenant:tenant-a:authentication-methods': {
-        'authentication-methods.directory_password.enabled': true,
-        'authentication-methods.directory_password.connector_id': 'campus',
-        'authentication-methods.directory_password.auto_provision': true,
-      },
+    AUTHRIM_CONFIG: createKV({}),
+    SETTINGS: createKV({
       'settings:tenant:tenant-a:directory-connectors': {
-        'directory-connectors.campus.endpoint_url': 'http://127.0.0.1:8080',
-        'directory-connectors.campus.auth_mode': 'hmac',
-        'directory-connectors.campus.connector_id': 'ww_tenant_a',
-        'directory-connectors.campus.key_id': 'kid-active',
-        'directory-connectors.campus.secret_ref': 'env:WORDWARDEN_SECRET',
-        'directory-connectors.campus.timeouts.request_ms': 3000,
-        'directory-connectors.campus.attribute_names': ['mail', 'displayName', 'uid'],
+        enabled: true,
+        default_connector_id: 'campus',
+        auto_provision: true,
+        connectors: [
+          {
+            id: 'campus',
+            endpoint_url: 'http://127.0.0.1:8080',
+            auth_mode: 'hmac',
+            connector_id: 'ww_tenant_a',
+            key_id: 'kid-active',
+            secret_ref: 'env:WORDWARDEN_SECRET',
+            timeouts: {
+              request_ms: 3000,
+            },
+            attribute_names: ['mail', 'displayName', 'uid'],
+          },
+        ],
       },
     }),
     WORDWARDEN_SECRET: 'active-secret',

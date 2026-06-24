@@ -355,6 +355,8 @@ export interface AuthEventData extends BaseEventData {
   requestId?: string;
   /** Error code (for failed auth) */
   errorCode?: string;
+  /** Tenant-scoped HMAC of the normalized user-supplied identifier for failed auth */
+  usernameHash?: string;
   /** IP address (hashed for privacy) */
   ipHash?: string;
   /** User agent (truncated) */

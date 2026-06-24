@@ -100,6 +100,7 @@ export interface Env {
   SAML_AGGREGATE_METADATA_STORE?: DurableObjectNamespace<SAMLAggregateMetadataStore>; // SAML aggregate metadata previews and batch imports
   PERMISSION_CHANGE_HUB?: DurableObjectNamespace; // Phase 8.3: Real-time permission change notifications
   FLOW_STATE_STORE?: DurableObjectNamespace; // Track C: Flow Engine state management
+  DIRECTORY_CONNECTOR_RELAY?: DurableObjectNamespace; // Wordwarden outbound connector relay
 
   // Service Bindings (Worker-to-Worker communication)
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP

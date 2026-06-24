@@ -34,8 +34,8 @@ paths:
       security: []
       summary: Return SCIM service provider configuration.
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
+        '200':
+          $ref: '#/components/responses/ScimJson'
   /scim/v2/ResourceTypes:
     get:
       tags:
@@ -43,8 +43,8 @@ paths:
       security: []
       summary: List supported SCIM resource types.
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
+        '200':
+          $ref: '#/components/responses/ScimJson'
   /scim/v2/ResourceTypes/{name}:
     get:
       tags:
@@ -61,10 +61,10 @@ paths:
               - User
               - Group
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "404":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '404':
+          $ref: '#/components/responses/ScimError'
   /scim/v2/Schemas:
     get:
       tags:
@@ -72,8 +72,8 @@ paths:
       security: []
       summary: List supported SCIM schemas.
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
+        '200':
+          $ref: '#/components/responses/ScimJson'
   /scim/v2/Schemas/{id}:
     get:
       tags:
@@ -87,26 +87,26 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "404":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '404':
+          $ref: '#/components/responses/ScimError'
   /scim/v2/Users:
     get:
       tags:
         - SCIM Users
       summary: List SCIM users.
       parameters:
-        - $ref: "#/components/parameters/Filter"
-        - $ref: "#/components/parameters/StartIndex"
-        - $ref: "#/components/parameters/Count"
-        - $ref: "#/components/parameters/SortBy"
-        - $ref: "#/components/parameters/SortOrder"
+        - $ref: '#/components/parameters/Filter'
+        - $ref: '#/components/parameters/StartIndex'
+        - $ref: '#/components/parameters/Count'
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortOrder'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "401":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '401':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     post:
@@ -114,14 +114,14 @@ paths:
         - SCIM Users
       summary: Create a SCIM user.
       requestBody:
-        $ref: "#/components/requestBodies/ScimUser"
+        $ref: '#/components/requestBodies/ScimUser'
       responses:
-        "201":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
-        "409":
-          $ref: "#/components/responses/ScimError"
+        '201':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
+        '409':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
   /scim/v2/Users/{id}:
@@ -130,12 +130,12 @@ paths:
         - SCIM Users
       summary: Get a SCIM user.
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "404":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '404':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     put:
@@ -143,17 +143,17 @@ paths:
         - SCIM Users
       summary: Replace a SCIM user.
       parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IfMatch'
       requestBody:
-        $ref: "#/components/requestBodies/ScimUser"
+        $ref: '#/components/requestBodies/ScimUser'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
-        "412":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
+        '412':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     patch:
@@ -161,17 +161,17 @@ paths:
         - SCIM Users
       summary: Patch a SCIM user.
       parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IfMatch'
       requestBody:
-        $ref: "#/components/requestBodies/ScimPatchOp"
+        $ref: '#/components/requestBodies/ScimPatchOp'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
-        "412":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
+        '412':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     delete:
@@ -179,13 +179,13 @@ paths:
         - SCIM Users
       summary: Delete a SCIM user.
       parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IfMatch'
       responses:
-        "204":
+        '204':
           description: User deleted.
-        "404":
-          $ref: "#/components/responses/ScimError"
+        '404':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
   /scim/v2/Groups:
@@ -194,14 +194,14 @@ paths:
         - SCIM Groups
       summary: List SCIM groups.
       parameters:
-        - $ref: "#/components/parameters/Filter"
-        - $ref: "#/components/parameters/StartIndex"
-        - $ref: "#/components/parameters/Count"
-        - $ref: "#/components/parameters/SortBy"
-        - $ref: "#/components/parameters/SortOrder"
+        - $ref: '#/components/parameters/Filter'
+        - $ref: '#/components/parameters/StartIndex'
+        - $ref: '#/components/parameters/Count'
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortOrder'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
+        '200':
+          $ref: '#/components/responses/ScimJson'
       security:
         - scimBearer: []
     post:
@@ -209,14 +209,14 @@ paths:
         - SCIM Groups
       summary: Create a SCIM group.
       requestBody:
-        $ref: "#/components/requestBodies/ScimGroup"
+        $ref: '#/components/requestBodies/ScimGroup'
       responses:
-        "201":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
-        "409":
-          $ref: "#/components/responses/ScimError"
+        '201':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
+        '409':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
   /scim/v2/Groups/{id}:
@@ -225,12 +225,12 @@ paths:
         - SCIM Groups
       summary: Get a SCIM group.
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "404":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '404':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     put:
@@ -238,17 +238,17 @@ paths:
         - SCIM Groups
       summary: Replace a SCIM group.
       parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IfMatch'
       requestBody:
-        $ref: "#/components/requestBodies/ScimGroup"
+        $ref: '#/components/requestBodies/ScimGroup'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
-        "412":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
+        '412':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     patch:
@@ -256,17 +256,17 @@ paths:
         - SCIM Groups
       summary: Patch a SCIM group.
       parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IfMatch'
       requestBody:
-        $ref: "#/components/requestBodies/ScimPatchOp"
+        $ref: '#/components/requestBodies/ScimPatchOp'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
-        "412":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
+        '412':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     delete:
@@ -274,13 +274,13 @@ paths:
         - SCIM Groups
       summary: Delete a SCIM group.
       parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IfMatch'
       responses:
-        "204":
+        '204':
           description: Group deleted.
-        "404":
-          $ref: "#/components/responses/ScimError"
+        '404':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
   /scim/v2/Bulk:
@@ -289,12 +289,12 @@ paths:
         - SCIM Bulk
       summary: Execute SCIM bulk operations.
       requestBody:
-        $ref: "#/components/requestBodies/ScimBulkRequest"
+        $ref: '#/components/requestBodies/ScimBulkRequest'
       responses:
-        "200":
-          $ref: "#/components/responses/ScimJson"
-        "400":
-          $ref: "#/components/responses/ScimError"
+        '200':
+          $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
 components:
@@ -358,62 +358,62 @@ components:
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimObject"
+            $ref: '#/components/schemas/ScimObject'
         application/json:
           schema:
-            $ref: "#/components/schemas/ScimObject"
+            $ref: '#/components/schemas/ScimObject'
     ScimUser:
       required: true
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimUser"
+            $ref: '#/components/schemas/ScimUser'
         application/json:
           schema:
-            $ref: "#/components/schemas/ScimUser"
+            $ref: '#/components/schemas/ScimUser'
     ScimGroup:
       required: true
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimGroup"
+            $ref: '#/components/schemas/ScimGroup'
         application/json:
           schema:
-            $ref: "#/components/schemas/ScimGroup"
+            $ref: '#/components/schemas/ScimGroup'
     ScimPatchOp:
       required: true
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimPatchOp"
+            $ref: '#/components/schemas/ScimPatchOp'
         application/json:
           schema:
-            $ref: "#/components/schemas/ScimPatchOp"
+            $ref: '#/components/schemas/ScimPatchOp'
     ScimBulkRequest:
       required: true
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimBulkRequest"
+            $ref: '#/components/schemas/ScimBulkRequest'
         application/json:
           schema:
-            $ref: "#/components/schemas/ScimBulkRequest"
+            $ref: '#/components/schemas/ScimBulkRequest'
   responses:
     ScimJson:
       description: Successful SCIM JSON response.
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimObject"
+            $ref: '#/components/schemas/ScimObject'
         application/json:
           schema:
-            $ref: "#/components/schemas/ScimObject"
+            $ref: '#/components/schemas/ScimObject'
     ScimError:
       description: SCIM error response.
       content:
         application/scim+json:
           schema:
-            $ref: "#/components/schemas/ScimError"
+            $ref: '#/components/schemas/ScimError'
   schemas:
     ScimObject:
       type: object
@@ -543,7 +543,7 @@ components:
         userName:
           type: string
         name:
-          $ref: "#/components/schemas/ScimName"
+          $ref: '#/components/schemas/ScimName'
         displayName:
           type: string
         nickName:
@@ -566,26 +566,30 @@ components:
         password:
           type: string
           writeOnly: true
+          description: >
+            Unsupported by Authrim SCIM provisioning. Requests that include this
+            field are rejected with `400 invalidValue`; use Passkey, Email Code,
+            Directory Connector, or External IdP authentication instead.
         emails:
           type: array
           minItems: 1
           items:
-            $ref: "#/components/schemas/ScimEmail"
+            $ref: '#/components/schemas/ScimEmail'
         phoneNumbers:
           type: array
           items:
-            $ref: "#/components/schemas/ScimPhoneNumber"
+            $ref: '#/components/schemas/ScimPhoneNumber'
         addresses:
           type: array
           items:
-            $ref: "#/components/schemas/ScimAddress"
+            $ref: '#/components/schemas/ScimAddress'
         groups:
           type: array
           readOnly: true
           items:
-            $ref: "#/components/schemas/ScimGroupMember"
+            $ref: '#/components/schemas/ScimGroupMember'
         meta:
-          $ref: "#/components/schemas/ScimMeta"
+          $ref: '#/components/schemas/ScimMeta'
     ScimGroup:
       type: object
       additionalProperties: true
@@ -606,9 +610,9 @@ components:
         members:
           type: array
           items:
-            $ref: "#/components/schemas/ScimGroupMember"
+            $ref: '#/components/schemas/ScimGroupMember'
         meta:
-          $ref: "#/components/schemas/ScimMeta"
+          $ref: '#/components/schemas/ScimMeta'
     ScimPatchOp:
       type: object
       additionalProperties: false
@@ -658,7 +662,7 @@ components:
           type: array
           minItems: 1
           items:
-            $ref: "#/components/schemas/ScimBulkOperation"
+            $ref: '#/components/schemas/ScimBulkOperation'
     ScimBulkOperation:
       type: object
       additionalProperties: false

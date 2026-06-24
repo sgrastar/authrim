@@ -112,6 +112,7 @@ import {
   verifyHumanVerificationForAction,
   type HumanVerificationAction,
 } from './human-verification';
+import { resolveSessionTtl } from './session-ttl';
 
 // ===== Constants =====
 
@@ -2359,7 +2360,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const sessionTTL = 24 * 60 * 60;
+    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
     const now = Date.now();
     const authTime = Math.floor(now / 1000);
     const amr = [typeof metadata.method === 'string' ? metadata.method : 'direct_auth'];
@@ -2386,7 +2387,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     await sessionStore.createSessionRpc(
       sessionId,
       artifactData.userId,
-      sessionTTL,
+      sessionTtl.seconds,
       {
         email: runtimeUser.email || null,
         name: runtimeUser.name,
@@ -2405,7 +2406,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       httpOnly: true,
       secure: isSecure,
       sameSite: getSessionCookieSameSite(c.env),
-      maxAge: sessionTTL,
+      maxAge: sessionTtl.seconds,
     });
 
     const browserState = await generateBrowserState(sessionId);
@@ -2413,7 +2414,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       path: '/',
       secure: isSecure,
       sameSite: getBrowserStateCookieSameSite(c.env),
-      maxAge: sessionTTL,
+      maxAge: sessionTtl.seconds,
     });
 
     const postLoginRedirect = authorizationContinuation
@@ -2424,11 +2425,11 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     c.header('Pragma', 'no-cache');
     return c.json({
       ok: true,
-      expires_in: sessionTTL,
+      expires_in: sessionTtl.seconds,
       session: {
         userId: artifactData.userId,
         createdAt: now,
-        expiresAt: now + sessionTTL * 1000,
+        expiresAt: now + sessionTtl.milliseconds,
         authTime,
         acr,
         amr,

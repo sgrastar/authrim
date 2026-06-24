@@ -206,6 +206,40 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/DirectoryPasswordLogin"
+  /api/auth/directory-relay/connect/{tenantId}/{connectorId}:
+    get:
+      tags:
+        - Directory Password
+      summary: Register a Wordwarden outbound relay WebSocket connection.
+      description: >
+        Upgrades to a WebSocket used by Authrim Wordwarden for outbound directory password
+        verification relay. The connector authenticates inside the WebSocket protocol with a
+        short-lived HMAC challenge response.
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9_-]{1,64}$"
+      responses:
+        "101":
+          description: WebSocket connection accepted.
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "426":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
   /api/auth/dids/challenge:
     post:
       tags:

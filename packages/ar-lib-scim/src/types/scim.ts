@@ -106,7 +106,7 @@ export interface ScimUser {
   locale?: string;
   timezone?: string;
   active?: boolean;
-  password?: string; // Write-only
+  password?: string; // RFC 7643 write-only; Authrim provisioning rejects it.
   emails?: ScimEmail[];
   phoneNumbers?: ScimPhoneNumber[];
   addresses?: ScimAddress[];

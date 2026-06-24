@@ -326,7 +326,7 @@ async function safeParseJson(response: Response): Promise<unknown> {
   }
 }
 
-function validateDirectoryPasswordVerifyResult(
+export function validateDirectoryPasswordVerifyResult(
   value: unknown,
   config: DirectoryPasswordConnectorConfig,
   requestId: string

@@ -61,27 +61,54 @@ function createKV(values: Record<string, unknown>) {
   };
 }
 
-function createContext(body: Record<string, unknown>, settings?: Record<string, unknown>) {
+function directoryConnectors(
+  connectorOverrides: Record<string, unknown> = {},
+  configOverrides: Record<string, unknown> = {}
+) {
+  return {
+    enabled: true,
+    default_connector_id: 'campus',
+    auto_provision: false,
+    connectors: [
+      {
+        id: 'campus',
+        endpoint_url: 'https://wordwarden.example.com',
+        auth_mode: 'hmac',
+        connector_id: 'ww_tenant_a',
+        key_id: 'kid-active',
+        secret_ref: 'env:WORDWARDEN_SECRET',
+        timeouts: {
+          request_ms: 1000,
+        },
+        attribute_names: ['mail', 'displayName'],
+        ...connectorOverrides,
+      },
+    ],
+    ...configOverrides,
+  };
+}
+
+function createContext(
+  body: Record<string, unknown>,
+  settings?: Record<string, unknown>,
+  authrimConfigOverrides?: Record<string, unknown>,
+  envOverrides: Record<string, unknown> = {}
+) {
   const headers = new Headers();
+  const authrimConfigSettings = {
+    ...settings,
+    ...authrimConfigOverrides,
+  };
+  const settingsKV = {
+    'settings:tenant:tenant-a:directory-connectors': directoryConnectors(),
+    ...settings,
+  };
   const env = {
-    AUTHRIM_CONFIG: createKV({
-      'settings:tenant:tenant-a:authentication-methods': {
-        'authentication-methods.directory_password.enabled': true,
-        'authentication-methods.directory_password.connector_id': 'campus',
-      },
-      'settings:tenant:tenant-a:directory-connectors': {
-        'directory-connectors.campus.endpoint_url': 'https://wordwarden.example.com',
-        'directory-connectors.campus.auth_mode': 'hmac',
-        'directory-connectors.campus.connector_id': 'ww_tenant_a',
-        'directory-connectors.campus.key_id': 'kid-active',
-        'directory-connectors.campus.secret_ref': 'env:WORDWARDEN_SECRET',
-        'directory-connectors.campus.timeouts.request_ms': 1000,
-        'directory-connectors.campus.attribute_names': ['mail', 'displayName'],
-      },
-      ...settings,
-    }),
-    SETTINGS: createKV(settings ?? {}),
+    AUTHRIM_CONFIG: createKV(authrimConfigSettings),
+    SETTINGS: createKV(settingsKV),
     WORDWARDEN_SECRET: 'active-secret',
+    EMAIL_DOMAIN_HASH_SECRET: 'audit-hash-secret',
+    ...envOverrides,
   };
   return {
     req: {
@@ -167,11 +194,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': true,
-            'authentication-methods.directory_password.connector_id': 'campus',
-            'authentication-methods.directory_password.auto_provision': true,
-          },
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
         }
       ) as never
     );
@@ -240,6 +266,73 @@ describe('directory password login handler', () => {
     expect(body.redirect_url).toBe('/');
   });
 
+  it('verifies credentials through the relay transport and creates an Authrim session', async () => {
+    const relayFetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        tenant_id: 'tenant-a',
+        connector_id: 'ww_tenant_a',
+        username: 'alice',
+        password: 'correct',
+        attribute_names: ['mail', 'displayName'],
+      });
+
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'ww_tenant_a',
+        result: 'success',
+        subject: {
+          directory_id: 'uid=alice,ou=People,dc=example,dc=com',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+          displayName: ['Alice Example'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const relay = {
+      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
+      get: vi.fn(() => ({ fetch: relayFetch }) as unknown as DurableObjectStub),
+    } as unknown as DurableObjectNamespace;
+    const handler = createDirectoryPasswordLoginHandler();
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {
+              transport: 'relay',
+              endpoint_url: '',
+            },
+            { auto_provision: true }
+          ),
+        },
+        {},
+        {
+          DIRECTORY_CONNECTOR_RELAY: relay,
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:ww_tenant_a');
+    expect(mocks.sessionStore.createSessionRpc).toHaveBeenCalledWith(
+      'sess_directory',
+      'user_generated',
+      86400,
+      expect.objectContaining({
+        directory_connector_id: 'campus',
+      }),
+      'tenant-a'
+    );
+  });
+
   it('returns configured post-login redirect after direct directory password login', async () => {
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -266,11 +359,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': true,
-            'authentication-methods.directory_password.connector_id': 'campus',
-            'authentication-methods.directory_password.auto_provision': true,
-          },
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
           'settings:tenant:tenant-a:login-entry': {
             'login-entry.post_login_behavior': 'custom_url',
             'login-entry.post_login_redirect_url': '/mypage',
@@ -316,9 +408,11 @@ describe('directory password login handler', () => {
           connectorId: 'campus',
           requestId: expect.any(String),
           errorCode: 'invalid_credentials',
+          usernameHash: expect.any(String),
         }),
       })
     );
+    expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
 
   it('does not create a session for policy-required directory verdicts', async () => {
@@ -353,9 +447,11 @@ describe('directory password login handler', () => {
           method: 'directory_password',
           connectorId: 'campus',
           errorCode: 'must_change_password',
+          usernameHash: expect.any(String),
         }),
       })
     );
+    expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
 
   it('returns a generic connector error and publishes a failure event when Wordwarden is unavailable', async () => {
@@ -398,9 +494,11 @@ describe('directory password login handler', () => {
           connectorId: 'campus',
           requestId: expect.any(String),
           errorCode: 'directory_unavailable',
+          usernameHash: expect.any(String),
         }),
       })
     );
+    expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
 
   it('returns unmapped when a directory identity has no Authrim user and auto provision is disabled', async () => {
@@ -528,6 +626,59 @@ describe('directory password login handler', () => {
     );
   });
 
+  it('prefers SETTINGS for directory connectors over stale AUTHRIM_CONFIG values', async () => {
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect(String(url)).toBe('https://wordwarden-current.example.com/v1/auth/verify-password');
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'ww_tenant_a',
+        result: 'success',
+        subject: {
+          directory_id: 'uid=alice,ou=People,dc=example,dc=com',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {
+              endpoint_url: 'https://wordwarden-current.example.com',
+            },
+            { auto_provision: true }
+          ),
+        },
+        {
+          'settings:tenant:tenant-a:directory-connectors': {
+            connectors: [
+              {
+                id: 'campus',
+                endpoint_url: 'https://wordwarden-stale.example.com',
+                auth_mode: 'mtls',
+                connector_id: 'ww_tenant_a',
+                key_id: 'kid-stale',
+                secret_ref: 'env:WORDWARDEN_SECRET',
+              },
+            ],
+          },
+        }
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it('returns 404 when the tenant has not enabled directory password login', async () => {
     const handler = createDirectoryPasswordLoginHandler(vi.fn());
 
@@ -535,9 +686,10 @@ describe('directory password login handler', () => {
       createContext(
         { username: 'alice', password: 'correct' },
         {
-          'settings:tenant:tenant-a:authentication-methods': {
-            'authentication-methods.directory_password.enabled': false,
-          },
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { enabled: false }
+          ),
         }
       ) as never
     );
@@ -555,11 +707,19 @@ describe('directory password login handler', () => {
         { username: 'alice', password: 'correct' },
         {
           'settings:tenant:tenant-a:directory-connectors': {
-            'directory-connectors.campus.endpoint_url': 'https://wordwarden.example.com',
-            'directory-connectors.campus.auth_mode': 'mtls',
-            'directory-connectors.campus.connector_id': 'ww_tenant_a',
-            'directory-connectors.campus.key_id': 'kid-active',
-            'directory-connectors.campus.secret_ref': 'env:WORDWARDEN_SECRET',
+            enabled: true,
+            default_connector_id: 'campus',
+            auto_provision: false,
+            connectors: [
+              {
+                id: 'campus',
+                endpoint_url: 'https://wordwarden.example.com',
+                auth_mode: 'mtls',
+                connector_id: 'ww_tenant_a',
+                key_id: 'kid-active',
+                secret_ref: 'env:WORDWARDEN_SECRET',
+              },
+            ],
           },
         }
       ) as never
@@ -578,11 +738,19 @@ describe('directory password login handler', () => {
         { username: 'alice', password: 'correct' },
         {
           'settings:tenant:tenant-a:directory-connectors': {
-            'directory-connectors.campus.endpoint_url': 'https://wordwarden.example.com',
-            'directory-connectors.campus.auth_mode': 'hmac',
-            'directory-connectors.campus.connector_id': 'ww_tenant_a',
-            'directory-connectors.campus.key_id': 'kid-active',
-            'directory-connectors.campus.secret_ref': 'env:UNRELATED_SECRET',
+            enabled: true,
+            default_connector_id: 'campus',
+            auto_provision: false,
+            connectors: [
+              {
+                id: 'campus',
+                endpoint_url: 'https://wordwarden.example.com',
+                auth_mode: 'hmac',
+                connector_id: 'ww_tenant_a',
+                key_id: 'kid-active',
+                secret_ref: 'env:UNRELATED_SECRET',
+              },
+            ],
           },
         }
       ) as never

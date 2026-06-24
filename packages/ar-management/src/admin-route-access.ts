@@ -362,6 +362,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'tenant email settings'
   ),
   ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-connectors',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'tenant directory connectors'
+  ),
+  ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-connectors/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'tenant directory connector operations'
+  ),
+  ...byMethod(
     '/api/admin/tenants/:tenantId/audit/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,

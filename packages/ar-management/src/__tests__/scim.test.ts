@@ -90,16 +90,6 @@ vi.mock('@authrim/ar-lib-core/utils/id', () => ({
   DEFAULT_USER_ID_FORMAT: 'nanoid',
 }));
 
-vi.mock('@authrim/ar-lib-core/utils/crypto', () => ({
-  hashPassword: vi.fn().mockResolvedValue('hashed_password_123'),
-  generateSecureRandomString: vi.fn().mockImplementation(
-    (length: number = 32) =>
-      `mock-random-${Date.now()}-${Math.random()
-        .toString(36)
-        .substring(2, 2 + length)}`
-  ),
-}));
-
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   const toProjection = (user: any) => ({
@@ -774,6 +764,15 @@ describe('SCIM 2.0 Endpoints', () => {
   }
 
   describe('Authentication', () => {
+    it('should advertise that SCIM password changes are not supported', async () => {
+      const req = new Request('http://localhost/scim/v2/ServiceProviderConfig');
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.changePassword).toEqual({ supported: false });
+    });
+
     it('should reject request without Authorization header', async () => {
       const req = new Request('http://localhost/scim/v2/Users', {
         headers: { 'Content-Type': 'application/json' },
@@ -985,6 +984,30 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(res.headers.get('Location')).toBeDefined();
     });
 
+    it('should reject SCIM password provisioning without storing a password hash', async () => {
+      const newUser = {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        userName: 'password-user',
+        emails: [{ value: 'password.user@example.com', primary: true }],
+        password: 'not-stored',
+        active: true,
+      };
+
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify(newUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.scimType).toBe('invalidValue');
+      expect(body.detail).toContain('SCIM password provisioning is not supported');
+      expect([...mockUsers.values()]).not.toContainEqual(
+        expect.objectContaining({ email: 'password.user@example.com' })
+      );
+    });
+
     it('should reject duplicate email', async () => {
       const newUser = {
         schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
@@ -1133,6 +1156,28 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.id).toBe('user-001');
     });
 
+    it('should reject SCIM password on replace without changing an existing password hash', async () => {
+      mockUsers.get('user-001').password_hash = 'legacy-hash';
+      const updatedUser = {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        userName: 'johndoe',
+        emails: [{ value: 'john.doe@example.com', primary: true }],
+        password: 'not-stored',
+        active: true,
+      };
+
+      const req = createRequest('/scim/v2/Users/user-001', {
+        method: 'PUT',
+        body: JSON.stringify(updatedUser),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.detail).toContain('SCIM password provisioning is not supported');
+      expect(mockUsers.get('user-001').password_hash).toBe('legacy-hash');
+    });
+
     it('should return 404 for non-existent user', async () => {
       const req = createRequest('/scim/v2/Users/non-existent', {
         method: 'PUT',
@@ -1224,6 +1269,25 @@ describe('SCIM 2.0 Endpoints', () => {
       // Verify response structure - the actual active value depends on mock implementation
       expect(body.schemas).toContain('urn:ietf:params:scim:schemas:core:2.0:User');
       expect(body.id).toBe('user-001');
+    });
+
+    it('should reject SCIM password on patch without changing an existing password hash', async () => {
+      mockUsers.get('user-001').password_hash = 'legacy-hash';
+      const patchOp = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [{ op: 'replace', path: 'password', value: 'not-stored' }],
+      };
+
+      const req = createRequest('/scim/v2/Users/user-001', {
+        method: 'PATCH',
+        body: JSON.stringify(patchOp),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.detail).toContain('SCIM password provisioning is not supported');
+      expect(mockUsers.get('user-001').password_hash).toBe('legacy-hash');
     });
 
     it('should preserve existing required custom claim values during patch', async () => {
@@ -1397,6 +1461,42 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.Operations[0].status).toBe('201');
       expect(body.Operations[0].bulkId).toBe('user1');
       expect(body.Operations[0].location).toBeDefined();
+    });
+
+    it('should reject bulk user POST password provisioning', async () => {
+      const bulkRequest = {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+        Operations: [
+          {
+            method: 'POST',
+            path: '/Users',
+            bulkId: 'password-user',
+            data: {
+              schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+              userName: 'bulk-password-user',
+              emails: [{ value: 'bulk.password@example.com', primary: true }],
+              password: 'not-stored',
+            },
+          },
+        ],
+      };
+
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify(bulkRequest),
+      });
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0].status).toBe('400');
+      expect(body.Operations[0].response.scimType).toBe('invalidValue');
+      expect(body.Operations[0].response.detail).toContain(
+        'SCIM password provisioning is not supported'
+      );
+      expect([...mockUsers.values()]).not.toContainEqual(
+        expect.objectContaining({ email: 'bulk.password@example.com' })
+      );
     });
 
     it('should enforce required custom claim fields for bulk user POST operations', async () => {

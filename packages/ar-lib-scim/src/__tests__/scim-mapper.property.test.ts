@@ -153,6 +153,8 @@ describe('SCIM Mapper Property Tests', () => {
             const primaryEmail = scimUser.emails.find((e) => e.primary) || scimUser.emails[0];
             expect(user.email).toBe(primaryEmail.value);
           }
+
+          expect(user.password_hash).toBeUndefined();
         }),
         { numRuns: 200 }
       );

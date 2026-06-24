@@ -2,7 +2,11 @@
 	import { onMount } from 'svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import {
+		adminSettingsAPI,
+		type CategoryMetaFull,
+		type CategorySettings
+	} from '$lib/api/admin-settings';
 	import { adminSAMLAPI, type SAMLSettings } from '$lib/api/admin-saml';
 	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
 	import { LL } from '$i18n/i18n-svelte';
@@ -24,6 +28,8 @@
 	// State
 	let info = $state<TenantInfo | null>(null);
 	let samlSettings = $state<SAMLSettings | null>(null);
+	let sessionSettings = $state<CategorySettings | null>(null);
+	let clientSettingsMeta = $state<CategoryMetaFull | null>(null);
 	let tenantLoginEntrySettings = $state<LoginEntryPreviewSettings | null>(null);
 	let commonLoginEntrySettings = $state<LoginEntryPreviewSettings | null>(null);
 	let loading = $state(true);
@@ -46,6 +52,8 @@
 			loading = false;
 			info = null;
 			samlSettings = null;
+			sessionSettings = null;
+			clientSettingsMeta = null;
 			tenantLoginEntrySettings = null;
 			commonLoginEntrySettings = null;
 			return;
@@ -58,18 +66,30 @@
 		error = '';
 		info = null;
 		samlSettings = null;
+		sessionSettings = null;
+		clientSettingsMeta = null;
 		tenantLoginEntrySettings = null;
 		commonLoginEntrySettings = null;
 		try {
-			const [infoResult, samlResult, tenantLoginEntryResult, commonLoginEntryResult] =
-				await Promise.all([
-					getTenantInfo(tenantId),
-					adminSAMLAPI.getSettings().catch(() => null),
-					adminSettingsAPI.getSettings('login-entry', tenantId).catch(() => null),
-					adminSettingsAPI.getPlatformSettings('login-entry').catch(() => null)
-				]);
+			const [
+				infoResult,
+				samlResult,
+				sessionResult,
+				clientMetaResult,
+				tenantLoginEntryResult,
+				commonLoginEntryResult
+			] = await Promise.all([
+				getTenantInfo(tenantId),
+				adminSAMLAPI.getSettings().catch(() => null),
+				adminSettingsAPI.getSettings('session', tenantId).catch(() => null),
+				adminSettingsAPI.getMeta('client').catch(() => null),
+				adminSettingsAPI.getSettings('login-entry', tenantId).catch(() => null),
+				adminSettingsAPI.getPlatformSettings('login-entry').catch(() => null)
+			]);
 			info = infoResult;
 			samlSettings = samlResult;
+			sessionSettings = sessionResult;
+			clientSettingsMeta = clientMetaResult;
 			tenantLoginEntrySettings = normalizeLoginEntrySettings(tenantLoginEntryResult);
 			commonLoginEntrySettings =
 				normalizeLoginEntrySettings(commonLoginEntryResult) ?? tenantLoginEntrySettings;
@@ -130,6 +150,105 @@
 	function readBooleanSetting(values: Record<string, unknown>, key: string, fallback: boolean) {
 		return typeof values[key] === 'boolean' ? values[key] : fallback;
 	}
+
+	function readNumberSetting(values: Record<string, unknown>, key: string, fallback: number) {
+		return typeof values[key] === 'number' && Number.isFinite(values[key]) ? values[key] : fallback;
+	}
+
+	function formatDurationMs(value: number) {
+		const seconds = Math.floor(value / 1000);
+		return formatDurationSeconds(seconds);
+	}
+
+	function formatDurationSeconds(seconds: number) {
+		const minute = 60;
+		const hour = 60 * minute;
+		const day = 24 * hour;
+		if (seconds % day === 0) return `${seconds / day}d`;
+		if (seconds % hour === 0) return `${seconds / hour}h`;
+		if (seconds % minute === 0) return `${seconds / minute}m`;
+		return `${seconds}s`;
+	}
+
+	const refreshTokenTtlInfo = $derived.by(() => {
+		const meta = clientSettingsMeta?.settings['client.refresh_token_ttl'];
+		if (!meta || typeof meta.default !== 'number') {
+			return $LL.admin_info_not_available();
+		}
+		return `${formatDurationSeconds(meta.default)} ${$LL.admin_info_refresh_token_ttl_per_client()}`;
+	});
+
+	function formatSettingSource(source: string | undefined) {
+		switch (source) {
+			case 'kv':
+				return $LL.admin_inheritance_source_kv();
+			case 'env':
+				return $LL.admin_inheritance_source_environment();
+			default:
+				return $LL.admin_inheritance_source_default();
+		}
+	}
+
+	const sessionTtlRows = $derived(
+		[
+			{
+				label: $LL.admin_info_ttl_email_code(),
+				key: 'session.ttl.email_code',
+				defaultValue: 86400000
+			},
+			{
+				label: $LL.admin_info_ttl_directory_password(),
+				key: 'session.ttl.directory_password',
+				defaultValue: 86400000
+			},
+			{
+				label: $LL.admin_info_ttl_direct_auth(),
+				key: 'session.ttl.direct_auth',
+				defaultValue: 86400000
+			},
+			{
+				label: $LL.admin_info_ttl_passkey(),
+				key: 'session.ttl.passkey',
+				defaultValue: 604800000
+			},
+			{
+				label: $LL.admin_info_ttl_passkey_registration(),
+				key: 'session.ttl.passkey_registration',
+				defaultValue: 2592000000
+			},
+			{
+				label: $LL.admin_info_ttl_admin_passkey(),
+				key: 'session.ttl.admin_passkey',
+				defaultValue: 604800000
+			},
+			{
+				label: $LL.admin_info_ttl_anonymous(),
+				key: 'session.ttl.anonymous',
+				defaultValue: 86400000
+			},
+			{
+				label: $LL.admin_info_ttl_did(),
+				key: 'session.ttl.did',
+				defaultValue: 86400000
+			}
+		].map((item) => {
+			if (!sessionSettings) {
+				return {
+					key: item.key,
+					label: item.label,
+					value: $LL.admin_info_not_available(),
+					source: $LL.admin_info_not_available()
+				};
+			}
+			const value = readNumberSetting(sessionSettings?.values ?? {}, item.key, item.defaultValue);
+			return {
+				key: item.key,
+				label: item.label,
+				value: formatDurationMs(value),
+				source: formatSettingSource(sessionSettings?.sources?.[item.key])
+			};
+		})
+	);
 
 	function formatDiscoveryMethods(methods: string[] | undefined) {
 		if (!methods || methods.length === 0) return $LL.admin_info_none_configured();
@@ -447,6 +566,55 @@
 			</div>
 		</section>
 
+		<!-- Session TTLs -->
+		<section class="info-section">
+			<div class="section-title-row">
+				<h2 class="section-title no-margin">
+					<i class="i-ph-clock-countdown w-5 h-5"></i>
+					{$LL.admin_info_session_ttl_title()}
+				</h2>
+				<a href="/admin/settings/session" class="settings-link">
+					{$LL.admin_info_session_ttl_settings_link()}
+					<i class="i-ph-arrow-right w-4 h-4"></i>
+				</a>
+			</div>
+			<div class="ttl-table" aria-label={$LL.admin_info_session_ttl_title()}>
+				<div class="ttl-row ttl-header">
+					<span>{$LL.admin_info_ttl_method()}</span>
+					<span>{$LL.admin_info_ttl_value()}</span>
+					<span>{$LL.admin_info_ttl_source()}</span>
+				</div>
+				{#each sessionTtlRows as row (row.key)}
+					<div class="ttl-row">
+						<span>{row.label}</span>
+						<span class="monospace">{row.value}</span>
+						<span>{row.source}</span>
+					</div>
+				{/each}
+			</div>
+		</section>
+
+		<!-- Token TTLs -->
+		<section class="info-section">
+			<div class="section-title-row">
+				<h2 class="section-title no-margin">
+					<i class="i-ph-key w-5 h-5"></i>
+					{$LL.admin_info_token_ttl_title()}
+				</h2>
+				<a href="/admin/clients" class="settings-link">
+					{$LL.admin_info_refresh_token_ttl_clients_link()}
+					<i class="i-ph-arrow-right w-4 h-4"></i>
+				</a>
+			</div>
+			<div class="url-grid">
+				{@render urlRow(
+					$LL.admin_info_refresh_token_ttl(),
+					refreshTokenTtlInfo,
+					'refresh_token_ttl'
+				)}
+			</div>
+		</section>
+
 		<!-- CIBA -->
 		<section class="info-section">
 			<h2 class="section-title">
@@ -642,6 +810,33 @@
 		margin: 0 0 16px 0;
 	}
 
+	.section-title.no-margin {
+		margin: 0;
+	}
+
+	.section-title-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin-bottom: 16px;
+	}
+
+	.settings-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--color-accent);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
+	.settings-link:hover {
+		text-decoration: underline;
+	}
+
 	.subsection-title {
 		font-size: 0.8125rem;
 		font-weight: 600;
@@ -711,6 +906,39 @@
 		text-decoration: underline;
 	}
 
+	.ttl-table {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		overflow: hidden;
+	}
+
+	.ttl-row {
+		display: grid;
+		grid-template-columns: minmax(180px, 1fr) 120px 120px;
+		gap: 12px;
+		align-items: center;
+		padding: 9px 12px;
+		border-bottom: 1px solid var(--color-border);
+		color: var(--color-text);
+		font-size: 0.8125rem;
+	}
+
+	.ttl-row:last-child {
+		border-bottom: none;
+	}
+
+	.ttl-header {
+		background: var(--color-surface-raised);
+		color: var(--color-text-muted);
+		font-weight: 600;
+	}
+
+	.monospace {
+		font-family: var(--font-mono);
+	}
+
 	/* Copy Button */
 	.copy-btn {
 		display: flex;
@@ -749,6 +977,17 @@
 
 		.url-label {
 			font-size: 0.75rem;
+		}
+
+		.section-title-row {
+			align-items: flex-start;
+			flex-direction: column;
+			gap: 10px;
+		}
+
+		.ttl-row {
+			grid-template-columns: 1fr;
+			gap: 4px;
 		}
 	}
 </style>

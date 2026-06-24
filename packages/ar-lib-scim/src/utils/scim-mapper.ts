@@ -496,11 +496,8 @@ export function scimToUser(scimUser: Partial<ScimUser>): Partial<InternalUser> {
     });
   }
 
-  // Password (write-only)
-  if (scimUser.password) {
-    // Password hashing should be done separately
-    user.password_hash = scimUser.password; // Placeholder
-  }
+  // SCIM password is intentionally ignored here. Authrim does not provision or
+  // store user password credentials through SCIM.
 
   // Enterprise extension
   const enterpriseExt = scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];

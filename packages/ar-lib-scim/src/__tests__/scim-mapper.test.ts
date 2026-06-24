@@ -217,6 +217,17 @@ describe('SCIM Mapper', () => {
       expect(customAttrs.employeeNumber).toBe('EMP-123');
       expect(customAttrs.department).toBe('Engineering');
     });
+
+    it('should not map SCIM password to an internal password hash', () => {
+      const scimUser: Partial<ScimUser> = {
+        userName: 'johndoe',
+        password: 'not-stored',
+      };
+
+      const internalUser = scimToUser(scimUser);
+
+      expect(internalUser.password_hash).toBeUndefined();
+    });
   });
 
   describe('groupToScim', () => {

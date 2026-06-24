@@ -31,15 +31,21 @@ import {
   type DirectoryPasswordSuccess,
 } from './directory-password';
 import {
+  DirectoryPasswordRelayClient,
+  type DirectoryPasswordRelayClientConfig,
+} from './directory-relay-client';
+import {
   consumeAuthorizationChallengeContinuation,
   readAuthorizationChallengeType,
   type AuthorizationChallengeContinuation,
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
+import { resolveSessionTtl } from './session-ttl';
 
-const DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID = 'default';
+const DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID = 'campus';
 const DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES = ['mail', 'displayName', 'uid'];
-const SESSION_TTL_SECONDS = 24 * 60 * 60;
+const MIN_RELAY_VERIFY_TIMEOUT_MS = 100;
+const MAX_RELAY_VERIFY_TIMEOUT_MS = 30_000;
 const ALLOWED_CONNECTOR_SECRET_ENV_PREFIXES = ['AUTHRIM_WORDWARDEN_', 'WORDWARDEN_'];
 
 interface DirectoryPasswordLoginRequest {
@@ -54,9 +60,36 @@ interface DirectoryConnectorKVSettings {
   [key: string]: unknown;
 }
 
+interface DirectoryConnectorSettingsRecord {
+  enabled?: unknown;
+  default_connector_id?: unknown;
+  auto_provision?: unknown;
+  connectors?: unknown;
+}
+
+interface DirectoryConnectorSettingsItem {
+  id: string;
+  transport: 'direct' | 'relay';
+  endpoint_url?: string;
+  auth_mode: string;
+  connector_id: string;
+  key_id: string;
+  secret_ref: string;
+  timeouts?: {
+    request_ms?: number;
+  };
+  relay?: {
+    verify_timeout_ms?: number;
+  };
+  attribute_names?: string[];
+}
+
 interface ResolvedDirectoryConnector {
   connectorId: string;
-  clientConfig: DirectoryPasswordConnectorConfig;
+  wordwardenConnectorId: string;
+  transport: 'direct' | 'relay';
+  clientConfig?: DirectoryPasswordConnectorConfig;
+  relayConfig?: DirectoryPasswordRelayClientConfig;
   attributeNames: string[];
   autoProvision: boolean;
 }
@@ -128,7 +161,21 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       );
     }
 
-    const client = new DirectoryPasswordClient(connector.clientConfig, fetcher);
+    const client =
+      connector.transport === 'relay' && connector.relayConfig
+        ? new DirectoryPasswordRelayClient(connector.relayConfig)
+        : connector.clientConfig
+          ? new DirectoryPasswordClient(connector.clientConfig, fetcher)
+          : null;
+    if (!client) {
+      return c.json(
+        {
+          error: 'directory_password_not_configured',
+          error_description: 'Directory password login is not configured for this tenant',
+        },
+        404
+      );
+    }
     let verdict;
     try {
       verdict = await client.verifyPassword({
@@ -138,11 +185,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       });
     } catch (error) {
       if (error instanceof DirectoryPasswordError) {
-        publishDirectoryPasswordFailureEvent(
+        await publishDirectoryPasswordFailureEvent(
           c,
           connector.connectorId,
           error.details.code,
-          error.details.requestId
+          error.details.requestId,
+          username
         );
         log.warn('Directory connector verification failed', {
           action: 'directory_password_connector',
@@ -168,11 +216,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     }
 
     if (verdict.result !== 'success') {
-      publishDirectoryPasswordFailureEvent(
+      await publishDirectoryPasswordFailureEvent(
         c,
         connector.connectorId,
         verdict.reason || verdict.result,
-        verdict.request_id
+        verdict.request_id,
+        username
       );
       return c.json({ error: 'invalid_credentials' }, 401);
     }
@@ -190,7 +239,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     let runtimeUser = await runtimeUsers.findByEmail(email);
     if (!runtimeUser) {
       if (!connector.autoProvision) {
-        publishDirectoryPasswordFailureEvent(
+        await publishDirectoryPasswordFailureEvent(
           c,
           connector.connectorId,
           'directory_identity_unmapped',
@@ -223,6 +272,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
     const now = Date.now();
     const authTime = Math.floor(now / 1000);
+    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'directory_password');
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (authorizationChallengeId) {
       const continuation = await consumeAuthorizationChallengeContinuation(
@@ -243,7 +293,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     await sessionStore.createSessionRpc(
       sessionId,
       runtimeUser.id,
-      SESSION_TTL_SECONDS,
+      sessionTtl.seconds,
       {
         email: runtimeUser.email,
         name: runtimeUser.name,
@@ -279,7 +329,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       data: {
         sessionId,
         userId: runtimeUser.id,
-        ttlSeconds: SESSION_TTL_SECONDS,
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err) => {
       log.error('Failed to publish session.user.created event', {
@@ -299,7 +349,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       metadata: JSON.stringify({
         method: 'directory_password',
         connector_id: connector.connectorId,
-        wordwarden_connector_id: connector.clientConfig.connectorId,
+        wordwarden_connector_id: connector.wordwardenConnectorId,
+        transport: connector.transport,
         wordwarden_request_id: verdict.request_id,
         directory_status: verdict.directory_status,
       }),
@@ -318,7 +369,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       httpOnly: true,
       secure: isSecure,
       sameSite: getSessionCookieSameSite(c.env),
-      maxAge: SESSION_TTL_SECONDS,
+      maxAge: sessionTtl.seconds,
     });
 
     const browserState = await generateBrowserState(sessionId);
@@ -326,7 +377,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       path: '/',
       secure: isSecure,
       sameSite: getBrowserStateCookieSameSite(c.env),
-      maxAge: SESSION_TTL_SECONDS,
+      maxAge: sessionTtl.seconds,
     });
 
     const postLoginRedirect = authorizationContinuation
@@ -337,11 +388,11 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     c.header('Pragma', 'no-cache');
     return c.json({
       ok: true,
-      expires_in: SESSION_TTL_SECONDS,
+      expires_in: sessionTtl.seconds,
       session: {
         userId: runtimeUser.id,
         createdAt: now,
-        expiresAt: now + SESSION_TTL_SECONDS * 1000,
+        expiresAt: now + sessionTtl.milliseconds,
         authTime,
         acr: 'urn:mace:incommon:iap:bronze',
         amr: ['pwd', 'directory'],
@@ -366,31 +417,36 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
 export const directoryPasswordLoginHandler = createDirectoryPasswordLoginHandler();
 
-function publishDirectoryPasswordFailureEvent(
+async function publishDirectoryPasswordFailureEvent(
   c: Context<{ Bindings: Env }>,
   connectorId: string,
   errorCode: string,
-  requestId?: string
-): void {
+  requestId?: string,
+  username?: string
+): Promise<void> {
   const tenantId = getTenantIdFromContext(c);
   const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
-  publishEvent(c, {
-    type: AUTH_EVENTS.DIRECTORY_PASSWORD_FAILED,
-    tenantId,
-    data: {
-      method: 'directory_password',
-      clientId: 'directory-password-auth',
-      connectorId,
-      requestId,
-      errorCode,
-    } satisfies AuthEventData,
-  }).catch((err) => {
+  try {
+    const usernameHash = await tenantScopedIdentifierHmac(c.env, tenantId, username);
+    await publishEvent(c, {
+      type: AUTH_EVENTS.DIRECTORY_PASSWORD_FAILED,
+      tenantId,
+      data: {
+        method: 'directory_password',
+        clientId: 'directory-password-auth',
+        connectorId,
+        requestId,
+        errorCode,
+        ...(usernameHash ? { usernameHash } : {}),
+      } satisfies AuthEventData,
+    });
+  } catch (err) {
     log.error('Failed to publish auth.directory_password.failed event', {
       action: 'event_publish',
       connectorId,
       errorType: err instanceof Error ? err.name : 'Unknown',
     });
-  });
+  }
 }
 
 function requestIpAddress(c: Context<{ Bindings: Env }>): string {
@@ -402,56 +458,153 @@ function requestIpAddress(c: Context<{ Bindings: Env }>): string {
   );
 }
 
+async function tenantScopedIdentifierHmac(
+  env: Env,
+  tenantId: string,
+  value?: string
+): Promise<string | undefined> {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const secret =
+    envString(env, 'AUTHRIM_AUDIT_HASH_SECRET') || envString(env, 'EMAIL_DOMAIN_HASH_SECRET');
+  if (!secret) return undefined;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(`${tenantId}:${secret}`),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(normalized));
+  return bytesToHex(new Uint8Array(signature));
+}
+
 async function resolveDirectoryConnector(
   env: Env,
   tenantId: string
 ): Promise<ResolvedDirectoryConnector | null> {
-  const authenticationMethods = await readTenantSettings(env, tenantId, 'authentication-methods');
-  if (
-    !normalizeBoolean(authenticationMethods?.['authentication-methods.directory_password.enabled'])
-  ) {
+  const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors');
+  if (!normalizeBoolean(connectorSettings?.enabled)) return null;
+  const connectorId =
+    stringSetting(connectorSettings?.default_connector_id) ||
+    DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
+  const directoryConnector = resolveDirectoryConnectorSettings(connectorSettings, connectorId);
+  if (!directoryConnector) {
     return null;
   }
 
-  const connectorId =
-    stringSetting(
-      authenticationMethods?.['authentication-methods.directory_password.connector_id']
-    ) || DEFAULT_DIRECTORY_PASSWORD_CONNECTOR_ID;
-  const connectorSettings = await readTenantSettings(env, tenantId, 'directory-connectors');
-  const prefix = `directory-connectors.${connectorId}.`;
-  const endpoint =
-    stringSetting(connectorSettings?.[`${prefix}endpoint_url`]) ||
-    stringSetting(connectorSettings?.[`${prefix}endpoint`]);
-  const authMode = stringSetting(connectorSettings?.[`${prefix}auth_mode`]) || 'hmac';
-  const wordwardenConnectorId =
-    stringSetting(connectorSettings?.[`${prefix}connector_id`]) || connectorId;
-  const keyId = stringSetting(connectorSettings?.[`${prefix}key_id`]);
-  const secretRef =
-    stringSetting(connectorSettings?.[`${prefix}secret_ref`]) ||
-    stringSetting(connectorSettings?.[`${prefix}secret_env`]);
+  const transport = directoryConnector.transport;
+  const endpoint = directoryConnector.endpoint_url;
+  const authMode = directoryConnector.auth_mode || 'hmac';
+  const wordwardenConnectorId = directoryConnector.connector_id;
+  const keyId = directoryConnector.key_id;
+  const secretRef = directoryConnector.secret_ref;
   const secret = secretRef ? resolveConnectorSecret(env, secretRef) : undefined;
-  if (authMode !== 'hmac' || !endpoint || !wordwardenConnectorId || !keyId || !secret) {
+  if (authMode !== 'hmac' || !wordwardenConnectorId || !keyId || !secretRef) {
+    return null;
+  }
+
+  if (transport === 'relay') {
+    if (!env.DIRECTORY_CONNECTOR_RELAY) return null;
+    return {
+      connectorId,
+      wordwardenConnectorId,
+      transport,
+      relayConfig: {
+        relay: env.DIRECTORY_CONNECTOR_RELAY,
+        tenantId,
+        connectorId: wordwardenConnectorId,
+        timeoutMs: directoryConnector.relay?.verify_timeout_ms,
+      },
+      attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
+      autoProvision: normalizeBoolean(connectorSettings?.auto_provision),
+    };
+  }
+
+  if (!endpoint) {
+    return null;
+  }
+  if (!secret) {
     return null;
   }
 
   return {
     connectorId,
+    wordwardenConnectorId,
+    transport,
     clientConfig: {
       endpoint,
       tenantId,
       connectorId: wordwardenConnectorId,
       keyId,
       secret,
-      timeoutMs:
-        numberSetting(connectorSettings?.[`${prefix}timeouts.request_ms`]) ||
-        numberSetting(connectorSettings?.[`${prefix}timeout_ms`]),
+      timeoutMs: directoryConnector.timeouts?.request_ms,
     },
-    attributeNames:
-      stringArraySetting(connectorSettings?.[`${prefix}attribute_names`]) ??
-      DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
-    autoProvision: normalizeBoolean(
-      authenticationMethods?.['authentication-methods.directory_password.auto_provision']
-    ),
+    attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
+    autoProvision: normalizeBoolean(connectorSettings?.auto_provision),
+  };
+}
+
+function resolveDirectoryConnectorSettings(
+  settings: DirectoryConnectorKVSettings | null,
+  connectorId: string
+): DirectoryConnectorSettingsItem | null {
+  if (!settings) return null;
+  const record = settings as DirectoryConnectorSettingsRecord;
+  if (!Array.isArray(record.connectors)) return null;
+
+  for (const candidate of record.connectors) {
+    const connector = normalizeDirectoryConnector(candidate);
+    if (connector && connector.id === connectorId) {
+      return connector;
+    }
+  }
+  return null;
+}
+
+function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettingsItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = stringSetting(record.id);
+  const endpointURL = stringSetting(record.endpoint_url);
+  const transport = stringSetting(record.transport) === 'relay' ? 'relay' : 'direct';
+  const authMode = stringSetting(record.auth_mode) || 'hmac';
+  const connectorID = stringSetting(record.connector_id) || id;
+  const keyID = stringSetting(record.key_id);
+  const secretRef = stringSetting(record.secret_ref);
+  if (!id || (transport === 'direct' && !endpointURL) || !connectorID || !keyID || !secretRef) {
+    return null;
+  }
+
+  const timeoutRecord =
+    record.timeouts && typeof record.timeouts === 'object' && !Array.isArray(record.timeouts)
+      ? (record.timeouts as Record<string, unknown>)
+      : {};
+  const requestMS = numberSetting(timeoutRecord.request_ms);
+  const relayRecord =
+    record.relay && typeof record.relay === 'object' && !Array.isArray(record.relay)
+      ? (record.relay as Record<string, unknown>)
+      : {};
+  const attributeNames = stringArraySetting(record.attribute_names);
+  return {
+    id,
+    transport,
+    endpoint_url: endpointURL,
+    auth_mode: authMode,
+    connector_id: connectorID,
+    key_id: keyID,
+    secret_ref: secretRef,
+    timeouts: requestMS ? { request_ms: requestMS } : undefined,
+    relay: {
+      verify_timeout_ms: boundedNumberSetting(
+        relayRecord.verify_timeout_ms,
+        MIN_RELAY_VERIFY_TIMEOUT_MS,
+        MAX_RELAY_VERIFY_TIMEOUT_MS
+      ),
+    },
+    attribute_names: attributeNames,
   };
 }
 
@@ -461,9 +614,7 @@ async function readTenantSettings(
   category: string
 ): Promise<DirectoryConnectorKVSettings | null> {
   const key = `settings:tenant:${tenantId}:${category}`;
-  const raw =
-    (await env.AUTHRIM_CONFIG?.get(key).catch(() => null)) ??
-    (await env.SETTINGS?.get(key).catch(() => null));
+  const raw = await env.SETTINGS?.get(key).catch(() => null);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as DirectoryConnectorKVSettings;
@@ -484,6 +635,11 @@ function stringSetting(value: unknown): string | undefined {
 
 function numberSetting(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function boundedNumberSetting(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return undefined;
+  return Math.min(max, Math.max(min, value));
 }
 
 function stringArraySetting(value: unknown): string[] | undefined {
@@ -532,4 +688,8 @@ function directoryEmail(verdict: DirectoryPasswordSuccess): string | null {
 function firstAttribute(verdict: DirectoryPasswordSuccess, name: string): string | undefined {
   const value = verdict.attributes?.[name]?.[0];
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

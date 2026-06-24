@@ -165,6 +165,26 @@ interface DevSamlProvider {
 	updatedAt: string;
 }
 
+interface DevDirectoryConnector {
+	id: string;
+	endpoint_url: string;
+	auth_mode: 'hmac';
+	connector_id: string;
+	key_id: string;
+	secret_ref: string;
+	timeouts: {
+		request_ms: number;
+	};
+	attribute_names: string[];
+}
+
+interface DevDirectoryConnectorConfig {
+	enabled: boolean;
+	default_connector_id: string;
+	auto_provision: boolean;
+	connectors: DevDirectoryConnector[];
+}
+
 interface DevExternalIdPProvider {
 	id: string;
 	slug?: string;
@@ -2711,6 +2731,29 @@ const settings = new Map<string, DevSettings>([
 			version: 'dev-1',
 			values: { 'feature.enable_flow_engine': true, 'feature.enable_custom_rules': true },
 			sources: { 'feature.enable_flow_engine': 'kv', 'feature.enable_custom_rules': 'kv' }
+		}
+	]
+]);
+
+const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
+	[
+		TENANT_ID,
+		{
+			enabled: false,
+			default_connector_id: 'campus',
+			auto_provision: false,
+			connectors: [
+				{
+					id: 'campus',
+					endpoint_url: 'http://localhost:8080',
+					auth_mode: 'hmac',
+					connector_id: 'ww_tenant_a',
+					key_id: 'kid-active',
+					secret_ref: 'env:WORDWARDEN_SECRET',
+					timeouts: { request_ms: 2500 },
+					attribute_names: ['mail', 'displayName', 'uid']
+				}
+			]
 		}
 	]
 ]);
@@ -6787,6 +6830,92 @@ async function handleSamlProviders(
 	return null;
 }
 
+function normalizeDevDirectoryConnector(input: unknown, index: number): DevDirectoryConnector {
+	const record = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+	const value = record as Record<string, unknown>;
+	const timeoutRecord =
+		value.timeouts && typeof value.timeouts === 'object' && !Array.isArray(value.timeouts)
+			? (value.timeouts as Record<string, unknown>)
+			: {};
+	const requestMs = Number(timeoutRecord.request_ms);
+	return {
+		id: stringValue(value.id, index === 0 ? 'campus' : `campus-${index + 1}`),
+		endpoint_url: stringValue(value.endpoint_url, 'http://localhost:8080'),
+		auth_mode: 'hmac',
+		connector_id: stringValue(value.connector_id, 'ww_tenant_a'),
+		key_id: stringValue(value.key_id, 'kid-active'),
+		secret_ref: stringValue(value.secret_ref, 'env:WORDWARDEN_SECRET'),
+		timeouts: {
+			request_ms: Number.isInteger(requestMs) ? requestMs : 2500
+		},
+		attribute_names: Array.isArray(value.attribute_names)
+			? [
+					...new Set(
+						value.attribute_names
+							.map(String)
+							.map((item) => item.trim())
+							.filter(Boolean)
+					)
+				]
+			: []
+	};
+}
+
+async function handleDirectoryConnectors(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	const method = event.request.method;
+	if (segments[0] !== 'tenants' || segments[2] !== 'directory-connectors') return null;
+
+	const tenantId = segments[1] || getTenantId(event);
+	const config = directoryConnectors.get(tenantId) ?? {
+		enabled: false,
+		default_connector_id: 'campus',
+		auto_provision: false,
+		connectors: []
+	};
+
+	if (segments.length === 3 && method === 'GET') {
+		return json({ tenantId, ...config });
+	}
+
+	if (segments.length === 3 && method === 'PUT') {
+		const input = await readJson(event.request);
+		const nextConnectors = Array.isArray(input.connectors)
+			? input.connectors.map((connector, index) => normalizeDevDirectoryConnector(connector, index))
+			: [];
+		const nextConfig = {
+			enabled: Boolean(input.enabled),
+			default_connector_id:
+				typeof input.default_connector_id === 'string' && input.default_connector_id.trim()
+					? input.default_connector_id.trim()
+					: 'campus',
+			auto_provision: Boolean(input.auto_provision),
+			connectors: nextConnectors
+		};
+		directoryConnectors.set(tenantId, nextConfig);
+		return json({ tenantId, ...nextConfig });
+	}
+
+	if (segments.length === 5 && segments[4] === 'health' && method === 'POST') {
+		const connectorId = segments[3];
+		const connector = config.connectors.find((item) => item.id === connectorId);
+		if (!connector) return json({ error: 'directory_connector_not_found' }, 404);
+		return json({
+			ok: true,
+			connector_id: connector.id,
+			status: 200,
+			body: {
+				ok: true,
+				mode: 'dev-admin-mock'
+			}
+		});
+	}
+
+	return null;
+}
+
 async function handleCompliance(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
 	const nowIso = new Date(NOW).toISOString();
@@ -9976,6 +10105,8 @@ export async function handleDevAdminMock(
 	if (customClaimsResponse) return customClaimsResponse;
 	const externalProvidersResponse = await handleExternalProviders(event, segments);
 	if (externalProvidersResponse) return externalProvidersResponse;
+	const directoryConnectorsResponse = await handleDirectoryConnectors(event, segments);
+	if (directoryConnectorsResponse) return directoryConnectorsResponse;
 	const sessionsResponse = await handleSessions(event, segments);
 	if (sessionsResponse) return sessionsResponse;
 	const endUsersResponse = await handleEndUsers(event, segments);

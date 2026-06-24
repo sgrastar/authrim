@@ -58,6 +58,7 @@ import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { resolveSessionTtl } from './session-ttl';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -611,6 +612,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Create new session if not an anonymous upgrade
+      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'email_code');
       if (!isAnonymousUpgrade) {
         try {
           const { stub: sessionStore, sessionId: newSessionId } =
@@ -620,7 +622,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           await sessionStore.createSessionRpc(
             newSessionId,
             user.id as string,
-            24 * 60 * 60, // 24 hours in seconds
+            sessionTtl.seconds,
             {
               email: user.email,
               name: user.name,
@@ -672,7 +674,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           httpOnly: true,
           secure: true,
           sameSite: getSessionCookieSameSite(c.env),
-          maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
+          maxAge: sessionTtl.seconds,
         });
 
         // Set browser state cookie for OIDC Session Management (NOT HttpOnly so JS can read it)
@@ -681,7 +683,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           path: '/',
           secure: true,
           sameSite: getBrowserStateCookieSameSite(c.env),
-          maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
+          maxAge: sessionTtl.seconds,
         });
       }
 
@@ -710,7 +712,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         data: {
           sessionId,
           userId: user.id as string,
-          ttlSeconds: 24 * 60 * 60, // 24 hours
+          ttlSeconds: sessionTtl.seconds,
         } satisfies SessionEventData,
       }).catch((err) => {
         log.error(
