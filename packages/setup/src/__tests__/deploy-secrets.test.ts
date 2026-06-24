@@ -94,6 +94,14 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-token')).not.toContain('LOGGING_CURSOR_HMAC_SECRET');
   });
 
+  it('uploads plugin encryption key only to plugin config/runtime workers', () => {
+    expect(getSecretNamesForWorker('ar-management')).toContain('PLUGIN_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-auth')).toContain('PLUGIN_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-discovery')).not.toContain('PLUGIN_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-router')).not.toContain('PLUGIN_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-token')).not.toContain('PLUGIN_ENCRYPTION_KEY');
+  });
+
   it('does not upload Admin API root bearer material to SAML or bridge workers', () => {
     expect(getSecretNamesForWorker('ar-saml')).toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');

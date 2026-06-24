@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import type { AuthrimPlugin, HealthStatus } from '../../core/types';
+import { secretField } from '../../core/security';
 
 export const TurnstileFailurePolicySchema = z.enum(['fail_closed', 'fail_open']);
 
@@ -15,10 +16,12 @@ export const CloudflareTurnstileConfigSchema = z.object({
     .string()
     .min(1, 'Site key is required')
     .describe('Cloudflare Turnstile widget sitekey used by Login UI'),
-  secretKey: z
-    .string()
-    .min(1, 'Secret key is required')
-    .describe('Cloudflare Turnstile secret key used only for server-side Siteverify'),
+  secretKey: secretField(
+    z
+      .string()
+      .min(1, 'Secret key is required')
+      .describe('Cloudflare Turnstile secret key used only for server-side Siteverify')
+  ),
   expectedHostname: z
     .string()
     .optional()

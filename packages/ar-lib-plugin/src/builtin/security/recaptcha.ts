@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import type { AuthrimPlugin, HealthStatus } from '../../core/types';
+import { secretField } from '../../core/security';
 import { TurnstileFailurePolicySchema } from './turnstile';
 
 export const ReCaptchaWidgetModeSchema = z.enum(['checkbox', 'invisible', 'score']);
@@ -16,10 +17,12 @@ export const ReCaptchaConfigSchema = z.object({
     .string()
     .min(1, 'Site key is required')
     .describe('Google reCAPTCHA site key used by Login UI'),
-  secretKey: z
-    .string()
-    .min(1, 'Secret key is required')
-    .describe('Google reCAPTCHA secret key used only for server-side Siteverify'),
+  secretKey: secretField(
+    z
+      .string()
+      .min(1, 'Secret key is required')
+      .describe('Google reCAPTCHA secret key used only for server-side Siteverify')
+  ),
   expectedHostname: z
     .string()
     .optional()

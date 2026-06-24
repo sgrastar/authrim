@@ -192,6 +192,7 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
@@ -292,10 +293,11 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(10);
+    expect(result.createdFiles).toHaveLength(11);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
@@ -374,6 +376,9 @@ describe('generateWranglerSecretCommands', () => {
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/logging_cursor_hmac_secret.txt)" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/plugin_encryption_key.txt)" | wrangler secret put PLUGIN_ENCRYPTION_KEY --env dev'
     );
   });
 });

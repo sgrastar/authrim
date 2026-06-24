@@ -1971,6 +1971,7 @@ export function createApiRoutes(): Hono {
             },
             { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
             { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
+            { file: join(keysDir, 'plugin_encryption_key.txt'), name: 'PLUGIN_ENCRYPTION_KEY' },
             { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
             // Email provider secrets (optional)
             { file: join(keysDir, 'resend_api_key.txt'), name: 'RESEND_API_KEY' },

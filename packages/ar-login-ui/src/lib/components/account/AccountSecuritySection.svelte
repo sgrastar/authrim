@@ -152,6 +152,14 @@
 						<li>
 							<div>
 								<strong>{passkey.device_name ?? passkey.id}</strong>
+								{#if passkey.provider?.name || passkey.aaguid}
+									<span class="passkey-provider">
+										{#if passkey.provider?.icon_light}
+											<img src={passkey.provider.icon_light} alt="" loading="lazy" />
+										{/if}
+										{passkey.provider?.name ?? passkey.aaguid}
+									</span>
+								{/if}
 								<span>{formatUnixDateTime(passkey.last_used_at || passkey.created_at)}</span>
 							</div>
 							<Button
@@ -241,6 +249,20 @@
 	.empty-text {
 		font-size: 0.8125rem;
 		color: var(--text-muted);
+	}
+
+	.passkey-provider {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 3px;
+	}
+
+	.passkey-provider img {
+		width: 18px;
+		height: 18px;
+		border-radius: 4px;
+		object-fit: contain;
 	}
 
 	.panel-error {

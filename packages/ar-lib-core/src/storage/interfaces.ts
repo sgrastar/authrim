@@ -580,6 +580,7 @@ export interface Passkey {
   counter: number; // Signature counter for replay attack prevention
   transports?: string[]; // Authenticator transports (usb, nfc, ble, internal)
   device_name?: string; // User-friendly device name
+  aaguid?: string | null; // Authenticator Attestation GUID for display metadata
   created_at: number; // Unix timestamp
   last_used_at?: number; // Unix timestamp
 }

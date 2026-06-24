@@ -899,6 +899,7 @@ describe('Passkey Handlers', () => {
           user_id: 'user-123',
           credential_id: expect.any(String),
           public_key: expect.any(String),
+          aaguid: '00000000-0000-0000-0000-000000000000',
         })
       );
       expect(db.prepare).toHaveBeenCalledWith(

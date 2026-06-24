@@ -311,6 +311,8 @@ export interface Env {
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
   KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
+  PLUGIN_ENCRYPTION_KEY?: string; // Dedicated encryption key for plugin configuration secrets
+  PLUGIN_ENCRYPTION_SALT?: string; // Optional salt override for plugin configuration secret encryption
   VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
   TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK?: string; // Ed25519 private JWK for control/management snapshot publishing only
   TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID?: string; // Key ID for runtime registry snapshot signatures

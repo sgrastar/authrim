@@ -28,6 +28,7 @@ import {
   runPIIWriteWithCompensation,
   type CanonicalRuntimeUserProjection,
 } from '@authrim/ar-lib-core';
+import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
   ADMIN_USER_UPDATE_RESERVED_FIELDS,
@@ -630,6 +631,8 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       id: p.id,
       credential_id: p.credential_id,
       device_name: p.device_name,
+      aaguid: p.aaguid ?? null,
+      provider: resolveAaguidAuthenticator(p.aaguid),
       created_at: toMilliseconds(p.created_at),
       last_used_at: toMilliseconds(p.last_used_at),
     }));

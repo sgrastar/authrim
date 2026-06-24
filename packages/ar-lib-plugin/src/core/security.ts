@@ -448,7 +448,7 @@ export interface EncryptedConfig {
   [key: string]: unknown;
 }
 
-/** Default salt for backwards compatibility */
+/** Default salt for plugin secret encryption */
 const DEFAULT_ENCRYPTION_SALT = 'authrim-plugin-config-v1';
 
 /**
@@ -502,10 +502,8 @@ export async function deriveEncryptionKey(secret: string, salt?: string): Promis
 /**
  * Get or create encryption key for plugin configuration
  *
- * Priority for secret:
- * 1. PLUGIN_ENCRYPTION_KEY environment variable
- * 2. KEY_MANAGER_SECRET (fallback, shared with key manager)
- *
+ * Secret:
+ * - PLUGIN_ENCRYPTION_KEY environment variable
  * Salt (optional):
  * - PLUGIN_ENCRYPTION_SALT environment variable
  * - Falls back to default salt for backwards compatibility
@@ -517,13 +515,12 @@ export async function deriveEncryptionKey(secret: string, salt?: string): Promis
 export async function getPluginEncryptionKey(env: {
   PLUGIN_ENCRYPTION_KEY?: string;
   PLUGIN_ENCRYPTION_SALT?: string;
-  KEY_MANAGER_SECRET?: string;
 }): Promise<CryptoKey> {
-  const secret = env.PLUGIN_ENCRYPTION_KEY ?? env.KEY_MANAGER_SECRET;
+  const secret = env.PLUGIN_ENCRYPTION_KEY;
 
   if (!secret) {
     throw new Error(
-      'Plugin encryption key not configured. Set PLUGIN_ENCRYPTION_KEY or KEY_MANAGER_SECRET environment variable.'
+      'Plugin encryption key not configured. Set PLUGIN_ENCRYPTION_KEY environment variable.'
     );
   }
 

@@ -9,6 +9,7 @@ import {
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { requireAccountSession, type AccountSession } from './account-page';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import type {
@@ -34,7 +35,9 @@ const VALID_TRANSPORTS: AccountAuthenticatorTransport[] = [
 type AccountPasskeyRecord = {
   id: string;
   user_id: string;
+  credential_id: string;
   device_name: string | null;
+  aaguid: string | null;
   created_at: number;
   last_used_at: number | null;
 };
@@ -59,11 +62,34 @@ function setNoStore(c: Context<{ Bindings: Env }>): void {
 }
 
 function sanitizePasskey(passkey: AccountPasskeyRecord) {
+  const provider = resolveAaguidAuthenticator(passkey.aaguid);
   return {
     id: passkey.id,
     device_name: passkey.device_name,
+    aaguid: provider?.aaguid ?? passkey.aaguid ?? null,
+    provider,
     created_at: passkey.created_at,
     last_used_at: passkey.last_used_at,
+  };
+}
+
+function getRequestRpId(c: Context<{ Bindings: Env }>): string {
+  const origin = normalizeOrigin(c.req.header('Origin'));
+  if (origin) {
+    return new URL(origin).hostname;
+  }
+  return new URL(c.req.url).hostname;
+}
+
+function buildWebAuthnSignalDetails(
+  c: Context<{ Bindings: Env }>,
+  accountSession: AccountSession,
+  passkeys: AccountPasskeyRecord[]
+) {
+  return {
+    rp_id: getRequestRpId(c),
+    user_id: toBase64URLString(new TextEncoder().encode(accountSession.userId)),
+    credential_ids: passkeys.map((passkey) => toBase64URLString(passkey.credential_id)),
   };
 }
 
@@ -466,6 +492,7 @@ export async function completeAccountPasskeyRegistrationHandler(
     transports,
     device_name:
       requestedDeviceName || challengeData.metadata?.deviceName || `Passkey ${Date.now()}`,
+    aaguid: registrationInfo.aaguid ?? null,
   });
 
   await recordAccountOperation(c, {
@@ -475,10 +502,16 @@ export async function completeAccountPasskeyRegistrationHandler(
     resourceId: passkey.id,
   });
 
+  const acceptedPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
+  const signalPasskeys = acceptedPasskeys.some((accepted) => accepted.id === passkey.id)
+    ? acceptedPasskeys
+    : [...acceptedPasskeys, passkey];
+
   return c.json(
     {
       ok: true,
       passkey: sanitizePasskey(passkey),
+      webauthn_signal: buildWebAuthnSignalDetails(c, accountSession, signalPasskeys),
     },
     201
   );
@@ -499,6 +532,7 @@ export async function listAccountPasskeysHandler(c: Context<{ Bindings: Env }>):
   return c.json({
     passkeys: passkeys.map(sanitizePasskey),
     total: passkeys.length,
+    webauthn_signal: buildWebAuthnSignalDetails(c, accountSession, passkeys),
   });
 }
 
@@ -627,5 +661,10 @@ export async function deleteAccountPasskeyHandler(
       id: existing.id,
       deleted: true,
     },
+    webauthn_signal: buildWebAuthnSignalDetails(
+      c,
+      accountSession,
+      registeredPasskeys.filter((passkey) => passkey.id !== existing.id)
+    ),
   });
 }

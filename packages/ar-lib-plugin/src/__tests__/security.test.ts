@@ -730,18 +730,18 @@ describe('Encryption Utilities', () => {
       expect(key).toBeDefined();
     });
 
-    it('should fallback to KEY_MANAGER_SECRET', async () => {
+    it('should reject KEY_MANAGER_SECRET without PLUGIN_ENCRYPTION_KEY', async () => {
       const env = {
         KEY_MANAGER_SECRET: TEST_SECRET,
       };
-      const key = await getPluginEncryptionKey(env);
-      expect(key).toBeDefined();
+      await expect(getPluginEncryptionKey(env)).rejects.toThrow(
+        'Plugin encryption key not configured'
+      );
     });
 
-    it('should prefer PLUGIN_ENCRYPTION_KEY over KEY_MANAGER_SECRET', async () => {
+    it('should use only PLUGIN_ENCRYPTION_KEY for encryption', async () => {
       const env = {
         PLUGIN_ENCRYPTION_KEY: TEST_SECRET,
-        KEY_MANAGER_SECRET: 'different-secret-with-32-characters-min',
       };
 
       const keyFromEnv = await getPluginEncryptionKey(env);

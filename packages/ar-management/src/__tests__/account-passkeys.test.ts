@@ -58,6 +58,20 @@ vi.mock('@simplewebauthn/server', () => ({
   verifyRegistrationResponse: mockVerifyRegistrationResponse,
 }));
 
+vi.mock('@authrim/ar-lib-core/webauthn/aaguid-metadata', () => ({
+  resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
+    aaguid
+      ? {
+          aaguid,
+          name: 'Windows Hello',
+          icon_dark: 'data:image/svg+xml;base64,dark',
+          icon_light: 'data:image/svg+xml;base64,light',
+          known: true,
+        }
+      : null
+  ),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -72,6 +86,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     PasskeyRepository: vi.fn(function PasskeyRepositoryMock() {
       return mockPasskeyRepo;
     }),
+    resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
+      aaguid
+        ? {
+            aaguid,
+            name: 'Windows Hello',
+            icon_dark: 'data:image/svg+xml;base64,dark',
+            icon_light: 'data:image/svg+xml;base64,light',
+            known: true,
+          }
+        : null
+    ),
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
@@ -100,6 +125,7 @@ const basePasskey = {
   counter: 12,
   transports: ['internal'],
   device_name: 'MacBook',
+  aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
   created_at: 1_777_000_000_000,
   last_used_at: 1_777_100_000_000,
 };
@@ -177,6 +203,7 @@ describe('Account Page passkey management API', () => {
     mockPasskeyRepo.create.mockResolvedValue({
       ...basePasskey,
       id: 'pk_new',
+      credential_id: 'credential-new',
       device_name: 'Phone',
     });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
@@ -203,6 +230,7 @@ describe('Account Page passkey management API', () => {
         credentialID: 'credential-new',
         credentialPublicKey: new Uint8Array([1, 2, 3]),
         counter: 0,
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
       },
     });
   });
@@ -218,6 +246,7 @@ describe('Account Page passkey management API', () => {
     const body = (await response.json()) as {
       passkeys: Array<Record<string, unknown>>;
       total: number;
+      webauthn_signal?: Record<string, unknown>;
     };
 
     expect(response.status).toBe(200);
@@ -227,8 +256,21 @@ describe('Account Page passkey management API', () => {
     expect(body.passkeys[0]).toEqual({
       id: 'pk_001',
       device_name: 'MacBook',
+      aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+      provider: {
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+        name: 'Windows Hello',
+        icon_dark: 'data:image/svg+xml;base64,dark',
+        icon_light: 'data:image/svg+xml;base64,light',
+        known: true,
+      },
       created_at: 1_777_000_000_000,
       last_used_at: 1_777_100_000_000,
+    });
+    expect(body.webauthn_signal).toEqual({
+      rp_id: 'op.example.com',
+      user_id: 'dXNlci0wMDE',
+      credential_ids: ['credential-secret'],
     });
     expect(body.passkeys[0]).not.toHaveProperty('credential_id');
     expect(body.passkeys[0]).not.toHaveProperty('public_key');
@@ -372,7 +414,10 @@ describe('Account Page passkey management API', () => {
         },
       })
     );
-    const body = (await response.json()) as { passkey: Record<string, unknown> };
+    const body = (await response.json()) as {
+      passkey: Record<string, unknown>;
+      webauthn_signal?: Record<string, unknown>;
+    };
 
     expect(response.status).toBe(201);
     expect(mockChallengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
@@ -394,13 +439,27 @@ describe('Account Page passkey management API', () => {
         credential_id: 'credential-new',
         public_key: 'AQID',
         device_name: 'Phone',
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
       })
     );
     expect(body.passkey).toEqual({
       id: 'pk_new',
       device_name: 'Phone',
+      aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+      provider: {
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+        name: 'Windows Hello',
+        icon_dark: 'data:image/svg+xml;base64,dark',
+        icon_light: 'data:image/svg+xml;base64,light',
+        known: true,
+      },
       created_at: 1_777_000_000_000,
       last_used_at: 1_777_100_000_000,
+    });
+    expect(body.webauthn_signal).toEqual({
+      rp_id: 'op.example.com',
+      user_id: 'dXNlci0wMDE',
+      credential_ids: ['credential-secret', 'credential-new'],
     });
     expect(body.passkey).not.toHaveProperty('credential_id');
   });
@@ -485,7 +544,10 @@ describe('Account Page passkey management API', () => {
         body: { device_name: '  Work   Mac  ' },
       })
     );
-    const body = (await response.json()) as { passkey: Record<string, unknown> };
+    const body = (await response.json()) as {
+      passkey: Record<string, unknown>;
+      webauthn_signal?: Record<string, unknown>;
+    };
 
     expect(response.status).toBe(200);
     expect(mockPasskeyRepo.rename).toHaveBeenCalledWith('pk_001', 'Work Mac');
@@ -549,7 +611,10 @@ describe('Account Page passkey management API', () => {
         params: { id: 'pk_001' },
       })
     );
-    const body = (await response.json()) as { passkey: Record<string, unknown> };
+    const body = (await response.json()) as {
+      passkey: Record<string, unknown>;
+      webauthn_signal?: Record<string, unknown>;
+    };
 
     expect(response.status).toBe(200);
     expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
@@ -559,6 +624,11 @@ describe('Account Page passkey management API', () => {
     expect(body.passkey).toEqual({
       id: 'pk_001',
       deleted: true,
+    });
+    expect(body.webauthn_signal).toEqual({
+      rp_id: 'op.example.com',
+      user_id: 'dXNlci0wMDE',
+      credential_ids: ['credential-secret-2'],
     });
   });
 
@@ -589,7 +659,10 @@ describe('Account Page passkey management API', () => {
         params: { id: 'pk_001' },
       })
     );
-    const body = (await response.json()) as { passkey: Record<string, unknown> };
+    const body = (await response.json()) as {
+      passkey: Record<string, unknown>;
+      webauthn_signal?: Record<string, unknown>;
+    };
 
     expect(response.status).toBe(200);
     expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
@@ -599,6 +672,11 @@ describe('Account Page passkey management API', () => {
     expect(body.passkey).toEqual({
       id: 'pk_001',
       deleted: true,
+    });
+    expect(body.webauthn_signal).toEqual({
+      rp_id: 'op.example.com',
+      user_id: 'dXNlci0wMDE',
+      credential_ids: [],
     });
   });
 

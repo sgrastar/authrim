@@ -2158,6 +2158,17 @@ components:
           type: string
         message:
           type: string
+        webauthn_signal:
+          $ref: "#/components/schemas/WebAuthnSignalHint"
+    WebAuthnSignalHint:
+      type: object
+      description:
+        Optional browser-side WebAuthn Signal API hint. When unknown_credential is true, clients
+        that just received a WebAuthn credential assertion may call
+        PublicKeyCredential.signalUnknownCredential() for that credential ID.
+      properties:
+        unknown_credential:
+          type: boolean
     AuthHealthResponse:
       type: object
       properties:

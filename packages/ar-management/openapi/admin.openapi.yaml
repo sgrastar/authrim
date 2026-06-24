@@ -37964,6 +37964,15 @@ components:
                     type:
                       - string
                       - 'null'
+                  aaguid:
+                    type:
+                      - string
+                      - 'null'
+                    description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+                  provider:
+                    oneOf:
+                      - $ref: '#/components/schemas/PasskeyProvider'
+                      - type: 'null'
                   created_at:
                     oneOf:
                       - type: integer
@@ -40971,6 +40980,7 @@ components:
           required:
             - roles
             - passkey_count
+            - passkeys
           properties:
             roles:
               type: array
@@ -40980,6 +40990,41 @@ components:
             passkey_count:
               type: integer
               minimum: 0
+            passkeys:
+              type: array
+              items:
+                type: object
+                required:
+                  - id
+                  - device_name
+                  - aaguid
+                  - provider
+                  - created_at
+                  - last_used_at
+                properties:
+                  id:
+                    type: string
+                  device_name:
+                    type:
+                      - string
+                      - 'null'
+                  aaguid:
+                    type:
+                      - string
+                      - 'null'
+                    description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+                  provider:
+                    oneOf:
+                      - $ref: '#/components/schemas/PasskeyProvider'
+                      - type: 'null'
+                  created_at:
+                    type: integer
+                    format: int64
+                  last_used_at:
+                    oneOf:
+                      - type: integer
+                        format: int64
+                      - type: 'null'
     AdminManagementUserCreateRequest:
       type: object
       additionalProperties: false
@@ -57990,8 +58035,19 @@ components:
           type: string
           example: apk_123
         device_name:
-          type: string
+          type:
+            - string
+            - 'null'
           example: MacBook Pro
+        aaguid:
+          type:
+            - string
+            - 'null'
+          description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+        provider:
+          oneOf:
+            - $ref: '#/components/schemas/PasskeyProvider'
+            - type: 'null'
         created_at:
           type: integer
           format: int64
@@ -58005,8 +58061,37 @@ components:
       required:
         - id
         - device_name
+        - aaguid
+        - provider
         - created_at
         - last_used_at
+    PasskeyProvider:
+      type: object
+      required:
+        - aaguid
+        - name
+        - icon_dark
+        - icon_light
+        - known
+      properties:
+        aaguid:
+          type: string
+        name:
+          type:
+            - string
+            - 'null'
+        icon_dark:
+          type:
+            - string
+            - 'null'
+          description: Display-only data URI icon for dark backgrounds when available.
+        icon_light:
+          type:
+            - string
+            - 'null'
+          description: Display-only data URI icon for light backgrounds when available.
+        known:
+          type: boolean
     AdminPasskeyListResponse:
       type: object
       properties:

@@ -7,16 +7,19 @@
 
 import { z } from 'zod';
 import type { AuthrimPlugin, HealthStatus } from '../../core/types';
+import { secretField } from '../../core/security';
 import { TurnstileFailurePolicySchema } from './turnstile';
 
 export const HCaptchaWidgetModeSchema = z.enum(['checkbox', 'invisible']);
 
 export const HCaptchaConfigSchema = z.object({
   siteKey: z.string().min(1, 'Site key is required').describe('hCaptcha sitekey used by Login UI'),
-  secretKey: z
-    .string()
-    .min(1, 'Secret key is required')
-    .describe('hCaptcha secret key used only for server-side Siteverify'),
+  secretKey: secretField(
+    z
+      .string()
+      .min(1, 'Secret key is required')
+      .describe('hCaptcha secret key used only for server-side Siteverify')
+  ),
   expectedHostname: z
     .string()
     .optional()

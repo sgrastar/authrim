@@ -905,12 +905,16 @@ async function decryptPluginConfigIfNeeded(
 
   try {
     const key = await getPluginEncryptionKey(
-      env as { PLUGIN_ENCRYPTION_KEY?: string; KEY_MANAGER_SECRET?: string }
+      env as { PLUGIN_ENCRYPTION_KEY?: string; PLUGIN_ENCRYPTION_SALT?: string }
     );
     return await decryptSecretFields(encrypted, key);
   } catch {
-    const { _encrypted, ...rest } = config as EncryptedConfig;
-    return rest;
+    const encryptedFields = new Set(encrypted._encrypted);
+    return Object.fromEntries(
+      Object.entries(config).filter(
+        ([field]) => field !== '_encrypted' && !encryptedFields.has(field)
+      )
+    );
   }
 }
 

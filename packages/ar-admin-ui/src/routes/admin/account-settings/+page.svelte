@@ -40,6 +40,10 @@
 		return nativeName === label ? label : `${label} (${nativeName})`;
 	}
 
+	function passkeyProviderIcon(passkey: AdminPasskey): string | null {
+		return passkey.provider?.icon_light ?? passkey.provider?.icon_dark ?? null;
+	}
+
 	async function handleLanguageChange(event: Event) {
 		const target = event.target as HTMLSelectElement;
 		const nextLanguage = target.value;
@@ -336,7 +340,11 @@
 							{#each passkeys as passkey (passkey.id)}
 								<div class="passkey-item">
 									<div class="passkey-icon">
-										<i class="i-ph-key"></i>
+										{#if passkeyProviderIcon(passkey)}
+											<img src={passkeyProviderIcon(passkey) ?? ''} alt="" loading="lazy" />
+										{:else}
+											<i class="i-ph-key"></i>
+										{/if}
 									</div>
 									<div class="passkey-info">
 										{#if editingPasskeyId === passkey.id}
@@ -370,6 +378,11 @@
 													lastUsed: formatRelativeTime(passkey.last_used_at)
 												})}
 											</p>
+											{#if passkey.provider?.name || passkey.aaguid}
+												<p class="passkey-provider">
+													{passkey.provider?.name ?? passkey.aaguid}
+												</p>
+											{/if}
 										{/if}
 									</div>
 									{#if editingPasskeyId !== passkey.id}
@@ -715,6 +728,12 @@
 		color: var(--color-accent);
 	}
 
+	.passkey-icon img {
+		width: 26px;
+		height: 26px;
+		object-fit: contain;
+	}
+
 	.passkey-info {
 		min-width: 0;
 		flex: 1;
@@ -726,6 +745,14 @@
 		font-size: 0.94rem;
 		font-weight: 700;
 		line-height: 1.35;
+	}
+
+	.passkey-provider {
+		margin: 4px 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
 	}
 
 	.passkey-edit-form {

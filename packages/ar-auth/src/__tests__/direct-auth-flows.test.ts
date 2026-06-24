@@ -375,6 +375,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         credentialID: new Uint8Array([9, 8, 7]),
         credentialPublicKey: new Uint8Array([6, 5, 4, 3]),
         counter: 0,
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
       },
     });
     mocks.generateEmailCode.mockReturnValue('123456');
@@ -662,6 +663,42 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('marks passkey login credential misses as safe for signalUnknownCredential', async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    mocks.passkey.findByCredentialId.mockResolvedValue(null);
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'missing-credential-id',
+          rawId: 'missing-credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.webauthn_signal).toEqual({ unknown_credential: true });
+    expect(mocks.verifyAuthenticationResponse).not.toHaveBeenCalled();
+  });
+
   it('allows passkey login from a tenant Login UI proxy origin not present in registry', async () => {
     mocks.getWebOriginRegistry.mockResolvedValue({
       origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
@@ -909,6 +946,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         public_key: Buffer.from([6, 5, 4, 3]).toString('base64'),
         transports: ['internal'],
         device_name: 'Direct Auth Passkey',
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
       })
     );
     expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
@@ -1036,6 +1074,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         user_id: 'user_existing',
         device_name: 'Work laptop',
         transports: ['internal'],
+        aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
       })
     );
     expect(mocks.challengeStore.deleteChallengeRpc).toHaveBeenCalledWith(

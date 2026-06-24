@@ -102,6 +102,9 @@ interface ScimToken {
 export interface APIError {
 	error: string;
 	error_description: string;
+	webauthn_signal?: {
+		unknown_credential?: boolean;
+	};
 	extensions?: Record<string, unknown>;
 }
 

@@ -9,6 +9,7 @@ import type {
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
 import { adminFetch } from '$lib/api/admin-request';
+import type { PasskeyProvider } from '$lib/api/admin-users';
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -32,6 +33,8 @@ export class PasskeyError extends Error {
 export interface AdminPasskey {
 	id: string;
 	device_name: string | null;
+	aaguid: string | null;
+	provider: PasskeyProvider | null;
 	created_at: number;
 	last_used_at: number | null;
 }

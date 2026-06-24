@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { verifyHumanVerificationToken } from '../builtin/security';
+import { deriveEncryptionKey, encryptSecretFields } from '../core/security';
 
 function createMockKV(data: Record<string, string> = {}) {
   return {
@@ -134,6 +135,41 @@ describe('Turnstile runtime verification', () => {
     expect(body.get('secret')).toBe('secret-key');
     expect(body.get('response')).toBe('hcaptcha-token');
     expect(body.get('sitekey')).toBe('site-key');
+  });
+
+  it('does not send encrypted hCaptcha secrets to Siteverify when decryption fails', async () => {
+    const encryptionKey = await deriveEncryptionKey('a'.repeat(32));
+    const encryptedConfig = await encryptSecretFields(
+      {
+        siteKey: 'site-key',
+        secretKey: 'secret-key',
+      },
+      ['secretKey'],
+      encryptionKey
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await verifyHumanVerificationToken({
+      env: {
+        SETTINGS: createMockKV({
+          'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+          'plugins:enabled:human-verification-hcaptcha:tenant:tenant_test': 'true',
+          'plugins:config:human-verification-hcaptcha:tenant:tenant_test':
+            JSON.stringify(encryptedConfig),
+        }) as never,
+        PLUGIN_ENCRYPTION_KEY: 'b'.repeat(32),
+      },
+      tenantId: 'tenant_test',
+      actions: 'login',
+      response: 'hcaptcha-token',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'missing_or_invalid_token', required: true });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('rejects reCAPTCHA score tokens below the configured threshold', async () => {
