@@ -18,6 +18,7 @@
 	const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 	const SECRET_REF_PATTERN =
 		/^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$/;
+	const HEARTBEAT_SECRET_REF_PATTERN = /^(|env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+)$/;
 
 	interface DirectoryConnectorDraft {
 		id: string;
@@ -34,6 +35,16 @@
 		relay_auth_failure_rate_limit_per_minute: number;
 		relay_auth_failure_block_ms: number;
 		relay_secret_rotation_grace_ms: number;
+		heartbeat_key_id: string;
+		heartbeat_secret_ref: string;
+		heartbeat_previous_key_id: string;
+		heartbeat_previous_secret_ref: string;
+		heartbeat_interval_ms: number;
+		heartbeat_stale_after_ms: number;
+		heartbeat_retention_days: number;
+		heartbeat_version_mismatch_policy: 'warn' | 'block';
+		heartbeat_unhealthy_threshold: number;
+		heartbeat_stale_detection_grace_ms: number;
 		attributes_text: string;
 	}
 
@@ -128,6 +139,16 @@
 			relay_auth_failure_rate_limit_per_minute: 10,
 			relay_auth_failure_block_ms: 300000,
 			relay_secret_rotation_grace_ms: 300000,
+			heartbeat_key_id: '',
+			heartbeat_secret_ref: '',
+			heartbeat_previous_key_id: '',
+			heartbeat_previous_secret_ref: '',
+			heartbeat_interval_ms: 300000,
+			heartbeat_stale_after_ms: 900000,
+			heartbeat_retention_days: 14,
+			heartbeat_version_mismatch_policy: 'warn',
+			heartbeat_unhealthy_threshold: 1,
+			heartbeat_stale_detection_grace_ms: 0,
 			attributes_text: 'mail, displayName, uid'
 		};
 	}
@@ -149,6 +170,16 @@
 				connector.relay?.auth_failure_rate_limit_per_minute ?? 10,
 			relay_auth_failure_block_ms: connector.relay?.auth_failure_block_ms ?? 300000,
 			relay_secret_rotation_grace_ms: connector.relay?.secret_rotation_grace_ms ?? 300000,
+			heartbeat_key_id: connector.heartbeat?.key_id ?? '',
+			heartbeat_secret_ref: connector.heartbeat?.secret_ref ?? '',
+			heartbeat_previous_key_id: connector.heartbeat?.previous_key_id ?? '',
+			heartbeat_previous_secret_ref: connector.heartbeat?.previous_secret_ref ?? '',
+			heartbeat_interval_ms: connector.heartbeat?.interval_ms ?? 300000,
+			heartbeat_stale_after_ms: connector.heartbeat?.stale_after_ms ?? 900000,
+			heartbeat_retention_days: connector.heartbeat?.retention_days ?? 14,
+			heartbeat_version_mismatch_policy: connector.heartbeat?.version_mismatch_policy ?? 'warn',
+			heartbeat_unhealthy_threshold: connector.heartbeat?.unhealthy_threshold ?? 1,
+			heartbeat_stale_detection_grace_ms: connector.heartbeat?.stale_detection_grace_ms ?? 0,
 			attributes_text: connector.attribute_names.join(', ')
 		};
 	}
@@ -182,6 +213,18 @@
 				auth_failure_rate_limit_per_minute: Number(draft.relay_auth_failure_rate_limit_per_minute),
 				auth_failure_block_ms: Number(draft.relay_auth_failure_block_ms),
 				secret_rotation_grace_ms: Number(draft.relay_secret_rotation_grace_ms)
+			},
+			heartbeat: {
+				key_id: draft.heartbeat_key_id.trim(),
+				secret_ref: draft.heartbeat_secret_ref.trim(),
+				previous_key_id: draft.heartbeat_previous_key_id.trim(),
+				previous_secret_ref: draft.heartbeat_previous_secret_ref.trim(),
+				interval_ms: Number(draft.heartbeat_interval_ms),
+				stale_after_ms: Number(draft.heartbeat_stale_after_ms),
+				retention_days: Number(draft.heartbeat_retention_days),
+				version_mismatch_policy: draft.heartbeat_version_mismatch_policy,
+				unhealthy_threshold: Number(draft.heartbeat_unhealthy_threshold),
+				stale_detection_grace_ms: Number(draft.heartbeat_stale_detection_grace_ms)
 			},
 			attribute_names: normalizeAttributes(draft.attributes_text)
 		}));
@@ -395,6 +438,47 @@
 				connector.relay.secret_rotation_grace_ms > 86400000
 			) {
 				return $LL.admin_directory_authentication_validation_rotation_grace();
+			}
+			if (
+				(Boolean(connector.heartbeat.key_id) && !connector.heartbeat.secret_ref) ||
+				(!connector.heartbeat.key_id && Boolean(connector.heartbeat.secret_ref))
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_secret_pair();
+			}
+			if (!HEARTBEAT_SECRET_REF_PATTERN.test(connector.heartbeat.secret_ref)) {
+				return $LL.admin_directory_authentication_validation_heartbeat_secret_format();
+			}
+			if (
+				(Boolean(connector.heartbeat.previous_key_id) &&
+					!connector.heartbeat.previous_secret_ref) ||
+				(!connector.heartbeat.previous_key_id &&
+					Boolean(connector.heartbeat.previous_secret_ref))
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_previous_pair();
+			}
+			if (!HEARTBEAT_SECRET_REF_PATTERN.test(connector.heartbeat.previous_secret_ref)) {
+				return $LL.admin_directory_authentication_validation_heartbeat_secret_format();
+			}
+			if (
+				!Number.isInteger(connector.heartbeat.interval_ms) ||
+				connector.heartbeat.interval_ms < 30000 ||
+				connector.heartbeat.interval_ms > 86400000
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_interval();
+			}
+			if (
+				!Number.isInteger(connector.heartbeat.stale_after_ms) ||
+				connector.heartbeat.stale_after_ms < 60000 ||
+				connector.heartbeat.stale_after_ms > 604800000
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_stale_after();
+			}
+			if (
+				!Number.isInteger(connector.heartbeat.retention_days) ||
+				connector.heartbeat.retention_days < 1 ||
+				connector.heartbeat.retention_days > 90
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_retention();
 			}
 			if (connector.attribute_names.length > 32) {
 				return $LL.admin_directory_authentication_validation_attributes();
@@ -676,6 +760,9 @@
 </svelte:head>
 
 {#snippet headerActions()}
+	<a class="btn btn-secondary" href="/admin/directory-authentication/fleet">
+		{$LL.admin_directory_authentication_open_fleet()}
+	</a>
 	<button
 		class="btn btn-secondary"
 		disabled={!hasChanges || saving || loading}
@@ -1256,6 +1343,158 @@
 									</div>
 								{/if}
 
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-key-id-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_key_id()}
+									</label>
+									<input
+										id={`heartbeat-key-id-${index}`}
+										class="admin-input"
+										bind:value={connector.heartbeat_key_id}
+										disabled={!canEdit}
+									/>
+								</div>
+
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-secret-ref-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_secret_ref()}
+									</label>
+									<input
+										id={`heartbeat-secret-ref-${index}`}
+										class="admin-input"
+										bind:value={connector.heartbeat_secret_ref}
+										disabled={!canEdit}
+									/>
+									<p class="field-hint">
+										{$LL.admin_directory_authentication_heartbeat_secret_hint()}
+									</p>
+								</div>
+
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-interval-ms-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_interval_ms()}
+									</label>
+									<input
+										id={`heartbeat-interval-ms-${index}`}
+										type="number"
+										min="30000"
+										max="86400000"
+										class="admin-input"
+										bind:value={connector.heartbeat_interval_ms}
+										disabled={!canEdit}
+									/>
+								</div>
+
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-stale-after-ms-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_stale_after_ms()}
+									</label>
+									<input
+										id={`heartbeat-stale-after-ms-${index}`}
+										type="number"
+										min="60000"
+										max="604800000"
+										class="admin-input"
+										bind:value={connector.heartbeat_stale_after_ms}
+										disabled={!canEdit}
+									/>
+								</div>
+
+								<details class="advanced-settings admin-field--full">
+									<summary>{$LL.admin_directory_authentication_advanced_fleet_settings()}</summary>
+									<div class="form-grid form-grid--nested">
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-previous-key-id-${index}`}>
+												{$LL.admin_directory_authentication_heartbeat_previous_key_id()}
+											</label>
+											<input
+												id={`heartbeat-previous-key-id-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_previous_key_id}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label
+												class="admin-field__label"
+												for={`heartbeat-previous-secret-ref-${index}`}
+											>
+												{$LL.admin_directory_authentication_heartbeat_previous_secret_ref()}
+											</label>
+											<input
+												id={`heartbeat-previous-secret-ref-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_previous_secret_ref}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-retention-days-${index}`}>
+												{$LL.admin_directory_authentication_heartbeat_retention_days()}
+											</label>
+											<input
+												id={`heartbeat-retention-days-${index}`}
+												type="number"
+												min="1"
+												max="90"
+												class="admin-input"
+												bind:value={connector.heartbeat_retention_days}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-version-policy-${index}`}>
+												{$LL.admin_directory_authentication_version_mismatch_policy()}
+											</label>
+											<select
+												id={`heartbeat-version-policy-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_version_mismatch_policy}
+												disabled={!canEdit}
+											>
+												<option value="warn">warn</option>
+												<option value="block">block</option>
+											</select>
+										</div>
+
+										<div class="admin-field">
+											<label
+												class="admin-field__label"
+												for={`heartbeat-unhealthy-threshold-${index}`}
+											>
+												{$LL.admin_directory_authentication_unhealthy_threshold()}
+											</label>
+											<input
+												id={`heartbeat-unhealthy-threshold-${index}`}
+												type="number"
+												min="1"
+												max="10"
+												class="admin-input"
+												bind:value={connector.heartbeat_unhealthy_threshold}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-stale-grace-ms-${index}`}>
+												{$LL.admin_directory_authentication_stale_detection_grace_ms()}
+											</label>
+											<input
+												id={`heartbeat-stale-grace-ms-${index}`}
+												type="number"
+												min="0"
+												max="86400000"
+												class="admin-input"
+												bind:value={connector.heartbeat_stale_detection_grace_ms}
+												disabled={!canEdit}
+											/>
+										</div>
+									</div>
+								</details>
+
 								<div class="admin-field admin-field--full">
 									<label class="admin-field__label" for={`attributes-${index}`}>
 										{$LL.admin_directory_authentication_attributes()}
@@ -1394,6 +1633,22 @@
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 14px;
+	}
+
+	.form-grid--nested {
+		margin-top: 12px;
+	}
+
+	.advanced-settings {
+		border-top: 1px solid var(--color-border);
+		padding-top: 12px;
+	}
+
+	.advanced-settings summary {
+		cursor: pointer;
+		color: var(--color-text);
+		font-size: 0.84rem;
+		font-weight: 700;
 	}
 
 	.admin-field {

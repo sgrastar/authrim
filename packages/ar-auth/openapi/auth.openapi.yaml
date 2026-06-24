@@ -206,6 +206,60 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/DirectoryPasswordLogin"
+  /api/auth/directory-connectors/heartbeat/{tenantId}/{connectorId}:
+    post:
+      tags:
+        - Directory Password
+      summary: Record a Wordwarden connector instance heartbeat.
+      description: >
+        Accepts a small HMAC-signed heartbeat from Authrim Wordwarden direct or tunnel transports.
+        The heartbeat key is separate from the password verification key. The payload must not
+        contain user PII, LDAP secrets, or raw LDAP internal values.
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^wwcon_[a-zA-Z0-9]{16}$"
+        - name: X-Authrim-Heartbeat-Key-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: X-Authrim-Heartbeat-Timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Unix epoch milliseconds or ISO-8601 timestamp within the accepted clock skew.
+        - name: X-Authrim-Heartbeat-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^(sha256=)?[a-fA-F0-9]{64}$"
+      requestBody:
+        $ref: "#/components/requestBodies/DirectoryConnectorHeartbeat"
+      responses:
+        "200":
+          $ref: "#/components/responses/DirectoryConnectorHeartbeat"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
   /api/auth/directory-relay/connect/{tenantId}/{connectorId}:
     get:
       tags:
@@ -1187,6 +1241,25 @@ components:
             email: user@example.com
             password: correct-horse-battery-staple
             client_id: client_123
+    DirectoryConnectorHeartbeat:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DirectoryConnectorHeartbeatRequest"
+          example:
+            instance_id: wwi_1234567890123456789012
+            display_name: campus-a
+            transport: direct
+            version: 0.13.0
+            started_at: "2026-06-24T00:00:00.000Z"
+            health_status: healthy
+            health_summary:
+              ldap: ok
+            config_fingerprint: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            config_categories:
+              - ldap
+            drift_severity: none
     DIDChallenge:
       required: true
       content:
@@ -1653,6 +1726,17 @@ components:
               id: user_123
               email: user@example.com
               name: Example User
+    DirectoryConnectorHeartbeat:
+      description: Heartbeat accepted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DirectoryConnectorHeartbeatResponse"
+          example:
+            ok: true
+            status: connected
+            instance_id: wwi_1234567890123456789012
+            connector_id: wwcon_8K4M2Q9F7D3H6P1X
     DIDChallenge:
       description: Successful JSON response.
       content:
@@ -2488,6 +2572,87 @@ components:
       required:
         - email
         - password
+    DirectoryConnectorHeartbeatRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - instance_id
+        - transport
+        - version
+        - started_at
+        - health_status
+        - config_fingerprint
+      properties:
+        instance_id:
+          type: string
+          maxLength: 128
+          pattern: "^[a-zA-Z0-9._:-]+$"
+          description: Immutable Wordwarden instance identifier persisted in the connector state directory.
+        display_name:
+          type: string
+          maxLength: 128
+          description: Human-readable operational display name. Not an identity boundary.
+        transport:
+          type: string
+          enum:
+            - relay
+            - direct
+            - tunnel
+        version:
+          type: string
+          maxLength: 64
+        started_at:
+          type: string
+          format: date-time
+        health_status:
+          type: string
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
+        health_summary:
+          type: object
+          additionalProperties: true
+          description: Redacted operational health summary. Must not include PII, LDAP secrets, or LDAP internal values.
+        config_fingerprint:
+          type: string
+          pattern: "^sha256:[a-f0-9]{64}$"
+        config_categories:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            maxLength: 64
+        drift_severity:
+          type: string
+          enum:
+            - none
+            - warning
+            - critical
+          default: none
+    DirectoryConnectorHeartbeatResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - status
+        - instance_id
+        - connector_id
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+        status:
+          type: string
+          enum:
+            - connected
+            - unhealthy
+        instance_id:
+          type: string
+        connector_id:
+          type: string
+          pattern: "^wwcon_[a-zA-Z0-9]{16}$"
     BrowserSessionResponse:
       type: object
       properties:

@@ -1,5 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { Env } from '@authrim/ar-lib-core';
+import {
+  ensureDatabaseAdapter,
+  recordDirectoryConnectorHeartbeat,
+  type Env,
+} from '@authrim/ar-lib-core';
 import {
   constantTimeHexEqual,
   DIRECTORY_RELAY_PROTOCOL,
@@ -39,6 +43,8 @@ const ALLOWED_CONNECTOR_SECRET_ENV_PREFIXES = ['AUTHRIM_WORDWARDEN_', 'WORDWARDE
 const MAX_RELAY_EVENT_RECORDS = 100;
 const MAX_RELAY_EVENT_FIELD_LENGTH = 256;
 const RELAY_ERROR_CODE_PATTERN = /^[a-zA-Z0-9_.:-]{1,128}$/;
+const WORDWARDEN_INSTANCE_ID_PATTERN = /^wwi_[a-zA-Z0-9_-]{22,64}$/;
+const MAX_RELAY_METADATA_FIELD_LENGTH = 128;
 
 interface DirectoryRelayAttachment {
   connectionId: string;
@@ -405,6 +411,18 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       return;
     }
 
+    const accepted = await this.recordFleetRegistration(attachment, message);
+    if (!accepted) {
+      this.sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
+      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+        type: 'directory_relay.connection.rejected',
+        code: 'relay_instance_rejected',
+        keyId: message.key_id,
+      });
+      ws.close(1008, 'relay authentication failed');
+      return;
+    }
+
     await this.markNonceUsed(attachment.tenantId, attachment.connectorId, message.nonce, settings);
     await this.closeOtherAuthenticatedSockets(ws, attachment);
     await this.clearAuthenticationFailures(attachment.tenantId, attachment.connectorId);
@@ -462,6 +480,30 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       },
       Math.max(0, attachment.challengeExpiresAt - Date.now() + 1000)
     );
+  }
+
+  private async recordFleetRegistration(
+    attachment: DirectoryRelayAttachment,
+    message: DirectoryRelayAuthResponseMessage
+  ): Promise<boolean> {
+    const instanceId = sanitizeRelayInstanceId(message.instance_id);
+    if (!instanceId) return false;
+    const adapter = ensureDatabaseAdapter(this.env.DB, 'core');
+    const result = await recordDirectoryConnectorHeartbeat(adapter, {
+      tenantId: attachment.tenantId,
+      connectorId: attachment.connectorId,
+      instanceId,
+      displayName: sanitizeRelayMetadata(message.display_name),
+      transport: 'relay',
+      version: sanitizeRelayMetadata(message.version) || 'unknown',
+      startedAt: validISODate(message.started_at) ? message.started_at! : new Date().toISOString(),
+      healthStatus: 'healthy',
+      healthSummary: { relay: 'authenticated' },
+      configFingerprint: sanitizeRelayFingerprint(message.config_fingerprint),
+      configCategories: sanitizeRelayCategories(message.config_categories),
+      driftSeverity: sanitizeRelayDriftSeverity(message.drift_severity),
+    });
+    return result.accepted;
   }
 
   private async handleVerifyPassword(request: Request): Promise<Response> {
@@ -1236,6 +1278,42 @@ function relayVerifyErrorRetryable(error: unknown): boolean {
   if (!error || typeof error !== 'object' || Array.isArray(error)) return true;
   const retryable = (error as { retryable?: unknown }).retryable;
   return typeof retryable === 'boolean' ? retryable : true;
+}
+
+function sanitizeRelayInstanceId(value: unknown): string | undefined {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!WORDWARDEN_INSTANCE_ID_PATTERN.test(raw)) return undefined;
+  return raw;
+}
+
+function sanitizeRelayMetadata(value: unknown): string | undefined {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return undefined;
+  return raw.slice(0, MAX_RELAY_METADATA_FIELD_LENGTH);
+}
+
+function sanitizeRelayFingerprint(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  return /^sha256:[a-f0-9]{64}$/.test(raw) ? raw : 'sha256:' + '0'.repeat(64);
+}
+
+function sanitizeRelayCategories(value: unknown): string[] {
+  if (!Array.isArray(value)) return ['relay'];
+  const categories = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => /^[a-zA-Z0-9_.:-]{1,64}$/.test(item))
+    .slice(0, 32);
+  return categories.length > 0 ? categories : ['relay'];
+}
+
+function sanitizeRelayDriftSeverity(value: unknown): 'none' | 'warning' | 'critical' {
+  return value === 'warning' || value === 'critical' ? value : 'none';
+}
+
+function validISODate(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  return Number.isFinite(Date.parse(value));
 }
 
 function numberValue(value: unknown): number | undefined {

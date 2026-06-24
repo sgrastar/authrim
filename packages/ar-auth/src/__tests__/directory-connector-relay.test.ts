@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapter, ExecuteResult, HealthStatus, TransactionContext } from '@authrim/ar-lib-core';
 import { DirectoryConnectorRelay } from '../directory-connector-relay';
 
 function createStorage() {
@@ -15,6 +16,7 @@ function createStorage() {
 
 function createRelay(options: { connector?: Record<string, unknown> } = {}) {
   const storage = createStorage();
+  const db = createAdapter();
   const connector = {
     id: 'campus',
     transport: 'relay',
@@ -32,6 +34,7 @@ function createRelay(options: { connector?: Record<string, unknown> } = {}) {
         return JSON.stringify({ connectors: [connector] });
       }),
     },
+    DB: db,
     WORDWARDEN_SECRET: 'active-secret',
   };
   const ctx = {
@@ -43,7 +46,35 @@ function createRelay(options: { connector?: Record<string, unknown> } = {}) {
   return {
     relay: new DirectoryConnectorRelay(ctx as unknown as DurableObjectState, env as never),
     ctx,
+    db,
     storage,
+  };
+}
+
+function executeResult(rowsAffected = 1): ExecuteResult {
+  return { rowsAffected, success: true };
+}
+
+function createAdapter(): DatabaseAdapter {
+  return {
+    query: vi.fn(async () => []),
+    queryOne: vi.fn(async () => null),
+    execute: vi.fn(async () => executeResult()),
+    async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
+      return fn({
+        query: vi.fn(async () => []),
+        queryOne: vi.fn(async () => null),
+        execute: vi.fn(async () => executeResult()),
+      });
+    },
+    batch: vi.fn(async () => []),
+    isHealthy: vi.fn(async (): Promise<HealthStatus> => ({
+      healthy: true,
+      latencyMs: 1,
+      type: 'mock',
+    })),
+    getType: vi.fn(() => 'mock'),
+    close: vi.fn(async () => undefined),
   };
 }
 
@@ -75,6 +106,71 @@ describe('DirectoryConnectorRelay', () => {
       protocol_version: 1,
       min_supported_version: 1,
     });
+  });
+
+  it('records connector fleet registration when relay auth includes instance metadata', async () => {
+    const { relay, db } = createRelay();
+    const relayInternals = relay as unknown as {
+      recordFleetRegistration: (
+        attachment: Record<string, unknown>,
+        message: Record<string, unknown>
+      ) => Promise<boolean>;
+    };
+
+    await expect(
+      relayInternals.recordFleetRegistration(
+        {
+          tenantId: 'tenant-a',
+          connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+        },
+        {
+          instance_id: 'wwi_1234567890123456789012',
+          display_name: 'campus relay',
+          version: '0.1.0',
+          started_at: '2026-06-24T00:00:00.000Z',
+        }
+      )
+    ).resolves.toBe(true);
+
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO directory_connector_instances'),
+      expect.arrayContaining([
+        'tenant-a',
+        'wwcon_8K4M2Q9F7D3H6P1X',
+        'wwi_1234567890123456789012',
+        'campus relay',
+        'relay',
+        '0.1.0',
+      ])
+    );
+  });
+
+  it('rejects relay fleet registration without an immutable instance id', async () => {
+    const { relay, db } = createRelay();
+    const relayInternals = relay as unknown as {
+      recordFleetRegistration: (
+        attachment: Record<string, unknown>,
+        message: Record<string, unknown>
+      ) => Promise<boolean>;
+    };
+
+    await expect(
+      relayInternals.recordFleetRegistration(
+        {
+          tenantId: 'tenant-a',
+          connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+        },
+        {
+          version: '0.1.0',
+          started_at: '2026-06-24T00:00:00.000Z',
+        }
+      )
+    ).resolves.toBe(false);
+
+    expect(db.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO directory_connector_instances'),
+      expect.anything()
+    );
   });
 
   it('rejects verify requests when connector pending requests exceed the configured limit', async () => {

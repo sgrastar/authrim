@@ -3,11 +3,18 @@ import type { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
+  acknowledgeDirectoryConnectorEpisode,
   createAuthContextFromHono,
   createAuditLogFromContext,
   createErrorResponse,
+  listDirectoryConnectorEpisodes,
+  listDirectoryConnectorInstances,
+  markDirectoryConnectorInstanceStatus,
   readResponseTextWithLimit,
+  reactivateDirectoryConnectorInstance,
   safeFetch,
+  type DirectoryConnectorInstanceRow,
+  type DirectoryConnectorStatusEpisodeRow,
 } from '@authrim/ar-lib-core';
 import { requireTenantResourceAccess } from '../admin-tenant-access';
 
@@ -16,6 +23,7 @@ const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 const SECRET_REF_PATTERN =
   /^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$/;
+const HEARTBEAT_SECRET_REF_PATTERN = /^env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+$/;
 const DEFAULT_REQUEST_TIMEOUT_MS = 2500;
 const MAX_REQUEST_TIMEOUT_MS = 30000;
 const DEFAULT_RELAY_VERIFY_TIMEOUT_MS = 5000;
@@ -24,6 +32,9 @@ const DEFAULT_RELAY_MAX_PENDING_REQUESTS = 16;
 const DEFAULT_RELAY_AUTH_FAILURE_RATE_LIMIT_PER_MINUTE = 10;
 const DEFAULT_RELAY_AUTH_FAILURE_BLOCK_MS = 5 * 60 * 1000;
 const DEFAULT_RELAY_SECRET_ROTATION_GRACE_MS = 5 * 60 * 1000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_HEARTBEAT_STALE_AFTER_MS = 15 * 60 * 1000;
+const DEFAULT_HEARTBEAT_RETENTION_DAYS = 14;
 const MAX_ATTRIBUTE_NAMES = 32;
 const MAX_CONNECTORS = 20;
 const MAX_PENDING_LIMIT = 100;
@@ -76,6 +87,52 @@ const RelayConnectorSettingsSchema = z
     secret_rotation_grace_ms: DEFAULT_RELAY_SECRET_ROTATION_GRACE_MS,
   });
 
+const OptionalHeartbeatSecretRefSchema = z.union([
+  z.literal(''),
+  z.string().regex(HEARTBEAT_SECRET_REF_PATTERN),
+]);
+
+const HeartbeatConnectorSettingsSchema = z
+  .object({
+    key_id: z.string().max(128).default(''),
+    secret_ref: OptionalHeartbeatSecretRefSchema.default(''),
+    previous_key_id: z.string().max(128).default(''),
+    previous_secret_ref: OptionalHeartbeatSecretRefSchema.default(''),
+    interval_ms: z
+      .number()
+      .int()
+      .min(30000)
+      .max(86400000)
+      .default(DEFAULT_HEARTBEAT_INTERVAL_MS),
+    stale_after_ms: z
+      .number()
+      .int()
+      .min(60000)
+      .max(7 * 86400000)
+      .default(DEFAULT_HEARTBEAT_STALE_AFTER_MS),
+    retention_days: z
+      .number()
+      .int()
+      .min(1)
+      .max(90)
+      .default(DEFAULT_HEARTBEAT_RETENTION_DAYS),
+    version_mismatch_policy: z.enum(['warn', 'block']).default('warn'),
+    unhealthy_threshold: z.number().int().min(1).max(10).default(1),
+    stale_detection_grace_ms: z.number().int().min(0).max(86400000).default(0),
+  })
+  .default({
+    key_id: '',
+    secret_ref: '',
+    previous_key_id: '',
+    previous_secret_ref: '',
+    interval_ms: DEFAULT_HEARTBEAT_INTERVAL_MS,
+    stale_after_ms: DEFAULT_HEARTBEAT_STALE_AFTER_MS,
+    retention_days: DEFAULT_HEARTBEAT_RETENTION_DAYS,
+    version_mismatch_policy: 'warn',
+    unhealthy_threshold: 1,
+    stale_detection_grace_ms: 0,
+  });
+
 const DirectoryConnectorSchema = z.object({
   id: z.string().regex(CONNECTOR_KEY_PATTERN),
   transport: z.enum(['direct', 'relay']).default('direct'),
@@ -95,6 +152,7 @@ const DirectoryConnectorSchema = z.object({
     })
     .default({ request_ms: DEFAULT_REQUEST_TIMEOUT_MS }),
   relay: RelayConnectorSettingsSchema,
+  heartbeat: HeartbeatConnectorSettingsSchema,
   attribute_names: z.array(z.string().min(1).max(128)).max(MAX_ATTRIBUTE_NAMES).default([]),
 });
 
@@ -115,6 +173,12 @@ const DirectoryConnectorsUpdateSchema = z.object({
 const DirectoryPendingActionSchema = z.object({
   action: z.enum(['approve', 'reject', 'link']),
   user_id: z.string().min(1).max(256).optional(),
+  reason: z.string().max(1000).optional(),
+});
+
+const DirectoryFleetActionSchema = z.object({
+  action: z.enum(['acknowledge', 'deactivate', 'reactivate']),
+  connector_id: z.string().regex(WORDWARDEN_CONNECTOR_ID_PATTERN),
   reason: z.string().max(1000).optional(),
 });
 
@@ -214,6 +278,58 @@ function serializePendingUser(row: DirectoryPendingUserRow) {
     decided_by: row.decided_by,
     decision_reason: row.decision_reason,
     linked_user_id: row.linked_user_id,
+  };
+}
+
+function parseJsonField(raw: string): unknown {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed === null ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
+function serializeFleetInstance(row: DirectoryConnectorInstanceRow) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    connector_id: row.connector_id,
+    instance_id: row.instance_id,
+    display_name: row.display_name,
+    transport: row.transport,
+    version: row.version,
+    started_at: row.started_at,
+    first_seen_at: row.first_seen_at,
+    last_seen_at: row.last_seen_at,
+    status: row.status,
+    health_status: row.health_status,
+    health_summary: parseJsonField(row.health_summary_json) ?? {},
+    config_fingerprint: row.config_fingerprint,
+    config_categories: parseJsonField(row.config_categories_json) ?? [],
+    drift_severity: row.drift_severity,
+    deactivated_at: row.deactivated_at,
+    deactivated_by: row.deactivated_by,
+    deactivation_reason: row.deactivation_reason,
+    updated_at: row.updated_at,
+  };
+}
+
+function serializeFleetEpisode(row: DirectoryConnectorStatusEpisodeRow) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    connector_id: row.connector_id,
+    instance_id: row.instance_id,
+    status: row.status,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    last_seen_at: row.last_seen_at,
+    reason: row.reason,
+    acknowledged_at: row.acknowledged_at,
+    acknowledged_by: row.acknowledged_by,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
@@ -350,6 +466,18 @@ function redactForAudit(config: DirectoryConnectorsConfig) {
       secret_ref_present: Boolean(connector.secret_ref),
       timeouts: connector.timeouts,
       relay: connector.relay,
+      heartbeat: {
+        key_id: connector.heartbeat.key_id,
+        secret_ref_present: Boolean(connector.heartbeat.secret_ref),
+        previous_key_id: connector.heartbeat.previous_key_id,
+        previous_secret_ref_present: Boolean(connector.heartbeat.previous_secret_ref),
+        interval_ms: connector.heartbeat.interval_ms,
+        stale_after_ms: connector.heartbeat.stale_after_ms,
+        retention_days: connector.heartbeat.retention_days,
+        version_mismatch_policy: connector.heartbeat.version_mismatch_policy,
+        unhealthy_threshold: connector.heartbeat.unhealthy_threshold,
+        stale_detection_grace_ms: connector.heartbeat.stale_detection_grace_ms,
+      },
       attribute_names: connector.attribute_names,
     })),
   };
@@ -739,6 +867,129 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
   ).catch(() => undefined);
 
   return c.json({ ok: true, id: pendingId, status: 'linked', linked_user_id: userId });
+}
+
+export async function listDirectoryConnectorFleetHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = c.req.param('tenantId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) return accessError;
+
+  const connectorId = c.req.query('connector_id');
+  if (connectorId && !WORDWARDEN_CONNECTOR_ID_PATTERN.test(connectorId)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  const limit = clampPendingLimit(c.req.query('limit'));
+  const adapter = coreAdapter(c, tenantId);
+  const config = await readConfig(c.env, tenantId);
+  const [instances, episodes] = await Promise.all([
+    listDirectoryConnectorInstances(adapter, tenantId, connectorId),
+    listFleetEpisodes(adapter, tenantId, connectorId, config, limit),
+  ]);
+
+  return c.json({
+    tenantId,
+    items: instances.map(serializeFleetInstance),
+    episodes: episodes.map(serializeFleetEpisode),
+  });
+}
+
+async function listFleetEpisodes(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  connectorId: string | undefined,
+  config: DirectoryConnectorsConfig,
+  limit: number
+): Promise<DirectoryConnectorStatusEpisodeRow[]> {
+  if (connectorId) {
+    return listDirectoryConnectorEpisodes(adapter, tenantId, connectorId, {
+      limit,
+      retentionDays:
+        findConnector(config, connectorId)?.heartbeat.retention_days ?? DEFAULT_HEARTBEAT_RETENTION_DAYS,
+    });
+  }
+  if (config.connectors.length === 0) {
+    return listDirectoryConnectorEpisodes(adapter, tenantId, undefined, {
+      limit,
+      retentionDays: DEFAULT_HEARTBEAT_RETENTION_DAYS,
+    });
+  }
+  const perConnectorEpisodes = await Promise.all(
+    config.connectors.map((connector) =>
+      listDirectoryConnectorEpisodes(adapter, tenantId, connector.connector_id, {
+        limit,
+        retentionDays: connector.heartbeat.retention_days,
+      })
+    )
+  );
+  return perConnectorEpisodes
+    .flat()
+    .sort((left, right) => right.started_at - left.started_at)
+    .slice(0, limit);
+}
+
+export async function updateDirectoryConnectorFleetInstanceHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = c.req.param('tenantId')!;
+  const instanceId = c.req.param('instanceId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) return accessError;
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = DirectoryFleetActionSchema.safeParse(body);
+  if (!parsed.success) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+
+  const actor = adminActorId(c);
+  const reason = parsed.data.reason?.trim() || null;
+  const adapter = coreAdapter(c, tenantId);
+  let updated = false;
+  if (parsed.data.action === 'acknowledge') {
+    updated = await acknowledgeDirectoryConnectorEpisode(adapter, {
+      tenantId,
+      connectorId: parsed.data.connector_id,
+      instanceId,
+      actorId: actor,
+      reason,
+    });
+  } else if (parsed.data.action === 'deactivate') {
+    updated = await markDirectoryConnectorInstanceStatus(adapter, {
+      tenantId,
+      connectorId: parsed.data.connector_id,
+      instanceId,
+      status: 'deactivated',
+      actorId: actor,
+      reason,
+    });
+  } else {
+    updated = await reactivateDirectoryConnectorInstance(adapter, {
+      tenantId,
+      connectorId: parsed.data.connector_id,
+      instanceId,
+      actorId: actor,
+      reason,
+    });
+  }
+  if (!updated) {
+    return c.json({ error: 'directory_connector_instance_not_found' }, 404);
+  }
+
+  await createAuditLogFromContext(
+    c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+    `directory_connector_instance.${parsed.data.action}`,
+    'directory_connector_instance',
+    instanceId,
+    {
+      tenant_id: tenantId,
+      connector_id: parsed.data.connector_id,
+    }
+  ).catch(() => undefined);
+
+  return c.json({
+    ok: true,
+    instance_id: instanceId,
+    connector_id: parsed.data.connector_id,
+    action: parsed.data.action,
+  });
 }
 
 export async function issueDirectoryConnectorSecretHandler(c: Context<{ Bindings: Env }>) {

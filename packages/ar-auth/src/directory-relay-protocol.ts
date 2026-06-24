@@ -26,6 +26,13 @@ export interface DirectoryRelayAuthResponseMessage {
   nonce: string;
   timestamp: string;
   signature: string;
+  instance_id?: string;
+  display_name?: string;
+  version?: string;
+  started_at?: string;
+  config_fingerprint?: string;
+  config_categories?: string[];
+  drift_severity?: 'none' | 'warning' | 'critical';
 }
 
 export interface DirectoryRelayAuthOkMessage {

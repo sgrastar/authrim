@@ -16840,6 +16840,80 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/fleet':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryConnectorsFleet
+      summary: List directory connector fleet instances
+      description: Returns current Wordwarden connector instances and recent status episodes for a tenant.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectorFleet'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: connector_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/fleet/{instanceId}':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsFleetByInstanceId
+      summary: Update a directory connector fleet instance
+      description: Acknowledges the current status episode, deactivates an instance, or reactivates an instance.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryConnectorFleetAction'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        $ref: '#/components/requestBodies/TenantDirectoryConnectorFleetAction'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/health':
     post:
       tags:
@@ -26303,16 +26377,28 @@ components:
                 secret_ref: env:WORDWARDEN_SECRET
                 timeouts:
                   request_ms: 2500
-                relay:
-                  verify_timeout_ms: 5000
-                  max_pending_requests: 16
-                  challenge_ttl_ms: 30000
-                  auth_failure_rate_limit_per_minute: 10
-                  auth_failure_block_ms: 300000
-                  secret_rotation_grace_ms: 300000
-                attribute_names:
-                  - mail
-                  - displayName
+                heartbeat:
+                  key_id: hb-active
+                  secret_ref: env:WORDWARDEN_HEARTBEAT_SECRET
+                  previous_key_id: ''
+                  previous_secret_ref: ''
+                  interval_ms: 300000
+                  stale_after_ms: 900000
+                  retention_days: 14
+                  version_mismatch_policy: warn
+                  unhealthy_threshold: 1
+                  stale_detection_grace_ms: 0
+    TenantDirectoryConnectorFleetAction:
+      required: true
+      description: Connector fleet instance action.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorFleetActionRequest'
+          example:
+            action: deactivate
+            connector_id: wwcon_8K4M2Q9F7D3H6P1X
+            reason: 'suspected host compromise'
     TenantDirectoryPendingUserAction:
       required: true
       description: Pending directory user action.
@@ -33438,6 +33524,62 @@ components:
             id: dirpending_123
             status: linked
             linked_user_id: user_123
+    TenantDirectoryConnectorFleet:
+      description: Directory connector fleet instances and recent status episodes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorFleetResponse'
+          example:
+            tenantId: tenant_123
+            items:
+              - id: dcinst_123
+                tenant_id: tenant_123
+                connector_id: wwcon_8K4M2Q9F7D3H6P1X
+                instance_id: wwi_1234567890123456789012
+                display_name: campus-a
+                transport: relay
+                version: 0.13.0
+                started_at: '2026-06-24T00:00:00.000Z'
+                first_seen_at: 1782260000000
+                last_seen_at: 1782260300000
+                status: connected
+                health_status: healthy
+                health_summary:
+                  ldap: ok
+                config_fingerprint: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                config_categories:
+                  - ldap
+                drift_severity: none
+                deactivated_at: null
+                deactivated_by: null
+                deactivation_reason: null
+                updated_at: 1782260300000
+            episodes:
+              - id: dcepi_123
+                tenant_id: tenant_123
+                connector_id: wwcon_8K4M2Q9F7D3H6P1X
+                instance_id: wwi_1234567890123456789012
+                status: connected
+                started_at: 1782260000000
+                ended_at: null
+                last_seen_at: 1782260300000
+                reason: null
+                acknowledged_at: null
+                acknowledged_by: null
+                created_at: 1782260000000
+                updated_at: 1782260300000
+    TenantDirectoryConnectorFleetAction:
+      description: Directory connector fleet instance action result.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryConnectorFleetActionResponse'
+          example:
+            ok: true
+            instance_id: wwi_1234567890123456789012
+            connector_id: wwcon_8K4M2Q9F7D3H6P1X
+            action: deactivate
     TenantDirectoryConnectorSecret:
       description: One-time directory connector secret response.
       content:
@@ -54185,6 +54327,68 @@ components:
           minimum: 0
           maximum: 86400000
           default: 300000
+    TenantDirectoryConnectorHeartbeatSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - key_id
+        - secret_ref
+        - previous_key_id
+        - previous_secret_ref
+        - interval_ms
+        - stale_after_ms
+        - retention_days
+        - version_mismatch_policy
+        - unhealthy_threshold
+        - stale_detection_grace_ms
+      properties:
+        key_id:
+          type: string
+          maxLength: 128
+          description: Active heartbeat HMAC key identifier. Empty until heartbeat is configured.
+        secret_ref:
+          type: string
+          pattern: '^(|env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+)$'
+          description: Active heartbeat HMAC secret reference. Heartbeat uses a key separate from password verification.
+        previous_key_id:
+          type: string
+          maxLength: 128
+          description: Previous heartbeat key identifier during rotation.
+        previous_secret_ref:
+          type: string
+          pattern: '^(|env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+)$'
+          description: Previous heartbeat secret reference during rotation.
+        interval_ms:
+          type: integer
+          minimum: 30000
+          maximum: 86400000
+          default: 300000
+        stale_after_ms:
+          type: integer
+          minimum: 60000
+          maximum: 604800000
+          default: 900000
+        retention_days:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 14
+        version_mismatch_policy:
+          type: string
+          enum:
+            - warn
+            - block
+          default: warn
+        unhealthy_threshold:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 1
+        stale_detection_grace_ms:
+          type: integer
+          minimum: 0
+          maximum: 86400000
+          default: 0
     TenantDirectoryConnector:
       type: object
       additionalProperties: false
@@ -54197,6 +54401,7 @@ components:
         - secret_ref
         - timeouts
         - relay
+        - heartbeat
         - attribute_names
       properties:
         id:
@@ -54232,6 +54437,8 @@ components:
           $ref: '#/components/schemas/TenantDirectoryConnectorTimeouts'
         relay:
           $ref: '#/components/schemas/TenantDirectoryConnectorRelaySettings'
+        heartbeat:
+          $ref: '#/components/schemas/TenantDirectoryConnectorHeartbeatSettings'
         attribute_names:
           type: array
           maxItems: 32
@@ -54393,6 +54600,215 @@ components:
             - linked
         linked_user_id:
           type: string
+    TenantDirectoryConnectorFleetStatus:
+      type: string
+      enum:
+        - connected
+        - disconnected
+        - stale
+        - version_mismatch
+        - unhealthy
+        - deactivated
+    TenantDirectoryConnectorDriftSeverity:
+      type: string
+      enum:
+        - none
+        - warning
+        - critical
+    TenantDirectoryConnectorFleetInstance:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - connector_id
+        - instance_id
+        - transport
+        - version
+        - started_at
+        - first_seen_at
+        - last_seen_at
+        - status
+        - health_status
+        - health_summary
+        - config_fingerprint
+        - config_categories
+        - drift_severity
+        - updated_at
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        connector_id:
+          type: string
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        instance_id:
+          type: string
+          maxLength: 128
+        display_name:
+          type:
+            - string
+            - 'null'
+        transport:
+          type: string
+          enum:
+            - relay
+            - direct
+            - tunnel
+        version:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        first_seen_at:
+          type: integer
+        last_seen_at:
+          type: integer
+        status:
+          $ref: '#/components/schemas/TenantDirectoryConnectorFleetStatus'
+        health_status:
+          type: string
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
+        health_summary:
+          type: object
+          additionalProperties: true
+        config_fingerprint:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+        config_categories:
+          type: array
+          items:
+            type: string
+        drift_severity:
+          $ref: '#/components/schemas/TenantDirectoryConnectorDriftSeverity'
+        deactivated_at:
+          type:
+            - integer
+            - 'null'
+        deactivated_by:
+          type:
+            - string
+            - 'null'
+        deactivation_reason:
+          type:
+            - string
+            - 'null'
+        updated_at:
+          type: integer
+    TenantDirectoryConnectorStatusEpisode:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - connector_id
+        - instance_id
+        - status
+        - started_at
+        - last_seen_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        connector_id:
+          type: string
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        instance_id:
+          type: string
+          maxLength: 128
+        status:
+          $ref: '#/components/schemas/TenantDirectoryConnectorFleetStatus'
+        started_at:
+          type: integer
+        ended_at:
+          type:
+            - integer
+            - 'null'
+        last_seen_at:
+          type: integer
+        reason:
+          type:
+            - string
+            - 'null'
+          description: Operational reason classification. Secret values and raw signatures are not exposed.
+        acknowledged_at:
+          type:
+            - integer
+            - 'null'
+        acknowledged_by:
+          type:
+            - string
+            - 'null'
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    TenantDirectoryConnectorFleetResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - items
+        - episodes
+      properties:
+        tenantId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantDirectoryConnectorFleetInstance'
+        episodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantDirectoryConnectorStatusEpisode'
+    TenantDirectoryConnectorFleetActionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+        - connector_id
+      properties:
+        action:
+          type: string
+          enum:
+            - acknowledge
+            - deactivate
+            - reactivate
+        connector_id:
+          type: string
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        reason:
+          type: string
+          maxLength: 1000
+    TenantDirectoryConnectorFleetActionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - instance_id
+        - connector_id
+        - action
+      properties:
+        ok:
+          type: boolean
+        instance_id:
+          type: string
+        connector_id:
+          type: string
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        action:
+          type: string
+          enum:
+            - acknowledge
+            - deactivate
+            - reactivate
     TenantDirectoryConnectorHealthResponse:
       type: object
       additionalProperties: false

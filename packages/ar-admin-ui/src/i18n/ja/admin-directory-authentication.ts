@@ -1,11 +1,14 @@
 const adminDirectoryAuthentication = {
 	admin_directory_authentication_page_title: 'ディレクトリ認証 - Authrim管理',
+	admin_directory_authentication_fleet_page_title: 'Connector Fleet - Authrim管理',
 	admin_directory_authentication_title: 'ディレクトリ認証',
 	admin_directory_authentication_description:
 		'LDAP/ADのパスワード検証に使うDirectory Connectorを設定します。',
 	admin_directory_authentication_load_failed: 'Directory Connectorを読み込めませんでした',
 	admin_directory_authentication_save_failed: 'Directory Connectorを保存できませんでした',
 	admin_directory_authentication_saved: 'Directory Connector設定を保存しました。',
+	admin_directory_authentication_back_to_settings: '設定へ戻る',
+	admin_directory_authentication_open_fleet: 'Connector Fleet',
 	admin_directory_authentication_select_tenant:
 		'ディレクトリ認証を管理するテナントを選択してください。',
 	admin_directory_authentication_loading: 'Directory Connectorを読み込み中...',
@@ -48,6 +51,28 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_pending_approve: 'Approve',
 	admin_directory_authentication_pending_link: 'Link',
 	admin_directory_authentication_pending_reject: 'Reject',
+	admin_directory_authentication_fleet_title: 'Connector Fleet',
+	admin_directory_authentication_fleet_description:
+		'Wordwarden instance、現在のstatus episode、設定driftを確認します。',
+	admin_directory_authentication_fleet_instances: 'Instances',
+	admin_directory_authentication_fleet_instances_description:
+		'各instanceは独立したidentityを持ちます。Deactivateは選択したinstanceだけに影響します。',
+	admin_directory_authentication_fleet_empty: 'まだ報告されたconnector instanceはありません。',
+	admin_directory_authentication_fleet_load_failed: 'Connector Fleetを読み込めませんでした',
+	admin_directory_authentication_fleet_update_failed: 'Connector instanceを更新できませんでした',
+	admin_directory_authentication_fleet_updated: 'Connector Fleetを更新しました。',
+	admin_directory_authentication_fleet_last_seen: 'Last Seen',
+	admin_directory_authentication_fleet_started_at: 'Started At',
+	admin_directory_authentication_fleet_health: 'Health',
+	admin_directory_authentication_fleet_drift: 'Drift',
+	admin_directory_authentication_fleet_categories: 'Categories',
+	admin_directory_authentication_fleet_acknowledge: 'Acknowledge',
+	admin_directory_authentication_fleet_deactivate: 'Deactivate',
+	admin_directory_authentication_fleet_reactivate: 'Reactivate',
+	admin_directory_authentication_fleet_recent_episodes: 'Recent Episodes',
+	admin_directory_authentication_fleet_acknowledged: 'Acknowledged',
+	admin_directory_authentication_fleet_key_rotation_recommended:
+		'Security reasonでdeactivateした場合は、reactivate前にheartbeat key rotationを推奨します。',
 	admin_directory_authentication_status: 'Status',
 	admin_directory_authentication_status_enabled: '有効',
 	admin_directory_authentication_status_disabled: '無効',
@@ -90,6 +115,20 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_relay_auth_failure_rate: 'Auth Failures / Minute',
 	admin_directory_authentication_relay_auth_failure_block_ms: 'Auth Failure Block (ms)',
 	admin_directory_authentication_rotation_grace_ms: 'Rotation Grace (ms)',
+	admin_directory_authentication_heartbeat_key_id: 'Heartbeat Key ID',
+	admin_directory_authentication_heartbeat_secret_ref: 'Heartbeat Secret Reference',
+	admin_directory_authentication_heartbeat_secret_hint:
+		'env:WORDWARDEN_* または env:AUTHRIM_WORDWARDEN_* を使います。Heartbeatはパスワード検証とは別keyです。',
+	admin_directory_authentication_heartbeat_interval_ms: 'Heartbeat Interval (ms)',
+	admin_directory_authentication_heartbeat_stale_after_ms: 'Stale After (ms)',
+	admin_directory_authentication_advanced_fleet_settings: '高度なFleet設定',
+	admin_directory_authentication_heartbeat_previous_key_id: 'Previous Heartbeat Key ID',
+	admin_directory_authentication_heartbeat_previous_secret_ref:
+		'Previous Heartbeat Secret Reference',
+	admin_directory_authentication_heartbeat_retention_days: 'Episode Retention (days)',
+	admin_directory_authentication_version_mismatch_policy: 'Version Mismatch Policy',
+	admin_directory_authentication_unhealthy_threshold: 'Unhealthy Threshold',
+	admin_directory_authentication_stale_detection_grace_ms: 'Stale Detection Grace (ms)',
 	admin_directory_authentication_attributes: 'LDAP Attributes',
 	admin_directory_authentication_auth_mode: 'Auth Mode',
 	admin_directory_authentication_hmac: 'HMAC',
@@ -129,6 +168,18 @@ const adminDirectoryAuthentication = {
 		'Auth Failure Blockは1000から3600000 msの範囲です。',
 	admin_directory_authentication_validation_rotation_grace:
 		'Rotation Graceは0から86400000 msの範囲です。',
+	admin_directory_authentication_validation_heartbeat_secret_pair:
+		'Heartbeat Key IDとHeartbeat Secret Referenceはセットで設定してください。',
+	admin_directory_authentication_validation_heartbeat_previous_pair:
+		'Previous Heartbeat Key IDとPrevious Heartbeat Secret Referenceはセットで設定してください。',
+	admin_directory_authentication_validation_heartbeat_secret_format:
+		'Heartbeat Secret Referenceは env:WORDWARDEN_* または env:AUTHRIM_WORDWARDEN_* 形式にしてください。',
+	admin_directory_authentication_validation_heartbeat_interval:
+		'Heartbeat Intervalは30000から86400000 msの範囲です。',
+	admin_directory_authentication_validation_heartbeat_stale_after:
+		'Stale Afterは60000から604800000 msの範囲です。',
+	admin_directory_authentication_validation_heartbeat_retention:
+		'Episode Retentionは1から90日の範囲です。',
 	admin_directory_authentication_validation_attributes: 'LDAP Attributesは最大32個です。',
 	admin_directory_authentication_validation_connector_required_when_enabled:
 		'ディレクトリパスワードログインを有効にするにはConnectorが必要です。',

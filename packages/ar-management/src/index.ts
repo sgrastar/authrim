@@ -816,10 +816,12 @@ import {
   checkDirectoryConnectorHealthHandler,
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
+  listDirectoryConnectorFleetHandler,
   listDirectoryConnectorRelayEventsHandler,
   listDirectoryPendingUsersHandler,
   rotateDirectoryConnectorSecretHandler,
   updateDirectoryConnectorsHandler,
+  updateDirectoryConnectorFleetInstanceHandler,
   updateDirectoryPendingUserHandler,
 } from './routes/directory-connectors';
 
@@ -1439,6 +1441,11 @@ app.get(
 app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/pending-users/:pendingId',
   updateDirectoryPendingUserHandler
+);
+app.get('/api/admin/tenants/:tenantId/directory-connectors/fleet', listDirectoryConnectorFleetHandler);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/fleet/:instanceId',
+  updateDirectoryConnectorFleetInstanceHandler
 );
 app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret',

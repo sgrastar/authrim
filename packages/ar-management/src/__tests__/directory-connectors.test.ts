@@ -3,10 +3,12 @@ import {
   checkDirectoryConnectorHealthHandler,
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
+  listDirectoryConnectorFleetHandler,
   listDirectoryConnectorRelayEventsHandler,
   listDirectoryPendingUsersHandler,
   rotateDirectoryConnectorSecretHandler,
   updateDirectoryConnectorsHandler,
+  updateDirectoryConnectorFleetInstanceHandler,
   updateDirectoryPendingUserHandler,
 } from '../routes/directory-connectors';
 
@@ -53,7 +55,8 @@ function createContext(
   connectorId?: string,
   envOverrides: Record<string, unknown> = {},
   query: Record<string, string | undefined> = {},
-  pendingId?: string
+  pendingId?: string,
+  instanceId?: string
 ) {
   const settings = createKV(initialSettings);
   return {
@@ -62,6 +65,7 @@ function createContext(
         if (name === 'tenantId') return tenantId;
         if (name === 'connectorId') return connectorId;
         if (name === 'pendingId') return pendingId;
+        if (name === 'instanceId') return instanceId;
         return undefined;
       }),
       query: vi.fn((name: string) => query[name]),
@@ -160,6 +164,15 @@ describe('directory connectors admin API', () => {
           auth_failure_block_ms: number;
           secret_rotation_grace_ms: number;
         };
+        heartbeat: {
+          key_id: string;
+          secret_ref: string;
+          previous_key_id: string;
+          previous_secret_ref: string;
+          interval_ms: number;
+          stale_after_ms: number;
+          retention_days: number;
+        };
       }>;
     };
 
@@ -175,6 +188,15 @@ describe('directory connectors admin API', () => {
       auth_failure_rate_limit_per_minute: 10,
       auth_failure_block_ms: 300000,
       secret_rotation_grace_ms: 300000,
+    });
+    expect(body.connectors[0]?.heartbeat).toMatchObject({
+      key_id: '',
+      secret_ref: '',
+      previous_key_id: '',
+      previous_secret_ref: '',
+      interval_ms: 300000,
+      stale_after_ms: 900000,
+      retention_days: 14,
     });
     expect(
       (context as { _settings: ReturnType<typeof createKV> })._settings.put
@@ -871,5 +893,214 @@ describe('directory connectors admin API', () => {
       expect.anything(),
       expect.anything()
     );
+  });
+
+  it('lists connector fleet instances and status episodes', async () => {
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'dcinst_1',
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        instance_id: 'wwi_1234567890123456789012',
+        display_name: 'campus-a',
+        transport: 'relay',
+        version: '0.13.0',
+        started_at: '2026-06-24T00:00:00.000Z',
+        first_seen_at: 1000,
+        last_seen_at: 2000,
+        status: 'connected',
+        health_status: 'healthy',
+        health_summary_json: '{"ldap":"ok"}',
+        config_fingerprint: 'sha256:abc',
+        config_categories_json: '["ldap"]',
+        drift_severity: 'none',
+        deactivated_at: null,
+        deactivated_by: null,
+        deactivation_reason: null,
+        updated_at: 2000,
+      },
+    ]);
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'dcepi_1',
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        instance_id: 'wwi_1234567890123456789012',
+        status: 'connected',
+        started_at: 1000,
+        ended_at: null,
+        last_seen_at: 2000,
+        reason: null,
+        acknowledged_at: null,
+        acknowledged_by: null,
+        created_at: 1000,
+        updated_at: 2000,
+      },
+    ]);
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      {},
+      undefined,
+      {},
+      { connector_id: 'wwcon_8K4M2Q9F7D3H6P1X', limit: '10' }
+    ) as never;
+
+    const response = await listDirectoryConnectorFleetHandler(context);
+    const body = (await response.json()) as {
+      items: Array<Record<string, unknown>>;
+      episodes: Array<Record<string, unknown>>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.items[0]).toMatchObject({
+      instance_id: 'wwi_1234567890123456789012',
+      health_summary: { ldap: 'ok' },
+      config_categories: ['ldap'],
+    });
+    expect(body.episodes[0]).toMatchObject({
+      id: 'dcepi_1',
+      status: 'connected',
+    });
+  });
+
+  it('applies fleet episode retention per connector when listing all connectors', async () => {
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.coreAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'dcepi_older',
+          tenant_id: 'tenant-a',
+          connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+          instance_id: 'wwi_1234567890123456789012',
+          status: 'connected',
+          started_at: 1000,
+          ended_at: null,
+          last_seen_at: 1000,
+          reason: null,
+          acknowledged_at: null,
+          acknowledged_by: null,
+          created_at: 1000,
+          updated_at: 1000,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'dcepi_newer',
+          tenant_id: 'tenant-a',
+          connector_id: 'wwcon_4R7T9K2M6Q1F3D8H',
+          instance_id: 'wwi_abcdefghijklmno1234567',
+          status: 'unhealthy',
+          started_at: 3000,
+          ended_at: null,
+          last_seen_at: 3000,
+          reason: 'unhealthy',
+          acknowledged_at: null,
+          acknowledged_by: null,
+          created_at: 3000,
+          updated_at: 3000,
+        },
+      ]);
+    const config = {
+      ...validConfig,
+      connectors: [
+        {
+          ...validConfig.connectors[0],
+          heartbeat: {
+            retention_days: 7,
+          },
+        },
+        {
+          ...validConfig.connectors[0],
+          id: 'campus-b',
+          endpoint_url: 'https://wordwarden-b.example.com',
+          connector_id: 'wwcon_4R7T9K2M6Q1F3D8H',
+          heartbeat: {
+            retention_days: 30,
+          },
+        },
+      ],
+    };
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      { 'settings:tenant:tenant-a:directory-connectors': config },
+      undefined,
+      {},
+      {
+        limit: '10',
+      }
+    ) as never;
+
+    const response = await listDirectoryConnectorFleetHandler(context);
+    const body = (await response.json()) as {
+      episodes: Array<Record<string, unknown>>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.episodes.map((episode) => episode.id)).toEqual(['dcepi_newer', 'dcepi_older']);
+    expect(mocks.coreAdapter.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('FROM directory_connector_status_episodes'),
+      ['tenant-a', 'wwcon_8K4M2Q9F7D3H6P1X', expect.any(Number), 10]
+    );
+    expect(mocks.coreAdapter.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('FROM directory_connector_status_episodes'),
+      ['tenant-a', 'wwcon_4R7T9K2M6Q1F3D8H', expect.any(Number), 10]
+    );
+  });
+
+  it('updates connector fleet instance state without exposing reason in audit metadata', async () => {
+    const context = createContext(
+      'tenant-a',
+      {
+        action: 'deactivate',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        reason: 'suspected host compromise',
+      },
+      {},
+      undefined,
+      {},
+      {},
+      undefined,
+      'wwi_1234567890123456789012'
+    ) as never;
+
+    const response = await updateDirectoryConnectorFleetInstanceHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      instance_id: 'wwi_1234567890123456789012',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      action: 'deactivate',
+    });
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE directory_connector_instances'),
+      expect.arrayContaining(['deactivated', 'admin-1', 'suspected host compromise'])
+    );
+    expect(JSON.stringify(mocks.createAuditLogFromContext.mock.calls)).not.toContain(
+      'suspected host compromise'
+    );
+  });
+
+  it('rejects fleet actions with mutable connector ids', async () => {
+    const context = createContext(
+      'tenant-a',
+      { action: 'acknowledge', connector_id: 'campus' },
+      {},
+      undefined,
+      {},
+      {},
+      undefined,
+      'wwi_1234567890123456789012'
+    ) as never;
+
+    const response = await updateDirectoryConnectorFleetInstanceHandler(context);
+
+    expect(response.status).toBe(400);
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalled();
   });
 });

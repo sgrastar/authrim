@@ -167,6 +167,7 @@ interface DevSamlProvider {
 
 interface DevDirectoryConnector {
 	id: string;
+	transport: 'direct' | 'relay';
 	endpoint_url: string;
 	auth_mode: 'hmac';
 	connector_id: string;
@@ -174,6 +175,26 @@ interface DevDirectoryConnector {
 	secret_ref: string;
 	timeouts: {
 		request_ms: number;
+	};
+	relay: {
+		verify_timeout_ms: number;
+		max_pending_requests: number;
+		challenge_ttl_ms: number;
+		auth_failure_rate_limit_per_minute: number;
+		auth_failure_block_ms: number;
+		secret_rotation_grace_ms: number;
+	};
+	heartbeat: {
+		key_id: string;
+		secret_ref: string;
+		previous_key_id: string;
+		previous_secret_ref: string;
+		interval_ms: number;
+		stale_after_ms: number;
+		retention_days: number;
+		version_mismatch_policy: 'warn' | 'block';
+		unhealthy_threshold: number;
+		stale_detection_grace_ms: number;
 	};
 	attribute_names: string[];
 }
@@ -2745,12 +2766,33 @@ const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
 			connectors: [
 				{
 					id: 'campus',
+					transport: 'relay',
 					endpoint_url: 'http://localhost:8080',
 					auth_mode: 'hmac',
 					connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
 					key_id: 'kid-active',
 					secret_ref: 'env:WORDWARDEN_SECRET',
 					timeouts: { request_ms: 2500 },
+					relay: {
+						verify_timeout_ms: 5000,
+						max_pending_requests: 16,
+						challenge_ttl_ms: 30000,
+						auth_failure_rate_limit_per_minute: 10,
+						auth_failure_block_ms: 300000,
+						secret_rotation_grace_ms: 300000
+					},
+					heartbeat: {
+						key_id: 'hb-active',
+						secret_ref: 'env:WORDWARDEN_HEARTBEAT_SECRET',
+						previous_key_id: '',
+						previous_secret_ref: '',
+						interval_ms: 300000,
+						stale_after_ms: 900000,
+						retention_days: 14,
+						version_mismatch_policy: 'warn',
+						unhealthy_threshold: 1,
+						stale_detection_grace_ms: 0
+					},
 					attribute_names: ['mail', 'displayName', 'uid']
 				}
 			]
@@ -6838,8 +6880,17 @@ function normalizeDevDirectoryConnector(input: unknown, index: number): DevDirec
 			? (value.timeouts as Record<string, unknown>)
 			: {};
 	const requestMs = Number(timeoutRecord.request_ms);
+	const relayRecord =
+		value.relay && typeof value.relay === 'object' && !Array.isArray(value.relay)
+			? (value.relay as Record<string, unknown>)
+			: {};
+	const heartbeatRecord =
+		value.heartbeat && typeof value.heartbeat === 'object' && !Array.isArray(value.heartbeat)
+			? (value.heartbeat as Record<string, unknown>)
+			: {};
 	return {
 		id: stringValue(value.id, index === 0 ? 'campus' : `campus-${index + 1}`),
+		transport: stringValue(value.transport, 'relay') === 'direct' ? 'direct' : 'relay',
 		endpoint_url: stringValue(value.endpoint_url, 'http://localhost:8080'),
 		auth_mode: 'hmac',
 		connector_id: stringValue(value.connector_id, 'wwcon_8K4M2Q9F7D3H6P1X'),
@@ -6847,6 +6898,30 @@ function normalizeDevDirectoryConnector(input: unknown, index: number): DevDirec
 		secret_ref: stringValue(value.secret_ref, 'env:WORDWARDEN_SECRET'),
 		timeouts: {
 			request_ms: Number.isInteger(requestMs) ? requestMs : 2500
+		},
+		relay: {
+			verify_timeout_ms: numberValue(relayRecord.verify_timeout_ms, 5000),
+			max_pending_requests: numberValue(relayRecord.max_pending_requests, 16),
+			challenge_ttl_ms: numberValue(relayRecord.challenge_ttl_ms, 30000),
+			auth_failure_rate_limit_per_minute: numberValue(
+				relayRecord.auth_failure_rate_limit_per_minute,
+				10
+			),
+			auth_failure_block_ms: numberValue(relayRecord.auth_failure_block_ms, 300000),
+			secret_rotation_grace_ms: numberValue(relayRecord.secret_rotation_grace_ms, 300000)
+		},
+		heartbeat: {
+			key_id: stringValue(heartbeatRecord.key_id, ''),
+			secret_ref: stringValue(heartbeatRecord.secret_ref, ''),
+			previous_key_id: stringValue(heartbeatRecord.previous_key_id, ''),
+			previous_secret_ref: stringValue(heartbeatRecord.previous_secret_ref, ''),
+			interval_ms: numberValue(heartbeatRecord.interval_ms, 300000),
+			stale_after_ms: numberValue(heartbeatRecord.stale_after_ms, 900000),
+			retention_days: numberValue(heartbeatRecord.retention_days, 14),
+			version_mismatch_policy:
+				stringValue(heartbeatRecord.version_mismatch_policy, 'warn') === 'block' ? 'block' : 'warn',
+			unhealthy_threshold: numberValue(heartbeatRecord.unhealthy_threshold, 1),
+			stale_detection_grace_ms: numberValue(heartbeatRecord.stale_detection_grace_ms, 0)
 		},
 		attribute_names: Array.isArray(value.attribute_names)
 			? [
@@ -6896,6 +6971,67 @@ async function handleDirectoryConnectors(
 		};
 		directoryConnectors.set(tenantId, nextConfig);
 		return json({ tenantId, ...nextConfig });
+	}
+
+	if (segments[3] === 'fleet' && segments.length === 4 && method === 'GET') {
+		const now = Date.now();
+		const connector = config.connectors[0];
+		const connectorId = connector?.connector_id ?? 'wwcon_8K4M2Q9F7D3H6P1X';
+		return json({
+			tenantId,
+			items: [
+				{
+					id: 'dcinst_dev',
+					tenant_id: tenantId,
+					connector_id: connectorId,
+					instance_id: 'wwi_devlocal12345678901234',
+					display_name: 'dev-wordwarden',
+					transport: connector?.transport ?? 'relay',
+					version: '0.13.0-dev',
+					started_at: new Date(now - 3600000).toISOString(),
+					first_seen_at: now - 3600000,
+					last_seen_at: now - 30000,
+					status: 'connected',
+					health_status: 'healthy',
+					health_summary: { ldap: 'ok' },
+					config_fingerprint: `sha256:${'a'.repeat(64)}`,
+					config_categories: ['ldap', 'heartbeat'],
+					drift_severity: 'none',
+					deactivated_at: null,
+					deactivated_by: null,
+					deactivation_reason: null,
+					updated_at: now - 30000
+				}
+			],
+			episodes: [
+				{
+					id: 'dcepi_dev',
+					tenant_id: tenantId,
+					connector_id: connectorId,
+					instance_id: 'wwi_devlocal12345678901234',
+					status: 'connected',
+					started_at: now - 3600000,
+					ended_at: null,
+					last_seen_at: now - 30000,
+					reason: null,
+					acknowledged_at: null,
+					acknowledged_by: null,
+					created_at: now - 3600000,
+					updated_at: now - 30000
+				}
+			]
+		});
+	}
+
+	if (segments[3] === 'fleet' && segments.length === 5 && method === 'POST') {
+		const input = await readJson(event.request);
+		return json({
+			ok: true,
+			instance_id: segments[4],
+			connector_id:
+				typeof input.connector_id === 'string' ? input.connector_id : 'wwcon_8K4M2Q9F7D3H6P1X',
+			action: typeof input.action === 'string' ? input.action : 'acknowledge'
+		});
 	}
 
 	if (segments.length === 5 && segments[4] === 'health' && method === 'POST') {

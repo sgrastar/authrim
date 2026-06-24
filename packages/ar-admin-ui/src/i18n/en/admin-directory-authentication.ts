@@ -1,11 +1,14 @@
 const adminDirectoryAuthentication = {
 	admin_directory_authentication_page_title: 'Directory Authentication - Authrim Admin',
+	admin_directory_authentication_fleet_page_title: 'Connector Fleet - Authrim Admin',
 	admin_directory_authentication_title: 'Directory Authentication',
 	admin_directory_authentication_description:
 		'Configure Directory Connectors used for LDAP/AD password verification.',
 	admin_directory_authentication_load_failed: 'Failed to load directory connectors',
 	admin_directory_authentication_save_failed: 'Failed to save directory connectors',
 	admin_directory_authentication_saved: 'Directory connector settings saved.',
+	admin_directory_authentication_back_to_settings: 'Back to Settings',
+	admin_directory_authentication_open_fleet: 'Connector Fleet',
 	admin_directory_authentication_select_tenant:
 		'Select a tenant to manage directory authentication.',
 	admin_directory_authentication_loading: 'Loading directory connectors...',
@@ -46,6 +49,28 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_pending_approve: 'Approve',
 	admin_directory_authentication_pending_link: 'Link',
 	admin_directory_authentication_pending_reject: 'Reject',
+	admin_directory_authentication_fleet_title: 'Connector Fleet',
+	admin_directory_authentication_fleet_description:
+		'Monitor Wordwarden instances, current status episodes, and configuration drift.',
+	admin_directory_authentication_fleet_instances: 'Instances',
+	admin_directory_authentication_fleet_instances_description:
+		'Each instance has its own identity. Deactivation affects only the selected instance.',
+	admin_directory_authentication_fleet_empty: 'No connector instances have reported yet.',
+	admin_directory_authentication_fleet_load_failed: 'Failed to load connector fleet',
+	admin_directory_authentication_fleet_update_failed: 'Failed to update connector instance',
+	admin_directory_authentication_fleet_updated: 'Connector fleet updated.',
+	admin_directory_authentication_fleet_last_seen: 'Last Seen',
+	admin_directory_authentication_fleet_started_at: 'Started At',
+	admin_directory_authentication_fleet_health: 'Health',
+	admin_directory_authentication_fleet_drift: 'Drift',
+	admin_directory_authentication_fleet_categories: 'Categories',
+	admin_directory_authentication_fleet_acknowledge: 'Acknowledge',
+	admin_directory_authentication_fleet_deactivate: 'Deactivate',
+	admin_directory_authentication_fleet_reactivate: 'Reactivate',
+	admin_directory_authentication_fleet_recent_episodes: 'Recent Episodes',
+	admin_directory_authentication_fleet_acknowledged: 'Acknowledged',
+	admin_directory_authentication_fleet_key_rotation_recommended:
+		'Rotate the heartbeat key before reactivating if this was a security deactivation.',
 	admin_directory_authentication_status: 'Status',
 	admin_directory_authentication_status_enabled: 'Enabled',
 	admin_directory_authentication_status_disabled: 'Disabled',
@@ -88,6 +113,20 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_relay_auth_failure_rate: 'Auth Failures / Minute',
 	admin_directory_authentication_relay_auth_failure_block_ms: 'Auth Failure Block (ms)',
 	admin_directory_authentication_rotation_grace_ms: 'Rotation Grace (ms)',
+	admin_directory_authentication_heartbeat_key_id: 'Heartbeat Key ID',
+	admin_directory_authentication_heartbeat_secret_ref: 'Heartbeat Secret Reference',
+	admin_directory_authentication_heartbeat_secret_hint:
+		'Use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*. Heartbeat uses a key separate from password verification.',
+	admin_directory_authentication_heartbeat_interval_ms: 'Heartbeat Interval (ms)',
+	admin_directory_authentication_heartbeat_stale_after_ms: 'Stale After (ms)',
+	admin_directory_authentication_advanced_fleet_settings: 'Advanced fleet settings',
+	admin_directory_authentication_heartbeat_previous_key_id: 'Previous Heartbeat Key ID',
+	admin_directory_authentication_heartbeat_previous_secret_ref:
+		'Previous Heartbeat Secret Reference',
+	admin_directory_authentication_heartbeat_retention_days: 'Episode Retention (days)',
+	admin_directory_authentication_version_mismatch_policy: 'Version Mismatch Policy',
+	admin_directory_authentication_unhealthy_threshold: 'Unhealthy Threshold',
+	admin_directory_authentication_stale_detection_grace_ms: 'Stale Detection Grace (ms)',
 	admin_directory_authentication_attributes: 'LDAP Attributes',
 	admin_directory_authentication_auth_mode: 'Auth Mode',
 	admin_directory_authentication_hmac: 'HMAC',
@@ -127,6 +166,18 @@ const adminDirectoryAuthentication = {
 		'Auth Failure Block must be between 1000 and 3600000 ms.',
 	admin_directory_authentication_validation_rotation_grace:
 		'Rotation grace must be between 0 and 86400000 ms.',
+	admin_directory_authentication_validation_heartbeat_secret_pair:
+		'Heartbeat Key ID and Heartbeat Secret Reference must be configured together.',
+	admin_directory_authentication_validation_heartbeat_previous_pair:
+		'Previous Heartbeat Key ID and Previous Heartbeat Secret Reference must be configured together.',
+	admin_directory_authentication_validation_heartbeat_secret_format:
+		'Heartbeat Secret Reference must use env:WORDWARDEN_* or env:AUTHRIM_WORDWARDEN_*.',
+	admin_directory_authentication_validation_heartbeat_interval:
+		'Heartbeat Interval must be between 30000 and 86400000 ms.',
+	admin_directory_authentication_validation_heartbeat_stale_after:
+		'Stale After must be between 60000 and 604800000 ms.',
+	admin_directory_authentication_validation_heartbeat_retention:
+		'Episode Retention must be between 1 and 90 days.',
 	admin_directory_authentication_validation_attributes:
 		'LDAP Attributes can contain up to 32 names.',
 	admin_directory_authentication_validation_connector_required_when_enabled:
