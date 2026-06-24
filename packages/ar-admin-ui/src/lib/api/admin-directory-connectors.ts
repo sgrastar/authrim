@@ -76,6 +76,34 @@ export interface DirectoryConnectorRelayEventsResponse {
 	error_description?: string;
 }
 
+export interface DirectoryPendingUser {
+	id: string;
+	tenant_id: string;
+	connector_id: string;
+	directory_subject: string;
+	login_identifier: string;
+	status: 'pending' | 'approved' | 'rejected' | 'linked';
+	directory_facts: unknown;
+	created_at: number;
+	updated_at: number;
+	decided_at?: number | null;
+	decided_by?: string | null;
+	decision_reason?: string | null;
+	linked_user_id?: string | null;
+}
+
+export interface DirectoryPendingUsersResponse {
+	tenantId: string;
+	items: DirectoryPendingUser[];
+}
+
+export interface DirectoryPendingActionResponse {
+	ok: boolean;
+	id: string;
+	status: 'approved' | 'rejected' | 'linked';
+	linked_user_id?: string;
+}
+
 async function parseError(response: Response, fallback: string): Promise<Error> {
 	const error = await response.json().catch(() => ({}));
 	return new Error(error.error_description || error.message || error.error || fallback);
@@ -188,5 +216,43 @@ export const adminDirectoryConnectorsAPI = {
 			throw new Error('Failed to load connector events');
 		}
 		return body;
+	},
+
+	async listPendingUsers(tenantId: string): Promise<DirectoryPendingUsersResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(
+				tenantId
+			)}/directory-connectors/pending-users?status=pending&limit=50`,
+			{ tenantId }
+		);
+		if (!response.ok) {
+			throw await parseError(response, 'Failed to load pending directory users');
+		}
+		return response.json();
+	},
+
+	async updatePendingUser(
+		tenantId: string,
+		pendingId: string,
+		action:
+			| { action: 'approve'; reason?: string }
+			| { action: 'reject'; reason?: string }
+			| { action: 'link'; user_id: string; reason?: string }
+	): Promise<DirectoryPendingActionResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(
+				tenantId
+			)}/directory-connectors/pending-users/${encodeURIComponent(pendingId)}`,
+			{
+				method: 'POST',
+				includeJsonContentType: true,
+				tenantId,
+				body: JSON.stringify(action)
+			}
+		);
+		if (!response.ok) {
+			throw await parseError(response, 'Failed to update pending directory user');
+		}
+		return response.json();
 	}
 };

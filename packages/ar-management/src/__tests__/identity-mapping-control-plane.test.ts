@@ -446,6 +446,23 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository source profiles', () => {
+  it('includes built-in directory facts as an external schema', async () => {
+    const adapter = createAdapter({ queryRows: [] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const schemas = await repository.listExternalSchemas('tenant_a');
+
+    expect(schemas[0]).toMatchObject({
+      id: 'builtin_directory_facts',
+      tenantId: 'tenant_a',
+      sourceType: 'directory',
+      sourceId: 'wordwarden',
+      schemaKey: 'directory-facts',
+      lifecycleState: 'active',
+    });
+    expect(JSON.stringify(schemas[0]?.schema)).toContain('directory.identity.subject');
+  });
+
   it('parses CSV into a schema-only draft without persisting raw sampled values', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);

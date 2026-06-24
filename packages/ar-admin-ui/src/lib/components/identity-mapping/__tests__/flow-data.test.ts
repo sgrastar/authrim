@@ -735,4 +735,53 @@ describe('field mapping flow data adapter', () => {
 		expect(sourceNodeIds.some((id) => id.includes('利用者id'))).toBe(true);
 		expect(sourceNodeIds.some((id) => id.includes('メール'))).toBe(true);
 	});
+
+	it('exposes directory facts as directory source nodes', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			sourceProfiles: [],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [
+				{
+					id: 'builtin_directory_facts',
+					tenantId: 'tenant_a',
+					sourceType: 'directory',
+					sourceId: 'wordwarden',
+					sourceKey: 'directory-facts',
+					schemaKey: 'directory-facts',
+					displayName: 'Directory Facts',
+					schema: {
+						fields: [
+							{
+								key: 'directory.identity.subject',
+								label: 'Directory Subject',
+								type: 'string',
+								classification: 'internal'
+							},
+							{
+								key: 'directory.groups',
+								label: 'Directory Groups',
+								type: 'array',
+								classification: 'internal'
+							}
+						]
+					},
+					lifecycleState: 'active'
+				}
+			],
+			schemaReadinessRows: []
+		});
+
+		const directorySample = samples.find((sample) => sample.title === 'Directory Facts');
+		expect(directorySample?.sourceAdapter).toBe('DIRECTORY');
+		expect(
+			directorySample?.nodes.some(
+				(node) =>
+					node.fieldRef?.namespace === 'directory' &&
+					node.fieldRef.path === 'directory.identity.subject'
+			)
+		).toBe(true);
+	});
 });

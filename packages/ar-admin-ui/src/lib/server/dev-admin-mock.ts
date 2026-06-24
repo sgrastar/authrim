@@ -2747,7 +2747,7 @@ const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
 					id: 'campus',
 					endpoint_url: 'http://localhost:8080',
 					auth_mode: 'hmac',
-					connector_id: 'ww_tenant_a',
+					connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
 					key_id: 'kid-active',
 					secret_ref: 'env:WORDWARDEN_SECRET',
 					timeouts: { request_ms: 2500 },
@@ -6842,7 +6842,7 @@ function normalizeDevDirectoryConnector(input: unknown, index: number): DevDirec
 		id: stringValue(value.id, index === 0 ? 'campus' : `campus-${index + 1}`),
 		endpoint_url: stringValue(value.endpoint_url, 'http://localhost:8080'),
 		auth_mode: 'hmac',
-		connector_id: stringValue(value.connector_id, 'ww_tenant_a'),
+		connector_id: stringValue(value.connector_id, 'wwcon_8K4M2Q9F7D3H6P1X'),
 		key_id: stringValue(value.key_id, 'kid-active'),
 		secret_ref: stringValue(value.secret_ref, 'env:WORDWARDEN_SECRET'),
 		timeouts: {

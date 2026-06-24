@@ -817,8 +817,10 @@ import {
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
   listDirectoryConnectorRelayEventsHandler,
+  listDirectoryPendingUsersHandler,
   rotateDirectoryConnectorSecretHandler,
   updateDirectoryConnectorsHandler,
+  updateDirectoryPendingUserHandler,
 } from './routes/directory-connectors';
 
 const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
@@ -1430,6 +1432,14 @@ app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHan
 app.patch('/api/admin/tenants/:tenantId/email-settings', updateTenantEmailSettingsHandler);
 app.get('/api/admin/tenants/:tenantId/directory-connectors', getDirectoryConnectorsHandler);
 app.put('/api/admin/tenants/:tenantId/directory-connectors', updateDirectoryConnectorsHandler);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/pending-users',
+  listDirectoryPendingUsersHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/pending-users/:pendingId',
+  updateDirectoryPendingUserHandler
+);
 app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret',
   issueDirectoryConnectorSecretHandler

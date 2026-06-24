@@ -3221,6 +3221,8 @@
 				return 'saml.attribute';
 			case 'SCIM':
 				return 'scim.attribute';
+			case 'DIRECTORY':
+				return 'directory';
 			case 'CSV':
 				return 'csv.column';
 			default:

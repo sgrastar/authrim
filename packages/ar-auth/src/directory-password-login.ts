@@ -9,7 +9,6 @@ import {
   createErrorResponse,
   createPIIContextFromHono,
   generateBrowserState,
-  generateUserIdFromSettings,
   AUTH_EVENTS,
   SESSION_EVENTS,
   getBrowserStateCookieSameSite,
@@ -20,6 +19,7 @@ import {
   publishEvent,
   resolvePostLoginRedirectUrl,
   type AuthEventData,
+  type DatabaseAdapter,
   type Env,
   type SessionEventData,
 } from '@authrim/ar-lib-core';
@@ -28,6 +28,7 @@ import {
   DirectoryPasswordError,
   type DirectoryPasswordConnectorConfig,
   type DirectoryPasswordFetch,
+  type DirectoryPasswordGroupFact,
   type DirectoryPasswordSuccess,
 } from './directory-password';
 import {
@@ -47,6 +48,8 @@ const DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES = ['mail', 'displayName', 'uid'];
 const MIN_RELAY_VERIFY_TIMEOUT_MS = 100;
 const MAX_RELAY_VERIFY_TIMEOUT_MS = 30_000;
 const ALLOWED_CONNECTOR_SECRET_ENV_PREFIXES = ['AUTHRIM_WORDWARDEN_', 'WORDWARDEN_'];
+const MAX_DIRECTORY_FACTS_JSON_BYTES = 32 * 1024;
+const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 
 interface DirectoryPasswordLoginRequest {
   username?: unknown;
@@ -92,6 +95,48 @@ interface ResolvedDirectoryConnector {
   relayConfig?: DirectoryPasswordRelayClientConfig;
   attributeNames: string[];
   autoProvision: boolean;
+}
+
+interface DirectoryFacts {
+  identity: {
+    subject: string;
+    canonical_username: string;
+    connector_id: string;
+  };
+  attributes: Record<
+    string,
+    {
+      value: string | string[];
+      source: 'directory';
+      evidence: {
+        attribute: string;
+        reason: 'allowlisted_directory_attribute';
+      };
+    }
+  >;
+  groups: DirectoryPasswordGroupFact[];
+  evidence: {
+    connector_id: string;
+    wordwarden_connector_id: string;
+    request_id: string;
+    source_decisions: Array<{
+      field: string;
+      chosen_source: 'directory';
+      candidate_sources: string[];
+      reason: string;
+      connector_id: string;
+    }>;
+    truncated?: boolean;
+    reason?: string;
+  };
+}
+
+interface DirectoryIdentityLinkRow {
+  user_id: string;
+}
+
+interface DirectoryPendingStatusRow {
+  status: 'pending' | 'approved' | 'rejected' | 'linked';
 }
 
 function createCanonicalRuntimeUserStore(
@@ -226,17 +271,67 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return c.json({ error: 'invalid_credentials' }, 401);
     }
 
-    const email = directoryEmail(verdict);
-    if (!email) {
-      log.warn('Directory password login produced no mappable email', {
-        action: 'directory_password_mapping',
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const directoryFacts = buildDirectoryFacts(connector, verdict);
+    const linkedUserId = await findDirectoryIdentityLink(
+      authCtx.coreAdapter,
+      tenantId,
+      connector.wordwardenConnectorId,
+      verdict.subject.directory_id
+    );
+    let runtimeUser = linkedUserId ? await runtimeUsers.findById(linkedUserId) : null;
+    if (linkedUserId && !runtimeUser) {
+      log.warn('Directory identity link references a missing or inactive user', {
+        action: 'directory_identity_link_stale',
         connectorId: connector.connectorId,
       });
+      await publishDirectoryPasswordFailureEvent(
+        c,
+        connector.connectorId,
+        'directory_identity_link_stale',
+        verdict.request_id
+      );
       return c.json({ error: 'directory_identity_unmapped' }, 409);
     }
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    let runtimeUser = await runtimeUsers.findByEmail(email);
+    const email = directoryEmail(verdict);
+    if (!runtimeUser && email) {
+      runtimeUser = await runtimeUsers.findByEmail(email);
+      if (runtimeUser) {
+        try {
+          await upsertDirectoryIdentityLink(authCtx.coreAdapter, {
+            tenantId,
+            connectorId: connector.wordwardenConnectorId,
+            directorySubject: verdict.subject.directory_id,
+            userId: runtimeUser.id,
+            facts: directoryFacts,
+          });
+        } catch {
+          log.warn('Directory identity link conflict during first login', {
+            action: 'directory_identity_link_conflict',
+            connectorId: connector.connectorId,
+          });
+          await publishDirectoryPasswordFailureEvent(
+            c,
+            connector.connectorId,
+            'directory_identity_link_conflict',
+            verdict.request_id
+          );
+          return c.json({ error: 'directory_identity_unmapped' }, 409);
+        }
+      }
+    }
+
+    if (runtimeUser && linkedUserId) {
+      await recordDirectoryIdentityLogin(authCtx.coreAdapter, {
+        tenantId,
+        connectorId: connector.wordwardenConnectorId,
+        directorySubject: verdict.subject.directory_id,
+        facts: directoryFacts,
+      });
+    }
+
     if (!runtimeUser) {
       if (!connector.autoProvision) {
         await publishDirectoryPasswordFailureEvent(
@@ -247,23 +342,50 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         );
         return c.json({ error: 'directory_identity_unmapped' }, 409);
       }
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
-      const displayName = firstAttribute(verdict, 'displayName') ?? verdict.subject.username;
-      await runtimeUsers.syncUser({
-        userId,
-        email,
-        name: displayName,
-        active: true,
-        emailVerified: true,
-        userType: 'end_user',
-        sourceRef: `directory:${connector.connectorId}`,
-        externalId: verdict.subject.directory_id,
-        customAttributesJson: JSON.stringify({
-          directory_connector_id: connector.connectorId,
-          directory_username: verdict.subject.username,
-        }),
+      const pendingStatus = await findDirectoryPendingStatus(
+        authCtx.coreAdapter,
+        tenantId,
+        connector.wordwardenConnectorId,
+        verdict.subject.directory_id
+      );
+      if (pendingStatus === 'rejected' || pendingStatus === 'linked') {
+        await publishDirectoryPasswordFailureEvent(
+          c,
+          connector.connectorId,
+          `directory_pending_${pendingStatus}`,
+          verdict.request_id
+        );
+        return c.json({ error: 'directory_identity_unmapped' }, 409);
+      }
+      const pendingRecorded = await upsertDirectoryPendingUser(authCtx.coreAdapter, {
+        tenantId,
+        connectorId: connector.wordwardenConnectorId,
+        directorySubject: verdict.subject.directory_id,
+        loginIdentifier: email ?? verdict.subject.username,
+        facts: directoryFacts,
       });
-      runtimeUser = await runtimeUsers.findById(userId);
+      if (!pendingRecorded) {
+        await publishDirectoryPasswordFailureEvent(
+          c,
+          connector.connectorId,
+          'directory_pending_state_conflict',
+          verdict.request_id
+        );
+        return c.json({ error: 'directory_identity_unmapped' }, 409);
+      }
+      await publishDirectoryPasswordFailureEvent(
+        c,
+        connector.connectorId,
+        'pending_provisioning_created',
+        verdict.request_id
+      );
+      return c.json(
+        {
+          error: 'directory_provisioning_pending',
+          error_description: '管理者の確認が必要です。所属組織の管理者にお問い合わせください。',
+        },
+        403
+      );
     }
 
     if (!runtimeUser) {
@@ -301,6 +423,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         acr: 'urn:mace:incommon:iap:bronze',
         authTime,
         directory_connector_id: connector.connectorId,
+        wordwarden_connector_id: connector.wordwardenConnectorId,
       },
       tenantId
     );
@@ -353,6 +476,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         transport: connector.transport,
         wordwarden_request_id: verdict.request_id,
         directory_status: verdict.directory_status,
+        directory_source_decisions: directoryFacts.evidence.source_decisions,
       }),
       severity: 'info',
     }).catch((err) => {
@@ -456,6 +580,205 @@ function requestIpAddress(c: Context<{ Bindings: Env }>): string {
     c.req.header('X-Real-IP') ||
     'unknown'
   );
+}
+
+function buildDirectoryFacts(
+  connector: ResolvedDirectoryConnector,
+  verdict: DirectoryPasswordSuccess
+): DirectoryFacts {
+  const attributes: DirectoryFacts['attributes'] = {};
+  for (const [name, values] of Object.entries(verdict.attributes ?? {})) {
+    const cleanValues = values
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean);
+    if (cleanValues.length === 0) continue;
+    attributes[name] = {
+      value: cleanValues.length === 1 ? cleanValues[0] : cleanValues,
+      source: 'directory',
+      evidence: {
+        attribute: name,
+        reason: 'allowlisted_directory_attribute',
+      },
+    };
+  }
+  const sourceDecisions = [
+    'directory.identity.subject',
+    'directory.identity.canonical_username',
+    ...Object.keys(attributes).map((name) => `directory.attributes.${name}`),
+    ...(verdict.group_facts && verdict.group_facts.length > 0 ? ['directory.groups'] : []),
+  ].map((field) => ({
+    field,
+    chosen_source: 'directory' as const,
+    candidate_sources: ['directory'],
+    reason: field.startsWith('directory.attributes.')
+      ? 'allowlisted_directory_attribute'
+      : field === 'directory.groups'
+        ? 'opt_in_directory_group_facts'
+        : 'directory_identity_fact',
+    connector_id: connector.wordwardenConnectorId,
+  }));
+
+  return {
+    identity: {
+      subject: verdict.subject.directory_id,
+      canonical_username: directoryEmail(verdict) ?? verdict.subject.username,
+      connector_id: connector.wordwardenConnectorId,
+    },
+    attributes,
+    groups: verdict.group_facts ?? [],
+    evidence: {
+      connector_id: connector.connectorId,
+      wordwarden_connector_id: connector.wordwardenConnectorId,
+      request_id: verdict.request_id,
+      source_decisions: sourceDecisions,
+    },
+  };
+}
+
+async function findDirectoryIdentityLink(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  connectorId: string,
+  directorySubject: string
+): Promise<string | null> {
+  const row = await adapter.queryOne<DirectoryIdentityLinkRow>(
+    `SELECT user_id
+       FROM directory_identity_links
+      WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ?`,
+    [tenantId, connectorId, directorySubject]
+  );
+  return row?.user_id ?? null;
+}
+
+async function upsertDirectoryIdentityLink(
+  adapter: DatabaseAdapter,
+  input: {
+    tenantId: string;
+    connectorId: string;
+    directorySubject: string;
+    userId: string;
+    facts: DirectoryFacts;
+  }
+): Promise<void> {
+  const now = Date.now();
+  const factsJson = encodeDirectoryFacts(input.facts);
+  const result = await adapter.execute(
+    `INSERT INTO directory_identity_links (
+       id, tenant_id, connector_id, directory_subject, user_id,
+       latest_facts_json, created_at, updated_at, last_login_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, connector_id, directory_subject) DO NOTHING`,
+    [
+      createDirectoryRecordId('dirlink'),
+      input.tenantId,
+      input.connectorId,
+      input.directorySubject,
+      input.userId,
+      factsJson,
+      now,
+      now,
+      now,
+    ]
+  );
+  if (result.rowsAffected !== 1) {
+    throw new Error('directory identity link conflict');
+  }
+}
+
+async function findDirectoryPendingStatus(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  connectorId: string,
+  directorySubject: string
+): Promise<DirectoryPendingStatusRow['status'] | null> {
+  const row = await adapter.queryOne<DirectoryPendingStatusRow>(
+    `SELECT status
+       FROM directory_jit_pending_users
+      WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ?`,
+    [tenantId, connectorId, directorySubject]
+  );
+  return row?.status ?? null;
+}
+
+async function recordDirectoryIdentityLogin(
+  adapter: DatabaseAdapter,
+  input: {
+    tenantId: string;
+    connectorId: string;
+    directorySubject: string;
+    facts: DirectoryFacts;
+  }
+): Promise<void> {
+  const now = Date.now();
+  await adapter.execute(
+    `UPDATE directory_identity_links
+        SET latest_facts_json = ?, updated_at = ?, last_login_at = ?
+      WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ?`,
+    [
+      encodeDirectoryFacts(input.facts),
+      now,
+      now,
+      input.tenantId,
+      input.connectorId,
+      input.directorySubject,
+    ]
+  );
+}
+
+async function upsertDirectoryPendingUser(
+  adapter: DatabaseAdapter,
+  input: {
+    tenantId: string;
+    connectorId: string;
+    directorySubject: string;
+    loginIdentifier: string;
+    facts: DirectoryFacts;
+  }
+): Promise<boolean> {
+  const now = Date.now();
+  const result = await adapter.execute(
+    `INSERT INTO directory_jit_pending_users (
+       id, tenant_id, connector_id, directory_subject, login_identifier,
+       status, directory_facts_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+     ON CONFLICT(tenant_id, connector_id, directory_subject) DO UPDATE SET
+       login_identifier = excluded.login_identifier,
+       directory_facts_json = excluded.directory_facts_json,
+       updated_at = excluded.updated_at
+     WHERE directory_jit_pending_users.status = 'pending'`,
+    [
+      createDirectoryRecordId('dirpending'),
+      input.tenantId,
+      input.connectorId,
+      input.directorySubject,
+      input.loginIdentifier,
+      encodeDirectoryFacts(input.facts),
+      now,
+      now,
+    ]
+  );
+  return result.rowsAffected === 1;
+}
+
+function encodeDirectoryFacts(facts: DirectoryFacts): string {
+  const json = JSON.stringify(facts);
+  if (new TextEncoder().encode(json).byteLength <= MAX_DIRECTORY_FACTS_JSON_BYTES) {
+    return json;
+  }
+  return JSON.stringify({
+    identity: facts.identity,
+    attributes: {},
+    groups: [],
+    evidence: {
+      ...facts.evidence,
+      truncated: true,
+      reason: 'directory_facts_size_limit',
+    },
+  });
+}
+
+function createDirectoryRecordId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID()}`;
 }
 
 async function tenantScopedIdentifierHmac(
@@ -571,10 +894,17 @@ function normalizeDirectoryConnector(value: unknown): DirectoryConnectorSettings
   const endpointURL = stringSetting(record.endpoint_url);
   const transport = stringSetting(record.transport) === 'relay' ? 'relay' : 'direct';
   const authMode = stringSetting(record.auth_mode) || 'hmac';
-  const connectorID = stringSetting(record.connector_id) || id;
+  const connectorID = stringSetting(record.connector_id);
   const keyID = stringSetting(record.key_id);
   const secretRef = stringSetting(record.secret_ref);
-  if (!id || (transport === 'direct' && !endpointURL) || !connectorID || !keyID || !secretRef) {
+  if (
+    !id ||
+    (transport === 'direct' && !endpointURL) ||
+    !connectorID ||
+    !WORDWARDEN_CONNECTOR_ID_PATTERN.test(connectorID) ||
+    !keyID ||
+    !secretRef
+  ) {
     return null;
   }
 

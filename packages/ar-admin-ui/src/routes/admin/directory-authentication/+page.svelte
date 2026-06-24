@@ -6,14 +6,16 @@
 		type DirectoryConnectorHealthResponse,
 		type DirectoryConnectorRelayEventsResponse,
 		type DirectoryConnectorSecretResponse,
-		type DirectoryConnectorsResponse
+		type DirectoryConnectorsResponse,
+		type DirectoryPendingUser
 	} from '$lib/api/admin-directory-connectors';
 	import { ToggleSwitch } from '$lib/components';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
-	const CONNECTOR_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+	const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+	const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 	const SECRET_REF_PATTERN =
 		/^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$/;
 
@@ -92,10 +94,23 @@
 	let secrets = $state<Record<number, SecretState>>({});
 	let relayEvents = $state<Record<number, EventsState>>({});
 	let copiedRelayUrlIndex = $state<number | null>(null);
+	let pendingLoading = $state(false);
+	let pendingUsers = $state<DirectoryPendingUser[]>([]);
+	let pendingError = $state('');
+	let pendingActionId = $state('');
+	let pendingLinkUserIds = $state<Record<string, string>>({});
+	let pendingReasons = $state<Record<string, string>>({});
 
 	const currentTenantId = $derived(settingsContext.tenantId);
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	const hasChanges = $derived(JSON.stringify(buildConfig()) !== initialConfigJson);
+
+	function randomConnectorId(): string {
+		const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+		const bytes = new Uint8Array(16);
+		crypto.getRandomValues(bytes);
+		return `wwcon_${Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')}`;
+	}
 
 	function defaultConnector(index: number): DirectoryConnectorDraft {
 		return {
@@ -103,7 +118,7 @@
 			transport: 'relay',
 			endpoint_url: 'https://wordwarden.example.com',
 			auth_mode: 'hmac',
-			connector_id: 'ww_tenant',
+			connector_id: randomConnectorId(),
 			key_id: 'kid-active',
 			secret_ref: 'env:WORDWARDEN_SECRET',
 			request_ms: 2500,
@@ -213,6 +228,21 @@
 		return relayEvents[index]?.result?.body?.events ?? [];
 	}
 
+	function directoryFactSummary(item: DirectoryPendingUser): string {
+		if (!isObject(item.directory_facts)) return item.login_identifier;
+		const identity = item.directory_facts.identity;
+		if (isObject(identity)) {
+			const canonical = identity.canonical_username;
+			if (typeof canonical === 'string' && canonical.trim()) return canonical;
+		}
+		return item.login_identifier;
+	}
+
+	function directoryFactGroupCount(item: DirectoryPendingUser): number {
+		if (!isObject(item.directory_facts) || !Array.isArray(item.directory_facts.groups)) return 0;
+		return item.directory_facts.groups.length;
+	}
+
 	function relayURL(connector: DirectoryConnectorDraft): string {
 		if (!tenantId || !connector.connector_id || typeof window === 'undefined') return '';
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -277,9 +307,10 @@
 			return $LL.admin_directory_authentication_validation_default_connector();
 		}
 		const ids: string[] = [];
+		const wordwardenConnectorIds: string[] = [];
 		for (const connector of config.connectors) {
 			if (!connector.id) return $LL.admin_directory_authentication_validation_id_required();
-			if (!CONNECTOR_ID_PATTERN.test(connector.id)) {
+			if (!CONNECTOR_KEY_PATTERN.test(connector.id)) {
 				return $LL.admin_directory_authentication_validation_id_format();
 			}
 			if (ids.includes(connector.id)) {
@@ -297,6 +328,13 @@
 			if (!connector.connector_id) {
 				return $LL.admin_directory_authentication_validation_connector_id_required();
 			}
+			if (!WORDWARDEN_CONNECTOR_ID_PATTERN.test(connector.connector_id)) {
+				return $LL.admin_directory_authentication_validation_connector_id_format();
+			}
+			if (wordwardenConnectorIds.includes(connector.connector_id)) {
+				return $LL.admin_directory_authentication_validation_connector_id_unique();
+			}
+			wordwardenConnectorIds.push(connector.connector_id);
 			if (!connector.key_id) return $LL.admin_directory_authentication_validation_key_id_required();
 			if (!connector.secret_ref) {
 				return $LL.admin_directory_authentication_validation_secret_required();
@@ -386,10 +424,59 @@
 				auto_provision: response.auto_provision,
 				connectors: response.connectors
 			});
+			await loadPendingUsers(selectedTenantId);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_directory_authentication_load_failed();
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadPendingUsers(selectedTenantId = tenantId) {
+		if (!selectedTenantId) return;
+		pendingLoading = true;
+		pendingError = '';
+		try {
+			const response = await adminDirectoryConnectorsAPI.listPendingUsers(selectedTenantId);
+			pendingUsers = response.items;
+		} catch (err) {
+			pendingError =
+				err instanceof Error
+					? err.message
+					: $LL.admin_directory_authentication_pending_load_failed();
+		} finally {
+			pendingLoading = false;
+		}
+	}
+
+	async function updatePendingUser(
+		item: DirectoryPendingUser,
+		action: 'approve' | 'reject' | 'link'
+	) {
+		if (!tenantId || !canEdit) return;
+		const reason = pendingReasons[item.id]?.trim() || undefined;
+		const userId = pendingLinkUserIds[item.id]?.trim();
+		if (action === 'link' && !userId) {
+			pendingError = $LL.admin_directory_authentication_pending_link_user_required();
+			return;
+		}
+		pendingActionId = item.id;
+		pendingError = '';
+		try {
+			await adminDirectoryConnectorsAPI.updatePendingUser(
+				tenantId,
+				item.id,
+				action === 'link' ? { action, user_id: userId, reason } : { action, reason }
+			);
+			successMessage = $LL.admin_directory_authentication_pending_updated();
+			await loadPendingUsers(tenantId);
+		} catch (err) {
+			pendingError =
+				err instanceof Error
+					? err.message
+					: $LL.admin_directory_authentication_pending_update_failed();
+		} finally {
+			pendingActionId = '';
 		}
 	}
 
@@ -698,6 +785,121 @@
 					</div>
 				</div>
 			</div>
+		</AdminSection>
+
+		<AdminSection
+			title={$LL.admin_directory_authentication_pending_title()}
+			description={$LL.admin_directory_authentication_pending_description()}
+		>
+			<div class="pending-toolbar">
+				<p class="pending-note">{$LL.admin_directory_authentication_pending_warning()}</p>
+				<button
+					class="btn btn-secondary"
+					disabled={pendingLoading}
+					onclick={() => loadPendingUsers(tenantId)}
+				>
+					{pendingLoading
+						? $LL.admin_directory_authentication_pending_loading()
+						: $LL.admin_directory_authentication_pending_refresh()}
+				</button>
+			</div>
+
+			{#if pendingError}
+				<div class="alert alert-error">{pendingError}</div>
+			{/if}
+
+			{#if pendingLoading && pendingUsers.length === 0}
+				<p class="state-text">{$LL.admin_directory_authentication_pending_loading()}</p>
+			{:else if pendingUsers.length === 0}
+				<div class="empty-state">
+					<p>{$LL.admin_directory_authentication_pending_empty()}</p>
+				</div>
+			{:else}
+				<div class="pending-list">
+					{#each pendingUsers as item (item.id)}
+						<section class="pending-row">
+							<div class="pending-main">
+								<div>
+									<h3>{directoryFactSummary(item)}</h3>
+									<p>
+										<code>{item.connector_id}</code>
+										<span>{new Date(item.updated_at).toLocaleString()}</span>
+									</p>
+								</div>
+								<div class="pending-facts">
+									<span>{item.status}</span>
+									<span>
+										{$LL.admin_directory_authentication_pending_group_count({
+											count: directoryFactGroupCount(item)
+										})}
+									</span>
+								</div>
+							</div>
+							<details class="pending-details">
+								<summary>{$LL.admin_directory_authentication_pending_details()}</summary>
+								<dl>
+									<div>
+										<dt>{$LL.admin_directory_authentication_pending_subject()}</dt>
+										<dd><code>{item.directory_subject}</code></dd>
+									</div>
+									<div>
+										<dt>{$LL.admin_directory_authentication_pending_identifier()}</dt>
+										<dd>{item.login_identifier}</dd>
+									</div>
+								</dl>
+							</details>
+							<div class="pending-action-grid">
+								<div class="admin-field">
+									<label class="admin-field__label" for={`pending-user-${item.id}`}>
+										{$LL.admin_directory_authentication_pending_user_id()}
+									</label>
+									<input
+										id={`pending-user-${item.id}`}
+										class="admin-input"
+										bind:value={pendingLinkUserIds[item.id]}
+										placeholder="user_..."
+										disabled={!canEdit || pendingActionId === item.id}
+									/>
+								</div>
+								<div class="admin-field">
+									<label class="admin-field__label" for={`pending-reason-${item.id}`}>
+										{$LL.admin_directory_authentication_pending_reason()}
+									</label>
+									<input
+										id={`pending-reason-${item.id}`}
+										class="admin-input"
+										bind:value={pendingReasons[item.id]}
+										disabled={!canEdit || pendingActionId === item.id}
+									/>
+								</div>
+								<div class="pending-actions">
+									<button
+										class="btn btn-secondary"
+										disabled={!canEdit || pendingActionId === item.id}
+										onclick={() => updatePendingUser(item, 'approve')}
+									>
+										{$LL.admin_directory_authentication_pending_approve()}
+									</button>
+									<button
+										class="btn btn-secondary"
+										disabled={!canEdit || pendingActionId === item.id}
+										onclick={() => updatePendingUser(item, 'link')}
+									>
+										{$LL.admin_directory_authentication_pending_link()}
+									</button>
+									<button
+										class="btn btn-danger"
+										disabled={!canEdit || pendingActionId === item.id}
+										onclick={() => updatePendingUser(item, 'reject')}
+									>
+										{$LL.admin_directory_authentication_pending_reject()}
+									</button>
+								</div>
+							</div>
+						</section>
+					{/each}
+				</div>
+			{/if}
 		</AdminSection>
 
 		<AdminSection
@@ -1360,6 +1562,128 @@
 		font-size: 0.76rem;
 	}
 
+	.pending-toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 14px;
+	}
+
+	.pending-note {
+		max-width: 720px;
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
+	.pending-list {
+		display: grid;
+		gap: 12px;
+	}
+
+	.pending-row {
+		display: grid;
+		gap: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+		padding: 14px;
+	}
+
+	.pending-main {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.pending-main h3 {
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
+	.pending-main p {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 5px;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+
+	.pending-main code,
+	.pending-details code {
+		overflow-wrap: anywhere;
+		color: var(--color-text);
+		font-size: 0.76rem;
+	}
+
+	.pending-facts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		justify-content: flex-end;
+	}
+
+	.pending-facts span {
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		padding: 4px 7px;
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 650;
+	}
+
+	.pending-details {
+		color: var(--color-text-muted);
+		font-size: 0.8rem;
+	}
+
+	.pending-details summary {
+		cursor: pointer;
+		color: var(--color-text);
+		font-weight: 650;
+	}
+
+	.pending-details dl {
+		display: grid;
+		gap: 8px;
+		margin: 10px 0 0;
+	}
+
+	.pending-details div {
+		display: grid;
+		gap: 3px;
+	}
+
+	.pending-details dt {
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.pending-details dd {
+		margin: 0;
+		color: var(--color-text);
+	}
+
+	.pending-action-grid {
+		display: grid;
+		grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+		gap: 10px;
+		align-items: end;
+	}
+
+	.pending-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+
 	.btn[disabled] {
 		opacity: 0.55;
 		cursor: not-allowed;
@@ -1388,6 +1712,20 @@
 		}
 
 		.relay-url-output {
+			grid-template-columns: 1fr;
+		}
+
+		.pending-toolbar,
+		.pending-main {
+			flex-direction: column;
+		}
+
+		.pending-facts,
+		.pending-actions {
+			justify-content: flex-start;
+		}
+
+		.pending-action-grid {
 			grid-template-columns: 1fr;
 		}
 	}

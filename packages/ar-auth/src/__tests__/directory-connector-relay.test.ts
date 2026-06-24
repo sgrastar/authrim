@@ -19,7 +19,7 @@ function createRelay(options: { connector?: Record<string, unknown> } = {}) {
     id: 'campus',
     transport: 'relay',
     auth_mode: 'hmac',
-    connector_id: 'ww_tenant_a',
+    connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
     key_id: 'kid-active',
     secret_ref: 'env:WORDWARDEN_SECRET',
     attribute_names: ['mail'],
@@ -57,7 +57,7 @@ describe('DirectoryConnectorRelay', () => {
 
     const response = await relay.fetch(
       new Request(
-        'https://directory-relay.internal/status?tenant_id=tenant-a&connector_id=ww_tenant_a'
+        'https://directory-relay.internal/status?tenant_id=tenant-a&connector_id=wwcon_8K4M2Q9F7D3H6P1X'
       )
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -100,7 +100,7 @@ describe('DirectoryConnectorRelay', () => {
     ).pending;
     pending.set('pending-1', {
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       requestId: 'req_existing',
       timeout: setTimeout(() => undefined, 1000),
     });
@@ -112,7 +112,7 @@ describe('DirectoryConnectorRelay', () => {
         body: JSON.stringify({
           request_id: 'req_new',
           tenant_id: 'tenant-a',
-          connector_id: 'ww_tenant_a',
+          connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
           username: 'alice',
           password: 'correct',
           attribute_names: ['mail'],
@@ -130,7 +130,7 @@ describe('DirectoryConnectorRelay', () => {
 
     const eventsResponse = await relay.fetch(
       new Request(
-        'https://directory-relay.internal/events?tenant_id=tenant-a&connector_id=ww_tenant_a'
+        'https://directory-relay.internal/events?tenant_id=tenant-a&connector_id=wwcon_8K4M2Q9F7D3H6P1X'
       )
     );
     const eventsBody = (await eventsResponse.json()) as {
@@ -168,7 +168,7 @@ describe('DirectoryConnectorRelay', () => {
     await storage.put('connection:conn-1', {
       authenticated: true,
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       keyId: 'kid-active',
       authenticatedAt: Date.now(),
     });
@@ -180,7 +180,7 @@ describe('DirectoryConnectorRelay', () => {
       deserializeAttachment: vi.fn(() => ({
         connectionId: 'conn-1',
         tenantId: 'tenant-a',
-        connectorId: 'ww_tenant_a',
+        connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       })),
       send: vi.fn((payload: string) => {
         const message = JSON.parse(payload) as { type?: string; id?: string; request_id?: string };
@@ -194,7 +194,7 @@ describe('DirectoryConnectorRelay', () => {
             id: message.id,
             request_id: message.request_id,
             tenant_id: 'tenant-a',
-            connector_id: 'ww_tenant_a',
+            connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
             error: {
               code: 'invalid_relay_request',
               retryable: false,
@@ -213,7 +213,7 @@ describe('DirectoryConnectorRelay', () => {
         body: JSON.stringify({
           request_id: 'req_123',
           tenant_id: 'tenant-a',
-          connector_id: 'ww_tenant_a',
+          connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
           username: 'alice',
           password: 'correct',
           attribute_names: ['mail'],
@@ -227,7 +227,7 @@ describe('DirectoryConnectorRelay', () => {
       code: 'invalid_relay_request',
       retryable: false,
     });
-    const eventRecord = storage._values.get('events:tenant-a:ww_tenant_a') as {
+    const eventRecord = storage._values.get('events:tenant-a:wwcon_8K4M2Q9F7D3H6P1X') as {
       events: Array<{ code?: string; retryable?: boolean }>;
     };
     expect(eventRecord.events[0]).toMatchObject({
@@ -241,7 +241,7 @@ describe('DirectoryConnectorRelay', () => {
     await storage.put('connection:conn-1', {
       authenticated: true,
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       keyId: 'kid-active',
       authenticatedAt: Date.now(),
     });
@@ -268,13 +268,13 @@ describe('DirectoryConnectorRelay', () => {
       timeout,
       requestId: 'req_123',
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
     });
     const ws = {
       deserializeAttachment: vi.fn(() => ({
         connectionId: 'conn-1',
         tenantId: 'tenant-a',
-        connectorId: 'ww_tenant_a',
+        connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       })),
       send: vi.fn(),
       close: vi.fn(),
@@ -296,7 +296,7 @@ describe('DirectoryConnectorRelay', () => {
     expect(reject).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'relay_verify_error', retryable: false })
     );
-    const eventRecord = storage._values.get('events:tenant-a:ww_tenant_a') as {
+    const eventRecord = storage._values.get('events:tenant-a:wwcon_8K4M2Q9F7D3H6P1X') as {
       events: Array<{ code?: string; retryable?: boolean }>;
     };
     expect(eventRecord.events[0]).toMatchObject({

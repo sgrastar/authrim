@@ -16754,6 +16754,92 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/pending-users':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryConnectorsPendingUsers
+      summary: List pending directory users
+      description: Lists directory identities that verified successfully but are not linked to an Authrim user.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryPendingUsers'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - pending
+              - approved
+              - rejected
+              - linked
+            default: pending
+        - name: connector_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-connectors/pending-users/{pendingId}':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsPendingUsersByPendingId
+      summary: Update a pending directory user
+      description: Approves, rejects, or links a pending directory identity to an existing Authrim user.
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantDirectoryPendingUserAction'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pendingId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: '#/components/requestBodies/TenantDirectoryPendingUserAction'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/health':
     post:
       tags:
@@ -26212,7 +26298,7 @@ components:
               - id: campus
                 transport: relay
                 auth_mode: hmac
-                connector_id: ww_tenant_a
+                connector_id: wwcon_8K4M2Q9F7D3H6P1X
                 key_id: kid-active
                 secret_ref: env:WORDWARDEN_SECRET
                 timeouts:
@@ -26227,6 +26313,23 @@ components:
                 attribute_names:
                   - mail
                   - displayName
+    TenantDirectoryPendingUserAction:
+      required: true
+      description: Pending directory user action.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryPendingUserActionRequest'
+          examples:
+            reject:
+              value:
+                action: reject
+                reason: No matching SCIM user
+            link:
+              value:
+                action: link
+                user_id: user_123
+                reason: SCIM profile verified
     TokenClaimRuleCreate:
       required: true
       content:
@@ -33284,7 +33387,7 @@ components:
               - id: campus
                 transport: relay
                 auth_mode: hmac
-                connector_id: ww_tenant_a
+                connector_id: wwcon_8K4M2Q9F7D3H6P1X
                 key_id: kid-active
                 secret_ref: env:WORDWARDEN_SECRET
                 timeouts:
@@ -33299,6 +33402,42 @@ components:
                 attribute_names:
                   - mail
                   - displayName
+    TenantDirectoryPendingUsers:
+      description: Pending directory users for a tenant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryPendingUsersResponse'
+          example:
+            tenantId: tenant_123
+            items:
+              - id: dirpending_123
+                tenant_id: tenant_123
+                connector_id: wwcon_8K4M2Q9F7D3H6P1X
+                directory_subject: base64url-object-guid
+                login_identifier: alice@example.edu
+                status: pending
+                directory_facts:
+                  identity:
+                    subject: base64url-object-guid
+                    canonical_username: alice@example.edu
+                created_at: 1782260000000
+                updated_at: 1782260000000
+                decided_at: null
+                decided_by: null
+                decision_reason: null
+                linked_user_id: null
+    TenantDirectoryPendingUserAction:
+      description: Pending directory user action result.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantDirectoryPendingUserActionResponse'
+          example:
+            ok: true
+            id: dirpending_123
+            status: linked
+            linked_user_id: user_123
     TenantDirectoryConnectorSecret:
       description: One-time directory connector secret response.
       content:
@@ -33343,12 +33482,12 @@ components:
             status: 200
             body:
               tenant_id: tenant_123
-              connector_id: ww_tenant_a
+              connector_id: wwcon_8K4M2Q9F7D3H6P1X
               events:
                 - id: 9b8d7d7d-3c2f-4c8f-a5d1-bac67a81f4a1
                   timestamp: '2026-06-23T12:00:00.000Z'
                   tenantId: tenant_123
-                  connectorId: ww_tenant_a
+                  connectorId: wwcon_8K4M2Q9F7D3H6P1X
                   type: directory_relay.verify.failed
                   requestId: req_123
                   code: relay_verify_timeout
@@ -54080,7 +54219,8 @@ components:
             - hmac
         connector_id:
           type: string
-          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+          description: Immutable Wordwarden connector identifier used for protocol, subject links, relay, fleet state, and audit records.
         key_id:
           type: string
           minLength: 1
@@ -54114,7 +54254,7 @@ components:
         default_connector_id:
           type: string
           pattern: '^[a-zA-Z0-9_-]{1,64}$'
-          description: Connector ID used for directory password verification.
+          description: Human-readable connector key used to select the default connector configuration.
         auto_provision:
           type: boolean
           description: Creates Authrim users from verified directory identities when unmapped.
@@ -54147,6 +54287,112 @@ components:
           maxItems: 20
           items:
             $ref: '#/components/schemas/TenantDirectoryConnector'
+    TenantDirectoryPendingUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - connector_id
+        - directory_subject
+        - login_identifier
+        - status
+        - directory_facts
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        connector_id:
+          type: string
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        directory_subject:
+          type: string
+        login_identifier:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+            - linked
+        directory_facts:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+        decided_at:
+          type:
+            - integer
+            - 'null'
+        decided_by:
+          type:
+            - string
+            - 'null'
+        decision_reason:
+          type:
+            - string
+            - 'null'
+        linked_user_id:
+          type:
+            - string
+            - 'null'
+    TenantDirectoryPendingUsersResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - items
+      properties:
+        tenantId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantDirectoryPendingUser'
+    TenantDirectoryPendingUserActionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum:
+            - approve
+            - reject
+            - link
+        user_id:
+          type: string
+          description: Existing Authrim user ID. Required when action is `link`.
+        reason:
+          type: string
+          maxLength: 1000
+    TenantDirectoryPendingUserActionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - id
+        - status
+      properties:
+        ok:
+          type: boolean
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - approved
+            - rejected
+            - linked
+        linked_user_id:
+          type: string
     TenantDirectoryConnectorHealthResponse:
       type: object
       additionalProperties: false

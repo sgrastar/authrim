@@ -23,7 +23,31 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_default_connector: '既定Connector',
 	admin_directory_authentication_auto_provision: '自動プロビジョニング',
 	admin_directory_authentication_auto_provision_description:
-		'Directoryで検証できたユーザーがAuthrimに未作成の場合、属性からユーザーを作成します。',
+		'Directoryで検証できた未linkユーザーを承認待ちとして記録します。通常セッションは作成しません。',
+	admin_directory_authentication_pending_title: '承認待ちDirectoryユーザー',
+	admin_directory_authentication_pending_description:
+		'Directory認証に成功したがAuthrimユーザーへlinkされていないユーザーを確認します。',
+	admin_directory_authentication_pending_warning:
+		'自動active作成は誤設定時の影響が大きいため、初期状態では承認待ちにします。既存ユーザーへlinkする前にSCIM/CSV/Authrim profileと照合してください。',
+	admin_directory_authentication_pending_loading: '承認待ちユーザーを読み込み中...',
+	admin_directory_authentication_pending_refresh: '再読み込み',
+	admin_directory_authentication_pending_empty: '承認待ちDirectoryユーザーはありません。',
+	admin_directory_authentication_pending_load_failed:
+		'承認待ちDirectoryユーザーを読み込めませんでした',
+	admin_directory_authentication_pending_update_failed:
+		'承認待ちDirectoryユーザーを更新できませんでした',
+	admin_directory_authentication_pending_updated: '承認待ちDirectoryユーザーを更新しました。',
+	admin_directory_authentication_pending_link_user_required:
+		'既存ユーザーへlinkするにはAuthrim User IDが必要です。',
+	admin_directory_authentication_pending_group_count: '{count} groups',
+	admin_directory_authentication_pending_details: '詳細',
+	admin_directory_authentication_pending_subject: 'Directory Subject',
+	admin_directory_authentication_pending_identifier: 'Login Identifier',
+	admin_directory_authentication_pending_user_id: 'Authrim User ID',
+	admin_directory_authentication_pending_reason: 'Reason',
+	admin_directory_authentication_pending_approve: 'Approve',
+	admin_directory_authentication_pending_link: 'Link',
+	admin_directory_authentication_pending_reject: 'Reject',
 	admin_directory_authentication_status: 'Status',
 	admin_directory_authentication_status_enabled: '有効',
 	admin_directory_authentication_status_disabled: '無効',
@@ -52,7 +76,7 @@ const adminDirectoryAuthentication = {
 		'この値をWordwardenへ設定してください。Authrimでは再表示できません。',
 	admin_directory_authentication_id: 'Connector ID',
 	admin_directory_authentication_endpoint_url: 'Endpoint URL',
-	admin_directory_authentication_connector_id: 'Wordwarden Tenant ID',
+	admin_directory_authentication_connector_id: 'Wordwarden Connector ID',
 	admin_directory_authentication_relay_url: 'Relay URL',
 	admin_directory_authentication_relay_url_copy: 'コピー',
 	admin_directory_authentication_relay_url_copied: 'コピー済み',
@@ -83,7 +107,11 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_validation_endpoint_https:
 		'Endpoint URLはHTTPSにしてください。local developmentのhttp://localhostのみ例外です。',
 	admin_directory_authentication_validation_connector_id_required:
-		'Wordwarden Tenant IDは必須です。',
+		'Wordwarden Connector IDは必須です。',
+	admin_directory_authentication_validation_connector_id_format:
+		'Wordwarden Connector IDは wwcon_ で始まる16文字の不変IDにしてください。',
+	admin_directory_authentication_validation_connector_id_unique:
+		'Wordwarden Connector IDは一意である必要があります。',
 	admin_directory_authentication_validation_key_id_required: 'Key IDは必須です。',
 	admin_directory_authentication_validation_secret_required: 'Secret Referenceは必須です。',
 	admin_directory_authentication_validation_secret_format:

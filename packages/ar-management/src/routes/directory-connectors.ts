@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
+  createAuthContextFromHono,
   createAuditLogFromContext,
   createErrorResponse,
   readResponseTextWithLimit,
@@ -11,7 +12,8 @@ import {
 import { requireTenantResourceAccess } from '../admin-tenant-access';
 
 const CATEGORY = 'directory-connectors';
-const CONNECTOR_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 const SECRET_REF_PATTERN =
   /^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$/;
 const DEFAULT_REQUEST_TIMEOUT_MS = 2500;
@@ -24,6 +26,7 @@ const DEFAULT_RELAY_AUTH_FAILURE_BLOCK_MS = 5 * 60 * 1000;
 const DEFAULT_RELAY_SECRET_ROTATION_GRACE_MS = 5 * 60 * 1000;
 const MAX_ATTRIBUTE_NAMES = 32;
 const MAX_CONNECTORS = 20;
+const MAX_PENDING_LIMIT = 100;
 
 const RelayConnectorSettingsSchema = z
   .object({
@@ -74,11 +77,11 @@ const RelayConnectorSettingsSchema = z
   });
 
 const DirectoryConnectorSchema = z.object({
-  id: z.string().regex(CONNECTOR_ID_PATTERN),
+  id: z.string().regex(CONNECTOR_KEY_PATTERN),
   transport: z.enum(['direct', 'relay']).default('direct'),
   endpoint_url: z.string().max(2048).optional().default(''),
   auth_mode: z.literal('hmac').default('hmac'),
-  connector_id: z.string().regex(CONNECTOR_ID_PATTERN),
+  connector_id: z.string().regex(WORDWARDEN_CONNECTOR_ID_PATTERN),
   key_id: z.string().min(1).max(128),
   secret_ref: z.string().regex(SECRET_REF_PATTERN),
   timeouts: z
@@ -97,16 +100,22 @@ const DirectoryConnectorSchema = z.object({
 
 const DirectoryConnectorsStoredConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  default_connector_id: z.string().regex(CONNECTOR_ID_PATTERN).default('campus'),
+  default_connector_id: z.string().regex(CONNECTOR_KEY_PATTERN).default('campus'),
   auto_provision: z.boolean().default(false),
   connectors: z.array(DirectoryConnectorSchema).max(MAX_CONNECTORS).default([]),
 });
 
 const DirectoryConnectorsUpdateSchema = z.object({
   enabled: z.boolean(),
-  default_connector_id: z.string().regex(CONNECTOR_ID_PATTERN),
+  default_connector_id: z.string().regex(CONNECTOR_KEY_PATTERN),
   auto_provision: z.boolean(),
   connectors: z.array(DirectoryConnectorSchema).max(MAX_CONNECTORS),
+});
+
+const DirectoryPendingActionSchema = z.object({
+  action: z.enum(['approve', 'reject', 'link']),
+  user_id: z.string().min(1).max(256).optional(),
+  reason: z.string().max(1000).optional(),
 });
 
 type DirectoryConnectorConfig = z.infer<typeof DirectoryConnectorSchema>;
@@ -125,6 +134,22 @@ interface DirectoryConnectorManagedPreviousSecretVersion extends DirectoryConnec
 interface DirectoryConnectorManagedSecretRecord {
   active: DirectoryConnectorManagedSecretVersion;
   previous?: DirectoryConnectorManagedPreviousSecretVersion;
+}
+
+interface DirectoryPendingUserRow {
+  id: string;
+  tenant_id: string;
+  connector_id: string;
+  directory_subject: string;
+  login_identifier: string;
+  status: 'pending' | 'approved' | 'rejected' | 'linked';
+  directory_facts_json: string;
+  created_at: number;
+  updated_at: number;
+  decided_at: number | null;
+  decided_by: string | null;
+  decision_reason: string | null;
+  linked_user_id: string | null;
 }
 
 const DEFAULT_CONFIG: DirectoryConnectorsConfig = {
@@ -148,6 +173,48 @@ function managedSecretRef(connectorId: string): string {
 
 function storage(env: Env): KVNamespace | null {
   return env.SETTINGS ?? null;
+}
+
+function coreAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function adminActorId(c: Context<{ Bindings: Env }>): string {
+  const adminAuth = c.get('adminAuth' as never) as { userId?: string } | undefined;
+  return adminAuth?.userId ?? 'unknown';
+}
+
+function clampPendingLimit(value: string | undefined): number {
+  const parsed = value ? Number.parseInt(value, 10) : 25;
+  if (!Number.isFinite(parsed)) return 25;
+  return Math.max(1, Math.min(MAX_PENDING_LIMIT, parsed));
+}
+
+function safeParseDirectoryFacts(raw: string): unknown {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function serializePendingUser(row: DirectoryPendingUserRow) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    connector_id: row.connector_id,
+    directory_subject: row.directory_subject,
+    login_identifier: row.login_identifier,
+    status: row.status,
+    directory_facts: safeParseDirectoryFacts(row.directory_facts_json),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    decided_at: row.decided_at,
+    decided_by: row.decided_by,
+    decision_reason: row.decision_reason,
+    linked_user_id: row.linked_user_id,
+  };
 }
 
 function normalizeAttributeNames(values: string[]): string[] {
@@ -178,11 +245,16 @@ function normalizeConfig(config: DirectoryConnectorsConfig): DirectoryConnectors
 
 function validateUniqueConnectorIds(connectors: DirectoryConnectorConfig[]): string | null {
   const ids = new Set<string>();
+  const wordwardenConnectorIds = new Set<string>();
   for (const connector of connectors) {
     if (ids.has(connector.id)) {
       return connector.id;
     }
     ids.add(connector.id);
+    if (wordwardenConnectorIds.has(connector.connector_id)) {
+      return connector.connector_id;
+    }
+    wordwardenConnectorIds.add(connector.connector_id);
   }
   return null;
 }
@@ -418,6 +490,255 @@ export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: En
     tenantId,
     ...config,
   });
+}
+
+export async function listDirectoryPendingUsersHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = c.req.param('tenantId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) return accessError;
+
+  const status = c.req.query('status') || 'pending';
+  if (!['pending', 'approved', 'rejected', 'linked'].includes(status)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  const limit = clampPendingLimit(c.req.query('limit'));
+  const connectorId = c.req.query('connector_id');
+  if (connectorId && !WORDWARDEN_CONNECTOR_ID_PATTERN.test(connectorId)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  const adapter = coreAdapter(c, tenantId);
+  const params: unknown[] = [tenantId, status];
+  let connectorClause = '';
+  if (connectorId) {
+    connectorClause = 'AND connector_id = ?';
+    params.push(connectorId);
+  }
+  params.push(limit);
+
+  const rows = await adapter.query<DirectoryPendingUserRow>(
+    `SELECT id, tenant_id, connector_id, directory_subject, login_identifier, status,
+            directory_facts_json, created_at, updated_at, decided_at, decided_by,
+            decision_reason, linked_user_id
+       FROM directory_jit_pending_users
+      WHERE tenant_id = ? AND status = ?
+        ${connectorClause}
+      ORDER BY updated_at DESC
+      LIMIT ?`,
+    params
+  );
+
+  return c.json({
+    tenantId,
+    items: rows.map(serializePendingUser),
+  });
+}
+
+export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = c.req.param('tenantId')!;
+  const pendingId = c.req.param('pendingId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) return accessError;
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = DirectoryPendingActionSchema.safeParse(body);
+  if (!parsed.success) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+
+  const adapter = coreAdapter(c, tenantId);
+  const pending = await adapter.queryOne<DirectoryPendingUserRow>(
+    `SELECT id, tenant_id, connector_id, directory_subject, login_identifier, status,
+            directory_facts_json, created_at, updated_at, decided_at, decided_by,
+            decision_reason, linked_user_id
+       FROM directory_jit_pending_users
+      WHERE tenant_id = ? AND id = ?`,
+    [tenantId, pendingId]
+  );
+  if (!pending) {
+    return c.json({ error: 'directory_pending_user_not_found' }, 404);
+  }
+  if (pending.status !== 'pending') {
+    return c.json(
+      {
+        error: 'directory_pending_user_not_pending',
+        error_description: 'Only pending directory users can be updated',
+      },
+      409
+    );
+  }
+
+  const now = Date.now();
+  const actor = adminActorId(c);
+  const reason = parsed.data.reason?.trim() || null;
+
+  if (parsed.data.action === 'reject') {
+    const result = await adapter.execute(
+      `UPDATE directory_jit_pending_users
+          SET status = 'rejected',
+              updated_at = ?,
+              decided_at = ?,
+              decided_by = ?,
+              decision_reason = ?
+        WHERE tenant_id = ? AND id = ? AND status = 'pending'`,
+      [now, now, actor, reason, tenantId, pendingId]
+    );
+    if (result.rowsAffected !== 1) {
+      return c.json(
+        {
+          error: 'directory_pending_user_not_pending',
+          error_description: 'Only pending directory users can be updated',
+        },
+        409
+      );
+    }
+    await createAuditLogFromContext(
+      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      'directory_jit_pending_user.rejected',
+      'directory_jit_pending_user',
+      pendingId,
+      {
+        tenant_id: tenantId,
+        connector_id: pending.connector_id,
+      }
+    ).catch(() => undefined);
+    return c.json({ ok: true, id: pendingId, status: 'rejected' });
+  }
+
+  if (parsed.data.action === 'approve') {
+    const result = await adapter.execute(
+      `UPDATE directory_jit_pending_users
+          SET status = 'approved',
+              updated_at = ?,
+              decided_at = ?,
+              decided_by = ?,
+              decision_reason = ?
+        WHERE tenant_id = ? AND id = ? AND status = 'pending'`,
+      [now, now, actor, reason, tenantId, pendingId]
+    );
+    if (result.rowsAffected !== 1) {
+      return c.json(
+        {
+          error: 'directory_pending_user_not_pending',
+          error_description: 'Only pending directory users can be updated',
+        },
+        409
+      );
+    }
+    await createAuditLogFromContext(
+      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      'directory_jit_pending_user.approved',
+      'directory_jit_pending_user',
+      pendingId,
+      {
+        tenant_id: tenantId,
+        connector_id: pending.connector_id,
+      }
+    ).catch(() => undefined);
+    return c.json({ ok: true, id: pendingId, status: 'approved' });
+  }
+
+  const userId = parsed.data.user_id?.trim();
+  if (!userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  const user = await adapter.queryOne<{ legacy_user_id: string }>(
+    `SELECT legacy_user_id
+       FROM identity_accounts
+      WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state = 'active'
+      LIMIT 1`,
+    [tenantId, userId]
+  );
+  if (!user) {
+    return c.json({ error: 'directory_pending_link_user_not_found' }, 404);
+  }
+  const existingLink = await adapter.queryOne<{ user_id: string }>(
+    `SELECT user_id
+       FROM directory_identity_links
+      WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ?`,
+    [tenantId, pending.connector_id, pending.directory_subject]
+  );
+  if (existingLink) {
+    return c.json(
+      {
+        error: 'directory_identity_link_conflict',
+        error_description: 'Directory subject is already linked to an Authrim user',
+      },
+      409
+    );
+  }
+
+  try {
+    await adapter.transaction(async (tx) => {
+      const inserted = await tx.execute(
+        `INSERT INTO directory_identity_links (
+       id, tenant_id, connector_id, directory_subject, user_id,
+       latest_facts_json, created_at, updated_at, last_login_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(tenant_id, connector_id, directory_subject) DO NOTHING`,
+        [
+          `dirlink_${crypto.randomUUID()}`,
+          tenantId,
+          pending.connector_id,
+          pending.directory_subject,
+          userId,
+          pending.directory_facts_json,
+          now,
+          now,
+        ]
+      );
+      if (inserted.rowsAffected !== 1) {
+        throw new Error('directory_identity_link_conflict');
+      }
+      const updated = await tx.execute(
+        `UPDATE directory_jit_pending_users
+          SET status = 'linked',
+              linked_user_id = ?,
+              updated_at = ?,
+              decided_at = ?,
+              decided_by = ?,
+              decision_reason = ?
+        WHERE tenant_id = ? AND id = ? AND status = 'pending'`,
+        [userId, now, now, actor, reason, tenantId, pendingId]
+      );
+      if (updated.rowsAffected !== 1) {
+        throw new Error('directory_pending_user_not_pending');
+      }
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'directory_identity_link_conflict') {
+      return c.json(
+        {
+          error: 'directory_identity_link_conflict',
+          error_description: 'Directory subject is already linked to an Authrim user',
+        },
+        409
+      );
+    }
+    if (error instanceof Error && error.message === 'directory_pending_user_not_pending') {
+      return c.json(
+        {
+          error: 'directory_pending_user_not_pending',
+          error_description: 'Only pending directory users can be updated',
+        },
+        409
+      );
+    }
+    throw error;
+  }
+
+  await createAuditLogFromContext(
+    c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+    'directory_jit_pending_user.linked',
+    'directory_jit_pending_user',
+    pendingId,
+    {
+      tenant_id: tenantId,
+      connector_id: pending.connector_id,
+      user_id: userId,
+    }
+  ).catch(() => undefined);
+
+  return c.json({ ok: true, id: pendingId, status: 'linked', linked_user_id: userId });
 }
 
 export async function issueDirectoryConnectorSecretHandler(c: Context<{ Bindings: Env }>) {

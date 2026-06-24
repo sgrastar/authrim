@@ -53,7 +53,7 @@ interface ExtractedField {
 	nullable?: boolean | null;
 }
 
-const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
+const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM', 'DIRECTORY'];
 
 const systemIdentityFields = [
 	{
@@ -834,13 +834,15 @@ function namespaceForProfile(adapter: MappingAdapter): string {
 			return 'saml.attribute';
 		case 'SCIM':
 			return 'scim.attribute';
+		case 'DIRECTORY':
+			return 'directory';
 		case 'CSV':
 			return 'csv.column';
 	}
 }
 
 function isSourceProtocol(protocol: string): boolean {
-	return ['csv', 'scim', 'saml', 'oidc'].includes(protocol.toLowerCase());
+	return ['csv', 'scim', 'saml', 'oidc', 'directory'].includes(protocol.toLowerCase());
 }
 
 function privacyFrom(value: string): MappingNode['privacy'] {

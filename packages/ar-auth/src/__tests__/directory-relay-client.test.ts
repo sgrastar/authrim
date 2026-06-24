@@ -21,7 +21,7 @@ describe('DirectoryPasswordRelayClient', () => {
       Response.json({
         request_id: 'req_123',
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -36,7 +36,7 @@ describe('DirectoryPasswordRelayClient', () => {
     const client = new DirectoryPasswordRelayClient({
       relay,
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       timeoutMs: 1000,
     });
 
@@ -48,7 +48,7 @@ describe('DirectoryPasswordRelayClient', () => {
     });
 
     expect(result.result).toBe('success');
-    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:ww_tenant_a');
+    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:wwcon_8K4M2Q9F7D3H6P1X');
     expect(relay._fetch).toHaveBeenCalledWith(
       'https://directory-relay.internal/verify-password',
       expect.objectContaining({
@@ -63,7 +63,7 @@ describe('DirectoryPasswordRelayClient', () => {
       Response.json({
         request_id: 'req_123',
         tenant_id: 'tenant-b',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'failure',
         reason: 'invalid_credentials',
         directory_status: 'ok',
@@ -72,7 +72,7 @@ describe('DirectoryPasswordRelayClient', () => {
     const client = new DirectoryPasswordRelayClient({
       relay,
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       timeoutMs: 1000,
     });
 
@@ -104,7 +104,7 @@ describe('DirectoryPasswordRelayClient', () => {
       Response.json({
         request_id: 'req_123',
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'failure',
         reason: 'invalid_credentials',
         directory_status: 'ok',
@@ -113,7 +113,7 @@ describe('DirectoryPasswordRelayClient', () => {
     const client = new DirectoryPasswordRelayClient({
       relay,
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       timeoutMs: 1000,
     });
 
@@ -142,7 +142,7 @@ describe('DirectoryPasswordRelayClient', () => {
     const client = new DirectoryPasswordRelayClient({
       relay,
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       timeoutMs: 1000,
     });
 

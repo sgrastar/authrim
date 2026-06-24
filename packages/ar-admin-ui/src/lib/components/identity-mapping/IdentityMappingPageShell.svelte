@@ -307,6 +307,7 @@
 		if (normalized === 'saml') return 'SAML';
 		if (normalized === 'oidc') return 'OIDC';
 		if (normalized === 'scim') return 'SCIM';
+		if (normalized === 'directory') return 'DIRECTORY';
 		return 'CSV';
 	}
 

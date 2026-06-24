@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   getChallengeStoreByChallengeId: vi.fn(),
   publishEvent: vi.fn(),
   createAuditLog: vi.fn(),
+  coreAdapter: {
+    queryOne: vi.fn(),
+    execute: vi.fn(),
+  },
   challengeStore: {
     getChallengeRpc: vi.fn(),
     consumeChallengeRpc: vi.fn(),
@@ -32,7 +36,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       findById = mocks.findById;
       syncUser = mocks.syncUser;
     },
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getSessionStoreForNewSession: mocks.getSessionStoreForNewSession,
@@ -74,7 +78,7 @@ function directoryConnectors(
         id: 'campus',
         endpoint_url: 'https://wordwarden.example.com',
         auth_mode: 'hmac',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         key_id: 'kid-active',
         secret_ref: 'env:WORDWARDEN_SECRET',
         timeouts: {
@@ -137,6 +141,8 @@ describe('directory password login handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findByEmail.mockResolvedValue(null);
+    mocks.coreAdapter.queryOne.mockResolvedValue({ user_id: 'user_generated' });
+    mocks.coreAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
     mocks.findById.mockResolvedValue({
       id: 'user_generated',
       email: 'alice@example.com',
@@ -162,11 +168,11 @@ describe('directory password login handler', () => {
       const headers = init?.headers as Headers;
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
 
-      expect(headers.get('X-Authrim-Connector-Id')).toBe('ww_tenant_a');
+      expect(headers.get('X-Authrim-Connector-Id')).toBe('wwcon_8K4M2Q9F7D3H6P1X');
       expect(headers.get('X-Authrim-Signature')).toMatch(/^[a-f0-9]{64}$/);
       expect(body).toMatchObject({
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         username: 'alice',
         password: 'correct',
         attribute_names: ['mail', 'displayName'],
@@ -175,7 +181,7 @@ describe('directory password login handler', () => {
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -205,14 +211,18 @@ describe('directory password login handler', () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(mocks.syncUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user_generated',
-        email: 'alice@example.com',
-        emailVerified: true,
-        sourceRef: 'directory:campus',
-        externalId: 'uid=alice,ou=People,dc=example,dc=com',
-      })
+    expect(mocks.syncUser).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('FROM directory_identity_links'),
+      ['tenant-a', 'wwcon_8K4M2Q9F7D3H6P1X', 'uid=alice,ou=People,dc=example,dc=com']
+    );
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE directory_identity_links'),
+      expect.arrayContaining([
+        'tenant-a',
+        'wwcon_8K4M2Q9F7D3H6P1X',
+        'uid=alice,ou=People,dc=example,dc=com',
+      ])
     );
     expect(mocks.sessionStore.createSessionRpc).toHaveBeenCalledWith(
       'sess_directory',
@@ -221,6 +231,7 @@ describe('directory password login handler', () => {
       expect.objectContaining({
         amr: ['pwd', 'directory'],
         directory_connector_id: 'campus',
+        wordwarden_connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
       }),
       'tenant-a'
     );
@@ -259,7 +270,7 @@ describe('directory password login handler', () => {
         resourceId: 'sess_directory',
         ipAddress: '203.0.113.10',
         userAgent: 'Test Browser',
-        metadata: expect.stringContaining('"method":"directory_password"'),
+        metadata: expect.stringContaining('"directory_source_decisions"'),
       })
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_directory');
@@ -271,7 +282,7 @@ describe('directory password login handler', () => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       expect(body).toMatchObject({
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         username: 'alice',
         password: 'correct',
         attribute_names: ['mail', 'displayName'],
@@ -280,7 +291,7 @@ describe('directory password login handler', () => {
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -321,7 +332,7 @@ describe('directory password login handler', () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:ww_tenant_a');
+    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:wwcon_8K4M2Q9F7D3H6P1X');
     expect(mocks.sessionStore.createSessionRpc).toHaveBeenCalledWith(
       'sess_directory',
       'user_generated',
@@ -340,7 +351,7 @@ describe('directory password login handler', () => {
         request_id: body.request_id,
         tenant_id: 'tenant-a',
         ok: true,
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -382,7 +393,7 @@ describe('directory password login handler', () => {
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'failure',
         reason: 'invalid_credentials',
         directory_status: 'ok',
@@ -421,7 +432,7 @@ describe('directory password login handler', () => {
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'policy_required',
         reason: 'must_change_password',
         directory_status: 'ok',
@@ -461,7 +472,7 @@ describe('directory password login handler', () => {
         {
           request_id: body.request_id,
           tenant_id: 'tenant-a',
-          connector_id: 'ww_tenant_a',
+          connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
           error: {
             code: 'directory_unavailable',
             retryable: true,
@@ -502,12 +513,14 @@ describe('directory password login handler', () => {
   });
 
   it('returns unmapped when a directory identity has no Authrim user and auto provision is disabled', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValue(null);
+    mocks.findByEmail.mockResolvedValue(null);
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -543,13 +556,287 @@ describe('directory password login handler', () => {
     );
   });
 
+  it('links a first directory login to an existing Authrim user by unique email match', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValue(null);
+    mocks.findByEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'alice@example.com',
+      name: 'Alice Existing',
+    });
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'success',
+        subject: {
+          directory_id: 'objectguid-base64url',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+          displayName: ['Alice Example'],
+        },
+        group_facts: [
+          {
+            id: 'staff',
+            dn: 'cn=staff,ou=Groups,dc=example,dc=com',
+            display: 'Staff',
+            source: 'memberOf',
+            depth: 1,
+          },
+        ],
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext({ username: 'alice', password: 'correct' }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO directory_identity_links'),
+      expect.arrayContaining([
+        'tenant-a',
+        'wwcon_8K4M2Q9F7D3H6P1X',
+        'objectguid-base64url',
+        'user_existing',
+      ])
+    );
+    const params = mocks.coreAdapter.execute.mock.calls[0]?.[1] as unknown[];
+    expect(String(params[5])).toContain('"groups"');
+    expect(String(params[5])).toContain('"staff"');
+    expect(String(params[5])).toContain('"source_decisions"');
+    expect(String(params[5])).toContain('"allowlisted_directory_attribute"');
+    expect(mocks.sessionStore.createSessionRpc).toHaveBeenCalledWith(
+      'sess_directory',
+      'user_existing',
+      86400,
+      expect.anything(),
+      'tenant-a'
+    );
+  });
+
+  it('creates a pending JIT record instead of a session when auto provision is enabled', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValue(null);
+    mocks.findByEmail.mockResolvedValue(null);
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'success',
+        subject: {
+          directory_id: 'objectguid-base64url',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(403);
+    expect(body.error).toBe('directory_provisioning_pending');
+    expect(mocks.syncUser).not.toHaveBeenCalled();
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO directory_jit_pending_users'),
+      expect.arrayContaining([
+        'tenant-a',
+        'wwcon_8K4M2Q9F7D3H6P1X',
+        'objectguid-base64url',
+        'alice@example.com',
+      ])
+    );
+  });
+
+  it('fails closed when pending creation loses a state race', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValue(null);
+    mocks.coreAdapter.execute.mockResolvedValue({ rowsAffected: 0, success: true });
+    mocks.findByEmail.mockResolvedValue(null);
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'success',
+        subject: {
+          directory_id: 'objectguid-base64url',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('directory_identity_unmapped');
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+    expect(mocks.publishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: 'auth.directory_password.failed',
+        data: expect.objectContaining({
+          errorCode: 'directory_pending_state_conflict',
+        }),
+      })
+    );
+  });
+
+  it('does not use a connector config with a mutable connector id as the Wordwarden id', async () => {
+    const fetcher = vi.fn();
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors({
+            connector_id: 'campus',
+          }),
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(404);
+    expect(body.error).toBe('directory_password_not_configured');
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('does not recreate pending access for a rejected directory subject', async () => {
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ status: 'rejected' });
+    mocks.findByEmail.mockResolvedValue(null);
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'success',
+        subject: {
+          directory_id: 'objectguid-base64url',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('directory_identity_unmapped');
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO directory_jit_pending_users'),
+      expect.anything()
+    );
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when an existing directory subject link points to a missing user', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValue({ user_id: 'user_deleted' });
+    mocks.findById.mockResolvedValue(null);
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'success',
+        subject: {
+          directory_id: 'objectguid-base64url',
+          username: 'alice',
+        },
+        attributes: {
+          mail: ['alice@example.com'],
+        },
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext(
+        { username: 'alice', password: 'correct' },
+        {
+          'settings:tenant:tenant-a:directory-connectors': directoryConnectors(
+            {},
+            { auto_provision: true }
+          ),
+        }
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('directory_identity_unmapped');
+    expect(mocks.findByEmail).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalled();
+    expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  });
+
   it('continues an authorization challenge after successful directory password login', async () => {
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -567,6 +854,7 @@ describe('directory password login handler', () => {
       email: 'alice@example.com',
       name: 'Alice Example',
     });
+    mocks.coreAdapter.queryOne.mockResolvedValue(null);
     mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
       metadata: {
         issuer: 'https://auth.example.com',
@@ -633,7 +921,7 @@ describe('directory password login handler', () => {
       return Response.json({
         request_id: body.request_id,
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         result: 'success',
         subject: {
           directory_id: 'uid=alice,ou=People,dc=example,dc=com',
@@ -665,7 +953,7 @@ describe('directory password login handler', () => {
                 id: 'campus',
                 endpoint_url: 'https://wordwarden-stale.example.com',
                 auth_mode: 'mtls',
-                connector_id: 'ww_tenant_a',
+                connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
                 key_id: 'kid-stale',
                 secret_ref: 'env:WORDWARDEN_SECRET',
               },
@@ -715,7 +1003,7 @@ describe('directory password login handler', () => {
                 id: 'campus',
                 endpoint_url: 'https://wordwarden.example.com',
                 auth_mode: 'mtls',
-                connector_id: 'ww_tenant_a',
+                connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
                 key_id: 'kid-active',
                 secret_ref: 'env:WORDWARDEN_SECRET',
               },
@@ -746,7 +1034,7 @@ describe('directory password login handler', () => {
                 id: 'campus',
                 endpoint_url: 'https://wordwarden.example.com',
                 auth_mode: 'hmac',
-                connector_id: 'ww_tenant_a',
+                connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
                 key_id: 'kid-active',
                 secret_ref: 'env:UNRELATED_SECRET',
               },

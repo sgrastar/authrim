@@ -4,14 +4,22 @@ import {
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
   listDirectoryConnectorRelayEventsHandler,
+  listDirectoryPendingUsersHandler,
   rotateDirectoryConnectorSecretHandler,
   updateDirectoryConnectorsHandler,
+  updateDirectoryPendingUserHandler,
 } from '../routes/directory-connectors';
 
 const mocks = vi.hoisted(() => ({
   safeFetch: vi.fn(),
   readResponseTextWithLimit: vi.fn(),
   createAuditLogFromContext: vi.fn(),
+  coreAdapter: {
+    query: vi.fn(),
+    queryOne: vi.fn(),
+    execute: vi.fn(),
+    transaction: vi.fn(),
+  },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -21,6 +29,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     safeFetch: mocks.safeFetch,
     readResponseTextWithLimit: mocks.readResponseTextWithLimit,
     createAuditLogFromContext: mocks.createAuditLogFromContext,
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
   };
 });
 
@@ -42,7 +51,9 @@ function createContext(
   body?: unknown,
   initialSettings: Record<string, unknown> = {},
   connectorId?: string,
-  envOverrides: Record<string, unknown> = {}
+  envOverrides: Record<string, unknown> = {},
+  query: Record<string, string | undefined> = {},
+  pendingId?: string
 ) {
   const settings = createKV(initialSettings);
   return {
@@ -50,8 +61,10 @@ function createContext(
       param: vi.fn((name: string) => {
         if (name === 'tenantId') return tenantId;
         if (name === 'connectorId') return connectorId;
+        if (name === 'pendingId') return pendingId;
         return undefined;
       }),
+      query: vi.fn((name: string) => query[name]),
       json: vi.fn(async () => body),
     },
     env: {
@@ -61,6 +74,7 @@ function createContext(
     get: vi.fn((name: string) => {
       if (name !== 'adminAuth') return undefined;
       return {
+        userId: 'admin-1',
         roles: ['system_admin'],
         permissions: ['admin:settings:read', 'admin:settings:write'],
         tenantScope: ['*'],
@@ -81,7 +95,7 @@ const validConfig = {
       transport: 'direct',
       endpoint_url: 'https://wordwarden.example.com',
       auth_mode: 'hmac',
-      connector_id: 'ww_tenant_a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
       key_id: 'kid-active',
       secret_ref: 'env:WORDWARDEN_SECRET',
       timeouts: {
@@ -95,7 +109,21 @@ const validConfig = {
 describe('directory connectors admin API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.coreAdapter.query.mockReset();
+    mocks.coreAdapter.queryOne.mockReset();
+    mocks.coreAdapter.execute.mockReset();
+    mocks.coreAdapter.transaction.mockReset();
     mocks.createAuditLogFromContext.mockResolvedValue(undefined);
+    mocks.coreAdapter.query.mockResolvedValue([]);
+    mocks.coreAdapter.queryOne.mockResolvedValue(null);
+    mocks.coreAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
+    mocks.coreAdapter.transaction.mockImplementation(async (fn) =>
+      fn({
+        execute: mocks.coreAdapter.execute,
+        query: mocks.coreAdapter.query,
+        queryOne: mocks.coreAdapter.queryOne,
+      })
+    );
   });
 
   it('returns an empty connector list by default', async () => {
@@ -231,6 +259,27 @@ describe('directory connectors admin API', () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toBe('invalid_directory_connector_config');
+  });
+
+  it('rejects duplicate immutable Wordwarden connector identifiers', async () => {
+    const context = createContext('tenant-a', {
+      ...validConfig,
+      connectors: [
+        validConfig.connectors[0],
+        {
+          ...validConfig.connectors[0],
+          id: 'branch',
+          endpoint_url: 'https://branch-wordwarden.example.com',
+        },
+      ],
+    }) as never;
+
+    const response = await updateDirectoryConnectorsHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_directory_connector_config');
+    expect(String(body.error_description)).toContain('wwcon_8K4M2Q9F7D3H6P1X');
   });
 
   it('rejects secret refs outside the Wordwarden env namespace', async () => {
@@ -459,9 +508,9 @@ describe('directory connectors admin API', () => {
     expect(body.ok).toBe(true);
     expect(body.body).toMatchObject({ connections: 1, authenticated_connections: 1 });
     expect(mocks.safeFetch).not.toHaveBeenCalled();
-    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:ww_tenant_a');
+    expect(relay.idFromName).toHaveBeenCalledWith('tenant-a:wwcon_8K4M2Q9F7D3H6P1X');
     expect(relayFetch).toHaveBeenCalledWith(
-      'https://directory-relay.internal/status?tenant_id=tenant-a&connector_id=ww_tenant_a'
+      'https://directory-relay.internal/status?tenant_id=tenant-a&connector_id=wwcon_8K4M2Q9F7D3H6P1X'
     );
   });
 
@@ -469,7 +518,7 @@ describe('directory connectors admin API', () => {
     const relayFetch = vi.fn(async () =>
       Response.json({
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         events: [
           {
             type: 'directory_relay.verify.failed',
@@ -482,7 +531,7 @@ describe('directory connectors admin API', () => {
     mocks.readResponseTextWithLimit.mockResolvedValueOnce(
       JSON.stringify({
         tenant_id: 'tenant-a',
-        connector_id: 'ww_tenant_a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
         events: [
           {
             type: 'directory_relay.verify.failed',
@@ -523,7 +572,7 @@ describe('directory connectors admin API', () => {
     expect(body.ok).toBe(true);
     expect(JSON.stringify(body.body)).toContain('directory_relay.verify.failed');
     expect(relayFetch).toHaveBeenCalledWith(
-      'https://directory-relay.internal/events?tenant_id=tenant-a&connector_id=ww_tenant_a'
+      'https://directory-relay.internal/events?tenant_id=tenant-a&connector_id=wwcon_8K4M2Q9F7D3H6P1X'
     );
   });
 
@@ -583,6 +632,244 @@ describe('directory connectors admin API', () => {
         allowLocalhost: true,
         requireHttps: false,
       })
+    );
+  });
+
+  it('lists directory pending users with parsed directory facts', async () => {
+    mocks.coreAdapter.query.mockResolvedValue([
+      {
+        id: 'pending-1',
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        directory_subject: 'subject-1',
+        login_identifier: 'alice@example.com',
+        status: 'pending',
+        directory_facts_json: JSON.stringify({
+          identity: { subject: 'subject-1', canonical_username: 'alice@example.com' },
+          attributes: { mail: { value: 'alice@example.com', source: 'directory' } },
+          groups: [],
+          evidence: { request_id: 'req-1' },
+        }),
+        created_at: 1000,
+        updated_at: 2000,
+        decided_at: null,
+        decided_by: null,
+        decision_reason: null,
+        linked_user_id: null,
+      },
+    ]);
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      {},
+      undefined,
+      {},
+      { status: 'pending', limit: '10' }
+    ) as never;
+
+    const response = await listDirectoryPendingUsersHandler(context);
+    const body = (await response.json()) as { items: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]?.directory_facts).toEqual(
+      expect.objectContaining({
+        identity: expect.objectContaining({ subject: 'subject-1' }),
+      })
+    );
+    expect(mocks.coreAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM directory_jit_pending_users'),
+      ['tenant-a', 'pending', 10]
+    );
+  });
+
+  it('rejects invalid immutable connector ids when filtering pending users', async () => {
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      {},
+      undefined,
+      {},
+      { connector_id: 'campus' }
+    ) as never;
+
+    const response = await listDirectoryPendingUsersHandler(context);
+
+    expect(response.status).toBe(400);
+    expect(mocks.coreAdapter.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a pending directory user without exposing directory secrets', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      id: 'pending-1',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      directory_subject: 'subject-1',
+      login_identifier: 'alice@example.com',
+      status: 'pending',
+      directory_facts_json: '{}',
+      created_at: 1000,
+      updated_at: 2000,
+      decided_at: null,
+      decided_by: null,
+      decision_reason: null,
+      linked_user_id: null,
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    const context = createContext(
+      'tenant-a',
+      { action: 'reject', reason: 'No matching SCIM user' },
+      {},
+      undefined,
+      {},
+      {},
+      'pending-1'
+    ) as never;
+
+    const response = await updateDirectoryPendingUserHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe('rejected');
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'rejected'"),
+      expect.arrayContaining(['admin-1', 'No matching SCIM user', 'tenant-a', 'pending-1'])
+    );
+    expect(JSON.stringify(mocks.createAuditLogFromContext.mock.calls)).not.toContain(
+      'alice@example.com'
+    );
+  });
+
+  it('links a pending directory user to an existing Authrim user', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      id: 'pending-1',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      directory_subject: 'subject-1',
+      login_identifier: 'alice@example.com',
+      status: 'pending',
+      directory_facts_json: '{"identity":{"subject":"subject-1"}}',
+      created_at: 1000,
+      updated_at: 2000,
+      decided_at: null,
+      decided_by: null,
+      decision_reason: null,
+      linked_user_id: null,
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    const context = createContext(
+      'tenant-a',
+      { action: 'link', user_id: 'user-1', reason: 'SCIM profile verified' },
+      {},
+      undefined,
+      {},
+      {},
+      'pending-1'
+    ) as never;
+
+    const response = await updateDirectoryPendingUserHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      id: 'pending-1',
+      status: 'linked',
+      linked_user_id: 'user-1',
+    });
+    expect(mocks.coreAdapter.transaction).toHaveBeenCalledOnce();
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO directory_identity_links'),
+      expect.arrayContaining(['tenant-a', 'wwcon_8K4M2Q9F7D3H6P1X', 'subject-1', 'user-1'])
+    );
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'linked'"),
+      expect.arrayContaining(['user-1', 'admin-1', 'SCIM profile verified'])
+    );
+  });
+
+  it('does not overwrite an existing directory subject link', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      id: 'pending-1',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      directory_subject: 'subject-1',
+      login_identifier: 'alice@example.com',
+      status: 'pending',
+      directory_facts_json: '{}',
+      created_at: 1000,
+      updated_at: 2000,
+      decided_at: null,
+      decided_by: null,
+      decision_reason: null,
+      linked_user_id: null,
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ user_id: 'user-other' });
+    const context = createContext(
+      'tenant-a',
+      { action: 'link', user_id: 'user-1' },
+      {},
+      undefined,
+      {},
+      {},
+      'pending-1'
+    ) as never;
+
+    const response = await updateDirectoryPendingUserHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('directory_identity_link_conflict');
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls back pending linking when pending state changes during the transaction', async () => {
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      id: 'pending-1',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      directory_subject: 'subject-1',
+      login_identifier: 'alice@example.com',
+      status: 'pending',
+      directory_facts_json: '{}',
+      created_at: 1000,
+      updated_at: 2000,
+      decided_at: null,
+      decided_by: null,
+      decision_reason: null,
+      linked_user_id: null,
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    mocks.coreAdapter.execute
+      .mockResolvedValueOnce({ rowsAffected: 1, success: true })
+      .mockResolvedValueOnce({ rowsAffected: 0, success: true });
+    const context = createContext(
+      'tenant-a',
+      { action: 'link', user_id: 'user-1' },
+      {},
+      undefined,
+      {},
+      {},
+      'pending-1'
+    ) as never;
+
+    const response = await updateDirectoryPendingUserHandler(context);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('directory_pending_user_not_pending');
+    expect(mocks.coreAdapter.transaction).toHaveBeenCalledOnce();
+    expect(mocks.createAuditLogFromContext).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'directory_jit_pending_user.linked',
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
     );
   });
 });

@@ -23,7 +23,29 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_default_connector: 'Default Connector',
 	admin_directory_authentication_auto_provision: 'Auto-provision users',
 	admin_directory_authentication_auto_provision_description:
-		'Create an Authrim user from directory attributes when a verified directory identity is not mapped yet.',
+		'Record verified but unmapped directory users as pending. Authrim does not create a normal session for them.',
+	admin_directory_authentication_pending_title: 'Pending directory users',
+	admin_directory_authentication_pending_description:
+		'Review users who passed directory authentication but are not linked to an Authrim user.',
+	admin_directory_authentication_pending_warning:
+		'Automatic active creation has a high blast radius when a directory scope is misconfigured. Verify SCIM, CSV, or Authrim profile data before linking.',
+	admin_directory_authentication_pending_loading: 'Loading pending users...',
+	admin_directory_authentication_pending_refresh: 'Refresh',
+	admin_directory_authentication_pending_empty: 'No pending directory users.',
+	admin_directory_authentication_pending_load_failed: 'Failed to load pending directory users',
+	admin_directory_authentication_pending_update_failed: 'Failed to update pending directory user',
+	admin_directory_authentication_pending_updated: 'Pending directory user updated.',
+	admin_directory_authentication_pending_link_user_required:
+		'An Authrim User ID is required to link an existing user.',
+	admin_directory_authentication_pending_group_count: '{count:number} groups',
+	admin_directory_authentication_pending_details: 'Details',
+	admin_directory_authentication_pending_subject: 'Directory Subject',
+	admin_directory_authentication_pending_identifier: 'Login Identifier',
+	admin_directory_authentication_pending_user_id: 'Authrim User ID',
+	admin_directory_authentication_pending_reason: 'Reason',
+	admin_directory_authentication_pending_approve: 'Approve',
+	admin_directory_authentication_pending_link: 'Link',
+	admin_directory_authentication_pending_reject: 'Reject',
 	admin_directory_authentication_status: 'Status',
 	admin_directory_authentication_status_enabled: 'Enabled',
 	admin_directory_authentication_status_disabled: 'Disabled',
@@ -52,7 +74,7 @@ const adminDirectoryAuthentication = {
 		'Copy this value into Wordwarden. Authrim will not show it again.',
 	admin_directory_authentication_id: 'Connector ID',
 	admin_directory_authentication_endpoint_url: 'Endpoint URL',
-	admin_directory_authentication_connector_id: 'Wordwarden Tenant ID',
+	admin_directory_authentication_connector_id: 'Wordwarden Connector ID',
 	admin_directory_authentication_relay_url: 'Relay URL',
 	admin_directory_authentication_relay_url_copy: 'Copy',
 	admin_directory_authentication_relay_url_copied: 'Copied',
@@ -83,7 +105,11 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_validation_endpoint_https:
 		'Endpoint URL must use HTTPS except http://localhost for local development.',
 	admin_directory_authentication_validation_connector_id_required:
-		'Wordwarden Tenant ID is required.',
+		'Wordwarden Connector ID is required.',
+	admin_directory_authentication_validation_connector_id_format:
+		'Wordwarden Connector ID must start with wwcon_ followed by 16 immutable characters.',
+	admin_directory_authentication_validation_connector_id_unique:
+		'Wordwarden Connector ID must be unique.',
 	admin_directory_authentication_validation_key_id_required: 'Key ID is required.',
 	admin_directory_authentication_validation_secret_required: 'Secret Reference is required.',
 	admin_directory_authentication_validation_secret_format:

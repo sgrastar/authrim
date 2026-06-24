@@ -68,7 +68,7 @@ function createContext() {
             id: 'campus',
             endpoint_url: 'http://127.0.0.1:8080',
             auth_mode: 'hmac',
-            connector_id: 'ww_tenant_a',
+            connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
             key_id: 'kid-active',
             secret_ref: 'env:WORDWARDEN_SECRET',
             timeouts: {

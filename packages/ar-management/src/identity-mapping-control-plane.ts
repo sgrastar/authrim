@@ -764,7 +764,7 @@ interface ParseCsvSourceProfileRequest {
 }
 
 interface CreateSourceProfileRequest {
-  sourceType: 'csv' | 'saml';
+  sourceType: 'csv' | 'saml' | 'directory';
   profileKey: string;
   displayName: string;
   versionLabel?: string;
@@ -776,7 +776,7 @@ interface CreateSourceProfileRequest {
 }
 
 interface UpdateSourceProfileRequest {
-  sourceType?: 'csv' | 'saml';
+  sourceType?: 'csv' | 'saml' | 'directory';
   profileKey?: string;
   displayName?: string;
   versionLabel?: string;
@@ -1200,7 +1200,7 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
-const SOURCE_PROFILE_TYPES = new Set(['csv', 'saml']);
+const SOURCE_PROFILE_TYPES = new Set(['csv', 'saml', 'directory']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml']);
 const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
@@ -1215,6 +1215,76 @@ const OIDC_STANDARD_SCOPES = new Set([
   'address',
   'offline_access',
 ]);
+const DIRECTORY_FACTS_EXTERNAL_SCHEMA_ID = 'builtin_directory_facts';
+const DIRECTORY_FACTS_SCHEMA = {
+  fields: [
+    {
+      key: 'directory.identity.subject',
+      label: 'Directory Subject',
+      type: 'string',
+      required: true,
+      classification: 'internal',
+      description: 'Stable subject resolved by the directory connector.',
+    },
+    {
+      key: 'directory.identity.canonical_username',
+      label: 'Canonical Username',
+      type: 'string',
+      required: true,
+      classification: 'pii',
+      description: 'Normalized username selected from directory facts.',
+    },
+    {
+      key: 'directory.identity.connector_id',
+      label: 'Connector ID',
+      type: 'string',
+      required: true,
+      classification: 'internal',
+      description: 'Immutable Wordwarden connector identifier.',
+    },
+    {
+      key: 'directory.attributes.mail',
+      label: 'Directory Mail',
+      type: 'string',
+      classification: 'pii',
+      description: 'Allowlisted directory mail attribute when requested.',
+    },
+    {
+      key: 'directory.attributes.displayName',
+      label: 'Directory Display Name',
+      type: 'string',
+      classification: 'pii',
+      description: 'Allowlisted directory displayName attribute when requested.',
+    },
+    {
+      key: 'directory.groups',
+      label: 'Directory Groups',
+      type: 'array',
+      classification: 'internal',
+      valueMultiplicity: 'multi',
+      description: 'Opt-in group facts returned by Wordwarden.',
+    },
+    {
+      key: 'directory.evidence.connector_id',
+      label: 'Evidence Connector ID',
+      type: 'string',
+      classification: 'internal',
+      description: 'Authrim connector config identifier for audit evidence.',
+    },
+    {
+      key: 'directory.evidence.request_id',
+      label: 'Wordwarden Request ID',
+      type: 'string',
+      classification: 'internal',
+      description: 'Wordwarden verification request correlation ID.',
+    },
+  ],
+  metadata: {
+    source: 'authrim_wordwarden',
+    attributesPolicy: 'allowlisted_only',
+    groupsPolicy: 'opt_in',
+  },
+} satisfies Record<string, unknown>;
 const OIDC_RESERVED_NON_PROFILE_CLAIMS = new Set([
   'iss',
   'aud',
@@ -1722,16 +1792,30 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY imported_at DESC`,
       [tenantId]
     );
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenant_id,
-      sourceType: row.source_type,
-      sourceId: row.source_id,
-      schemaKey: row.schema_key,
-      schema: JSON.parse(row.schema_json) as Record<string, unknown>,
-      lifecycleState: row.lifecycle_state,
-      importedAt: row.imported_at,
-    }));
+    return [
+      {
+        id: DIRECTORY_FACTS_EXTERNAL_SCHEMA_ID,
+        tenantId,
+        sourceType: 'directory',
+        sourceId: 'wordwarden',
+        sourceKey: 'directory-facts',
+        displayName: 'Directory Facts',
+        schemaKey: 'directory-facts',
+        schema: DIRECTORY_FACTS_SCHEMA,
+        lifecycleState: 'active',
+        importedAt: 0,
+      },
+      ...rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        sourceType: row.source_type,
+        sourceId: row.source_id,
+        schemaKey: row.schema_key,
+        schema: JSON.parse(row.schema_json) as Record<string, unknown>,
+        lifecycleState: row.lifecycle_state,
+        importedAt: row.imported_at,
+      })),
+    ];
   }
 
   async parseCsvSourceProfile(tenantId: string, input: ParseCsvSourceProfileRequest) {
@@ -1789,7 +1873,7 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
-      throw badRequest('sourceType must be csv or saml');
+      throw badRequest('sourceType must be csv, saml, or directory');
     }
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -1967,7 +2051,7 @@ export class IdentityMappingControlPlaneRepository {
     }
     const sourceType = input.sourceType ?? (existing.source_type as 'csv' | 'saml');
     if (!SOURCE_PROFILE_TYPES.has(sourceType)) {
-      throw badRequest('sourceType must be csv or saml');
+      throw badRequest('sourceType must be csv, saml, or directory');
     }
     const profileKey = input.profileKey ?? existing.profile_key;
     const displayName = input.displayName ?? existing.display_name;
