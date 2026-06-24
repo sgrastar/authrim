@@ -234,6 +234,7 @@
 		].map((item) => {
 			if (!sessionSettings) {
 				return {
+					key: item.key,
 					label: item.label,
 					value: $LL.admin_info_not_available(),
 					source: $LL.admin_info_not_available()
@@ -241,6 +242,7 @@
 			}
 			const value = readNumberSetting(sessionSettings?.values ?? {}, item.key, item.defaultValue);
 			return {
+				key: item.key,
 				label: item.label,
 				value: formatDurationMs(value),
 				source: formatSettingSource(sessionSettings?.sources?.[item.key])
@@ -582,7 +584,7 @@
 					<span>{$LL.admin_info_ttl_value()}</span>
 					<span>{$LL.admin_info_ttl_source()}</span>
 				</div>
-				{#each sessionTtlRows as row}
+				{#each sessionTtlRows as row (row.key)}
 					<div class="ttl-row">
 						<span>{row.label}</span>
 						<span class="monospace">{row.value}</span>

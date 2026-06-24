@@ -139,12 +139,10 @@
 	}
 
 	function normalizeAttributes(value: string): string[] {
-		const seen = new Set<string>();
 		const result: string[] = [];
 		for (const item of value.split(',')) {
 			const normalized = item.trim();
-			if (!normalized || seen.has(normalized)) continue;
-			seen.add(normalized);
+			if (!normalized || result.includes(normalized)) continue;
 			result.push(normalized);
 		}
 		return result;
@@ -278,14 +276,16 @@
 		) {
 			return $LL.admin_directory_authentication_validation_default_connector();
 		}
-		const ids = new Set<string>();
+		const ids: string[] = [];
 		for (const connector of config.connectors) {
 			if (!connector.id) return $LL.admin_directory_authentication_validation_id_required();
 			if (!CONNECTOR_ID_PATTERN.test(connector.id)) {
 				return $LL.admin_directory_authentication_validation_id_format();
 			}
-			if (ids.has(connector.id)) return $LL.admin_directory_authentication_validation_id_unique();
-			ids.add(connector.id);
+			if (ids.includes(connector.id)) {
+				return $LL.admin_directory_authentication_validation_id_unique();
+			}
+			ids.push(connector.id);
 			if (connector.transport === 'direct') {
 				if (!connector.endpoint_url) {
 					return $LL.admin_directory_authentication_validation_endpoint_required();
@@ -682,7 +682,7 @@
 							{#if connectors.length === 0}
 								<option value="campus">campus</option>
 							{:else}
-								{#each connectors as connector}
+								{#each connectors as connector, index (index)}
 									<option value={connector.id}>{connector.id}</option>
 								{/each}
 							{/if}
@@ -792,7 +792,7 @@
 								</div>
 								{#if relayStatusDetails(healthChecks[index].result).length > 0}
 									<div class="relay-status-details">
-										{#each relayStatusDetails(healthChecks[index].result) as detail}
+										{#each relayStatusDetails(healthChecks[index].result) as detail (detail[0])}
 											<div>
 												<span>{detail[0]}</span>
 												<code>{detail[1]}</code>
@@ -819,7 +819,7 @@
 							{#if relayEventItems(index).length}
 								<div class="relay-events">
 									<h4>{$LL.admin_directory_authentication_recent_events()}</h4>
-									{#each relayEventItems(index) as event}
+									{#each relayEventItems(index) as event, eventIndex (event.id ?? event.requestId ?? eventIndex)}
 										<div class="relay-event-row">
 											<span>{event.timestamp ?? '-'}</span>
 											<strong>{event.type}</strong>
