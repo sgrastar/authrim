@@ -380,10 +380,7 @@ app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
 
 // Directory Password endpoint
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
-app.get(
-  '/api/auth/directory-relay/connect/:tenantId/:connectorId',
-  directoryRelayConnectHandler
-);
+app.get('/api/auth/directory-relay/connect/:tenantId/:connectorId', directoryRelayConnectHandler);
 
 // DID Authentication endpoints (Phase 9)
 // Challenge-response pattern for DID-based authentication

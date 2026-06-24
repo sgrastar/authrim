@@ -280,7 +280,10 @@ const COMPONENT_LOCAL_DO_BINDINGS: Partial<
 };
 
 const COMPONENT_EXTERNAL_DO_BINDINGS: Partial<
-  Record<WorkerComponent, Array<{ name: string; className: string; scriptComponent: WorkerComponent }>>
+  Record<
+    WorkerComponent,
+    Array<{ name: string; className: string; scriptComponent: WorkerComponent }>
+  >
 > = {
   'ar-management': [
     {
