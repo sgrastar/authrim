@@ -8,7 +8,7 @@ import {
 const config = {
   endpoint: 'https://wordwarden.example.com',
   tenantId: 'tenant-a',
-  connectorId: 'ww_tenant_a',
+  connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
   keyId: 'kid-active',
   secret: 'active-secret',
   timeoutMs: 1000,

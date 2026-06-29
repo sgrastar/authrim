@@ -3,7 +3,9 @@
 	import AdminBreadcrumbs from '$lib/components/admin/AdminBreadcrumbs.svelte';
 	import ThemeSwitcher from '$lib/components/admin/ThemeSwitcher.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { getLocale, LL, setLocale } from '$i18n/i18n-svelte';
+	import { LOCALE_LABELS, SUPPORTED_LOCALES } from '$i18n/locales';
+	import type { Locales } from '$i18n/i18n-types';
 
 	interface Breadcrumb {
 		label: string;
@@ -40,6 +42,9 @@
 	// User dropdown state
 	let showUserMenu = $state(false);
 	let userMenuRoot: HTMLDivElement | undefined = $state();
+	let currentLanguage = $state<Locales>(getLocale());
+	let languageSaving = $state(false);
+	let languageError = $state('');
 
 	function toggleUserMenu() {
 		showUserMenu = !showUserMenu;
@@ -62,6 +67,35 @@
 
 	async function handleLogout() {
 		await adminAuthAPI.logout();
+	}
+
+	async function handleLanguageChange(event: Event) {
+		const select = event.currentTarget as HTMLSelectElement;
+		const nextLocale = select.value as Locales;
+		const previousLocale = currentLanguage;
+		languageError = '';
+		languageSaving = true;
+
+		try {
+			const response = await fetch('/api/set-language', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ language: nextLocale })
+			});
+			if (!response.ok) {
+				throw new Error('Failed to update language');
+			}
+			setLocale(nextLocale);
+			currentLanguage = nextLocale;
+			if (typeof window !== 'undefined') {
+				window.location.reload();
+			}
+		} catch {
+			select.value = previousLocale;
+			languageError = $LL.language_switch_error();
+		} finally {
+			languageSaving = false;
+		}
 	}
 
 	function handleTenantChange(event: Event) {
@@ -121,6 +155,31 @@
 			{#if showUserMenu}
 				<div class="user-menu">
 					<ThemeSwitcher variant="menu" />
+					<div class="user-menu-divider"></div>
+					<div class="user-menu-language">
+						<label for="admin-header-language" class="user-menu-language__label">
+							<i class="i-ph-translate"></i>
+							<span>{$LL.admin_account_interface_language()}</span>
+						</label>
+						<select
+							id="admin-header-language"
+							class="user-menu-language__select"
+							value={currentLanguage}
+							aria-label={$LL.language_select_label()}
+							aria-invalid={languageError ? 'true' : undefined}
+							disabled={languageSaving}
+							onchange={handleLanguageChange}
+						>
+							{#each SUPPORTED_LOCALES as locale (locale)}
+								<option value={locale}>
+									{LOCALE_LABELS[locale].nativeName} / {LOCALE_LABELS[locale].name}
+								</option>
+							{/each}
+						</select>
+						{#if languageError}
+							<p class="user-menu-language__error" role="alert">{languageError}</p>
+						{/if}
+					</div>
 					<div class="user-menu-divider"></div>
 					<a href={accountSettingsHref} class="user-menu-item" onclick={closeUserMenu}>
 						<i class="i-ph-user-circle"></i>
@@ -309,6 +368,50 @@
 	.user-menu-divider {
 		height: 1px;
 		background: var(--color-border);
+	}
+
+	.user-menu-language {
+		display: grid;
+		gap: 8px;
+		padding: 12px 16px;
+	}
+
+	.user-menu-language__label {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		color: var(--color-text);
+		font-size: 0.875rem;
+	}
+
+	.user-menu-language__label :global(i) {
+		width: 18px;
+		height: 18px;
+		color: var(--color-text-muted);
+	}
+
+	.user-menu-language__select {
+		width: 100%;
+		padding: 8px 32px 8px 10px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-surface);
+		color: var(--color-text);
+		font: inherit;
+		cursor: pointer;
+		outline: none;
+	}
+
+	.user-menu-language__select:hover,
+	.user-menu-language__select:focus {
+		border-color: var(--color-accent);
+		box-shadow: var(--control-focus-shadow, 0 0 0 3px var(--color-accent-muted));
+	}
+
+	.user-menu-language__error {
+		margin: 0;
+		color: var(--color-danger);
+		font-size: 0.78rem;
 	}
 
 	.user-menu-item {

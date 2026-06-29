@@ -43,7 +43,14 @@ import {
   passkeyLoginVerifyHandler,
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
-import { directoryPasswordLoginHandler } from './directory-password-login';
+import {
+  directoryPasswordLoginHandler,
+  directoryMigrationEmailCodeSendHandler,
+  directoryMigrationEmailCodeVerifyHandler,
+  directoryMigrationPasskeyOptionsHandler,
+  directoryMigrationPasskeyVerifyHandler,
+} from './directory-password-login';
+import { directoryConnectorHeartbeatHandler } from './directory-connector-heartbeat';
 import { directoryRelayConnectHandler } from './directory-relay-route';
 import { consentGetHandler, consentPostHandler } from './consent';
 import { loginChallengeGetHandler } from './login-challenge';
@@ -286,11 +293,25 @@ app.use('/api/auth/directory-password/login', async (c, next) => {
     endpoints: ['/api/auth/directory-password/login'],
   })(c, next);
 });
+app.use('/api/auth/directory-password/migration/passkey/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-password/migration/passkey'],
+  })(c, next);
+});
 app.use('/api/auth/directory-relay/connect/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/directory-relay/connect'],
+  })(c, next);
+});
+app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-connectors/heartbeat'],
   })(c, next);
 });
 
@@ -321,7 +342,12 @@ app.use('/api/auth/upgrade/*', async (c, next) => {
 // - /flow/* endpoints handle login form submissions from the Login UI
 //
 // Note: /par, /logout/backchannel are server-to-server endpoints (use client auth, not cookies)
-app.use('/api/auth/*', csrfProtectionMiddleware());
+app.use(
+  '/api/auth/*',
+  csrfProtectionMiddleware({
+    excludePaths: ['/api/auth/directory-connectors/heartbeat'],
+  })
+);
 app.use('/api/sessions/*', csrfProtectionMiddleware());
 app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
 app.use('/auth/consent', csrfProtectionMiddleware());
@@ -380,6 +406,26 @@ app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
 
 // Directory Password endpoint
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
+app.post(
+  '/api/auth/directory-password/migration/passkey/options',
+  directoryMigrationPasskeyOptionsHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/passkey/verify',
+  directoryMigrationPasskeyVerifyHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/email-code/send',
+  directoryMigrationEmailCodeSendHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/email-code/verify',
+  directoryMigrationEmailCodeVerifyHandler
+);
+app.post(
+  '/api/auth/directory-connectors/heartbeat/:tenantId/:connectorId',
+  directoryConnectorHeartbeatHandler
+);
 app.get('/api/auth/directory-relay/connect/:tenantId/:connectorId', directoryRelayConnectHandler);
 
 // DID Authentication endpoints (Phase 9)

@@ -325,7 +325,7 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
   }
 }
 
-/** DELETE /api/admin/consent-statements/:id (soft delete) */
+/** DELETE /api/admin/consent-statements/:id */
 export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
@@ -333,12 +333,53 @@ export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const id = c.req.param('id')!;
 
+    const existing = await authCtx.coreAdapter.query(
+      `SELECT id FROM consent_statements WHERE id = ? AND tenant_id = ?`,
+      [id, tenantId]
+    );
+    if (existing.length === 0) {
+      return c.json({ error: 'not_found', error_description: 'Statement not found' }, 404);
+    }
+
     await authCtx.coreAdapter.execute(
-      `UPDATE consent_statements SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?`,
-      [Date.now(), id, tenantId]
+      `DELETE FROM client_consent_overrides WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_policy_items WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_item_history WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM user_consent_records WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_statement_localizations
+        WHERE tenant_id = ?
+          AND version_id IN (
+            SELECT id FROM consent_statement_versions
+             WHERE tenant_id = ? AND statement_id = ?
+          )`,
+      [tenantId, tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_statement_versions WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_statements WHERE id = ? AND tenant_id = ?`,
+      [id, tenantId]
     );
 
-    log.info('Soft-deleted consent statement', { action: 'delete', statementId: id });
+    log.info('Deleted consent statement', { action: 'delete', statementId: id });
     return c.json({ success: true });
   } catch (error) {
     log.error('Failed to delete consent statement', { action: 'delete' }, error as Error);

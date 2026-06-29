@@ -52,6 +52,7 @@ export * from './types/id-jag';
 export * from './types/settings/assurance-levels';
 
 // Utils
+export * from './db';
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
 export * from './utils/crypto';
@@ -123,6 +124,8 @@ export * from './utils/post-login-routing';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/directory-auth';
+export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
 export * from './services/persistent-identifiers';

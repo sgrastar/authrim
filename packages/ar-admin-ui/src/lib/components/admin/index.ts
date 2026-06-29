@@ -15,5 +15,7 @@ export { default as AdminPageShell } from './AdminPageShell.svelte';
 export { default as AdminSection } from './AdminSection.svelte';
 export { default as AdminTabs } from './AdminTabs.svelte';
 export { default as AdminToolbar } from './AdminToolbar.svelte';
+export { default as MonacoTextEditor } from './MonacoTextEditor.svelte';
+export { default as SanitizedHtmlPreview } from './SanitizedHtmlPreview.svelte';
 export type { AdminBreadcrumbItem } from './AdminBreadcrumbs.svelte';
 export type { AdminTabItem } from './AdminTabs.svelte';

@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { actions as rootActions, load as rootLoad } from '../routes/+page.server';
 import { actions as loginActions, load as loginLoad } from '../routes/login/+page.server';
 import { load as discoverLoad } from '../routes/discover/+page.server';
 import { load as signupLoad } from '../routes/signup/+page.server';
+import { clearLoginDiscoveryConfigCacheForTests } from '../lib/login-discovery-config-cache';
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -25,6 +26,10 @@ function createCookies(initial: Record<string, string> = {}) {
 }
 
 describe('common-entry routing', () => {
+	beforeEach(() => {
+		clearLoginDiscoveryConfigCacheForTests();
+	});
+
 	it('does not redirect the root page for single-tenant deployments', async () => {
 		const fetch = vi.fn().mockResolvedValueOnce(
 			jsonResponse({
@@ -367,6 +372,44 @@ describe('common-entry routing', () => {
 		} as never);
 
 		expect(result).toEqual({});
+	});
+
+	it('reuses login discovery config for repeated tenant-host page loads', async () => {
+		const fetch = vi.fn().mockResolvedValue(
+			jsonResponse({
+				config: {
+					tenant_id: 'first',
+					mode: 'tenant_only',
+					discovery_methods: ['tenant_code', 'tenant_slug'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: false,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		);
+
+		const firstResult = await loginLoad({
+			cookies: createCookies(),
+			fetch,
+			request: new Request('https://first.multi-tenant.authrim.com/login'),
+			url: new URL('https://first.multi-tenant.authrim.com/login')
+		} as never);
+		const secondResult = await loginLoad({
+			cookies: createCookies(),
+			fetch,
+			request: new Request('https://first.multi-tenant.authrim.com/login'),
+			url: new URL('https://first.multi-tenant.authrim.com/login')
+		} as never);
+
+		expect(firstResult).toEqual({});
+		expect(secondResult).toEqual({});
+		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 
 	it('accepts a valid discovery grant on tenant-host /login and strips it from the URL', async () => {

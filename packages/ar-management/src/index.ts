@@ -51,6 +51,7 @@ import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
+import { isTenantScopedDirectoryAdminPath } from './admin-tenant-access';
 
 const VERSION_MANAGER_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -677,8 +678,12 @@ import { getAccountCapabilitiesHandler } from './account-capabilities';
 import { listAccountOperationsHandler } from './account-operations';
 import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
 import {
+  completeAccountEmailCodeReauthHandler,
+  createAccountPasskeyReauthOptionsHandler,
   createAccountPasskeyOptionsHandler,
+  completeAccountPasskeyReauthHandler,
   completeAccountPasskeyRegistrationHandler,
+  sendAccountEmailCodeReauthHandler,
   listAccountPasskeysHandler,
   updateAccountPasskeyHandler,
   deleteAccountPasskeyHandler,
@@ -816,10 +821,36 @@ import {
   checkDirectoryConnectorHealthHandler,
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
+  listDirectoryConnectorFleetHandler,
   listDirectoryConnectorRelayEventsHandler,
+  listDirectoryPendingUsersHandler,
   rotateDirectoryConnectorSecretHandler,
   updateDirectoryConnectorsHandler,
+  updateDirectoryConnectorFleetInstanceHandler,
+  updateDirectoryPendingUserHandler,
 } from './routes/directory-connectors';
+import {
+  createDirectoryAuthEvidenceExportHandler,
+  createDirectoryAuthMigrationCampaignHandler,
+  createDirectoryAuthSupportBundleHandler,
+  downloadDirectoryAuthEvidenceExportHandler,
+  downloadDirectoryAuthSupportBundleHandler,
+  getDirectoryAuthOverviewHandler,
+  getDirectoryAuthRetentionPolicyHandler,
+  getDirectoryAuthTenantPolicyHandler,
+  listDirectoryAuthAdvisoriesHandler,
+  listDirectoryAuthConfigHistoryHandler,
+  listDirectoryAuthEvidenceExportsHandler,
+  listDirectoryAuthManagedConnectorsHandler,
+  listDirectoryAuthMigrationCampaignsHandler,
+  listDirectoryAuthMigrationUserStatesHandler,
+  listDirectoryAuthSupportBundlesHandler,
+  resetDirectoryAuthMigrationUserStateHandler,
+  runDirectoryAuthMaintenanceCleanupHandler,
+  updateDirectoryAuthMigrationCampaignHandler,
+  updateDirectoryAuthRetentionPolicyHandler,
+  updateDirectoryAuthTenantPolicyHandler,
+} from './routes/directory-auth';
 
 const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
 
@@ -1187,6 +1218,10 @@ app.post('/api/account/return', createAccountReturnHandler);
 app.post('/api/account/return/:id/consume', consumeAccountReturnHandler);
 app.get('/api/account/capabilities', getAccountCapabilitiesHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
+app.post('/api/account/reauth/passkey/options', createAccountPasskeyReauthOptionsHandler);
+app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHandler);
+app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandler);
+app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
@@ -1396,8 +1431,16 @@ app.delete(
 // - POST   /api/admin/tenants/:id/set-default - Set as default tenant
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
-app.use('/api/admin/tenants', requireSystemAdmin());
-app.use('/api/admin/tenants/*', requireSystemAdmin());
+const tenantManagementSystemAdminGuard = requireSystemAdmin();
+app.use('/api/admin/tenants', tenantManagementSystemAdminGuard);
+app.use('/api/admin/tenants/*', async (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  if (isTenantScopedDirectoryAdminPath(pathname)) {
+    await next();
+    return;
+  }
+  return tenantManagementSystemAdminGuard(c, next);
+});
 app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'));
@@ -1430,6 +1473,96 @@ app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHan
 app.patch('/api/admin/tenants/:tenantId/email-settings', updateTenantEmailSettingsHandler);
 app.get('/api/admin/tenants/:tenantId/directory-connectors', getDirectoryConnectorsHandler);
 app.put('/api/admin/tenants/:tenantId/directory-connectors', updateDirectoryConnectorsHandler);
+app.get('/api/admin/tenants/:tenantId/directory-auth/overview', getDirectoryAuthOverviewHandler);
+app.get('/api/admin/tenants/:tenantId/directory-auth/policy', getDirectoryAuthTenantPolicyHandler);
+app.put(
+  '/api/admin/tenants/:tenantId/directory-auth/policy',
+  updateDirectoryAuthTenantPolicyHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
+  listDirectoryAuthMigrationCampaignsHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
+  createDirectoryAuthMigrationCampaignHandler
+);
+app.patch(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns/:campaignId',
+  updateDirectoryAuthMigrationCampaignHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/user-states',
+  listDirectoryAuthMigrationUserStatesHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/user-states/:stateId/reset',
+  resetDirectoryAuthMigrationUserStateHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/retention',
+  getDirectoryAuthRetentionPolicyHandler
+);
+app.put(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/retention',
+  updateDirectoryAuthRetentionPolicyHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/config-history',
+  listDirectoryAuthConfigHistoryHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports',
+  listDirectoryAuthEvidenceExportsHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports',
+  createDirectoryAuthEvidenceExportHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports/:exportId/download',
+  downloadDirectoryAuthEvidenceExportHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/support/bundles',
+  listDirectoryAuthSupportBundlesHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/support/bundles',
+  createDirectoryAuthSupportBundleHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/support/bundles/:bundleId/download',
+  downloadDirectoryAuthSupportBundleHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/managed/advisories',
+  listDirectoryAuthAdvisoriesHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/maintenance/cleanup',
+  runDirectoryAuthMaintenanceCleanupHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/managed/connectors',
+  listDirectoryAuthManagedConnectorsHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/pending-users',
+  listDirectoryPendingUsersHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/pending-users/:pendingId',
+  updateDirectoryPendingUserHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/fleet',
+  listDirectoryConnectorFleetHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/fleet/:instanceId',
+  updateDirectoryConnectorFleetInstanceHandler
+);
 app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret',
   issueDirectoryConnectorSecretHandler

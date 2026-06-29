@@ -354,20 +354,35 @@ export const adminConsentStatementsAPI = {
 	async upsertRequirement(
 		statementId: string,
 		data: {
-			is_required?: number;
+			is_required?: number | boolean;
 			min_version?: string;
 			enforcement?: string;
-			show_deletion_link?: number;
+			show_deletion_link?: number | boolean;
 			deletion_url?: string;
+			conditional_rules?: unknown;
 			conditional_rules_json?: string;
 			display_order?: number;
 		}
 	): Promise<{ requirement: TenantConsentRequirement }> {
+		const requestBody: Record<string, unknown> = {
+			...data,
+			is_required: data.is_required === undefined ? undefined : Boolean(data.is_required),
+			show_deletion_link:
+				data.show_deletion_link === undefined ? undefined : Boolean(data.show_deletion_link)
+		};
+		if (data.conditional_rules_json && data.conditional_rules === undefined) {
+			try {
+				requestBody.conditional_rules = JSON.parse(data.conditional_rules_json);
+			} catch {
+				requestBody.conditional_rules = undefined;
+			}
+		}
+		delete requestBody.conditional_rules_json;
 		const response = await apiRequest<
 			TenantConsentRequirement | { requirement: TenantConsentRequirement }
 		>(`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`, {
 			method: 'PUT',
-			body: JSON.stringify(data)
+			body: JSON.stringify(requestBody)
 		});
 		return { requirement: unwrapResource<TenantConsentRequirement>(response, 'requirement') };
 	},

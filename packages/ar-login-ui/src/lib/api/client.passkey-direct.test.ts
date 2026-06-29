@@ -251,6 +251,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		const verified = await directoryPasswordAPI.login({
 			username: 'alice',
 			password: 'correct',
+			inviteToken: 'invite-token',
 			authorizationChallengeId: 'oauth_directory_challenge'
 		});
 
@@ -258,6 +259,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
 			username: 'alice',
 			password: 'correct',
+			invite_token: 'invite-token',
 			authorization_challenge_id: 'oauth_directory_challenge'
 		});
 		expect(verified.data).toMatchObject({
@@ -268,6 +270,288 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 				authTime: 1700000789,
 				acr: 'urn:mace:incommon:iap:bronze',
 				amr: ['pwd', 'directory']
+			}
+		});
+	});
+
+	it('returns Directory Password migration transactions without converting them to sessions', async () => {
+		const fetchMock = vi.fn(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						ok: false,
+						migration: {
+							required: true,
+							action: 'require_passkey',
+							transaction_id: 'damt_1',
+							transaction_token: 'migration-token',
+							expires_at: 1700001000,
+							campaign_id: 'damc_1',
+							state: 'passkey_required',
+							reason: 'immediate',
+							passkey_required_at: 1700000000,
+							email_code_fallback_mode: 'migration_recovery'
+						},
+						user: {
+							id: 'user_directory',
+							email: 'alice@example.com',
+							name: 'Alice Example'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const verified = await directoryPasswordAPI.login({
+			username: 'alice',
+			password: 'correct'
+		});
+
+		expect(verified.data).toMatchObject({
+			success: false,
+			migration: {
+				required: true,
+				action: 'require_passkey',
+				transaction_id: 'damt_1',
+				transaction_token: 'migration-token',
+				campaign_id: 'damc_1'
+			}
+		});
+		expect(verified.data).not.toHaveProperty('session');
+	});
+
+	it('keeps optional Directory Password migration prompts attached to successful sessions', async () => {
+		const fetchMock = vi.fn(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						expires_in: 3600,
+						session: {
+							userId: 'user_directory',
+							createdAt: 1700000000,
+							expiresAt: 1700003600,
+							authTime: 1700000000,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['pwd', 'directory']
+						},
+						user: {
+							id: 'user_directory',
+							email: 'alice@example.com',
+							name: 'Alice Example'
+						},
+						migration: {
+							required: false,
+							action: 'prompt_passkey',
+							campaign_id: 'damc_1',
+							state: 'prompted',
+							passkey_required_at: null,
+							transaction_ttl_seconds: 600
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const verified = await directoryPasswordAPI.login({
+			username: 'alice',
+			password: 'correct'
+		});
+
+		expect(verified.data).toMatchObject({
+			success: true,
+			userId: 'user_directory',
+			migration: {
+				required: false,
+				action: 'prompt_passkey',
+				campaign_id: 'damc_1'
+			}
+		});
+	});
+
+	it('starts and verifies Directory Password migration passkey registration', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						challenge_id: 'challenge_migration',
+						options: { challenge: 'webauthn-challenge' }
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+						session: {
+							userId: 'user_directory',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000456,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['pwd', 'directory', 'passkey']
+						},
+						user: {
+							id: 'user_directory',
+							email: 'directory@example.com',
+							name: 'Directory User'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const options = await directoryPasswordAPI.migrationPasskeyOptions({
+			transactionId: 'damt_1',
+			transactionToken: 'migration-token',
+			displayName: 'Directory User'
+		});
+		const verified = await directoryPasswordAPI.migrationPasskeyVerify({
+			transactionId: 'damt_1',
+			transactionToken: 'migration-token',
+			challengeId: options.data!.challenge_id,
+			credential: { id: 'credential' },
+			deviceName: 'Work laptop'
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/passkey/options'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_1',
+			transaction_token: 'migration-token',
+			display_name: 'Directory User'
+		});
+		expect(fetchMock.mock.calls[1]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/passkey/verify'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_1',
+			transaction_token: 'migration-token',
+			challenge_id: 'challenge_migration',
+			device_name: 'Work laptop'
+		});
+		expect(verified.data).toMatchObject({
+			userId: 'user_directory',
+			redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+			session: {
+				amr: ['pwd', 'directory', 'passkey']
+			}
+		});
+	});
+
+	it('sends and verifies Directory Password migration email-code fallback', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						success: true,
+						challenge_id: 'email_challenge_1',
+						expires_in: 300,
+						masked_email: 'al***@example.com'
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+						session: {
+							userId: 'user_directory',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000456,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['pwd', 'directory', 'otp']
+						},
+						user: {
+							id: 'user_directory',
+							email: 'directory@example.com',
+							name: 'Directory User'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const sent = await directoryPasswordAPI.migrationEmailCodeSend({
+			transactionId: 'damt_email_1',
+			transactionToken: 'migration-email-token'
+		});
+		const verified = await directoryPasswordAPI.migrationEmailCodeVerify({
+			transactionId: 'damt_email_1',
+			transactionToken: 'migration-email-token',
+			challengeId: sent.data!.challenge_id,
+			code: '123456'
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/email-code/send'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_email_1',
+			transaction_token: 'migration-email-token'
+		});
+		expect(fetchMock.mock.calls[1]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/email-code/verify'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_email_1',
+			transaction_token: 'migration-email-token',
+			challenge_id: 'email_challenge_1',
+			code: '123456'
+		});
+		expect(verified.data).toMatchObject({
+			userId: 'user_directory',
+			redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+			session: {
+				amr: ['pwd', 'directory', 'otp']
 			}
 		});
 	});

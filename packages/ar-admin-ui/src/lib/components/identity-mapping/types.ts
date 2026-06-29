@@ -1,4 +1,4 @@
-export type MappingAdapter = 'CSV' | 'SAML' | 'OIDC' | 'SCIM';
+export type MappingAdapter = 'CSV' | 'SAML' | 'OIDC' | 'SCIM' | 'DIRECTORY';
 export type MappingRisk = 'low' | 'medium' | 'high';
 export type NodeRole = 'source' | 'transform' | 'target' | 'destination';
 export type TransformOperation =

@@ -502,6 +502,74 @@ describe('Consent Statements Utility', () => {
         ['tenant-a', 'ver-1']
       );
     });
+
+    it('should fall back to English when requested and tenant default languages are unavailable', async () => {
+      const adapter = {
+        query: vi.fn(async () => [
+          {
+            id: 'loc-ja',
+            tenant_id: 'tenant-a',
+            version_id: 'ver-1',
+            language: 'ja',
+            title: '利用規約',
+            description: '日本語',
+            processing_purpose: null,
+            withdrawal_impact: null,
+            document_url: null,
+            inline_content: '日本語',
+            created_at: 1,
+            updated_at: 1,
+          },
+          {
+            id: 'loc-en',
+            tenant_id: 'tenant-a',
+            version_id: 'ver-1',
+            language: 'en',
+            title: 'Terms',
+            description: 'English',
+            processing_purpose: null,
+            withdrawal_impact: null,
+            document_url: null,
+            inline_content: 'English',
+            created_at: 1,
+            updated_at: 1,
+          },
+        ]),
+        execute: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const result = await getLocalization(adapter, 'tenant-a', 'ver-1', 'fr', 'de');
+
+      expect(result?.language).toBe('en');
+      expect(result?.title).toBe('Terms');
+    });
+
+    it('should fall back to the only available non-English localization', async () => {
+      const adapter = {
+        query: vi.fn(async () => [
+          {
+            id: 'loc-ja',
+            tenant_id: 'tenant-a',
+            version_id: 'ver-1',
+            language: 'ja',
+            title: '利用規約',
+            description: '日本語',
+            processing_purpose: null,
+            withdrawal_impact: null,
+            document_url: null,
+            inline_content: '日本語',
+            created_at: 1,
+            updated_at: 1,
+          },
+        ]),
+        execute: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const result = await getLocalization(adapter, 'tenant-a', 'ver-1', 'fr', 'de');
+
+      expect(result?.language).toBe('ja');
+      expect(result?.title).toBe('利用規約');
+    });
   });
 
   describe('resolveConsentRequirements', () => {
@@ -673,6 +741,83 @@ describe('Consent Statements Utility', () => {
       );
 
       expect(result).toEqual([]);
+    });
+
+    it('should resolve subject-bound policy items for the current subject', async () => {
+      const now = Date.now();
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'active_statements',
+            [
+              {
+                id: 'stmt-1',
+                tenant_id: 'default',
+                slug: 'terms',
+                category: 'terms_of_service',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 10,
+                is_active: 1,
+                reconsent_on_version_change: 1,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          ['consent_policy_assignments', [{ policy_id: 'policy-1' }]],
+          [
+            'consent_policy_items',
+            [
+              {
+                statement_id: 'stmt-1',
+                requirement: 'required',
+                version_mode: 'current',
+                version_id: null,
+                min_version: null,
+                checkbox_mode: 'required',
+                checkbox_default_checked: 0,
+                binding_type: 'subject',
+                binding_value: 'self',
+                evidence_profile: null,
+                language_fallback: null,
+                display_order: 5,
+              },
+            ],
+          ],
+          [
+            'current_version',
+            [
+              {
+                id: 'ver-1',
+                version: '20260601',
+                content_type: 'url',
+                is_current: 1,
+                status: 'active',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const result = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          subject_id: 'user-1',
+        }
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        statement_id: 'stmt-1',
+        binding_type: 'subject',
+        binding_value: 'self',
+      });
     });
 
     it('should only resolve active consent policies from assignments', async () => {

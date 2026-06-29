@@ -47,6 +47,7 @@ export interface ResolvedSignInConfirmationPolicy {
 export interface ConsentRequirementResolutionContext {
   target_type?: 'oidc_client' | 'saml_sp';
   target_id?: string | null;
+  subject_id?: string | null;
   requested_scopes?: string[];
   requested_claims?: string[];
   requested_saml_attributes?: string[];
@@ -322,7 +323,7 @@ async function getVersionById(
 
 /**
  * Get localization for a version with fallback chain:
- * userLang → tenantDefaultLang → 'en' → null
+ * user language -> tenant default language -> English -> first available localization.
  */
 export async function getLocalization(
   adapter: DatabaseAdapter,
@@ -354,8 +355,9 @@ export async function getLocalization(
 
   if (rows.length === 0) return null;
 
-  // Build fallback chain
-  const fallbackChain = [userLanguage, tenantDefaultLanguage, 'en'];
+  const fallbackChain = [userLanguage, tenantDefaultLanguage, 'en']
+    .map((lang) => lang?.trim())
+    .filter((lang): lang is string => Boolean(lang));
   const seen = new Set<string>();
 
   for (const lang of fallbackChain) {
@@ -589,6 +591,8 @@ function policyItemMatchesRequestContext(
   if (values.length === 0) return true;
 
   switch (item.binding_type) {
+    case 'subject':
+      return matchesSubjectBinding(values, context.subject_id);
     case 'scope':
       return intersects(values, context.requested_scopes ?? []);
     case 'claim':
@@ -600,6 +604,14 @@ function policyItemMatchesRequestContext(
     default:
       return true;
   }
+}
+
+function matchesSubjectBinding(values: string[], subjectId?: string | null): boolean {
+  if (values.some((item) => item === 'self' || item === 'authenticated_subject')) {
+    return true;
+  }
+  if (!subjectId) return false;
+  return values.some((item) => item === subjectId);
 }
 
 function splitBindingValues(value: string): string[] {

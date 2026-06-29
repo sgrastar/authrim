@@ -6,16 +6,20 @@
 		type DirectoryConnectorHealthResponse,
 		type DirectoryConnectorRelayEventsResponse,
 		type DirectoryConnectorSecretResponse,
-		type DirectoryConnectorsResponse
+		type DirectoryConnectorsResponse,
+		type DirectoryPendingUser
 	} from '$lib/api/admin-directory-connectors';
 	import { ToggleSwitch } from '$lib/components';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import DirectoryAuthenticationTabs from './DirectoryAuthenticationTabs.svelte';
 
-	const CONNECTOR_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+	const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+	const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 	const SECRET_REF_PATTERN =
 		/^(env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+|managed:[a-zA-Z0-9_-]{1,64})$/;
+	const HEARTBEAT_SECRET_REF_PATTERN = /^(|env:(AUTHRIM_WORDWARDEN_|WORDWARDEN_)[A-Z0-9_]+)$/;
 
 	interface DirectoryConnectorDraft {
 		id: string;
@@ -32,6 +36,18 @@
 		relay_auth_failure_rate_limit_per_minute: number;
 		relay_auth_failure_block_ms: number;
 		relay_secret_rotation_grace_ms: number;
+		heartbeat_key_id: string;
+		heartbeat_secret_ref: string;
+		heartbeat_previous_key_id: string;
+		heartbeat_previous_secret_ref: string;
+		heartbeat_interval_ms: number;
+		heartbeat_stale_after_ms: number;
+		heartbeat_retention_days: number;
+		heartbeat_version_mismatch_policy: 'warn' | 'block';
+		heartbeat_expected_version: string;
+		heartbeat_minimum_version: string;
+		heartbeat_unhealthy_threshold: number;
+		heartbeat_stale_detection_grace_ms: number;
 		attributes_text: string;
 	}
 
@@ -92,10 +108,23 @@
 	let secrets = $state<Record<number, SecretState>>({});
 	let relayEvents = $state<Record<number, EventsState>>({});
 	let copiedRelayUrlIndex = $state<number | null>(null);
+	let pendingLoading = $state(false);
+	let pendingUsers = $state<DirectoryPendingUser[]>([]);
+	let pendingError = $state('');
+	let pendingActionId = $state('');
+	let pendingLinkUserIds = $state<Record<string, string>>({});
+	let pendingReasons = $state<Record<string, string>>({});
 
 	const currentTenantId = $derived(settingsContext.tenantId);
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	const hasChanges = $derived(JSON.stringify(buildConfig()) !== initialConfigJson);
+
+	function randomConnectorId(): string {
+		const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+		const bytes = new Uint8Array(16);
+		crypto.getRandomValues(bytes);
+		return `wwcon_${Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')}`;
+	}
 
 	function defaultConnector(index: number): DirectoryConnectorDraft {
 		return {
@@ -103,7 +132,7 @@
 			transport: 'relay',
 			endpoint_url: 'https://wordwarden.example.com',
 			auth_mode: 'hmac',
-			connector_id: 'ww_tenant',
+			connector_id: randomConnectorId(),
 			key_id: 'kid-active',
 			secret_ref: 'env:WORDWARDEN_SECRET',
 			request_ms: 2500,
@@ -113,6 +142,18 @@
 			relay_auth_failure_rate_limit_per_minute: 10,
 			relay_auth_failure_block_ms: 300000,
 			relay_secret_rotation_grace_ms: 300000,
+			heartbeat_key_id: '',
+			heartbeat_secret_ref: '',
+			heartbeat_previous_key_id: '',
+			heartbeat_previous_secret_ref: '',
+			heartbeat_interval_ms: 300000,
+			heartbeat_stale_after_ms: 900000,
+			heartbeat_retention_days: 14,
+			heartbeat_version_mismatch_policy: 'warn',
+			heartbeat_expected_version: '',
+			heartbeat_minimum_version: '',
+			heartbeat_unhealthy_threshold: 1,
+			heartbeat_stale_detection_grace_ms: 0,
 			attributes_text: 'mail, displayName, uid'
 		};
 	}
@@ -134,6 +175,18 @@
 				connector.relay?.auth_failure_rate_limit_per_minute ?? 10,
 			relay_auth_failure_block_ms: connector.relay?.auth_failure_block_ms ?? 300000,
 			relay_secret_rotation_grace_ms: connector.relay?.secret_rotation_grace_ms ?? 300000,
+			heartbeat_key_id: connector.heartbeat?.key_id ?? '',
+			heartbeat_secret_ref: connector.heartbeat?.secret_ref ?? '',
+			heartbeat_previous_key_id: connector.heartbeat?.previous_key_id ?? '',
+			heartbeat_previous_secret_ref: connector.heartbeat?.previous_secret_ref ?? '',
+			heartbeat_interval_ms: connector.heartbeat?.interval_ms ?? 300000,
+			heartbeat_stale_after_ms: connector.heartbeat?.stale_after_ms ?? 900000,
+			heartbeat_retention_days: connector.heartbeat?.retention_days ?? 14,
+			heartbeat_version_mismatch_policy: connector.heartbeat?.version_mismatch_policy ?? 'warn',
+			heartbeat_expected_version: connector.heartbeat?.expected_version ?? '',
+			heartbeat_minimum_version: connector.heartbeat?.minimum_version ?? '',
+			heartbeat_unhealthy_threshold: connector.heartbeat?.unhealthy_threshold ?? 1,
+			heartbeat_stale_detection_grace_ms: connector.heartbeat?.stale_detection_grace_ms ?? 0,
 			attributes_text: connector.attribute_names.join(', ')
 		};
 	}
@@ -167,6 +220,20 @@
 				auth_failure_rate_limit_per_minute: Number(draft.relay_auth_failure_rate_limit_per_minute),
 				auth_failure_block_ms: Number(draft.relay_auth_failure_block_ms),
 				secret_rotation_grace_ms: Number(draft.relay_secret_rotation_grace_ms)
+			},
+			heartbeat: {
+				key_id: draft.heartbeat_key_id.trim(),
+				secret_ref: draft.heartbeat_secret_ref.trim(),
+				previous_key_id: draft.heartbeat_previous_key_id.trim(),
+				previous_secret_ref: draft.heartbeat_previous_secret_ref.trim(),
+				interval_ms: Number(draft.heartbeat_interval_ms),
+				stale_after_ms: Number(draft.heartbeat_stale_after_ms),
+				retention_days: Number(draft.heartbeat_retention_days),
+				version_mismatch_policy: draft.heartbeat_version_mismatch_policy,
+				expected_version: draft.heartbeat_expected_version.trim(),
+				minimum_version: draft.heartbeat_minimum_version.trim(),
+				unhealthy_threshold: Number(draft.heartbeat_unhealthy_threshold),
+				stale_detection_grace_ms: Number(draft.heartbeat_stale_detection_grace_ms)
 			},
 			attribute_names: normalizeAttributes(draft.attributes_text)
 		}));
@@ -211,6 +278,21 @@
 
 	function relayEventItems(index: number) {
 		return relayEvents[index]?.result?.body?.events ?? [];
+	}
+
+	function directoryFactSummary(item: DirectoryPendingUser): string {
+		if (!isObject(item.directory_facts)) return item.login_identifier;
+		const identity = item.directory_facts.identity;
+		if (isObject(identity)) {
+			const canonical = identity.canonical_username;
+			if (typeof canonical === 'string' && canonical.trim()) return canonical;
+		}
+		return item.login_identifier;
+	}
+
+	function directoryFactGroupCount(item: DirectoryPendingUser): number {
+		if (!isObject(item.directory_facts) || !Array.isArray(item.directory_facts.groups)) return 0;
+		return item.directory_facts.groups.length;
 	}
 
 	function relayURL(connector: DirectoryConnectorDraft): string {
@@ -277,9 +359,10 @@
 			return $LL.admin_directory_authentication_validation_default_connector();
 		}
 		const ids: string[] = [];
+		const wordwardenConnectorIds: string[] = [];
 		for (const connector of config.connectors) {
 			if (!connector.id) return $LL.admin_directory_authentication_validation_id_required();
-			if (!CONNECTOR_ID_PATTERN.test(connector.id)) {
+			if (!CONNECTOR_KEY_PATTERN.test(connector.id)) {
 				return $LL.admin_directory_authentication_validation_id_format();
 			}
 			if (ids.includes(connector.id)) {
@@ -297,6 +380,13 @@
 			if (!connector.connector_id) {
 				return $LL.admin_directory_authentication_validation_connector_id_required();
 			}
+			if (!WORDWARDEN_CONNECTOR_ID_PATTERN.test(connector.connector_id)) {
+				return $LL.admin_directory_authentication_validation_connector_id_format();
+			}
+			if (wordwardenConnectorIds.includes(connector.connector_id)) {
+				return $LL.admin_directory_authentication_validation_connector_id_unique();
+			}
+			wordwardenConnectorIds.push(connector.connector_id);
 			if (!connector.key_id) return $LL.admin_directory_authentication_validation_key_id_required();
 			if (!connector.secret_ref) {
 				return $LL.admin_directory_authentication_validation_secret_required();
@@ -358,6 +448,46 @@
 			) {
 				return $LL.admin_directory_authentication_validation_rotation_grace();
 			}
+			if (
+				(Boolean(connector.heartbeat.key_id) && !connector.heartbeat.secret_ref) ||
+				(!connector.heartbeat.key_id && Boolean(connector.heartbeat.secret_ref))
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_secret_pair();
+			}
+			if (!HEARTBEAT_SECRET_REF_PATTERN.test(connector.heartbeat.secret_ref)) {
+				return $LL.admin_directory_authentication_validation_heartbeat_secret_format();
+			}
+			if (
+				(Boolean(connector.heartbeat.previous_key_id) &&
+					!connector.heartbeat.previous_secret_ref) ||
+				(!connector.heartbeat.previous_key_id && Boolean(connector.heartbeat.previous_secret_ref))
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_previous_pair();
+			}
+			if (!HEARTBEAT_SECRET_REF_PATTERN.test(connector.heartbeat.previous_secret_ref)) {
+				return $LL.admin_directory_authentication_validation_heartbeat_secret_format();
+			}
+			if (
+				!Number.isInteger(connector.heartbeat.interval_ms) ||
+				connector.heartbeat.interval_ms < 30000 ||
+				connector.heartbeat.interval_ms > 86400000
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_interval();
+			}
+			if (
+				!Number.isInteger(connector.heartbeat.stale_after_ms) ||
+				connector.heartbeat.stale_after_ms < 60000 ||
+				connector.heartbeat.stale_after_ms > 604800000
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_stale_after();
+			}
+			if (
+				!Number.isInteger(connector.heartbeat.retention_days) ||
+				connector.heartbeat.retention_days < 1 ||
+				connector.heartbeat.retention_days > 90
+			) {
+				return $LL.admin_directory_authentication_validation_heartbeat_retention();
+			}
 			if (connector.attribute_names.length > 32) {
 				return $LL.admin_directory_authentication_validation_attributes();
 			}
@@ -386,10 +516,59 @@
 				auto_provision: response.auto_provision,
 				connectors: response.connectors
 			});
+			await loadPendingUsers(selectedTenantId);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_directory_authentication_load_failed();
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadPendingUsers(selectedTenantId = tenantId) {
+		if (!selectedTenantId) return;
+		pendingLoading = true;
+		pendingError = '';
+		try {
+			const response = await adminDirectoryConnectorsAPI.listPendingUsers(selectedTenantId);
+			pendingUsers = response.items;
+		} catch (err) {
+			pendingError =
+				err instanceof Error
+					? err.message
+					: $LL.admin_directory_authentication_pending_load_failed();
+		} finally {
+			pendingLoading = false;
+		}
+	}
+
+	async function updatePendingUser(
+		item: DirectoryPendingUser,
+		action: 'approve' | 'reject' | 'link'
+	) {
+		if (!tenantId || !canEdit) return;
+		const reason = pendingReasons[item.id]?.trim() || undefined;
+		const userId = pendingLinkUserIds[item.id]?.trim();
+		if (action === 'link' && !userId) {
+			pendingError = $LL.admin_directory_authentication_pending_link_user_required();
+			return;
+		}
+		pendingActionId = item.id;
+		pendingError = '';
+		try {
+			await adminDirectoryConnectorsAPI.updatePendingUser(
+				tenantId,
+				item.id,
+				action === 'link' ? { action, user_id: userId, reason } : { action, reason }
+			);
+			successMessage = $LL.admin_directory_authentication_pending_updated();
+			await loadPendingUsers(tenantId);
+		} catch (err) {
+			pendingError =
+				err instanceof Error
+					? err.message
+					: $LL.admin_directory_authentication_pending_update_failed();
+		} finally {
+			pendingActionId = '';
 		}
 	}
 
@@ -621,6 +800,8 @@
 		actions={headerActions}
 	/>
 
+	<DirectoryAuthenticationTabs active="settings" />
+
 	{#if loading}
 		<AdminSection>
 			<p class="state-text">{$LL.admin_directory_authentication_loading()}</p>
@@ -698,6 +879,121 @@
 					</div>
 				</div>
 			</div>
+		</AdminSection>
+
+		<AdminSection
+			title={$LL.admin_directory_authentication_pending_title()}
+			description={$LL.admin_directory_authentication_pending_description()}
+		>
+			<div class="pending-toolbar">
+				<p class="pending-note">{$LL.admin_directory_authentication_pending_warning()}</p>
+				<button
+					class="btn btn-secondary"
+					disabled={pendingLoading}
+					onclick={() => loadPendingUsers(tenantId)}
+				>
+					{pendingLoading
+						? $LL.admin_directory_authentication_pending_loading()
+						: $LL.admin_directory_authentication_pending_refresh()}
+				</button>
+			</div>
+
+			{#if pendingError}
+				<div class="alert alert-error">{pendingError}</div>
+			{/if}
+
+			{#if pendingLoading && pendingUsers.length === 0}
+				<p class="state-text">{$LL.admin_directory_authentication_pending_loading()}</p>
+			{:else if pendingUsers.length === 0}
+				<div class="empty-state">
+					<p>{$LL.admin_directory_authentication_pending_empty()}</p>
+				</div>
+			{:else}
+				<div class="pending-list">
+					{#each pendingUsers as item (item.id)}
+						<section class="pending-row">
+							<div class="pending-main">
+								<div>
+									<h3>{directoryFactSummary(item)}</h3>
+									<p>
+										<code>{item.connector_id}</code>
+										<span>{new Date(item.updated_at).toLocaleString()}</span>
+									</p>
+								</div>
+								<div class="pending-facts">
+									<span>{item.status}</span>
+									<span>
+										{$LL.admin_directory_authentication_pending_group_count({
+											count: directoryFactGroupCount(item)
+										})}
+									</span>
+								</div>
+							</div>
+							<details class="pending-details">
+								<summary>{$LL.admin_directory_authentication_pending_details()}</summary>
+								<dl>
+									<div>
+										<dt>{$LL.admin_directory_authentication_pending_subject()}</dt>
+										<dd><code>{item.directory_subject}</code></dd>
+									</div>
+									<div>
+										<dt>{$LL.admin_directory_authentication_pending_identifier()}</dt>
+										<dd>{item.login_identifier}</dd>
+									</div>
+								</dl>
+							</details>
+							<div class="pending-action-grid">
+								<div class="admin-field">
+									<label class="admin-field__label" for={`pending-user-${item.id}`}>
+										{$LL.admin_directory_authentication_pending_user_id()}
+									</label>
+									<input
+										id={`pending-user-${item.id}`}
+										class="admin-input"
+										bind:value={pendingLinkUserIds[item.id]}
+										placeholder="user_..."
+										disabled={!canEdit || pendingActionId === item.id}
+									/>
+								</div>
+								<div class="admin-field">
+									<label class="admin-field__label" for={`pending-reason-${item.id}`}>
+										{$LL.admin_directory_authentication_pending_reason()}
+									</label>
+									<input
+										id={`pending-reason-${item.id}`}
+										class="admin-input"
+										bind:value={pendingReasons[item.id]}
+										disabled={!canEdit || pendingActionId === item.id}
+									/>
+								</div>
+								<div class="pending-actions">
+									<button
+										class="btn btn-secondary"
+										disabled={!canEdit || pendingActionId === item.id}
+										onclick={() => updatePendingUser(item, 'approve')}
+									>
+										{$LL.admin_directory_authentication_pending_approve()}
+									</button>
+									<button
+										class="btn btn-secondary"
+										disabled={!canEdit || pendingActionId === item.id}
+										onclick={() => updatePendingUser(item, 'link')}
+									>
+										{$LL.admin_directory_authentication_pending_link()}
+									</button>
+									<button
+										class="btn btn-danger"
+										disabled={!canEdit || pendingActionId === item.id}
+										onclick={() => updatePendingUser(item, 'reject')}
+									>
+										{$LL.admin_directory_authentication_pending_reject()}
+									</button>
+								</div>
+							</div>
+						</section>
+					{/each}
+				</div>
+			{/if}
 		</AdminSection>
 
 		<AdminSection
@@ -1054,6 +1350,184 @@
 									</div>
 								{/if}
 
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-key-id-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_key_id()}
+									</label>
+									<input
+										id={`heartbeat-key-id-${index}`}
+										class="admin-input"
+										bind:value={connector.heartbeat_key_id}
+										disabled={!canEdit}
+									/>
+								</div>
+
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-secret-ref-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_secret_ref()}
+									</label>
+									<input
+										id={`heartbeat-secret-ref-${index}`}
+										class="admin-input"
+										bind:value={connector.heartbeat_secret_ref}
+										disabled={!canEdit}
+									/>
+									<p class="field-hint">
+										{$LL.admin_directory_authentication_heartbeat_secret_hint()}
+									</p>
+								</div>
+
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-interval-ms-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_interval_ms()}
+									</label>
+									<input
+										id={`heartbeat-interval-ms-${index}`}
+										type="number"
+										min="30000"
+										max="86400000"
+										class="admin-input"
+										bind:value={connector.heartbeat_interval_ms}
+										disabled={!canEdit}
+									/>
+								</div>
+
+								<div class="admin-field">
+									<label class="admin-field__label" for={`heartbeat-stale-after-ms-${index}`}>
+										{$LL.admin_directory_authentication_heartbeat_stale_after_ms()}
+									</label>
+									<input
+										id={`heartbeat-stale-after-ms-${index}`}
+										type="number"
+										min="60000"
+										max="604800000"
+										class="admin-input"
+										bind:value={connector.heartbeat_stale_after_ms}
+										disabled={!canEdit}
+									/>
+								</div>
+
+								<details class="advanced-settings admin-field--full">
+									<summary>{$LL.admin_directory_authentication_advanced_fleet_settings()}</summary>
+									<div class="form-grid form-grid--nested">
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-previous-key-id-${index}`}>
+												{$LL.admin_directory_authentication_heartbeat_previous_key_id()}
+											</label>
+											<input
+												id={`heartbeat-previous-key-id-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_previous_key_id}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label
+												class="admin-field__label"
+												for={`heartbeat-previous-secret-ref-${index}`}
+											>
+												{$LL.admin_directory_authentication_heartbeat_previous_secret_ref()}
+											</label>
+											<input
+												id={`heartbeat-previous-secret-ref-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_previous_secret_ref}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-retention-days-${index}`}>
+												{$LL.admin_directory_authentication_heartbeat_retention_days()}
+											</label>
+											<input
+												id={`heartbeat-retention-days-${index}`}
+												type="number"
+												min="1"
+												max="90"
+												class="admin-input"
+												bind:value={connector.heartbeat_retention_days}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-version-policy-${index}`}>
+												{$LL.admin_directory_authentication_version_mismatch_policy()}
+											</label>
+											<select
+												id={`heartbeat-version-policy-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_version_mismatch_policy}
+												disabled={!canEdit}
+											>
+												<option value="warn">warn</option>
+												<option value="block">block</option>
+											</select>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-expected-version-${index}`}>
+												{$LL.admin_directory_authentication_expected_version()}
+											</label>
+											<input
+												id={`heartbeat-expected-version-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_expected_version}
+												disabled={!canEdit}
+												placeholder="0.1.0-beta.1"
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-minimum-version-${index}`}>
+												{$LL.admin_directory_authentication_minimum_version()}
+											</label>
+											<input
+												id={`heartbeat-minimum-version-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_minimum_version}
+												disabled={!canEdit}
+												placeholder="0.1.0"
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label
+												class="admin-field__label"
+												for={`heartbeat-unhealthy-threshold-${index}`}
+											>
+												{$LL.admin_directory_authentication_unhealthy_threshold()}
+											</label>
+											<input
+												id={`heartbeat-unhealthy-threshold-${index}`}
+												type="number"
+												min="1"
+												max="10"
+												class="admin-input"
+												bind:value={connector.heartbeat_unhealthy_threshold}
+												disabled={!canEdit}
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-stale-grace-ms-${index}`}>
+												{$LL.admin_directory_authentication_stale_detection_grace_ms()}
+											</label>
+											<input
+												id={`heartbeat-stale-grace-ms-${index}`}
+												type="number"
+												min="0"
+												max="86400000"
+												class="admin-input"
+												bind:value={connector.heartbeat_stale_detection_grace_ms}
+												disabled={!canEdit}
+											/>
+										</div>
+									</div>
+								</details>
+
 								<div class="admin-field admin-field--full">
 									<label class="admin-field__label" for={`attributes-${index}`}>
 										{$LL.admin_directory_authentication_attributes()}
@@ -1192,6 +1666,22 @@
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 14px;
+	}
+
+	.form-grid--nested {
+		margin-top: 12px;
+	}
+
+	.advanced-settings {
+		border-top: 1px solid var(--color-border);
+		padding-top: 12px;
+	}
+
+	.advanced-settings summary {
+		cursor: pointer;
+		color: var(--color-text);
+		font-size: 0.84rem;
+		font-weight: 700;
 	}
 
 	.admin-field {
@@ -1360,6 +1850,128 @@
 		font-size: 0.76rem;
 	}
 
+	.pending-toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 14px;
+	}
+
+	.pending-note {
+		max-width: 720px;
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
+	.pending-list {
+		display: grid;
+		gap: 12px;
+	}
+
+	.pending-row {
+		display: grid;
+		gap: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+		padding: 14px;
+	}
+
+	.pending-main {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.pending-main h3 {
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+	}
+
+	.pending-main p {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 5px;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+
+	.pending-main code,
+	.pending-details code {
+		overflow-wrap: anywhere;
+		color: var(--color-text);
+		font-size: 0.76rem;
+	}
+
+	.pending-facts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		justify-content: flex-end;
+	}
+
+	.pending-facts span {
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		padding: 4px 7px;
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 650;
+	}
+
+	.pending-details {
+		color: var(--color-text-muted);
+		font-size: 0.8rem;
+	}
+
+	.pending-details summary {
+		cursor: pointer;
+		color: var(--color-text);
+		font-weight: 650;
+	}
+
+	.pending-details dl {
+		display: grid;
+		gap: 8px;
+		margin: 10px 0 0;
+	}
+
+	.pending-details div {
+		display: grid;
+		gap: 3px;
+	}
+
+	.pending-details dt {
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.pending-details dd {
+		margin: 0;
+		color: var(--color-text);
+	}
+
+	.pending-action-grid {
+		display: grid;
+		grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+		gap: 10px;
+		align-items: end;
+	}
+
+	.pending-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+
 	.btn[disabled] {
 		opacity: 0.55;
 		cursor: not-allowed;
@@ -1388,6 +2000,20 @@
 		}
 
 		.relay-url-output {
+			grid-template-columns: 1fr;
+		}
+
+		.pending-toolbar,
+		.pending-main {
+			flex-direction: column;
+		}
+
+		.pending-facts,
+		.pending-actions {
+			justify-content: flex-start;
+		}
+
+		.pending-action-grid {
 			grid-template-columns: 1fr;
 		}
 	}

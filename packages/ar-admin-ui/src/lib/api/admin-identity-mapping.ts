@@ -9,6 +9,8 @@ export interface IdentityMappingFieldMappingSetSummary {
 	displayName: string;
 	description?: string | null;
 	lifecycleState: string;
+	createdAt?: number | null;
+	updatedAt?: number | null;
 }
 
 export interface IdentityMappingFieldMappingVersionSummary {

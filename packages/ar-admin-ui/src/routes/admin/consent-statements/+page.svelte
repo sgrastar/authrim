@@ -58,8 +58,7 @@
 		const ja = getLocale() === 'ja';
 		const labels: Record<string, { ja: string; en: string }> = {
 			samlCategory: { ja: 'SAML属性送信確認', en: 'SAML attribute release confirmation' },
-			createFromTemplate: { ja: 'テンプレートから作る', en: 'Create from template' },
-			createFromScratch: { ja: '最初から作る', en: 'Create from scratch' }
+			createNew: { ja: '新規作成', en: 'New' }
 		};
 		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
 	}
@@ -96,16 +95,9 @@
 		description={$LL.admin_consent_statements_list_description()}
 	>
 		{#snippet actions()}
-			<a
-				href="/admin/consent-statements/new?template=saml-attribute-release-confirmation"
-				class="btn btn-secondary"
-			>
-				<i class="i-ph-copy" aria-hidden="true"></i>
-				{localText('createFromTemplate')}
-			</a>
 			<a href="/admin/consent-statements/new" class="btn btn-primary">
 				<i class="i-ph-plus" aria-hidden="true"></i>
-				{localText('createFromScratch')}
+				{localText('createNew')}
 			</a>
 		{/snippet}
 	</AdminPageHeader>
@@ -181,14 +173,8 @@
 									<div class="empty-state">
 										<p class="empty-state-description">{$LL.admin_consent_statements_empty()}</p>
 										<div class="empty-state-actions">
-											<a
-												href="/admin/consent-statements/new?template=saml-attribute-release-confirmation"
-												class="btn btn-secondary"
-											>
-												{localText('createFromTemplate')}
-											</a>
 											<a href="/admin/consent-statements/new" class="btn btn-primary">
-												{localText('createFromScratch')}
+												{localText('createNew')}
 											</a>
 										</div>
 									</div>

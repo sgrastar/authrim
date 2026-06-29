@@ -100,6 +100,121 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
       security: *accountSession
+  /api/account/reauth/passkey/options:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReauthPasskeyOptions
+      summary: Create passkey reauthentication options.
+      description:
+        Starts a WebAuthn authentication ceremony for the current Account Page session user.
+        The returned allowCredentials list is limited to the user's registered passkeys.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountPasskeyOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  /api/account/reauth/passkey/complete:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReauthPasskeyComplete
+      summary: Complete passkey reauthentication.
+      description:
+        Verifies a WebAuthn authentication response for the current Account Page session user
+        and refreshes the session auth_time used by sensitive Account Page operations.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountReauthComplete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+      security: *accountSession
+  /api/account/reauth/email-code/send:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReauthEmailCodeSend
+      summary: Send an email code for reauthentication.
+      description:
+        Sends a one-time verification code to the verified email address of the current Account
+        Page session user. This endpoint only uses email code when it is enabled for
+        reauthentication in the tenant authentication method settings.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountEmailReauthSend'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  /api/account/reauth/email-code/complete:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReauthEmailCodeComplete
+      summary: Complete email code reauthentication.
+      description:
+        Verifies a one-time email code for the current Account Page session and refreshes the
+        session auth_time used by sensitive Account Page operations.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountReauthComplete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - code
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      security: *accountSession
   /api/account/operations:
     get:
       tags:
@@ -786,6 +901,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AccountReauthStatusResponse'
+    AccountReauthComplete:
+      description: Account Page reauthentication completion response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountReauthCompleteResponse'
+    AccountEmailReauthSend:
+      description: Account Page email reauthentication challenge response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountEmailReauthSendResponse'
     AccountCapabilities:
       description: Account Page feature capabilities response.
       content:
@@ -1087,6 +1214,42 @@ components:
               type: array
               items:
                 type: string
+    AccountReauthCompleteResponse:
+      type: object
+      required:
+        - ok
+        - reauth
+      properties:
+        ok:
+          type: boolean
+        reauth:
+          type: object
+          required:
+            - authenticated_at
+            - expires_at
+            - methods
+          properties:
+            authenticated_at:
+              type: integer
+            expires_at:
+              type: integer
+            methods:
+              type: array
+              items:
+                type: string
+    AccountEmailReauthSendResponse:
+      type: object
+      required:
+        - challenge_id
+        - expires_in
+        - masked_email
+      properties:
+        challenge_id:
+          type: string
+        expires_in:
+          type: integer
+        masked_email:
+          type: string
     AccountCapability:
       type: object
       required:

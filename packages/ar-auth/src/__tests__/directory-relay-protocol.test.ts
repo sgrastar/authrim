@@ -10,7 +10,7 @@ describe('directory relay protocol', () => {
   it('signs the relay authentication challenge context', async () => {
     const canonical = buildDirectoryRelayAuthCanonical({
       tenantId: 'tenant-a',
-      connectorId: 'ww_tenant_a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       keyId: 'kid-active',
       protocolVersion: 1,
       minSupportedVersion: 1,
@@ -23,7 +23,7 @@ describe('directory relay protocol', () => {
       [
         'AUTHRIM-WORDWARDEN-RELAY-HMAC-SHA256',
         'tenant-a',
-        'ww_tenant_a',
+        'wwcon_8K4M2Q9F7D3H6P1X',
         'kid-active',
         '1',
         '1',
@@ -35,7 +35,7 @@ describe('directory relay protocol', () => {
 
     const signature = await signDirectoryRelayCanonical(canonical, 'active-secret');
     const tampered = await signDirectoryRelayCanonical(
-      canonical.replace('ww_tenant_a', 'ww_tenant_b'),
+      canonical.replace('wwcon_8K4M2Q9F7D3H6P1X', 'wwcon_B7N5R3T9Y2U4P6A8'),
       'active-secret'
     );
 

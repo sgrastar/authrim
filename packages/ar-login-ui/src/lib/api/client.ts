@@ -12,6 +12,10 @@ import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
 } from '$lib/authrim/storage-keys';
+import type {
+	PublicKeyCredentialCreationOptionsJSON,
+	PublicKeyCredentialRequestOptionsJSON
+} from '@simplewebauthn/browser';
 
 interface ApiFetchOptions extends RequestInit {
 	baseUrl?: string;
@@ -135,6 +139,52 @@ interface ManagedDirectSessionResponse {
 	authorization?: {
 		challenge_id: string;
 		type: 'login' | 'reauth';
+	};
+	migration?: DirectoryPasswordMigrationResponse['migration'];
+}
+
+interface DirectoryPasswordMigrationResponse {
+	ok: false;
+	migration: {
+		required: boolean;
+		action: 'prompt_passkey' | 'require_passkey';
+		transaction_id?: string;
+		transaction_token?: string;
+		expires_at?: number;
+		campaign_id: string;
+		state: string;
+		reason?: string;
+		passkey_required_at?: number | null;
+		email_code_fallback_mode?: string;
+		email_code_fallback_available?: boolean;
+		email_code_fallback?: {
+			transaction_id: string;
+			transaction_token: string;
+			expires_at: number;
+			masked_email: string;
+		};
+	};
+	user?: {
+		id: string;
+		email: string;
+		name?: string | null;
+	};
+}
+
+interface DirectoryPasswordRecoveryResponse {
+	ok: false;
+	recovery: {
+		required: boolean;
+		reason: 'directory_unavailable';
+		transaction_id: string;
+		transaction_token: string;
+		expires_at: number;
+		masked_email: string;
+	};
+	user?: {
+		id: string;
+		email: string;
+		name?: string | null;
 	};
 }
 
@@ -713,22 +763,22 @@ export const passkeyAPI = {
 		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
-			'/api/v1/auth/direct/passkey/signup/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					client_id: getAuthConfig().clientId,
-					code_challenge: pkce.codeChallenge,
-					code_challenge_method: pkce.codeChallengeMethod,
-					channel: 'browser',
-					email: data.email || undefined,
-					display_name: data.name,
-					custom_fields: data.custom_fields,
-					human_verification_response: data.human_verification_response
-				})
-			}
-		);
+		const response = await apiFetch<{
+			options: PublicKeyCredentialCreationOptionsJSON;
+			challenge_id: string;
+		}>('/api/v1/auth/direct/passkey/signup/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				email: data.email || undefined,
+				display_name: data.name,
+				custom_fields: data.custom_fields,
+				human_verification_response: data.human_verification_response
+			})
+		});
 		if (response.data) {
 			directPasskeySignupPkce.set(response.data.challenge_id, {
 				codeVerifier: pkce.codeVerifier
@@ -742,7 +792,10 @@ export const passkeyAPI = {
 				error: undefined
 			};
 		}
-		return response as { data?: { options: unknown; userId: string }; error?: APIError };
+		return response as {
+			data?: { options: PublicKeyCredentialCreationOptionsJSON; userId: string };
+			error?: APIError;
+		};
 	},
 
 	/**
@@ -827,21 +880,21 @@ export const passkeyAPI = {
 		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
-			'/api/v1/auth/direct/passkey/login/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					client_id: getAuthConfig().clientId,
-					code_challenge: pkce.codeChallenge,
-					code_challenge_method: pkce.codeChallengeMethod,
-					channel: 'browser',
-					email: data.email,
-					authorization_challenge_id: data.authorizationChallengeId,
-					human_verification_response: data.human_verification_response
-				})
-			}
-		);
+		const response = await apiFetch<{
+			options: PublicKeyCredentialRequestOptionsJSON;
+			challenge_id: string;
+		}>('/api/v1/auth/direct/passkey/login/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				email: data.email,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
 		if (response.data) {
 			directPasskeyLoginPkce.set(response.data.challenge_id, {
 				codeVerifier: pkce.codeVerifier
@@ -854,7 +907,10 @@ export const passkeyAPI = {
 				error: undefined
 			};
 		}
-		return response as { data?: { options: unknown; challengeId: string }; error?: APIError };
+		return response as {
+			data?: { options: PublicKeyCredentialRequestOptionsJSON; challengeId: string };
+			error?: APIError;
+		};
 	},
 
 	/**
@@ -1056,18 +1112,103 @@ export const directoryPasswordAPI = {
 	async login(data: {
 		username: string;
 		password: string;
+		inviteToken?: string;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
 	}) {
+		const session = await apiFetch<
+			| ManagedDirectSessionResponse
+			| DirectoryPasswordMigrationResponse
+			| DirectoryPasswordRecoveryResponse
+		>('/api/auth/directory-password/login', {
+			method: 'POST',
+			body: JSON.stringify({
+				username: data.username,
+				password: data.password,
+				invite_token: data.inviteToken,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		if (session.data.ok === false && 'migration' in session.data) {
+			return {
+				data: {
+					success: false,
+					user: session.data.user,
+					migration: session.data.migration
+				},
+				error: undefined
+			};
+		}
+
+		if (session.data.ok === false && 'recovery' in session.data) {
+			return {
+				data: {
+					success: false,
+					user: session.data.user,
+					recovery: session.data.recovery
+				},
+				error: undefined
+			};
+		}
+
+		return {
+			data: {
+				success: true,
+				...directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse),
+				...(session.data.migration ? { migration: session.data.migration } : {})
+			},
+			error: undefined
+		};
+	},
+
+	async migrationPasskeyOptions(data: {
+		transactionId: string;
+		transactionToken: string;
+		displayName?: string;
+	}) {
+		return apiFetch<{
+			challenge_id: string;
+			options: PublicKeyCredentialCreationOptionsJSON;
+		}>('/api/auth/directory-password/migration/passkey/options', {
+			method: 'POST',
+			body: JSON.stringify({
+				transaction_id: data.transactionId,
+				transaction_token: data.transactionToken,
+				display_name: data.displayName
+			})
+		});
+	},
+
+	async migrationPasskeyVerify(data: {
+		transactionId: string;
+		transactionToken: string;
+		challengeId: string;
+		credential: unknown;
+		deviceName?: string;
+	}) {
 		const session = await apiFetch<ManagedDirectSessionResponse>(
-			'/api/auth/directory-password/login',
+			'/api/auth/directory-password/migration/passkey/verify',
 			{
 				method: 'POST',
 				body: JSON.stringify({
-					username: data.username,
-					password: data.password,
-					authorization_challenge_id: data.authorizationChallengeId,
-					human_verification_response: data.human_verification_response
+					transaction_id: data.transactionId,
+					transaction_token: data.transactionToken,
+					challenge_id: data.challengeId,
+					credential: data.credential,
+					device_name: data.deviceName
 				})
 			}
 		);
@@ -1082,7 +1223,59 @@ export const directoryPasswordAPI = {
 				error?: APIError;
 			};
 		}
+		return {
+			data: {
+				success: true,
+				...directSessionToLegacyAuthResponse(session.data)
+			},
+			error: undefined
+		};
+	},
 
+	async migrationEmailCodeSend(data: { transactionId: string; transactionToken: string }) {
+		return apiFetch<{
+			success: boolean;
+			challenge_id: string;
+			expires_in: number;
+			masked_email: string;
+		}>('/api/auth/directory-password/migration/email-code/send', {
+			method: 'POST',
+			body: JSON.stringify({
+				transaction_id: data.transactionId,
+				transaction_token: data.transactionToken
+			})
+		});
+	},
+
+	async migrationEmailCodeVerify(data: {
+		transactionId: string;
+		transactionToken: string;
+		challengeId: string;
+		code: string;
+	}) {
+		const session = await apiFetch<ManagedDirectSessionResponse>(
+			'/api/auth/directory-password/migration/email-code/verify',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					transaction_id: data.transactionId,
+					transaction_token: data.transactionToken,
+					challenge_id: data.challengeId,
+					code: data.code
+				})
+			}
+		);
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
 		return {
 			data: {
 				success: true,

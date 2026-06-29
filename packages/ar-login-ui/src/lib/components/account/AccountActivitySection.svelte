@@ -2,12 +2,9 @@
 	import { Card } from '$lib/components';
 	import type { AccountOperation } from '$lib/api/account';
 	import { LL } from '$i18n/i18n-svelte';
+	import { formatTimestamp } from '$lib/utils/date';
 
 	let { operations = [] } = $props<{ operations?: AccountOperation[] }>();
-
-	function formatDateTime(value: number): string {
-		return new Date(value * 1000).toLocaleString();
-	}
 
 	function formatAction(action: string): string {
 		switch (action) {
@@ -36,7 +33,7 @@
 			<ul>
 				{#each operations as operation (operation.id)}
 					<li>
-						<span>{formatDateTime(operation.created_at)}</span>
+						<span>{formatTimestamp(operation.created_at)}</span>
 						<strong>{formatAction(operation.action)}</strong>
 					</li>
 				{/each}

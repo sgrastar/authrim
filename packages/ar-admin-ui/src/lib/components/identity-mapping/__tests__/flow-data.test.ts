@@ -88,15 +88,7 @@ describe('field mapping flow data adapter', () => {
 		const csvSample = samples.find((sample) => sample.title === 'employee-columns');
 		expect(csvSample).toBeDefined();
 		expect(csvSample?.nodes.some((node) => node.label === 'employee_id')).toBe(true);
-		expect(
-			csvSample?.nodes.some(
-				(node) =>
-					node.role === 'target' &&
-					node.label === 'UUID' &&
-					node.uiGroupKey === 'system' &&
-					node.storageTarget === 'System identity'
-			)
-		).toBe(true);
+		expect(csvSample?.nodes.some((node) => node.role === 'target')).toBe(false);
 		expect(
 			csvSample?.nodes.some((node) => node.label === 'email' && node.role === 'destination')
 		).toBe(true);
@@ -134,7 +126,7 @@ describe('field mapping flow data adapter', () => {
 		expect(samples).toEqual([]);
 	});
 
-	it('uses field catalog entries as canonical target nodes when catalogs are available', () => {
+	it('does not show catalog fallback targets when no Schema Settings fields exist', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [],
 			catalogs: [
@@ -224,59 +216,7 @@ describe('field mapping flow data adapter', () => {
 			schemaReadinessRows: []
 		});
 
-		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
-		expect(targetNodes[0]).toEqual(
-			expect.objectContaining({
-				label: 'User ID',
-				uiGroupKey: 'system',
-				uiGroupLabel: 'System',
-				storageTarget: 'System identity',
-				fieldRef: expect.objectContaining({
-					path: 'id',
-					catalogEntryId: 'system.identity.user_id'
-				})
-			})
-		);
-		expect(targetNodes).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					label: 'UUID',
-					uiGroupKey: 'system',
-					fieldRef: expect.objectContaining({
-						path: 'account_id',
-						catalogEntryId: 'system.identity.account_uuid'
-					})
-				})
-			])
-		);
-		expect(targetNodes.find((node) => node.label === 'Subject Identifier')).toEqual(
-			expect.objectContaining({
-				label: 'Subject Identifier',
-				storageTarget: 'Account identity',
-				locked: true
-			})
-		);
-		expect(samples[0].nodes).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					role: 'target',
-					label: 'First Name',
-					caption: '',
-					type: 'String',
-					storageTarget: 'Profile attribute',
-					uiGroupKey: 'name',
-					uiGroupLabel: 'Name',
-					examples: ['John Doe']
-				}),
-				expect.objectContaining({
-					role: 'target',
-					label: 'Group Membership',
-					type: 'Array',
-					inputCardinality: 'many',
-					privacy: 'non-PII'
-				})
-			])
-		);
+		expect(samples[0].nodes.filter((node) => node.role === 'target')).toEqual([]);
 	});
 
 	it('uses Schema Settings claim fields as identity schema target nodes before field catalogs', () => {
@@ -366,6 +306,40 @@ describe('field mapping flow data adapter', () => {
 					created_by: null,
 					created_at: 0,
 					updated_at: 0
+				},
+				{
+					id: 'schema_nickname',
+					tenant_id: 'tenant_a',
+					field_key: 'nickname',
+					display_label: 'Nickname',
+					field_type: 'string',
+					is_pii: 1,
+					is_required: 0,
+					is_active: 1,
+					validation_rules: null,
+					include_in_id_token: 0,
+					include_in_userinfo: 1,
+					include_in_introspection: 0,
+					required_scopes: null,
+					scope_mode: 'any',
+					is_system: 0,
+					is_searchable: 0,
+					is_exportable: 0,
+					is_vc_claim: 0,
+					claim_namespace: null,
+					description: 'Casual display handle',
+					display_order: 40,
+					schema_version: 1,
+					operation_status: 'active',
+					operation_detail: null,
+					created_by: null,
+					created_at: 0,
+					updated_at: 0,
+					examples_json: '{"values":["taro","yamada_t"]}',
+					ui_group_key: 'profile',
+					ui_group_label: 'Profile',
+					ui_group_order: 30,
+					ui_field_order: 10
 				}
 			],
 			sourceProfiles: [
@@ -405,14 +379,16 @@ describe('field mapping flow data adapter', () => {
 		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
 		expect(targetNodes[0]).toEqual(
 			expect.objectContaining({
-				label: 'User ID',
+				label: 'UUID',
 				uiGroupKey: 'system',
 				fieldRef: expect.objectContaining({
-					path: 'id',
-					catalogEntryId: 'system.identity.user_id'
+					path: 'account_id',
+					catalogEntryId: 'system.identity.account_uuid'
 				})
 			})
 		);
+		expect(targetNodes.some((node) => node.label === 'User ID')).toBe(false);
+		expect(targetNodes.some((node) => node.label === 'Subject ID')).toBe(false);
 		expect(targetNodes).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
@@ -424,7 +400,16 @@ describe('field mapping flow data adapter', () => {
 					uiGroupKey: 'contact',
 					uiGroupLabel: 'Contact',
 					privacy: 'PII',
-					required: true
+					required: true,
+					examples: ['taro.yamada@example.edu']
+				}),
+				expect.objectContaining({
+					label: 'Nickname',
+					fieldRef: expect.objectContaining({
+						path: 'nickname',
+						catalogEntryId: 'custom-claim.nickname'
+					}),
+					examples: ['taro', 'yamada_t']
 				})
 			])
 		);
@@ -622,16 +607,7 @@ describe('field mapping flow data adapter', () => {
 			])
 		);
 		expect(samples[0].nodes.some((node) => node.role === 'source')).toBe(false);
-		expect(samples[0].nodes).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					role: 'target',
-					label: 'UUID',
-					uiGroupKey: 'system',
-					storageTarget: 'System identity'
-				})
-			])
-		);
+		expect(samples[0].nodes.some((node) => node.role === 'target')).toBe(false);
 	});
 
 	it('does not build profile nodes for registered profiles without schema', () => {
@@ -734,5 +710,54 @@ describe('field mapping flow data adapter', () => {
 		expect(new Set(sourceNodeIds).size).toBe(sourceNodeIds.length);
 		expect(sourceNodeIds.some((id) => id.includes('利用者id'))).toBe(true);
 		expect(sourceNodeIds.some((id) => id.includes('メール'))).toBe(true);
+	});
+
+	it('exposes directory facts as directory source nodes', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			sourceProfiles: [],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [
+				{
+					id: 'builtin_directory_facts',
+					tenantId: 'tenant_a',
+					sourceType: 'directory',
+					sourceId: 'wordwarden',
+					sourceKey: 'directory-facts',
+					schemaKey: 'directory-facts',
+					displayName: 'Directory Facts',
+					schema: {
+						fields: [
+							{
+								key: 'directory.identity.subject',
+								label: 'Directory Subject',
+								type: 'string',
+								classification: 'internal'
+							},
+							{
+								key: 'directory.groups',
+								label: 'Directory Groups',
+								type: 'array',
+								classification: 'internal'
+							}
+						]
+					},
+					lifecycleState: 'active'
+				}
+			],
+			schemaReadinessRows: []
+		});
+
+		const directorySample = samples.find((sample) => sample.title === 'Directory Facts');
+		expect(directorySample?.sourceAdapter).toBe('DIRECTORY');
+		expect(
+			directorySample?.nodes.some(
+				(node) =>
+					node.fieldRef?.namespace === 'directory' &&
+					node.fieldRef.path === 'directory.identity.subject'
+			)
+		).toBe(true);
 	});
 });

@@ -1,4 +1,9 @@
 import { adminFetch } from '$lib/api/admin-request';
+import {
+	createLegacyPreviewCompiledPlan,
+	getLegacyPreviewFlow,
+	isLegacyPreviewFlowId
+} from './legacy-flow-preview';
 /**
  * Admin Flows API Client
  *
@@ -676,6 +681,11 @@ export const adminFlowsAPI = {
 	 * Get flow by ID
 	 */
 	async get(id: string): Promise<FlowDetailResponse> {
+		if (isLegacyPreviewFlowId(id)) {
+			const flow = getLegacyPreviewFlow(id);
+			if (flow) return { flow };
+		}
+
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
 			credentials: 'include'
 		});
@@ -711,6 +721,11 @@ export const adminFlowsAPI = {
 	 * Update an existing flow
 	 */
 	async update(id: string, data: UpdateFlowRequest): Promise<{ success: boolean }> {
+		if (isLegacyPreviewFlowId(id)) {
+			void data;
+			return { success: true };
+		}
+
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
@@ -730,6 +745,10 @@ export const adminFlowsAPI = {
 	 * Delete a flow
 	 */
 	async delete(id: string): Promise<{ success: boolean }> {
+		if (isLegacyPreviewFlowId(id)) {
+			return { success: true };
+		}
+
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}`, {
 			method: 'DELETE',
 			credentials: 'include'
@@ -750,6 +769,11 @@ export const adminFlowsAPI = {
 		id: string,
 		data: CopyFlowRequest = {}
 	): Promise<{ success: boolean; flow_id: string }> {
+		if (isLegacyPreviewFlowId(id)) {
+			void data;
+			return { success: true, flow_id: id };
+		}
+
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/copy`,
 			{
@@ -772,6 +796,11 @@ export const adminFlowsAPI = {
 	 * Validate a flow definition
 	 */
 	async validate(id: string, graphDefinition: GraphDefinition): Promise<ValidationResult> {
+		if (isLegacyPreviewFlowId(id)) {
+			void graphDefinition;
+			return { valid: true, errors: [] };
+		}
+
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/validate`,
 			{
@@ -794,6 +823,10 @@ export const adminFlowsAPI = {
 	 * Compile a flow definition to CompiledPlan
 	 */
 	async compile(id: string): Promise<{ success: boolean; compiled_plan: Record<string, unknown> }> {
+		if (isLegacyPreviewFlowId(id)) {
+			return { success: true, compiled_plan: createLegacyPreviewCompiledPlan(id) };
+		}
+
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/flows/${encodeURIComponent(id)}/compile`,
 			{

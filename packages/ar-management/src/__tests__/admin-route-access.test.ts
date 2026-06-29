@@ -12,7 +12,7 @@ import {
 
 const ROUTE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
-function createHarness(permissions: string[]) {
+function createHarness(permissions: string[], roles: string[] = []) {
   const app = new Hono<{
     Bindings: Env;
     Variables: { adminAuth?: AdminAuthContext };
@@ -24,7 +24,7 @@ function createHarness(permissions: string[]) {
       authMethod: 'machine_access_token',
       actorType: 'machine',
       tenantId: 'tenant-a',
-      roles: [],
+      roles,
       permissions,
       hierarchyLevel: 0,
       mfaVerified: false,
@@ -51,6 +51,25 @@ function createHarness(permissions: string[]) {
   app.put('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
   app.get('/api/admin/sign-in-confirmation-policies', (c) => c.json({ ok: true }));
   app.put('/api/admin/sign-in-confirmation-policies', (c) => c.json({ ok: true }));
+  app.get('/api/admin/tenants/tenant-a/directory-auth/overview', (c) => c.json({ ok: true }));
+  app.get('/api/admin/tenants/tenant-a/directory-connectors', (c) => c.json({ ok: true }));
+  app.put('/api/admin/tenants/tenant-a/directory-connectors', (c) => c.json({ ok: true }));
+  app.post('/api/admin/tenants/tenant-a/directory-auth/migration/campaigns', (c) =>
+    c.json({ ok: true })
+  );
+  app.post('/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports', (c) =>
+    c.json({ ok: true })
+  );
+  app.get(
+    '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports/daex_1/download',
+    (c) => c.json({ ok: true })
+  );
+  app.get('/api/admin/tenants/tenant-a/directory-auth/support/bundles/dasb_1/download', (c) =>
+    c.json({ ok: true })
+  );
+  app.post('/api/admin/tenants/tenant-a/directory-auth/maintenance/cleanup', (c) =>
+    c.json({ ok: true })
+  );
 
   return app;
 }
@@ -164,6 +183,81 @@ describe('declared admin route access', () => {
     ).resolves.toMatchObject({ status: 200 });
     await expect(
       writer.request('/api/admin/sign-in-confirmation-policies', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('keeps directory authentication tenant-scoped and permission-specific', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ]);
+    const writer = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE]);
+    const migrationWriter = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE]);
+    const evidenceExporter = createHarness([
+      ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
+    ]);
+    const tenantAdmin = createHarness([], ['tenant_admin']);
+
+    await expect(
+      reader.request('/api/admin/tenants/tenant-a/directory-auth/overview')
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      reader.request('/api/admin/tenants/tenant-a/directory-connectors')
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      reader.request('/api/admin/tenants/tenant-a/directory-connectors', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      writer.request('/api/admin/tenants/tenant-a/directory-connectors', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      reader.request('/api/admin/tenants/tenant-a/directory-auth/migration/campaigns', {
+        method: 'POST',
+      })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      migrationWriter.request('/api/admin/tenants/tenant-a/directory-auth/migration/campaigns', {
+        method: 'POST',
+      })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      migrationWriter.request(
+        '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports',
+        {
+          method: 'POST',
+        }
+      )
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      evidenceExporter.request(
+        '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports',
+        {
+          method: 'POST',
+        }
+      )
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      reader.request(
+        '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports/daex_1/download'
+      )
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      evidenceExporter.request(
+        '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports/daex_1/download'
+      )
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      reader.request('/api/admin/tenants/tenant-a/directory-auth/support/bundles/dasb_1/download')
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      writer.request('/api/admin/tenants/tenant-a/directory-auth/support/bundles/dasb_1/download')
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      evidenceExporter.request('/api/admin/tenants/tenant-a/directory-auth/maintenance/cleanup', {
+        method: 'POST',
+      })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      tenantAdmin.request('/api/admin/tenants/tenant-a/directory-auth/maintenance/cleanup', {
+        method: 'POST',
+      })
     ).resolves.toMatchObject({ status: 200 });
   });
 

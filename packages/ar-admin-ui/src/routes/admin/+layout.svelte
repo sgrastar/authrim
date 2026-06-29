@@ -100,6 +100,7 @@
 				label: $LL.admin_nav_directory_authentication(),
 				icon: 'i-ph-tree-structure'
 			},
+			{ path: '/admin/flows', label: 'Legacy Flows', icon: 'i-ph-flow-arrow' },
 			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
 			{
 				path: '/admin/consent-policies',
@@ -264,8 +265,6 @@
 		...navEndUser.monitoring,
 		// Client
 		...navClient.applications,
-		// Flow pages are product-gated from the primary navigation, but still need breadcrumbs.
-		{ path: '/admin/flows', label: 'Flows', icon: 'i-ph-flow-arrow' },
 		{
 			path: '/admin/account-settings',
 			label: $LL.admin_header_account_settings(),

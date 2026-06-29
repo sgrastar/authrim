@@ -53,32 +53,17 @@ interface ExtractedField {
 	nullable?: boolean | null;
 }
 
-const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
+const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM', 'DIRECTORY'];
 
 const systemIdentityFields = [
-	{
-		id: 'system.identity.user_id',
-		path: 'id',
-		label: 'User ID',
-		valueType: 'identifier',
-		note: 'Runtime user identifier. Use this as the default stable seed for pairwise or persistent identifiers.',
-		uiFieldOrder: 10
-	},
 	{
 		id: 'system.identity.account_uuid',
 		path: 'account_id',
 		label: 'UUID',
 		valueType: 'identifier',
+		examples: ['018f4d65-6a49-7d3a-9b83-b2c3f4d5e6a7'],
 		note: 'Canonical identity account UUID.',
 		uiFieldOrder: 20
-	},
-	{
-		id: 'system.identity.subject_id',
-		path: 'subject_id',
-		label: 'Subject ID',
-		valueType: 'identifier',
-		note: 'Primary canonical subject identifier linked to the account.',
-		uiFieldOrder: 30
 	},
 	{
 		id: 'system.identity.lifecycle_state',
@@ -86,6 +71,7 @@ const systemIdentityFields = [
 		label: 'Lifecycle State',
 		valueType: 'string',
 		allowedValues: ['active', 'suspended', 'deleted'],
+		examples: ['active'],
 		note: 'Current lifecycle state of the identity account.',
 		uiFieldOrder: 40
 	},
@@ -94,6 +80,7 @@ const systemIdentityFields = [
 		path: 'created_at',
 		label: 'Created At',
 		valueType: 'datetime',
+		examples: ['2026-01-15T09:30:00Z'],
 		note: 'Account creation timestamp.',
 		uiFieldOrder: 50
 	},
@@ -102,6 +89,7 @@ const systemIdentityFields = [
 		path: 'updated_at',
 		label: 'Updated At',
 		valueType: 'datetime',
+		examples: ['2026-03-20T14:45:00Z'],
 		note: 'Account update timestamp.',
 		uiFieldOrder: 60
 	}
@@ -119,7 +107,7 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		...input.destinationProfiles.map(destinationProfileToProfile),
 		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
 	];
-	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? [], input.catalogs);
+	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? []);
 
 	if (
 		sourceProfiles.length === 0 &&
@@ -295,14 +283,10 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 	};
 }
 
-function buildIdentityTargets(
-	identitySchemas: CustomClaimSchema[],
-	catalogs: IdentityMappingCatalogSummary[]
-): MappingNode[] {
-	const systemTargets = buildSystemIdentityTargets();
+function buildIdentityTargets(identitySchemas: CustomClaimSchema[]): MappingNode[] {
 	const schemaTargets = buildCustomClaimTargets(identitySchemas);
-	if (schemaTargets.length > 0) return [...systemTargets, ...schemaTargets];
-	return [...systemTargets, ...buildCatalogTargets(catalogs)];
+	if (schemaTargets.length === 0) return [];
+	return [...buildSystemIdentityTargets(), ...schemaTargets];
 }
 
 function buildSystemIdentityTargets(): MappingNode[] {
@@ -320,7 +304,7 @@ function buildSystemIdentityTargets(): MappingNode[] {
 			uiGroupLabel: 'System',
 			uiGroupOrder: -100,
 			uiFieldOrder: field.uiFieldOrder,
-			examples: [],
+			examples: Array.from(field.examples),
 			note: field.note,
 			allowedValues: 'allowedValues' in field ? Array.from(field.allowedValues) : undefined,
 			valueMultiplicity: 'single',
@@ -363,56 +347,16 @@ function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {
 		);
 }
 
-function buildCatalogTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
-	const activeCatalog =
-		catalogs.find((catalog) => catalog.lifecycleState === 'active') ?? catalogs[0];
-	const catalogEntries = activeCatalog?.entries ?? [];
-	if (catalogEntries.length > 0) {
-		return catalogEntries
-			.filter(
-				(entry) =>
-					entry.targetTaxonomy !== 'destination-only' && entry.targetTaxonomy !== 'review-only'
-			)
-			.sort(
-				(a, b) =>
-					canonicalTargetSortPriority(a.stableFieldId) -
-						canonicalTargetSortPriority(b.stableFieldId) ||
-					(a.uiGroupOrder ?? 0) - (b.uiGroupOrder ?? 0) ||
-					(a.uiFieldOrder ?? 0) - (b.uiFieldOrder ?? 0) ||
-					a.stableFieldId.localeCompare(b.stableFieldId)
-			)
-			.map((entry) =>
-				canonicalTargetNode({
-					id: entry.id,
-					stableFieldId: entry.stableFieldId,
-					path: entry.path,
-					label: labelForCatalogEntry(entry.path),
-					valueType: entry.valueType,
-					cardinality: entry.cardinality,
-					classification: entry.classification,
-					storageTarget: friendlyStorageTarget(entry.stableFieldId, entry.valueType),
-					uiGroupKey: entry.uiGroupKey,
-					uiGroupLabel: entry.uiGroupLabel,
-					uiGroupOrder: entry.uiGroupOrder,
-					uiFieldOrder: entry.uiFieldOrder,
-					examples: entry.examples,
-					note: entry.note,
-					allowedValues: entry.allowedValues,
-					valueMultiplicity: entry.valueMultiplicity,
-					nullable: entry.nullable,
-					required: entry.required
-				})
-			);
-	}
-
-	return [];
-}
-
 function examplesFromCustomClaim(schema: CustomClaimSchema): unknown[] | undefined {
 	const parsed = parseJsonValue(schema.examples_json);
-	if (Array.isArray(parsed)) return parsed;
-	if (parsed !== undefined && parsed !== null) return [parsed];
-	return undefined;
+	const explicit = examplesFromParsedValue(parsed);
+	if (explicit) return explicit;
+	return inferredExamplesForField({
+		key: schema.field_key,
+		label: schema.display_label,
+		type: schema.field_type,
+		allowedValues: allowedValuesFromCustomClaim(schema)
+	});
 }
 
 function allowedValuesFromCustomClaim(schema: CustomClaimSchema): string[] | undefined {
@@ -432,10 +376,6 @@ function parseJsonValue(value: unknown): unknown {
 	} catch {
 		return undefined;
 	}
-}
-
-function canonicalTargetSortPriority(stableFieldId: string): number {
-	return stableFieldId === 'field.canonical.subject_id' ? -1 : 0;
 }
 
 function canonicalTargetNode(input: {
@@ -559,7 +499,15 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 	if (!Array.isArray(value)) return [];
 	return value.flatMap((item) => {
 		if (typeof item === 'string') {
-			return [{ key: item, label: item, caption: 'schema field', required: required.has(item) }];
+			return [
+				{
+					key: item,
+					label: item,
+					caption: 'schema field',
+					required: required.has(item),
+					examples: inferredExamplesForField({ key: item, label: item })
+				}
+			];
 		}
 		if (!isRecord(item)) return [];
 		const key =
@@ -572,6 +520,7 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 			stringValue(item.stableColumnId);
 		if (!key) return [];
 		const type = stringValue(item.type) ?? stringValue(item.valueType);
+		const allowedValues = allowedValuesFromRecord(item);
 		return [
 			{
 				key,
@@ -580,9 +529,16 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 				type,
 				required: required.has(key) || item.required === true,
 				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`),
-				examples: examplesFromRecord(item),
+				examples:
+					examplesFromRecord(item) ??
+					inferredExamplesForField({
+						key,
+						label: stringValue(item.label),
+						type,
+						allowedValues
+					}),
 				note: noteFromRecord(item),
-				allowedValues: allowedValuesFromRecord(item),
+				allowedValues,
 				valueMultiplicity: valueMultiplicityFromRecord(item),
 				nullable: nullableFromRecord(item)
 			}
@@ -593,36 +549,50 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 function fieldsFromClaims(value: unknown, required: Set<string>): ExtractedField[] {
 	if (Array.isArray(value)) return fieldsFromArray(value, required);
 	if (!isRecord(value)) return [];
-	return Object.entries(value).map(([key, claim]) => ({
-		key,
-		label: key,
-		caption: isRecord(claim) ? (stringValue(claim.description) ?? 'claim') : 'claim',
-		type: isRecord(claim) ? stringValue(claim.type) : undefined,
-		required: required.has(key),
-		privacy: privacyFrom(key),
-		examples: isRecord(claim) ? examplesFromRecord(claim) : undefined,
-		note: isRecord(claim) ? noteFromRecord(claim) : null,
-		allowedValues: isRecord(claim) ? allowedValuesFromRecord(claim) : undefined,
-		valueMultiplicity: isRecord(claim) ? valueMultiplicityFromRecord(claim) : null,
-		nullable: isRecord(claim) ? nullableFromRecord(claim) : null
-	}));
+	return Object.entries(value).map(([key, claim]) => {
+		const record = isRecord(claim) ? claim : null;
+		const type = record ? stringValue(record.type) : undefined;
+		const allowedValues = record ? allowedValuesFromRecord(record) : undefined;
+		return {
+			key,
+			label: key,
+			caption: record ? (stringValue(record.description) ?? 'claim') : 'claim',
+			type,
+			required: required.has(key),
+			privacy: privacyFrom(key),
+			examples:
+				(record ? examplesFromRecord(record) : undefined) ??
+				inferredExamplesForField({ key, type, allowedValues }),
+			note: record ? noteFromRecord(record) : null,
+			allowedValues,
+			valueMultiplicity: record ? valueMultiplicityFromRecord(record) : null,
+			nullable: record ? nullableFromRecord(record) : null
+		};
+	});
 }
 
 function fieldsFromProperties(value: unknown, required: Set<string>): ExtractedField[] {
 	if (!isRecord(value)) return [];
-	return Object.entries(value).map(([key, property]) => ({
-		key,
-		label: key,
-		caption: isRecord(property) ? (stringValue(property.description) ?? 'property') : 'property',
-		type: isRecord(property) ? stringValue(property.type) : undefined,
-		required: required.has(key),
-		privacy: privacyFrom(key),
-		examples: isRecord(property) ? examplesFromRecord(property) : undefined,
-		note: isRecord(property) ? noteFromRecord(property) : null,
-		allowedValues: isRecord(property) ? allowedValuesFromRecord(property) : undefined,
-		valueMultiplicity: isRecord(property) ? valueMultiplicityFromRecord(property) : null,
-		nullable: isRecord(property) ? nullableFromRecord(property) : null
-	}));
+	return Object.entries(value).map(([key, property]) => {
+		const record = isRecord(property) ? property : null;
+		const type = record ? stringValue(record.type) : undefined;
+		const allowedValues = record ? allowedValuesFromRecord(record) : undefined;
+		return {
+			key,
+			label: key,
+			caption: record ? (stringValue(record.description) ?? 'property') : 'property',
+			type,
+			required: required.has(key),
+			privacy: privacyFrom(key),
+			examples:
+				(record ? examplesFromRecord(record) : undefined) ??
+				inferredExamplesForField({ key, type, allowedValues }),
+			note: record ? noteFromRecord(record) : null,
+			allowedValues,
+			valueMultiplicity: record ? valueMultiplicityFromRecord(record) : null,
+			nullable: record ? nullableFromRecord(record) : null
+		};
+	});
 }
 
 function allowedValuesFromRecord(record: Record<string, unknown>): string[] | undefined {
@@ -659,13 +629,109 @@ function nullableFromRecord(record: Record<string, unknown>): boolean | null {
 }
 
 function examplesFromRecord(record: Record<string, unknown>): unknown[] | undefined {
-	for (const key of ['examples', 'sampleValues', 'sample_values', 'samples']) {
+	for (const key of [
+		'examples',
+		'exampleValues',
+		'example_values',
+		'sampleValues',
+		'sample_values',
+		'samples',
+		'values'
+	]) {
 		const value = record[key];
 		if (Array.isArray(value)) return value;
 	}
 	const sampleValue =
-		record.sampleValue ?? record.sample_value ?? record.example ?? record.defaultExample;
+		record.sampleValue ??
+		record.sample_value ??
+		record.example ??
+		record.defaultExample ??
+		record.default_example;
 	return sampleValue === undefined ? undefined : [sampleValue];
+}
+
+function examplesFromParsedValue(value: unknown): unknown[] | undefined {
+	if (Array.isArray(value)) return compactExamples(value);
+	if (isRecord(value)) return compactExamples(examplesFromRecord(value) ?? []);
+	if (value !== undefined && value !== null) return [value];
+	return undefined;
+}
+
+function compactExamples(values: unknown[]): unknown[] | undefined {
+	const compacted = values
+		.flatMap((value) => (Array.isArray(value) ? value : [value]))
+		.filter((value) => value !== undefined && value !== null && String(value).trim() !== '');
+	return compacted.length > 0 ? compacted : undefined;
+}
+
+function inferredExamplesForField(input: {
+	key: string;
+	label?: string | null;
+	type?: string | null;
+	allowedValues?: string[];
+}): unknown[] | undefined {
+	if (input.allowedValues && input.allowedValues.length > 0) {
+		return input.allowedValues.slice(0, 3);
+	}
+
+	const key = input.key.toLowerCase();
+	const label = (input.label ?? '').toLowerCase();
+	const haystack = `${key} ${label}`;
+	const type = displayValueType(input.type ?? undefined);
+
+	if (haystack.includes('email_verified')) return [true];
+	if (haystack.includes('phone_number_verified')) return [false];
+	if (haystack.includes('email') || haystack === 'mail') return ['taro.yamada@example.edu'];
+	if (haystack.includes('phone')) return ['+81-3-1234-5678'];
+	if (haystack.includes('given_name') || haystack.includes('first_name')) return ['Taro'];
+	if (haystack.includes('family_name') || haystack.includes('last_name') || key === 'sn') {
+		return ['Yamada'];
+	}
+	if (haystack.includes('middle_name')) return ['Quincy'];
+	if (haystack.includes('display_name') || haystack.includes('full_name') || key === 'name') {
+		return ['Taro Yamada'];
+	}
+	if (haystack.includes('nickname')) return ['taro', 'yamada_t'];
+	if (haystack.includes('preferred_username') || haystack.includes('username')) {
+		return ['taro.yamada'];
+	}
+	if (haystack.includes('picture') || haystack.includes('avatar')) {
+		return ['https://example.edu/users/taro.yamada/photo.jpg'];
+	}
+	if (haystack.includes('profile')) return ['https://example.edu/users/taro.yamada'];
+	if (haystack.includes('website')) return ['https://example.edu'];
+	if (haystack.includes('gender')) return ['female'];
+	if (haystack.includes('birthdate')) return ['1970-01-01'];
+	if (haystack.includes('zoneinfo') || haystack.includes('time_zone')) return ['Asia/Tokyo'];
+	if (haystack.includes('locale')) return ['ja-JP'];
+	if (haystack.includes('country')) return ['JP'];
+	if (haystack.includes('postal')) return ['100-0001'];
+	if (haystack.includes('locality') || haystack.includes('city')) return ['Tokyo'];
+	if (haystack.includes('region') || haystack.includes('prefecture')) return ['Tokyo'];
+	if (haystack.includes('street')) return ['1-1 Chiyoda'];
+	if (haystack.includes('address')) return ['1-1 Chiyoda, Tokyo, Japan'];
+	if (haystack.includes('organization') || key === 'o') return ['Example University'];
+	if (haystack.includes('department') || haystack.includes('organizational_unit') || key === 'ou') {
+		return ['Library Services'];
+	}
+	if (haystack.includes('group')) return [['students', 'library-users']];
+	if (haystack.includes('entitlement')) return [['urn:example:entitlement:library']];
+	if (haystack.includes('updated_at') || haystack.includes('created_at')) {
+		return ['2026-01-15T09:30:00Z'];
+	}
+	if (haystack.includes('uuid')) return ['018f4d65-6a49-7d3a-9b83-b2c3f4d5e6a7'];
+	if (haystack.includes('subject')) return ['sub_9f8e7d6c5b4a3210'];
+	if (haystack.endsWith(' id') || key === 'id' || key.endsWith('_id')) {
+		return ['usr_01J7Z4W2M8Q8Y9N6T3V2K1A0BC'];
+	}
+
+	if (type === 'Boolean') return [true];
+	if (type === 'Number') return [12345];
+	if (type === 'Date') return ['2026-01-15T09:30:00Z'];
+	if (type === 'Array') return [['value-1', 'value-2']];
+	if (type === 'JSON') return [{ value: 'example' }];
+	if (type === 'String') return ['example'];
+	return undefined;
 }
 
 function noteFromRecord(record: Record<string, unknown>): string | null {
@@ -739,42 +805,6 @@ function displayName(value: string | undefined, fallback: string): string {
 	return value?.trim() || fallback;
 }
 
-function labelForCatalogEntry(path: string): string {
-	const knownLabels: Record<string, string> = {
-		name: 'Full Name',
-		given_name: 'First Name',
-		family_name: 'Last Name',
-		middle_name: 'Middle Name',
-		nickname: 'Nickname',
-		preferred_username: 'Preferred Username',
-		profile: 'Profile URL',
-		picture: 'Picture URL',
-		website: 'Website',
-		birthdate: 'Birthdate',
-		zoneinfo: 'Time Zone',
-		locale: 'Locale',
-		updated_at: 'Last Updated',
-		email: 'Email',
-		email_verified: 'Email Verified',
-		phone_number: 'Phone Number',
-		phone_number_verified: 'Phone Number Verified',
-		address: 'Address',
-		address_formatted: 'Address (Formatted)',
-		address_street_address: 'Street Address',
-		address_locality: 'City / Locality',
-		address_region: 'Region',
-		address_postal_code: 'Postal Code',
-		address_country: 'Country',
-		group_membership: 'Group Membership',
-		entitlements: 'Entitlements',
-		linked_identity: 'Linked Identity',
-		lifecycle_state: 'Lifecycle State',
-		subject_id: 'Subject Identifier'
-	};
-	const key = path.split('.').at(-1) ?? path;
-	return knownLabels[key] ?? titleCase(key);
-}
-
 function displayValueType(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	const normalized = value.toLowerCase();
@@ -790,24 +820,6 @@ function displayValueType(value: string | undefined): string | undefined {
 	if (['array', 'list', 'multi-value', 'multivalue'].includes(normalized)) return 'Array';
 	if (normalized === 'enum') return 'String';
 	return titleCase(value);
-}
-
-function friendlyStorageTarget(stableFieldId: string, valueType: string): string {
-	const normalizedId = stableFieldId.toLowerCase();
-	if (normalizedId.includes('subject_id') || normalizedId.includes('lifecycle_state')) {
-		return 'Account identity';
-	}
-	if (
-		normalizedId.includes('email') ||
-		normalizedId.includes('phone') ||
-		normalizedId.includes('address')
-	) {
-		return 'Contact method';
-	}
-	if (normalizedId.includes('group')) return 'Group assignment';
-	if (normalizedId.includes('entitlement')) return 'Entitlement assignment';
-	if (displayValueType(valueType) === 'JSON') return 'Structured profile attribute';
-	return 'Profile attribute';
 }
 
 function isRequiredCanonicalTarget(stableFieldId: string): boolean {
@@ -834,13 +846,15 @@ function namespaceForProfile(adapter: MappingAdapter): string {
 			return 'saml.attribute';
 		case 'SCIM':
 			return 'scim.attribute';
+		case 'DIRECTORY':
+			return 'directory';
 		case 'CSV':
 			return 'csv.column';
 	}
 }
 
 function isSourceProtocol(protocol: string): boolean {
-	return ['csv', 'scim', 'saml', 'oidc'].includes(protocol.toLowerCase());
+	return ['csv', 'scim', 'saml', 'oidc', 'directory'].includes(protocol.toLowerCase());
 }
 
 function privacyFrom(value: string): MappingNode['privacy'] {

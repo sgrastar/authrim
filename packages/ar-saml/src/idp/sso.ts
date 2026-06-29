@@ -12,7 +12,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AttributeReleaseConsentMode, Env } from '@authrim/ar-lib-core';
 import type {
   SAMLAuthnRequest,
   SAMLRequestContext,
@@ -30,6 +30,7 @@ import {
   shouldUseBuiltinForms,
   createConfigurationError,
   getLogger,
+  getLocalization,
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
@@ -466,11 +467,14 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           },
         });
 
-        return renderSAMLAttributeReleaseConsentPage(c, {
+        return await renderSAMLAttributeReleaseConsentPage(c, {
+          tenantId,
           requestId: authnRequest.id,
           spEntityId: spConfig.entityId,
           challengeId,
           attributeSetHash: error.attributeSetHash,
+          consentMode: error.consentMode,
+          spConfig,
           spDisplayName: spConfig.entityId,
           attributes: error.attributeSummaries,
         });
@@ -569,6 +573,7 @@ export async function handleIdPAttributeReleaseConsent(
     const challengeId = readFormString(body.challenge_id);
     const attributeSetHash = readFormString(body.attribute_set_hash);
     const decision = readFormString(body.decision);
+    const releaseScope = readFormString(body.release_scope);
     if (!requestId || !spEntityId || !challengeId || !attributeSetHash || !decision) {
       return createErrorResponse(
         c,
@@ -576,13 +581,20 @@ export async function handleIdPAttributeReleaseConsent(
         STATUS_CODES.REQUESTER
       );
     }
-    if (decision !== 'approve' && decision !== 'deny') {
+    if (
+      decision !== 'approve' &&
+      decision !== 'approve_once' &&
+      decision !== 'approve_remember' &&
+      decision !== 'deny'
+    ) {
       return createErrorResponse(
         c,
         'Invalid attribute release consent decision',
         STATUS_CODES.REQUESTER
       );
     }
+    const oneTimeApproval =
+      decision === 'approve_once' || (decision === 'approve' && releaseScope === 'once');
 
     const storedRequest = await consumeStoredAuthnRequest(env, tenantId, requestId, spEntityId);
     const authnRequest = storedRequest.data as SAMLAuthnRequest;
@@ -640,19 +652,21 @@ export async function handleIdPAttributeReleaseConsent(
       );
     }
 
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      'saml-attribute-release-consent-post'
-    );
-    const repository = new AttributeReleaseConsentRepository(adapter);
-    await repository.grant({
-      tenant_id: tenantId,
-      subject_id: authSession.userId,
-      destination_type: 'saml_sp',
-      destination_id: spEntityId,
-      attribute_set_hash: attributeSetHash,
-      consent_mode: challenge.consentMode,
-    });
+    if (!oneTimeApproval) {
+      const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'saml-attribute-release-consent-post'
+      );
+      const repository = new AttributeReleaseConsentRepository(adapter);
+      await repository.grant({
+        tenant_id: tenantId,
+        subject_id: authSession.userId,
+        destination_type: 'saml_sp',
+        destination_id: spEntityId,
+        attribute_set_hash: attributeSetHash,
+        consent_mode: challenge.consentMode,
+      });
+    }
 
     await storeAuthnRequest(env, tenantId, authnRequest, storedRequest.relayState, {
       attributeReleaseConsentConfirmed: {
@@ -687,17 +701,25 @@ function buildSAMLSSOResumeUrl(baseUrl: string, requestId: string, spEntityId: s
   return url.toString();
 }
 
-function renderSAMLAttributeReleaseConsentPage(
+async function renderSAMLAttributeReleaseConsentPage(
   c: Context<{ Bindings: Env }>,
   input: {
+    tenantId: string;
     requestId: string;
     spEntityId: string;
     challengeId: string;
     attributeSetHash: string;
+    consentMode: AttributeReleaseConsentMode;
+    spConfig: SAMLSPConfig;
     spDisplayName: string;
     attributes: SAMLAttributeReleaseConsentRequiredError['attributeSummaries'];
   }
-): Response {
+): Promise<Response> {
+  const presentation = await loadSAMLAttributeReleaseConsentPresentation(c, input);
+  const rememberHelp =
+    input.consentMode === 'until_attributes_change'
+      ? presentation.rememberUntilChangedHelp
+      : presentation.rememberHelp;
   const rows = input.attributes
     .map((attribute) => {
       const label = attribute.friendlyName || attribute.name;
@@ -708,11 +730,35 @@ function renderSAMLAttributeReleaseConsentPage(
       return `<li><span>${escapeHtml(label)}</span><small>${escapeHtml(detail)}</small></li>`;
     })
     .join('');
+  const allowRememberChoice =
+    input.consentMode === 'once' || input.consentMode === 'until_attributes_change';
+  const approveButtonLabel =
+    input.spConfig.attributeReleaseConfirmation?.buttonLabel?.trim() ||
+    (presentation.language.startsWith('ja') ? '続行' : 'Continue');
+  const inlineContent = presentation.inlineContent
+    ? `<div class="notice">${escapeHtml(presentation.inlineContent)
+        .replaceAll('{spName}', escapeHtml(input.spDisplayName))
+        .replaceAll('{entityId}', escapeHtml(input.spEntityId))
+        .replaceAll('\n', '<br>')}</div>`
+    : '';
+  const decisionControls = allowRememberChoice
+    ? `<fieldset>
+        <legend>${escapeHtml(presentation.choiceLegend)}</legend>
+        <label class="choice">
+          <input type="radio" name="release_scope" value="once" checked>
+          <span>${escapeHtml(presentation.onceLabel)}<small>${escapeHtml(presentation.onceHelp)}</small></span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="release_scope" value="remember">
+          <span>${escapeHtml(presentation.rememberLabel)}<small>${escapeHtml(rememberHelp)}</small></span>
+        </label>
+      </fieldset>`
+    : '<input type="hidden" name="release_scope" value="once">';
 
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   return c.html(`<!doctype html>
-<html lang="en">
+<html lang="${escapeHtml(presentation.language)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -726,6 +772,13 @@ function renderSAMLAttributeReleaseConsentPage(
     li { align-items: center; display: flex; justify-content: space-between; gap: 16px; padding: 12px 14px; border-top: 1px solid #e2e7ef; }
     li:first-child { border-top: 0; }
     small { color: #66758a; white-space: nowrap; }
+    fieldset { border: 0; margin: 0 0 24px; padding: 0; }
+    legend { color: #344256; font-size: .92rem; font-weight: 700; margin: 0 0 12px; }
+    .choice { align-items: flex-start; display: flex; gap: 12px; margin: 0 0 14px; }
+    .choice input { height: 22px; margin: 1px 0 0; width: 22px; }
+    .choice span { color: #243044; display: grid; font-weight: 600; gap: 4px; line-height: 1.45; }
+    .choice small { white-space: normal; }
+    .notice { background: #f8fafc; border: 1px solid #e2e7ef; border-radius: 6px; color: #526070; line-height: 1.55; margin: 0 0 18px; padding: 12px 14px; }
     .actions { display: flex; gap: 12px; }
     button { border: 0; border-radius: 6px; cursor: pointer; font-size: 1rem; padding: 11px 16px; }
     .approve { background: #235ad1; color: #fff; flex: 1; }
@@ -734,22 +787,126 @@ function renderSAMLAttributeReleaseConsentPage(
 </head>
 <body>
   <main>
-    <h1>Share attributes with this service?</h1>
-    <p>${escapeHtml(input.spDisplayName)} is requesting the following SAML attributes from Authrim.</p>
+    <h1>${escapeHtml(presentation.title)}</h1>
+    <p>${escapeHtml(presentation.description)}</p>
+    ${inlineContent}
     <ul>${rows}</ul>
     <form method="post" action="/saml/idp/attribute-release-consent">
       <input type="hidden" name="saml_request_id" value="${escapeHtml(input.requestId)}">
       <input type="hidden" name="saml_sp_entity_id" value="${escapeHtml(input.spEntityId)}">
       <input type="hidden" name="challenge_id" value="${escapeHtml(input.challengeId)}">
       <input type="hidden" name="attribute_set_hash" value="${escapeHtml(input.attributeSetHash)}">
+      ${decisionControls}
       <div class="actions">
-        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
-        <button class="approve" type="submit" name="decision" value="approve">Share attributes</button>
+        <button class="deny" type="submit" name="decision" value="deny">${escapeHtml(presentation.denyLabel)}</button>
+        <button class="approve" type="submit" name="decision" value="approve">${escapeHtml(approveButtonLabel)}</button>
       </div>
     </form>
   </main>
 </body>
 </html>`);
+}
+
+async function loadSAMLAttributeReleaseConsentPresentation(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    spEntityId: string;
+    spDisplayName: string;
+    spConfig: SAMLSPConfig;
+  }
+): Promise<{
+  language: string;
+  title: string;
+  description: string;
+  inlineContent: string;
+  choiceLegend: string;
+  onceLabel: string;
+  onceHelp: string;
+  rememberLabel: string;
+  rememberHelp: string;
+  rememberUntilChangedHelp: string;
+  denyLabel: string;
+}> {
+  const language = preferredConsentLanguage(c);
+  const fallback = defaultSAMLAttributeReleaseConsentPresentation(
+    language,
+    input.spDisplayName,
+    input.spEntityId
+  );
+  const statementId = input.spConfig.attributeReleaseConfirmation?.templateStatementId;
+  if (!statementId) {
+    return fallback;
+  }
+
+  try {
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      c.env,
+      'saml-attribute-release-consent-template'
+    );
+    const version = await adapter.queryOne<{ id: string }>(
+      `SELECT id
+         FROM consent_statement_versions
+        WHERE tenant_id = ?
+          AND statement_id = ?
+          AND is_current = ?
+        LIMIT 1`,
+      [input.tenantId, statementId, 1]
+    );
+    if (!version) {
+      return fallback;
+    }
+    const localization = await getLocalization(adapter, input.tenantId, version.id, language, 'en');
+    return {
+      ...fallback,
+      title: localization?.title || fallback.title,
+      description: localization?.description || fallback.description,
+      inlineContent: localization?.inline_content || fallback.inlineContent,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function defaultSAMLAttributeReleaseConsentPresentation(
+  language: string,
+  spDisplayName: string,
+  spEntityId: string
+) {
+  const ja = language.startsWith('ja');
+  return ja
+    ? {
+        language,
+        title: 'SPへの属性提供に対する同意',
+        description: `${spDisplayName} に送信される属性情報を確認してください。`,
+        inlineContent: `サービス名: ${spDisplayName}\n送信先: ${spEntityId}`,
+        choiceLegend: '同意方法',
+        onceLabel: '今回だけ情報を送信することに同意する',
+        onceHelp: '次回ログイン時に再度同意確認を行う',
+        rememberLabel: '今後も情報を自動的にこのサービスに送信することに同意する',
+        rememberHelp: '次回ログイン以降、同意確認は行わない',
+        rememberUntilChangedHelp: '送信される属性が変更されるまでは同意確認を行わない',
+        denyLabel: 'キャンセル',
+      }
+    : {
+        language,
+        title: 'Consent for releasing attributes to the SP',
+        description: `Review the attributes that will be released to ${spDisplayName}.`,
+        inlineContent: `Service: ${spDisplayName}\nDestination: ${spEntityId}`,
+        choiceLegend: 'Consent choice',
+        onceLabel: 'Release the information this time only',
+        onceHelp: 'Authrim will ask again at the next login.',
+        rememberLabel: 'Automatically release the information to this service in the future',
+        rememberHelp: 'Authrim will not ask again on later logins.',
+        rememberUntilChangedHelp: 'Authrim will ask again if the released attributes change.',
+        denyLabel: 'Deny',
+      };
+}
+
+function preferredConsentLanguage(c: Context<{ Bindings: Env }>): string {
+  const languageHeader = c.req.header('accept-language') || '';
+  const firstLanguage = languageHeader.split(',')[0]?.trim().toLowerCase();
+  return firstLanguage?.startsWith('ja') ? 'ja' : 'en';
 }
 
 async function resolveAttributeReleaseFailureUserMessageMode(

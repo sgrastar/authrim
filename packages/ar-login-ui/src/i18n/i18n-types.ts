@@ -175,13 +175,46 @@ type RootTranslation = {
 	 */
 	account_refresh: string
 	/**
-	 * S​i​g​n​ ​i​n​ ​a​g​a​i​n
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e
 	 */
 	account_reauth: string
 	/**
-	 * R​e​c​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​i​r​e​d​.​ ​S​i​g​n​ ​i​n​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+	 * R​e​c​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​i​r​e​d​.​ ​R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​a​n​d​ ​r​e​t​r​y​.
 	 */
 	account_reauthRequired: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	account_reauthTitle: string
+	/**
+	 * C​o​n​f​i​r​m​ ​y​o​u​r​ ​i​d​e​n​t​i​t​y​ ​b​e​f​o​r​e​ ​c​o​n​t​i​n​u​i​n​g​ ​w​i​t​h​ ​t​h​i​s​ ​s​e​c​u​r​i​t​y​-​s​e​n​s​i​t​i​v​e​ ​o​p​e​r​a​t​i​o​n​.
+	 */
+	account_reauthDescription: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​P​a​s​s​k​e​y
+	 */
+	account_reauthWithPasskey: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​e​m​a​i​l​ ​c​o​d​e
+	 */
+	account_reauthWithEmailCode: string
+	/**
+	 * A​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e​ ​w​a​s​ ​s​e​n​t​ ​t​o​ ​{​e​m​a​i​l​}​.
+	 * @param {string} email
+	 */
+	account_reauthEmailCodeSent: RequiredParams<'email'>
+	/**
+	 * 6​-​d​i​g​i​t​ ​c​o​d​e
+	 */
+	account_reauthEmailCodePlaceholder: string
+	/**
+	 * V​e​r​i​f​y​ ​c​o​d​e
+	 */
+	account_reauthVerifyEmailCode: string
+	/**
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	account_reauthNoMethods: string
 	/**
 	 * D​e​v​i​c​e​s
 	 */
@@ -1175,13 +1208,45 @@ export type TranslationFunctions = {
 	 */
 	account_refresh: () => LocalizedString
 	/**
-	 * Sign in again
+	 * Re-authenticate
 	 */
 	account_reauth: () => LocalizedString
 	/**
-	 * Recent authentication is required. Sign in again and retry.
+	 * Recent authentication is required. Re-authenticate and retry.
 	 */
 	account_reauthRequired: () => LocalizedString
+	/**
+	 * Re-authentication
+	 */
+	account_reauthTitle: () => LocalizedString
+	/**
+	 * Confirm your identity before continuing with this security-sensitive operation.
+	 */
+	account_reauthDescription: () => LocalizedString
+	/**
+	 * Re-authenticate with Passkey
+	 */
+	account_reauthWithPasskey: () => LocalizedString
+	/**
+	 * Re-authenticate with email code
+	 */
+	account_reauthWithEmailCode: () => LocalizedString
+	/**
+	 * A verification code was sent to {email}.
+	 */
+	account_reauthEmailCodeSent: (arg: { email: string }) => LocalizedString
+	/**
+	 * 6-digit code
+	 */
+	account_reauthEmailCodePlaceholder: () => LocalizedString
+	/**
+	 * Verify code
+	 */
+	account_reauthVerifyEmailCode: () => LocalizedString
+	/**
+	 * No authentication method is available for re-authentication.
+	 */
+	account_reauthNoMethods: () => LocalizedString
 	/**
 	 * Devices
 	 */

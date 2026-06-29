@@ -167,6 +167,7 @@ interface DevSamlProvider {
 
 interface DevDirectoryConnector {
 	id: string;
+	transport: 'direct' | 'relay';
 	endpoint_url: string;
 	auth_mode: 'hmac';
 	connector_id: string;
@@ -174,6 +175,28 @@ interface DevDirectoryConnector {
 	secret_ref: string;
 	timeouts: {
 		request_ms: number;
+	};
+	relay: {
+		verify_timeout_ms: number;
+		max_pending_requests: number;
+		challenge_ttl_ms: number;
+		auth_failure_rate_limit_per_minute: number;
+		auth_failure_block_ms: number;
+		secret_rotation_grace_ms: number;
+	};
+	heartbeat: {
+		key_id: string;
+		secret_ref: string;
+		previous_key_id: string;
+		previous_secret_ref: string;
+		interval_ms: number;
+		stale_after_ms: number;
+		retention_days: number;
+		version_mismatch_policy: 'warn' | 'block';
+		expected_version: string;
+		minimum_version: string;
+		unhealthy_threshold: number;
+		stale_detection_grace_ms: number;
 	};
 	attribute_names: string[];
 }
@@ -183,6 +206,121 @@ interface DevDirectoryConnectorConfig {
 	default_connector_id: string;
 	auto_provision: boolean;
 	connectors: DevDirectoryConnector[];
+}
+
+interface DevDirectoryAuthCampaign {
+	id: string;
+	tenant_id: string;
+	name: string;
+	description: string | null;
+	status: 'disabled' | 'draft' | 'active' | 'paused' | 'archived';
+	mode:
+		| 'directory_login_allowed'
+		| 'prompt_passkey'
+		| 'grace_then_require_passkey'
+		| 'require_passkey_after_directory'
+		| 'disabled';
+	passkey_prompt_mode: 'none' | 'optional' | 'campaign_only';
+	email_code_fallback_mode:
+		| 'tenant_default'
+		| 'migration_recovery'
+		| 'directory_unavailable_recovery'
+		| 'admin_invitation_only'
+		| 'login_method'
+		| 'disabled';
+	grace_period_days: number;
+	transaction_ttl_seconds: number;
+	enforcement_start_mode: 'first_directory_login';
+	target_policy: Record<string, unknown>;
+	is_template: number;
+	created_by: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+interface DevDirectoryAuthUserState {
+	id: string;
+	tenant_id: string;
+	campaign_id: string;
+	user_id: string | null;
+	connector_id: string | null;
+	directory_subject: string | null;
+	cohort_key?: string | null;
+	state:
+		| 'not_applicable'
+		| 'eligible'
+		| 'prompted'
+		| 'deferred'
+		| 'passkey_required'
+		| 'enrolled'
+		| 'blocked'
+		| 'recovered';
+	first_directory_login_at: number | null;
+	prompted_at: number | null;
+	deferred_until: number | null;
+	passkey_required_at: number | null;
+	enrolled_at: number | null;
+	blocked_reason: string | null;
+	recovery_reason: string | null;
+	reset_count: number;
+	last_reset_at: number | null;
+	last_reset_by: string | null;
+	last_reset_reason: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+interface DevDirectoryAuthTenantPolicy {
+	tenant_id: string;
+	email_code_fallback_mode:
+		| 'migration_recovery'
+		| 'directory_unavailable_recovery'
+		| 'admin_invitation_only'
+		| 'login_method'
+		| 'disabled';
+	updated_by: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+interface DevDirectoryAuthRetentionPolicy {
+	tenant_id: string;
+	authrim_audit_retention_days: number;
+	wordwarden_local_retention_days: number | null;
+	artifact_delete_grace_hours: number;
+	updated_by: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+interface DevDirectoryAuthConfigHistory {
+	id: string;
+	tenant_id: string;
+	actor_id: string | null;
+	category: string;
+	action: string;
+	resource_type: string;
+	resource_id: string | null;
+	before_redacted_json: string;
+	after_redacted_json: string;
+	before_redacted: unknown;
+	after_redacted: unknown;
+	created_at: number;
+}
+
+interface DevDirectoryAuthJob {
+	id: string;
+	tenant_id: string;
+	status: 'pending' | 'running' | 'ready' | 'failed' | 'deleted' | 'expired';
+	requested_by: string;
+	retention_expires_at: number;
+	created_at: number;
+	updated_at: number;
+	artifact_key: string | null;
+	artifact_sha256: string | null;
+	artifact_download_url?: string | null;
+	completed_at: number | null;
+	deleted_at: number | null;
 }
 
 interface DevExternalIdPProvider {
@@ -841,7 +979,7 @@ interface DevConsentPolicyItem {
 	min_version?: string | null;
 	checkbox_mode: 'none' | 'required' | 'optional';
 	checkbox_default_checked: number;
-	binding_type?: 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set' | null;
+	binding_type?: 'subject' | 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set' | null;
 	binding_value?: string | null;
 	evidence_profile?: string | null;
 	language_fallback?: string | null;
@@ -899,7 +1037,9 @@ const fieldMappingSets = [
 		fieldMappingKey: 'gakunin-basic',
 		displayName: 'GakuNin basic profile',
 		description: 'Dev mock field mapping set for SAML attributes and OIDC claims.',
-		lifecycleState: 'active'
+		lifecycleState: 'active',
+		createdAt: NOW - 86_400_000,
+		updatedAt: NOW
 	},
 	{
 		id: 'field-mapping-researcher-oidc',
@@ -907,7 +1047,9 @@ const fieldMappingSets = [
 		fieldMappingKey: 'researcher-oidc',
 		displayName: 'Researcher OIDC claims',
 		description: 'Dev mock field mapping set for OIDC claim release testing.',
-		lifecycleState: 'draft'
+		lifecycleState: 'draft',
+		createdAt: NOW - 43_200_000,
+		updatedAt: NOW - 3_600_000
 	}
 ];
 
@@ -918,6 +1060,7 @@ const fieldMappingVersions = [
 		fieldMappingSetId: 'field-mapping-gakunin-basic',
 		versionLabel: 'v1',
 		lifecycleState: 'active',
+		authorId: 'admin-dev-admin',
 		publishedAt: NOW,
 		createdAt: NOW,
 		updatedAt: NOW,
@@ -2745,18 +2888,190 @@ const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
 			connectors: [
 				{
 					id: 'campus',
+					transport: 'relay',
 					endpoint_url: 'http://localhost:8080',
 					auth_mode: 'hmac',
-					connector_id: 'ww_tenant_a',
+					connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
 					key_id: 'kid-active',
 					secret_ref: 'env:WORDWARDEN_SECRET',
 					timeouts: { request_ms: 2500 },
+					relay: {
+						verify_timeout_ms: 5000,
+						max_pending_requests: 16,
+						challenge_ttl_ms: 30000,
+						auth_failure_rate_limit_per_minute: 10,
+						auth_failure_block_ms: 300000,
+						secret_rotation_grace_ms: 300000
+					},
+					heartbeat: {
+						key_id: 'hb-active',
+						secret_ref: 'env:WORDWARDEN_HEARTBEAT_SECRET',
+						previous_key_id: '',
+						previous_secret_ref: '',
+						interval_ms: 300000,
+						stale_after_ms: 900000,
+						retention_days: 14,
+						version_mismatch_policy: 'warn',
+						expected_version: '',
+						minimum_version: '',
+						unhealthy_threshold: 1,
+						stale_detection_grace_ms: 0
+					},
 					attribute_names: ['mail', 'displayName', 'uid']
 				}
 			]
 		}
 	]
 ]);
+
+const directoryAuthCampaigns = new Map<string, DevDirectoryAuthCampaign[]>([
+	[
+		TENANT_ID,
+		[
+			{
+				id: 'damc_template',
+				tenant_id: TENANT_ID,
+				name: 'Default passwordless migration template',
+				description: 'Disabled template for an explicit passwordless migration campaign.',
+				status: 'disabled',
+				mode: 'grace_then_require_passkey',
+				passkey_prompt_mode: 'campaign_only',
+				email_code_fallback_mode: 'tenant_default',
+				grace_period_days: 30,
+				transaction_ttl_seconds: 600,
+				enforcement_start_mode: 'first_directory_login',
+				target_policy: { type: 'template', assignments: [] },
+				is_template: 1,
+				created_by: 'dev-admin',
+				created_at: NOW - 86400000,
+				updated_at: NOW - 86400000
+			}
+		]
+	]
+]);
+
+const directoryAuthTenantPolicies = new Map<string, DevDirectoryAuthTenantPolicy>([
+	[
+		TENANT_ID,
+		{
+			tenant_id: TENANT_ID,
+			email_code_fallback_mode: 'migration_recovery',
+			updated_by: 'dev-admin',
+			created_at: NOW - 86400000,
+			updated_at: NOW - 86400000
+		}
+	]
+]);
+
+const directoryAuthUserStates = new Map<string, DevDirectoryAuthUserState[]>([
+	[
+		TENANT_ID,
+		[
+			{
+				id: 'damus_dev_blocked',
+				tenant_id: TENANT_ID,
+				campaign_id: 'damc_template',
+				user_id: 'user-dev-1',
+				connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+				directory_subject: 'uid=alice,ou=people,dc=example,dc=test',
+				cohort_key: 'staff',
+				state: 'blocked',
+				first_directory_login_at: NOW - 86400000 * 4,
+				prompted_at: NOW - 86400000 * 4,
+				deferred_until: null,
+				passkey_required_at: null,
+				enrolled_at: null,
+				blocked_reason: 'operator_review',
+				recovery_reason: null,
+				reset_count: 0,
+				last_reset_at: null,
+				last_reset_by: null,
+				last_reset_reason: null,
+				created_at: NOW - 86400000 * 4,
+				updated_at: NOW - 86400000
+			}
+		]
+	]
+]);
+
+const directoryAuthConfigHistory = new Map<string, DevDirectoryAuthConfigHistory[]>([
+	[
+		TENANT_ID,
+		[
+			{
+				id: 'dach_dev_1',
+				tenant_id: TENANT_ID,
+				actor_id: 'dev-admin',
+				category: 'policy',
+				action: 'tenant_policy.updated',
+				resource_type: 'directory_auth_tenant_policy',
+				resource_id: TENANT_ID,
+				before_redacted_json: '{}',
+				after_redacted_json: '{"email_code_fallback_mode":"migration_recovery"}',
+				before_redacted: {},
+				after_redacted: { email_code_fallback_mode: 'migration_recovery' },
+				created_at: NOW - 3600000
+			}
+		]
+	]
+]);
+
+const directoryAuthRetentionPolicies = new Map<string, DevDirectoryAuthRetentionPolicy>([
+	[
+		TENANT_ID,
+		{
+			tenant_id: TENANT_ID,
+			authrim_audit_retention_days: 365,
+			wordwarden_local_retention_days: 14,
+			artifact_delete_grace_hours: 72,
+			updated_by: 'dev-admin',
+			created_at: NOW - 86400000,
+			updated_at: NOW - 86400000
+		}
+	]
+]);
+
+const directoryAuthEvidenceExports = new Map<
+	string,
+	Array<
+		DevDirectoryAuthJob & {
+			period_start_at: number;
+			period_end_at: number;
+			size_estimate_bytes: number | null;
+			manifest_signature_key_id: string | null;
+			manifest_signature_alg: string | null;
+			signed_url_expires_at: number | null;
+			download_after_delete: number;
+			error_code: string | null;
+		}
+	>
+>([[TENANT_ID, []]]);
+
+const directoryAuthSupportBundles = new Map<
+	string,
+	Array<
+		DevDirectoryAuthJob & {
+			redaction_level: 'minimal' | 'standard' | 'detailed';
+			scope_json: string;
+			consent_summary_json: string;
+		}
+	>
+>([[TENANT_ID, []]]);
+
+const directoryAuthAdvisories = [
+	{
+		id: 'wwadv_dev',
+		channel: 'stable',
+		severity: 'medium',
+		affected_versions_json: JSON.stringify(['<0.14.0']),
+		fixed_version: '0.14.0',
+		summary: 'Dev advisory example for Wordwarden update guidance.',
+		published_at: NOW - 86400000 * 2,
+		updated_at: NOW - 86400000,
+		release_url: 'https://github.com/authrim/authrim-wordwarden/releases',
+		created_at: NOW - 86400000 * 2
+	}
+];
 
 const consentStatements = new Map<string, DevConsentStatement>([
 	[
@@ -6150,7 +6465,9 @@ function handleIdentityMapping(event: RequestEvent, segments: string[]): Respons
 				tenantId: TENANT_ID,
 				fieldMappingKey: 'dev-created-field-mapping',
 				displayName: 'Dev created field mapping set',
-				lifecycleState: 'draft'
+				lifecycleState: 'draft',
+				createdAt: Date.now(),
+				updatedAt: Date.now()
 			}
 		});
 	}
@@ -6838,15 +7155,50 @@ function normalizeDevDirectoryConnector(input: unknown, index: number): DevDirec
 			? (value.timeouts as Record<string, unknown>)
 			: {};
 	const requestMs = Number(timeoutRecord.request_ms);
+	const relayRecord =
+		value.relay && typeof value.relay === 'object' && !Array.isArray(value.relay)
+			? (value.relay as Record<string, unknown>)
+			: {};
+	const heartbeatRecord =
+		value.heartbeat && typeof value.heartbeat === 'object' && !Array.isArray(value.heartbeat)
+			? (value.heartbeat as Record<string, unknown>)
+			: {};
 	return {
 		id: stringValue(value.id, index === 0 ? 'campus' : `campus-${index + 1}`),
+		transport: stringValue(value.transport, 'relay') === 'direct' ? 'direct' : 'relay',
 		endpoint_url: stringValue(value.endpoint_url, 'http://localhost:8080'),
 		auth_mode: 'hmac',
-		connector_id: stringValue(value.connector_id, 'ww_tenant_a'),
+		connector_id: stringValue(value.connector_id, 'wwcon_8K4M2Q9F7D3H6P1X'),
 		key_id: stringValue(value.key_id, 'kid-active'),
 		secret_ref: stringValue(value.secret_ref, 'env:WORDWARDEN_SECRET'),
 		timeouts: {
 			request_ms: Number.isInteger(requestMs) ? requestMs : 2500
+		},
+		relay: {
+			verify_timeout_ms: numberValue(relayRecord.verify_timeout_ms, 5000),
+			max_pending_requests: numberValue(relayRecord.max_pending_requests, 16),
+			challenge_ttl_ms: numberValue(relayRecord.challenge_ttl_ms, 30000),
+			auth_failure_rate_limit_per_minute: numberValue(
+				relayRecord.auth_failure_rate_limit_per_minute,
+				10
+			),
+			auth_failure_block_ms: numberValue(relayRecord.auth_failure_block_ms, 300000),
+			secret_rotation_grace_ms: numberValue(relayRecord.secret_rotation_grace_ms, 300000)
+		},
+		heartbeat: {
+			key_id: stringValue(heartbeatRecord.key_id, ''),
+			secret_ref: stringValue(heartbeatRecord.secret_ref, ''),
+			previous_key_id: stringValue(heartbeatRecord.previous_key_id, ''),
+			previous_secret_ref: stringValue(heartbeatRecord.previous_secret_ref, ''),
+			interval_ms: numberValue(heartbeatRecord.interval_ms, 300000),
+			stale_after_ms: numberValue(heartbeatRecord.stale_after_ms, 900000),
+			retention_days: numberValue(heartbeatRecord.retention_days, 14),
+			version_mismatch_policy:
+				stringValue(heartbeatRecord.version_mismatch_policy, 'warn') === 'block' ? 'block' : 'warn',
+			expected_version: stringValue(heartbeatRecord.expected_version, ''),
+			minimum_version: stringValue(heartbeatRecord.minimum_version, ''),
+			unhealthy_threshold: numberValue(heartbeatRecord.unhealthy_threshold, 1),
+			stale_detection_grace_ms: numberValue(heartbeatRecord.stale_detection_grace_ms, 0)
 		},
 		attribute_names: Array.isArray(value.attribute_names)
 			? [
@@ -6859,6 +7211,525 @@ function normalizeDevDirectoryConnector(input: unknown, index: number): DevDirec
 				]
 			: []
 	};
+}
+
+function ensureDevDirectoryAuth(tenantId: string) {
+	if (!directoryAuthCampaigns.has(tenantId)) {
+		directoryAuthCampaigns.set(tenantId, [
+			{
+				id: 'damc_template',
+				tenant_id: tenantId,
+				name: 'Default passwordless migration template',
+				description: 'Disabled template for an explicit passwordless migration campaign.',
+				status: 'disabled',
+				mode: 'grace_then_require_passkey',
+				passkey_prompt_mode: 'campaign_only',
+				email_code_fallback_mode: 'tenant_default',
+				grace_period_days: 30,
+				transaction_ttl_seconds: 600,
+				enforcement_start_mode: 'first_directory_login',
+				target_policy: { type: 'template', assignments: [] },
+				is_template: 1,
+				created_by: 'dev-admin',
+				created_at: Date.now(),
+				updated_at: Date.now()
+			}
+		]);
+	}
+	if (!directoryAuthTenantPolicies.has(tenantId)) {
+		directoryAuthTenantPolicies.set(tenantId, {
+			tenant_id: tenantId,
+			email_code_fallback_mode: 'migration_recovery',
+			updated_by: 'dev-admin',
+			created_at: Date.now(),
+			updated_at: Date.now()
+		});
+	}
+	if (!directoryAuthUserStates.has(tenantId)) directoryAuthUserStates.set(tenantId, []);
+	if (!directoryAuthConfigHistory.has(tenantId)) directoryAuthConfigHistory.set(tenantId, []);
+	if (!directoryAuthRetentionPolicies.has(tenantId)) {
+		directoryAuthRetentionPolicies.set(tenantId, {
+			tenant_id: tenantId,
+			authrim_audit_retention_days: 365,
+			wordwarden_local_retention_days: 14,
+			artifact_delete_grace_hours: 72,
+			updated_by: 'dev-admin',
+			created_at: Date.now(),
+			updated_at: Date.now()
+		});
+	}
+	if (!directoryAuthEvidenceExports.has(tenantId)) directoryAuthEvidenceExports.set(tenantId, []);
+	if (!directoryAuthSupportBundles.has(tenantId)) directoryAuthSupportBundles.set(tenantId, []);
+}
+
+function devDirectoryAuthSummaryLinks(tenantId: string) {
+	return [
+		{
+			label: 'Public compliance summary',
+			href: '/docs/directory-authentication-public-summary'
+		},
+		{
+			label: 'Migration summary',
+			href: `/admin/directory-authentication/migration?tenant_id=${encodeURIComponent(tenantId)}`
+		},
+		{
+			label: 'Fleet summary',
+			href: `/admin/directory-authentication/fleet?tenant_id=${encodeURIComponent(tenantId)}`
+		}
+	];
+}
+
+function serializeDevDirectoryAuthCampaign(
+	campaign: DevDirectoryAuthCampaign,
+	policy: DevDirectoryAuthTenantPolicy
+) {
+	return {
+		...campaign,
+		effective_email_code_fallback_mode:
+			campaign.email_code_fallback_mode === 'tenant_default'
+				? policy.email_code_fallback_mode
+				: campaign.email_code_fallback_mode
+	};
+}
+
+async function handleDirectoryAuth(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	const method = event.request.method;
+	if (segments[0] !== 'tenants' || segments[2] !== 'directory-auth') return null;
+
+	const tenantId = segments[1] || getTenantId(event);
+	ensureDevDirectoryAuth(tenantId);
+	const campaigns = directoryAuthCampaigns.get(tenantId) ?? [];
+	const userStates = directoryAuthUserStates.get(tenantId) ?? [];
+	const tenantPolicy = directoryAuthTenantPolicies.get(tenantId)!;
+	const retentionPolicy = directoryAuthRetentionPolicies.get(tenantId);
+	const evidenceExports = directoryAuthEvidenceExports.get(tenantId) ?? [];
+	const supportBundles = directoryAuthSupportBundles.get(tenantId) ?? [];
+	const configHistory = directoryAuthConfigHistory.get(tenantId) ?? [];
+	const section = segments[3];
+
+	if (section === 'overview' && method === 'GET') {
+		return json({
+			tenantId,
+			policy: tenantPolicy,
+			migration: {
+				campaigns: campaigns.map((campaign) =>
+					serializeDevDirectoryAuthCampaign(campaign, tenantPolicy)
+				),
+				user_states: userStates
+			},
+			compliance: {
+				retention_policy: retentionPolicy,
+				evidence_exports: evidenceExports,
+				support_bundles: supportBundles,
+				config_history: configHistory,
+				public_summary_links: devDirectoryAuthSummaryLinks(tenantId)
+			},
+			managed_connector: {
+				advisories: directoryAuthAdvisories,
+				heartbeat_fields: [
+					'connector_id',
+					'version',
+					'platform',
+					'release_channel',
+					'health_status',
+					'redacted_error_code',
+					'last_seen_at'
+				]
+			}
+		});
+	}
+
+	if (section === 'policy') {
+		if (method === 'GET') return json({ tenantId, policy: tenantPolicy });
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			const nextPolicy: DevDirectoryAuthTenantPolicy = {
+				...tenantPolicy,
+				email_code_fallback_mode:
+					stringValue(input.email_code_fallback_mode, 'migration_recovery') === 'disabled'
+						? 'disabled'
+						: stringValue(input.email_code_fallback_mode, 'migration_recovery') === 'login_method'
+							? 'login_method'
+							: stringValue(input.email_code_fallback_mode, 'migration_recovery') ===
+								  'admin_invitation_only'
+								? 'admin_invitation_only'
+								: stringValue(input.email_code_fallback_mode, 'migration_recovery') ===
+									  'directory_unavailable_recovery'
+									? 'directory_unavailable_recovery'
+									: 'migration_recovery',
+				updated_by: 'dev-admin',
+				updated_at: Date.now()
+			};
+			directoryAuthTenantPolicies.set(tenantId, nextPolicy);
+			return json({ tenantId, policy: nextPolicy });
+		}
+	}
+
+	if (section === 'migration' && segments[4] === 'campaigns') {
+		if (segments.length === 5 && method === 'GET') {
+			return json({
+				tenantId,
+				items: campaigns.map((campaign) =>
+					serializeDevDirectoryAuthCampaign(campaign, tenantPolicy)
+				)
+			});
+		}
+		if (segments.length === 5 && method === 'POST') {
+			const input = await readJson(event.request);
+			const now = Date.now();
+			const campaign: DevDirectoryAuthCampaign = {
+				id: `damc_dev_${campaigns.length + 1}`,
+				tenant_id: tenantId,
+				name: stringValue(input.name, `Migration campaign ${campaigns.length + 1}`),
+				description: typeof input.description === 'string' ? input.description : null,
+				status: 'disabled',
+				mode:
+					stringValue(input.mode, 'grace_then_require_passkey') ===
+					'require_passkey_after_directory'
+						? 'require_passkey_after_directory'
+						: stringValue(input.mode, 'grace_then_require_passkey') === 'prompt_passkey'
+							? 'prompt_passkey'
+							: stringValue(input.mode, 'grace_then_require_passkey') === 'directory_login_allowed'
+								? 'directory_login_allowed'
+								: 'grace_then_require_passkey',
+				passkey_prompt_mode: 'campaign_only',
+				email_code_fallback_mode:
+					stringValue(input.email_code_fallback_mode, 'tenant_default') === 'disabled'
+						? 'disabled'
+						: stringValue(input.email_code_fallback_mode, 'tenant_default') === 'login_method'
+							? 'login_method'
+							: stringValue(input.email_code_fallback_mode, 'tenant_default') ===
+								  'admin_invitation_only'
+								? 'admin_invitation_only'
+								: stringValue(input.email_code_fallback_mode, 'tenant_default') ===
+									  'directory_unavailable_recovery'
+									? 'directory_unavailable_recovery'
+									: stringValue(input.email_code_fallback_mode, 'tenant_default') ===
+										  'migration_recovery'
+										? 'migration_recovery'
+										: 'tenant_default',
+				grace_period_days: numberValue(input.grace_period_days, 30),
+				transaction_ttl_seconds: numberValue(input.transaction_ttl_seconds, 600),
+				enforcement_start_mode: 'first_directory_login',
+				target_policy:
+					input.target_policy && typeof input.target_policy === 'object'
+						? (input.target_policy as Record<string, unknown>)
+						: {},
+				is_template: 0,
+				created_by: 'dev-admin',
+				created_at: now,
+				updated_at: now
+			};
+			campaigns.unshift(campaign);
+			directoryAuthCampaigns.set(tenantId, campaigns);
+			return json(
+				{ tenantId, item: serializeDevDirectoryAuthCampaign(campaign, tenantPolicy) },
+				201
+			);
+		}
+		if (segments.length === 6 && method === 'PATCH') {
+			const input = await readJson(event.request);
+			const campaign = campaigns.find((item) => item.id === segments[5]);
+			if (!campaign) return json({ error: 'directory_auth_campaign_not_found' }, 404);
+			campaign.status =
+				stringValue(input.status, campaign.status) === 'active'
+					? 'active'
+					: stringValue(input.status, campaign.status) === 'paused'
+						? 'paused'
+						: stringValue(input.status, campaign.status) === 'draft'
+							? 'draft'
+							: stringValue(input.status, campaign.status) === 'archived'
+								? 'archived'
+								: 'disabled';
+			campaign.mode = stringValue(input.mode, campaign.mode) as DevDirectoryAuthCampaign['mode'];
+			campaign.passkey_prompt_mode = stringValue(
+				input.passkey_prompt_mode,
+				campaign.passkey_prompt_mode
+			) as DevDirectoryAuthCampaign['passkey_prompt_mode'];
+			campaign.email_code_fallback_mode = stringValue(
+				input.email_code_fallback_mode,
+				campaign.email_code_fallback_mode
+			) as DevDirectoryAuthCampaign['email_code_fallback_mode'];
+			campaign.grace_period_days = numberValue(input.grace_period_days, campaign.grace_period_days);
+			campaign.transaction_ttl_seconds = numberValue(
+				input.transaction_ttl_seconds,
+				campaign.transaction_ttl_seconds
+			);
+			if (input.target_policy && typeof input.target_policy === 'object') {
+				campaign.target_policy = input.target_policy as Record<string, unknown>;
+			}
+			campaign.updated_at = Date.now();
+			return json({ tenantId, item: serializeDevDirectoryAuthCampaign(campaign, tenantPolicy) });
+		}
+	}
+
+	if (section === 'migration' && segments[4] === 'user-states') {
+		if (segments.length === 5 && method === 'GET') {
+			const url = new URL(event.request.url);
+			const state = url.searchParams.get('state');
+			const campaignId = url.searchParams.get('campaign_id');
+			const userId = url.searchParams.get('user_id');
+			const items = userStates.filter((item) => {
+				if (state && item.state !== state) return false;
+				if (campaignId && item.campaign_id !== campaignId) return false;
+				if (userId && item.user_id !== userId) return false;
+				return true;
+			});
+			return json({ tenantId, items });
+		}
+		if (segments.length === 7 && segments[6] === 'reset' && method === 'POST') {
+			const input = await readJson(event.request);
+			const state = userStates.find((item) => item.id === segments[5]);
+			if (!state) return json({ error: 'directory_auth_migration_state_not_found' }, 404);
+			const now = Date.now();
+			state.state = 'eligible';
+			state.blocked_reason = null;
+			state.recovery_reason = null;
+			state.deferred_until = null;
+			state.reset_count += 1;
+			state.last_reset_at = now;
+			state.last_reset_by = 'dev-admin';
+			state.last_reset_reason = stringValue(input.reason, 'admin_reset');
+			state.updated_at = now;
+			return json({ tenantId, item: state });
+		}
+	}
+
+	if (section === 'compliance' && segments[4] === 'retention') {
+		if (method === 'GET') return json({ tenantId, policy: retentionPolicy });
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			const policy = {
+				tenant_id: tenantId,
+				authrim_audit_retention_days: numberValue(input.authrim_audit_retention_days, 365),
+				wordwarden_local_retention_days: numberValue(input.wordwarden_local_retention_days, 14),
+				artifact_delete_grace_hours: numberValue(input.artifact_delete_grace_hours, 72),
+				updated_by: 'dev-admin',
+				created_at: retentionPolicy?.created_at ?? Date.now(),
+				updated_at: Date.now()
+			};
+			directoryAuthRetentionPolicies.set(tenantId, policy);
+			return json({ tenantId, policy });
+		}
+	}
+
+	if (section === 'compliance' && segments[4] === 'config-history' && method === 'GET') {
+		return json({
+			tenantId,
+			items: configHistory,
+			public_summary_links: devDirectoryAuthSummaryLinks(tenantId)
+		});
+	}
+
+	if (section === 'compliance' && segments[4] === 'evidence-exports') {
+		if (segments.length === 7 && segments[6] === 'download' && method === 'GET') {
+			const item = evidenceExports.find((exportJob) => exportJob.id === segments[5]);
+			if (!item || item.status !== 'ready') {
+				return json({ error: 'directory_auth_evidence_export_not_found' }, 404);
+			}
+			return json({
+				type: 'directory_auth_evidence_export',
+				version: 1,
+				tenant_id: tenantId,
+				export_id: item.id,
+				generated_at: Date.now(),
+				sections: {
+					migration_campaigns: campaigns,
+					migration_user_states: userStates,
+					retention_policy: retentionPolicy
+				}
+			});
+		}
+		if (method === 'GET') return json({ tenantId, items: evidenceExports });
+		if (method === 'POST') {
+			const input = await readJson(event.request);
+			const now = Date.now();
+			const item = {
+				id: `daex_dev_${evidenceExports.length + 1}`,
+				tenant_id: tenantId,
+				status: 'ready' as const,
+				requested_by: 'dev-admin',
+				period_start_at: numberValue(input.period_start_at, now - 86400000),
+				period_end_at: numberValue(input.period_end_at, now),
+				size_estimate_bytes: 512,
+				artifact_key: `directory-auth/evidence/${tenantId}/daex_dev_${evidenceExports.length + 1}.json`,
+				artifact_sha256: 'a'.repeat(64),
+				artifact_download_url: `/api/admin/tenants/${encodeURIComponent(
+					tenantId
+				)}/directory-auth/compliance/evidence-exports/daex_dev_${evidenceExports.length + 1}/download`,
+				manifest_signature_key_id: null,
+				manifest_signature_alg: null,
+				signed_url_expires_at: null,
+				retention_expires_at: now + 86400000 * 7,
+				download_after_delete: input.download_after_delete === true ? 1 : 0,
+				error_code: null,
+				created_at: now,
+				updated_at: now,
+				completed_at: now,
+				deleted_at: null
+			};
+			evidenceExports.unshift(item);
+			directoryAuthEvidenceExports.set(tenantId, evidenceExports);
+			return json({ tenantId, item }, 201);
+		}
+	}
+
+	if (section === 'maintenance' && segments[4] === 'cleanup' && method === 'POST') {
+		const now = Date.now();
+		const expiredExports = evidenceExports.filter(
+			(item) => item.status === 'ready' && item.retention_expires_at <= now
+		);
+		const expiredBundles = supportBundles.filter(
+			(item) => item.status === 'ready' && item.retention_expires_at <= now
+		);
+		for (const item of expiredExports) {
+			item.status = 'expired';
+			item.updated_at = now;
+		}
+		for (const item of expiredBundles) {
+			item.status = 'expired';
+			item.updated_at = now;
+		}
+		return json({
+			tenantId,
+			result: {
+				migration_transactions_expired: 0,
+				evidence_exports_expired: expiredExports.length,
+				evidence_exports_deleted: 0,
+				support_bundles_expired: expiredBundles.length,
+				support_bundles_deleted: 0
+			}
+		});
+	}
+
+	if (section === 'support' && segments[4] === 'bundles') {
+		if (segments.length === 7 && segments[6] === 'download' && method === 'GET') {
+			const item = supportBundles.find((bundle) => bundle.id === segments[5]);
+			if (!item || item.status !== 'ready') {
+				return json({ error: 'directory_auth_support_bundle_not_found' }, 404);
+			}
+			return json({
+				type: 'directory_auth_support_bundle',
+				version: 1,
+				tenant_id: tenantId,
+				bundle_id: item.id,
+				redaction_level: item.redaction_level,
+				generated_at: Date.now(),
+				sections: {
+					retention_policy: retentionPolicy,
+					evidence_export_metadata: evidenceExports.map(
+						({
+							artifact_key: _artifactKey,
+							artifact_download_url: _artifactDownloadUrl,
+							manifest_signature_key_id: _manifestSignatureKeyId,
+							manifest_signature_alg: _manifestSignatureAlg,
+							signed_url_expires_at: _signedUrlExpiresAt,
+							...metadata
+						}) => metadata
+					),
+					support_bundle_metadata: supportBundles.map(
+						({
+							artifact_key: _artifactKey,
+							artifact_download_url: _artifactDownloadUrl,
+							...metadata
+						}) => metadata
+					)
+				}
+			});
+		}
+		if (method === 'GET') return json({ tenantId, items: supportBundles });
+		if (method === 'POST') {
+			const input = await readJson(event.request);
+			const scope =
+				input.scope && typeof input.scope === 'object' && !Array.isArray(input.scope)
+					? (input.scope as Record<string, unknown>)
+					: {};
+			const scopeKeys = Object.keys(scope);
+			const allowedScopeKeys = new Set([
+				'connector_ids',
+				'include_recent_episodes',
+				'include_advisories'
+			]);
+			if (
+				scopeKeys.some((key) => !allowedScopeKeys.has(key)) ||
+				(scope.connector_ids !== undefined &&
+					(!Array.isArray(scope.connector_ids) ||
+						scope.connector_ids.length > 20 ||
+						scope.connector_ids.some(
+							(value) =>
+								typeof value !== 'string' ||
+								value.length < 1 ||
+								value.length > 128 ||
+								!/^[A-Za-z0-9._:-]+$/.test(value)
+						))) ||
+				(scope.include_recent_episodes !== undefined &&
+					typeof scope.include_recent_episodes !== 'boolean') ||
+				(scope.include_advisories !== undefined && typeof scope.include_advisories !== 'boolean')
+			) {
+				return json({ error: 'invalid_directory_auth_support_bundle_scope' }, 400);
+			}
+			const consent =
+				input.consent_summary &&
+				typeof input.consent_summary === 'object' &&
+				!Array.isArray(input.consent_summary)
+					? (input.consent_summary as Record<string, unknown>)
+					: {};
+			const consentKeys = Object.keys(consent);
+			if (
+				consent.operator_confirmed !== true ||
+				consentKeys.some(
+					(key) => key !== 'operator_confirmed' && key !== 'detailed_warning_acknowledged'
+				) ||
+				(consent.detailed_warning_acknowledged !== undefined &&
+					typeof consent.detailed_warning_acknowledged !== 'boolean')
+			) {
+				return json({ error: 'invalid_directory_auth_support_bundle_consent' }, 400);
+			}
+			const redactionLevel: 'minimal' | 'standard' | 'detailed' =
+				input.redaction_level === 'detailed' || input.redaction_level === 'minimal'
+					? input.redaction_level
+					: 'standard';
+			if (redactionLevel === 'detailed' && consent.detailed_warning_acknowledged !== true) {
+				return json({ error: 'invalid_directory_auth_support_bundle_consent' }, 400);
+			}
+			const now = Date.now();
+			const item = {
+				id: `dasb_dev_${supportBundles.length + 1}`,
+				tenant_id: tenantId,
+				requested_by: 'dev-admin',
+				redaction_level: redactionLevel,
+				status: 'ready' as const,
+				scope_json: JSON.stringify(scope),
+				consent_summary_json: JSON.stringify(consent),
+				artifact_key: `directory-auth/support-bundles/${tenantId}/dasb_dev_${supportBundles.length + 1}.json`,
+				artifact_sha256: 'b'.repeat(64),
+				artifact_download_url: `/api/admin/tenants/${encodeURIComponent(
+					tenantId
+				)}/directory-auth/support/bundles/dasb_dev_${supportBundles.length + 1}/download`,
+				retention_expires_at: now + 86400000 * 7,
+				created_at: now,
+				updated_at: now,
+				completed_at: now,
+				deleted_at: null
+			};
+			supportBundles.unshift(item);
+			directoryAuthSupportBundles.set(tenantId, supportBundles);
+			return json({ tenantId, item }, 201);
+		}
+	}
+
+	if (section === 'managed' && segments[4] === 'advisories' && method === 'GET') {
+		return json({ tenantId, channel: 'stable', items: directoryAuthAdvisories });
+	}
+
+	if (section === 'managed' && segments[4] === 'connectors' && method === 'GET') {
+		return json({ tenantId, items: [], recent_episodes: [] });
+	}
+
+	return null;
 }
 
 async function handleDirectoryConnectors(
@@ -6896,6 +7767,68 @@ async function handleDirectoryConnectors(
 		};
 		directoryConnectors.set(tenantId, nextConfig);
 		return json({ tenantId, ...nextConfig });
+	}
+
+	if (segments[3] === 'fleet' && segments.length === 4 && method === 'GET') {
+		const now = Date.now();
+		const connector = config.connectors[0];
+		const connectorId = connector?.connector_id ?? 'wwcon_8K4M2Q9F7D3H6P1X';
+		return json({
+			tenantId,
+			items: [
+				{
+					id: 'dcinst_dev',
+					tenant_id: tenantId,
+					connector_id: connectorId,
+					instance_id: 'wwi_devlocal12345678901234',
+					display_name: 'dev-wordwarden',
+					transport: connector?.transport ?? 'relay',
+					version: '0.13.0-dev',
+					release_channel: 'stable',
+					started_at: new Date(now - 3600000).toISOString(),
+					first_seen_at: now - 3600000,
+					last_seen_at: now - 30000,
+					status: 'connected',
+					health_status: 'healthy',
+					health_summary: { ldap: 'ok' },
+					config_fingerprint: `sha256:${'a'.repeat(64)}`,
+					config_categories: ['ldap', 'heartbeat'],
+					drift_severity: 'none',
+					deactivated_at: null,
+					deactivated_by: null,
+					deactivation_reason: null,
+					updated_at: now - 30000
+				}
+			],
+			episodes: [
+				{
+					id: 'dcepi_dev',
+					tenant_id: tenantId,
+					connector_id: connectorId,
+					instance_id: 'wwi_devlocal12345678901234',
+					status: 'connected',
+					started_at: now - 3600000,
+					ended_at: null,
+					last_seen_at: now - 30000,
+					reason: null,
+					acknowledged_at: null,
+					acknowledged_by: null,
+					created_at: now - 3600000,
+					updated_at: now - 30000
+				}
+			]
+		});
+	}
+
+	if (segments[3] === 'fleet' && segments.length === 5 && method === 'POST') {
+		const input = await readJson(event.request);
+		return json({
+			ok: true,
+			instance_id: segments[4],
+			connector_id:
+				typeof input.connector_id === 'string' ? input.connector_id : 'wwcon_8K4M2Q9F7D3H6P1X',
+			action: typeof input.action === 'string' ? input.action : 'acknowledge'
+		});
 	}
 
 	if (segments.length === 5 && segments[4] === 'health' && method === 'POST') {
@@ -10105,6 +11038,8 @@ export async function handleDevAdminMock(
 	if (customClaimsResponse) return customClaimsResponse;
 	const externalProvidersResponse = await handleExternalProviders(event, segments);
 	if (externalProvidersResponse) return externalProvidersResponse;
+	const directoryAuthResponse = await handleDirectoryAuth(event, segments);
+	if (directoryAuthResponse) return directoryAuthResponse;
 	const directoryConnectorsResponse = await handleDirectoryConnectors(event, segments);
 	if (directoryConnectorsResponse) return directoryConnectorsResponse;
 	const sessionsResponse = await handleSessions(event, segments);

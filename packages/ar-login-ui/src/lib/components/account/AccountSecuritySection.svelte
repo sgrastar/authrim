@@ -2,6 +2,7 @@
 	import { Button, Card, Input } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import type { AccountDevice, AccountPasskey, AccountSession } from '$lib/api/account';
+	import { formatTimestamp } from '$lib/utils/date';
 
 	let {
 		devices = [],
@@ -34,16 +35,6 @@
 	}>();
 
 	let newPasskeyName = $state('');
-
-	function formatUnixDateTime(value: number | null | undefined): string {
-		if (!value) return '-';
-		return new Date(value * 1000).toLocaleString();
-	}
-
-	function formatMillisDateTime(value: number | null | undefined): string {
-		if (!value) return '-';
-		return new Date(value).toLocaleString();
-	}
 
 	function addPasskey() {
 		onAddPasskey(newPasskeyName);
@@ -82,7 +73,7 @@
 										<span class="inline-tag">{$LL.account_currentDevice()}</span>
 									{/if}
 								</strong>
-								<span>{device.platform} / {formatUnixDateTime(device.last_seen_at_unix)}</span>
+								<span>{device.platform} / {formatTimestamp(device.last_seen_at_unix)}</span>
 							</div>
 						</li>
 					{/each}
@@ -100,7 +91,7 @@
 						<li>
 							<div>
 								<strong>{session.current ? $LL.account_currentSession() : session.id}</strong>
-								<span>{formatMillisDateTime(session.created_at)}</span>
+								<span>{formatTimestamp(session.created_at)}</span>
 							</div>
 							<Button
 								variant={session.current ? 'danger' : 'secondary'}
@@ -160,7 +151,7 @@
 										{passkey.provider?.name ?? passkey.aaguid}
 									</span>
 								{/if}
-								<span>{formatUnixDateTime(passkey.last_used_at || passkey.created_at)}</span>
+								<span>{formatTimestamp(passkey.last_used_at ?? passkey.created_at)}</span>
 							</div>
 							<Button
 								variant="danger"

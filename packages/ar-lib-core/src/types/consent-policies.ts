@@ -5,6 +5,7 @@ export type ConsentPolicyAssignmentType = 'registration' | 'login' | 'oidc_clien
 export type ClientTrustPolicyTargetType = 'oidc_client' | 'saml_sp';
 export type SignInConfirmationMode = 'disabled' | 'first_time' | 'every_time';
 export type ConsentPolicyItemBindingType =
+  | 'subject'
   | 'scope'
   | 'claim'
   | 'saml_attribute'

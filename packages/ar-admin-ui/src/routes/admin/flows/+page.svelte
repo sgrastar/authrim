@@ -9,6 +9,7 @@
 		getProfileBadgeClass,
 		canDeleteFlow
 	} from '$lib/api/admin-flows';
+	import { isLegacyPreviewFlowId, listLegacyPreviewFlows } from '$lib/api/legacy-flow-preview';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import {
@@ -26,6 +27,7 @@
 	let flows: Flow[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
+	let previewNotice = $state('');
 
 	// Flow Engine Feature Flag state
 	let flowEngineEnabled = $state(false);
@@ -101,6 +103,7 @@
 	async function loadFlows() {
 		loading = true;
 		error = '';
+		previewNotice = '';
 
 		try {
 			const response = await adminFlowsAPI.list({
@@ -110,15 +113,39 @@
 				page,
 				limit
 			});
+
+			if (response.flows.length === 0) {
+				loadPreviewFlows('No saved legacy flows were found. Showing preview-only sample flows.');
+				return;
+			}
+
 			flows = response.flows;
 			total = response.pagination.total;
 			totalPages = response.pagination.total_pages;
 		} catch (err) {
 			console.error('Failed to load flows:', err);
-			error = 'Failed to load flows';
+			loadPreviewFlows('Flow API is not available. Showing preview-only sample flows.');
 		} finally {
 			loading = false;
 		}
+	}
+
+	function loadPreviewFlows(reason: string) {
+		const query = searchQuery.trim().toLowerCase();
+		const filtered = listLegacyPreviewFlows().filter((flow) => {
+			if (filterProfile !== 'all' && flow.profile_id !== filterProfile) return false;
+			if (filterActive === 'active' && !flow.is_active) return false;
+			if (filterActive === 'inactive' && flow.is_active) return false;
+			if (query && !`${flow.name} ${flow.description || ''}`.toLowerCase().includes(query)) {
+				return false;
+			}
+			return true;
+		});
+		const start = (page - 1) * limit;
+		flows = filtered.slice(start, start + limit);
+		total = filtered.length;
+		totalPages = Math.max(1, Math.ceil(filtered.length / limit));
+		previewNotice = reason;
 	}
 
 	onMount(() => {
@@ -207,6 +234,11 @@
 		{/snippet}
 	</AdminPageHeader>
 
+	<div class="alert alert-info">
+		<strong>Legacy preview.</strong> This screen exposes the old Flow Designer for review only. These
+		flows are not connected to the current LoginUI, consent, approval, or runtime execution path.
+	</div>
+
 	<!-- Flow Engine Feature Flag Toggle -->
 	<AdminSection>
 		<div class="flow-engine-toggle-row">
@@ -241,6 +273,13 @@
 		<div class="alert alert-warning">
 			<strong>Flow Engine is disabled.</strong> Enable it above to manage flows. When disabled, standard
 			OIDC flows will be used instead.
+		</div>
+	{/if}
+
+	{#if previewNotice}
+		<div class="alert alert-warning">
+			<strong>Preview data.</strong>
+			{previewNotice}
 		</div>
 	{/if}
 
@@ -372,7 +411,7 @@
 									>
 										View
 									</button>
-									{#if canDeleteFlow(flow)}
+									{#if canDeleteFlow(flow) && !isLegacyPreviewFlowId(flow.id)}
 										<button
 											class="btn btn-danger btn-sm"
 											onclick={(e) => openDeleteDialog(flow, e)}
@@ -491,6 +530,19 @@
 	.alert-warning {
 		background-color: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
 		border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+		border-radius: var(--radius-control);
+		padding: 0.75rem 1rem;
+		color: var(--color-text);
+		margin-bottom: 1rem;
+	}
+
+	.alert-info {
+		background-color: color-mix(
+			in srgb,
+			var(--color-info, var(--color-accent)) 10%,
+			var(--color-surface)
+		);
+		border: 1px solid color-mix(in srgb, var(--color-info, var(--color-accent)) 30%, transparent);
 		border-radius: var(--radius-control);
 		padding: 0.75rem 1rem;
 		color: var(--color-text);

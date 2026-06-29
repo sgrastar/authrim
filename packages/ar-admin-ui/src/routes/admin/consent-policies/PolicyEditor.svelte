@@ -228,6 +228,9 @@
 					description: policyForm.description,
 					is_active: policyForm.is_active
 				});
+				if (itemDrafts.length > 0) {
+					await adminConsentPoliciesAPI.replaceItems(result.policy.id, policyItemsPayload());
+				}
 				successMessage = $LL.admin_consent_policies_created();
 				await goto(`/admin/consent-policies/${encodeURIComponent(result.policy.id)}`);
 			}
@@ -272,7 +275,7 @@
 				version_mode: 'current',
 				version_id: '',
 				min_version: '',
-				checkbox_mode: 'required',
+				checkbox_mode: 'none',
 				checkbox_default_checked: false,
 				binding_type: null,
 				binding_value: '',
@@ -301,11 +304,10 @@
 		error = '';
 		successMessage = '';
 		try {
-			const items = itemDrafts.map(({ _key, ...item }) => ({
-				...item,
-				checkbox_default_checked: Boolean(item.checkbox_default_checked)
-			}));
-			const result = await adminConsentPoliciesAPI.replaceItems(policyForm.id, items);
+			const result = await adminConsentPoliciesAPI.replaceItems(
+				policyForm.id,
+				policyItemsPayload()
+			);
 			itemDrafts = (result.items || []).map(toItemDraft);
 			successMessage = $LL.admin_consent_policies_statements_saved();
 		} catch (err) {
@@ -314,6 +316,22 @@
 		} finally {
 			saving = false;
 		}
+	}
+
+	function policyItemsPayload(): ConsentPolicyItem[] {
+		return itemDrafts.map(({ _key, ...item }) => ({
+			...item,
+			requirement: 'required',
+			version_mode: 'current',
+			version_id: '',
+			min_version: '',
+			checkbox_mode: 'none',
+			checkbox_default_checked: false,
+			binding_type: null,
+			binding_value: '',
+			evidence_profile: '',
+			language_fallback: ''
+		}));
 	}
 
 	async function saveAssignment() {
@@ -544,7 +562,7 @@
 					class="btn btn-secondary"
 					type="button"
 					onclick={addItem}
-					disabled={!policyForm.id || statements.length === 0 || writeDisabled}
+					disabled={statements.length === 0 || writeDisabled}
 				>
 					<i class="i-ph-plus" aria-hidden="true"></i>
 					{$LL.admin_consent_policies_add_statement()}
@@ -595,80 +613,6 @@
 									</select>
 								</div>
 								<div class="admin-field">
-									<label for={`requirement-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_requirement()}</label
-									>
-									<select
-										id={`requirement-${item._key}`}
-										class="admin-select"
-										bind:value={item.requirement}
-										disabled={!canWriteSettings}
-									>
-										<option value="required"
-											>{$LL.admin_consent_policies_requirement_required()}</option
-										>
-										<option value="optional"
-											>{$LL.admin_consent_policies_requirement_optional()}</option
-										>
-										<option value="hidden">{$LL.admin_consent_policies_requirement_hidden()}</option
-										>
-									</select>
-								</div>
-								<div class="admin-field">
-									<label for={`version-mode-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_version()}</label
-									>
-									<select
-										id={`version-mode-${item._key}`}
-										class="admin-select"
-										bind:value={item.version_mode}
-										disabled={!canWriteSettings}
-									>
-										<option value="current">{$LL.admin_consent_policies_version_current()}</option>
-										<option value="fixed">{$LL.admin_consent_policies_version_fixed()}</option>
-										<option value="minimum">{$LL.admin_consent_policies_version_minimum()}</option>
-									</select>
-								</div>
-								<div class="admin-field">
-									<label for={`version-value-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_version_value()}</label
-									>
-									{#if item.version_mode === 'minimum'}
-										<input
-											id={`version-value-${item._key}`}
-											class="admin-input"
-											bind:value={item.min_version}
-											disabled={!canWriteSettings}
-										/>
-									{:else}
-										<input
-											id={`version-value-${item._key}`}
-											class="admin-input"
-											bind:value={item.version_id}
-											disabled={!canWriteSettings || item.version_mode === 'current'}
-										/>
-									{/if}
-								</div>
-								<div class="admin-field">
-									<label for={`checkbox-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_checkbox()}</label
-									>
-									<select
-										id={`checkbox-${item._key}`}
-										class="admin-select"
-										bind:value={item.checkbox_mode}
-										disabled={!canWriteSettings}
-									>
-										<option value="none">{$LL.admin_consent_policies_checkbox_none()}</option>
-										<option value="required"
-											>{$LL.admin_consent_policies_requirement_required()}</option
-										>
-										<option value="optional"
-											>{$LL.admin_consent_policies_requirement_optional()}</option
-										>
-									</select>
-								</div>
-								<div class="admin-field">
 									<label for={`order-${item._key}`} class="admin-field__label"
 										>{$LL.admin_consent_policies_order()}</label
 									>
@@ -678,67 +622,6 @@
 										type="number"
 										bind:value={item.display_order}
 										disabled={!canWriteSettings}
-									/>
-								</div>
-								<div class="admin-field">
-									<label for={`binding-type-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_binding()}</label
-									>
-									<select
-										id={`binding-type-${item._key}`}
-										class="admin-select"
-										bind:value={item.binding_type}
-										disabled={!canWriteSettings}
-									>
-										<option value="">{$LL.admin_consent_policies_binding_none()}</option>
-										<option value="scope">{$LL.admin_consent_policies_binding_scope()}</option>
-										<option value="claim">{$LL.admin_consent_policies_binding_claim()}</option>
-										<option value="saml_attribute"
-											>{$LL.admin_consent_policies_binding_saml_attribute()}</option
-										>
-										<option value="destination_field_set"
-											>{$LL.admin_consent_policies_binding_destination_field_set()}</option
-										>
-									</select>
-								</div>
-								<div class="admin-field">
-									<label for={`binding-value-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_binding_value()}</label
-									>
-									<input
-										id={`binding-value-${item._key}`}
-										class="admin-input"
-										bind:value={item.binding_value}
-										disabled={!canWriteSettings}
-									/>
-								</div>
-								<div class="admin-field">
-									<label for={`evidence-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_evidence()}</label
-									>
-									<input
-										id={`evidence-${item._key}`}
-										class="admin-input"
-										bind:value={item.evidence_profile}
-										disabled={!canWriteSettings}
-									/>
-								</div>
-								<div class="admin-field">
-									<label for={`fallback-${item._key}`} class="admin-field__label"
-										>{$LL.admin_consent_policies_fallback()}</label
-									>
-									<input
-										id={`fallback-${item._key}`}
-										class="admin-input"
-										bind:value={item.language_fallback}
-										disabled={!canWriteSettings}
-									/>
-								</div>
-								<div class="admin-field admin-field--toggle">
-									<ToggleSwitch
-										bind:checked={item.checkbox_default_checked}
-										disabled={!canWriteSettings}
-										label={$LL.admin_consent_policies_checkbox_checked_default()}
 									/>
 								</div>
 							</div>
@@ -1149,11 +1032,6 @@
 
 	.admin-field--full {
 		grid-column: 1 / -1;
-	}
-
-	.admin-field--toggle {
-		align-self: center;
-		min-height: var(--control-height, 40px);
 	}
 
 	.admin-field__label {

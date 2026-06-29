@@ -11,6 +11,7 @@
 		type GraphNodeType,
 		canEditFlow
 	} from '$lib/api/admin-flows';
+	import { isLegacyPreviewFlowId } from '$lib/api/legacy-flow-preview';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { FlowCanvas, NodePalette, NodeConfigModal } from '$lib/components/flow-designer';
 	import { getFlowNodeMetadata } from '$lib/components/flow-designer/flow-node-metadata';
@@ -31,6 +32,7 @@
 	let configModalNodeId = $state<string | null>(null);
 
 	const flowId = $derived($page.params.id ?? '');
+	const flowIsPreview = $derived.by(() => (flow ? isLegacyPreviewFlowId(flow.id) : false));
 	const configModalNode = $derived(
 		configModalNodeId ? nodes.find((n) => n.id === configModalNodeId) || null : null
 	);
@@ -424,6 +426,9 @@
 					</button>
 					<div class="flow-edit-header-info">
 						<h1>Edit: {flow.name}</h1>
+						{#if flowIsPreview}
+							<span class="preview-badge">Preview only</span>
+						{/if}
 						{#if hasChanges}
 							<span class="unsaved-badge">Unsaved changes</span>
 						{/if}
@@ -446,6 +451,15 @@
 				<div class="error-banner">
 					<span>{saveError}</span>
 					<button type="button" onclick={() => (saveError = '')}>Dismiss</button>
+				</div>
+			{/if}
+
+			{#if flowIsPreview}
+				<div class="warning-banner">
+					<span>
+						This is a legacy preview flow. You can inspect and experiment with the old designer, but
+						changes are not connected to runtime execution.
+					</span>
 				</div>
 			{/if}
 
@@ -606,6 +620,18 @@
 		border-radius: var(--status-badge-radius, 999px);
 		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 		color: var(--color-warning);
+		font-size: 0.75rem;
+		font-weight: 800;
+	}
+
+	.preview-badge {
+		display: inline-flex;
+		align-items: center;
+		min-height: 24px;
+		padding: 0 9px;
+		border-radius: var(--status-badge-radius, 999px);
+		background: color-mix(in srgb, var(--color-info, var(--color-accent)) 14%, transparent);
+		color: var(--color-info, var(--color-accent));
 		font-size: 0.75rem;
 		font-weight: 800;
 	}

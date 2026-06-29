@@ -12,6 +12,8 @@ interface AutoMapEndpoint {
 	labelText: string;
 	searchText: string;
 	type: string | null;
+	fieldRefText: string;
+	semanticKeys: Set<string>;
 }
 
 interface AutoMapFieldCandidate {
@@ -846,7 +848,13 @@ export function suggestAutoMapConnections(input: {
 			if (existing.has(`${from.node.id}->${to.node.id}`)) continue;
 			const scored = scoreCandidate(from, to);
 			if (!scored) continue;
-			if (ambiguousKeys.has(scored.fieldKey) && !isExactSameLabel(from, to)) continue;
+			if (
+				ambiguousKeys.has(scored.fieldKey) &&
+				!isExactSameLabel(from, to) &&
+				!hasStrongSharedSemanticKey(from, to, scored.fieldKey)
+			) {
+				continue;
+			}
 			candidates.push({
 				fromId: from.node.id,
 				toId: to.node.id,
@@ -895,6 +903,9 @@ function scoreCandidate(
 		const toScore = semanticEndpointScore(to, field);
 		if (fromScore === 0 || toScore === 0) continue;
 		const score = fromScore + toScore + typeScore(from, to);
+		if (isAmbiguousPersonNameField(field.key) && !isExactSameLabel(from, to) && score < 248) {
+			continue;
+		}
 		if (!best || score > best.score) {
 			best = {
 				score,
@@ -941,7 +952,9 @@ function ambiguousFieldKeys(endpoints: AutoMapEndpoint[]): Set<string> {
 	const byField = new Map<string, AutoMapEndpoint[]>();
 	for (const endpoint of endpoints) {
 		for (const field of AUTO_MAP_FIELD_CANDIDATES) {
-			if (field.key !== 'phone_number') continue;
+			if (!['phone_number', 'name'].includes(field.key)) {
+				continue;
+			}
 			if (semanticEndpointScore(endpoint, field) < 112 && !isPhoneLikeEndpoint(endpoint)) continue;
 			byField.set(field.key, [...(byField.get(field.key) ?? []), endpoint]);
 		}
@@ -955,6 +968,23 @@ function ambiguousFieldKeys(endpoints: AutoMapEndpoint[]): Set<string> {
 
 function isExactSameLabel(from: AutoMapEndpoint, to: AutoMapEndpoint): boolean {
 	return Boolean(from.labelText && from.labelText === to.labelText);
+}
+
+function hasStrongSharedSemanticKey(
+	from: AutoMapEndpoint,
+	to: AutoMapEndpoint,
+	fieldKey: string
+): boolean {
+	if (!from.semanticKeys.has(fieldKey) || !to.semanticKeys.has(fieldKey)) return false;
+	return (
+		from.labelText === to.labelText ||
+		from.fieldRefText === to.fieldRefText ||
+		from.searchText === to.searchText
+	);
+}
+
+function isAmbiguousPersonNameField(fieldKey: string): boolean {
+	return fieldKey === 'name';
 }
 
 function isPhoneLikeEndpoint(endpoint: AutoMapEndpoint): boolean {
@@ -978,6 +1008,9 @@ function semanticEndpointScore(endpoint: AutoMapEndpoint, field: AutoMapFieldCan
 	}
 	for (const alias of aliases) {
 		if (endpoint.searchText === alias) return 112;
+	}
+	for (const alias of aliases) {
+		if (endpoint.fieldRefText === alias) return 120;
 	}
 	for (const alias of aliases) {
 		if (shouldUseSubstringAlias(alias) && endpoint.labelText.includes(alias)) return 104;
@@ -1010,16 +1043,51 @@ function typeScore(from: AutoMapEndpoint, to: AutoMapEndpoint): number {
 }
 
 function nodeToEndpoint(node: MappingNode): AutoMapEndpoint {
+	const fieldRefValues = [
+		node.fieldRef?.namespace,
+		node.fieldRef?.path,
+		node.fieldRef?.catalogEntryId
+	].filter(Boolean);
+	const searchText = normalizeText(
+		[
+			node.label,
+			node.caption,
+			node.type,
+			node.storageTarget,
+			node.uiGroupKey,
+			node.uiGroupLabel,
+			...fieldRefValues
+		]
+			.filter(Boolean)
+			.join(' ')
+	);
+	const fieldRefText = normalizeText(fieldRefValues.join(' '));
+	const semanticKeys = new Set(
+		AUTO_MAP_FIELD_CANDIDATES.filter(
+			(field) => semanticEndpointScoreRaw(searchText, fieldRefText, field) >= 112
+		).map((field) => field.key)
+	);
 	return {
 		node,
 		labelText: normalizeText(node.label),
-		searchText: normalizeText(
-			[node.label, node.caption, node.type, node.storageTarget, node.uiGroupKey, node.uiGroupLabel]
-				.filter(Boolean)
-				.join(' ')
-		),
-		type: normalizeType(node.type)
+		searchText,
+		type: normalizeType(node.type),
+		fieldRefText,
+		semanticKeys
 	};
+}
+
+function semanticEndpointScoreRaw(
+	searchText: string,
+	fieldRefText: string,
+	field: AutoMapFieldCandidate
+): number {
+	const aliases = [field.key, field.label, ...field.aliases].map(normalizeText).filter(Boolean);
+	if (aliases.some((alias) => searchText === alias)) return 112;
+	if (aliases.some((alias) => fieldRefText === alias)) return 120;
+	if (aliases.some((alias) => shouldUseSubstringAlias(alias) && searchText.includes(alias)))
+		return 96;
+	return 0;
 }
 
 function normalizeText(value: string | undefined): string {

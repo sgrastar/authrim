@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { formatDate, formatRelativeTime } from './date';
+import { formatDate, formatRelativeTime, normalizeTimestampToMillis } from './date';
 
 describe('date utilities', () => {
 	describe('formatDate', () => {
@@ -22,6 +22,24 @@ describe('date utilities', () => {
 		it('handles ISO date format', () => {
 			const result = formatDate('2024-06-01T14:00:00.000Z');
 			expect(result).not.toBe('-');
+		});
+	});
+
+	describe('normalizeTimestampToMillis', () => {
+		it('returns null for empty or invalid values', () => {
+			expect(normalizeTimestampToMillis(null)).toBeNull();
+			expect(normalizeTimestampToMillis(undefined)).toBeNull();
+			expect(normalizeTimestampToMillis(0)).toBeNull();
+			expect(normalizeTimestampToMillis(-1)).toBeNull();
+			expect(normalizeTimestampToMillis(Number.NaN)).toBeNull();
+		});
+
+		it('converts Unix seconds to milliseconds', () => {
+			expect(normalizeTimestampToMillis(1_782_323_761)).toBe(1_782_323_761_000);
+		});
+
+		it('keeps millisecond timestamps unchanged', () => {
+			expect(normalizeTimestampToMillis(1_782_323_761_845)).toBe(1_782_323_761_845);
 		});
 	});
 

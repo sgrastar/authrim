@@ -1,7 +1,9 @@
 import { buildDiagnosticHeaders, type APIError } from '$lib/api/client';
 import { authrimFetch } from '$lib/authrim/fetch';
 import type {
+	AuthenticationResponseJSON,
 	PublicKeyCredentialCreationOptionsJSON,
+	PublicKeyCredentialRequestOptionsJSON,
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
 
@@ -16,6 +18,15 @@ export type AccountProfile = {
 	family_name: string | null;
 	locale: string | null;
 	picture: string | null;
+};
+
+export type AccountProfileSession = {
+	id: string;
+	created_at: number;
+	expires_at: number;
+	auth_time: number;
+	acr?: string;
+	amr?: string[];
 };
 
 export type AccountSession = {
@@ -147,7 +158,7 @@ export const accountAPI = {
 		),
 
 	getProfile: () =>
-		accountFetch<{ profile: AccountProfile; session: Record<string, unknown> }>(
+		accountFetch<{ profile: AccountProfile; session: AccountProfileSession }>(
 			'/api/account/profile'
 		),
 
@@ -158,6 +169,56 @@ export const accountAPI = {
 		}),
 
 	getCapabilities: () => accountFetch<AccountCapabilities>('/api/account/capabilities'),
+
+	createPasskeyReauthOptions: () =>
+		accountFetch<{ options: PublicKeyCredentialRequestOptionsJSON; challenge_id: string }>(
+			'/api/account/reauth/passkey/options',
+			{
+				method: 'POST',
+				body: JSON.stringify({})
+			}
+		),
+
+	completePasskeyReauth: (challengeId: string, credential: AuthenticationResponseJSON) =>
+		accountFetch<{
+			ok: boolean;
+			reauth: {
+				authenticated_at: number;
+				expires_at: number;
+				methods: string[];
+			};
+		}>('/api/account/reauth/passkey/complete', {
+			method: 'POST',
+			body: JSON.stringify({
+				challenge_id: challengeId,
+				credential
+			})
+		}),
+
+	sendEmailCodeReauth: () =>
+		accountFetch<{ challenge_id: string; expires_in: number; masked_email: string }>(
+			'/api/account/reauth/email-code/send',
+			{
+				method: 'POST',
+				body: JSON.stringify({})
+			}
+		),
+
+	completeEmailCodeReauth: (challengeId: string, code: string) =>
+		accountFetch<{
+			ok: boolean;
+			reauth: {
+				authenticated_at: number;
+				expires_at: number;
+				methods: string[];
+			};
+		}>('/api/account/reauth/email-code/complete', {
+			method: 'POST',
+			body: JSON.stringify({
+				challenge_id: challengeId,
+				code
+			})
+		}),
 
 	getSessions: () => accountFetch<{ sessions: AccountSession[] }>('/api/account/sessions'),
 
