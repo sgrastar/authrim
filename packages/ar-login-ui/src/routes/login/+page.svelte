@@ -420,8 +420,7 @@
 				throw new Error(getApiErrorMessage(optionsError));
 			}
 
-			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-			const credential = await startAuthentication({ optionsJSON: optionsData!.options as any });
+			const credential = await startAuthentication({ optionsJSON: optionsData!.options });
 
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin({
 				challengeId: optionsData!.challengeId,
@@ -596,7 +595,7 @@
 			if (optionsError || !optionsData) {
 				throw new Error(optionsError ? getApiErrorMessage(optionsError) : $LL.error_unknown());
 			}
-			const credential = await startRegistration({ optionsJSON: optionsData.options as any });
+			const credential = await startRegistration({ optionsJSON: optionsData.options });
 			const { data, error: verifyError } = await directoryPasswordAPI.migrationPasskeyVerify({
 				transactionId: directoryMigrationTransaction.transactionId,
 				transactionToken: directoryMigrationTransaction.transactionToken,

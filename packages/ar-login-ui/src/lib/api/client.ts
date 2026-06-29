@@ -12,6 +12,10 @@ import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
 } from '$lib/authrim/storage-keys';
+import type {
+	PublicKeyCredentialCreationOptionsJSON,
+	PublicKeyCredentialRequestOptionsJSON
+} from '@simplewebauthn/browser';
 
 interface ApiFetchOptions extends RequestInit {
 	baseUrl?: string;
@@ -759,7 +763,10 @@ export const passkeyAPI = {
 		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
+		const response = await apiFetch<{
+			options: PublicKeyCredentialCreationOptionsJSON;
+			challenge_id: string;
+		}>(
 			'/api/v1/auth/direct/passkey/signup/start',
 			{
 				method: 'POST',
@@ -788,7 +795,10 @@ export const passkeyAPI = {
 				error: undefined
 			};
 		}
-		return response as { data?: { options: unknown; userId: string }; error?: APIError };
+		return response as {
+			data?: { options: PublicKeyCredentialCreationOptionsJSON; userId: string };
+			error?: APIError;
+		};
 	},
 
 	/**
@@ -873,7 +883,10 @@ export const passkeyAPI = {
 		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
+		const response = await apiFetch<{
+			options: PublicKeyCredentialRequestOptionsJSON;
+			challenge_id: string;
+		}>(
 			'/api/v1/auth/direct/passkey/login/start',
 			{
 				method: 'POST',
@@ -900,7 +913,10 @@ export const passkeyAPI = {
 				error: undefined
 			};
 		}
-		return response as { data?: { options: unknown; challengeId: string }; error?: APIError };
+		return response as {
+			data?: { options: PublicKeyCredentialRequestOptionsJSON; challengeId: string };
+			error?: APIError;
+		};
 	},
 
 	/**
@@ -1167,7 +1183,10 @@ export const directoryPasswordAPI = {
 		transactionToken: string;
 		displayName?: string;
 	}) {
-		return apiFetch<{ challenge_id: string; options: unknown }>(
+		return apiFetch<{
+			challenge_id: string;
+			options: PublicKeyCredentialCreationOptionsJSON;
+		}>(
 			'/api/auth/directory-password/migration/passkey/options',
 			{
 				method: 'POST',
