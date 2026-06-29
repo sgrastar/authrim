@@ -745,21 +745,6 @@
 		color: var(--color-warning);
 	}
 
-	.table-wrap {
-		overflow-x: auto;
-		margin-top: 1rem;
-	}
-
-	.compact-table {
-		margin-top: 0.75rem;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
 	th,
 	td {
 		border-bottom: 1px solid var(--color-border);

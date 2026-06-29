@@ -1386,7 +1386,7 @@
 	<title>{$LL.admin_consent_templates_page_title()}</title>
 </svelte:head>
 
-<AdminPageShell width="wide">
+<AdminPageShell>
 	<div class="template-page">
 		{#if loadingStatement}
 			<div class="loading-state">

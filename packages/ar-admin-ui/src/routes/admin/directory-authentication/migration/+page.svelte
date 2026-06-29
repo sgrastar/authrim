@@ -735,16 +735,6 @@
 		resize: vertical;
 	}
 
-	.table-wrap {
-		overflow-x: auto;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
 	th,
 	td {
 		border-bottom: 1px solid var(--color-border);
