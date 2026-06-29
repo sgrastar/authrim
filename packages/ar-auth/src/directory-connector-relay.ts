@@ -496,6 +496,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       displayName: sanitizeRelayMetadata(message.display_name),
       transport: 'relay',
       version: sanitizeRelayMetadata(message.version) || 'unknown',
+      releaseChannel: sanitizeRelayReleaseChannel(message.release_channel),
       startedAt: validISODate(message.started_at) ? message.started_at! : new Date().toISOString(),
       healthStatus: 'healthy',
       healthSummary: { relay: 'authenticated' },
@@ -1290,6 +1291,11 @@ function sanitizeRelayMetadata(value: unknown): string | undefined {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return undefined;
   return raw.slice(0, MAX_RELAY_METADATA_FIELD_LENGTH);
+}
+
+function sanitizeRelayReleaseChannel(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  return /^[a-zA-Z0-9_.-]{1,32}$/.test(raw) ? raw : 'stable';
 }
 
 function sanitizeRelayFingerprint(value: unknown): string {

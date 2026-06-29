@@ -95,7 +95,6 @@
 	let selectedPolicySide = $state<MappingSide | null>(null);
 	let policyOperationBusy = $state(false);
 	let policyOperationStatus = $state<string | null>(null);
-	let confirmRollbackFieldMappingSetId = $state<string | null>(null);
 	let confirmDeleteFieldMappingSetId = $state<string | null>(null);
 	let sourceProfileCount = $state(0);
 	let sourceProfileSchemaCount = $state(0);
@@ -149,7 +148,8 @@
 		selectedFieldMappingVersion?.latestSnapshot?.id ?? null
 	);
 	const selectedFieldMappingActive = $derived(
-		selectedFieldMappingVersion?.lifecycleState === 'active' ||
+		selectedFieldMappingSetSummary?.lifecycleState === 'active' ||
+			selectedFieldMappingVersion?.lifecycleState === 'active' ||
 			selectedFieldMappingVersion?.latestSnapshot?.lifecycleState === 'active'
 	);
 	const policyNameConflict = $derived(findPolicyNameConflict(policyDisplayName));
@@ -224,7 +224,16 @@
 		}
 		if (appliedRoutePolicyOptionId === routePolicyOptionId) return;
 		selectedFieldMappingSetId = $page.url.searchParams.get('policyId');
-		selectedFieldMappingVersionId = $page.url.searchParams.get('versionId');
+		selectedFieldMappingVersionId =
+			selectedFieldMappingSetId && routePolicySide
+				? (preferredVersionForPolicySide(selectedFieldMappingSetId, routePolicySide)?.id ?? null)
+				: null;
+		const selectedPolicy = fieldMappingSetSummaries.find(
+			(policy) => policy.id === selectedFieldMappingSetId
+		);
+		if (selectedPolicy && !policyDisplayNameTouched) {
+			policyDisplayName = selectedPolicy.displayName;
+		}
 		appliedRoutePolicyOptionId = routePolicyOptionId;
 		resetEditorDraft();
 	});
@@ -241,7 +250,7 @@
 	});
 
 	$effect(() => {
-		if (!showPolicySaveControl || policyDisplayNameTouched) return;
+		if (!showPolicySaveControl || policyDisplayNameTouched || selectedFieldMappingSetId) return;
 		const selectedProfileTitle =
 			editSide === 'source'
 				? sourceProfileOptions.find((option) => option.id === selectedSourceProfileId)?.title
@@ -359,10 +368,11 @@
 
 	function routePolicyOptionIdFromSearchParams(): string | null {
 		const policyId = $page.url.searchParams.get('policyId');
-		const versionId = $page.url.searchParams.get('versionId');
 		const direction = routeSideFromSearchParams();
-		if (!policyId || !versionId || !direction) return null;
-		return `${policyId}:${versionId}:${direction}`;
+		if (!policyId || !direction) return null;
+		const version = preferredVersionForPolicySide(policyId, direction);
+		if (!version) return null;
+		return `${policyId}:${version.id}:${direction}`;
 	}
 
 	function selectedFieldMappingOptionIdFromState(): string | null {
@@ -370,17 +380,6 @@
 			return null;
 		}
 		return `${selectedFieldMappingSetId}:${selectedFieldMappingVersionId}:${selectedPolicySide}`;
-	}
-
-	function selectFieldMappingVersion(event: Event) {
-		const versionId = (event.currentTarget as HTMLSelectElement).value || null;
-		if (versionId === selectedFieldMappingVersionId) return;
-		if (!confirmDiscardEditorDraft()) return;
-		selectedFieldMappingVersionId = versionId;
-		policyOperationStatus = null;
-		confirmRollbackFieldMappingSetId = null;
-		confirmDeleteFieldMappingSetId = null;
-		resetEditorDraft();
 	}
 
 	async function refreshSelectedFieldMappingVersions() {
@@ -391,34 +390,6 @@
 			...fieldMappingVersionsByFieldMappingSetId,
 			[selectedFieldMappingSetId]: versions.fieldMappingVersions
 		};
-	}
-
-	async function publishSelectedFieldMappingVersion() {
-		await runFieldMappingVersionOperation(
-			$LL.admin_identity_mapping_editor_policy_published(),
-			async (policyId, version) => {
-				await adminIdentityMappingAPI.publishFieldMappingVersion(policyId, version.id);
-				if (!version.latestSnapshot?.id) {
-					const catalogVersionId = catalogSummaries.find((catalog) => catalog.versionId)?.versionId;
-					if (!catalogVersionId) {
-						throw new Error($LL.admin_identity_mapping_editor_no_active_catalog());
-					}
-					await adminIdentityMappingAPI.compileFieldMappingVersion(policyId, version.id, {
-						catalogVersionId,
-						metadata: { source: 'admin-ui-edit', triggeredBy: 'publish' }
-					});
-				}
-			}
-		);
-	}
-
-	async function toggleSelectedPolicyActivation(event: Event) {
-		const checked = (event.currentTarget as HTMLInputElement).checked;
-		if (checked) {
-			await activateSelectedFieldMappingVersion();
-		} else {
-			await deactivateSelectedFieldMappingVersion();
-		}
 	}
 
 	async function activateSelectedFieldMappingVersion() {
@@ -437,49 +408,15 @@
 		);
 	}
 
-	async function deactivateSelectedFieldMappingVersion() {
-		await runFieldMappingVersionOperation(
-			$LL.admin_identity_mapping_editor_policy_deactivated(),
-			async (policyId, version) => {
-				await adminIdentityMappingAPI.deactivateFieldMappingVersion(policyId, version.id);
-			}
-		);
-	}
-
-	async function rollbackSelectedPolicy() {
-		if (!selectedFieldMappingSetId) {
-			policyOperationStatus = $LL.admin_identity_mapping_editor_select_policy_version_first();
-			return;
-		}
-		confirmDeleteFieldMappingSetId = null;
-		if (confirmRollbackFieldMappingSetId !== selectedFieldMappingSetId) {
-			confirmRollbackFieldMappingSetId = selectedFieldMappingSetId;
-			policyOperationStatus = $LL.admin_identity_mapping_editor_confirm_rollback_status();
-			return;
-		}
-		policyOperationBusy = true;
-		policyOperationStatus = null;
-		try {
-			await adminIdentityMappingAPI.rollbackFieldMappingSet(selectedFieldMappingSetId);
-			confirmRollbackFieldMappingSetId = null;
-			policyOperationStatus = $LL.admin_identity_mapping_editor_rollback_requested();
-			await refreshSelectedFieldMappingVersions();
-		} catch (error) {
-			policyOperationStatus =
-				error instanceof Error
-					? error.message
-					: $LL.admin_identity_mapping_editor_rollback_failed();
-		} finally {
-			policyOperationBusy = false;
-		}
-	}
-
 	async function deleteSelectedPolicy() {
 		if (!selectedFieldMappingSetId) {
 			policyOperationStatus = $LL.admin_identity_mapping_editor_select_policy_version_first();
 			return;
 		}
-		confirmRollbackFieldMappingSetId = null;
+		if (selectedFieldMappingActive) {
+			policyOperationStatus = $LL.admin_identity_mapping_editor_policy_delete_failed();
+			return;
+		}
 		if (confirmDeleteFieldMappingSetId !== selectedFieldMappingSetId) {
 			confirmDeleteFieldMappingSetId = selectedFieldMappingSetId;
 			policyOperationStatus = $LL.admin_identity_mapping_editor_confirm_delete_status();
@@ -527,10 +464,12 @@
 				throw new Error($LL.admin_identity_mapping_editor_select_policy_version_first());
 			}
 			await operation(policyId, version);
-			confirmRollbackFieldMappingSetId = null;
 			confirmDeleteFieldMappingSetId = null;
 			policyOperationStatus = successMessage;
 			await refreshSelectedFieldMappingVersions();
+			fieldMappingSetSummaries = fieldMappingSetSummaries.map((policy) =>
+				policy.id === policyId ? { ...policy, lifecycleState: 'active' } : policy
+			);
 		} catch (error) {
 			policyOperationStatus =
 				error instanceof Error
@@ -601,19 +540,41 @@
 			policy = createdPolicy.result;
 			fieldMappingSetSummaries = [policy, ...fieldMappingSetSummaries];
 		}
+		const activateAfterSave = policy.lifecycleState === 'active';
 		const version = await adminIdentityMappingAPI.createFieldMappingVersion(policy.id, {
 			versionLabel: draft.versionLabel,
 			compatibilityRange: draft.compatibilityRange,
 			rules: draft.rules
 		});
-		await adminIdentityMappingAPI.compileFieldMappingVersion(policy.id, version.result.id, {
-			catalogVersionId,
-			metadata: {
-				source: 'admin_ui_flow_editor',
-				policyDisplayName: displayName,
-				...draft.metadata
+		const snapshot = await adminIdentityMappingAPI.compileFieldMappingVersion(
+			policy.id,
+			version.result.id,
+			{
+				catalogVersionId,
+				metadata: {
+					source: 'admin_ui_flow_editor',
+					policyDisplayName: displayName,
+					...draft.metadata
+				}
 			}
-		});
+		);
+		if (activateAfterSave) {
+			const snapshotId = typeof snapshot.id === 'string' ? snapshot.id : null;
+			if (!snapshotId) {
+				throw new Error($LL.admin_identity_mapping_editor_policy_operation_failed());
+			}
+			await adminIdentityMappingAPI.activateFieldMappingVersion(policy.id, version.result.id, {
+				snapshotId,
+				activationScope: { kind: 'tenant' }
+			});
+			fieldMappingSetSummaries = fieldMappingSetSummaries.map((candidate) =>
+				candidate.id === policy.id ? { ...candidate, lifecycleState: 'active' } : candidate
+			);
+		}
+		selectedFieldMappingSetId = policy.id;
+		selectedFieldMappingVersionId = version.result.id;
+		selectedPolicySide = editSide;
+		await refreshSelectedFieldMappingVersions();
 		editorHasUnsavedDraftChanges = false;
 	}
 
@@ -658,6 +619,25 @@
 	): boolean {
 		if (!routePolicySide) return false;
 		return routePolicyOptionId === `${policy.id}:${version.id}:${routePolicySide}`;
+	}
+
+	function preferredVersionForPolicySide(
+		policyId: string,
+		side: MappingSide
+	): IdentityMappingFieldMappingVersionSummary | null {
+		const versions = (fieldMappingVersionsByFieldMappingSetId[policyId] ?? []).filter((version) => {
+			const sides = policyVersionSides(version);
+			return side === 'source' ? sides.source : sides.destination;
+		});
+		return (
+			versions.find(
+				(version) =>
+					version.lifecycleState === 'active' || version.latestSnapshot?.lifecycleState === 'active'
+			) ??
+			versions.find((version) => version.latestSnapshot?.id) ??
+			versions[0] ??
+			null
+		);
 	}
 
 	onMount(async () => {
@@ -760,60 +740,29 @@
 				{#if showProfileModeControl}
 					<div class="policy-version-panel">
 						<div class="policy-version-heading">
-							<span>{$LL.admin_identity_mapping_editor_policy_version()}</span>
+							<span>{$LL.admin_identity_mapping_editor_policy_name()}</span>
 							<strong>
 								{selectedFieldMappingSetSummary?.displayName ??
 									$LL.admin_identity_mapping_editor_no_policy_selected()}
 							</strong>
 						</div>
-						<select
-							aria-label={$LL.admin_identity_mapping_editor_policy_version()}
-							value={selectedFieldMappingVersionId ?? ''}
-							onchange={selectFieldMappingVersion}
-							disabled={!selectedFieldMappingSetId ||
-								selectedFieldMappingVersions.length === 0 ||
-								policyOperationBusy}
-						>
-							<option value="" disabled
-								>{$LL.admin_identity_mapping_editor_no_version_selected()}</option
-							>
-							{#each selectedFieldMappingVersions as version (version.id)}
-								<option value={version.id}>{version.versionLabel} / {version.lifecycleState}</option
-								>
-							{/each}
-						</select>
 						<div class="policy-version-actions">
-							<label class="activation-switch">
-								<input
-									type="checkbox"
-									checked={selectedFieldMappingActive}
-									onchange={toggleSelectedPolicyActivation}
-									disabled={!selectedFieldMappingVersion || policyOperationBusy}
-								/>
-								<span aria-hidden="true"></span>
-								<strong>{$LL.admin_identity_mapping_editor_activate()}</strong>
-							</label>
 							<button
 								type="button"
-								onclick={publishSelectedFieldMappingVersion}
-								disabled={!selectedFieldMappingVersion || policyOperationBusy}
+								onclick={activateSelectedFieldMappingVersion}
+								disabled={!selectedFieldMappingVersion ||
+									selectedFieldMappingActive ||
+									policyOperationBusy}
 							>
-								{$LL.admin_identity_mapping_editor_publish()}
-							</button>
-							<button
-								type="button"
-								onclick={rollbackSelectedPolicy}
-								disabled={!selectedFieldMappingSetId || policyOperationBusy}
-							>
-								{confirmRollbackFieldMappingSetId === selectedFieldMappingSetId
-									? $LL.admin_identity_mapping_editor_confirm_rollback()
-									: $LL.admin_identity_mapping_editor_request_rollback()}
+								{$LL.admin_identity_mapping_editor_activate()}
 							</button>
 							<button
 								type="button"
 								class="danger-action"
 								onclick={deleteSelectedPolicy}
-								disabled={!selectedFieldMappingSetId || policyOperationBusy}
+								disabled={!selectedFieldMappingSetId ||
+									selectedFieldMappingActive ||
+									policyOperationBusy}
 							>
 								{confirmDeleteFieldMappingSetId === selectedFieldMappingSetId
 									? $LL.admin_identity_mapping_editor_confirm_delete()
@@ -829,9 +778,11 @@
 										: $LL.admin_identity_mapping_editor_side_not_selected()}
 							</span>
 							<span>
-								{selectedFieldMappingSnapshotId
-									? $LL.admin_identity_mapping_editor_snapshot_ready()
-									: $LL.admin_identity_mapping_editor_no_snapshot()}
+								{selectedFieldMappingActive
+									? (selectedFieldMappingSetSummary?.lifecycleState ?? 'active')
+									: selectedFieldMappingSnapshotId
+										? $LL.admin_identity_mapping_editor_snapshot_ready()
+										: $LL.admin_identity_mapping_editor_no_snapshot()}
 							</span>
 						</div>
 						{#if policyOperationStatus}
@@ -1108,17 +1059,6 @@
 		white-space: nowrap;
 	}
 
-	.policy-version-panel select {
-		min-height: var(--control-height, 36px);
-		padding: var(--control-padding, 0 12px);
-		border: var(--toolbar-control-border, 1px solid var(--color-border));
-		border-radius: var(--toolbar-control-radius, var(--radius-control));
-		color: var(--color-text);
-		background: var(--toolbar-control-bg, var(--color-surface));
-		font-size: 13px;
-		font-weight: 700;
-	}
-
 	.policy-version-actions {
 		display: flex;
 		flex-wrap: wrap;
@@ -1137,8 +1077,7 @@
 		font-weight: 800;
 	}
 
-	.policy-version-actions button:disabled,
-	.policy-version-panel select:disabled {
+	.policy-version-actions button:disabled {
 		cursor: not-allowed;
 		opacity: 0.55;
 	}
@@ -1150,63 +1089,6 @@
 
 	.policy-version-actions .danger-action:not(:disabled):hover {
 		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface-muted));
-	}
-
-	.activation-switch {
-		display: inline-flex;
-		align-items: center;
-		gap: 7px;
-		color: var(--color-text);
-		font-size: 12px;
-		font-weight: 800;
-		cursor: pointer;
-	}
-
-	.activation-switch input {
-		position: absolute;
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.activation-switch span {
-		position: relative;
-		width: 34px;
-		height: 20px;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		background: var(--color-surface-muted);
-		transition:
-			background 120ms ease,
-			border-color 120ms ease;
-	}
-
-	.activation-switch span::after {
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 14px;
-		height: 14px;
-		border-radius: 999px;
-		background: var(--color-text-muted);
-		content: '';
-		transition:
-			background 120ms ease,
-			transform 120ms ease;
-	}
-
-	.activation-switch input:checked + span {
-		border-color: color-mix(in srgb, var(--color-success) 65%, var(--color-border));
-		background: color-mix(in srgb, var(--color-success) 20%, transparent);
-	}
-
-	.activation-switch input:checked + span::after {
-		background: var(--color-success);
-		transform: translateX(14px);
-	}
-
-	.activation-switch input:focus-visible + span {
-		outline: 2px solid var(--color-accent);
-		outline-offset: 2px;
 	}
 
 	.policy-version-meta {

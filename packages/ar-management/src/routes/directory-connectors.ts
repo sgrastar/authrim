@@ -4,12 +4,14 @@ import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
   acknowledgeDirectoryConnectorEpisode,
+  applyDirectoryConnectorFleetPolicy,
   createAuthContextFromHono,
   createAuditLogFromContext,
   createErrorResponse,
   listDirectoryConnectorEpisodes,
   listDirectoryConnectorInstances,
   markDirectoryConnectorInstanceStatus,
+  refreshDirectoryConnectorDerivedStatuses,
   readResponseTextWithLimit,
   reactivateDirectoryConnectorInstance,
   safeFetch,
@@ -117,6 +119,8 @@ const HeartbeatConnectorSettingsSchema = z
       .max(90)
       .default(DEFAULT_HEARTBEAT_RETENTION_DAYS),
     version_mismatch_policy: z.enum(['warn', 'block']).default('warn'),
+    expected_version: z.string().max(64).default(''),
+    minimum_version: z.string().max(64).default(''),
     unhealthy_threshold: z.number().int().min(1).max(10).default(1),
     stale_detection_grace_ms: z.number().int().min(0).max(86400000).default(0),
   })
@@ -129,6 +133,8 @@ const HeartbeatConnectorSettingsSchema = z
     stale_after_ms: DEFAULT_HEARTBEAT_STALE_AFTER_MS,
     retention_days: DEFAULT_HEARTBEAT_RETENTION_DAYS,
     version_mismatch_policy: 'warn',
+    expected_version: '',
+    minimum_version: '',
     unhealthy_threshold: 1,
     stale_detection_grace_ms: 0,
   });
@@ -299,6 +305,7 @@ function serializeFleetInstance(row: DirectoryConnectorInstanceRow) {
     display_name: row.display_name,
     transport: row.transport,
     version: row.version,
+    release_channel: row.release_channel,
     started_at: row.started_at,
     first_seen_at: row.first_seen_at,
     last_seen_at: row.last_seen_at,
@@ -475,6 +482,8 @@ function redactForAudit(config: DirectoryConnectorsConfig) {
         stale_after_ms: connector.heartbeat.stale_after_ms,
         retention_days: connector.heartbeat.retention_days,
         version_mismatch_policy: connector.heartbeat.version_mismatch_policy,
+        expected_version: connector.heartbeat.expected_version,
+        minimum_version: connector.heartbeat.minimum_version,
         unhealthy_threshold: connector.heartbeat.unhealthy_threshold,
         stale_detection_grace_ms: connector.heartbeat.stale_detection_grace_ms,
       },
@@ -881,16 +890,40 @@ export async function listDirectoryConnectorFleetHandler(c: Context<{ Bindings: 
   const limit = clampPendingLimit(c.req.query('limit'));
   const adapter = coreAdapter(c, tenantId);
   const config = await readConfig(c.env, tenantId);
-  const [instances, episodes] = await Promise.all([
-    listDirectoryConnectorInstances(adapter, tenantId, connectorId),
-    listFleetEpisodes(adapter, tenantId, connectorId, config, limit),
-  ]);
+  let instances = await listDirectoryConnectorInstances(adapter, tenantId, connectorId);
+  const now = Date.now();
+  const refreshed = await refreshDirectoryConnectorDerivedStatuses(
+    adapter,
+    instances,
+    (instance) => fleetPolicyFor(config, instance),
+    now
+  );
+  if (refreshed > 0) {
+    instances = await listDirectoryConnectorInstances(adapter, tenantId, connectorId);
+  }
+  const episodes = await listFleetEpisodes(adapter, tenantId, connectorId, config, limit);
 
   return c.json({
     tenantId,
-    items: instances.map(serializeFleetInstance),
+    items: instances.map((instance) =>
+      serializeFleetInstance(
+        applyDirectoryConnectorFleetPolicy(instance, fleetPolicyFor(config, instance) ?? {}, now)
+      )
+    ),
     episodes: episodes.map(serializeFleetEpisode),
   });
+}
+
+function fleetPolicyFor(config: DirectoryConnectorsConfig, instance: DirectoryConnectorInstanceRow) {
+  const connector = findConnector(config, instance.connector_id);
+  if (!connector) return null;
+  return {
+    staleAfterMs: connector?.heartbeat.stale_after_ms,
+    staleDetectionGraceMs: connector?.heartbeat.stale_detection_grace_ms,
+    versionMismatchPolicy: connector?.heartbeat.version_mismatch_policy,
+    expectedVersion: connector?.heartbeat.expected_version,
+    minimumVersion: connector?.heartbeat.minimum_version,
+  };
 }
 
 async function listFleetEpisodes(

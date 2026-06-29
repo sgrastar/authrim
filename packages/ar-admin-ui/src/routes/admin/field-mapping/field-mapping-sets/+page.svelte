@@ -5,6 +5,7 @@
 		type IdentityMappingFieldMappingVersionSummary,
 		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { adminAdminsAPI, type AdminUser } from '$lib/api/admin-admins';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -15,14 +16,13 @@
 		policy: IdentityMappingFieldMappingSetSummary;
 		version: IdentityMappingFieldMappingVersionSummary;
 		href: string;
-		profileSummary: string;
-		versionSummary: string;
 	}
 
 	let policies = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let fieldMappingVersionsByFieldMappingSetId = $state<
 		Record<string, IdentityMappingFieldMappingVersionSummary[]>
 	>({});
+	let adminUsersByLookupKey = $state<Record<string, AdminUser>>({});
 	let loading = $state(true);
 	let errorMessage = $state<string | null>(null);
 
@@ -34,8 +34,12 @@
 		loading = true;
 		errorMessage = null;
 		try {
-			const policyResult = await adminIdentityMappingAPI.listFieldMappingSets();
+			const [policyResult, adminResult] = await Promise.all([
+				adminIdentityMappingAPI.listFieldMappingSets(),
+				adminAdminsAPI.list({ limit: 200 }).catch(() => null)
+			]);
 			policies = policyResult.fieldMappingSets;
+			adminUsersByLookupKey = buildAdminUserLookup(adminResult?.items ?? []);
 			const versionPairs = await Promise.all(
 				policyResult.fieldMappingSets.map(
 					async (policy) =>
@@ -70,9 +74,7 @@
 					side,
 					policy,
 					version,
-					href: editPolicyHref(policy, version, side),
-					profileSummary: profileSummary(version, side),
-					versionSummary: `${version.versionLabel} / ${version.lifecycleState}`
+					href: editPolicyHref(policy, version, side)
 				} satisfies PolicyListItem;
 			})
 			.filter((item): item is PolicyListItem => item !== null);
@@ -121,12 +123,11 @@
 
 	function editPolicyHref(
 		policy: IdentityMappingFieldMappingSetSummary,
-		version: IdentityMappingFieldMappingVersionSummary,
+		_version: IdentityMappingFieldMappingVersionSummary,
 		side: PolicySide
 	): string {
 		const params = new URLSearchParams({
 			policyId: policy.id,
-			versionId: version.id,
 			direction: side
 		});
 		return `/admin/field-mapping/edit?${params.toString()}`;
@@ -137,23 +138,42 @@
 		return `/admin/field-mapping/edit?${params.toString()}`;
 	}
 
-	function profileSummary(
-		version: IdentityMappingFieldMappingVersionSummary,
-		side: PolicySide
-	): string {
-		const count =
-			side === 'source'
-				? (version.sourceProfileIds?.length ?? 0)
-				: (version.destinationProfileIds?.length ?? 0);
-		return side === 'source'
-			? $LL.admin_identity_mapping_source_profile_count({
-					count,
-					plural: count === 1 ? '' : 's'
-				})
-			: $LL.admin_identity_mapping_destination_profile_count({
-					count,
-					plural: count === 1 ? '' : 's'
-				});
+	function formatPolicyDateTime(value: number | string | null | undefined): string {
+		if (value === null || value === undefined || value === '') {
+			return '-';
+		}
+		const date = new Date(typeof value === 'number' ? value : value);
+		if (Number.isNaN(date.getTime())) {
+			return '-';
+		}
+		return new Intl.DateTimeFormat(undefined, {
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(date);
+	}
+
+	function buildAdminUserLookup(users: AdminUser[]): Record<string, AdminUser> {
+		const entries = users.flatMap((user) => [
+			[user.id, user] as const,
+			[user.email, user] as const
+		]);
+		return Object.fromEntries(entries);
+	}
+
+	function adminUserDisplayName(user: AdminUser): string {
+		return user.name?.trim() || user.email || '-';
+	}
+
+	function policyUpdatedBy(version: IdentityMappingFieldMappingVersionSummary): string {
+		const authorId = version.authorId?.trim();
+		if (!authorId) {
+			return '-';
+		}
+		const adminUser = adminUsersByLookupKey[authorId];
+		return adminUser ? adminUserDisplayName(adminUser) : '-';
 	}
 </script>
 
@@ -199,9 +219,22 @@
 							<div class="policy-list">
 								{#each sourcePolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
 									<a class="policy-item" href={item.href}>
-										<div>
+										<div class="policy-main">
 											<h4>{item.policy.displayName}</h4>
-											<span>{item.policy.description ?? item.profileSummary}</span>
+											<dl class="policy-audit-list">
+												<div>
+													<dt>{$LL.admin_user_detail_created_at()}</dt>
+													<dd>{formatPolicyDateTime(item.policy.createdAt)}</dd>
+												</div>
+												<div>
+													<dt>{$LL.admin_user_detail_updated_at()}</dt>
+													<dd>{formatPolicyDateTime(item.policy.updatedAt)}</dd>
+												</div>
+												<div>
+													<dt>{$LL.admin_database_connections_updated_by()}</dt>
+													<dd>{policyUpdatedBy(item.version)}</dd>
+												</div>
+											</dl>
 										</div>
 										<div class="policy-meta">
 											<span
@@ -209,7 +242,6 @@
 												class:active={item.policy.lifecycleState === 'active'}
 												>{item.policy.lifecycleState}</span
 											>
-											<span>{item.versionSummary}</span>
 										</div>
 									</a>
 								{/each}
@@ -238,9 +270,22 @@
 							<div class="policy-list">
 								{#each destinationPolicyItems as item (`${item.side}-${item.policy.id}-${item.version?.id ?? 'latest'}`)}
 									<a class="policy-item" href={item.href}>
-										<div>
+										<div class="policy-main">
 											<h4>{item.policy.displayName}</h4>
-											<span>{item.policy.description ?? item.profileSummary}</span>
+											<dl class="policy-audit-list">
+												<div>
+													<dt>{$LL.admin_user_detail_created_at()}</dt>
+													<dd>{formatPolicyDateTime(item.policy.createdAt)}</dd>
+												</div>
+												<div>
+													<dt>{$LL.admin_user_detail_updated_at()}</dt>
+													<dd>{formatPolicyDateTime(item.policy.updatedAt)}</dd>
+												</div>
+												<div>
+													<dt>{$LL.admin_database_connections_updated_by()}</dt>
+													<dd>{policyUpdatedBy(item.version)}</dd>
+												</div>
+											</dl>
 										</div>
 										<div class="policy-meta">
 											<span
@@ -248,7 +293,6 @@
 												class:active={item.policy.lifecycleState === 'active'}
 												>{item.policy.lifecycleState}</span
 											>
-											<span>{item.versionSummary}</span>
 										</div>
 									</a>
 								{/each}
@@ -282,7 +326,7 @@
 		line-height: 1.25;
 	}
 
-	.policy-item span,
+	.policy-audit-list,
 	.column-empty {
 		color: var(--color-text-muted);
 		font-size: 13px;
@@ -394,14 +438,49 @@
 	}
 
 	.policy-item h4,
-	.policy-item span {
+	.policy-audit-list dd {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
+	.policy-main {
+		min-width: 0;
+	}
+
+	.policy-audit-list {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 8px 16px;
+		margin: 8px 0 0;
+	}
+
+	.policy-audit-list div {
+		min-width: 0;
+		display: grid;
+		gap: 2px;
+	}
+
+	.policy-audit-list dt,
+	.policy-audit-list dd {
+		margin: 0;
+	}
+
+	.policy-audit-list dt {
+		color: var(--color-text-muted);
+		font-size: 10px;
+		font-weight: 800;
+		letter-spacing: 0;
+		text-transform: uppercase;
+	}
+
+	.policy-audit-list dd {
+		color: var(--color-text);
+		font-size: 12px;
+	}
+
 	.policy-meta {
-		min-width: 142px;
+		min-width: 80px;
 		display: grid;
 		justify-items: end;
 		gap: 6px;
@@ -430,6 +509,10 @@
 	@media (max-width: 900px) {
 		.policy-item {
 			display: grid;
+		}
+
+		.policy-audit-list {
+			grid-template-columns: 1fr;
 		}
 
 		.policy-meta {

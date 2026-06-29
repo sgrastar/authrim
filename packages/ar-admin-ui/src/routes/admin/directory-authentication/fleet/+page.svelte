@@ -8,6 +8,7 @@
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import DirectoryAuthenticationTabs from '../DirectoryAuthenticationTabs.svelte';
 
 	let loading = $state(true);
 	let actionInstanceId = $state('');
@@ -65,9 +66,7 @@
 			episodes = response.episodes;
 		} catch (err) {
 			error =
-				err instanceof Error
-					? err.message
-					: $LL.admin_directory_authentication_fleet_load_failed();
+				err instanceof Error ? err.message : $LL.admin_directory_authentication_fleet_load_failed();
 			instances = [];
 			episodes = [];
 		} finally {
@@ -123,10 +122,11 @@
 </svelte:head>
 
 {#snippet headerActions()}
-	<a class="btn btn-secondary" href="/admin/directory-authentication">
-		{$LL.admin_directory_authentication_back_to_settings()}
-	</a>
-	<button class="btn btn-primary" disabled={loading || !tenantId} onclick={() => loadFleet(tenantId)}>
+	<button
+		class="btn btn-primary"
+		disabled={loading || !tenantId}
+		onclick={() => loadFleet(tenantId)}
+	>
 		{$LL.admin_directory_authentication_pending_refresh()}
 	</button>
 {/snippet}
@@ -137,6 +137,8 @@
 		description={$LL.admin_directory_authentication_fleet_description()}
 		actions={headerActions}
 	/>
+
+	<DirectoryAuthenticationTabs active="fleet" />
 
 	{#if error}
 		<div class="alert alert--error">{error}</div>
@@ -164,6 +166,7 @@
 									<code>{instance.instance_id}</code>
 									<span>{instance.transport}</span>
 									<span>{instance.version}</span>
+									<span>{instance.release_channel}</span>
 								</p>
 							</div>
 							<span class={`status-pill status-pill--${instance.status}`}>

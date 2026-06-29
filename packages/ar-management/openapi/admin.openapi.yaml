@@ -4662,6 +4662,7 @@ paths:
                       binding_type:
                         type: string
                         enum:
+                          - subject
                           - scope
                           - claim
                           - saml_attribute
@@ -16751,6 +16752,958 @@ paths:
             type: string
       requestBody:
         $ref: '#/components/requestBodies/TenantDirectoryConnectorsUpdate'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/overview':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthOverview
+      summary: Get directory authentication overview
+      description: Returns migration, compliance, support bundle, and managed connector advisory summaries for Authrim Wordwarden.
+      responses:
+        '200':
+          description: Directory authentication overview.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/policy':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthPolicy
+      summary: Get directory authentication tenant policy
+      description: Returns tenant-level Directory Authentication policy, including the default Email Code fallback mode inherited by migration campaigns that use tenant_default.
+      responses:
+        '200':
+          description: Directory authentication tenant policy.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Tenants
+      operationId: putApiAdminTenantsByTenantIdDirectoryAuthPolicy
+      summary: Update directory authentication tenant policy
+      description: Updates tenant-level Directory Authentication policy. Campaigns can still explicitly override the fallback mode through the migration campaign API.
+      responses:
+        '200':
+          description: Directory authentication tenant policy updated.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - email_code_fallback_mode
+              properties:
+                email_code_fallback_mode:
+                  type: string
+                  enum:
+                    - migration_recovery
+                    - directory_unavailable_recovery
+                    - admin_invitation_only
+                    - login_method
+                    - disabled
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/migration/campaigns':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthMigrationCampaigns
+      summary: List directory migration campaigns
+      description: Lists passwordless migration campaigns. A disabled template campaign may be seeded but does not start migration until enabled and assigned.
+      responses:
+        '200':
+          description: Directory migration campaigns.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryAuthMigrationCampaigns
+      summary: Create a directory migration campaign
+      description: Creates a migration campaign. New campaigns are normally created disabled and remain inert until enabled and assigned. Tenant-scoped admins need the directory authentication migration write permission.
+      responses:
+        '201':
+          description: Directory migration campaign created.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/migration/campaigns/{campaignId}':
+    patch:
+      tags:
+        - Tenants
+      operationId: patchApiAdminTenantsByTenantIdDirectoryAuthMigrationCampaignsByCampaignId
+      summary: Update a directory migration campaign
+      description: Updates campaign policy, status, prompt mode, fallback mode, grace period, or target policy. Tenant-scoped admins need the directory authentication migration write permission.
+      responses:
+        '200':
+          description: Directory migration campaign updated.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/migration/user-states':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthMigrationUserStates
+      summary: List directory migration user states
+      description: Lists per-user migration states for explicit migration campaigns.
+      responses:
+        '200':
+          description: Directory migration user states.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - tenantId
+                  - items
+                properties:
+                  tenantId:
+                    type: string
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - tenant_id
+                        - campaign_id
+                        - state
+                        - created_at
+                        - updated_at
+                      properties:
+                        id:
+                          type: string
+                        tenant_id:
+                          type: string
+                        campaign_id:
+                          type: string
+                        user_id:
+                          type: string
+                          nullable: true
+                        connector_id:
+                          type: string
+                          nullable: true
+                        directory_subject:
+                          type: string
+                          nullable: true
+                        cohort_key:
+                          type: string
+                          nullable: true
+                        state:
+                          type: string
+                          enum:
+                            - not_applicable
+                            - eligible
+                            - prompted
+                            - deferred
+                            - passkey_required
+                            - enrolled
+                            - blocked
+                            - recovered
+                        first_directory_login_at:
+                          type: integer
+                          nullable: true
+                        prompted_at:
+                          type: integer
+                          nullable: true
+                        deferred_until:
+                          type: integer
+                          nullable: true
+                        passkey_required_at:
+                          type: integer
+                          nullable: true
+                        enrolled_at:
+                          type: integer
+                          nullable: true
+                        blocked_reason:
+                          type: string
+                          nullable: true
+                        recovery_reason:
+                          type: string
+                          nullable: true
+                        reset_count:
+                          type: integer
+                        last_reset_at:
+                          type: integer
+                          nullable: true
+                        last_reset_by:
+                          type: string
+                          nullable: true
+                        last_reset_reason:
+                          type: string
+                          nullable: true
+                        created_at:
+                          type: integer
+                        updated_at:
+                          type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: campaign_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/migration/user-states/{stateId}/reset':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryAuthMigrationUserStatesByStateIdReset
+      summary: Reset a directory migration user state
+      description: Resets a blocked or deferred migration state and records an audit/config-history event. Tenant-scoped admins need the directory authentication migration write permission.
+      responses:
+        '200':
+          description: Directory migration user state reset.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stateId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/compliance/retention':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthComplianceRetention
+      summary: Get directory authentication retention policy
+      description: Returns Authrim audit retention, Wordwarden local retention, and evidence artifact delete grace settings for directory authentication.
+      responses:
+        '200':
+          description: Directory authentication retention policy.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Tenants
+      operationId: putApiAdminTenantsByTenantIdDirectoryAuthComplianceRetention
+      summary: Update directory authentication retention policy
+      description: Updates Authrim audit retention, Wordwarden local retention, and evidence artifact delete grace settings for directory authentication.
+      responses:
+        '200':
+          description: Directory authentication retention policy updated.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/compliance/config-history':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthComplianceConfigHistory
+      summary: List directory authentication config history
+      description: Lists redacted Directory Authentication config history and summary links for the tenant.
+      responses:
+        '200':
+          description: Directory authentication config history.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/compliance/evidence-exports':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthComplianceEvidenceExports
+      summary: List directory authentication evidence export jobs
+      description: Lists evidence export jobs. This endpoint requires the directory authentication evidence export permission.
+      responses:
+        '200':
+          description: Directory authentication evidence export jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryAuthComplianceEvidenceExports
+      summary: Create a directory authentication evidence export job
+      description: Creates a tenant-scoped evidence export artifact in encrypted export storage and records it in Object Catalog. The response includes a proxy download URL when the artifact is ready.
+      responses:
+        '201':
+          description: Directory authentication evidence export job created.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/compliance/evidence-exports/{exportId}/download':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthComplianceEvidenceExportsByExportIdDownload
+      summary: Download a directory authentication evidence export artifact
+      description: Downloads a ready evidence export through the Authrim API proxy. This endpoint requires the directory authentication evidence export permission and returns no-store JSON content.
+      responses:
+        '200':
+          description: Directory authentication evidence export artifact.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/support/bundles':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthSupportBundles
+      summary: List directory authentication support bundles
+      description: Lists redacted support bundle requests for the tenant.
+      responses:
+        '200':
+          description: Directory authentication support bundle jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryAuthSupportBundles
+      summary: Create a directory authentication support bundle request
+      description: Creates a redacted support bundle request. Tenant admins can create support bundles; detailed bundles require explicit warning acknowledgement in the client flow.
+      responses:
+        '201':
+          description: Directory authentication support bundle request created.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                redaction_level:
+                  type: string
+                  enum:
+                    - minimal
+                    - standard
+                    - detailed
+                  default: standard
+                scope:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    connector_ids:
+                      type: array
+                      maxItems: 20
+                      items:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: '^[A-Za-z0-9._:-]+$'
+                    include_recent_episodes:
+                      type: boolean
+                    include_advisories:
+                      type: boolean
+                consent_summary:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - operator_confirmed
+                  properties:
+                    operator_confirmed:
+                      type: boolean
+                      enum:
+                        - true
+                    detailed_warning_acknowledged:
+                      type: boolean
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/support/bundles/{bundleId}/download':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthSupportBundlesByBundleIdDownload
+      summary: Download a directory authentication support bundle artifact
+      description: Downloads a ready redacted support bundle through the Authrim API proxy. This endpoint requires directory authentication write permission and returns no-store JSON content.
+      responses:
+        '200':
+          description: Directory authentication support bundle artifact.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/managed/advisories':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthManagedAdvisories
+      summary: List Wordwarden release advisories
+      description: Lists stable channel advisories used by managed connector update guidance. Auto-update is not performed.
+      responses:
+        '200':
+          description: Wordwarden release advisories.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+            default: stable
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/maintenance/cleanup':
+    post:
+      tags:
+        - Tenants
+      operationId: postApiAdminTenantsByTenantIdDirectoryAuthMaintenanceCleanup
+      summary: Run Directory Authentication maintenance cleanup
+      description: Tenant admin scoped maintenance operation that marks expired Directory Authentication migration transactions, evidence exports, and support bundle metadata as expired. Export artifacts past their tenant-configured grace period are tombstoned in Object Catalog for later physical object cleanup.
+      responses:
+        '200':
+          description: Directory Authentication maintenance cleanup result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId:
+                    type: string
+                  result:
+                    type: object
+                    properties:
+                      migration_transactions_expired:
+                        type: integer
+                        minimum: 0
+                      evidence_exports_expired:
+                        type: integer
+                        minimum: 0
+                      evidence_exports_deleted:
+                        type: integer
+                        minimum: 0
+                      support_bundles_expired:
+                        type: integer
+                        minimum: 0
+                      support_bundles_deleted:
+                        type: integer
+                        minimum: 0
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1000
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{tenantId}/directory-auth/managed/connectors':
+    get:
+      tags:
+        - Tenants
+      operationId: getApiAdminTenantsByTenantIdDirectoryAuthManagedConnectors
+      summary: List managed Wordwarden connector instances
+      description: Lists Wordwarden instances and recent status episodes reported by signed heartbeat messages.
+      responses:
+        '200':
+          description: Managed connector instances and recent status episodes.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - tenantId
+                  - items
+                  - recent_episodes
+                properties:
+                  tenantId:
+                    type: string
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      required:
+                        - connector_id
+                        - instance_id
+                        - version
+                        - release_channel
+                        - status
+                        - affected_advisory_count
+                        - advisory_matches
+                      properties:
+                        connector_id:
+                          type: string
+                          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+                        instance_id:
+                          type: string
+                        version:
+                          type: string
+                        release_channel:
+                          type: string
+                          default: stable
+                        status:
+                          $ref: '#/components/schemas/TenantDirectoryConnectorFleetStatus'
+                        affected_advisory_count:
+                          type: integer
+                          minimum: 0
+                        advisory_matches:
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: false
+                            required:
+                              - id
+                              - severity
+                              - summary
+                            properties:
+                              id:
+                                type: string
+                              severity:
+                                type: string
+                                enum:
+                                  - low
+                                  - medium
+                                  - high
+                                  - critical
+                              fixed_version:
+                                type:
+                                  - string
+                                  - 'null'
+                              summary:
+                                type: string
+                              release_url:
+                                type:
+                                  - string
+                                  - 'null'
+                  recent_episodes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TenantDirectoryConnectorStatusEpisode'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: connector_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -45797,6 +46750,8 @@ components:
         - fieldMappingKey
         - displayName
         - lifecycleState
+        - createdAt
+        - updatedAt
       properties:
         id:
           type: string
@@ -45812,6 +46767,14 @@ components:
             - 'null'
         lifecycleState:
           type: string
+        createdAt:
+          type: integer
+          format: int64
+          description: Unix epoch milliseconds when the field mapping set was created.
+        updatedAt:
+          type: integer
+          format: int64
+          description: Unix epoch milliseconds when the field mapping set was last updated.
     FieldMappingSetsResponse:
       type: object
       additionalProperties: false
@@ -54339,6 +55302,8 @@ components:
         - stale_after_ms
         - retention_days
         - version_mismatch_policy
+        - expected_version
+        - minimum_version
         - unhealthy_threshold
         - stale_detection_grace_ms
       properties:
@@ -54379,6 +55344,16 @@ components:
             - warn
             - block
           default: warn
+        expected_version:
+          type: string
+          maxLength: 64
+          default: ''
+          description: Optional exact Wordwarden version expected for this connector. Empty disables exact-version mismatch detection.
+        minimum_version:
+          type: string
+          maxLength: 64
+          default: ''
+          description: Optional minimum accepted Wordwarden version. Empty disables minimum-version mismatch detection.
         unhealthy_threshold:
           type: integer
           minimum: 1
@@ -54625,6 +55600,7 @@ components:
         - instance_id
         - transport
         - version
+        - release_channel
         - started_at
         - first_seen_at
         - last_seen_at
@@ -54658,6 +55634,9 @@ components:
             - tunnel
         version:
           type: string
+        release_channel:
+          type: string
+          default: stable
         started_at:
           type: string
           format: date-time

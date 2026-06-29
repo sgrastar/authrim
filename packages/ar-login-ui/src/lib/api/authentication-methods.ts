@@ -127,6 +127,10 @@ export interface AuthenticationMethodsError {
 
 let cachedResponse: AuthenticationMethodsResponse | null = null;
 let cacheExpiry = 0;
+let inFlightRequest: Promise<{
+	data?: AuthenticationMethodsResponse;
+	error?: AuthenticationMethodsError;
+}> | null = null;
 
 /**
  * Fetch available authentication methods from the backend.
@@ -139,45 +143,53 @@ export async function fetchAuthenticationMethods(): Promise<{
 	if (cachedResponse && Date.now() < cacheExpiry) {
 		return { data: cachedResponse };
 	}
-
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-	try {
-		const response = await authrimFetch('/api/auth/authentication-methods', {
-			method: 'GET',
-			headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-			signal: controller.signal
-		});
-
-		const data = await response.json();
-
-		if (!response.ok) {
-			return { error: data as AuthenticationMethodsError };
-		}
-
-		const result = data as AuthenticationMethodsResponse;
-
-		cachedResponse = result;
-		cacheExpiry = Date.now() + (result.meta.cacheTTL || 180) * 1000;
-
-		return { data: result };
-	} catch {
-		// Stale-while-revalidate: return stale cache on network error
-		if (cachedResponse) {
-			return { data: cachedResponse };
-		}
-		return {
-			error: {
-				error: {
-					code: 'NETWORK_ERROR',
-					message: 'Failed to fetch authentication methods'
-				}
-			}
-		};
-	} finally {
-		clearTimeout(timeoutId);
+	if (inFlightRequest) {
+		return inFlightRequest;
 	}
+
+	inFlightRequest = (async () => {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+		try {
+			const response = await authrimFetch('/api/auth/authentication-methods', {
+				method: 'GET',
+				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
+				signal: controller.signal
+			});
+
+			const data = await response.json();
+
+			if (!response.ok) {
+				return { error: data as AuthenticationMethodsError };
+			}
+
+			const result = data as AuthenticationMethodsResponse;
+
+			cachedResponse = result;
+			cacheExpiry = Date.now() + (result.meta.cacheTTL || 180) * 1000;
+
+			return { data: result };
+		} catch {
+			// Stale-while-revalidate: return stale cache on network error
+			if (cachedResponse) {
+				return { data: cachedResponse };
+			}
+			return {
+				error: {
+					error: {
+						code: 'NETWORK_ERROR',
+						message: 'Failed to fetch authentication methods'
+					}
+				}
+			};
+		} finally {
+			clearTimeout(timeoutId);
+			inFlightRequest = null;
+		}
+	})();
+
+	return inFlightRequest;
 }
 
 /**

@@ -448,6 +448,15 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(body.presets[0].id).toBe('oidc_standard');
+      expect(body.presets[0].fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field_key: 'gender',
+            display_label: 'Gender',
+            field_type: 'string',
+          }),
+        ])
+      );
       expect(body.existing_field_keys).toEqual(['email']);
     });
   });

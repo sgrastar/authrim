@@ -3028,6 +3028,8 @@ describe('identity mapping control plane Admin API handlers', () => {
           displayName: 'Default field mapping set',
           description: null,
           lifecycleState: 'draft',
+          createdAt: 1000,
+          updatedAt: 1000,
         },
       ],
     });

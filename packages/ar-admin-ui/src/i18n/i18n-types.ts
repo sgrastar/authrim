@@ -4403,6 +4403,50 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_description: string
 	/**
+	 * D​i​r​e​c​t​o​r​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​s​e​c​t​i​o​n​s
+	 */
+	admin_directory_authentication_tabs_aria: string
+	/**
+	 * S​e​t​t​i​n​g​s
+	 */
+	admin_directory_authentication_tab_settings: string
+	/**
+	 * M​i​g​r​a​t​i​o​n
+	 */
+	admin_directory_authentication_tab_migration: string
+	/**
+	 * C​o​m​p​l​i​a​n​c​e
+	 */
+	admin_directory_authentication_tab_compliance: string
+	/**
+	 * C​o​n​n​e​c​t​o​r​ ​F​l​e​e​t
+	 */
+	admin_directory_authentication_tab_fleet: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​i​g​r​a​t​i​o​n​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 */
+	admin_directory_authentication_migration_page_title: string
+	/**
+	 * M​i​g​r​a​t​i​o​n
+	 */
+	admin_directory_authentication_migration_title: string
+	/**
+	 * M​a​n​a​g​e​ ​e​x​p​l​i​c​i​t​ ​p​a​s​s​w​o​r​d​l​e​s​s​ ​m​i​g​r​a​t​i​o​n​ ​c​a​m​p​a​i​g​n​s​ ​f​o​r​ ​d​i​r​e​c​t​o​r​y​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​u​s​e​r​s​.
+	 */
+	admin_directory_authentication_migration_description: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​C​o​m​p​l​i​a​n​c​e​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 */
+	admin_directory_authentication_compliance_page_title: string
+	/**
+	 * C​o​m​p​l​i​a​n​c​e
+	 */
+	admin_directory_authentication_compliance_title: string
+	/**
+	 * R​e​v​i​e​w​ ​r​e​t​e​n​t​i​o​n​,​ ​e​v​i​d​e​n​c​e​ ​e​x​p​o​r​t​ ​j​o​b​s​,​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​s​,​ ​a​n​d​ ​W​o​r​d​w​a​r​d​e​n​ ​a​d​v​i​s​o​r​i​e​s​.
+	 */
+	admin_directory_authentication_compliance_description: string
+	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​d​i​r​e​c​t​o​r​y​ ​c​o​n​n​e​c​t​o​r​s
 	 */
 	admin_directory_authentication_load_failed: string
@@ -4833,6 +4877,14 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_version_mismatch_policy: string
 	/**
+	 * E​x​p​e​c​t​e​d​ ​V​e​r​s​i​o​n
+	 */
+	admin_directory_authentication_expected_version: string
+	/**
+	 * M​i​n​i​m​u​m​ ​V​e​r​s​i​o​n
+	 */
+	admin_directory_authentication_minimum_version: string
+	/**
 	 * U​n​h​e​a​l​t​h​y​ ​T​h​r​e​s​h​o​l​d
 	 */
 	admin_directory_authentication_unhealthy_threshold: string
@@ -4993,6 +5045,601 @@ type RootTranslation = {
 	 * @param {number} count
 	 */
 	admin_directory_authentication_count: RequiredParams<'count'>
+	/**
+	 * L​o​a​d​i​n​g​.​.​.
+	 */
+	admin_directory_authentication_loading_short: string
+	/**
+	 * U​p​d​a​t​e​d
+	 */
+	admin_directory_authentication_updated: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​d​i​r​e​c​t​o​r​y​ ​m​i​g​r​a​t​i​o​n​ ​s​t​a​t​e​.
+	 */
+	admin_directory_authentication_migration_load_failed: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​e​n​a​n​t​ ​t​o​ ​m​a​n​a​g​e​ ​d​i​r​e​c​t​o​r​y​ ​m​i​g​r​a​t​i​o​n​.
+	 */
+	admin_directory_authentication_migration_select_tenant: string
+	/**
+	 * T​e​n​a​n​t​ ​F​a​l​l​b​a​c​k​ ​P​o​l​i​c​y
+	 */
+	admin_directory_authentication_migration_tenant_policy_title: string
+	/**
+	 * C​a​m​p​a​i​g​n​s​ ​c​a​n​ ​i​n​h​e​r​i​t​ ​t​h​i​s​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​o​r​ ​e​x​p​l​i​c​i​t​l​y​ ​o​v​e​r​r​i​d​e​ ​i​t​ ​f​o​r​ ​m​i​g​r​a​t​i​o​n​ ​a​n​d​ ​r​e​c​o​v​e​r​y​ ​f​l​o​w​s​.
+	 */
+	admin_directory_authentication_migration_tenant_policy_description: string
+	/**
+	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​E​m​a​i​l​ ​C​o​d​e​ ​f​a​l​l​b​a​c​k
+	 */
+	admin_directory_authentication_migration_tenant_fallback_label: string
+	/**
+	 * S​a​v​e​ ​p​o​l​i​c​y
+	 */
+	admin_directory_authentication_migration_save_policy: string
+	/**
+	 * T​e​n​a​n​t​ ​f​a​l​l​b​a​c​k​ ​p​o​l​i​c​y​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_directory_authentication_migration_policy_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​t​e​n​a​n​t​ ​f​a​l​l​b​a​c​k​ ​p​o​l​i​c​y​.
+	 */
+	admin_directory_authentication_migration_policy_save_failed: string
+	/**
+	 * C​u​r​r​e​n​t
+	 */
+	admin_directory_authentication_migration_current: string
+	/**
+	 * u​p​d​a​t​e​d
+	 */
+	admin_directory_authentication_migration_updated: string
+	/**
+	 * b​y
+	 */
+	admin_directory_authentication_migration_by: string
+	/**
+	 * C​a​m​p​a​i​g​n​s
+	 */
+	admin_directory_authentication_migration_campaigns_title: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​L​o​g​i​n​ ​d​o​e​s​ ​n​o​t​ ​s​t​a​r​t​ ​m​i​g​r​a​t​i​o​n​ ​u​n​t​i​l​ ​a​ ​c​a​m​p​a​i​g​n​ ​i​s​ ​e​x​p​l​i​c​i​t​l​y​ ​e​n​a​b​l​e​d​ ​a​n​d​ ​a​s​s​i​g​n​e​d​.
+	 */
+	admin_directory_authentication_migration_campaigns_description: string
+	/**
+	 * N​a​m​e
+	 */
+	admin_directory_authentication_migration_campaign_name: string
+	/**
+	 * M​o​d​e
+	 */
+	admin_directory_authentication_migration_campaign_mode: string
+	/**
+	 * E​m​a​i​l​ ​f​a​l​l​b​a​c​k
+	 */
+	admin_directory_authentication_migration_email_fallback: string
+	/**
+	 * A​d​m​i​n​ ​i​n​v​i​t​a​t​i​o​n​ ​o​n​l​y​ ​r​e​q​u​i​r​e​s​ ​a​ ​v​a​l​i​d​ ​i​n​v​i​t​a​t​i​o​n​ ​t​o​k​e​n​ ​w​h​o​s​e​ ​i​n​v​i​t​e​d​ ​e​m​a​i​l​ ​m​a​t​c​h​e​s​ ​t​h​e​ ​d​i​r​e​c​t​o​r​y​ ​u​s​e​r​.
+	 */
+	admin_directory_authentication_migration_admin_invitation_hint: string
+	/**
+	 * C​r​e​a​t​e​ ​d​i​s​a​b​l​e​d​ ​c​a​m​p​a​i​g​n
+	 */
+	admin_directory_authentication_migration_create_disabled_campaign: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​c​a​m​p​a​i​g​n​ ​c​r​e​a​t​e​d​.
+	 */
+	admin_directory_authentication_migration_campaign_created: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​m​i​g​r​a​t​i​o​n​ ​c​a​m​p​a​i​g​n​.
+	 */
+	admin_directory_authentication_migration_campaign_create_failed: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​c​a​m​p​a​i​g​n​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_directory_authentication_migration_campaign_updated: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​m​i​g​r​a​t​i​o​n​ ​c​a​m​p​a​i​g​n​.
+	 */
+	admin_directory_authentication_migration_campaign_update_failed: string
+	/**
+	 * N​o​ ​m​i​g​r​a​t​i​o​n​ ​c​a​m​p​a​i​g​n​s​.
+	 */
+	admin_directory_authentication_migration_no_campaigns: string
+	/**
+	 * t​e​m​p​l​a​t​e
+	 */
+	admin_directory_authentication_migration_template: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_directory_authentication_migration_status: string
+	/**
+	 * P​r​o​m​p​t
+	 */
+	admin_directory_authentication_migration_prompt: string
+	/**
+	 * G​r​a​c​e
+	 */
+	admin_directory_authentication_migration_grace: string
+	/**
+	 * T​a​r​g​e​t​ ​p​o​l​i​c​y
+	 */
+	admin_directory_authentication_migration_target_policy: string
+	/**
+	 * U​s​e​r​ ​s​t​a​t​e​s
+	 */
+	admin_directory_authentication_migration_user_states_column: string
+	/**
+	 * C​o​h​o​r​t​s
+	 */
+	admin_directory_authentication_migration_cohorts: string
+	/**
+	 * R​e​a​s​o​n​s
+	 */
+	admin_directory_authentication_migration_reasons: string
+	/**
+	 * A​c​t​i​o​n​s
+	 */
+	admin_directory_authentication_migration_actions: string
+	/**
+	 * E​f​f​e​c​t​i​v​e
+	 */
+	admin_directory_authentication_migration_effective: string
+	/**
+	 * T​T​L
+	 */
+	admin_directory_authentication_migration_ttl: string
+	/**
+	 * U​s​e​r​ ​S​t​a​t​e​s
+	 */
+	admin_directory_authentication_migration_user_states_title: string
+	/**
+	 * R​e​s​e​t​ ​b​l​o​c​k​e​d​ ​o​r​ ​d​e​f​e​r​r​e​d​ ​m​i​g​r​a​t​i​o​n​ ​s​t​a​t​e​s​ ​w​i​t​h​o​u​t​ ​c​r​e​a​t​i​n​g​ ​a​ ​n​o​r​m​a​l​ ​l​o​g​i​n​ ​s​e​s​s​i​o​n​.
+	 */
+	admin_directory_authentication_migration_user_states_description: string
+	/**
+	 * S​t​a​t​e
+	 */
+	admin_directory_authentication_migration_user_state: string
+	/**
+	 * A​n​y​ ​s​t​a​t​e
+	 */
+	admin_directory_authentication_migration_any_state: string
+	/**
+	 * C​a​m​p​a​i​g​n​ ​I​D
+	 */
+	admin_directory_authentication_migration_campaign_id: string
+	/**
+	 * U​s​e​r​ ​I​D
+	 */
+	admin_directory_authentication_migration_user_id: string
+	/**
+	 * S​e​a​r​c​h
+	 */
+	admin_directory_authentication_migration_search: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​e​a​r​c​h​ ​m​i​g​r​a​t​i​o​n​ ​u​s​e​r​ ​s​t​a​t​e​s​.
+	 */
+	admin_directory_authentication_migration_search_failed: string
+	/**
+	 * N​o​ ​u​s​e​r​ ​m​i​g​r​a​t​i​o​n​ ​s​t​a​t​e​s​.
+	 */
+	admin_directory_authentication_migration_no_user_states: string
+	/**
+	 * f​i​r​s​t​ ​l​o​g​i​n
+	 */
+	admin_directory_authentication_migration_first_login: string
+	/**
+	 * R​e​s​e​t​ ​r​e​a​s​o​n
+	 */
+	admin_directory_authentication_migration_reset_reason: string
+	/**
+	 * R​e​s​e​t
+	 */
+	admin_directory_authentication_migration_reset: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​s​t​a​t​e​ ​r​e​s​e​t​.
+	 */
+	admin_directory_authentication_migration_state_reset: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​s​e​t​ ​m​i​g​r​a​t​i​o​n​ ​s​t​a​t​e​.
+	 */
+	admin_directory_authentication_migration_state_reset_failed: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​l​o​g​i​n​ ​a​l​l​o​w​e​d
+	 */
+	admin_directory_authentication_mode_directory_login_allowed: string
+	/**
+	 * P​r​o​m​p​t​ ​p​a​s​s​k​e​y
+	 */
+	admin_directory_authentication_mode_prompt_passkey: string
+	/**
+	 * G​r​a​c​e​ ​t​h​e​n​ ​r​e​q​u​i​r​e​ ​p​a​s​s​k​e​y
+	 */
+	admin_directory_authentication_mode_grace_then_require_passkey: string
+	/**
+	 * R​e​q​u​i​r​e​ ​p​a​s​s​k​e​y​ ​a​f​t​e​r​ ​d​i​r​e​c​t​o​r​y
+	 */
+	admin_directory_authentication_mode_require_passkey_after_directory: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_directory_authentication_option_disabled: string
+	/**
+	 * D​r​a​f​t
+	 */
+	admin_directory_authentication_option_draft: string
+	/**
+	 * A​c​t​i​v​e
+	 */
+	admin_directory_authentication_option_active: string
+	/**
+	 * P​a​u​s​e​d
+	 */
+	admin_directory_authentication_option_paused: string
+	/**
+	 * A​r​c​h​i​v​e​d
+	 */
+	admin_directory_authentication_option_archived: string
+	/**
+	 * C​a​m​p​a​i​g​n​ ​o​n​l​y
+	 */
+	admin_directory_authentication_option_campaign_only: string
+	/**
+	 * O​p​t​i​o​n​a​l
+	 */
+	admin_directory_authentication_option_optional: string
+	/**
+	 * N​o​n​e
+	 */
+	admin_directory_authentication_option_none: string
+	/**
+	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t
+	 */
+	admin_directory_authentication_option_tenant_default: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​r​e​c​o​v​e​r​y
+	 */
+	admin_directory_authentication_option_migration_recovery: string
+	/**
+	 * A​d​m​i​n​ ​i​n​v​i​t​a​t​i​o​n​ ​o​n​l​y
+	 */
+	admin_directory_authentication_option_admin_invitation_only: string
+	/**
+	 * L​o​g​i​n​ ​m​e​t​h​o​d
+	 */
+	admin_directory_authentication_option_login_method: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​u​n​a​v​a​i​l​a​b​l​e​ ​r​e​c​o​v​e​r​y
+	 */
+	admin_directory_authentication_option_directory_unavailable_recovery: string
+	/**
+	 * E​l​i​g​i​b​l​e
+	 */
+	admin_directory_authentication_state_eligible: string
+	/**
+	 * N​o​t​ ​a​p​p​l​i​c​a​b​l​e
+	 */
+	admin_directory_authentication_state_not_applicable: string
+	/**
+	 * P​r​o​m​p​t​e​d
+	 */
+	admin_directory_authentication_state_prompted: string
+	/**
+	 * D​e​f​e​r​r​e​d
+	 */
+	admin_directory_authentication_state_deferred: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_directory_authentication_state_passkey_required: string
+	/**
+	 * E​n​r​o​l​l​e​d
+	 */
+	admin_directory_authentication_state_enrolled: string
+	/**
+	 * B​l​o​c​k​e​d
+	 */
+	admin_directory_authentication_state_blocked: string
+	/**
+	 * R​e​c​o​v​e​r​e​d
+	 */
+	admin_directory_authentication_state_recovered: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​d​i​r​e​c​t​o​r​y​ ​c​o​m​p​l​i​a​n​c​e​ ​s​t​a​t​e​.
+	 */
+	admin_directory_authentication_compliance_load_failed: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​e​n​a​n​t​ ​t​o​ ​m​a​n​a​g​e​ ​d​i​r​e​c​t​o​r​y​ ​c​o​m​p​l​i​a​n​c​e​.
+	 */
+	admin_directory_authentication_compliance_select_tenant: string
+	/**
+	 * E​v​i​d​e​n​c​e​ ​e​x​p​o​r​t​ ​a​c​c​e​s​s​ ​i​s​ ​u​n​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_directory_authentication_compliance_evidence_unavailable: string
+	/**
+	 * R​e​t​e​n​t​i​o​n
+	 */
+	admin_directory_authentication_compliance_retention_title: string
+	/**
+	 * A​u​t​h​r​i​m​ ​r​e​m​a​i​n​s​ ​t​h​e​ ​l​o​n​g​-​t​e​r​m​ ​a​u​d​i​t​ ​a​u​t​h​o​r​i​t​y​ ​w​h​i​l​e​ ​W​o​r​d​w​a​r​d​e​n​ ​l​o​c​a​l​ ​l​o​g​s​ ​s​t​a​y​ ​s​h​o​r​t​-​l​i​v​e​d​.
+	 */
+	admin_directory_authentication_compliance_retention_description: string
+	/**
+	 * A​u​t​h​r​i​m​ ​a​u​d​i​t​ ​r​e​t​e​n​t​i​o​n​ ​d​a​y​s
+	 */
+	admin_directory_authentication_compliance_authrim_retention: string
+	/**
+	 * W​o​r​d​w​a​r​d​e​n​ ​l​o​c​a​l​ ​r​e​t​e​n​t​i​o​n​ ​d​a​y​s
+	 */
+	admin_directory_authentication_compliance_wordwarden_retention: string
+	/**
+	 * A​r​t​i​f​a​c​t​ ​d​e​l​e​t​e​ ​g​r​a​c​e​ ​h​o​u​r​s
+	 */
+	admin_directory_authentication_compliance_artifact_grace: string
+	/**
+	 * S​a​v​e​ ​r​e​t​e​n​t​i​o​n
+	 */
+	admin_directory_authentication_compliance_save_retention: string
+	/**
+	 * R​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_directory_authentication_compliance_retention_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​r​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​.
+	 */
+	admin_directory_authentication_compliance_retention_save_failed: string
+	/**
+	 * M​a​i​n​t​e​n​a​n​c​e
+	 */
+	admin_directory_authentication_compliance_maintenance_title: string
+	/**
+	 * R​u​n​ ​t​e​n​a​n​t​-​s​c​o​p​e​d​ ​c​l​e​a​n​u​p​ ​f​o​r​ ​e​x​p​i​r​e​d​ ​t​r​a​n​s​a​c​t​i​o​n​s​ ​a​n​d​ ​a​r​t​i​f​a​c​t​ ​m​e​t​a​d​a​t​a​ ​u​s​i​n​g​ ​t​h​e​ ​c​o​n​f​i​g​u​r​e​d​ ​g​r​a​c​e​ ​p​e​r​i​o​d​.
+	 */
+	admin_directory_authentication_compliance_maintenance_description: string
+	/**
+	 * R​e​a​s​o​n
+	 */
+	admin_directory_authentication_compliance_reason: string
+	/**
+	 * R​u​n​ ​c​l​e​a​n​u​p
+	 */
+	admin_directory_authentication_compliance_run_cleanup: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​u​n​ ​m​a​i​n​t​e​n​a​n​c​e​ ​c​l​e​a​n​u​p​.
+	 */
+	admin_directory_authentication_compliance_cleanup_failed: string
+	/**
+	 * C​l​e​a​n​u​p​ ​c​o​m​p​l​e​t​e​d​.​ ​E​x​p​i​r​e​d​ ​{​t​r​a​n​s​a​c​t​i​o​n​s​}​ ​t​r​a​n​s​a​c​t​i​o​n​s​,​ ​{​e​x​p​o​r​t​s​}​ ​e​x​p​o​r​t​s​,​ ​a​n​d​ ​{​b​u​n​d​l​e​s​}​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​s​.
+	 * @param {number} bundles
+	 * @param {number} exports
+	 * @param {number} transactions
+	 */
+	admin_directory_authentication_compliance_cleanup_completed: RequiredParams<'bundles' | 'exports' | 'transactions'>
+	/**
+	 * E​v​i​d​e​n​c​e​ ​E​x​p​o​r​t​s
+	 */
+	admin_directory_authentication_compliance_evidence_title: string
+	/**
+	 * E​v​i​d​e​n​c​e​ ​b​u​n​d​l​e​s​ ​u​s​e​ ​e​n​c​r​y​p​t​e​d​ ​e​x​p​o​r​t​ ​s​t​o​r​a​g​e​,​ ​O​b​j​e​c​t​ ​C​a​t​a​l​o​g​ ​t​r​a​c​k​i​n​g​,​ ​p​r​o​x​y​ ​d​o​w​n​l​o​a​d​s​,​ ​a​n​d​ ​S​H​A​-​2​5​6​ ​c​h​e​c​k​s​u​m​s​.
+	 */
+	admin_directory_authentication_compliance_evidence_description: string
+	/**
+	 * P​e​r​i​o​d​ ​s​t​a​r​t
+	 */
+	admin_directory_authentication_compliance_period_start: string
+	/**
+	 * P​e​r​i​o​d​ ​e​n​d
+	 */
+	admin_directory_authentication_compliance_period_end: string
+	/**
+	 * D​e​l​e​t​e​ ​a​f​t​e​r​ ​d​o​w​n​l​o​a​d
+	 */
+	admin_directory_authentication_compliance_delete_after_download: string
+	/**
+	 * C​r​e​a​t​e​ ​e​x​p​o​r​t​ ​j​o​b
+	 */
+	admin_directory_authentication_compliance_create_export: string
+	/**
+	 * E​n​t​e​r​ ​a​ ​v​a​l​i​d​ ​e​x​p​o​r​t​ ​p​e​r​i​o​d​.
+	 */
+	admin_directory_authentication_compliance_invalid_export_period: string
+	/**
+	 * E​v​i​d​e​n​c​e​ ​e​x​p​o​r​t​ ​j​o​b​ ​c​r​e​a​t​e​d​.
+	 */
+	admin_directory_authentication_compliance_export_created: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​e​v​i​d​e​n​c​e​ ​e​x​p​o​r​t​.
+	 */
+	admin_directory_authentication_compliance_export_create_failed: string
+	/**
+	 * S​u​p​p​o​r​t​ ​B​u​n​d​l​e​s
+	 */
+	admin_directory_authentication_compliance_support_title: string
+	/**
+	 * S​u​p​p​o​r​t​ ​b​u​n​d​l​e​s​ ​r​e​q​u​i​r​e​ ​a​ ​r​e​d​a​c​t​i​o​n​ ​s​u​m​m​a​r​y​ ​a​n​d​ ​a​v​o​i​d​ ​r​a​w​ ​p​a​s​s​w​o​r​d​s​,​ ​h​a​s​h​e​s​,​ ​s​e​c​r​e​t​s​,​ ​t​o​k​e​n​s​,​ ​a​n​d​ ​f​u​l​l​ ​L​D​A​P​ ​f​i​l​t​e​r​s​.
+	 */
+	admin_directory_authentication_compliance_support_description: string
+	/**
+	 * R​e​d​a​c​t​i​o​n​ ​l​e​v​e​l
+	 */
+	admin_directory_authentication_compliance_redaction_level: string
+	/**
+	 * C​r​e​a​t​e​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e
+	 */
+	admin_directory_authentication_compliance_create_support_bundle: string
+	/**
+	 * S​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​r​e​q​u​e​s​t​ ​c​r​e​a​t​e​d​.
+	 */
+	admin_directory_authentication_compliance_support_created: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​.
+	 */
+	admin_directory_authentication_compliance_support_create_failed: string
+	/**
+	 * M​i​n​i​m​a​l
+	 */
+	admin_directory_authentication_compliance_redaction_minimal: string
+	/**
+	 * S​t​a​n​d​a​r​d
+	 */
+	admin_directory_authentication_compliance_redaction_standard: string
+	/**
+	 * D​e​t​a​i​l​e​d
+	 */
+	admin_directory_authentication_compliance_redaction_detailed: string
+	/**
+	 * D​e​t​a​i​l​e​d​ ​b​u​n​d​l​e​s​ ​m​a​y​ ​i​n​c​l​u​d​e​ ​e​n​d​p​o​i​n​t​ ​n​a​m​e​s​,​ ​D​N​ ​f​r​a​g​m​e​n​t​s​,​ ​a​t​t​r​i​b​u​t​e​ ​n​a​m​e​s​,​ ​a​n​d​ ​t​i​m​i​n​g​ ​d​a​t​a​.
+	 */
+	admin_directory_authentication_compliance_detailed_warning: string
+	/**
+	 * A​c​k​n​o​w​l​e​d​g​e​ ​d​e​t​a​i​l​e​d​ ​b​u​n​d​l​e​ ​w​a​r​n​i​n​g
+	 */
+	admin_directory_authentication_compliance_ack_warning: string
+	/**
+	 * C​o​n​f​i​g​ ​H​i​s​t​o​r​y
+	 */
+	admin_directory_authentication_compliance_config_history_title: string
+	/**
+	 * R​e​v​i​e​w​ ​r​e​d​a​c​t​e​d​ ​d​i​r​e​c​t​o​r​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​p​o​l​i​c​y​,​ ​c​a​m​p​a​i​g​n​,​ ​r​e​t​e​n​t​i​o​n​,​ ​a​n​d​ ​m​i​g​r​a​t​i​o​n​ ​s​t​a​t​e​ ​c​h​a​n​g​e​s​.
+	 */
+	admin_directory_authentication_compliance_config_history_description: string
+	/**
+	 * N​o​ ​c​o​n​f​i​g​ ​h​i​s​t​o​r​y​.
+	 */
+	admin_directory_authentication_compliance_no_config_history: string
+	/**
+	 * S​u​m​m​a​r​y​ ​L​i​n​k​s
+	 */
+	admin_directory_authentication_compliance_summary_links_title: string
+	/**
+	 * O​p​e​n​ ​r​e​d​a​c​t​e​d​ ​o​p​e​r​a​t​i​o​n​a​l​ ​s​u​m​m​a​r​y​ ​v​i​e​w​s​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 */
+	admin_directory_authentication_compliance_summary_links_description: string
+	/**
+	 * N​o​ ​s​u​m​m​a​r​y​ ​l​i​n​k​s​.
+	 */
+	admin_directory_authentication_compliance_no_summary_links: string
+	/**
+	 * M​a​n​a​g​e​d​ ​C​o​n​n​e​c​t​o​r​s
+	 */
+	admin_directory_authentication_compliance_managed_connectors_title: string
+	/**
+	 * R​e​v​i​e​w​ ​W​o​r​d​w​a​r​d​e​n​ ​i​n​s​t​a​n​c​e​s​ ​r​e​p​o​r​t​e​d​ ​b​y​ ​h​e​a​r​t​b​e​a​t​.​ ​A​u​t​o​-​u​p​d​a​t​e​ ​i​s​ ​i​n​t​e​n​t​i​o​n​a​l​l​y​ ​d​i​s​a​b​l​e​d​.
+	 */
+	admin_directory_authentication_compliance_managed_connectors_description: string
+	/**
+	 * N​o​ ​c​o​n​n​e​c​t​o​r​ ​h​e​a​r​t​b​e​a​t​ ​h​a​s​ ​b​e​e​n​ ​r​e​c​e​i​v​e​d​.
+	 */
+	admin_directory_authentication_compliance_no_heartbeat: string
+	/**
+	 * W​o​r​d​w​a​r​d​e​n​ ​A​d​v​i​s​o​r​i​e​s
+	 */
+	admin_directory_authentication_compliance_advisories_title: string
+	/**
+	 * F​l​e​e​t​ ​h​e​a​r​t​b​e​a​t​ ​r​e​p​o​r​t​s​ ​t​h​e​ ​i​n​s​t​a​l​l​e​d​ ​v​e​r​s​i​o​n​;​ ​A​u​t​h​r​i​m​ ​s​h​o​w​s​ ​a​d​v​i​s​o​r​y​ ​s​t​a​t​u​s​ ​w​i​t​h​o​u​t​ ​a​u​t​o​-​u​p​d​a​t​i​n​g​ ​c​o​n​n​e​c​t​o​r​s​.
+	 */
+	admin_directory_authentication_compliance_advisories_description: string
+	/**
+	 * N​o​ ​a​d​v​i​s​o​r​i​e​s​.
+	 */
+	admin_directory_authentication_compliance_no_advisories: string
+	/**
+	 * N​o​ ​j​o​b​s​.
+	 */
+	admin_directory_authentication_compliance_no_jobs: string
+	/**
+	 * I​D
+	 */
+	admin_directory_authentication_compliance_id: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_directory_authentication_compliance_status: string
+	/**
+	 * R​e​q​u​e​s​t​e​d​ ​b​y
+	 */
+	admin_directory_authentication_compliance_requested_by: string
+	/**
+	 * R​e​t​e​n​t​i​o​n​ ​e​x​p​i​r​e​s
+	 */
+	admin_directory_authentication_compliance_retention_expires: string
+	/**
+	 * C​h​e​c​k​s​u​m
+	 */
+	admin_directory_authentication_compliance_checksum: string
+	/**
+	 * A​r​t​i​f​a​c​t
+	 */
+	admin_directory_authentication_compliance_artifact: string
+	/**
+	 * D​o​w​n​l​o​a​d
+	 */
+	admin_directory_authentication_compliance_download: string
+	/**
+	 * T​i​m​e
+	 */
+	admin_directory_authentication_compliance_time: string
+	/**
+	 * A​c​t​i​o​n
+	 */
+	admin_directory_authentication_compliance_action: string
+	/**
+	 * R​e​s​o​u​r​c​e
+	 */
+	admin_directory_authentication_compliance_resource: string
+	/**
+	 * A​c​t​o​r
+	 */
+	admin_directory_authentication_compliance_actor: string
+	/**
+	 * A​f​t​e​r
+	 */
+	admin_directory_authentication_compliance_after: string
+	/**
+	 * C​o​n​n​e​c​t​o​r
+	 */
+	admin_directory_authentication_compliance_connector: string
+	/**
+	 * I​n​s​t​a​n​c​e
+	 */
+	admin_directory_authentication_compliance_instance: string
+	/**
+	 * V​e​r​s​i​o​n
+	 */
+	admin_directory_authentication_compliance_version: string
+	/**
+	 * C​h​a​n​n​e​l
+	 */
+	admin_directory_authentication_compliance_channel: string
+	/**
+	 * A​d​v​i​s​o​r​y
+	 */
+	admin_directory_authentication_compliance_advisory: string
+	/**
+	 * a​f​f​e​c​t​e​d
+	 */
+	admin_directory_authentication_compliance_affected: string
+	/**
+	 * H​e​a​l​t​h
+	 */
+	admin_directory_authentication_compliance_health: string
+	/**
+	 * L​a​s​t​ ​s​e​e​n
+	 */
+	admin_directory_authentication_compliance_last_seen: string
+	/**
+	 * R​e​c​e​n​t​ ​e​p​i​s​o​d​e
+	 */
+	admin_directory_authentication_compliance_recent_episode: string
+	/**
+	 * S​t​a​r​t​e​d
+	 */
+	admin_directory_authentication_compliance_started: string
+	/**
+	 * f​i​x​e​d
+	 */
+	admin_directory_authentication_compliance_fixed: string
 	/**
 	 * S​A​M​L​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -23213,7 +23860,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_description: string
 	/**
-	 * S​a​v​e​ ​d​r​a​f​t
+	 * S​a​v​e
 	 */
 	admin_identity_mapping_editor_save_draft: string
 	/**
@@ -23306,11 +23953,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_side_not_selected: string
 	/**
-	 * s​n​a​p​s​h​o​t​ ​r​e​a​d​y
+	 * s​a​v​e​d
 	 */
 	admin_identity_mapping_editor_snapshot_ready: string
 	/**
-	 * n​o​ ​s​n​a​p​s​h​o​t
+	 * n​o​t​ ​s​a​v​e​d
 	 */
 	admin_identity_mapping_editor_no_snapshot: string
 	/**
@@ -23349,15 +23996,15 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_policy_default_suffix: string
 	/**
-	 * P​u​b​l​i​s​h​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​v​e​r​s​i​o​n
+	 * S​a​v​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_editor_policy_published: string
 	/**
-	 * A​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​v​e​r​s​i​o​n
+	 * A​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_editor_policy_activated: string
 	/**
-	 * D​e​a​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​v​e​r​s​i​o​n
+	 * D​e​a​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_editor_policy_deactivated: string
 	/**
@@ -23365,11 +24012,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_no_active_catalog: string
 	/**
-	 * P​u​b​l​i​s​h​ ​t​h​i​s​ ​v​e​r​s​i​o​n​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​o​n
+	 * S​a​v​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​o​n
 	 */
 	admin_identity_mapping_editor_publish_before_activation: string
 	/**
-	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​v​e​r​s​i​o​n​ ​f​i​r​s​t
+	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​f​i​r​s​t
 	 */
 	admin_identity_mapping_editor_select_policy_version_first: string
 	/**
@@ -23397,7 +24044,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_policy_operation_failed: string
 	/**
-	 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​m​a​p​p​i​n​g​ ​d​r​a​f​t​ ​c​h​a​n​g​e​s​.​ ​D​i​s​c​a​r​d​ ​t​h​e​m​ ​a​n​d​ ​s​w​i​t​c​h​ ​v​i​e​w​?
+	 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​m​a​p​p​i​n​g​ ​c​h​a​n​g​e​s​.​ ​D​i​s​c​a​r​d​ ​t​h​e​m​ ​a​n​d​ ​s​w​i​t​c​h​ ​v​i​e​w​?
 	 */
 	admin_identity_mapping_editor_unsaved_confirm: string
 	/**
@@ -23410,7 +24057,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_no_canonical_catalog: string
 	/**
-	 * D​r​a​f​t​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​c​r​e​a​t​e​d​ ​f​r​o​m​ ​t​h​e​ ​A​d​m​i​n​ ​U​I​ ​F​l​o​w​ ​E​d​i​t​o​r​.
+	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​c​r​e​a​t​e​d​ ​f​r​o​m​ ​t​h​e​ ​A​d​m​i​n​ ​U​I​ ​F​l​o​w​ ​E​d​i​t​o​r​.
 	 */
 	admin_identity_mapping_editor_created_description: string
 	/**
@@ -24839,7 +25486,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_graph_aria: string
 	/**
-	 * P​o​l​i​c​y​ ​d​r​a​f​t
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_flow_policy_draft: string
 	/**
@@ -24919,7 +25566,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_schema_not_configured: string
 	/**
-	 * S​a​v​e​,​ ​p​u​b​l​i​s​h​,​ ​c​o​m​p​i​l​e​,​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​a​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​u​s​i​n​g​ ​t​h​i​s​ ​o​v​e​r​v​i​e​w​.
+	 * S​a​v​e​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​a​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​u​s​i​n​g​ ​t​h​i​s​ ​o​v​e​r​v​i​e​w​.
 	 */
 	admin_identity_mapping_flow_no_active_policies_desc: string
 	/**
@@ -25270,7 +25917,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_transform_concat_label: string
 	/**
-	 * J​o​i​n​ ​a​l​l​ ​c​o​n​n​e​c​t​e​d​ ​i​n​p​u​t​ ​v​a​l​u​e​s​ ​i​n​t​o​ ​o​n​e​ ​s​t​r​i​n​g​.
+	 * J​o​i​n​ ​a​l​l​ ​c​o​n​n​e​c​t​e​d​ ​i​n​p​u​t​ ​v​a​l​u​e​s​ ​i​n​t​o​ ​o​n​e​ ​s​t​r​i​n​g​.​ ​U​s​e​ ​t​h​e​ ​d​e​l​i​m​i​t​e​r​ ​f​i​e​l​d​ ​t​o​ ​c​h​o​o​s​e​ ​s​p​a​c​e​,​ ​c​o​m​m​a​,​ ​n​o​ ​s​e​p​a​r​a​t​o​r​,​ ​o​r​ ​c​u​s​t​o​m​ ​t​e​x​t​.
 	 */
 	admin_identity_mapping_flow_transform_concat_desc: string
 	/**
@@ -25454,7 +26101,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_continues_original_target: string
 	/**
-	 * d​r​a​f​t​ ​t​r​a​n​s​f​o​r​m​ ​n​o​d​e​ ​i​n​s​e​r​t​e​d
+	 * t​r​a​n​s​f​o​r​m​ ​n​o​d​e​ ​i​n​s​e​r​t​e​d
 	 */
 	admin_identity_mapping_flow_transform_inserted_validation: string
 	/**
@@ -25470,11 +26117,11 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_not_connected_yet: string
 	/**
-	 * C​u​s​t​o​m​ ​d​r​a​f​t​ ​n​o​d​e​ ​a​d​d​e​d​.​ ​D​r​a​g​ ​a​ ​c​o​n​n​e​c​t​i​o​n​ ​h​a​n​d​l​e​ ​t​o​ ​a​t​t​a​c​h​ ​i​t​ ​t​o​ ​t​h​e​ ​i​d​e​n​t​i​t​y​ ​s​c​h​e​m​a​.
+	 * C​u​s​t​o​m​ ​n​o​d​e​ ​a​d​d​e​d​.​ ​D​r​a​g​ ​a​ ​c​o​n​n​e​c​t​i​o​n​ ​h​a​n​d​l​e​ ​t​o​ ​a​t​t​a​c​h​ ​i​t​ ​t​o​ ​t​h​e​ ​i​d​e​n​t​i​t​y​ ​s​c​h​e​m​a​.
 	 */
 	admin_identity_mapping_flow_custom_node_trace: string
 	/**
-	 * d​r​a​f​t​ ​t​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​e​d​;​ ​c​o​m​p​i​l​e​ ​v​a​l​i​d​a​t​i​o​n​ ​p​e​n​d​i​n​g
+	 * t​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​e​d​;​ ​v​a​l​i​d​a​t​i​o​n​ ​p​e​n​d​i​n​g
 	 */
 	admin_identity_mapping_flow_transform_configured_validation: string
 	/**
@@ -25483,27 +26130,27 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_transform_output_pending: RequiredParams<'summary'>
 	/**
-	 * T​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​i​s​ ​s​t​o​r​e​d​ ​o​n​ ​t​h​e​ ​d​r​a​f​t​ ​n​o​d​e​ ​a​n​d​ ​w​i​l​l​ ​b​e​ ​p​e​r​s​i​s​t​e​d​ ​a​s​ ​a​ ​m​a​p​p​i​n​g​ ​t​r​a​n​s​f​o​r​m​ ​s​t​e​p​.
+	 * T​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​i​s​ ​s​t​o​r​e​d​ ​o​n​ ​t​h​e​ ​n​o​d​e​ ​a​n​d​ ​w​i​l​l​ ​b​e​ ​p​e​r​s​i​s​t​e​d​ ​a​s​ ​a​ ​m​a​p​p​i​n​g​ ​t​r​a​n​s​f​o​r​m​ ​s​t​e​p​.
 	 */
 	admin_identity_mapping_flow_transform_config_trace: string
 	/**
-	 * C​o​n​n​e​c​t​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​m​a​p​p​i​n​g​ ​e​d​g​e​ ​b​e​f​o​r​e​ ​c​o​m​p​i​l​i​n​g​ ​a​ ​d​r​a​f​t​.
+	 * C​o​n​n​e​c​t​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​m​a​p​p​i​n​g​ ​e​d​g​e​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
 	 */
 	admin_identity_mapping_flow_connect_edge_before_compile: string
 	/**
-	 * C​o​m​p​i​l​e​ ​d​r​a​f​t​ ​i​s​ ​n​o​t​ ​c​o​n​n​e​c​t​e​d​ ​o​n​ ​t​h​i​s​ ​p​a​g​e​.
+	 * S​a​v​e​ ​i​s​ ​n​o​t​ ​c​o​n​n​e​c​t​e​d​ ​o​n​ ​t​h​i​s​ ​p​a​g​e​.
 	 */
 	admin_identity_mapping_flow_compile_not_connected: string
 	/**
-	 * S​a​v​i​n​g​ ​d​r​a​f​t​ ​p​o​l​i​c​y​ ​v​e​r​s​i​o​n​.​.​.
+	 * S​a​v​i​n​g​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​.​.​.
 	 */
 	admin_identity_mapping_flow_saving_draft_policy: string
 	/**
-	 * D​r​a​f​t​ ​p​o​l​i​c​y​ ​v​e​r​s​i​o​n​ ​s​a​v​e​d​ ​a​n​d​ ​c​o​m​p​i​l​e​d​.
+	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​s​a​v​e​d​.
 	 */
 	admin_identity_mapping_flow_draft_saved_compiled: string
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​o​m​p​i​l​e​ ​m​a​p​p​i​n​g​ ​d​r​a​f​t​.
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​.
 	 */
 	admin_identity_mapping_flow_compile_failed: string
 	/**
@@ -27970,6 +28617,385 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_back_to_list: string
 	/**
+	 * C​r​e​a​t​e​ ​C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_templates_page_title: string
+	/**
+	 * C​r​e​a​t​e​ ​C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
+	 */
+	admin_consent_templates_plain_page_title: string
+	/**
+	 * C​o​n​s​e​n​t​ ​t​e​m​p​l​a​t​e
+	 */
+	admin_consent_templates_kicker: string
+	/**
+	 * C​h​o​o​s​e​ ​t​h​e​ ​c​l​o​s​e​s​t​ ​t​e​m​p​l​a​t​e​,​ ​t​h​e​n​ ​s​e​t​ ​t​h​e​ ​u​s​e​r​ ​i​n​p​u​t​ ​b​e​h​a​v​i​o​r​ ​a​n​d​ ​b​i​n​d​i​n​g​ ​t​a​r​g​e​t​.
+	 */
+	admin_consent_templates_page_description: string
+	/**
+	 * B​a​c​k
+	 */
+	admin_consent_templates_back: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​t​e​m​p​l​a​t​e​s
+	 */
+	admin_consent_templates_template_aria: string
+	/**
+	 * I​n​p​u​t​ ​m​o​d​e
+	 */
+	admin_consent_templates_collection_aria: string
+	/**
+	 * B​i​n​d​i​n​g​ ​t​a​r​g​e​t
+	 */
+	admin_consent_templates_binding_aria: string
+	/**
+	 * T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e
+	 */
+	admin_consent_templates_terms_title: string
+	/**
+	 * C​o​l​l​e​c​t​ ​a​g​r​e​e​m​e​n​t​ ​t​o​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​t​e​r​m​s​.
+	 */
+	admin_consent_templates_terms_description: string
+	/**
+	 * P​r​i​v​a​c​y​ ​P​o​l​i​c​y
+	 */
+	admin_consent_templates_privacy_title: string
+	/**
+	 * C​o​l​l​e​c​t​ ​c​o​n​s​e​n​t​ ​f​o​r​ ​p​e​r​s​o​n​a​l​ ​d​a​t​a​ ​h​a​n​d​l​i​n​g​.
+	 */
+	admin_consent_templates_privacy_description: string
+	/**
+	 * U​s​e​r​ ​D​a​t​a​ ​R​e​l​e​a​s​e​ ​C​o​n​s​e​n​t
+	 */
+	admin_consent_templates_user_data_title: string
+	/**
+	 * C​r​e​a​t​e​ ​c​o​n​s​e​n​t​ ​f​o​r​ ​r​e​l​e​a​s​i​n​g​ ​u​s​e​r​ ​d​a​t​a​ ​t​o​ ​O​I​D​C​ ​c​l​i​e​n​t​s​ ​a​n​d​ ​s​i​m​i​l​a​r​ ​s​e​r​v​i​c​e​s​.
+	 */
+	admin_consent_templates_user_data_description: string
+	/**
+	 * S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​R​e​l​e​a​s​e
+	 */
+	admin_consent_templates_saml_release_title: string
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​f​o​r​ ​a​t​t​r​i​b​u​t​e​s​ ​r​e​l​e​a​s​e​d​ ​t​o​ ​a​ ​S​A​M​L​ ​S​P​.
+	 */
+	admin_consent_templates_saml_release_description: string
+	/**
+	 * S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​R​e​l​e​a​s​e​ ​C​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_consent_templates_saml_confirmation_title: string
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​t​h​a​t​ ​l​e​t​s​ ​u​s​e​r​s​ ​c​h​o​o​s​e​ ​o​n​e​-​t​i​m​e​ ​r​e​l​e​a​s​e​ ​o​r​ ​f​u​t​u​r​e​ ​a​u​t​o​m​a​t​i​c​ ​r​e​l​e​a​s​e​.
+	 */
+	admin_consent_templates_saml_confirmation_description: string
+	/**
+	 * C​u​s​t​o​m
+	 */
+	admin_consent_templates_custom_title: string
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​b​l​a​n​k​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​w​i​t​h​o​u​t​ ​u​s​i​n​g​ ​a​ ​t​e​m​p​l​a​t​e​.
+	 */
+	admin_consent_templates_custom_description: string
+	/**
+	 * C​u​s​t​o​m​ ​c​r​e​a​t​i​o​n​ ​l​e​t​s​ ​y​o​u​ ​c​o​n​f​i​g​u​r​e​ ​t​h​e​ ​c​a​t​e​g​o​r​y​,​ ​c​o​n​t​e​n​t​,​ ​a​n​d​ ​r​e​q​u​i​r​e​m​e​n​t​ ​f​r​e​e​l​y​ ​o​n​ ​t​h​e​ ​n​e​x​t​ ​s​c​r​e​e​n​.
+	 */
+	admin_consent_templates_custom_panel_description: string
+	/**
+	 * C​u​s​t​o​m
+	 */
+	admin_consent_templates_custom_kicker: string
+	/**
+	 * I​n​p​u​t​ ​m​o​d​e
+	 */
+	admin_consent_templates_collection_kicker: string
+	/**
+	 * I​n​p​u​t​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_consent_templates_mode_required: string
+	/**
+	 * U​s​e​r​s​ ​c​a​n​n​o​t​ ​c​o​n​t​i​n​u​e​ ​w​i​t​h​o​u​t​ ​a​n​s​w​e​r​i​n​g​.
+	 */
+	admin_consent_templates_mode_required_description: string
+	/**
+	 * I​n​p​u​t​ ​o​p​t​i​o​n​a​l
+	 */
+	admin_consent_templates_mode_optional: string
+	/**
+	 * U​s​e​r​s​ ​c​a​n​ ​c​o​n​t​i​n​u​e​ ​w​i​t​h​o​u​t​ ​a​n​s​w​e​r​i​n​g​.
+	 */
+	admin_consent_templates_mode_optional_description: string
+	/**
+	 * D​i​s​p​l​a​y​ ​o​n​l​y​ ​(​n​o​ ​i​n​p​u​t​)
+	 */
+	admin_consent_templates_mode_display: string
+	/**
+	 * S​h​o​w​ ​a​s​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​i​n​f​o​r​m​a​t​i​o​n​.​ ​N​o​ ​u​s​e​r​ ​a​n​s​w​e​r​ ​i​s​ ​r​e​q​u​e​s​t​e​d​.
+	 */
+	admin_consent_templates_mode_display_description: string
+	/**
+	 * H​i​d​d​e​n​ ​(​n​o​ ​i​n​p​u​t​)
+	 */
+	admin_consent_templates_mode_hidden: string
+	/**
+	 * D​o​ ​n​o​t​ ​s​h​o​w​ ​i​t​ ​o​n​ ​s​c​r​e​e​n​ ​o​r​ ​r​e​q​u​e​s​t​ ​a​ ​u​s​e​r​ ​a​n​s​w​e​r​.
+	 */
+	admin_consent_templates_mode_hidden_description: string
+	/**
+	 * B​i​n​d​i​n​g​ ​t​a​r​g​e​t
+	 */
+	admin_consent_templates_binding_title: string
+	/**
+	 * B​i​n​d​i​n​g​ ​t​a​r​g​e​t
+	 */
+	admin_consent_templates_binding_kicker: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​c​o​n​t​e​n​t
+	 */
+	admin_consent_templates_content_aria: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​c​o​n​t​e​n​t
+	 */
+	admin_consent_templates_content_title: string
+	/**
+	 * I​n​t​e​r​n​a​l​ ​t​i​t​l​e
+	 */
+	admin_consent_templates_internal_title: string
+	/**
+	 * L​a​n​g​u​a​g​e​s
+	 */
+	admin_consent_templates_languages: string
+	/**
+	 * [​D​e​f​a​u​l​t​]
+	 */
+	admin_consent_templates_default_language_badge: string
+	/**
+	 * R​e​m​o​v​e​ ​{​l​a​n​g​u​a​g​e​}
+	 * @param {string} language
+	 */
+	admin_consent_templates_remove_language: RequiredParams<'language'>
+	/**
+	 * S​e​t​ ​a​s​ ​d​e​f​a​u​l​t​ ​l​a​n​g​u​a​g​e
+	 */
+	admin_consent_templates_default_language: string
+	/**
+	 * C​o​n​s​e​n​t​ ​c​o​n​t​e​n​t​ ​e​d​i​t​o​r​ ​t​a​b​s
+	 */
+	admin_consent_templates_editor_tabs: string
+	/**
+	 * T​e​x​t
+	 */
+	admin_consent_templates_text_tab: string
+	/**
+	 * p​r​e​v​i​e​w
+	 */
+	admin_consent_templates_preview_tab: string
+	/**
+	 * C​o​n​t​e​n​t
+	 */
+	admin_consent_templates_text_label: string
+	/**
+	 * A​l​l​o​w​e​d​ ​H​T​M​L​ ​t​a​g​s​:​ ​a​,​ ​b​r​,​ ​p​,​ ​s​p​a​n​,​ ​s​t​r​o​n​g​.​ ​P​r​e​v​i​e​w​ ​r​e​p​l​a​c​e​s​ ​%​l​i​n​k​1​%​,​ ​%​i​d​e​n​t​i​t​y​_​s​c​h​e​m​a​%​,​ ​%​d​e​s​t​i​n​a​t​i​o​n​_​f​i​e​l​d​_​m​a​p​p​i​n​g​_​s​e​t​%​,​ ​%​u​s​e​r​_​d​e​c​i​s​i​o​n​%​,​ ​%​b​i​n​d​i​n​g​_​l​i​s​t​%​,​ ​a​n​d​ ​%​s​u​b​j​e​c​t​%​.
+	 */
+	admin_consent_templates_text_hint: string
+	/**
+	 * C​o​n​t​e​n​t​ ​m​o​d​e
+	 */
+	admin_consent_templates_content_mode: string
+	/**
+	 * D​i​s​p​l​a​y​ ​o​n​l​y
+	 */
+	admin_consent_templates_content_mode_display: string
+	/**
+	 * S​h​o​w​ ​t​e​x​t​ ​w​i​t​h​o​u​t​ ​c​o​l​l​e​c​t​i​n​g​ ​a​ ​s​e​p​a​r​a​t​e​ ​a​n​s​w​e​r​.
+	 */
+	admin_consent_templates_content_mode_display_description: string
+	/**
+	 * C​h​e​c​k​b​o​x
+	 */
+	admin_consent_templates_content_mode_checkbox: string
+	/**
+	 * C​o​l​l​e​c​t​ ​o​n​e​ ​o​r​ ​m​o​r​e​ ​t​r​u​e​/​f​a​l​s​e​ ​a​g​r​e​e​m​e​n​t​s​ ​f​o​r​ ​t​h​i​s​ ​s​t​a​t​e​m​e​n​t​.
+	 */
+	admin_consent_templates_content_mode_checkbox_description: string
+	/**
+	 * R​a​d​i​o
+	 */
+	admin_consent_templates_content_mode_radio: string
+	/**
+	 * L​e​t​ ​u​s​e​r​s​ ​c​h​o​o​s​e​ ​e​x​a​c​t​l​y​ ​o​n​e​ ​a​n​s​w​e​r​ ​s​u​c​h​ ​a​s​ ​o​n​c​e​,​ ​a​l​w​a​y​s​,​ ​m​i​n​i​m​a​l​,​ ​o​r​ ​n​o​n​e​.
+	 */
+	admin_consent_templates_content_mode_radio_description: string
+	/**
+	 * L​i​n​k​s
+	 */
+	admin_consent_templates_links_title: string
+	/**
+	 * A​d​d​ ​l​i​n​k​s​ ​r​e​f​e​r​e​n​c​e​d​ ​f​r​o​m​ ​t​h​e​ ​s​t​a​t​e​m​e​n​t​ ​o​r​ ​o​p​t​i​o​n​ ​t​e​x​t​.​ ​T​h​e​ ​t​o​k​e​n​ ​n​u​m​b​e​r​ ​f​o​l​l​o​w​s​ ​t​h​e​ ​o​r​d​e​r​ ​b​e​l​o​w​.
+	 */
+	admin_consent_templates_links_description: string
+	/**
+	 * A​d​d​ ​l​i​n​k
+	 */
+	admin_consent_templates_links_add: string
+	/**
+	 * R​e​m​o​v​e​ ​{​t​o​k​e​n​}
+	 * @param {string} token
+	 */
+	admin_consent_templates_links_remove: RequiredParams<'token'>
+	/**
+	 * N​o​ ​m​a​n​a​g​e​d​ ​l​i​n​k​s​.​ ​A​d​d​ ​a​ ​l​i​n​k​ ​w​h​e​n​ ​t​h​e​ ​t​e​x​t​ ​u​s​e​s​ ​%​l​i​n​k​1​%​.
+	 */
+	admin_consent_templates_links_empty: string
+	/**
+	 * T​o​k​e​n
+	 */
+	admin_consent_templates_link_token: string
+	/**
+	 * U​R​L
+	 */
+	admin_consent_templates_link_url: string
+	/**
+	 * L​a​b​e​l​ ​(​{​l​a​n​g​u​a​g​e​}​)
+	 * @param {string} language
+	 */
+	admin_consent_templates_link_label: RequiredParams<'language'>
+	/**
+	 * O​p​t​i​o​n​s
+	 */
+	admin_consent_templates_options_title: string
+	/**
+	 * D​e​f​i​n​e​ ​t​h​e​ ​a​n​s​w​e​r​ ​v​a​l​u​e​s​ ​a​n​d​ ​l​a​b​e​l​s​ ​s​h​o​w​n​ ​w​i​t​h​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​.​ ​E​f​f​e​c​t​s​ ​a​r​e​ ​a​ ​d​r​a​f​t​ ​u​n​t​i​l​ ​t​h​e​ ​A​P​I​ ​s​c​h​e​m​a​ ​i​s​ ​f​i​n​a​l​i​z​e​d​.
+	 */
+	admin_consent_templates_options_description: string
+	/**
+	 * A​d​d​ ​o​p​t​i​o​n
+	 */
+	admin_consent_templates_options_add: string
+	/**
+	 * O​p​t​i​o​n​ ​{​i​n​d​e​x​}
+	 * @param {number} index
+	 */
+	admin_consent_templates_option_title: RequiredParams<'index'>
+	/**
+	 * R​e​m​o​v​e​ ​o​p​t​i​o​n​ ​{​i​n​d​e​x​}
+	 * @param {number} index
+	 */
+	admin_consent_templates_option_remove: RequiredParams<'index'>
+	/**
+	 * V​a​l​u​e​ ​t​y​p​e
+	 */
+	admin_consent_templates_option_value_type: string
+	/**
+	 * V​a​l​u​e
+	 */
+	admin_consent_templates_option_value: string
+	/**
+	 * L​a​b​e​l​ ​(​{​l​a​n​g​u​a​g​e​}​)
+	 * @param {string} language
+	 */
+	admin_consent_templates_option_label: RequiredParams<'language'>
+	/**
+	 * O​p​t​i​o​n​ ​t​e​x​t​ ​(​{​l​a​n​g​u​a​g​e​}​)
+	 * @param {string} language
+	 */
+	admin_consent_templates_option_body: RequiredParams<'language'>
+	/**
+	 * T​h​i​s​ ​t​e​x​t​ ​i​s​ ​s​h​o​w​n​ ​a​s​ ​t​h​e​ ​o​p​t​i​o​n​ ​l​a​b​e​l​/​b​o​d​y​.​ ​I​t​ ​c​a​n​ ​i​n​c​l​u​d​e​ ​m​a​n​a​g​e​d​ ​l​i​n​k​ ​t​o​k​e​n​s​ ​s​u​c​h​ ​a​s​ ​%​l​i​n​k​1​%​.
+	 */
+	admin_consent_templates_option_body_description: string
+	/**
+	 * E​f​f​e​c​t
+	 */
+	admin_consent_templates_option_effect: string
+	/**
+	 * E​f​f​e​c​t​ ​t​a​r​g​e​t
+	 */
+	admin_consent_templates_option_effect_target: string
+	/**
+	 * N​o​ ​e​f​f​e​c​t
+	 */
+	admin_consent_templates_option_effect_none: string
+	/**
+	 * R​e​l​e​a​s​e​ ​f​i​e​l​d​ ​s​e​t
+	 */
+	admin_consent_templates_option_effect_release_field_set: string
+	/**
+	 * D​e​n​y​ ​/​ ​s​t​o​p
+	 */
+	admin_consent_templates_option_effect_deny: string
+	/**
+	 * R​e​m​e​m​b​e​r​ ​a​n​s​w​e​r
+	 */
+	admin_consent_templates_option_effect_remember: string
+	/**
+	 * O​p​e​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_consent_templates_option_open_field_mapping: string
+	/**
+	 * C​h​o​o​s​e​ ​w​h​a​t​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​s​ ​b​o​u​n​d​ ​t​o​.
+	 */
+	admin_consent_templates_binding_description: string
+	/**
+	 * T​a​r​g​e​t​ ​t​y​p​e
+	 */
+	admin_consent_templates_binding_type: string
+	/**
+	 * S​u​b​j​e​c​t
+	 */
+	admin_consent_templates_binding_subject: string
+	/**
+	 * U​s​e​ ​t​h​i​s​ ​f​o​r​ ​T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e​,​ ​P​r​i​v​a​c​y​ ​P​o​l​i​c​y​,​ ​a​n​d​ ​o​t​h​e​r​ ​s​t​a​t​e​m​e​n​t​s​ ​t​h​a​t​ ​a​p​p​l​y​ ​t​o​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​s​i​g​n​e​d​-​i​n​ ​s​u​b​j​e​c​t​ ​r​a​t​h​e​r​ ​t​h​a​n​ ​a​ ​s​p​e​c​i​f​i​c​ ​a​t​t​r​i​b​u​t​e​.
+	 */
+	admin_consent_templates_binding_subject_description: string
+	/**
+	 * I​d​e​n​t​i​t​y​ ​S​c​h​e​m​a
+	 */
+	admin_consent_templates_binding_identity_schema: string
+	/**
+	 * U​s​e​ ​t​h​i​s​ ​w​h​e​n​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​v​a​l​u​e​ ​i​s​ ​r​e​c​o​r​d​e​d​ ​t​o​ ​a​ ​s​p​e​c​i​f​i​c​ ​f​i​e​l​d​ ​i​n​ ​t​h​e​ ​u​s​e​r​ ​i​d​e​n​t​i​t​y​ ​d​a​t​a​b​a​s​e​.
+	 */
+	admin_consent_templates_binding_identity_schema_description: string
+	/**
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
+	 */
+	admin_consent_templates_binding_destination_field_mapping_sets: string
+	/**
+	 * U​s​e​ ​t​h​i​s​ ​f​o​r​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​t​i​e​d​ ​t​o​ ​f​i​e​l​d​ ​s​e​t​s​ ​o​r​ ​a​t​t​r​i​b​u​t​e​ ​g​r​o​u​p​s​ ​d​e​f​i​n​e​d​ ​f​o​r​ ​e​a​c​h​ ​d​e​s​t​i​n​a​t​i​o​n​.
+	 */
+	admin_consent_templates_binding_destination_field_mapping_sets_description: string
+	/**
+	 * U​s​e​r​ ​D​e​c​i​s​i​o​n
+	 */
+	admin_consent_templates_binding_user_decision: string
+	/**
+	 * U​s​e​ ​t​h​i​s​ ​f​o​r​ ​g​e​n​e​r​i​c​ ​r​e​c​o​r​d​s​ ​t​h​a​t​ ​d​e​p​e​n​d​ ​o​n​ ​a​ ​u​s​e​r​-​s​e​l​e​c​t​e​d​ ​s​t​a​t​e​ ​o​r​ ​a​n​s​w​e​r​,​ ​s​u​c​h​ ​a​s​ ​S​A​M​L​ ​S​P​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​d​e​c​i​s​i​o​n​s​.
+	 */
+	admin_consent_templates_binding_user_decision_description: string
+	/**
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_consent_templates_binding_field_mapping_set: string
+	/**
+	 * N​o​ ​a​c​t​i​v​e​ ​s​e​t​ ​i​s​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_consent_templates_binding_no_field_mapping_sets: string
+	/**
+	 * L​o​a​d​i​n​g​ ​s​e​t​s​.​.​.
+	 */
+	admin_consent_templates_binding_loading_field_mapping_sets: string
+	/**
+	 * S​t​a​r​t​ ​b​l​a​n​k
+	 */
+	admin_consent_templates_start_blank: string
+	/**
+	 * C​r​e​a​t​e
+	 */
+	admin_consent_templates_create_from_template: string
+	/**
+	 * C​r​e​a​t​e
+	 */
+	admin_consent_templates_create_custom: string
+	/**
 	 * V​e​r​s​i​o​n​s​ ​f​o​r​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t
 	 */
 	admin_consent_statements_versions_section: string
@@ -28532,15 +29558,15 @@ type RootTranslation = {
 	 */
 	admin_consent_requirements_enabled: string
 	/**
-	 * C​o​n​s​e​n​t​ ​c​o​l​l​e​c​t​i​o​n
+	 * U​s​e​r​ ​i​n​p​u​t
 	 */
 	admin_consent_requirements_collection_mode: string
 	/**
-	 * C​o​l​l​e​c​t​ ​a​s​ ​r​e​q​u​i​r​e​d
+	 * I​n​p​u​t​ ​r​e​q​u​i​r​e​d
 	 */
 	admin_consent_requirements_collection_required: string
 	/**
-	 * C​o​l​l​e​c​t​ ​a​s​ ​o​p​t​i​o​n​a​l
+	 * I​n​p​u​t​ ​o​p​t​i​o​n​a​l
 	 */
 	admin_consent_requirements_collection_optional: string
 	/**
@@ -32915,6 +33941,50 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_description: () => LocalizedString
 	/**
+	 * Directory authentication sections
+	 */
+	admin_directory_authentication_tabs_aria: () => LocalizedString
+	/**
+	 * Settings
+	 */
+	admin_directory_authentication_tab_settings: () => LocalizedString
+	/**
+	 * Migration
+	 */
+	admin_directory_authentication_tab_migration: () => LocalizedString
+	/**
+	 * Compliance
+	 */
+	admin_directory_authentication_tab_compliance: () => LocalizedString
+	/**
+	 * Connector Fleet
+	 */
+	admin_directory_authentication_tab_fleet: () => LocalizedString
+	/**
+	 * Directory Authentication Migration - Authrim Admin
+	 */
+	admin_directory_authentication_migration_page_title: () => LocalizedString
+	/**
+	 * Migration
+	 */
+	admin_directory_authentication_migration_title: () => LocalizedString
+	/**
+	 * Manage explicit passwordless migration campaigns for directory-authenticated users.
+	 */
+	admin_directory_authentication_migration_description: () => LocalizedString
+	/**
+	 * Directory Authentication Compliance - Authrim Admin
+	 */
+	admin_directory_authentication_compliance_page_title: () => LocalizedString
+	/**
+	 * Compliance
+	 */
+	admin_directory_authentication_compliance_title: () => LocalizedString
+	/**
+	 * Review retention, evidence export jobs, support bundles, and Wordwarden advisories.
+	 */
+	admin_directory_authentication_compliance_description: () => LocalizedString
+	/**
 	 * Failed to load directory connectors
 	 */
 	admin_directory_authentication_load_failed: () => LocalizedString
@@ -33343,6 +34413,14 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_version_mismatch_policy: () => LocalizedString
 	/**
+	 * Expected Version
+	 */
+	admin_directory_authentication_expected_version: () => LocalizedString
+	/**
+	 * Minimum Version
+	 */
+	admin_directory_authentication_minimum_version: () => LocalizedString
+	/**
 	 * Unhealthy Threshold
 	 */
 	admin_directory_authentication_unhealthy_threshold: () => LocalizedString
@@ -33502,6 +34580,598 @@ export type TranslationFunctions = {
 	 * {count} connectors
 	 */
 	admin_directory_authentication_count: (arg: { count: number }) => LocalizedString
+	/**
+	 * Loading...
+	 */
+	admin_directory_authentication_loading_short: () => LocalizedString
+	/**
+	 * Updated
+	 */
+	admin_directory_authentication_updated: () => LocalizedString
+	/**
+	 * Failed to load directory migration state.
+	 */
+	admin_directory_authentication_migration_load_failed: () => LocalizedString
+	/**
+	 * Select a tenant to manage directory migration.
+	 */
+	admin_directory_authentication_migration_select_tenant: () => LocalizedString
+	/**
+	 * Tenant Fallback Policy
+	 */
+	admin_directory_authentication_migration_tenant_policy_title: () => LocalizedString
+	/**
+	 * Campaigns can inherit this tenant default or explicitly override it for migration and recovery flows.
+	 */
+	admin_directory_authentication_migration_tenant_policy_description: () => LocalizedString
+	/**
+	 * Tenant default Email Code fallback
+	 */
+	admin_directory_authentication_migration_tenant_fallback_label: () => LocalizedString
+	/**
+	 * Save policy
+	 */
+	admin_directory_authentication_migration_save_policy: () => LocalizedString
+	/**
+	 * Tenant fallback policy updated.
+	 */
+	admin_directory_authentication_migration_policy_saved: () => LocalizedString
+	/**
+	 * Failed to update tenant fallback policy.
+	 */
+	admin_directory_authentication_migration_policy_save_failed: () => LocalizedString
+	/**
+	 * Current
+	 */
+	admin_directory_authentication_migration_current: () => LocalizedString
+	/**
+	 * updated
+	 */
+	admin_directory_authentication_migration_updated: () => LocalizedString
+	/**
+	 * by
+	 */
+	admin_directory_authentication_migration_by: () => LocalizedString
+	/**
+	 * Campaigns
+	 */
+	admin_directory_authentication_migration_campaigns_title: () => LocalizedString
+	/**
+	 * Directory Login does not start migration until a campaign is explicitly enabled and assigned.
+	 */
+	admin_directory_authentication_migration_campaigns_description: () => LocalizedString
+	/**
+	 * Name
+	 */
+	admin_directory_authentication_migration_campaign_name: () => LocalizedString
+	/**
+	 * Mode
+	 */
+	admin_directory_authentication_migration_campaign_mode: () => LocalizedString
+	/**
+	 * Email fallback
+	 */
+	admin_directory_authentication_migration_email_fallback: () => LocalizedString
+	/**
+	 * Admin invitation only requires a valid invitation token whose invited email matches the directory user.
+	 */
+	admin_directory_authentication_migration_admin_invitation_hint: () => LocalizedString
+	/**
+	 * Create disabled campaign
+	 */
+	admin_directory_authentication_migration_create_disabled_campaign: () => LocalizedString
+	/**
+	 * Migration campaign created.
+	 */
+	admin_directory_authentication_migration_campaign_created: () => LocalizedString
+	/**
+	 * Failed to create migration campaign.
+	 */
+	admin_directory_authentication_migration_campaign_create_failed: () => LocalizedString
+	/**
+	 * Migration campaign updated.
+	 */
+	admin_directory_authentication_migration_campaign_updated: () => LocalizedString
+	/**
+	 * Failed to update migration campaign.
+	 */
+	admin_directory_authentication_migration_campaign_update_failed: () => LocalizedString
+	/**
+	 * No migration campaigns.
+	 */
+	admin_directory_authentication_migration_no_campaigns: () => LocalizedString
+	/**
+	 * template
+	 */
+	admin_directory_authentication_migration_template: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_directory_authentication_migration_status: () => LocalizedString
+	/**
+	 * Prompt
+	 */
+	admin_directory_authentication_migration_prompt: () => LocalizedString
+	/**
+	 * Grace
+	 */
+	admin_directory_authentication_migration_grace: () => LocalizedString
+	/**
+	 * Target policy
+	 */
+	admin_directory_authentication_migration_target_policy: () => LocalizedString
+	/**
+	 * User states
+	 */
+	admin_directory_authentication_migration_user_states_column: () => LocalizedString
+	/**
+	 * Cohorts
+	 */
+	admin_directory_authentication_migration_cohorts: () => LocalizedString
+	/**
+	 * Reasons
+	 */
+	admin_directory_authentication_migration_reasons: () => LocalizedString
+	/**
+	 * Actions
+	 */
+	admin_directory_authentication_migration_actions: () => LocalizedString
+	/**
+	 * Effective
+	 */
+	admin_directory_authentication_migration_effective: () => LocalizedString
+	/**
+	 * TTL
+	 */
+	admin_directory_authentication_migration_ttl: () => LocalizedString
+	/**
+	 * User States
+	 */
+	admin_directory_authentication_migration_user_states_title: () => LocalizedString
+	/**
+	 * Reset blocked or deferred migration states without creating a normal login session.
+	 */
+	admin_directory_authentication_migration_user_states_description: () => LocalizedString
+	/**
+	 * State
+	 */
+	admin_directory_authentication_migration_user_state: () => LocalizedString
+	/**
+	 * Any state
+	 */
+	admin_directory_authentication_migration_any_state: () => LocalizedString
+	/**
+	 * Campaign ID
+	 */
+	admin_directory_authentication_migration_campaign_id: () => LocalizedString
+	/**
+	 * User ID
+	 */
+	admin_directory_authentication_migration_user_id: () => LocalizedString
+	/**
+	 * Search
+	 */
+	admin_directory_authentication_migration_search: () => LocalizedString
+	/**
+	 * Failed to search migration user states.
+	 */
+	admin_directory_authentication_migration_search_failed: () => LocalizedString
+	/**
+	 * No user migration states.
+	 */
+	admin_directory_authentication_migration_no_user_states: () => LocalizedString
+	/**
+	 * first login
+	 */
+	admin_directory_authentication_migration_first_login: () => LocalizedString
+	/**
+	 * Reset reason
+	 */
+	admin_directory_authentication_migration_reset_reason: () => LocalizedString
+	/**
+	 * Reset
+	 */
+	admin_directory_authentication_migration_reset: () => LocalizedString
+	/**
+	 * Migration state reset.
+	 */
+	admin_directory_authentication_migration_state_reset: () => LocalizedString
+	/**
+	 * Failed to reset migration state.
+	 */
+	admin_directory_authentication_migration_state_reset_failed: () => LocalizedString
+	/**
+	 * Directory login allowed
+	 */
+	admin_directory_authentication_mode_directory_login_allowed: () => LocalizedString
+	/**
+	 * Prompt passkey
+	 */
+	admin_directory_authentication_mode_prompt_passkey: () => LocalizedString
+	/**
+	 * Grace then require passkey
+	 */
+	admin_directory_authentication_mode_grace_then_require_passkey: () => LocalizedString
+	/**
+	 * Require passkey after directory
+	 */
+	admin_directory_authentication_mode_require_passkey_after_directory: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_directory_authentication_option_disabled: () => LocalizedString
+	/**
+	 * Draft
+	 */
+	admin_directory_authentication_option_draft: () => LocalizedString
+	/**
+	 * Active
+	 */
+	admin_directory_authentication_option_active: () => LocalizedString
+	/**
+	 * Paused
+	 */
+	admin_directory_authentication_option_paused: () => LocalizedString
+	/**
+	 * Archived
+	 */
+	admin_directory_authentication_option_archived: () => LocalizedString
+	/**
+	 * Campaign only
+	 */
+	admin_directory_authentication_option_campaign_only: () => LocalizedString
+	/**
+	 * Optional
+	 */
+	admin_directory_authentication_option_optional: () => LocalizedString
+	/**
+	 * None
+	 */
+	admin_directory_authentication_option_none: () => LocalizedString
+	/**
+	 * Tenant default
+	 */
+	admin_directory_authentication_option_tenant_default: () => LocalizedString
+	/**
+	 * Migration recovery
+	 */
+	admin_directory_authentication_option_migration_recovery: () => LocalizedString
+	/**
+	 * Admin invitation only
+	 */
+	admin_directory_authentication_option_admin_invitation_only: () => LocalizedString
+	/**
+	 * Login method
+	 */
+	admin_directory_authentication_option_login_method: () => LocalizedString
+	/**
+	 * Directory unavailable recovery
+	 */
+	admin_directory_authentication_option_directory_unavailable_recovery: () => LocalizedString
+	/**
+	 * Eligible
+	 */
+	admin_directory_authentication_state_eligible: () => LocalizedString
+	/**
+	 * Not applicable
+	 */
+	admin_directory_authentication_state_not_applicable: () => LocalizedString
+	/**
+	 * Prompted
+	 */
+	admin_directory_authentication_state_prompted: () => LocalizedString
+	/**
+	 * Deferred
+	 */
+	admin_directory_authentication_state_deferred: () => LocalizedString
+	/**
+	 * Passkey required
+	 */
+	admin_directory_authentication_state_passkey_required: () => LocalizedString
+	/**
+	 * Enrolled
+	 */
+	admin_directory_authentication_state_enrolled: () => LocalizedString
+	/**
+	 * Blocked
+	 */
+	admin_directory_authentication_state_blocked: () => LocalizedString
+	/**
+	 * Recovered
+	 */
+	admin_directory_authentication_state_recovered: () => LocalizedString
+	/**
+	 * Failed to load directory compliance state.
+	 */
+	admin_directory_authentication_compliance_load_failed: () => LocalizedString
+	/**
+	 * Select a tenant to manage directory compliance.
+	 */
+	admin_directory_authentication_compliance_select_tenant: () => LocalizedString
+	/**
+	 * Evidence export access is unavailable.
+	 */
+	admin_directory_authentication_compliance_evidence_unavailable: () => LocalizedString
+	/**
+	 * Retention
+	 */
+	admin_directory_authentication_compliance_retention_title: () => LocalizedString
+	/**
+	 * Authrim remains the long-term audit authority while Wordwarden local logs stay short-lived.
+	 */
+	admin_directory_authentication_compliance_retention_description: () => LocalizedString
+	/**
+	 * Authrim audit retention days
+	 */
+	admin_directory_authentication_compliance_authrim_retention: () => LocalizedString
+	/**
+	 * Wordwarden local retention days
+	 */
+	admin_directory_authentication_compliance_wordwarden_retention: () => LocalizedString
+	/**
+	 * Artifact delete grace hours
+	 */
+	admin_directory_authentication_compliance_artifact_grace: () => LocalizedString
+	/**
+	 * Save retention
+	 */
+	admin_directory_authentication_compliance_save_retention: () => LocalizedString
+	/**
+	 * Retention policy updated.
+	 */
+	admin_directory_authentication_compliance_retention_saved: () => LocalizedString
+	/**
+	 * Failed to update retention policy.
+	 */
+	admin_directory_authentication_compliance_retention_save_failed: () => LocalizedString
+	/**
+	 * Maintenance
+	 */
+	admin_directory_authentication_compliance_maintenance_title: () => LocalizedString
+	/**
+	 * Run tenant-scoped cleanup for expired transactions and artifact metadata using the configured grace period.
+	 */
+	admin_directory_authentication_compliance_maintenance_description: () => LocalizedString
+	/**
+	 * Reason
+	 */
+	admin_directory_authentication_compliance_reason: () => LocalizedString
+	/**
+	 * Run cleanup
+	 */
+	admin_directory_authentication_compliance_run_cleanup: () => LocalizedString
+	/**
+	 * Failed to run maintenance cleanup.
+	 */
+	admin_directory_authentication_compliance_cleanup_failed: () => LocalizedString
+	/**
+	 * Cleanup completed. Expired {transactions} transactions, {exports} exports, and {bundles} support bundles.
+	 */
+	admin_directory_authentication_compliance_cleanup_completed: (arg: { bundles: number, exports: number, transactions: number }) => LocalizedString
+	/**
+	 * Evidence Exports
+	 */
+	admin_directory_authentication_compliance_evidence_title: () => LocalizedString
+	/**
+	 * Evidence bundles use encrypted export storage, Object Catalog tracking, proxy downloads, and SHA-256 checksums.
+	 */
+	admin_directory_authentication_compliance_evidence_description: () => LocalizedString
+	/**
+	 * Period start
+	 */
+	admin_directory_authentication_compliance_period_start: () => LocalizedString
+	/**
+	 * Period end
+	 */
+	admin_directory_authentication_compliance_period_end: () => LocalizedString
+	/**
+	 * Delete after download
+	 */
+	admin_directory_authentication_compliance_delete_after_download: () => LocalizedString
+	/**
+	 * Create export job
+	 */
+	admin_directory_authentication_compliance_create_export: () => LocalizedString
+	/**
+	 * Enter a valid export period.
+	 */
+	admin_directory_authentication_compliance_invalid_export_period: () => LocalizedString
+	/**
+	 * Evidence export job created.
+	 */
+	admin_directory_authentication_compliance_export_created: () => LocalizedString
+	/**
+	 * Failed to create evidence export.
+	 */
+	admin_directory_authentication_compliance_export_create_failed: () => LocalizedString
+	/**
+	 * Support Bundles
+	 */
+	admin_directory_authentication_compliance_support_title: () => LocalizedString
+	/**
+	 * Support bundles require a redaction summary and avoid raw passwords, hashes, secrets, tokens, and full LDAP filters.
+	 */
+	admin_directory_authentication_compliance_support_description: () => LocalizedString
+	/**
+	 * Redaction level
+	 */
+	admin_directory_authentication_compliance_redaction_level: () => LocalizedString
+	/**
+	 * Create support bundle
+	 */
+	admin_directory_authentication_compliance_create_support_bundle: () => LocalizedString
+	/**
+	 * Support bundle request created.
+	 */
+	admin_directory_authentication_compliance_support_created: () => LocalizedString
+	/**
+	 * Failed to create support bundle.
+	 */
+	admin_directory_authentication_compliance_support_create_failed: () => LocalizedString
+	/**
+	 * Minimal
+	 */
+	admin_directory_authentication_compliance_redaction_minimal: () => LocalizedString
+	/**
+	 * Standard
+	 */
+	admin_directory_authentication_compliance_redaction_standard: () => LocalizedString
+	/**
+	 * Detailed
+	 */
+	admin_directory_authentication_compliance_redaction_detailed: () => LocalizedString
+	/**
+	 * Detailed bundles may include endpoint names, DN fragments, attribute names, and timing data.
+	 */
+	admin_directory_authentication_compliance_detailed_warning: () => LocalizedString
+	/**
+	 * Acknowledge detailed bundle warning
+	 */
+	admin_directory_authentication_compliance_ack_warning: () => LocalizedString
+	/**
+	 * Config History
+	 */
+	admin_directory_authentication_compliance_config_history_title: () => LocalizedString
+	/**
+	 * Review redacted directory authentication policy, campaign, retention, and migration state changes.
+	 */
+	admin_directory_authentication_compliance_config_history_description: () => LocalizedString
+	/**
+	 * No config history.
+	 */
+	admin_directory_authentication_compliance_no_config_history: () => LocalizedString
+	/**
+	 * Summary Links
+	 */
+	admin_directory_authentication_compliance_summary_links_title: () => LocalizedString
+	/**
+	 * Open redacted operational summary views for this tenant.
+	 */
+	admin_directory_authentication_compliance_summary_links_description: () => LocalizedString
+	/**
+	 * No summary links.
+	 */
+	admin_directory_authentication_compliance_no_summary_links: () => LocalizedString
+	/**
+	 * Managed Connectors
+	 */
+	admin_directory_authentication_compliance_managed_connectors_title: () => LocalizedString
+	/**
+	 * Review Wordwarden instances reported by heartbeat. Auto-update is intentionally disabled.
+	 */
+	admin_directory_authentication_compliance_managed_connectors_description: () => LocalizedString
+	/**
+	 * No connector heartbeat has been received.
+	 */
+	admin_directory_authentication_compliance_no_heartbeat: () => LocalizedString
+	/**
+	 * Wordwarden Advisories
+	 */
+	admin_directory_authentication_compliance_advisories_title: () => LocalizedString
+	/**
+	 * Fleet heartbeat reports the installed version; Authrim shows advisory status without auto-updating connectors.
+	 */
+	admin_directory_authentication_compliance_advisories_description: () => LocalizedString
+	/**
+	 * No advisories.
+	 */
+	admin_directory_authentication_compliance_no_advisories: () => LocalizedString
+	/**
+	 * No jobs.
+	 */
+	admin_directory_authentication_compliance_no_jobs: () => LocalizedString
+	/**
+	 * ID
+	 */
+	admin_directory_authentication_compliance_id: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_directory_authentication_compliance_status: () => LocalizedString
+	/**
+	 * Requested by
+	 */
+	admin_directory_authentication_compliance_requested_by: () => LocalizedString
+	/**
+	 * Retention expires
+	 */
+	admin_directory_authentication_compliance_retention_expires: () => LocalizedString
+	/**
+	 * Checksum
+	 */
+	admin_directory_authentication_compliance_checksum: () => LocalizedString
+	/**
+	 * Artifact
+	 */
+	admin_directory_authentication_compliance_artifact: () => LocalizedString
+	/**
+	 * Download
+	 */
+	admin_directory_authentication_compliance_download: () => LocalizedString
+	/**
+	 * Time
+	 */
+	admin_directory_authentication_compliance_time: () => LocalizedString
+	/**
+	 * Action
+	 */
+	admin_directory_authentication_compliance_action: () => LocalizedString
+	/**
+	 * Resource
+	 */
+	admin_directory_authentication_compliance_resource: () => LocalizedString
+	/**
+	 * Actor
+	 */
+	admin_directory_authentication_compliance_actor: () => LocalizedString
+	/**
+	 * After
+	 */
+	admin_directory_authentication_compliance_after: () => LocalizedString
+	/**
+	 * Connector
+	 */
+	admin_directory_authentication_compliance_connector: () => LocalizedString
+	/**
+	 * Instance
+	 */
+	admin_directory_authentication_compliance_instance: () => LocalizedString
+	/**
+	 * Version
+	 */
+	admin_directory_authentication_compliance_version: () => LocalizedString
+	/**
+	 * Channel
+	 */
+	admin_directory_authentication_compliance_channel: () => LocalizedString
+	/**
+	 * Advisory
+	 */
+	admin_directory_authentication_compliance_advisory: () => LocalizedString
+	/**
+	 * affected
+	 */
+	admin_directory_authentication_compliance_affected: () => LocalizedString
+	/**
+	 * Health
+	 */
+	admin_directory_authentication_compliance_health: () => LocalizedString
+	/**
+	 * Last seen
+	 */
+	admin_directory_authentication_compliance_last_seen: () => LocalizedString
+	/**
+	 * Recent episode
+	 */
+	admin_directory_authentication_compliance_recent_episode: () => LocalizedString
+	/**
+	 * Started
+	 */
+	admin_directory_authentication_compliance_started: () => LocalizedString
+	/**
+	 * fixed
+	 */
+	admin_directory_authentication_compliance_fixed: () => LocalizedString
 	/**
 	 * SAML - Admin Dashboard - Authrim
 	 */
@@ -51433,7 +53103,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_description: () => LocalizedString
 	/**
-	 * Save draft
+	 * Save
 	 */
 	admin_identity_mapping_editor_save_draft: () => LocalizedString
 	/**
@@ -51525,11 +53195,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_side_not_selected: () => LocalizedString
 	/**
-	 * snapshot ready
+	 * saved
 	 */
 	admin_identity_mapping_editor_snapshot_ready: () => LocalizedString
 	/**
-	 * no snapshot
+	 * not saved
 	 */
 	admin_identity_mapping_editor_no_snapshot: () => LocalizedString
 	/**
@@ -51565,15 +53235,15 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_policy_default_suffix: () => LocalizedString
 	/**
-	 * Published field mapping set version
+	 * Saved field mapping set
 	 */
 	admin_identity_mapping_editor_policy_published: () => LocalizedString
 	/**
-	 * Activated field mapping set version
+	 * Activated field mapping set
 	 */
 	admin_identity_mapping_editor_policy_activated: () => LocalizedString
 	/**
-	 * Deactivated field mapping set version
+	 * Deactivated field mapping set
 	 */
 	admin_identity_mapping_editor_policy_deactivated: () => LocalizedString
 	/**
@@ -51581,11 +53251,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_no_active_catalog: () => LocalizedString
 	/**
-	 * Publish this version before activation
+	 * Save this field mapping set before activation
 	 */
 	admin_identity_mapping_editor_publish_before_activation: () => LocalizedString
 	/**
-	 * Select a Field Mapping Set version first
+	 * Select a Field Mapping Set first
 	 */
 	admin_identity_mapping_editor_select_policy_version_first: () => LocalizedString
 	/**
@@ -51613,7 +53283,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_policy_operation_failed: () => LocalizedString
 	/**
-	 * You have unsaved mapping draft changes. Discard them and switch view?
+	 * You have unsaved mapping changes. Discard them and switch view?
 	 */
 	admin_identity_mapping_editor_unsaved_confirm: () => LocalizedString
 	/**
@@ -51625,7 +53295,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_no_canonical_catalog: () => LocalizedString
 	/**
-	 * Draft field mapping set created from the Admin UI Flow Editor.
+	 * Field mapping set created from the Admin UI Flow Editor.
 	 */
 	admin_identity_mapping_editor_created_description: () => LocalizedString
 	/**
@@ -53029,7 +54699,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_graph_aria: () => LocalizedString
 	/**
-	 * Policy draft
+	 * Field Mapping Set
 	 */
 	admin_identity_mapping_flow_policy_draft: () => LocalizedString
 	/**
@@ -53109,7 +54779,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_schema_not_configured: () => LocalizedString
 	/**
-	 * Save, publish, compile, and activate a field mapping set before using this overview.
+	 * Save and activate a field mapping set before using this overview.
 	 */
 	admin_identity_mapping_flow_no_active_policies_desc: () => LocalizedString
 	/**
@@ -53453,7 +55123,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_transform_concat_label: () => LocalizedString
 	/**
-	 * Join all connected input values into one string.
+	 * Join all connected input values into one string. Use the delimiter field to choose space, comma, no separator, or custom text.
 	 */
 	admin_identity_mapping_flow_transform_concat_desc: () => LocalizedString
 	/**
@@ -53637,7 +55307,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_continues_original_target: () => LocalizedString
 	/**
-	 * draft transform node inserted
+	 * transform node inserted
 	 */
 	admin_identity_mapping_flow_transform_inserted_validation: () => LocalizedString
 	/**
@@ -53653,11 +55323,11 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_not_connected_yet: () => LocalizedString
 	/**
-	 * Custom draft node added. Drag a connection handle to attach it to the identity schema.
+	 * Custom node added. Drag a connection handle to attach it to the identity schema.
 	 */
 	admin_identity_mapping_flow_custom_node_trace: () => LocalizedString
 	/**
-	 * draft transform configured; compile validation pending
+	 * transform configured; validation pending
 	 */
 	admin_identity_mapping_flow_transform_configured_validation: () => LocalizedString
 	/**
@@ -53665,27 +55335,27 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_transform_output_pending: (arg: { summary: string }) => LocalizedString
 	/**
-	 * Transform configuration is stored on the draft node and will be persisted as a mapping transform step.
+	 * Transform configuration is stored on the node and will be persisted as a mapping transform step.
 	 */
 	admin_identity_mapping_flow_transform_config_trace: () => LocalizedString
 	/**
-	 * Connect at least one mapping edge before compiling a draft.
+	 * Connect at least one mapping edge before saving.
 	 */
 	admin_identity_mapping_flow_connect_edge_before_compile: () => LocalizedString
 	/**
-	 * Compile draft is not connected on this page.
+	 * Save is not connected on this page.
 	 */
 	admin_identity_mapping_flow_compile_not_connected: () => LocalizedString
 	/**
-	 * Saving draft policy version...
+	 * Saving field mapping set...
 	 */
 	admin_identity_mapping_flow_saving_draft_policy: () => LocalizedString
 	/**
-	 * Draft policy version saved and compiled.
+	 * Field mapping set saved.
 	 */
 	admin_identity_mapping_flow_draft_saved_compiled: () => LocalizedString
 	/**
-	 * Failed to compile mapping draft.
+	 * Failed to save field mapping set.
 	 */
 	admin_identity_mapping_flow_compile_failed: () => LocalizedString
 	/**
@@ -56117,6 +57787,378 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_back_to_list: () => LocalizedString
 	/**
+	 * Create Consent Statement
+	 */
+	admin_consent_templates_page_title: () => LocalizedString
+	/**
+	 * Create Consent Statement
+	 */
+	admin_consent_templates_plain_page_title: () => LocalizedString
+	/**
+	 * Consent template
+	 */
+	admin_consent_templates_kicker: () => LocalizedString
+	/**
+	 * Choose the closest template, then set the user input behavior and binding target.
+	 */
+	admin_consent_templates_page_description: () => LocalizedString
+	/**
+	 * Back
+	 */
+	admin_consent_templates_back: () => LocalizedString
+	/**
+	 * Consent statement templates
+	 */
+	admin_consent_templates_template_aria: () => LocalizedString
+	/**
+	 * Input mode
+	 */
+	admin_consent_templates_collection_aria: () => LocalizedString
+	/**
+	 * Binding target
+	 */
+	admin_consent_templates_binding_aria: () => LocalizedString
+	/**
+	 * Terms of Service
+	 */
+	admin_consent_templates_terms_title: () => LocalizedString
+	/**
+	 * Collect agreement to the service terms.
+	 */
+	admin_consent_templates_terms_description: () => LocalizedString
+	/**
+	 * Privacy Policy
+	 */
+	admin_consent_templates_privacy_title: () => LocalizedString
+	/**
+	 * Collect consent for personal data handling.
+	 */
+	admin_consent_templates_privacy_description: () => LocalizedString
+	/**
+	 * User Data Release Consent
+	 */
+	admin_consent_templates_user_data_title: () => LocalizedString
+	/**
+	 * Create consent for releasing user data to OIDC clients and similar services.
+	 */
+	admin_consent_templates_user_data_description: () => LocalizedString
+	/**
+	 * SAML Attribute Release
+	 */
+	admin_consent_templates_saml_release_title: () => LocalizedString
+	/**
+	 * Create a consent statement for attributes released to a SAML SP.
+	 */
+	admin_consent_templates_saml_release_description: () => LocalizedString
+	/**
+	 * SAML Attribute Release Confirmation
+	 */
+	admin_consent_templates_saml_confirmation_title: () => LocalizedString
+	/**
+	 * Create a confirmation that lets users choose one-time release or future automatic release.
+	 */
+	admin_consent_templates_saml_confirmation_description: () => LocalizedString
+	/**
+	 * Custom
+	 */
+	admin_consent_templates_custom_title: () => LocalizedString
+	/**
+	 * Create a blank consent statement without using a template.
+	 */
+	admin_consent_templates_custom_description: () => LocalizedString
+	/**
+	 * Custom creation lets you configure the category, content, and requirement freely on the next screen.
+	 */
+	admin_consent_templates_custom_panel_description: () => LocalizedString
+	/**
+	 * Custom
+	 */
+	admin_consent_templates_custom_kicker: () => LocalizedString
+	/**
+	 * Input mode
+	 */
+	admin_consent_templates_collection_kicker: () => LocalizedString
+	/**
+	 * Input required
+	 */
+	admin_consent_templates_mode_required: () => LocalizedString
+	/**
+	 * Users cannot continue without answering.
+	 */
+	admin_consent_templates_mode_required_description: () => LocalizedString
+	/**
+	 * Input optional
+	 */
+	admin_consent_templates_mode_optional: () => LocalizedString
+	/**
+	 * Users can continue without answering.
+	 */
+	admin_consent_templates_mode_optional_description: () => LocalizedString
+	/**
+	 * Display only (no input)
+	 */
+	admin_consent_templates_mode_display: () => LocalizedString
+	/**
+	 * Show as confirmation information. No user answer is requested.
+	 */
+	admin_consent_templates_mode_display_description: () => LocalizedString
+	/**
+	 * Hidden (no input)
+	 */
+	admin_consent_templates_mode_hidden: () => LocalizedString
+	/**
+	 * Do not show it on screen or request a user answer.
+	 */
+	admin_consent_templates_mode_hidden_description: () => LocalizedString
+	/**
+	 * Binding target
+	 */
+	admin_consent_templates_binding_title: () => LocalizedString
+	/**
+	 * Binding target
+	 */
+	admin_consent_templates_binding_kicker: () => LocalizedString
+	/**
+	 * Consent statement content
+	 */
+	admin_consent_templates_content_aria: () => LocalizedString
+	/**
+	 * Consent statement content
+	 */
+	admin_consent_templates_content_title: () => LocalizedString
+	/**
+	 * Internal title
+	 */
+	admin_consent_templates_internal_title: () => LocalizedString
+	/**
+	 * Languages
+	 */
+	admin_consent_templates_languages: () => LocalizedString
+	/**
+	 * [Default]
+	 */
+	admin_consent_templates_default_language_badge: () => LocalizedString
+	/**
+	 * Remove {language}
+	 */
+	admin_consent_templates_remove_language: (arg: { language: string }) => LocalizedString
+	/**
+	 * Set as default language
+	 */
+	admin_consent_templates_default_language: () => LocalizedString
+	/**
+	 * Consent content editor tabs
+	 */
+	admin_consent_templates_editor_tabs: () => LocalizedString
+	/**
+	 * Text
+	 */
+	admin_consent_templates_text_tab: () => LocalizedString
+	/**
+	 * preview
+	 */
+	admin_consent_templates_preview_tab: () => LocalizedString
+	/**
+	 * Content
+	 */
+	admin_consent_templates_text_label: () => LocalizedString
+	/**
+	 * Allowed HTML tags: a, br, p, span, strong. Preview replaces %link1%, %identity_schema%, %destination_field_mapping_set%, %user_decision%, %binding_list%, and %subject%.
+	 */
+	admin_consent_templates_text_hint: () => LocalizedString
+	/**
+	 * Content mode
+	 */
+	admin_consent_templates_content_mode: () => LocalizedString
+	/**
+	 * Display only
+	 */
+	admin_consent_templates_content_mode_display: () => LocalizedString
+	/**
+	 * Show text without collecting a separate answer.
+	 */
+	admin_consent_templates_content_mode_display_description: () => LocalizedString
+	/**
+	 * Checkbox
+	 */
+	admin_consent_templates_content_mode_checkbox: () => LocalizedString
+	/**
+	 * Collect one or more true/false agreements for this statement.
+	 */
+	admin_consent_templates_content_mode_checkbox_description: () => LocalizedString
+	/**
+	 * Radio
+	 */
+	admin_consent_templates_content_mode_radio: () => LocalizedString
+	/**
+	 * Let users choose exactly one answer such as once, always, minimal, or none.
+	 */
+	admin_consent_templates_content_mode_radio_description: () => LocalizedString
+	/**
+	 * Links
+	 */
+	admin_consent_templates_links_title: () => LocalizedString
+	/**
+	 * Add links referenced from the statement or option text. The token number follows the order below.
+	 */
+	admin_consent_templates_links_description: () => LocalizedString
+	/**
+	 * Add link
+	 */
+	admin_consent_templates_links_add: () => LocalizedString
+	/**
+	 * Remove {token}
+	 */
+	admin_consent_templates_links_remove: (arg: { token: string }) => LocalizedString
+	/**
+	 * No managed links. Add a link when the text uses %link1%.
+	 */
+	admin_consent_templates_links_empty: () => LocalizedString
+	/**
+	 * Token
+	 */
+	admin_consent_templates_link_token: () => LocalizedString
+	/**
+	 * URL
+	 */
+	admin_consent_templates_link_url: () => LocalizedString
+	/**
+	 * Label ({language})
+	 */
+	admin_consent_templates_link_label: (arg: { language: string }) => LocalizedString
+	/**
+	 * Options
+	 */
+	admin_consent_templates_options_title: () => LocalizedString
+	/**
+	 * Define the answer values and labels shown with this consent statement. Effects are a draft until the API schema is finalized.
+	 */
+	admin_consent_templates_options_description: () => LocalizedString
+	/**
+	 * Add option
+	 */
+	admin_consent_templates_options_add: () => LocalizedString
+	/**
+	 * Option {index}
+	 */
+	admin_consent_templates_option_title: (arg: { index: number }) => LocalizedString
+	/**
+	 * Remove option {index}
+	 */
+	admin_consent_templates_option_remove: (arg: { index: number }) => LocalizedString
+	/**
+	 * Value type
+	 */
+	admin_consent_templates_option_value_type: () => LocalizedString
+	/**
+	 * Value
+	 */
+	admin_consent_templates_option_value: () => LocalizedString
+	/**
+	 * Label ({language})
+	 */
+	admin_consent_templates_option_label: (arg: { language: string }) => LocalizedString
+	/**
+	 * Option text ({language})
+	 */
+	admin_consent_templates_option_body: (arg: { language: string }) => LocalizedString
+	/**
+	 * This text is shown as the option label/body. It can include managed link tokens such as %link1%.
+	 */
+	admin_consent_templates_option_body_description: () => LocalizedString
+	/**
+	 * Effect
+	 */
+	admin_consent_templates_option_effect: () => LocalizedString
+	/**
+	 * Effect target
+	 */
+	admin_consent_templates_option_effect_target: () => LocalizedString
+	/**
+	 * No effect
+	 */
+	admin_consent_templates_option_effect_none: () => LocalizedString
+	/**
+	 * Release field set
+	 */
+	admin_consent_templates_option_effect_release_field_set: () => LocalizedString
+	/**
+	 * Deny / stop
+	 */
+	admin_consent_templates_option_effect_deny: () => LocalizedString
+	/**
+	 * Remember answer
+	 */
+	admin_consent_templates_option_effect_remember: () => LocalizedString
+	/**
+	 * Open Field Mapping Set settings
+	 */
+	admin_consent_templates_option_open_field_mapping: () => LocalizedString
+	/**
+	 * Choose what this consent statement is bound to.
+	 */
+	admin_consent_templates_binding_description: () => LocalizedString
+	/**
+	 * Target type
+	 */
+	admin_consent_templates_binding_type: () => LocalizedString
+	/**
+	 * Subject
+	 */
+	admin_consent_templates_binding_subject: () => LocalizedString
+	/**
+	 * Use this for Terms of Service, Privacy Policy, and other statements that apply to the current signed-in subject rather than a specific attribute.
+	 */
+	admin_consent_templates_binding_subject_description: () => LocalizedString
+	/**
+	 * Identity Schema
+	 */
+	admin_consent_templates_binding_identity_schema: () => LocalizedString
+	/**
+	 * Use this when the selected value is recorded to a specific field in the user identity database.
+	 */
+	admin_consent_templates_binding_identity_schema_description: () => LocalizedString
+	/**
+	 * Destination Field Mapping Sets
+	 */
+	admin_consent_templates_binding_destination_field_mapping_sets: () => LocalizedString
+	/**
+	 * Use this for consent statements tied to field sets or attribute groups defined for each destination.
+	 */
+	admin_consent_templates_binding_destination_field_mapping_sets_description: () => LocalizedString
+	/**
+	 * User Decision
+	 */
+	admin_consent_templates_binding_user_decision: () => LocalizedString
+	/**
+	 * Use this for generic records that depend on a user-selected state or answer, such as SAML SP attribute release decisions.
+	 */
+	admin_consent_templates_binding_user_decision_description: () => LocalizedString
+	/**
+	 * Destination Field Mapping Set
+	 */
+	admin_consent_templates_binding_field_mapping_set: () => LocalizedString
+	/**
+	 * No active set is available.
+	 */
+	admin_consent_templates_binding_no_field_mapping_sets: () => LocalizedString
+	/**
+	 * Loading sets...
+	 */
+	admin_consent_templates_binding_loading_field_mapping_sets: () => LocalizedString
+	/**
+	 * Start blank
+	 */
+	admin_consent_templates_start_blank: () => LocalizedString
+	/**
+	 * Create
+	 */
+	admin_consent_templates_create_from_template: () => LocalizedString
+	/**
+	 * Create
+	 */
+	admin_consent_templates_create_custom: () => LocalizedString
+	/**
 	 * Versions for this consent statement
 	 */
 	admin_consent_statements_versions_section: () => LocalizedString
@@ -56673,15 +58715,15 @@ Remove this role from {email}?
 	 */
 	admin_consent_requirements_enabled: () => LocalizedString
 	/**
-	 * Consent collection
+	 * User input
 	 */
 	admin_consent_requirements_collection_mode: () => LocalizedString
 	/**
-	 * Collect as required
+	 * Input required
 	 */
 	admin_consent_requirements_collection_required: () => LocalizedString
 	/**
-	 * Collect as optional
+	 * Input optional
 	 */
 	admin_consent_requirements_collection_optional: () => LocalizedString
 	/**

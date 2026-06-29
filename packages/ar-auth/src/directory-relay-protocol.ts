@@ -29,6 +29,7 @@ export interface DirectoryRelayAuthResponseMessage {
   instance_id?: string;
   display_name?: string;
   version?: string;
+  release_channel?: string;
   started_at?: string;
   config_fingerprint?: string;
   config_categories?: string[];

@@ -22,6 +22,8 @@ export interface DirectoryConnectorHeartbeatSettings {
 	stale_after_ms: number;
 	retention_days: number;
 	version_mismatch_policy: 'warn' | 'block';
+	expected_version: string;
+	minimum_version: string;
 	unhealthy_threshold: number;
 	stale_detection_grace_ms: number;
 }
@@ -134,6 +136,7 @@ export interface DirectoryConnectorFleetInstance {
 	display_name: string | null;
 	transport: 'relay' | 'direct' | 'tunnel';
 	version: string;
+	release_channel: string;
 	started_at: string;
 	first_seen_at: number;
 	last_seen_at: number;

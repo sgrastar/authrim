@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount, tick } from 'svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import {
 		adminIdentityMappingAPI,
 		type PersistentIdentifierProfileSummary
@@ -79,7 +79,18 @@
 		description: string;
 		parameters: TransformParameterSchema[];
 	};
+	type TransformOperationCategoryId = 'basic' | 'array' | 'text' | 'identifier' | 'json';
+	type TransformOperationCategory = {
+		id: TransformOperationCategoryId;
+		operations: TransformOperation[];
+	};
 	type TransformParameterValue = string | boolean;
+	type DryRunValue = {
+		ok: boolean;
+		value: string;
+		input?: string;
+		trace?: string;
+	};
 
 	const transformOperationSchemas: TransformOperationSchema[] = [
 		{
@@ -241,7 +252,7 @@
 					label: 'Delimiter',
 					kind: 'string',
 					required: false,
-					placeholder: 'space, comma, or custom text'
+					placeholder: 'space, comma, blank, or custom text'
 				}
 			]
 		},
@@ -345,6 +356,24 @@
 					required: true,
 					placeholder: 'quota.limit or memberships[0].rank'
 				}
+			]
+		}
+	];
+	const transformOperationCategories: TransformOperationCategory[] = [
+		{ id: 'basic', operations: ['copy', 'fallback'] },
+		{ id: 'array', operations: ['as_array', 'split', 'join', 'first'] },
+		{
+			id: 'text',
+			operations: ['trim', 'normalize', 'case', 'affix_text', 'concat', 'text_to_boolean']
+		},
+		{ id: 'identifier', operations: ['oidc_pairwise_sub', 'saml_edu_person_targeted_id'] },
+		{
+			id: 'json',
+			operations: [
+				'json_build',
+				'json_extract_text',
+				'json_extract_boolean',
+				'json_extract_integer'
 			]
 		}
 	];
@@ -464,6 +493,9 @@
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
 	let draftSubmitMessage = $state<string | null>(null);
 	let persistentIdentifierProfiles = $state<PersistentIdentifierProfileSummary[]>([]);
+	let dryRunResults = $state<
+		Record<string, Pick<RuleDetail, 'dryrunStatus' | 'dryrunTone' | 'input' | 'output' | 'trace'>>
+	>({});
 	let swappingNodeIds = $state<string[]>([]);
 	let nodeSwapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
 	let animateNextSampleSourceNodes = false;
@@ -485,6 +517,7 @@
 	let connectionDragPointer: Point | null = null;
 	let connectionAutoScrollFrame: number | null = null;
 	let suppressNextNodeClickId: string | null = null;
+	let suppressNextCanvasClear = false;
 
 	interface Point {
 		x: number;
@@ -631,7 +664,7 @@
 		})
 	);
 	const selectedEdge = $derived(
-		selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) : null
+		selectedEdgeId ? graphEdges.find((edge) => edge.id === selectedEdgeId) : null
 	);
 	const selectedEdges = $derived(
 		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
@@ -659,9 +692,22 @@
 	const enabledViewModes = $derived(
 		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
 	);
-	const rule = $derived(
+	const inspectorRuleKey = $derived(selectedEdge ? `edge:${selectedEdge.id}` : activeRuleId);
+	const baseRule = $derived(
 		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
 	);
+	const liveDryRunResult = $derived.by(() => {
+		if (activeTab !== 'dryrun') return null;
+		const edge = selectedDryRunEdge();
+		return dryRunRulePatch(
+			edge ? evaluateDryRunEdge(edge) : evaluateDryRunNode(selectedInspectorNode())
+		);
+	});
+	const rule = $derived({
+		...baseRule,
+		...(dryRunResults[inspectorRuleKey] ?? {}),
+		...(liveDryRunResult ?? {})
+	});
 	const selectedTransformNode = $derived.by(() => {
 		const selected = selectedNodeId ? nodeById(selectedNodeId) : undefined;
 		return selected?.role === 'transform' ? selected : null;
@@ -867,6 +913,15 @@
 		return nodes.find((node) => node.id === id);
 	}
 
+	function firstNodeExample(node: MappingNode | undefined): string {
+		const example = node?.examples?.[0];
+		if (example !== undefined && example !== null && String(example).trim().length > 0) {
+			return formatNodeInfoValue(example);
+		}
+		if (node?.caption) return node.caption;
+		return node?.label ?? $LL.admin_identity_mapping_flow_not_connected();
+	}
+
 	function nodeForRule(ruleId: string): MappingNode | undefined {
 		return nodes.find((node) => node.ruleId === ruleId);
 	}
@@ -883,11 +938,13 @@
 		activeRuleId = ruleId;
 		selectedEdgeId = null;
 		selectedNodeId = nodeForRule(ruleId)?.id ?? null;
+		dryRunResults = {};
 	}
 
 	function selectEdge(edge: MappingEdge) {
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		dryRunResults = {};
 	}
 
 	function clearSelection() {
@@ -896,6 +953,22 @@
 		hoverNodeId = null;
 		hoverEdgeId = null;
 		hoverTargetGroupKey = null;
+		dryRunResults = {};
+	}
+
+	function clearCanvasSelection() {
+		if (suppressNextCanvasClear) {
+			suppressNextCanvasClear = false;
+			return;
+		}
+		clearSelection();
+	}
+
+	function suppressCanvasClearOnce() {
+		suppressNextCanvasClear = true;
+		window.setTimeout(() => {
+			suppressNextCanvasClear = false;
+		}, 0);
 	}
 
 	function markDraftDirty() {
@@ -949,6 +1022,13 @@
 				custom: true
 			});
 		}
+		logDebug('[IdentityMappingAutoMap]', {
+			viewMode,
+			fromNodes: visibleAutoMapFromNodes().map(debugNode),
+			toNodes: visibleAutoMapToNodes().map(debugNode),
+			candidates,
+			newEdges
+		});
 
 		if (newEdges.length === 0) {
 			draftSubmitStatus = 'info';
@@ -2485,8 +2565,10 @@
 		const toNode = connectionTargetForPointer(event);
 		if (reconnectState.reconnectEdgeId && reconnectState.reconnectSide && toNode) {
 			reconnectEdge(reconnectState.reconnectEdgeId, reconnectState.reconnectSide, toNode.id);
+			suppressCanvasClearOnce();
 		} else if (isValidConnection(fromNode, toNode) && toNode) {
 			addEdge(dragState.fromNodeId, toNode.id);
+			suppressCanvasClearOnce();
 		}
 		dragState = null;
 		stopConnectionAutoScroll();
@@ -2509,6 +2591,7 @@
 		edges = [...edges, edge];
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2521,6 +2604,7 @@
 		event.stopPropagation();
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		dryRunResults = {};
 		pendingConnectionStart = null;
 		dragState = {
 			fromNodeId: edge.from,
@@ -2559,6 +2643,7 @@
 		);
 		selectedEdgeId = edgeId;
 		selectedNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2618,6 +2703,7 @@
 		activeRuleId = ruleId;
 		selectedNodeId = nodeId;
 		selectedEdgeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2649,6 +2735,7 @@
 
 		edges = edges.filter((candidate) => candidate.id !== edgeId);
 		selectedEdgeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2663,6 +2750,7 @@
 		}
 		selectedEdgeId = null;
 		hoverNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2716,6 +2804,7 @@
 		}
 		selectedEdgeId = null;
 		hoverNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2875,6 +2964,45 @@
 
 	function activeTransformSchema(node: MappingNode): TransformOperationSchema {
 		return transformSchema(activeTransformOperation(node));
+	}
+
+	function transformOperationCategoryForOperation(
+		operation: TransformOperation
+	): TransformOperationCategory {
+		return (
+			transformOperationCategories.find((category) => category.operations.includes(operation)) ??
+			transformOperationCategories[0]
+		);
+	}
+
+	function activeTransformOperationCategory(node: MappingNode): TransformOperationCategory {
+		return transformOperationCategoryForOperation(activeTransformOperation(node));
+	}
+
+	function transformOperationCategoryLabel(categoryId: TransformOperationCategoryId): string {
+		const ja = getLocale() === 'ja';
+		switch (categoryId) {
+			case 'basic':
+				return ja ? '基本' : 'Basic';
+			case 'array':
+				return ja ? '配列' : 'Array';
+			case 'text':
+				return ja ? 'テキスト' : 'Text';
+			case 'identifier':
+				return ja ? '識別子' : 'Identifier';
+			case 'json':
+				return 'JSON';
+		}
+	}
+
+	function transformOperationCategoryFieldLabel(): string {
+		return getLocale() === 'ja' ? 'カテゴリ' : 'Category';
+	}
+
+	function transformOperationOptionsForCategory(
+		category: TransformOperationCategory
+	): TransformOperationSchema[] {
+		return category.operations.map(transformSchema);
 	}
 
 	function transformOperationLabel(operation: TransformOperation): string {
@@ -3048,7 +3176,7 @@
 		if (operation === 'affix_text') return { prefix: '', suffix: '' };
 		if (operation === 'normalize') return { mode: 'whitespace' };
 		if (operation === 'case') return { mode: 'lower' };
-		if (operation === 'concat') return { delimiter: ' ' };
+		if (operation === 'concat') return { delimiter: 'space' };
 		if (operation === 'text_to_boolean') {
 			return {
 				trueValues: 'true,1,yes,y,on,active,enabled',
@@ -3173,6 +3301,15 @@
 	function updateTransformOperation(node: MappingNode, value: string) {
 		const operation = transformOperation(value);
 		updateTransformNode(node.id, operation, defaultTransformParameters(operation));
+	}
+
+	function updateTransformOperationCategory(node: MappingNode, value: string) {
+		const category =
+			transformOperationCategories.find((candidate) => candidate.id === value) ??
+			transformOperationCategories[0];
+		const activeOperation = activeTransformOperation(node);
+		if (category.operations.includes(activeOperation)) return;
+		updateTransformOperation(node, category.operations[0]);
 	}
 
 	function updateTransformParameter(
@@ -3386,6 +3523,440 @@
 				: $LL.admin_identity_mapping_flow_selected_edge_loaded_validation(),
 			trace: $LL.admin_identity_mapping_flow_selected_edge_trace()
 		};
+	}
+
+	function inspectorConnectionDirection(): 'source_to_schema' | 'schema_to_destination' | 'other' {
+		if (selectedEdge) {
+			const fromNode = nodeById(selectedEdge.from);
+			const toNode = nodeById(selectedEdge.to);
+			if (toNode?.role === 'target') return 'source_to_schema';
+			if (fromNode?.role === 'target' || toNode?.role === 'destination') {
+				return 'schema_to_destination';
+			}
+		}
+		const selectedNode = nodes.find((node) => node.id === selectedNodeId);
+		if (selectedNode?.role === 'source') return 'source_to_schema';
+		if (selectedNode?.role === 'destination') return 'schema_to_destination';
+		if (selectedNode?.role === 'target') {
+			return viewMode === 'destination' ? 'schema_to_destination' : 'source_to_schema';
+		}
+		return 'other';
+	}
+
+	function runInspectorDryRun() {
+		const edge = selectedDryRunEdge();
+		const result = edge ? evaluateDryRunEdge(edge) : evaluateDryRunNode(selectedInspectorNode());
+		logDryRunDebug('manual', result);
+		dryRunResults = {
+			...dryRunResults,
+			[inspectorRuleKey]: dryRunRulePatch(result)
+		};
+	}
+
+	function logDryRunDebug(
+		mode: 'manual' | 'live',
+		result: { ok: boolean; input: string; output: string; trace: string }
+	) {
+		logDebug('[IdentityMappingDryRun]', {
+			mode,
+			activeTab,
+			inspectorRuleKey,
+			activeRuleId,
+			selectedNodeId,
+			selectedEdgeId,
+			selectedEdge,
+			selectedNode: selectedInspectorNode() ? debugNode(selectedInspectorNode()) : null,
+			graphEdgeCount: graphEdges.length,
+			graphEdges,
+			editableEdgeCount: edges.length,
+			editableEdges: edges,
+			result
+		});
+	}
+
+	function logDebug(label: string, payload: unknown) {
+		try {
+			console.log(label, JSON.stringify(payload, null, 2));
+		} catch {
+			console.log(label, payload);
+		}
+	}
+
+	function debugNode(node: MappingNode | undefined) {
+		if (!node) return null;
+		return {
+			id: node.id,
+			role: node.role,
+			label: node.label,
+			caption: node.caption,
+			type: node.type,
+			adapter: node.adapter,
+			profileId: node.profileId,
+			fieldRef: node.fieldRef
+		};
+	}
+
+	function selectedInspectorNode(): MappingNode | undefined {
+		return selectedNodeId ? nodeById(selectedNodeId) : nodeForRule(activeRuleId);
+	}
+
+	function selectedDryRunEdge(): MappingEdge | null {
+		if (selectedEdge) return selectedEdge;
+		if (selectedEdgeId) {
+			return graphEdges.find((edge) => edge.id === selectedEdgeId) ?? null;
+		}
+		if (selectedNodeId) return null;
+		return graphEdges.length === 1 ? graphEdges[0] : null;
+	}
+
+	function dryRunRulePatch(result: {
+		ok: boolean;
+		input: string;
+		output: string;
+		trace: string;
+	}): Pick<RuleDetail, 'dryrunStatus' | 'dryrunTone' | 'input' | 'output' | 'trace'> {
+		return {
+			dryrunStatus: result.ok
+				? $LL.admin_identity_mapping_flow_configured()
+				: $LL.admin_identity_mapping_flow_not_configured(),
+			dryrunTone: result.ok ? 'ok' : 'warn',
+			input: result.input,
+			output: result.output,
+			trace: result.trace
+		};
+	}
+
+	function evaluateDryRunEdge(edge: MappingEdge): {
+		ok: boolean;
+		input: string;
+		output: string;
+		trace: string;
+	} {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		logDebug('[IdentityMappingDryRun:evaluateEdge]', {
+			edge,
+			fromNode: debugNode(fromNode),
+			toNode: debugNode(toNode)
+		});
+		if (!fromNode || !toNode) {
+			return disconnectedDryRunResult();
+		}
+		const inputValue = evaluateNodeOutput(fromNode);
+		if (!inputValue.ok) {
+			return disconnectedDryRunResult(inputValue.trace);
+		}
+		if (toNode.role === 'transform') {
+			const outputValue = evaluateNodeOutput(toNode);
+			return {
+				ok: outputValue.ok,
+				input: outputValue.input ?? inputValue.value,
+				output: outputValue.value,
+				trace: outputValue.trace ?? $LL.admin_identity_mapping_flow_selected_edge_trace()
+			};
+		}
+		return {
+			ok: true,
+			input: inputValue.value,
+			output: inputValue.value,
+			trace: $LL.admin_identity_mapping_flow_selected_edge_trace()
+		};
+	}
+
+	function evaluateDryRunNode(node: MappingNode | undefined): {
+		ok: boolean;
+		input: string;
+		output: string;
+		trace: string;
+	} {
+		logDebug('[IdentityMappingDryRun:evaluateNode]', {
+			node: debugNode(node),
+			incoming: node ? graphEdges.filter((edge) => edge.to === node.id) : [],
+			outgoing: node ? graphEdges.filter((edge) => edge.from === node.id) : []
+		});
+		if (!node) {
+			return disconnectedDryRunResult();
+		}
+		if (node.role === 'source' || (node.role === 'target' && viewMode === 'destination')) {
+			if (!graphEdges.some((edge) => edge.from === node.id)) {
+				return disconnectedDryRunResult();
+			}
+			const value = evaluateNodeOutput(node);
+			return {
+				ok: value.ok,
+				input: value.value,
+				output: value.value,
+				trace: $LL.admin_identity_mapping_flow_select_node_trace()
+			};
+		}
+		const value = evaluateNodeOutput(node);
+		if (!value.ok) {
+			return disconnectedDryRunResult(value.trace);
+		}
+		return {
+			ok: true,
+			input: value.input ?? value.value,
+			output: value.value,
+			trace: value.trace ?? $LL.admin_identity_mapping_flow_select_node_trace()
+		};
+	}
+
+	function disconnectedDryRunResult(
+		trace = String($LL.admin_identity_mapping_flow_select_node_trace())
+	) {
+		return {
+			ok: false,
+			input: $LL.admin_identity_mapping_flow_no_runtime_input(),
+			output: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+			trace
+		};
+	}
+
+	function evaluateNodeOutput(node: MappingNode, seen = new Set<string>()): DryRunValue {
+		if (seen.has(node.id)) {
+			return {
+				ok: false,
+				value: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+				trace: $LL.admin_identity_mapping_flow_no_mapping_edge()
+			};
+		}
+		const nextSeen = new Set(seen).add(node.id);
+		if (node.role === 'source' || (node.role === 'target' && viewMode === 'destination')) {
+			return { ok: true, value: firstNodeExample(node) };
+		}
+		const incoming = graphEdges.filter((edge) => edge.to === node.id);
+		if (incoming.length === 0) {
+			return {
+				ok: false,
+				value: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+				trace: $LL.admin_identity_mapping_flow_no_mapping_edge()
+			};
+		}
+		const inputs = incoming
+			.map((edge) => {
+				const fromNode = nodeById(edge.from);
+				return fromNode ? evaluateNodeOutput(fromNode, nextSeen) : null;
+			})
+			.filter((value): value is DryRunValue => Boolean(value?.ok));
+		if (inputs.length === 0) {
+			return {
+				ok: false,
+				value: $LL.admin_identity_mapping_flow_no_runtime_input(),
+				trace: $LL.admin_identity_mapping_flow_no_runtime_input()
+			};
+		}
+		const inputValues = inputs.map((inputValue) => inputValue.value);
+		if (node.role === 'transform') {
+			const input = formatDryRunValues(inputValues);
+			return {
+				ok: true,
+				input,
+				value: transformDryRunOutput(node, inputValues),
+				trace: transformSummary(
+					activeTransformOperation(node),
+					sanitizeTransformParameters(activeTransformOperation(node), node.transformParameters)
+				)
+			};
+		}
+		return {
+			ok: true,
+			input: formatDryRunValues(inputValues),
+			value: inputValues[0],
+			trace: $LL.admin_identity_mapping_flow_select_node_trace()
+		};
+	}
+
+	function formatDryRunValues(values: string[]): string {
+		return values.length === 1 ? values[0] : JSON.stringify(values);
+	}
+
+	function transformDryRunOutput(node: MappingNode, inputs: string[]): string {
+		const input = inputs[0] ?? '';
+		const params = sanitizeTransformParameters(
+			activeTransformOperation(node),
+			node.transformParameters
+		);
+		switch (activeTransformOperation(node)) {
+			case 'copy':
+				return input;
+			case 'trim':
+				return input.trim();
+			case 'normalize':
+				return String(params.mode) === 'unicode'
+					? input.normalize('NFKC')
+					: input.trim().replace(/\s+/g, ' ');
+			case 'case':
+				return params.mode === 'upper'
+					? input.toUpperCase()
+					: params.mode === 'lower'
+						? input.toLowerCase()
+						: titleCase(input);
+			case 'split':
+				return JSON.stringify(
+					normalizeDryRunList(
+						input.split(delimiterFromParameter(params.delimiter)),
+						params.trimItems === true,
+						params.omitEmpty === true,
+						params.unique === true
+					)
+				);
+			case 'join':
+				return normalizeDryRunList(
+					inputs,
+					params.trimItems === true,
+					params.omitEmpty === true,
+					false
+				).join(delimiterTextFromParameter(params.delimiter, ','));
+			case 'first':
+				return (
+					normalizeDryRunList(
+						inputs,
+						params.trimItems === true,
+						params.omitEmpty === true,
+						false
+					)[0] ?? ''
+				);
+			case 'affix_text':
+				return `${String(params.prefix ?? '')}${input}${String(params.suffix ?? '')}`;
+			case 'concat':
+				return inputs.join(delimiterTextFromParameter(params.delimiter, ' '));
+			case 'fallback':
+				return inputs.find((value) => value.trim().length > 0) ?? '';
+			case 'as_array':
+				return JSON.stringify(
+					normalizeDryRunList(
+						inputs,
+						params.trimItems === true,
+						params.omitEmpty === true,
+						params.unique === true
+					)
+				);
+			case 'text_to_boolean':
+				return textToBooleanDryRun(input, params);
+			case 'json_build':
+				return jsonBuildDryRun(inputs, params);
+			case 'json_extract_text':
+			case 'json_extract_boolean':
+			case 'json_extract_integer':
+				return jsonExtractDryRun(input, String(params.path ?? ''), activeTransformOperation(node));
+			case 'oidc_pairwise_sub':
+				return `pairwise:${input}`;
+			case 'saml_edu_person_targeted_id':
+				return `https://idp.example.edu/idp/shibboleth!https://sp.example.org!${input}`;
+			default:
+				return input;
+		}
+	}
+
+	function delimiterFromParameter(value: TransformParameterValue | undefined): string | RegExp {
+		const delimiter = String(value || ',');
+		if (delimiter === 'space') return /\s+/;
+		if (delimiter === 'comma') return ',';
+		if (delimiter === 'tab') return '\t';
+		if (delimiter === 'newline') return /\r?\n/;
+		return delimiter;
+	}
+
+	function delimiterTextFromParameter(
+		value: TransformParameterValue | undefined,
+		fallback: string
+	): string {
+		if (value === undefined) return fallback;
+		const delimiter = String(value);
+		if (delimiter === 'space') return ' ';
+		if (delimiter === 'comma') return ',';
+		if (delimiter === 'tab') return '\t';
+		if (delimiter === 'newline') return '\n';
+		return delimiter;
+	}
+
+	function normalizeDryRunList(
+		values: string[],
+		trimItems: boolean,
+		omitEmpty: boolean,
+		unique: boolean
+	): string[] {
+		const normalized = values
+			.map((value) => (trimItems ? value.trim() : value))
+			.filter((value) => !omitEmpty || value.length > 0);
+		return unique ? [...new Set(normalized)] : normalized;
+	}
+
+	function titleCase(value: string): string {
+		return value.replace(
+			/\S+/g,
+			(word) => `${word[0]?.toUpperCase() ?? ''}${word.slice(1).toLowerCase()}`
+		);
+	}
+
+	function textToBooleanDryRun(
+		value: string,
+		params: Record<string, TransformParameterValue>
+	): string {
+		const normalized = value.trim().toLowerCase();
+		const trueValues = commaList(params.trueValues);
+		const falseValues = commaList(params.falseValues);
+		const nullValues = commaList(params.nullValues);
+		if (trueValues.includes(normalized)) return 'true';
+		if (falseValues.includes(normalized)) return 'false';
+		if (nullValues.includes(normalized) || normalized === '') return 'null';
+		return 'null';
+	}
+
+	function commaList(value: TransformParameterValue | undefined): string[] {
+		return String(value ?? '')
+			.split(',')
+			.map((item) => item.trim().toLowerCase())
+			.filter(Boolean);
+	}
+
+	function jsonBuildDryRun(
+		inputs: string[],
+		params: Record<string, TransformParameterValue>
+	): string {
+		const keyMap = parseKeyMap(String(params.keyMap ?? ''));
+		const nullHandling = params.nullHandling;
+		const object = Object.fromEntries(
+			inputs
+				.map((value, index) => [keyMap[index] ?? `value${index + 1}`, value] as const)
+				.filter(([, value]) => nullHandling === 'include_null' || value.trim().length > 0)
+		);
+		return JSON.stringify(object);
+	}
+
+	function parseKeyMap(value: string): Record<number, string> {
+		if (!value.trim()) return {};
+		try {
+			const parsed = JSON.parse(value) as Record<string, string>;
+			return Object.fromEntries(Object.values(parsed).map((key, index) => [index, key]));
+		} catch {
+			return {};
+		}
+	}
+
+	function jsonExtractDryRun(input: string, path: string, operation: TransformOperation): string {
+		try {
+			const parsed = JSON.parse(input) as unknown;
+			const value = readJsonPath(parsed, path);
+			if (operation === 'json_extract_boolean') return String(Boolean(value));
+			if (operation === 'json_extract_integer') return String(Number.parseInt(String(value), 10));
+			return value === undefined || value === null ? '' : String(value);
+		} catch {
+			return '';
+		}
+	}
+
+	function readJsonPath(value: unknown, path: string): unknown {
+		return path
+			.replace(/\[(\d+)\]/g, '.$1')
+			.split('.')
+			.filter(Boolean)
+			.reduce<unknown>((current, key) => {
+				if (current && typeof current === 'object') {
+					return (current as Record<string, unknown>)[key];
+				}
+				return undefined;
+			}, value);
 	}
 
 	function fallbackRule() {
@@ -3674,7 +4245,7 @@
 						role="button"
 						tabindex="0"
 						aria-label={$LL.admin_identity_mapping_flow_clear_selection_aria()}
-						onclick={clearSelection}
+						onclick={clearCanvasSelection}
 						onkeydown={handleClearSelectionKeyDown}
 					/>
 					{#each graphEdges as edge (edge.id)}
@@ -3973,6 +4544,8 @@
 				{#if activeTab === 'rule'}
 					{#if selectedTransformNode}
 						{@const schema = activeTransformSchema(selectedTransformNode)}
+						{@const activeTransformCategory =
+							activeTransformOperationCategory(selectedTransformNode)}
 						<section
 							class="transform-config-card"
 							aria-label={$LL.admin_identity_mapping_flow_transform_config_aria()}
@@ -3982,10 +4555,29 @@
 									<p class="section-kicker">{$LL.admin_identity_mapping_flow_transform_step()}</p>
 									<h3>{transformOperationLabel(schema.operation)}</h3>
 								</div>
-								<span class="transform-operation-pill"
-									>{activeTransformOperation(selectedTransformNode)}</span
-								>
 							</div>
+							<label
+								class="inspector-field"
+								for={`transform-operation-category-${selectedTransformNode.id}`}
+							>
+								<span>{transformOperationCategoryFieldLabel()}</span>
+								<select
+									id={`transform-operation-category-${selectedTransformNode.id}`}
+									value={activeTransformCategory.id}
+									disabled={!editable}
+									onchange={(event) =>
+										updateTransformOperationCategory(
+											selectedTransformNode,
+											(event.currentTarget as HTMLSelectElement).value
+										)}
+								>
+									{#each transformOperationCategories as category (category.id)}
+										<option value={category.id}
+											>{transformOperationCategoryLabel(category.id)}</option
+										>
+									{/each}
+								</select>
+							</label>
 							<label
 								class="inspector-field"
 								for={`transform-operation-${selectedTransformNode.id}`}
@@ -4001,7 +4593,7 @@
 											(event.currentTarget as HTMLSelectElement).value
 										)}
 								>
-									{#each transformOperationSchemas as option (option.operation)}
+									{#each transformOperationOptionsForCategory(activeTransformCategory) as option (option.operation)}
 										<option value={option.operation}
 											>{transformOperationLabel(option.operation)}</option
 										>
@@ -4106,18 +4698,22 @@
 						</section>
 					{/if}
 					<dl class="detail-list">
-						<div>
-							<dt>{$LL.admin_identity_mapping_source()}</dt>
-							<dd>{rule.source}</dd>
-						</div>
+						{#if inspectorConnectionDirection() !== 'schema_to_destination'}
+							<div>
+								<dt>{$LL.admin_identity_mapping_source()}</dt>
+								<dd>{rule.source}</dd>
+							</div>
+						{/if}
 						<div>
 							<dt>{$LL.admin_identity_mapping_flow_schema_field()}</dt>
 							<dd>{rule.target}</dd>
 						</div>
-						<div>
-							<dt>{$LL.admin_identity_mapping_destination()}</dt>
-							<dd>{rule.destination}</dd>
-						</div>
+						{#if inspectorConnectionDirection() !== 'source_to_schema'}
+							<div>
+								<dt>{$LL.admin_identity_mapping_destination()}</dt>
+								<dd>{rule.destination}</dd>
+							</div>
+						{/if}
 						<div>
 							<dt>{$LL.admin_identity_mapping_flow_transform()}</dt>
 							<dd>{rule.transform}</dd>
@@ -4141,6 +4737,9 @@
 							<h3>{$LL.admin_identity_mapping_flow_sample_evaluation()}</h3>
 							<span class={`dryrun-status ${rule.dryrunTone}`}>{rule.dryrunStatus}</span>
 						</div>
+						<button type="button" class="dryrun-action" onclick={runInspectorDryRun}>
+							{$LL.admin_identity_mapping_flow_tab_dryrun()}
+						</button>
 						<div class="value-pair">
 							<span>{$LL.admin_identity_mapping_flow_input()}</span>
 							<code>{rule.input}</code>
@@ -4164,60 +4763,6 @@
 						</ul>
 					</section>
 				{/if}
-
-				<div class="control-block">
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_consent_status()}</span>
-						<strong>{rule.consentStatus.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_legal_basis()}</span>
-						<strong>{rule.legalBasis.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_purpose()}</span>
-						<strong>{rule.purpose}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_attribute_set()}</span>
-						<strong>{rule.attributeSetHash}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_challenge_mode()}</span>
-						<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_release_policy()}</span>
-						<strong>{rule.releaseFieldMappingVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_terms()}</span>
-						<strong>{rule.termsVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_privacy_policy()}</span>
-						<strong>{rule.privacyFieldMappingVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_deny_reason()}</span>
-						<strong>{rule.denyReason}</strong>
-					</div>
-				</div>
-
-				<div class="control-block">
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_runtime_exposure()}</span>
-						<strong>{rule.runtime}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_conflict_policy()}</span>
-						<strong>{rule.conflict}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_trace_disclosure()}</span>
-						<strong>{rule.disclosure}</strong>
-					</div>
-				</div>
 			</aside>
 		{/if}
 	</div>
@@ -5555,19 +6100,14 @@
 		gap: 10px;
 	}
 
+	.transform-config-header > div {
+		min-width: 0;
+	}
+
 	.transform-config-header h3 {
 		margin: 2px 0 0;
 		font-size: 14px;
-	}
-
-	.transform-operation-pill {
-		padding: 3px 8px;
-		border: 1px solid color-mix(in srgb, var(--map-green) 50%, transparent);
-		border-radius: 999px;
-		color: var(--map-green);
-		background: color-mix(in srgb, var(--map-green) 11%, transparent);
-		font-size: 11px;
-		font-weight: 900;
+		overflow-wrap: anywhere;
 	}
 
 	.transform-description {
@@ -5580,6 +6120,13 @@
 	.inspector-field {
 		display: grid;
 		gap: 6px;
+		min-width: 0;
+	}
+
+	.inspector-field select,
+	.inspector-field input {
+		width: 100%;
+		min-width: 0;
 	}
 
 	.inspector-field > span {
@@ -5661,16 +6208,36 @@
 		margin-bottom: 10px;
 	}
 
+	.dryrun-action {
+		width: fit-content;
+		min-height: 32px;
+		margin-bottom: 12px;
+		padding: 0 12px;
+		border: 1px solid var(--map-brand);
+		border-radius: var(--map-radius);
+		color: var(--map-brand);
+		background: color-mix(in srgb, var(--map-brand) 8%, var(--map-surface));
+		font-size: 12px;
+		font-weight: 800;
+	}
+
+	.dryrun-action:hover,
+	.dryrun-action:focus-visible {
+		background: color-mix(in srgb, var(--map-brand) 14%, var(--map-surface));
+	}
+
 	code {
 		display: block;
 		padding: 10px;
 		border: 1px solid var(--map-line);
 		border-radius: 4px;
 		background: #0b1220;
-		color: var(--map-text);
+		color: #f8fafc;
 		font-family: SFMono-Regular, Consolas, monospace;
 		font-size: 12px;
-		white-space: normal;
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
 	}
 
 	.trace-box {

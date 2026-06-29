@@ -13,6 +13,7 @@
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import DirectoryAuthenticationTabs from './DirectoryAuthenticationTabs.svelte';
 
 	const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 	const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
@@ -43,6 +44,8 @@
 		heartbeat_stale_after_ms: number;
 		heartbeat_retention_days: number;
 		heartbeat_version_mismatch_policy: 'warn' | 'block';
+		heartbeat_expected_version: string;
+		heartbeat_minimum_version: string;
 		heartbeat_unhealthy_threshold: number;
 		heartbeat_stale_detection_grace_ms: number;
 		attributes_text: string;
@@ -147,6 +150,8 @@
 			heartbeat_stale_after_ms: 900000,
 			heartbeat_retention_days: 14,
 			heartbeat_version_mismatch_policy: 'warn',
+			heartbeat_expected_version: '',
+			heartbeat_minimum_version: '',
 			heartbeat_unhealthy_threshold: 1,
 			heartbeat_stale_detection_grace_ms: 0,
 			attributes_text: 'mail, displayName, uid'
@@ -178,6 +183,8 @@
 			heartbeat_stale_after_ms: connector.heartbeat?.stale_after_ms ?? 900000,
 			heartbeat_retention_days: connector.heartbeat?.retention_days ?? 14,
 			heartbeat_version_mismatch_policy: connector.heartbeat?.version_mismatch_policy ?? 'warn',
+			heartbeat_expected_version: connector.heartbeat?.expected_version ?? '',
+			heartbeat_minimum_version: connector.heartbeat?.minimum_version ?? '',
 			heartbeat_unhealthy_threshold: connector.heartbeat?.unhealthy_threshold ?? 1,
 			heartbeat_stale_detection_grace_ms: connector.heartbeat?.stale_detection_grace_ms ?? 0,
 			attributes_text: connector.attribute_names.join(', ')
@@ -223,6 +230,8 @@
 				stale_after_ms: Number(draft.heartbeat_stale_after_ms),
 				retention_days: Number(draft.heartbeat_retention_days),
 				version_mismatch_policy: draft.heartbeat_version_mismatch_policy,
+				expected_version: draft.heartbeat_expected_version.trim(),
+				minimum_version: draft.heartbeat_minimum_version.trim(),
 				unhealthy_threshold: Number(draft.heartbeat_unhealthy_threshold),
 				stale_detection_grace_ms: Number(draft.heartbeat_stale_detection_grace_ms)
 			},
@@ -451,8 +460,7 @@
 			if (
 				(Boolean(connector.heartbeat.previous_key_id) &&
 					!connector.heartbeat.previous_secret_ref) ||
-				(!connector.heartbeat.previous_key_id &&
-					Boolean(connector.heartbeat.previous_secret_ref))
+				(!connector.heartbeat.previous_key_id && Boolean(connector.heartbeat.previous_secret_ref))
 			) {
 				return $LL.admin_directory_authentication_validation_heartbeat_previous_pair();
 			}
@@ -760,9 +768,6 @@
 </svelte:head>
 
 {#snippet headerActions()}
-	<a class="btn btn-secondary" href="/admin/directory-authentication/fleet">
-		{$LL.admin_directory_authentication_open_fleet()}
-	</a>
 	<button
 		class="btn btn-secondary"
 		disabled={!hasChanges || saving || loading}
@@ -794,6 +799,8 @@
 		description={$LL.admin_directory_authentication_description()}
 		actions={headerActions}
 	/>
+
+	<DirectoryAuthenticationTabs active="settings" />
 
 	{#if loading}
 		<AdminSection>
@@ -1458,6 +1465,32 @@
 												<option value="warn">warn</option>
 												<option value="block">block</option>
 											</select>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-expected-version-${index}`}>
+												{$LL.admin_directory_authentication_expected_version()}
+											</label>
+											<input
+												id={`heartbeat-expected-version-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_expected_version}
+												disabled={!canEdit}
+												placeholder="0.1.0-beta.1"
+											/>
+										</div>
+
+										<div class="admin-field">
+											<label class="admin-field__label" for={`heartbeat-minimum-version-${index}`}>
+												{$LL.admin_directory_authentication_minimum_version()}
+											</label>
+											<input
+												id={`heartbeat-minimum-version-${index}`}
+												class="admin-input"
+												bind:value={connector.heartbeat_minimum_version}
+												disabled={!canEdit}
+												placeholder="0.1.0"
+											/>
 										</div>
 
 										<div class="admin-field">

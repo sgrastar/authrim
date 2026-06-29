@@ -492,9 +492,16 @@
 			return 'address';
 		}
 		if (
-			['profile', 'picture', 'website', 'birthdate', 'zoneinfo', 'locale', 'updated_at'].includes(
-				key
-			)
+			[
+				'profile',
+				'picture',
+				'website',
+				'gender',
+				'birthdate',
+				'zoneinfo',
+				'locale',
+				'updated_at'
+			].includes(key)
 		) {
 			return 'profile';
 		}
@@ -627,14 +634,6 @@
 
 	<!-- Filters -->
 	<AdminSection>
-		<div class="schema-note">
-			<div>
-				<strong>{$LL.admin_custom_claims_system_note_title()}</strong>
-				<p>
-					{$LL.admin_custom_claims_system_note_description()}
-				</p>
-			</div>
-		</div>
 		<AdminToolbar>
 			<div class="admin-field admin-field--search">
 				<input
@@ -1314,28 +1313,6 @@
 
 	.filter-actions {
 		align-self: flex-end;
-	}
-
-	.schema-note {
-		margin-bottom: 1rem;
-		padding: 0.875rem 1rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-card);
-		background: var(--color-surface-muted);
-	}
-
-	.schema-note strong {
-		display: block;
-		color: var(--color-text);
-		font-size: 0.875rem;
-		font-weight: 600;
-	}
-
-	.schema-note p {
-		margin: 0.25rem 0 0;
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		line-height: 1.45;
 	}
 
 	.stats-grid {

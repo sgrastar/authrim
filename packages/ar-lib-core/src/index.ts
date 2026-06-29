@@ -124,6 +124,7 @@ export * from './utils/post-login-routing';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/oidc-attribute-release-consent';

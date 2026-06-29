@@ -83,6 +83,7 @@ function heartbeatPayload(overrides: Record<string, unknown> = {}) {
     instance_id: 'wwi_1234567890123456789012',
     transport: 'direct',
     version: '0.13.0',
+    release_channel: 'stable',
     started_at: '2026-06-24T00:00:00.000Z',
     health_status: 'healthy',
     health_summary: { ldap: 'ok' },
@@ -142,6 +143,7 @@ describe('directory connector heartbeat handler', () => {
         tenantId: 'tenant-a',
         connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
         instanceId: 'wwi_1234567890123456789012',
+        releaseChannel: 'stable',
         configFingerprint: `sha256:${'a'.repeat(64)}`,
       })
     );

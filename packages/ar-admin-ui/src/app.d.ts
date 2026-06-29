@@ -16,4 +16,16 @@ declare global {
 	}
 }
 
+declare module 'monaco-editor/esm/vs/editor/editor.api.js' {
+	export * from 'monaco-editor/esm/vs/editor/editor.api';
+}
+
+declare module 'monaco-editor/esm/vs/basic-languages/html/html.contribution.js' {
+	export {};
+}
+
+declare module 'monaco-editor/esm/vs/basic-languages/css/css.contribution.js' {
+	export {};
+}
+
 export {};

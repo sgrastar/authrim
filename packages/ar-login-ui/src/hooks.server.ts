@@ -333,7 +333,6 @@ export function buildProxyHeaders(
 		'accept',
 		'accept-language',
 		'content-type',
-		'content-length',
 		'authorization',
 		'cookie',
 		'origin',

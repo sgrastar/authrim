@@ -17,6 +17,7 @@ export interface DirectoryConnectorHeartbeatInput {
   displayName?: string | null;
   transport: 'relay' | 'direct' | 'tunnel';
   version: string;
+  releaseChannel?: string | null;
   startedAt: string;
   healthStatus: 'healthy' | 'degraded' | 'unhealthy';
   healthSummary?: Record<string, unknown>;
@@ -34,6 +35,7 @@ export interface DirectoryConnectorInstanceRow {
   display_name: string | null;
   transport: string;
   version: string;
+  release_channel: string;
   started_at: string;
   first_seen_at: number;
   last_seen_at: number;
@@ -75,6 +77,14 @@ export interface DirectoryConnectorFleetRecordInput {
   now?: number;
 }
 
+export interface DirectoryConnectorFleetPolicy {
+  staleAfterMs?: number;
+  staleDetectionGraceMs?: number;
+  versionMismatchPolicy?: 'warn' | 'block';
+  expectedVersion?: string | null;
+  minimumVersion?: string | null;
+}
+
 const MAX_JSON_BYTES = 16 * 1024;
 
 export async function recordDirectoryConnectorHeartbeat(
@@ -108,15 +118,16 @@ export async function recordDirectoryConnectorHeartbeat(
   const firstSeenAt = existing?.first_seen_at ?? now;
   await adapter.execute(
     `INSERT INTO directory_connector_instances (
-       id, tenant_id, connector_id, instance_id, display_name, transport, version,
+       id, tenant_id, connector_id, instance_id, display_name, transport, version, release_channel,
        started_at, first_seen_at, last_seen_at, status, health_status,
        health_summary_json, config_fingerprint, config_categories_json, drift_severity,
        updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, connector_id, instance_id) DO UPDATE SET
        display_name = excluded.display_name,
        transport = excluded.transport,
        version = excluded.version,
+       release_channel = excluded.release_channel,
        started_at = excluded.started_at,
        last_seen_at = excluded.last_seen_at,
        status = excluded.status,
@@ -134,6 +145,7 @@ export async function recordDirectoryConnectorHeartbeat(
       input.displayName?.trim() || null,
       input.transport,
       input.version,
+      input.releaseChannel?.trim() || 'stable',
       input.startedAt,
       firstSeenAt,
       now,
@@ -165,7 +177,6 @@ export async function markDirectoryConnectorInstanceStatus(
   const result = await adapter.execute(
     `UPDATE directory_connector_instances
         SET status = ?,
-            last_seen_at = ?,
             updated_at = ?,
             deactivated_at = CASE WHEN ? = 'deactivated' THEN ? ELSE deactivated_at END,
             deactivated_by = CASE WHEN ? = 'deactivated' THEN ? ELSE deactivated_by END,
@@ -173,7 +184,6 @@ export async function markDirectoryConnectorInstanceStatus(
       WHERE tenant_id = ? AND connector_id = ? AND instance_id = ?`,
     [
       input.status,
-      now,
       now,
       input.status,
       now,
@@ -189,6 +199,31 @@ export async function markDirectoryConnectorInstanceStatus(
   if (result.rowsAffected !== 1) return false;
   await ensureDirectoryConnectorEpisode(adapter, { ...input, now });
   return true;
+}
+
+export async function refreshDirectoryConnectorDerivedStatuses(
+  adapter: DatabaseAdapter,
+  instances: DirectoryConnectorInstanceRow[],
+  policyFor: (row: DirectoryConnectorInstanceRow) => DirectoryConnectorFleetPolicy | null,
+  now: number = Date.now()
+): Promise<number> {
+  let updated = 0;
+  for (const instance of instances) {
+    const policy = policyFor(instance);
+    if (!policy) continue;
+    const status = resolveDirectoryConnectorFleetStatus(instance, policy, now);
+    if (status === instance.status || status === 'deactivated') continue;
+    const result = await markDirectoryConnectorInstanceStatus(adapter, {
+      tenantId: instance.tenant_id,
+      connectorId: instance.connector_id,
+      instanceId: instance.instance_id,
+      status,
+      reason: status === 'stale' ? 'heartbeat_stale' : status,
+      now,
+    });
+    if (result) updated += 1;
+  }
+  return updated;
 }
 
 export async function reactivateDirectoryConnectorInstance(
@@ -242,6 +277,7 @@ export async function listDirectoryConnectorInstances(
   if (connectorId) params.push(connectorId);
   return adapter.query<DirectoryConnectorInstanceRow>(
     `SELECT id, tenant_id, connector_id, instance_id, display_name, transport, version,
+            COALESCE(release_channel, 'stable') AS release_channel,
             started_at, first_seen_at, last_seen_at, status, health_status,
             health_summary_json, config_fingerprint, config_categories_json, drift_severity,
             deactivated_at, deactivated_by, deactivation_reason, updated_at
@@ -251,6 +287,39 @@ export async function listDirectoryConnectorInstances(
       ORDER BY connector_id ASC, last_seen_at DESC`,
     params
   );
+}
+
+export function resolveDirectoryConnectorFleetStatus(
+  row: DirectoryConnectorInstanceRow,
+  policy: DirectoryConnectorFleetPolicy | null = {},
+  now: number = Date.now()
+): DirectoryConnectorFleetStatus {
+  const effectivePolicy = policy ?? {};
+  if (row.deactivated_at) return 'deactivated';
+  const staleAfterMs = Math.max(60_000, effectivePolicy.staleAfterMs ?? 15 * 60 * 1000);
+  const graceMs = Math.max(0, effectivePolicy.staleDetectionGraceMs ?? 0);
+  if (now - row.last_seen_at > staleAfterMs + graceMs) return 'stale';
+
+  const expectedVersion = normalizeVersion(effectivePolicy.expectedVersion ?? undefined);
+  const minimumVersion = normalizeVersion(effectivePolicy.minimumVersion ?? undefined);
+  const actualVersion = normalizeVersion(row.version);
+  if (
+    (expectedVersion && actualVersion && actualVersion !== expectedVersion) ||
+    (minimumVersion && actualVersion && compareVersions(actualVersion, minimumVersion) < 0)
+  ) {
+    return 'version_mismatch';
+  }
+
+  return row.status;
+}
+
+export function applyDirectoryConnectorFleetPolicy(
+  row: DirectoryConnectorInstanceRow,
+  policy: DirectoryConnectorFleetPolicy = {},
+  now: number = Date.now()
+): DirectoryConnectorInstanceRow {
+  const status = resolveDirectoryConnectorFleetStatus(row, policy, now);
+  return status === row.status ? row : { ...row, status };
 }
 
 export async function listDirectoryConnectorEpisodes(
@@ -287,6 +356,7 @@ async function getDirectoryConnectorInstance(
 ): Promise<DirectoryConnectorInstanceRow | null> {
   return adapter.queryOne<DirectoryConnectorInstanceRow>(
     `SELECT id, tenant_id, connector_id, instance_id, display_name, transport, version,
+            COALESCE(release_channel, 'stable') AS release_channel,
             started_at, first_seen_at, last_seen_at, status, health_status,
             health_summary_json, config_fingerprint, config_categories_json, drift_severity,
             deactivated_at, deactivated_by, deactivation_reason, updated_at
@@ -350,4 +420,27 @@ async function ensureDirectoryConnectorEpisode(
 function boundedJson(value: unknown): string {
   const json = JSON.stringify(value);
   return new TextEncoder().encode(json).byteLength <= MAX_JSON_BYTES ? json : '{}';
+}
+
+function normalizeVersion(value: string | null | undefined): string {
+  return value?.trim().replace(/^v/i, '') ?? '';
+}
+
+function compareVersions(left: string, right: string): number {
+  const leftParts = versionParts(left);
+  const rightParts = versionParts(right);
+  const max = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < max; index += 1) {
+    const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function versionParts(value: string): number[] {
+  const core = value.split('-')[0] ?? '';
+  return core
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
 }

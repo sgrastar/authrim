@@ -23,6 +23,7 @@ const REQUIREMENTS = new Set<ConsentPolicyRequirement>(['required', 'optional', 
 const VERSION_MODES = new Set<ConsentPolicyVersionMode>(['current', 'fixed', 'minimum']);
 const CHECKBOX_MODES = new Set<ConsentPolicyCheckboxMode>(['none', 'required', 'optional']);
 const BINDING_TYPES = new Set<ConsentPolicyItemBindingType>([
+  'subject',
   'scope',
   'claim',
   'saml_attribute',
@@ -352,7 +353,7 @@ export async function adminConsentPolicyItemsReplaceHandler(c: Context<{ Binding
       if (bindingType && !BINDING_TYPES.has(bindingType as ConsentPolicyItemBindingType)) {
         return invalid(
           c,
-          'items[].binding_type must be scope, claim, saml_attribute, or destination_field_set'
+          'items[].binding_type must be subject, scope, claim, saml_attribute, or destination_field_set'
         );
       }
 

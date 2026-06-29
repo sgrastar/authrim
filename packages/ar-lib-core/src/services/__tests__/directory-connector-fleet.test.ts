@@ -7,6 +7,7 @@ import {
   markDirectoryConnectorInstanceStatus,
   reactivateDirectoryConnectorInstance,
   recordDirectoryConnectorHeartbeat,
+  resolveDirectoryConnectorFleetStatus,
 } from '../directory-connector-fleet';
 
 function executeResult(rowsAffected = 1): ExecuteResult {
@@ -46,6 +47,7 @@ describe('directory connector fleet service', () => {
       instanceId: 'wwi_1234567890123456789012',
       transport: 'relay',
       version: '0.13.0',
+      releaseChannel: 'stable',
       startedAt: '2026-06-24T00:00:00.000Z',
       healthStatus: 'healthy',
       healthSummary: { ldap: 'ok' },
@@ -64,6 +66,7 @@ describe('directory connector fleet service', () => {
         null,
         'relay',
         '0.13.0',
+        'stable',
       ])
     );
     expect(adapter.execute).toHaveBeenCalledWith(
@@ -82,6 +85,7 @@ describe('directory connector fleet service', () => {
       display_name: null,
       transport: 'relay',
       version: '0.13.0',
+      release_channel: 'stable',
       started_at: '2026-06-24T00:00:00.000Z',
       first_seen_at: 1,
       last_seen_at: 1,
@@ -175,5 +179,39 @@ describe('directory connector fleet service', () => {
       expect.stringContaining('FROM directory_connector_status_episodes'),
       ['tenant-a', 'wwcon_8K4M2Q9F7D3H6P1X', 24 * 60 * 60 * 1000, 14]
     );
+  });
+
+  it('resolves stale and version mismatch status for fleet display', () => {
+    const row = {
+      id: 'dcinst_1',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      instance_id: 'wwi_1234567890123456789012',
+      display_name: null,
+      transport: 'relay',
+      version: '0.1.0-beta.1',
+      release_channel: 'stable',
+      started_at: '2026-06-24T00:00:00.000Z',
+      first_seen_at: 1000,
+      last_seen_at: 1000,
+      status: 'connected',
+      health_status: 'healthy',
+      health_summary_json: '{}',
+      config_fingerprint: 'sha256:abc',
+      config_categories_json: '[]',
+      drift_severity: 'none',
+      deactivated_at: null,
+      deactivated_by: null,
+      deactivation_reason: null,
+      updated_at: 1000,
+    } as const;
+
+    expect(resolveDirectoryConnectorFleetStatus(row, { staleAfterMs: 60_000 }, 62_001)).toBe('stale');
+    expect(
+      resolveDirectoryConnectorFleetStatus(row, {
+        staleAfterMs: 10000,
+        minimumVersion: '0.1.1',
+      }, 2000)
+    ).toBe('version_mismatch');
   });
 });

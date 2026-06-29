@@ -267,8 +267,8 @@ export interface ConsentScreenItem {
   checkbox_mode?: 'none' | 'required' | 'optional';
   /** Whether checkbox starts checked */
   checkbox_default_checked?: boolean;
-  /** Optional binding to a scope, claim, SAML attribute, or destination field set */
-  binding_type?: 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
+  /** Optional binding to the subject, scope, claim, SAML attribute, or destination field set */
+  binding_type?: 'subject' | 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
   /** Binding identifier or space-delimited value */
   binding_value?: string;
   /** Evidence profile recorded for this item */
@@ -345,7 +345,7 @@ export interface ResolvedConsentRequirement {
   deletion_url?: string;
   checkbox_mode?: 'none' | 'required' | 'optional';
   checkbox_default_checked?: boolean;
-  binding_type?: 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
+  binding_type?: 'subject' | 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
   binding_value?: string;
   evidence_profile?: string;
   language_fallback?: string;

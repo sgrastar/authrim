@@ -10,6 +10,8 @@ export const OBJECT_CLASSES = [
   'user_import_input',
   'user_import_result',
   'admin_job_result',
+  'directory_auth_evidence_export',
+  'directory_auth_support_bundle',
   'approval_transport_detail',
   'dr_bundle',
 ] as const;

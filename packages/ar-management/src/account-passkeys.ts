@@ -5,14 +5,24 @@ import {
   PasskeyRepository,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  buildDOKey,
   generateId,
   getChallengeStoreByChallengeId,
+  getLogger,
+  getPluginContext,
+  getSessionStoreBySessionId,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { requireAccountSession, type AccountSession } from './account-page';
-import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from '@simplewebauthn/server';
 import type {
+  AuthenticationResponseJSON,
   AuthenticatorTransportFuture,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
@@ -20,9 +30,12 @@ import { recordAccountOperation } from './account-operation-log';
 
 const MAX_DEVICE_NAME_LENGTH = 100;
 const REAUTH_TTL_SECONDS = 5 * 60;
+const EMAIL_REAUTH_TTL_SECONDS = 5 * 60;
 const RP_NAME = 'Authrim';
 const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
 type AccountAuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
+type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
+type BuiltInAuthenticationMethod = 'passkey' | 'email_otp';
 
 const VALID_TRANSPORTS: AccountAuthenticatorTransport[] = [
   'usb',
@@ -54,6 +67,27 @@ type RegistrationInfoCompat = {
     counter?: number;
   };
   aaguid?: string;
+};
+
+type AccountPasskeyReauthChallenge = {
+  userId?: string;
+  sessionId?: string;
+  challenge: string;
+  metadata?: {
+    rpID?: string;
+    origin?: string;
+    sessionId?: string;
+  };
+};
+
+type AccountEmailReauthChallenge = {
+  userId?: string;
+  email?: string;
+  challenge: string;
+  metadata?: {
+    sessionId?: string;
+    issuedAt?: number;
+  };
 };
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
@@ -210,24 +244,49 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {
+function getAuthenticationMethodSettingKey(
+  method: BuiltInAuthenticationMethod,
+  usage: AuthenticationMethodUsage
+): string {
+  return usage === 'account_link'
+    ? `authentication-methods.${method}.account_link_enabled`
+    : `authentication-methods.${method}.${usage}_enabled`;
+}
+
+async function getLegacyAuthenticationMethodDefault(
+  env: Env,
+  method: BuiltInAuthenticationMethod
+): Promise<boolean> {
   let legacyDefault = true;
   try {
     const rawSystemSettings = await env.SETTINGS?.get('system_settings');
-    if (rawSystemSettings) {
-      const systemSettings = JSON.parse(rawSystemSettings) as Record<string, unknown>;
-      const advanced =
-        systemSettings.advanced &&
-        typeof systemSettings.advanced === 'object' &&
-        !Array.isArray(systemSettings.advanced)
-          ? (systemSettings.advanced as Record<string, unknown>)
-          : {};
-      legacyDefault = advanced.magicLinkEnabled !== false;
+    if (!rawSystemSettings) {
+      return legacyDefault;
     }
+    const systemSettings = JSON.parse(rawSystemSettings) as Record<string, unknown>;
+    const advanced =
+      systemSettings.advanced &&
+      typeof systemSettings.advanced === 'object' &&
+      !Array.isArray(systemSettings.advanced)
+        ? (systemSettings.advanced as Record<string, unknown>)
+        : {};
+    legacyDefault =
+      method === 'passkey'
+        ? advanced.passkeyEnabled !== false
+        : advanced.magicLinkEnabled !== false;
   } catch {
     legacyDefault = true;
   }
+  return legacyDefault;
+}
 
+async function isAuthenticationMethodUsageAvailable(
+  env: Env,
+  tenantId: string,
+  method: BuiltInAuthenticationMethod,
+  usage: AuthenticationMethodUsage
+): Promise<boolean> {
+  const legacyDefault = await getLegacyAuthenticationMethodDefault(env, method);
   try {
     const raw = await env.SETTINGS?.get(
       `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
@@ -237,16 +296,583 @@ async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<bo
     }
     const settings = JSON.parse(raw) as Record<string, unknown>;
     const legacyEnabled = normalizeBoolean(
-      settings['authentication-methods.email_otp.enabled'],
+      settings[`authentication-methods.${method}.enabled`],
       legacyDefault
     );
     return normalizeBoolean(
-      settings['authentication-methods.email_otp.login_enabled'],
+      settings[getAuthenticationMethodSettingKey(method, usage)],
       legacyEnabled
     );
   } catch {
     return legacyDefault;
   }
+}
+
+function generateEmailCode(): string {
+  const array = new Uint32Array(1);
+  crypto.getRandomValues(array);
+  return (array[0] % 1_000_000).toString().padStart(6, '0');
+}
+
+async function hashEmailCode(
+  code: string,
+  email: string,
+  sessionId: string,
+  issuedAt: number,
+  secret: string
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`${code}:${email.toLowerCase()}:${sessionId}:${issuedAt}`);
+  const keyData = encoder.encode(secret);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, data);
+  return Array.from(new Uint8Array(signature))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let result = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+async function verifyEmailCodeHash(
+  code: string,
+  email: string,
+  sessionId: string,
+  issuedAt: number,
+  storedHash: string,
+  secret: string
+): Promise<boolean> {
+  const computedHash = await hashEmailCode(code, email, sessionId, issuedAt, secret);
+  return timingSafeStringEqual(computedHash, storedHash);
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const masked =
+    local.length <= 2 ? `${local.charAt(0)}***` : `${local.charAt(0)}***${local.slice(-1)}`;
+  return `${masked}@${domain}`;
+}
+
+function getEmailReauthHtml(data: {
+  name?: string | null;
+  email: string;
+  code: string;
+  expiresInMinutes: number;
+}): string {
+  const greeting = data.name ? `Hi ${escapeHtml(data.name)},` : 'Hi,';
+  return `<!doctype html><html><body><p>${greeting}</p><p>Use this verification code to re-authenticate your Authrim account.</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${escapeHtml(data.code)}</p><p>This code expires in ${data.expiresInMinutes} minutes.</p><p>If you did not request this code, you can ignore this email.</p></body></html>`;
+}
+
+function getEmailReauthText(data: {
+  name?: string | null;
+  email: string;
+  code: string;
+  expiresInMinutes: number;
+}): string {
+  const greeting = data.name ? `Hi ${data.name},` : 'Hi,';
+  return `${greeting}\n\nUse this verification code to re-authenticate your Authrim account: ${data.code}\n\nThis code expires in ${data.expiresInMinutes} minutes.\n\nIf you did not request this code, you can ignore this email.`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function refreshAccountReauthSession(
+  c: Context<{ Bindings: Env }>,
+  accountSession: AccountSession,
+  method: string
+): Promise<Response> {
+  const tenantId = getTenantIdFromContext(c);
+  const authTime = Math.floor(Date.now() / 1000);
+  const reauthMethods = Array.from(new Set([...(accountSession.amr ?? []), method]));
+  const { stub: sessionStore } = getSessionStoreBySessionId(
+    c.env,
+    accountSession.sessionId,
+    tenantId
+  );
+  const updatedSession = await sessionStore.updateSessionDataRpc(accountSession.sessionId, {
+    authTime,
+    acr: accountSession.acr ?? 'urn:mace:incommon:iap:bronze',
+    amr: reauthMethods,
+  });
+  if (!updatedSession) {
+    return c.json({ error: 'server_error', error_description: 'Failed to update session' }, 500);
+  }
+
+  return c.json({
+    ok: true,
+    reauth: {
+      authenticated_at: authTime,
+      expires_at: authTime + REAUTH_TTL_SECONDS,
+      methods: reauthMethods,
+    },
+  });
+}
+
+export async function createAccountPasskeyReauthOptionsHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+
+  const origin = normalizeOrigin(c.req.header('Origin'));
+  if (!origin) {
+    return c.json(
+      { error: 'invalid_request', error_description: 'Origin header is required' },
+      400
+    );
+  }
+
+  const rpID = new URL(origin).hostname;
+  const tenantId = getTenantIdFromContext(c);
+  if (!(await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'passkey', 'reauth'))) {
+    return c.json(
+      {
+        error: 'no_reauth_method',
+        error_description: 'Passkey is not enabled for re-authentication',
+      },
+      403
+    );
+  }
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
+  const passkeys = await passkeyRepo.findByUserId(accountSession.userId);
+  if (passkeys.length === 0) {
+    return c.json(
+      {
+        error: 'no_reauth_method',
+        error_description: 'No passkey is available for re-authentication',
+      },
+      400
+    );
+  }
+
+  const options = await generateAuthenticationOptions({
+    rpID,
+    userVerification: 'required',
+    allowCredentials: passkeys.map((passkey) => ({
+      id: toBase64URLString(passkey.credential_id),
+      type: 'public-key' as const,
+      transports:
+        passkey.transports.length > 0
+          ? (passkey.transports as AuthenticatorTransportFuture[])
+          : undefined,
+    })),
+  });
+
+  const challengeId = generateId();
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
+  await challengeStore.storeChallengeRpc({
+    id: `account_passkey_reauth:${challengeId}`,
+    tenantId,
+    type: 'passkey_reauth',
+    userId: accountSession.userId,
+    challenge: options.challenge,
+    ttl: 300,
+    metadata: {
+      rpID,
+      origin,
+      sessionId: accountSession.sessionId,
+    },
+  });
+
+  return c.json({
+    options,
+    challenge_id: challengeId,
+  });
+}
+
+export async function completeAccountPasskeyReauthHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+
+  let body: {
+    challenge_id?: unknown;
+    credential?: AuthenticationResponseJSON;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(
+      { error: 'invalid_request', error_description: 'Request body must be JSON' },
+      400
+    );
+  }
+
+  if (typeof body.challenge_id !== 'string' || !body.credential) {
+    return c.json(
+      { error: 'invalid_request', error_description: 'challenge_id and credential are required' },
+      400
+    );
+  }
+
+  const tenantId = getTenantIdFromContext(c);
+  if (!(await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'passkey', 'reauth'))) {
+    return c.json(
+      {
+        error: 'no_reauth_method',
+        error_description: 'Passkey is not enabled for re-authentication',
+      },
+      403
+    );
+  }
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, body.challenge_id, tenantId);
+  let challengeData: AccountPasskeyReauthChallenge;
+  try {
+    challengeData = (await challengeStore.consumeChallengeRpc({
+      id: `account_passkey_reauth:${body.challenge_id}`,
+      tenantId,
+      type: 'passkey_reauth',
+    })) as AccountPasskeyReauthChallenge;
+  } catch {
+    return c.json(
+      { error: 'invalid_challenge', error_description: 'Challenge not found or expired' },
+      400
+    );
+  }
+
+  const expectedOrigin = challengeData.metadata?.origin;
+  const expectedRPID = challengeData.metadata?.rpID;
+  const expectedSessionId = challengeData.metadata?.sessionId;
+  if (
+    challengeData.userId !== accountSession.userId ||
+    expectedSessionId !== accountSession.sessionId ||
+    !expectedOrigin ||
+    !expectedRPID ||
+    normalizeExpectedOrigin(c.req.header('Origin')) !== expectedOrigin
+  ) {
+    return c.json(
+      { error: 'invalid_challenge', error_description: 'Challenge does not match this session' },
+      400
+    );
+  }
+
+  const credentialId = toBase64URLString(body.credential.id);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
+  const passkey = await passkeyRepo.findByCredentialId(credentialId);
+  if (!passkey || passkey.user_id !== accountSession.userId) {
+    return c.json(
+      { error: 'verification_failed', error_description: 'Passkey was not verified' },
+      400
+    );
+  }
+
+  let verification;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response: body.credential,
+      expectedChallenge: challengeData.challenge,
+      expectedOrigin,
+      expectedRPID,
+      credential: {
+        id: toBase64URLString(passkey.credential_id),
+        publicKey: Uint8Array.from(Buffer.from(passkey.public_key, 'base64')),
+        counter: passkey.counter,
+      },
+      requireUserVerification: true,
+    });
+  } catch {
+    return c.json(
+      { error: 'verification_failed', error_description: 'Passkey verification failed' },
+      400
+    );
+  }
+
+  if (!verification.verified) {
+    return c.json(
+      { error: 'verification_failed', error_description: 'Passkey was not verified' },
+      400
+    );
+  }
+
+  await passkeyRepo.updateCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter);
+  return refreshAccountReauthSession(c, accountSession, 'passkey');
+}
+
+export async function sendAccountEmailCodeReauthHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const log = getLogger(c).module('ACCOUNT-REAUTH');
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+
+  const tenantId = getTenantIdFromContext(c);
+  if (!(await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'email_otp', 'reauth'))) {
+    return c.json(
+      {
+        error: 'no_reauth_method',
+        error_description: 'Email code is not enabled for re-authentication',
+      },
+      403
+    );
+  }
+
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+  const user = await runtimeUsers.findById(accountSession.userId);
+  const normalizedEmail = user?.email?.trim().toLowerCase();
+  if (!user || !normalizedEmail || user.email_verified !== 1) {
+    return c.json(
+      {
+        error: 'no_reauth_method',
+        error_description: 'A verified email address is required for email code re-authentication',
+      },
+      400
+    );
+  }
+
+  const hmacSecret = c.env.OTP_HMAC_SECRET;
+  if (!hmacSecret) {
+    log.error('OTP_HMAC_SECRET must be configured for account email-code re-authentication', {
+      action: 'account_email_reauth_send',
+    });
+    return c.json(
+      { error: 'server_error', error_description: 'Email code is not configured' },
+      500
+    );
+  }
+
+  const rateLimiter = c.env.RATE_LIMITER.get(
+    c.env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'account-email-reauth', tenantId))
+  );
+  const rateLimitResult = await rateLimiter.incrementRpc(`send:${accountSession.userId}`, {
+    windowSeconds: 15 * 60,
+    maxRequests: 3,
+  });
+  if (!rateLimitResult.allowed) {
+    return c.json(
+      {
+        error: 'rate_limited',
+        error_description: 'Too many email code requests. Please try again later.',
+        retry_after: rateLimitResult.retryAfter,
+      },
+      429
+    );
+  }
+
+  const challengeId = crypto.randomUUID();
+  const code = generateEmailCode();
+  const issuedAt = Date.now();
+  const codeHash = await hashEmailCode(code, normalizedEmail, challengeId, issuedAt, hmacSecret);
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
+  await challengeStore.storeChallengeRpc({
+    id: `account_email_reauth:${challengeId}`,
+    tenantId,
+    type: 'account_email_reauth',
+    userId: accountSession.userId,
+    challenge: codeHash,
+    ttl: EMAIL_REAUTH_TTL_SECONDS,
+    email: normalizedEmail,
+    metadata: {
+      sessionId: accountSession.sessionId,
+      issuedAt,
+    },
+  });
+
+  const emailNotifier = getPluginContext(c).registry.getNotifier('email');
+  if (!emailNotifier) {
+    log.error('No email notifier plugin configured for account email-code re-authentication', {
+      action: 'account_email_reauth_send',
+    });
+    return c.json(
+      { error: 'server_error', error_description: 'Email delivery is not configured' },
+      500
+    );
+  }
+
+  await emailNotifier.send({
+    channel: 'email',
+    to: normalizedEmail,
+    from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
+    subject: 'Your re-authentication code',
+    body: getEmailReauthHtml({
+      name: user.name,
+      email: normalizedEmail,
+      code,
+      expiresInMinutes: EMAIL_REAUTH_TTL_SECONDS / 60,
+    }),
+    metadata: {
+      textBody: getEmailReauthText({
+        name: user.name,
+        email: normalizedEmail,
+        code,
+        expiresInMinutes: EMAIL_REAUTH_TTL_SECONDS / 60,
+      }),
+    },
+  });
+
+  return c.json({
+    challenge_id: challengeId,
+    expires_in: EMAIL_REAUTH_TTL_SECONDS,
+    masked_email: maskEmail(normalizedEmail),
+  });
+}
+
+export async function completeAccountEmailCodeReauthHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const log = getLogger(c).module('ACCOUNT-REAUTH');
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+
+  let body: {
+    challenge_id?: unknown;
+    code?: unknown;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(
+      { error: 'invalid_request', error_description: 'Request body must be JSON' },
+      400
+    );
+  }
+
+  if (typeof body.challenge_id !== 'string' || typeof body.code !== 'string') {
+    return c.json(
+      { error: 'invalid_request', error_description: 'challenge_id and code are required' },
+      400
+    );
+  }
+  const code = body.code.trim();
+  if (!/^\d{6}$/.test(code)) {
+    return c.json(
+      { error: 'invalid_request', error_description: 'code must be a 6 digit value' },
+      400
+    );
+  }
+
+  const tenantId = getTenantIdFromContext(c);
+  if (!(await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'email_otp', 'reauth'))) {
+    return c.json(
+      {
+        error: 'no_reauth_method',
+        error_description: 'Email code is not enabled for re-authentication',
+      },
+      403
+    );
+  }
+
+  const rateLimiter = c.env.RATE_LIMITER.get(
+    c.env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'account-email-reauth', tenantId))
+  );
+  const attemptResult = await rateLimiter.incrementRpc(`verify:${body.challenge_id}`, {
+    windowSeconds: EMAIL_REAUTH_TTL_SECONDS,
+    maxRequests: 5,
+  });
+  if (!attemptResult.allowed) {
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, body.challenge_id, tenantId);
+    await challengeStore
+      .deleteChallengeRpc(`account_email_reauth:${body.challenge_id}`)
+      .catch(() => {});
+    return c.json(
+      {
+        error: 'rate_limited',
+        error_description: 'Too many verification attempts. Please request a new code.',
+        retry_after: attemptResult.retryAfter,
+      },
+      429
+    );
+  }
+
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, body.challenge_id, tenantId);
+  let challengeData: AccountEmailReauthChallenge;
+  try {
+    challengeData = (await challengeStore.consumeChallengeRpc({
+      id: `account_email_reauth:${body.challenge_id}`,
+      tenantId,
+      type: 'account_email_reauth',
+    })) as AccountEmailReauthChallenge;
+  } catch {
+    return c.json(
+      { error: 'invalid_code', error_description: 'The verification code is invalid or expired' },
+      400
+    );
+  }
+
+  if (
+    challengeData.userId !== accountSession.userId ||
+    challengeData.metadata?.sessionId !== accountSession.sessionId ||
+    !challengeData.email ||
+    typeof challengeData.metadata?.issuedAt !== 'number'
+  ) {
+    return c.json(
+      { error: 'invalid_challenge', error_description: 'Challenge does not match this session' },
+      400
+    );
+  }
+
+  const hmacSecret = c.env.OTP_HMAC_SECRET;
+  if (!hmacSecret) {
+    log.error('OTP_HMAC_SECRET must be configured for account email-code re-authentication', {
+      action: 'account_email_reauth_complete',
+    });
+    return c.json(
+      { error: 'server_error', error_description: 'Email code is not configured' },
+      500
+    );
+  }
+
+  const isValidCode = await verifyEmailCodeHash(
+    code,
+    challengeData.email,
+    body.challenge_id,
+    challengeData.metadata.issuedAt,
+    challengeData.challenge,
+    hmacSecret
+  );
+  if (!isValidCode) {
+    return c.json(
+      { error: 'invalid_code', error_description: 'The verification code is invalid or expired' },
+      400
+    );
+  }
+
+  return refreshAccountReauthSession(c, accountSession, 'email_code');
+}
+
+async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {
+  return isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login');
 }
 
 async function hasVerifiedEmailLoginMethod(

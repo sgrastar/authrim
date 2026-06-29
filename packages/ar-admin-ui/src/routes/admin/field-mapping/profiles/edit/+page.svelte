@@ -15,10 +15,6 @@
 		type IdentityMappingSourceProfileSummary
 	} from '$lib/api/admin-identity-mapping';
 	import {
-		createDestinationConsentSettingsDraft,
-		type DestinationConsentSettingsDraft
-	} from '$lib/admin/identity-mapping-profile-settings';
-	import {
 		destinationTemplates,
 		type DestinationTemplate
 	} from '$lib/admin/identity-mapping-destination-templates';
@@ -237,9 +233,6 @@
 	let samlAttributes = $state<SamlAttributeDraft[]>([
 		createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')
 	]);
-	let consentDraft = $state<DestinationConsentSettingsDraft>(
-		createDestinationConsentSettingsDraft('destination-draft')
-	);
 
 	let groupProtocol = $state<IdentityMappingAttributeProtocol>('oidc');
 	let groupType = $state('scope');
@@ -398,7 +391,6 @@
 		destinationOwnerScopeId = destinationProfile.ownerScopeId ?? '';
 		loadDestinationSchemaDraft(schema);
 		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
-		consentDraft = createDestinationConsentSettingsDraft(destinationProfile.id);
 		message = $LL.admin_identity_mapping_profile_edit_editing_message({
 			name: destinationProfile.displayName
 		});
@@ -460,10 +452,6 @@
 	function setSamlNameIdValueOption(value: string) {
 		samlNameIdValueOption = value;
 		if (value !== customOptionValue) customSamlNameIdValue = '';
-	}
-
-	function updateConsentDraft(patch: Partial<DestinationConsentSettingsDraft>) {
-		consentDraft = { ...consentDraft, ...patch };
 	}
 
 	async function parseSelectedCsv() {
@@ -717,13 +705,6 @@
 		} finally {
 			deletingProfile = false;
 		}
-	}
-
-	function scrollToReleaseConsent() {
-		document.getElementById('destination-consent')?.scrollIntoView({
-			behavior: 'smooth',
-			block: 'start'
-		});
 	}
 
 	async function saveAttributeGroup() {
@@ -1007,7 +988,6 @@
 		destinationOwnerScopeId = selected.ownerScopeId ?? '';
 		loadDestinationSchemaDraft(schema);
 		destinationBlockingWarningsConfirmed = getDestinationBlockingWarningCount() === 0;
-		consentDraft = createDestinationConsentSettingsDraft('destination-draft');
 		message = $LL.admin_identity_mapping_profile_edit_copied_existing({
 			name: selected.displayName
 		});
@@ -1449,7 +1429,6 @@
 		samlAttributes = [
 			createSamlAttributeDraft('urn:oid:0.9.2342.19200300.100.1.3', 'Email', 'email', 'pii')
 		];
-		consentDraft = createDestinationConsentSettingsDraft('destination-draft');
 	}
 
 	function nextVersionLabel(value: string | null | undefined): string {
@@ -1523,30 +1502,6 @@
 			case 'warnings':
 				return $LL.admin_identity_mapping_profile_edit_warnings();
 		}
-	}
-
-	function localizedConsentSummary(settings: DestinationConsentSettingsDraft): string {
-		const scope =
-			settings.scope === 'tenant_default'
-				? $LL.admin_identity_mapping_profile_edit_tenant_default()
-				: $LL.admin_identity_mapping_profile_edit_client_override({
-						clientId: settings.clientId || '-'
-					});
-		const challenge =
-			settings.challengeExperience === 'login_flow'
-				? $LL.admin_identity_mapping_profile_edit_login_flow_challenge()
-				: $LL.admin_identity_mapping_profile_edit_step_up_challenge();
-		const guard = settings.regulatedPurposeGuard
-			? $LL.admin_identity_mapping_profile_edit_purpose_guard_enabled()
-			: $LL.admin_identity_mapping_profile_edit_purpose_guard_off();
-		return $LL.admin_identity_mapping_profile_edit_consent_summary({
-			scope,
-			legalBasis: settings.legalBasis,
-			mode: settings.consentMode,
-			purpose: settings.purpose,
-			challenge,
-			guard
-		});
 	}
 
 	function normalizeProfileKey(value: string): string {
@@ -2624,9 +2579,6 @@
 
 				<div class="profile-actions">
 					<div class="profile-action-row">
-						<button type="button" onclick={scrollToReleaseConsent}>
-							{$LL.admin_identity_mapping_profile_edit_configure_release_consent()}
-						</button>
 						<button
 							type="button"
 							onclick={saveDestinationProfile}
@@ -2657,79 +2609,6 @@
 								: $LL.admin_identity_mapping_profile_edit_activate()}
 						</button>
 					</div>
-				</div>
-			</section>
-
-			<section
-				id="destination-consent"
-				class="panel"
-				aria-label={$LL.admin_identity_mapping_profile_edit_destination_consent_aria()}
-			>
-				<div>
-					<p class="eyebrow">
-						{$LL.admin_identity_mapping_profile_edit_destination_consent_settings()}
-					</p>
-					<h2>{$LL.admin_identity_mapping_profile_edit_release_consent()}</h2>
-				</div>
-				<div class="settings-grid">
-					<label>
-						<span>{$LL.admin_identity_mapping_profile_edit_scope()}</span>
-						<select
-							value={consentDraft.scope}
-							onchange={(event) =>
-								updateConsentDraft({
-									scope: getInputValue(event) as DestinationConsentSettingsDraft['scope']
-								})}
-						>
-							<option value="tenant_default"
-								>{$LL.admin_identity_mapping_profile_edit_tenant_default()}</option
-							>
-							<option value="destination_override"
-								>{$LL.admin_identity_mapping_profile_edit_destination_override()}</option
-							>
-						</select>
-					</label>
-					<label>
-						<span>{$LL.admin_identity_mapping_profile_edit_consent_mode()}</span>
-						<select
-							value={consentDraft.consentMode}
-							onchange={(event) =>
-								updateConsentDraft({
-									consentMode: getInputValue(
-										event
-									) as DestinationConsentSettingsDraft['consentMode']
-								})}
-						>
-							<option value="once">{$LL.admin_identity_mapping_profile_edit_once()}</option>
-							<option value="every_time"
-								>{$LL.admin_identity_mapping_profile_edit_every_time()}</option
-							>
-							<option value="until_attributes_change"
-								>{$LL.admin_identity_mapping_profile_edit_until_attributes_change()}</option
-							>
-						</select>
-					</label>
-					<label class="checkbox-row">
-						<input
-							type="checkbox"
-							checked={consentDraft.regulatedPurposeGuard}
-							onchange={(event) =>
-								updateConsentDraft({ regulatedPurposeGuard: getCheckboxValue(event) })}
-						/>
-						<span>{$LL.admin_identity_mapping_profile_edit_require_purpose_guard()}</span>
-					</label>
-				</div>
-				<div class="impact-preview">
-					<span>{$LL.admin_identity_mapping_profile_edit_preview()}</span>
-					<strong>{localizedConsentSummary(consentDraft)}</strong>
-					<small
-						>{$LL.admin_identity_mapping_profile_edit_raw_values_remain({
-							display:
-								consentDraft.rawValueDisplay === 'hidden'
-									? $LL.admin_identity_mapping_profile_edit_raw_value_hidden()
-									: consentDraft.rawValueDisplay
-						})}</small
-					>
 				</div>
 			</section>
 

@@ -23,7 +23,7 @@
 
 	// Filter state
 	let filterCategory = $state('');
-	let filterEnabled = $state<boolean | undefined>(undefined);
+	let filterStatus = $state<'all' | 'enabled' | 'disabled'>('all');
 
 	// Detail dialog state
 	let showDetailDialog = $state(false);
@@ -45,6 +45,7 @@
 
 	const pluginIconClasses: Record<string, string> = {
 		mail: 'i-ph-envelope-simple',
+		cloud: 'i-ph-cloud',
 		'shield-check': 'i-ph-shield-check',
 		security: 'i-ph-shield-check',
 		notification: 'i-ph-bell',
@@ -52,6 +53,14 @@
 		integration: 'i-ph-plugs',
 		plugin: 'i-ph-puzzle-piece'
 	};
+	const filteredPlugins = $derived(
+		plugins.filter((plugin) => {
+			if (filterCategory && plugin.meta?.category !== filterCategory) return false;
+			if (filterStatus === 'enabled' && !plugin.enabled) return false;
+			if (filterStatus === 'disabled' && plugin.enabled) return false;
+			return true;
+		})
+	);
 
 	function getSelectedTenantId(): string | undefined {
 		return settingsContext.tenantId || undefined;
@@ -93,13 +102,7 @@
 		lastLoadedTenantId = getSelectedTenantId() ?? '';
 
 		try {
-			const params: { category?: string; enabled?: boolean; tenantId?: string } = {
-				tenantId: getSelectedTenantId()
-			};
-			if (filterCategory) params.category = filterCategory;
-			if (filterEnabled !== undefined) params.enabled = filterEnabled;
-
-			const response = await adminPluginsAPI.list(params);
+			const response = await adminPluginsAPI.list({ tenantId: getSelectedTenantId() });
 			plugins = response.plugins;
 
 			const pluginId = $page.url.searchParams.get('plugin');
@@ -164,21 +167,19 @@
 			lastHealthCheck?: PluginWithStatus['lastHealthCheck'];
 		}
 	) {
-		plugins = plugins
-			.map((plugin) =>
-				plugin.id === pluginId
-					? {
-							...plugin,
-							enabled: status.enabled,
-							configSource: status.configSource,
-							configured: status.configured,
-							missingRequiredFields: status.missingRequiredFields,
-							loadedAt: status.loadedAt,
-							lastHealthCheck: status.lastHealthCheck ?? plugin.lastHealthCheck
-						}
-					: plugin
-			)
-			.filter((plugin) => filterEnabled === undefined || plugin.enabled === filterEnabled);
+		plugins = plugins.map((plugin) =>
+			plugin.id === pluginId
+				? {
+						...plugin,
+						enabled: status.enabled,
+						configSource: status.configSource,
+						configured: status.configured,
+						missingRequiredFields: status.missingRequiredFields,
+						loadedAt: status.loadedAt,
+						lastHealthCheck: status.lastHealthCheck ?? plugin.lastHealthCheck
+					}
+				: plugin
+		);
 
 		if (selectedPlugin?.id === pluginId) {
 			selectedPlugin = {
@@ -387,14 +388,9 @@
 		return pluginSchema?.required?.includes(key) ?? false;
 	}
 
-	function applyFilters() {
-		loadPlugins();
-	}
-
 	function clearFilters() {
 		filterCategory = '';
-		filterEnabled = undefined;
-		loadPlugins();
+		filterStatus = 'all';
 	}
 
 	function formatCategory(id: string): string {
@@ -533,13 +529,12 @@
 				<label for="filter-status" class="admin-field__label">
 					{$LL.admin_plugins_status()}
 				</label>
-				<select id="filter-status" class="admin-select" bind:value={filterEnabled}>
-					<option value={undefined}>{$LL.admin_plugins_all()}</option>
-					<option value={true}>{$LL.admin_plugins_enabled()}</option>
-					<option value={false}>{$LL.admin_plugins_disabled()}</option>
+				<select id="filter-status" class="admin-select" bind:value={filterStatus}>
+					<option value="all">{$LL.admin_plugins_all()}</option>
+					<option value="enabled">{$LL.admin_plugins_enabled()}</option>
+					<option value="disabled">{$LL.admin_plugins_disabled()}</option>
 				</select>
 			</div>
-			<button class="btn btn-secondary" onclick={applyFilters}>{$LL.admin_plugins_apply()}</button>
 			<button class="btn btn-secondary" onclick={clearFilters}>{$LL.admin_plugins_clear()}</button>
 		</AdminToolbar>
 	</AdminSection>
@@ -550,18 +545,18 @@
 
 	{#if loading}
 		<div class="loading-state">{$LL.admin_plugins_loading()}</div>
-	{:else if plugins.length === 0}
+	{:else if filteredPlugins.length === 0}
 		<div class="empty-state">
 			<p>{$LL.admin_plugins_empty()}</p>
 			<p class="text-muted">
-				{filterCategory || filterEnabled !== undefined
+				{filterCategory || filterStatus !== 'all'
 					? $LL.admin_plugins_adjust_filters()
 					: $LL.admin_plugins_empty_hint()}
 			</p>
 		</div>
 	{:else}
 		<div class="plugin-grid">
-			{#each plugins as plugin (plugin.id)}
+			{#each filteredPlugins as plugin (plugin.id)}
 				<div
 					class="plugin-card"
 					onclick={() => openDetailDialog(plugin)}

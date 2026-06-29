@@ -10,6 +10,7 @@
 		canEditFlow,
 		canDeleteFlow
 	} from '$lib/api/admin-flows';
+	import { isLegacyPreviewFlowId } from '$lib/api/legacy-flow-preview';
 	import { Modal } from '$lib/components';
 	import {
 		AdminDataTable,
@@ -44,8 +45,10 @@
 	const flowId = $derived($page.params.id ?? '');
 	const flowIsBuiltin = $derived.by(() => flow?.is_builtin ?? false);
 	const flowIsActive = $derived.by(() => flow?.is_active ?? false);
+	const flowIsPreview = $derived.by(() => (flow ? isLegacyPreviewFlowId(flow.id) : false));
 	const flowCanEdit = $derived.by(() => (flow ? canEditFlow(flow) : false));
-	const flowCanDelete = $derived.by(() => (flow ? canDeleteFlow(flow) : false));
+	const flowCanMutate = $derived.by(() => flowCanEdit && !flowIsPreview);
+	const flowCanDelete = $derived.by(() => (flow && !flowIsPreview ? canDeleteFlow(flow) : false));
 
 	async function loadFlow() {
 		if (!flowId) return;
@@ -196,6 +199,9 @@
 				{#if flowIsBuiltin}
 					<span class="badge badge-primary">Builtin</span>
 				{/if}
+				{#if flowIsPreview}
+					<span class="badge badge-info">Preview</span>
+				{/if}
 				<span
 					class="status-badge"
 					class:status-active={flowIsActive}
@@ -212,8 +218,8 @@
 				{#if flowCanEdit}
 					<button class="btn btn-primary" onclick={navigateToEdit}>Edit Flow</button>
 				{/if}
-				<button class="btn btn-secondary" onclick={openCopyDialog}>Copy</button>
-				{#if flowCanEdit}
+				{#if flowCanMutate}
+					<button class="btn btn-secondary" onclick={openCopyDialog}>Copy</button>
 					<button class="btn btn-secondary" onclick={toggleActive} disabled={toggling}>
 						{toggling ? 'Updating...' : flowIsActive ? 'Deactivate' : 'Activate'}
 					</button>
@@ -223,6 +229,13 @@
 				{/if}
 			{/snippet}
 		</AdminPageHeader>
+
+		{#if flowIsPreview}
+			<div class="alert alert-warning">
+				<strong>Legacy preview.</strong> This sample flow is available for reviewing the old Flow Designer
+				only. It is not persisted to the backend and is not used by runtime execution.
+			</div>
+		{/if}
 
 		<!-- Flow Info Panel -->
 		<AdminSection>

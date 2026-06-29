@@ -206,6 +206,72 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/DirectoryPasswordLogin"
+  /api/auth/directory-password/migration/passkey/options:
+    post:
+      tags:
+        - Directory Password
+      summary: Create WebAuthn registration options for a directory password migration transaction.
+      requestBody:
+        $ref: "#/components/requestBodies/DirectoryMigrationPasskeyOptions"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Any"
+        "401":
+          $ref: "#/components/responses/Any"
+        "403":
+          $ref: "#/components/responses/Any"
+  /api/auth/directory-password/migration/passkey/verify:
+    post:
+      tags:
+        - Directory Password
+      summary: Verify WebAuthn registration for a directory password migration transaction and create a session.
+      requestBody:
+        $ref: "#/components/requestBodies/DirectoryMigrationPasskeyVerify"
+      responses:
+        "200":
+          $ref: "#/components/responses/DirectoryPasswordLogin"
+        "400":
+          $ref: "#/components/responses/Any"
+        "401":
+          $ref: "#/components/responses/Any"
+        "403":
+          $ref: "#/components/responses/Any"
+  /api/auth/directory-password/migration/email-code/send:
+    post:
+      tags:
+        - Directory Password
+      summary: Send an email code for a directory password migration fallback or recovery transaction.
+      requestBody:
+        $ref: "#/components/requestBodies/DirectoryMigrationEmailCodeSend"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+        "400":
+          $ref: "#/components/responses/Any"
+        "401":
+          $ref: "#/components/responses/Any"
+        "403":
+          $ref: "#/components/responses/Any"
+        "429":
+          $ref: "#/components/responses/Any"
+  /api/auth/directory-password/migration/email-code/verify:
+    post:
+      tags:
+        - Directory Password
+      summary: Verify an email code for a directory password migration fallback or recovery transaction and create a session.
+      requestBody:
+        $ref: "#/components/requestBodies/DirectoryMigrationEmailCodeVerify"
+      responses:
+        "200":
+          $ref: "#/components/responses/DirectoryPasswordLogin"
+        "400":
+          $ref: "#/components/responses/Any"
+        "401":
+          $ref: "#/components/responses/Any"
+        "403":
+          $ref: "#/components/responses/Any"
   /api/auth/directory-connectors/heartbeat/{tenantId}/{connectorId}:
     post:
       tags:
@@ -1238,9 +1304,54 @@ components:
           schema:
             $ref: "#/components/schemas/DirectoryPasswordLoginRequest"
           example:
-            email: user@example.com
+            username: alice
             password: correct-horse-battery-staple
-            client_id: client_123
+            invite_token: invite-token-if-admin-invitation-fallback-is-required
+    DirectoryMigrationPasskeyOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DirectoryMigrationPasskeyOptionsRequest"
+          example:
+            transaction_id: damt_123
+            transaction_token: migration-transaction-token
+            display_name: Example User
+    DirectoryMigrationPasskeyVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DirectoryMigrationPasskeyVerifyRequest"
+          example:
+            transaction_id: damt_123
+            transaction_token: migration-transaction-token
+            challenge_id: challenge_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+            device_name: Work laptop
+    DirectoryMigrationEmailCodeSend:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DirectoryMigrationEmailCodeSendRequest"
+          example:
+            transaction_id: damt_email_123
+            transaction_token: migration-email-token
+    DirectoryMigrationEmailCodeVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DirectoryMigrationEmailCodeVerifyRequest"
+          example:
+            transaction_id: damt_email_123
+            transaction_token: migration-email-token
+            challenge_id: challenge_123
+            code: "123456"
     DirectoryConnectorHeartbeat:
       required: true
       content:
@@ -1252,6 +1363,7 @@ components:
             display_name: campus-a
             transport: direct
             version: 0.13.0
+            release_channel: stable
             started_at: "2026-06-24T00:00:00.000Z"
             health_status: healthy
             health_summary:
@@ -1709,7 +1821,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/BrowserSessionResponse"
+            $ref: "#/components/schemas/DirectoryPasswordLoginResponse"
           example:
             ok: true
             expires_in: 86400
@@ -2554,24 +2666,119 @@ components:
         - user
     DirectoryPasswordLoginRequest:
       type: object
+      additionalProperties: false
       properties:
-        email:
+        username:
           type: string
-          format: email
-          example: user@example.com
+          minLength: 1
+          example: alice
         password:
           type: string
           format: password
           example: correct-horse-battery-staple
-        client_id:
+        invite_token:
           type: string
-          example: client_123
+          minLength: 1
+          description: Optional tenant invitation token used only to authorize admin-invitation-only migration fallback.
+          example: invite-token-if-admin-invitation-fallback-is-required
         authorization_challenge_id:
           type: string
+          minLength: 1
           example: auth_chal_123
+        human_verification_response:
+          type: string
+          minLength: 1
+          example: turnstile-response-token
       required:
-        - email
+        - username
         - password
+    DirectoryMigrationPasskeyOptionsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-transaction-token
+        display_name:
+          type: string
+          maxLength: 160
+          example: Example User
+      required:
+        - transaction_id
+        - transaction_token
+    DirectoryMigrationPasskeyVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-transaction-token
+        challenge_id:
+          type: string
+          minLength: 1
+          example: challenge_123
+        credential:
+          type: object
+          additionalProperties: true
+        device_name:
+          type: string
+          maxLength: 160
+          example: Work laptop
+      required:
+        - transaction_id
+        - transaction_token
+        - challenge_id
+        - credential
+    DirectoryMigrationEmailCodeSendRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_email_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-email-token
+      required:
+        - transaction_id
+        - transaction_token
+    DirectoryMigrationEmailCodeVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_email_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-email-token
+        challenge_id:
+          type: string
+          minLength: 1
+          example: challenge_123
+        code:
+          type: string
+          pattern: "^\\d{6}$"
+          example: "123456"
+      required:
+        - transaction_id
+        - transaction_token
+        - challenge_id
+        - code
     DirectoryConnectorHeartbeatRequest:
       type: object
       additionalProperties: false
@@ -2601,6 +2808,11 @@ components:
         version:
           type: string
           maxLength: 64
+        release_channel:
+          type: string
+          maxLength: 32
+          pattern: "^[a-zA-Z0-9_.-]{1,32}$"
+          default: stable
         started_at:
           type: string
           format: date-time
@@ -2715,6 +2927,152 @@ components:
         - expires_in
         - session
         - user
+    DirectoryPasswordLoginResponse:
+      oneOf:
+        - $ref: "#/components/schemas/BrowserSessionResponse"
+        - $ref: "#/components/schemas/DirectoryPasswordMigrationRequiredResponse"
+        - $ref: "#/components/schemas/DirectoryPasswordRecoveryRequiredResponse"
+    DirectoryPasswordMigrationRequiredResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - false
+        migration:
+          type: object
+          additionalProperties: false
+          properties:
+            required:
+              type: boolean
+              enum:
+                - true
+            action:
+              type: string
+              enum:
+                - require_passkey
+            transaction_id:
+              type: string
+              example: damt_123
+            transaction_token:
+              type: string
+              example: migration-transaction-token
+            expires_at:
+              type: integer
+              example: 1770000600000
+            campaign_id:
+              type: string
+              example: damc_123
+            state:
+              type: string
+              example: passkey_required
+            reason:
+              anyOf:
+                - type: string
+                  example: immediate
+                - type: "null"
+            passkey_required_at:
+              anyOf:
+                - type: integer
+                  example: 1770000000000
+                - type: "null"
+            email_code_fallback_mode:
+              type: string
+              enum:
+                - migration_recovery
+                - directory_unavailable_recovery
+                - admin_invitation_only
+                - login_method
+                - disabled
+            email_code_fallback_available:
+              type: boolean
+            email_code_fallback:
+              anyOf:
+                - $ref: "#/components/schemas/DirectoryPasswordEmailCodeTransaction"
+                - type: "null"
+          required:
+            - required
+            - action
+            - transaction_id
+            - transaction_token
+            - expires_at
+            - campaign_id
+            - state
+            - email_code_fallback_mode
+            - email_code_fallback_available
+        user:
+          $ref: "#/components/schemas/AuthUser"
+      required:
+        - ok
+        - migration
+        - user
+    DirectoryPasswordRecoveryRequiredResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - false
+        recovery:
+          type: object
+          additionalProperties: false
+          properties:
+            required:
+              type: boolean
+              enum:
+                - true
+            reason:
+              type: string
+              enum:
+                - directory_unavailable
+            transaction_id:
+              type: string
+              example: damt_recovery_123
+            transaction_token:
+              type: string
+              example: recovery-transaction-token
+            expires_at:
+              type: integer
+              example: 1770000600000
+            masked_email:
+              type: string
+              example: al***@example.com
+          required:
+            - required
+            - reason
+            - transaction_id
+            - transaction_token
+            - expires_at
+            - masked_email
+        user:
+          $ref: "#/components/schemas/AuthUser"
+      required:
+        - ok
+        - recovery
+        - user
+    DirectoryPasswordEmailCodeTransaction:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          example: damt_email_123
+        transaction_token:
+          type: string
+          example: migration-email-token
+        expires_at:
+          type: integer
+          example: 1770000600000
+        masked_email:
+          type: string
+          example: al***@example.com
+      required:
+        - transaction_id
+        - transaction_token
+        - expires_at
+        - masked_email
     DIDChallengeRequest:
       type: object
       properties:

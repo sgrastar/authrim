@@ -35,6 +35,7 @@ interface HeartbeatPayload {
   display_name?: string;
   transport: 'relay' | 'direct' | 'tunnel';
   version: string;
+  release_channel?: string;
   started_at: string;
   health_status: 'healthy' | 'degraded' | 'unhealthy';
   health_summary?: Record<string, unknown>;
@@ -124,6 +125,7 @@ export async function directoryConnectorHeartbeatHandler(c: Context<{ Bindings: 
     displayName: payload.display_name,
     transport: payload.transport,
     version: payload.version,
+    releaseChannel: payload.release_channel,
     startedAt: payload.started_at,
     healthStatus: payload.health_status,
     healthSummary: payload.health_summary,
@@ -211,9 +213,13 @@ function parseHeartbeatPayload(bodyText: string): HeartbeatPayload | null {
     return null;
   }
   const displayName = stringValue(record.display_name);
+  const releaseChannel = stringValue(record.release_channel) || 'stable';
   const categories = stringArray(record.config_categories);
   const driftSeverity = stringValue(record.drift_severity) || 'none';
-  if (driftSeverity !== 'none' && driftSeverity !== 'warning' && driftSeverity !== 'critical') {
+  if (
+    !/^[a-zA-Z0-9_.-]{1,32}$/.test(releaseChannel) ||
+    (driftSeverity !== 'none' && driftSeverity !== 'warning' && driftSeverity !== 'critical')
+  ) {
     return null;
   }
   return {
@@ -221,6 +227,7 @@ function parseHeartbeatPayload(bodyText: string): HeartbeatPayload | null {
     ...(displayName && displayName.length <= 128 ? { display_name: displayName } : {}),
     transport,
     version,
+    release_channel: releaseChannel,
     started_at: startedAt,
     health_status: healthStatus,
     health_summary: plainRecord(record.health_summary) ?? {},

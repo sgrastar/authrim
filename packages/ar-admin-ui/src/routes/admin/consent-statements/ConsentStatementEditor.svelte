@@ -13,13 +13,25 @@
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
-		AdminSection
+		AdminSection,
+		MonacoTextEditor
 	} from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	type Mode = 'new' | 'edit';
-	type StatementTemplateId = 'saml-attribute-release-confirmation';
+	type StatementTemplateId =
+		| 'terms-of-service'
+		| 'privacy-policy'
+		| 'user-data-release-consent'
+		| 'saml-attribute-release'
+		| 'saml-attribute-release-confirmation';
+	type CollectionMode = 'required' | 'optional' | 'display' | 'hidden';
+	type BindingType =
+		| 'subject'
+		| 'identity_schema'
+		| 'destination_field_mapping_set'
+		| 'user_decision';
 
 	let { mode, statementId = '' }: { mode: Mode; statementId?: string } = $props();
 
@@ -37,6 +49,10 @@
 	let editingLanguage = $state<string | null>(null);
 	let recordRetentionMode = $state<'indefinite' | 'specified'>('indefinite');
 	let reconsentIntervalEnabled = $state(false);
+	let collectionMode = $state<CollectionMode>('required');
+	let bindingDraft = $state<{ binding_type: BindingType; binding_value?: string }>({
+		binding_type: 'subject'
+	});
 	const samlAttributeReleaseConfirmationCategory = 'saml_attribute_release_confirmation';
 
 	let statementFormData = $state({
@@ -184,6 +200,7 @@
 	}
 
 	function populateRequirementForm(value: TenantConsentRequirement | null) {
+		collectionMode = value ? (value.is_required ? 'required' : 'optional') : 'hidden';
 		requirementFormData = value
 			? {
 					is_required: value.is_required,
@@ -354,6 +371,9 @@
 	}
 
 	async function saveRequirementSettings(currentStatementId: string) {
+		if (collectionMode === 'hidden') {
+			return;
+		}
 		await adminConsentStatementsAPI.upsertRequirement(currentStatementId, {
 			is_required: requirementFormData.is_required,
 			min_version: requirementFormData.min_version || undefined,
@@ -537,24 +557,36 @@
 
 	function applyTemplateFromQuery() {
 		const template = $page.url.searchParams.get('template');
-		if (template === 'saml-attribute-release-confirmation') {
+		if (isStatementTemplateId(template)) {
 			applyStatementTemplate(template);
+			applyCollectionMode(
+				normalizeCollectionMode($page.url.searchParams.get('collection'), template)
+			);
+			applyBindingFromQuery(template);
 		}
 	}
 
+	function applyBindingFromQuery(template: StatementTemplateId) {
+		const bindingType = normalizeBindingType($page.url.searchParams.get('binding_type'), template);
+		bindingDraft = {
+			binding_type: bindingType,
+			binding_value: $page.url.searchParams.get('binding_value') ?? undefined
+		};
+	}
+
 	function applyStatementTemplate(template: StatementTemplateId) {
-		if (template !== 'saml-attribute-release-confirmation') return;
 		const ja = getLocale() === 'ja';
+		const templateDefaults = getStatementTemplateDefaults(template, ja);
 
 		statementFormData = {
-			slug: 'saml_attribute_release_uapprove',
-			category: samlAttributeReleaseConfirmationCategory,
+			slug: templateDefaults.slug,
+			category: templateDefaults.category,
 			legal_basis: 'consent',
-			processing_purpose: ja ? 'SAML SPへの属性送信確認' : 'SAML SP attribute release confirmation',
+			processing_purpose: templateDefaults.processingPurpose,
 			display_order: 0,
 			is_active: true,
 			record_retention_days: null,
-			withdrawal_allowed: false,
+			withdrawal_allowed: templateDefaults.withdrawalAllowed,
 			withdrawal_impact: '',
 			reconsent_on_version_change: true,
 			reconsent_interval_days: null
@@ -567,49 +599,229 @@
 		};
 		requirementFormData = {
 			...requirementFormData,
-			is_required: 0,
-			enforcement: 'allow_continue',
 			display_order: 0
 		};
 		localizationFormData = {
 			language: ja ? 'ja' : 'en',
-			title: ja ? '属性情報の送信について' : 'About releasing your attributes',
-			description: ja
-				? 'このサービスに送信される属性情報を確認してください。'
-				: 'Review the attributes that will be released to this service.',
-			processing_purpose: ja ? 'SAML SPへの属性送信確認' : 'SAML SP attribute release confirmation',
+			title: templateDefaults.title,
+			description: templateDefaults.description,
+			processing_purpose: templateDefaults.processingPurpose,
 			withdrawal_impact: '',
 			document_url: '',
-			inline_content: ja
-				? [
-						'このサービスに以下の情報を送信します。',
-						'',
-						'サービス名: {spName}',
-						'送信先: {entityId}',
-						'',
-						'続行すると、表示されている属性情報がサービスに送信されます。',
-						'送信される情報を確認してください。',
-						'',
-						'送信される属性が変更された場合は、再度確認画面が表示されます。'
-					].join('\n')
-				: [
-						'The following information will be released to this service.',
-						'',
-						'Service: {spName}',
-						'Destination: {entityId}',
-						'',
-						'If you continue, the displayed attributes will be released to the service.',
-						'Review the information before continuing.',
-						'',
-						'This confirmation will be shown again if the released attributes change.'
-					].join('\n')
+			inline_content: templateDefaults.inlineContent
 		};
+	}
+
+	function isStatementTemplateId(value: string | null): value is StatementTemplateId {
+		return (
+			value === 'terms-of-service' ||
+			value === 'privacy-policy' ||
+			value === 'user-data-release-consent' ||
+			value === 'saml-attribute-release' ||
+			value === 'saml-attribute-release-confirmation'
+		);
+	}
+
+	function normalizeCollectionMode(
+		value: string | null,
+		template: StatementTemplateId
+	): CollectionMode {
+		if (value === 'required' || value === 'optional' || value === 'display' || value === 'hidden') {
+			return value;
+		}
+		return template === 'saml-attribute-release-confirmation' ? 'display' : 'required';
+	}
+
+	function applyCollectionMode(mode: CollectionMode) {
+		collectionMode = mode;
+		switch (mode) {
+			case 'required':
+				requirementFormData = {
+					...requirementFormData,
+					is_required: 1,
+					enforcement: 'block'
+				};
+				return;
+			case 'optional':
+			case 'display':
+			case 'hidden':
+				requirementFormData = {
+					...requirementFormData,
+					is_required: 0,
+					enforcement: 'allow_continue'
+				};
+				return;
+		}
+	}
+
+	function normalizeBindingType(value: string | null, template: StatementTemplateId): BindingType {
+		if (
+			value === 'subject' ||
+			value === 'identity_schema' ||
+			value === 'destination_field_mapping_set' ||
+			value === 'user_decision'
+		) {
+			return value;
+		}
+		switch (template) {
+			case 'user-data-release-consent':
+			case 'saml-attribute-release':
+				return 'destination_field_mapping_set';
+			case 'saml-attribute-release-confirmation':
+				return 'user_decision';
+			case 'terms-of-service':
+			case 'privacy-policy':
+			default:
+				return 'subject';
+		}
+	}
+
+	function getStatementTemplateDefaults(template: StatementTemplateId, ja: boolean) {
+		const defaults: Record<
+			StatementTemplateId,
+			{
+				slug: string;
+				category: string;
+				processingPurpose: string;
+				title: string;
+				description: string;
+				inlineContent: string;
+				withdrawalAllowed: boolean;
+			}
+		> = {
+			'terms-of-service': {
+				slug: 'terms_of_service',
+				category: 'terms_of_service',
+				processingPurpose: ja ? 'サービス利用条件への同意' : 'Agreement to service terms',
+				title: ja ? '利用規約への同意' : 'Terms of Service',
+				description: ja
+					? 'サービスを利用するには利用規約への同意が必要です。'
+					: 'You must agree to the Terms of Service to continue.',
+				inlineContent: ja
+					? '利用規約を読み、その内容に同意します。'
+					: 'I have read and agree to the Terms of Service.',
+				withdrawalAllowed: false
+			},
+			'privacy-policy': {
+				slug: 'privacy_policy',
+				category: 'privacy_policy',
+				processingPurpose: ja ? '個人情報の取り扱いへの同意' : 'Consent to privacy practices',
+				title: ja ? 'プライバシーポリシーへの同意' : 'Privacy Policy',
+				description: ja
+					? '個人情報の取り扱い方針を確認してください。'
+					: 'Review how personal data is handled.',
+				inlineContent: ja
+					? 'プライバシーポリシーを読み、その内容に同意します。'
+					: 'I have read and agree to the Privacy Policy.',
+				withdrawalAllowed: false
+			},
+			'user-data-release-consent': {
+				slug: 'user_data_release',
+				category: 'custom',
+				processingPurpose: ja ? 'ユーザーデータの送信同意' : 'User data release consent',
+				title: ja ? 'ユーザーデータ送信への同意' : 'User Data Release Consent',
+				description: ja
+					? 'このサービスにユーザーデータを送信することへの同意を取得します。'
+					: 'Collect consent to release user data to this service.',
+				inlineContent: ja
+					? [
+							'このサービスに必要なユーザーデータを送信します。',
+							'',
+							'送信先: {clientName}',
+							'送信される情報: {claims}',
+							'',
+							'送信内容を確認してください。'
+						].join('\n')
+					: [
+							'Authrim will release the required user data to this service.',
+							'',
+							'Destination: {clientName}',
+							'Released data: {claims}',
+							'',
+							'Review the information before continuing.'
+						].join('\n'),
+				withdrawalAllowed: true
+			},
+			'saml-attribute-release': {
+				slug: 'saml_attribute_release',
+				category: 'custom',
+				processingPurpose: ja ? 'SAML SPへの属性送信同意' : 'SAML SP attribute release consent',
+				title: ja ? 'SAML属性送信への同意' : 'SAML Attribute Release Consent',
+				description: ja
+					? 'SAML SPに属性情報を送信することへの同意を取得します。'
+					: 'Collect consent to release attributes to a SAML SP.',
+				inlineContent: ja
+					? [
+							'このサービスに以下の属性情報を送信します。',
+							'',
+							'サービス名: {spName}',
+							'送信先: {entityId}',
+							'送信属性: {attributes}',
+							'',
+							'送信内容を確認してください。'
+						].join('\n')
+					: [
+							'Authrim will release the following attributes to this service.',
+							'',
+							'Service: {spName}',
+							'Destination: {entityId}',
+							'Attributes: {attributes}',
+							'',
+							'Review the information before continuing.'
+						].join('\n'),
+				withdrawalAllowed: true
+			},
+			'saml-attribute-release-confirmation': {
+				slug: 'saml_attribute_release_uapprove',
+				category: samlAttributeReleaseConfirmationCategory,
+				processingPurpose: ja
+					? 'SAML SPへの属性送信確認'
+					: 'SAML SP attribute release confirmation',
+				title: ja ? 'SPへの属性提供に対する同意' : 'Consent for releasing attributes to the SP',
+				description: ja
+					? 'このサービスに属性情報を送信する方法を選択してください。'
+					: 'Choose how Authrim should release attributes to this service.',
+				inlineContent: ja
+					? [
+							'このサービスに表示中の属性情報を送信します。',
+							'',
+							'サービス名: {spName}',
+							'送信先: {entityId}',
+							'',
+							'選択肢:',
+							'- 今回だけ情報を送信することに同意する（次回ログイン時に再度同意確認を行う）',
+							'- 今後も情報を自動的にこのサービスに送信することに同意する（次回ログイン以降、同意確認は行わない）',
+							''
+						].join('\n')
+					: [
+							'Authrim will release the displayed attributes to this service.',
+							'',
+							'Service: {spName}',
+							'Destination: {entityId}',
+							'',
+							'Choices:',
+							'- Agree to release the information this time only. You will be asked again at the next login.',
+							'- Agree to automatically release the information to this service in the future.',
+							''
+						].join('\n'),
+				withdrawalAllowed: false
+			}
+		};
+		return defaults[template];
 	}
 
 	function localText(key: string): string {
 		const ja = getLocale() === 'ja';
 		const labels: Record<string, { ja: string; en: string }> = {
-			samlCategory: { ja: 'SAML属性送信確認', en: 'SAML attribute release confirmation' }
+			samlCategory: { ja: 'SAML属性送信確認', en: 'SAML attribute release confirmation' },
+			displayOnly: { ja: '表示のみ', en: 'Display only' },
+			hidden: { ja: '表示なし', en: 'Hidden' },
+			bindingTitle: { ja: '紐づけ対象', en: 'Binding target' },
+			bindingDescription: {
+				ja: 'この同意文をどの対象に紐付けるかの初期指定です。',
+				en: 'Initial binding target for this consent statement.'
+			},
+			bindingType: { ja: '対象種別', en: 'Target type' }
 		};
 		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
 	}
@@ -752,9 +964,9 @@
 								<input
 									type="radio"
 									name="requirement-required"
-									value={1}
-									checked={requirementFormData.is_required === 1}
-									onchange={() => (requirementFormData.is_required = 1)}
+									value="required"
+									checked={collectionMode === 'required'}
+									onchange={() => applyCollectionMode('required')}
 								/>
 								<span>{$LL.admin_consent_requirements_collection_required()}</span>
 							</label>
@@ -762,16 +974,60 @@
 								<input
 									type="radio"
 									name="requirement-required"
-									value={0}
-									checked={requirementFormData.is_required === 0}
-									onchange={() => (requirementFormData.is_required = 0)}
+									value="optional"
+									checked={collectionMode === 'optional'}
+									onchange={() => applyCollectionMode('optional')}
 								/>
 								<span>{$LL.admin_consent_requirements_collection_optional()}</span>
+							</label>
+							<label class="radio-card">
+								<input
+									type="radio"
+									name="requirement-required"
+									value="display"
+									checked={collectionMode === 'display'}
+									onchange={() => applyCollectionMode('display')}
+								/>
+								<span>{localText('displayOnly')}</span>
+							</label>
+							<label class="radio-card">
+								<input
+									type="radio"
+									name="requirement-required"
+									value="hidden"
+									checked={collectionMode === 'hidden'}
+									onchange={() => applyCollectionMode('hidden')}
+								/>
+								<span>{localText('hidden')}</span>
 							</label>
 						</div>
 					</div>
 				</div>
 			</AdminSection>
+
+			{#if mode === 'new' && $page.url.searchParams.has('template')}
+				<AdminSection>
+					<div class="section-header">
+						<div>
+							<h2>{localText('bindingTitle')}</h2>
+							<p>{localText('bindingDescription')}</p>
+						</div>
+					</div>
+					<div class="binding-editor">
+						<div class="form-group">
+							<label for="binding-type">{localText('bindingType')}</label>
+							<select id="binding-type" class="input" bind:value={bindingDraft.binding_type}>
+								<option value="subject">本人 / Subject</option>
+								<option value="identity_schema">Identity Schema</option>
+								<option value="destination_field_mapping_set">
+									Destination Field Mapping Sets
+								</option>
+								<option value="user_decision">User Decision</option>
+							</select>
+						</div>
+					</div>
+				</AdminSection>
+			{/if}
 
 			<AdminSection>
 				<div class="section-header">
@@ -1223,14 +1479,14 @@
 						</div>
 						<div class="form-group full">
 							<label for="loc-inline">{$LL.admin_consent_localizations_inline()}</label>
-							<textarea
-								id="loc-inline"
-								class="input"
+							<MonacoTextEditor
 								bind:value={localizationFormData.inline_content}
-								rows="5"
+								language="authrim-consent-html"
+								ariaLabel={$LL.admin_consent_localizations_inline()}
 								placeholder={$LL.admin_consent_localizations_placeholder_inline()}
 								disabled={!selectedVersionId}
-							></textarea>
+								minHeight={188}
+							/>
 						</div>
 					</div>
 					<div class="form-actions">
@@ -1387,6 +1643,12 @@
 	.form-grid {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 14px;
+	}
+
+	.binding-editor {
+		display: grid;
+		grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
 		gap: 14px;
 	}
 
@@ -1650,6 +1912,10 @@
 		}
 
 		.form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.binding-editor {
 			grid-template-columns: 1fr;
 		}
 

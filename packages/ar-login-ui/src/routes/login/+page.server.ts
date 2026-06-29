@@ -1,12 +1,12 @@
 import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import {
-	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
 	isCurrentSessionActive,
 	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
 } from '../../lib/discovery-entry';
+import { fetchCachedLoginDiscoveryConfig } from '../../lib/login-discovery-config-cache';
 
 const DISCOVERY_GRANT_VERIFIED_COOKIE = 'authrim_discovery_grant_verified';
 
@@ -53,6 +53,10 @@ function consumeVerifiedGrantCookie(
 	return true;
 }
 
+function getDiscoveryConfigCacheKey(event: Parameters<PageServerLoad>[0]): string {
+	return event.request.headers.get('x-authrim-original-host')?.trim() || event.url.host;
+}
+
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
@@ -81,7 +85,11 @@ export const load: PageServerLoad = async (event) => {
 		}
 	}
 
-	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(() => null);
+	const config = await fetchCachedLoginDiscoveryConfig(
+		event.fetch,
+		getDiscoveryConfigCacheKey(event),
+		discoveryHeaders
+	).catch(() => null);
 	if (!config) {
 		return {};
 	}

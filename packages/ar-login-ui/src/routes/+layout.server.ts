@@ -4,6 +4,17 @@ import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discove
 export const load: LayoutServerLoad = async (event) => {
 	// Get language preference from cookie
 	const preferredLanguage = event.cookies.get('preferredLanguage') || 'en';
+	if (
+		event.route.id === '/login' ||
+		event.route.id === '/account' ||
+		event.route.id?.startsWith('/account/')
+	) {
+		return {
+			preferredLanguage,
+			shouldLoadTenantBranding: true
+		};
+	}
+
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
 	const discoveryConfig = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(
 		() => null

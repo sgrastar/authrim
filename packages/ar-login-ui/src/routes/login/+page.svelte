@@ -23,7 +23,7 @@
 		type ExternalProvider
 	} from '$lib/api/authentication-methods';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
-	import { startAuthentication } from '@simplewebauthn/browser';
+	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import {
 		signalUnknownCredential,
@@ -43,12 +43,37 @@
 	let directoryUsername = $state('');
 	let directoryPassword = $state('');
 	let error = $state('');
+	let directoryMigrationNotice = $state('');
+	let directoryMigrationTransaction = $state<{
+		transactionId: string;
+		transactionToken: string;
+		userName?: string | null;
+		emailFallback?: {
+			transactionId: string;
+			transactionToken: string;
+			maskedEmail: string;
+		};
+	} | null>(null);
+	let directoryRecoveryTransaction = $state<{
+		transactionId: string;
+		transactionToken: string;
+		maskedEmail: string;
+	} | null>(null);
+	let directoryMigrationEmailChallengeId = $state('');
+	let directoryMigrationEmailCode = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
 	let directoryPasswordLoading = $state(false);
+	let directoryMigrationPasskeyLoading = $state(false);
+	let directoryMigrationEmailLoading = $state(false);
 	let externalIdpLoading = $state<string | null>(null);
 	const authActionLoading = $derived(
-		passkeyLoading || emailCodeLoading || directoryPasswordLoading || externalIdpLoading !== null
+		passkeyLoading ||
+			emailCodeLoading ||
+			directoryPasswordLoading ||
+			directoryMigrationPasskeyLoading ||
+			directoryMigrationEmailLoading ||
+			externalIdpLoading !== null
 	);
 
 	// Authentication methods (from API)
@@ -83,6 +108,7 @@
 	let clientInfo = $state<ClientInfo | null>(null);
 	let clientInfoLoading = $state(false);
 	let authorizationChallengeId = $state('');
+	let inviteToken = $state('');
 	let samlRequestId = $state('');
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
@@ -203,6 +229,7 @@
 		// Fetch authentication methods + challenge data in parallel
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
 		authorizationChallengeId = urlChallengeId || '';
+		inviteToken = $page.url.searchParams.get('invite_token') || '';
 		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
 		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = $page.url.searchParams.get('return_to') || '';
@@ -471,6 +498,9 @@
 	async function handleDirectoryPasswordLogin() {
 		if (authActionLoading) return;
 		error = '';
+		directoryMigrationNotice = '';
+		directoryMigrationTransaction = null;
+		directoryRecoveryTransaction = null;
 
 		const username = directoryUsername.trim();
 		if (!username) {
@@ -489,6 +519,7 @@
 			const { data, error: apiError } = await directoryPasswordAPI.login({
 				username,
 				password: directoryPassword,
+				inviteToken: inviteToken || undefined,
 				authorizationChallengeId: authorizationChallengeId || undefined,
 				human_verification_response: cfTurnstileResponse
 			});
@@ -504,13 +535,147 @@
 				}
 				throw new Error(getApiErrorMessage(apiError));
 			}
+			if (data && 'migration' in data && data.migration?.required) {
+				directoryPassword = '';
+				directoryMigrationEmailChallengeId = '';
+				directoryMigrationEmailCode = '';
+				directoryMigrationTransaction =
+					data.migration.transaction_id && data.migration.transaction_token
+						? {
+								transactionId: data.migration.transaction_id,
+								transactionToken: data.migration.transaction_token,
+								userName: data.user?.name || data.user?.email,
+								emailFallback: data.migration.email_code_fallback
+									? {
+											transactionId: data.migration.email_code_fallback.transaction_id,
+											transactionToken: data.migration.email_code_fallback.transaction_token,
+											maskedEmail: data.migration.email_code_fallback.masked_email
+										}
+									: undefined
+							}
+						: null;
+				directoryMigrationNotice = 'Passkey registration is required before completing this login.';
+				return;
+			}
+			if (data && 'recovery' in data && data.recovery?.required) {
+				directoryPassword = '';
+				directoryMigrationEmailChallengeId = '';
+				directoryMigrationEmailCode = '';
+				directoryMigrationTransaction = null;
+				directoryRecoveryTransaction = {
+					transactionId: data.recovery.transaction_id,
+					transactionToken: data.recovery.transaction_token,
+					maskedEmail: data.recovery.masked_email
+				};
+				directoryMigrationNotice =
+					'Directory is temporarily unavailable. Use Email Code recovery to continue.';
+				return;
+			}
 
 			await auth.refreshFromSession();
-			window.location.href = await buildPostAuthRedirect(data?.redirect_url);
+			const redirectUrl = data && 'redirect_url' in data ? data.redirect_url : undefined;
+			window.location.href = await buildPostAuthRedirect(redirectUrl);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.login_errorDirectoryFailed();
 		} finally {
 			directoryPasswordLoading = false;
+		}
+	}
+
+	async function handleDirectoryMigrationPasskeyRegistration() {
+		if (!directoryMigrationTransaction || authActionLoading) return;
+		error = '';
+		directoryMigrationPasskeyLoading = true;
+		try {
+			const { data: optionsData, error: optionsError } =
+				await directoryPasswordAPI.migrationPasskeyOptions({
+					transactionId: directoryMigrationTransaction.transactionId,
+					transactionToken: directoryMigrationTransaction.transactionToken,
+					displayName: directoryMigrationTransaction.userName || undefined
+				});
+			if (optionsError || !optionsData) {
+				throw new Error(optionsError ? getApiErrorMessage(optionsError) : $LL.error_unknown());
+			}
+			const credential = await startRegistration({ optionsJSON: optionsData.options as any });
+			const { data, error: verifyError } = await directoryPasswordAPI.migrationPasskeyVerify({
+				transactionId: directoryMigrationTransaction.transactionId,
+				transactionToken: directoryMigrationTransaction.transactionToken,
+				challengeId: optionsData.challenge_id,
+				credential,
+				deviceName: 'Directory Migration Passkey'
+			});
+			if (verifyError || !data) {
+				throw new Error(verifyError ? getApiErrorMessage(verifyError) : $LL.error_unknown());
+			}
+			directoryMigrationTransaction = null;
+			directoryMigrationEmailChallengeId = '';
+			directoryMigrationEmailCode = '';
+			directoryMigrationNotice = '';
+			await auth.refreshFromSession();
+			const redirectUrl = 'redirect_url' in data ? data.redirect_url : undefined;
+			window.location.href = await buildPostAuthRedirect(redirectUrl);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Passkey registration failed';
+		} finally {
+			directoryMigrationPasskeyLoading = false;
+		}
+	}
+
+	async function handleDirectoryMigrationEmailCodeSend() {
+		const fallback = directoryMigrationTransaction?.emailFallback ?? directoryRecoveryTransaction;
+		if (!fallback || authActionLoading) return;
+		error = '';
+		directoryMigrationEmailLoading = true;
+		try {
+			const { data, error: apiError } = await directoryPasswordAPI.migrationEmailCodeSend({
+				transactionId: fallback.transactionId,
+				transactionToken: fallback.transactionToken
+			});
+			if (apiError || !data) {
+				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+			}
+			directoryMigrationEmailChallengeId = data.challenge_id;
+			directoryMigrationEmailCode = '';
+			directoryMigrationNotice = `Verification code sent to ${data.masked_email}.`;
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to send verification code';
+		} finally {
+			directoryMigrationEmailLoading = false;
+		}
+	}
+
+	async function handleDirectoryMigrationEmailCodeVerify() {
+		const fallback = directoryMigrationTransaction?.emailFallback ?? directoryRecoveryTransaction;
+		if (!fallback || !directoryMigrationEmailChallengeId || authActionLoading) return;
+		const code = directoryMigrationEmailCode.trim();
+		if (!/^\d{6}$/.test(code)) {
+			error = $LL.emailCode_errorInvalid();
+			return;
+		}
+		error = '';
+		directoryMigrationEmailLoading = true;
+		try {
+			const { data, error: apiError } = await directoryPasswordAPI.migrationEmailCodeVerify({
+				transactionId: fallback.transactionId,
+				transactionToken: fallback.transactionToken,
+				challengeId: directoryMigrationEmailChallengeId,
+				code
+			});
+			if (apiError || !data) {
+				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+			}
+			directoryMigrationTransaction = null;
+			directoryRecoveryTransaction = null;
+			directoryMigrationEmailChallengeId = '';
+			directoryMigrationEmailCode = '';
+			directoryMigrationNotice = '';
+			await auth.refreshFromSession();
+			const redirectUrl = 'redirect_url' in data ? data.redirect_url : undefined;
+			window.location.href = await buildPostAuthRedirect(redirectUrl);
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
+		} finally {
+			directoryMigrationEmailLoading = false;
 		}
 	}
 
@@ -737,6 +902,76 @@
 				{#if error}
 					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 						{error}
+					</Alert>
+				{/if}
+
+				{#if directoryMigrationNotice && (directoryMigrationTransaction || directoryRecoveryTransaction)}
+					<Alert variant="info" class="mb-4">
+						<div class="space-y-3">
+							<p>{directoryMigrationNotice}</p>
+							{#if directoryMigrationTransaction}
+								<Button
+									variant="primary"
+									class="w-full"
+									loading={directoryMigrationPasskeyLoading}
+									disabled={passkeyLoading ||
+										emailCodeLoading ||
+										directoryPasswordLoading ||
+										directoryMigrationEmailLoading ||
+										externalIdpLoading !== null}
+									onclick={handleDirectoryMigrationPasskeyRegistration}
+								>
+									<div class="i-heroicons-key h-5 w-5"></div>
+									Register Passkey and Continue
+								</Button>
+							{/if}
+							{#if directoryMigrationTransaction?.emailFallback || directoryRecoveryTransaction}
+								<div class="space-y-2">
+									<Button
+										variant="secondary"
+										class="w-full"
+										loading={directoryMigrationEmailLoading && !directoryMigrationEmailChallengeId}
+										disabled={passkeyLoading ||
+											emailCodeLoading ||
+											directoryPasswordLoading ||
+											directoryMigrationPasskeyLoading ||
+											externalIdpLoading !== null}
+										onclick={handleDirectoryMigrationEmailCodeSend}
+									>
+										<div class="i-heroicons-envelope h-5 w-5"></div>
+										Continue with Email Code
+									</Button>
+									{#if directoryMigrationEmailChallengeId}
+										<div class="space-y-2">
+											<input
+												type="text"
+												inputmode="numeric"
+												autocomplete="one-time-code"
+												maxlength="6"
+												placeholder="Verification code"
+												bind:value={directoryMigrationEmailCode}
+												class="input w-full"
+											/>
+											<Button
+												variant="primary"
+												class="w-full"
+												loading={directoryMigrationEmailLoading}
+												disabled={directoryMigrationEmailCode.trim().length !== 6 ||
+													passkeyLoading ||
+													emailCodeLoading ||
+													directoryPasswordLoading ||
+													directoryMigrationPasskeyLoading ||
+													externalIdpLoading !== null}
+												onclick={handleDirectoryMigrationEmailCodeVerify}
+											>
+												<div class="i-heroicons-check h-5 w-5"></div>
+												Verify Code and Continue
+											</Button>
+										</div>
+									{/if}
+								</div>
+							{/if}
+						</div>
 					</Alert>
 				{/if}
 

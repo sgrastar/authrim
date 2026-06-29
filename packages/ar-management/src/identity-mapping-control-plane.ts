@@ -2943,6 +2943,8 @@ export class IdentityMappingControlPlaneRepository {
       displayName: input.displayName,
       description: input.description ?? null,
       lifecycleState: 'draft',
+      createdAt: now,
+      updatedAt: now,
     };
   }
 
@@ -2958,6 +2960,8 @@ export class IdentityMappingControlPlaneRepository {
       displayName: row.display_name,
       description: row.description,
       lifecycleState: row.lifecycle_state,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }));
   }
 
@@ -6439,13 +6443,16 @@ export async function adminIdentityFieldMappingSetDeleteHandler(c: AdminContext)
 }
 
 export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.version.create', async (repository, tenantId, body) =>
-    repository.createFieldMappingVersion(
-      tenantId,
-      requiredParam(c, 'fieldMappingSetId'),
-      body as CreateFieldMappingVersionRequest
-    )
-  );
+  return handleMutation(c, 'field_mapping.version.create', async (repository, tenantId, body) => {
+    const request = body as CreateFieldMappingVersionRequest;
+    const adminAuth = (c as unknown as { get: (key: string) => { userId?: string } | undefined }).get(
+      'adminAuth'
+    );
+    return repository.createFieldMappingVersion(tenantId, requiredParam(c, 'fieldMappingSetId'), {
+      ...request,
+      authorId: request.authorId ?? adminAuth?.userId,
+    });
+  });
 }
 
 export async function adminIdentityFieldMappingVersionPublishHandler(c: AdminContext) {

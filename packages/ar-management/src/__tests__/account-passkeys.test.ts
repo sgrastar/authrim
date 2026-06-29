@@ -9,15 +9,20 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockCreatePIIContextFromHono,
+  mockEmailNotifier,
   mockCoreAdapter,
   mockPiiAdapter,
   mockPasskeyRepo,
+  mockRateLimiter,
   mockRuntimeUserStore,
+  mockGenerateAuthenticationOptions,
   mockGenerateRegistrationOptions,
+  mockVerifyAuthenticationResponse,
   mockVerifyRegistrationResponse,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
+    updateSessionDataRpc: vi.fn(),
   };
   const challengeStore = {
     storeChallengeRpc: vi.fn(),
@@ -27,12 +32,19 @@ const {
     execute: vi.fn(),
   };
   const piiAdapter = {};
+  const emailNotifier = {
+    send: vi.fn(),
+  };
+  const rateLimiter = {
+    incrementRpc: vi.fn(),
+  };
   const passkeyRepo = {
     findByUserId: vi.fn(),
     findById: vi.fn(),
     rename: vi.fn(),
     findByCredentialId: vi.fn(),
     create: vi.fn(),
+    updateCounterAfterAuth: vi.fn(),
   };
   return {
     mockSessionStore: sessionStore,
@@ -42,19 +54,25 @@ const {
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: piiAdapter }),
+    mockEmailNotifier: emailNotifier,
     mockCoreAdapter: coreAdapter,
     mockPiiAdapter: piiAdapter,
     mockPasskeyRepo: passkeyRepo,
+    mockRateLimiter: rateLimiter,
     mockRuntimeUserStore: {
       findById: vi.fn(),
     },
+    mockGenerateAuthenticationOptions: vi.fn(),
     mockGenerateRegistrationOptions: vi.fn(),
+    mockVerifyAuthenticationResponse: vi.fn(),
     mockVerifyRegistrationResponse: vi.fn(),
   };
 });
 
 vi.mock('@simplewebauthn/server', () => ({
+  generateAuthenticationOptions: mockGenerateAuthenticationOptions,
   generateRegistrationOptions: mockGenerateRegistrationOptions,
+  verifyAuthenticationResponse: mockVerifyAuthenticationResponse,
   verifyRegistrationResponse: mockVerifyRegistrationResponse,
 }));
 
@@ -100,6 +118,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
+    getPluginContext: () => ({
+      registry: {
+        getNotifier: vi.fn((channel: string) => (channel === 'email' ? mockEmailNotifier : null)),
+      },
+    }),
     getLogger: () => ({
       module: () => ({
         error: vi.fn(),
@@ -109,8 +132,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import {
+  completeAccountEmailCodeReauthHandler,
+  createAccountPasskeyReauthOptionsHandler,
   createAccountPasskeyOptionsHandler,
+  completeAccountPasskeyReauthHandler,
   completeAccountPasskeyRegistrationHandler,
+  sendAccountEmailCodeReauthHandler,
   listAccountPasskeysHandler,
   updateAccountPasskeyHandler,
   deleteAccountPasskeyHandler,
@@ -129,6 +156,29 @@ const basePasskey = {
   created_at: 1_777_000_000_000,
   last_used_at: 1_777_100_000_000,
 };
+
+async function hashTestEmailCode(
+  code: string,
+  email: string,
+  sessionId: string,
+  issuedAt: number,
+  secret: string
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`${code}:${email.toLowerCase()}:${sessionId}:${issuedAt}`);
+  const keyData = encoder.encode(secret);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, data);
+  return Array.from(new Uint8Array(signature))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 function createMockContext(
   options: {
@@ -157,6 +207,12 @@ function createMockContext(
           const value = options.settings?.[key];
           return value === undefined ? null : JSON.stringify(value);
         }),
+      },
+      OTP_HMAC_SECRET: 'test-secret',
+      EMAIL_FROM: 'noreply@example.com',
+      RATE_LIMITER: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => mockRateLimiter),
       },
     } as unknown as Env,
     req: {
@@ -206,8 +262,20 @@ describe('Account Page passkey management API', () => {
       credential_id: 'credential-new',
       device_name: 'Phone',
     });
+    mockPasskeyRepo.updateCounterAfterAuth.mockResolvedValue({
+      ...basePasskey,
+      counter: 13,
+    });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockRateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
+    mockEmailNotifier.send.mockResolvedValue({ messageId: 'email-001' });
     mockRuntimeUserStore.findById.mockResolvedValue(null);
+    mockGenerateAuthenticationOptions.mockResolvedValue({
+      challenge: 'reauth-challenge-value',
+      rpId: 'op.example.com',
+      allowCredentials: [{ id: 'credential-secret', type: 'public-key' }],
+      userVerification: 'required',
+    });
     mockGenerateRegistrationOptions.mockResolvedValue({
       challenge: 'challenge-value',
       rp: { id: 'op.example.com', name: 'Authrim' },
@@ -231,6 +299,23 @@ describe('Account Page passkey management API', () => {
         credentialPublicKey: new Uint8Array([1, 2, 3]),
         counter: 0,
         aaguid: '08987058-cadc-4b81-b6e1-30de50dcbe96',
+      },
+    });
+    mockVerifyAuthenticationResponse.mockResolvedValue({
+      verified: true,
+      authenticationInfo: {
+        newCounter: 13,
+      },
+    });
+    mockSessionStore.updateSessionDataRpc.mockResolvedValue({
+      id: 'g1:apac:3:session_current',
+      tenantId: 'default',
+      userId: 'user-001',
+      createdAt: 1_777_000_000_000,
+      expiresAt: Date.now() + 60_000,
+      data: {
+        authTime: Math.floor(Date.now() / 1000),
+        amr: ['passkey'],
       },
     });
   });
@@ -275,6 +360,210 @@ describe('Account Page passkey management API', () => {
     expect(body.passkeys[0]).not.toHaveProperty('credential_id');
     expect(body.passkeys[0]).not.toHaveProperty('public_key');
     expect(body.passkeys[0]).not.toHaveProperty('counter');
+  });
+
+  it('creates passkey re-authentication options for the current session user', async () => {
+    const response = await createAccountPasskeyReauthOptionsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        body: {},
+      })
+    );
+    const body = (await response.json()) as {
+      challenge_id: string;
+      options: Record<string, unknown>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(mockGenerateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpID: 'op.example.com',
+        userVerification: 'required',
+        allowCredentials: [
+          {
+            id: 'credential-secret',
+            type: 'public-key',
+            transports: ['internal'],
+          },
+        ],
+      })
+    );
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'account_passkey_reauth:challenge-001',
+        tenantId: 'default',
+        type: 'passkey_reauth',
+        userId: 'user-001',
+        challenge: 'reauth-challenge-value',
+        metadata: {
+          rpID: 'op.example.com',
+          origin: 'https://op.example.com',
+          sessionId: 'g1:apac:3:session_current',
+        },
+      })
+    );
+    expect(body.challenge_id).toBe('challenge-001');
+    expect(body.options).toHaveProperty('challenge', 'reauth-challenge-value');
+  });
+
+  it('completes passkey re-authentication and refreshes session authTime', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'reauth-challenge-value',
+      metadata: {
+        rpID: 'op.example.com',
+        origin: 'https://op.example.com',
+        sessionId: 'g1:apac:3:session_current',
+      },
+    });
+    mockPasskeyRepo.findByCredentialId.mockResolvedValueOnce(basePasskey);
+
+    const response = await completeAccountPasskeyReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        body: {
+          challenge_id: 'challenge-001',
+          credential: { id: 'credential-secret' },
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      ok: boolean;
+      reauth: { authenticated_at: number; expires_at: number; methods: string[] };
+    };
+
+    expect(response.status).toBe(200);
+    expect(mockVerifyAuthenticationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedChallenge: 'reauth-challenge-value',
+        expectedOrigin: 'https://op.example.com',
+        expectedRPID: 'op.example.com',
+        requireUserVerification: true,
+      })
+    );
+    expect(mockPasskeyRepo.updateCounterAfterAuth).toHaveBeenCalledWith('pk_001', 13);
+    expect(mockSessionStore.updateSessionDataRpc).toHaveBeenCalledWith(
+      'g1:apac:3:session_current',
+      expect.objectContaining({
+        authTime: Math.floor(Date.now() / 1000),
+        amr: ['passkey'],
+      })
+    );
+    expect(body.ok).toBe(true);
+    expect(body.reauth.expires_at).toBe(body.reauth.authenticated_at + 300);
+  });
+
+  it('rejects passkey re-authentication when passkey reauth is disabled', async () => {
+    const response = await createAccountPasskeyReauthOptionsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        body: {},
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.passkey.enabled': true,
+            'authentication-methods.passkey.reauth_enabled': false,
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(403);
+    expect(body.error).toBe('no_reauth_method');
+    expect(mockGenerateAuthenticationOptions).not.toHaveBeenCalled();
+    expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('sends an email-code re-authentication challenge to the current verified user email', async () => {
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'User@Example.com',
+      email_verified: 1,
+      name: 'User One',
+    });
+
+    const response = await sendAccountEmailCodeReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        body: {},
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.masked_email).toBe('u***r@example.com');
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.stringMatching(/^account_email_reauth:/),
+        tenantId: 'default',
+        type: 'account_email_reauth',
+        userId: 'user-001',
+        email: 'user@example.com',
+        metadata: expect.objectContaining({
+          sessionId: 'g1:apac:3:session_current',
+        }),
+      })
+    );
+    expect(mockEmailNotifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'email',
+        to: 'user@example.com',
+        subject: 'Your re-authentication code',
+      })
+    );
+  });
+
+  it('completes email-code re-authentication and refreshes session authTime', async () => {
+    const issuedAt = Date.now();
+    const codeHash = await hashTestEmailCode(
+      '123456',
+      'user@example.com',
+      'email-reauth-001',
+      issuedAt,
+      'test-secret'
+    );
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      email: 'user@example.com',
+      challenge: codeHash,
+      metadata: {
+        sessionId: 'g1:apac:3:session_current',
+        issuedAt,
+      },
+    });
+
+    const response = await completeAccountEmailCodeReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        body: {
+          challenge_id: 'email-reauth-001',
+          code: '123456',
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      ok: boolean;
+      reauth: { authenticated_at: number; expires_at: number; methods: string[] };
+    };
+
+    expect(response.status).toBe(200);
+    expect(mockChallengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
+      id: 'account_email_reauth:email-reauth-001',
+      tenantId: 'default',
+      type: 'account_email_reauth',
+    });
+    expect(mockSessionStore.updateSessionDataRpc).toHaveBeenCalledWith(
+      'g1:apac:3:session_current',
+      expect.objectContaining({
+        authTime: Math.floor(Date.now() / 1000),
+        amr: ['email_code'],
+      })
+    );
+    expect(body.ok).toBe(true);
+    expect(body.reauth.methods).toEqual(['email_code']);
   });
 
   it('creates registration options with a stored one-time challenge', async () => {
