@@ -149,7 +149,7 @@
 		sessions = sessionsResult.data?.sessions ?? [];
 		passkeys = passkeysResult.data?.passkeys ?? [];
 		operations = operationsResult.data?.operations ?? [];
-		void Promise.all([
+		await Promise.all([
 			signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal),
 			signalCurrentUserDetails(profile)
 		]);
@@ -185,7 +185,7 @@
 			sessions = sessionsResult.data?.sessions ?? sessions;
 			passkeys = passkeysResult.data?.passkeys ?? passkeys;
 			operations = operationsResult.data?.operations ?? operations;
-			void signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
+			await signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
 			securityError =
 				devicesResult.error?.error_description ||
 				sessionsResult.error?.error_description ||
