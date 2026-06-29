@@ -3031,22 +3031,32 @@ const directoryAuthRetentionPolicies = new Map<string, DevDirectoryAuthRetention
 	]
 ]);
 
-const directoryAuthEvidenceExports = new Map<string, Array<DevDirectoryAuthJob & {
-	period_start_at: number;
-	period_end_at: number;
-	size_estimate_bytes: number | null;
-	manifest_signature_key_id: string | null;
-	manifest_signature_alg: string | null;
-	signed_url_expires_at: number | null;
-	download_after_delete: number;
-	error_code: string | null;
-}>>([[TENANT_ID, []]]);
+const directoryAuthEvidenceExports = new Map<
+	string,
+	Array<
+		DevDirectoryAuthJob & {
+			period_start_at: number;
+			period_end_at: number;
+			size_estimate_bytes: number | null;
+			manifest_signature_key_id: string | null;
+			manifest_signature_alg: string | null;
+			signed_url_expires_at: number | null;
+			download_after_delete: number;
+			error_code: string | null;
+		}
+	>
+>([[TENANT_ID, []]]);
 
-const directoryAuthSupportBundles = new Map<string, Array<DevDirectoryAuthJob & {
-	redaction_level: 'minimal' | 'standard' | 'detailed';
-	scope_json: string;
-	consent_summary_json: string;
-}>>([[TENANT_ID, []]]);
+const directoryAuthSupportBundles = new Map<
+	string,
+	Array<
+		DevDirectoryAuthJob & {
+			redaction_level: 'minimal' | 'standard' | 'detailed';
+			scope_json: string;
+			consent_summary_json: string;
+		}
+	>
+>([[TENANT_ID, []]]);
 
 const directoryAuthAdvisories = [
 	{
@@ -7305,7 +7315,9 @@ async function handleDirectoryAuth(
 			tenantId,
 			policy: tenantPolicy,
 			migration: {
-				campaigns: campaigns.map((campaign) => serializeDevDirectoryAuthCampaign(campaign, tenantPolicy)),
+				campaigns: campaigns.map((campaign) =>
+					serializeDevDirectoryAuthCampaign(campaign, tenantPolicy)
+				),
 				user_states: userStates
 			},
 			compliance: {
@@ -7360,7 +7372,9 @@ async function handleDirectoryAuth(
 		if (segments.length === 5 && method === 'GET') {
 			return json({
 				tenantId,
-				items: campaigns.map((campaign) => serializeDevDirectoryAuthCampaign(campaign, tenantPolicy))
+				items: campaigns.map((campaign) =>
+					serializeDevDirectoryAuthCampaign(campaign, tenantPolicy)
+				)
 			});
 		}
 		if (segments.length === 5 && method === 'POST') {
@@ -7373,7 +7387,8 @@ async function handleDirectoryAuth(
 				description: typeof input.description === 'string' ? input.description : null,
 				status: 'disabled',
 				mode:
-					stringValue(input.mode, 'grace_then_require_passkey') === 'require_passkey_after_directory'
+					stringValue(input.mode, 'grace_then_require_passkey') ===
+					'require_passkey_after_directory'
 						? 'require_passkey_after_directory'
 						: stringValue(input.mode, 'grace_then_require_passkey') === 'prompt_passkey'
 							? 'prompt_passkey'
@@ -7410,7 +7425,10 @@ async function handleDirectoryAuth(
 			};
 			campaigns.unshift(campaign);
 			directoryAuthCampaigns.set(tenantId, campaigns);
-			return json({ tenantId, item: serializeDevDirectoryAuthCampaign(campaign, tenantPolicy) }, 201);
+			return json(
+				{ tenantId, item: serializeDevDirectoryAuthCampaign(campaign, tenantPolicy) },
+				201
+			);
 		}
 		if (segments.length === 6 && method === 'PATCH') {
 			const input = await readJson(event.request);
@@ -7488,10 +7506,7 @@ async function handleDirectoryAuth(
 				tenant_id: tenantId,
 				authrim_audit_retention_days: numberValue(input.authrim_audit_retention_days, 365),
 				wordwarden_local_retention_days: numberValue(input.wordwarden_local_retention_days, 14),
-				artifact_delete_grace_hours: numberValue(
-					input.artifact_delete_grace_hours,
-					72
-				),
+				artifact_delete_grace_hours: numberValue(input.artifact_delete_grace_hours, 72),
 				updated_by: 'dev-admin',
 				created_at: retentionPolicy?.created_at ?? Date.now(),
 				updated_at: Date.now()
@@ -7616,8 +7631,11 @@ async function handleDirectoryAuth(
 						}) => metadata
 					),
 					support_bundle_metadata: supportBundles.map(
-						({ artifact_key: _artifactKey, artifact_download_url: _artifactDownloadUrl, ...metadata }) =>
-							metadata
+						({
+							artifact_key: _artifactKey,
+							artifact_download_url: _artifactDownloadUrl,
+							...metadata
+						}) => metadata
 					)
 				}
 			});

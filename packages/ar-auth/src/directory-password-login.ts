@@ -238,8 +238,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       typeof request.authorization_challenge_id === 'string'
         ? request.authorization_challenge_id.trim()
         : '';
-    const inviteToken =
-      typeof request.invite_token === 'string' ? request.invite_token.trim() : '';
+    const inviteToken = typeof request.invite_token === 'string' ? request.invite_token.trim() : '';
     if (!username || !password) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
@@ -687,8 +686,7 @@ export async function directoryMigrationPasskeyOptionsHandler(c: Context<{ Bindi
       transaction_token?: unknown;
       display_name?: unknown;
     }>();
-    const transactionId =
-      typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
+    const transactionId = typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
     const transactionToken =
       typeof body.transaction_token === 'string' ? body.transaction_token.trim() : '';
     const displayName = boundedDisplayString(body.display_name, 160);
@@ -800,8 +798,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       credential?: RegistrationResponseJSON;
       device_name?: unknown;
     }>();
-    const transactionId =
-      typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
+    const transactionId = typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
     const transactionToken =
       typeof body.transaction_token === 'string' ? body.transaction_token.trim() : '';
     const challengeId = typeof body.challenge_id === 'string' ? body.challenge_id.trim() : '';
@@ -963,8 +960,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       transaction_id?: unknown;
       transaction_token?: unknown;
     }>();
-    const transactionId =
-      typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
+    const transactionId = typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
     const transactionToken =
       typeof body.transaction_token === 'string' ? body.transaction_token.trim() : '';
     if (!transactionId || !transactionToken) {
@@ -1118,8 +1114,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       challenge_id?: unknown;
       code?: unknown;
     }>();
-    const transactionId =
-      typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
+    const transactionId = typeof body.transaction_id === 'string' ? body.transaction_id.trim() : '';
     const transactionToken =
       typeof body.transaction_token === 'string' ? body.transaction_token.trim() : '';
     const challengeId = typeof body.challenge_id === 'string' ? body.challenge_id.trim() : '';
@@ -1311,7 +1306,12 @@ async function createMigrationRequiredResponse(
       reason: input.decision.reason,
       passkey_required_at: input.decision.passkeyRequiredAt,
       email_code_fallback_mode: effectiveEmailCodeFallbackMode,
-      ...(await createEmailFallbackMigrationResponse(c, input, token, effectiveEmailCodeFallbackMode)),
+      ...(await createEmailFallbackMigrationResponse(
+        c,
+        input,
+        token,
+        effectiveEmailCodeFallbackMode
+      )),
     },
     user: {
       id: input.runtimeUser.id,

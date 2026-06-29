@@ -144,7 +144,7 @@ interface ManagedDirectSessionResponse {
 }
 
 interface DirectoryPasswordMigrationResponse {
-  ok: false;
+	ok: false;
 	migration: {
 		required: boolean;
 		action: 'prompt_passkey' | 'require_passkey';
@@ -766,22 +766,19 @@ export const passkeyAPI = {
 		const response = await apiFetch<{
 			options: PublicKeyCredentialCreationOptionsJSON;
 			challenge_id: string;
-		}>(
-			'/api/v1/auth/direct/passkey/signup/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					client_id: getAuthConfig().clientId,
-					code_challenge: pkce.codeChallenge,
-					code_challenge_method: pkce.codeChallengeMethod,
-					channel: 'browser',
-					email: data.email || undefined,
-					display_name: data.name,
-					custom_fields: data.custom_fields,
-					human_verification_response: data.human_verification_response
-				})
-			}
-		);
+		}>('/api/v1/auth/direct/passkey/signup/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				email: data.email || undefined,
+				display_name: data.name,
+				custom_fields: data.custom_fields,
+				human_verification_response: data.human_verification_response
+			})
+		});
 		if (response.data) {
 			directPasskeySignupPkce.set(response.data.challenge_id, {
 				codeVerifier: pkce.codeVerifier
@@ -886,21 +883,18 @@ export const passkeyAPI = {
 		const response = await apiFetch<{
 			options: PublicKeyCredentialRequestOptionsJSON;
 			challenge_id: string;
-		}>(
-			'/api/v1/auth/direct/passkey/login/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					client_id: getAuthConfig().clientId,
-					code_challenge: pkce.codeChallenge,
-					code_challenge_method: pkce.codeChallengeMethod,
-					channel: 'browser',
-					email: data.email,
-					authorization_challenge_id: data.authorizationChallengeId,
-					human_verification_response: data.human_verification_response
-				})
-			}
-		);
+		}>('/api/v1/auth/direct/passkey/login/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				email: data.email,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
 		if (response.data) {
 			directPasskeyLoginPkce.set(response.data.challenge_id, {
 				codeVerifier: pkce.codeVerifier
@@ -1123,7 +1117,9 @@ export const directoryPasswordAPI = {
 		human_verification_response?: string;
 	}) {
 		const session = await apiFetch<
-			ManagedDirectSessionResponse | DirectoryPasswordMigrationResponse | DirectoryPasswordRecoveryResponse
+			| ManagedDirectSessionResponse
+			| DirectoryPasswordMigrationResponse
+			| DirectoryPasswordRecoveryResponse
 		>('/api/auth/directory-password/login', {
 			method: 'POST',
 			body: JSON.stringify({
@@ -1186,17 +1182,14 @@ export const directoryPasswordAPI = {
 		return apiFetch<{
 			challenge_id: string;
 			options: PublicKeyCredentialCreationOptionsJSON;
-		}>(
-			'/api/auth/directory-password/migration/passkey/options',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					transaction_id: data.transactionId,
-					transaction_token: data.transactionToken,
-					display_name: data.displayName
-				})
-			}
-		);
+		}>('/api/auth/directory-password/migration/passkey/options', {
+			method: 'POST',
+			body: JSON.stringify({
+				transaction_id: data.transactionId,
+				transaction_token: data.transactionToken,
+				display_name: data.displayName
+			})
+		});
 	},
 
 	async migrationPasskeyVerify(data: {

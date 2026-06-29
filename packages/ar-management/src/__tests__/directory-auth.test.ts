@@ -405,7 +405,9 @@ describe('directory auth admin API', () => {
     expect(response.status).toBe(201);
     expect(body.item.status).toBe('ready');
     expect(body.item.download_after_delete).toBe(1);
-    expect(body.item.artifact_download_url).toContain('/directory-auth/compliance/evidence-exports/');
+    expect(body.item.artifact_download_url).toContain(
+      '/directory-auth/compliance/evidence-exports/'
+    );
     expect(mocks.materializeEncryptedObjectArtifact).toHaveBeenCalledWith(
       mocks.coreAdapter,
       expect.anything(),

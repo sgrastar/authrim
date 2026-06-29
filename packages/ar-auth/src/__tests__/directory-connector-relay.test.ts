@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseAdapter, ExecuteResult, HealthStatus, TransactionContext } from '@authrim/ar-lib-core';
+import type {
+  DatabaseAdapter,
+  ExecuteResult,
+  HealthStatus,
+  TransactionContext,
+} from '@authrim/ar-lib-core';
 import { DirectoryConnectorRelay } from '../directory-connector-relay';
 
 function createStorage() {
@@ -68,11 +73,13 @@ function createAdapter(): DatabaseAdapter {
       });
     },
     batch: vi.fn(async () => []),
-    isHealthy: vi.fn(async (): Promise<HealthStatus> => ({
-      healthy: true,
-      latencyMs: 1,
-      type: 'mock',
-    })),
+    isHealthy: vi.fn(
+      async (): Promise<HealthStatus> => ({
+        healthy: true,
+        latencyMs: 1,
+        type: 'mock',
+      })
+    ),
     getType: vi.fn(() => 'mock'),
     close: vi.fn(async () => undefined),
   };

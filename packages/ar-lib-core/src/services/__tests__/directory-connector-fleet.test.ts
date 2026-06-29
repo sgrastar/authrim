@@ -27,11 +27,13 @@ function createAdapter(): DatabaseAdapter {
       })
     ),
     batch: vi.fn(async () => []),
-    isHealthy: vi.fn(async (): Promise<HealthStatus> => ({
-      healthy: true,
-      latencyMs: 1,
-      type: 'mock',
-    })),
+    isHealthy: vi.fn(
+      async (): Promise<HealthStatus> => ({
+        healthy: true,
+        latencyMs: 1,
+        type: 'mock',
+      })
+    ),
     getType: vi.fn(() => 'mock'),
     close: vi.fn(async () => undefined),
   };
@@ -71,7 +73,12 @@ describe('directory connector fleet service', () => {
     );
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_connector_status_episodes'),
-      expect.arrayContaining(['tenant-a', 'wwcon_8K4M2Q9F7D3H6P1X', 'wwi_1234567890123456789012', 'connected'])
+      expect.arrayContaining([
+        'tenant-a',
+        'wwcon_8K4M2Q9F7D3H6P1X',
+        'wwi_1234567890123456789012',
+        'connected',
+      ])
     );
   });
 
@@ -206,12 +213,18 @@ describe('directory connector fleet service', () => {
       updated_at: 1000,
     } as const;
 
-    expect(resolveDirectoryConnectorFleetStatus(row, { staleAfterMs: 60_000 }, 62_001)).toBe('stale');
+    expect(resolveDirectoryConnectorFleetStatus(row, { staleAfterMs: 60_000 }, 62_001)).toBe(
+      'stale'
+    );
     expect(
-      resolveDirectoryConnectorFleetStatus(row, {
-        staleAfterMs: 10000,
-        minimumVersion: '0.1.1',
-      }, 2000)
+      resolveDirectoryConnectorFleetStatus(
+        row,
+        {
+          staleAfterMs: 10000,
+          minimumVersion: '0.1.1',
+        },
+        2000
+      )
     ).toBe('version_mismatch');
   });
 });

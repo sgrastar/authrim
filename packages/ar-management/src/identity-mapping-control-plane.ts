@@ -6445,9 +6445,9 @@ export async function adminIdentityFieldMappingSetDeleteHandler(c: AdminContext)
 export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminContext) {
   return handleMutation(c, 'field_mapping.version.create', async (repository, tenantId, body) => {
     const request = body as CreateFieldMappingVersionRequest;
-    const adminAuth = (c as unknown as { get: (key: string) => { userId?: string } | undefined }).get(
-      'adminAuth'
-    );
+    const adminAuth = (
+      c as unknown as { get: (key: string) => { userId?: string } | undefined }
+    ).get('adminAuth');
     return repository.createFieldMappingVersion(tenantId, requiredParam(c, 'fieldMappingSetId'), {
       ...request,
       authorId: request.authorId ?? adminAuth?.userId,

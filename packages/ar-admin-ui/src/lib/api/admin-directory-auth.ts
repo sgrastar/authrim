@@ -277,7 +277,9 @@ export const adminDirectoryAuthAPI = {
 		return response.json();
 	},
 
-	async getTenantPolicy(tenantId: string): Promise<{ tenantId: string; policy: DirectoryAuthTenantPolicy }> {
+	async getTenantPolicy(
+		tenantId: string
+	): Promise<{ tenantId: string; policy: DirectoryAuthTenantPolicy }> {
 		const response = await adminFetch(`${tenantDirectoryAuthBase(tenantId)}/policy`, {
 			tenantId
 		});
@@ -304,13 +306,13 @@ export const adminDirectoryAuthAPI = {
 		campaign: {
 			name: string;
 			description?: string | null;
-				status?: DirectoryAuthMigrationCampaignStatus;
-				mode?: DirectoryAuthMigrationPolicyMode;
-				passkey_prompt_mode?: DirectoryAuthPasskeyPromptMode;
-				email_code_fallback_mode?: DirectoryAuthCampaignEmailCodeFallbackMode;
-				grace_period_days?: number;
-				transaction_ttl_seconds?: number;
-				target_policy?: unknown;
+			status?: DirectoryAuthMigrationCampaignStatus;
+			mode?: DirectoryAuthMigrationPolicyMode;
+			passkey_prompt_mode?: DirectoryAuthPasskeyPromptMode;
+			email_code_fallback_mode?: DirectoryAuthCampaignEmailCodeFallbackMode;
+			grace_period_days?: number;
+			transaction_ttl_seconds?: number;
+			target_policy?: unknown;
 		}
 	): Promise<{ tenantId: string; item: DirectoryAuthMigrationCampaign }> {
 		const response = await adminFetch(`${tenantDirectoryAuthBase(tenantId)}/migration/campaigns`, {
@@ -353,7 +355,11 @@ export const adminDirectoryAuthAPI = {
 
 	async listUserStates(
 		tenantId: string,
-		filters: { state?: DirectoryAuthMigrationUserState; campaign_id?: string; user_id?: string } = {}
+		filters: {
+			state?: DirectoryAuthMigrationUserState;
+			campaign_id?: string;
+			user_id?: string;
+		} = {}
 	): Promise<DirectoryAuthMigrationUserStatesResponse> {
 		const params = new URLSearchParams({ limit: '50' });
 		if (filters.state) params.set('state', filters.state);
@@ -387,7 +393,9 @@ export const adminDirectoryAuthAPI = {
 		return response.json();
 	},
 
-	async getRetention(tenantId: string): Promise<{ tenantId: string; policy: DirectoryAuthRetentionPolicy }> {
+	async getRetention(
+		tenantId: string
+	): Promise<{ tenantId: string; policy: DirectoryAuthRetentionPolicy }> {
 		const response = await adminFetch(`${tenantDirectoryAuthBase(tenantId)}/compliance/retention`, {
 			tenantId
 		});
@@ -397,11 +405,11 @@ export const adminDirectoryAuthAPI = {
 
 	async updateRetention(
 		tenantId: string,
-			policy: {
-				authrim_audit_retention_days: number;
-				wordwarden_local_retention_days: number | null;
-				artifact_delete_grace_hours: number;
-			}
+		policy: {
+			authrim_audit_retention_days: number;
+			wordwarden_local_retention_days: number | null;
+			artifact_delete_grace_hours: number;
+		}
 	): Promise<{ tenantId: string; policy: DirectoryAuthRetentionPolicy }> {
 		const response = await adminFetch(`${tenantDirectoryAuthBase(tenantId)}/compliance/retention`, {
 			method: 'PUT',
@@ -413,9 +421,7 @@ export const adminDirectoryAuthAPI = {
 		return response.json();
 	},
 
-	async listConfigHistory(
-		tenantId: string
-	): Promise<{
+	async listConfigHistory(tenantId: string): Promise<{
 		tenantId: string;
 		items: DirectoryAuthConfigHistory[];
 		public_summary_links: DirectoryAuthSummaryLink[];
@@ -486,9 +492,12 @@ export const adminDirectoryAuthAPI = {
 	async listSupportBundles(
 		tenantId: string
 	): Promise<{ tenantId: string; items: DirectoryAuthSupportBundle[] }> {
-		const response = await adminFetch(`${tenantDirectoryAuthBase(tenantId)}/support/bundles?limit=50`, {
-			tenantId
-		});
+		const response = await adminFetch(
+			`${tenantDirectoryAuthBase(tenantId)}/support/bundles?limit=50`,
+			{
+				tenantId
+			}
+		);
 		if (!response.ok) throw await parseError(response, 'Failed to load support bundles');
 		return response.json();
 	},
@@ -528,9 +537,7 @@ export const adminDirectoryAuthAPI = {
 		return response.json();
 	},
 
-	async listManagedConnectors(
-		tenantId: string
-	): Promise<{
+	async listManagedConnectors(tenantId: string): Promise<{
 		tenantId: string;
 		items: DirectoryAuthManagedConnectorInstance[];
 		recent_episodes: DirectoryAuthManagedConnectorEpisode[];

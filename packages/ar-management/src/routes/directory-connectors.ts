@@ -100,24 +100,14 @@ const HeartbeatConnectorSettingsSchema = z
     secret_ref: OptionalHeartbeatSecretRefSchema.default(''),
     previous_key_id: z.string().max(128).default(''),
     previous_secret_ref: OptionalHeartbeatSecretRefSchema.default(''),
-    interval_ms: z
-      .number()
-      .int()
-      .min(30000)
-      .max(86400000)
-      .default(DEFAULT_HEARTBEAT_INTERVAL_MS),
+    interval_ms: z.number().int().min(30000).max(86400000).default(DEFAULT_HEARTBEAT_INTERVAL_MS),
     stale_after_ms: z
       .number()
       .int()
       .min(60000)
       .max(7 * 86400000)
       .default(DEFAULT_HEARTBEAT_STALE_AFTER_MS),
-    retention_days: z
-      .number()
-      .int()
-      .min(1)
-      .max(90)
-      .default(DEFAULT_HEARTBEAT_RETENTION_DAYS),
+    retention_days: z.number().int().min(1).max(90).default(DEFAULT_HEARTBEAT_RETENTION_DAYS),
     version_mismatch_policy: z.enum(['warn', 'block']).default('warn'),
     expected_version: z.string().max(64).default(''),
     minimum_version: z.string().max(64).default(''),
@@ -914,7 +904,10 @@ export async function listDirectoryConnectorFleetHandler(c: Context<{ Bindings: 
   });
 }
 
-function fleetPolicyFor(config: DirectoryConnectorsConfig, instance: DirectoryConnectorInstanceRow) {
+function fleetPolicyFor(
+  config: DirectoryConnectorsConfig,
+  instance: DirectoryConnectorInstanceRow
+) {
   const connector = findConnector(config, instance.connector_id);
   if (!connector) return null;
   return {
@@ -937,7 +930,8 @@ async function listFleetEpisodes(
     return listDirectoryConnectorEpisodes(adapter, tenantId, connectorId, {
       limit,
       retentionDays:
-        findConnector(config, connectorId)?.heartbeat.retention_days ?? DEFAULT_HEARTBEAT_RETENTION_DAYS,
+        findConnector(config, connectorId)?.heartbeat.retention_days ??
+        DEFAULT_HEARTBEAT_RETENTION_DAYS,
     });
   }
   if (config.connectors.length === 0) {

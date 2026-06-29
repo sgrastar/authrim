@@ -1475,7 +1475,10 @@ app.get('/api/admin/tenants/:tenantId/directory-connectors', getDirectoryConnect
 app.put('/api/admin/tenants/:tenantId/directory-connectors', updateDirectoryConnectorsHandler);
 app.get('/api/admin/tenants/:tenantId/directory-auth/overview', getDirectoryAuthOverviewHandler);
 app.get('/api/admin/tenants/:tenantId/directory-auth/policy', getDirectoryAuthTenantPolicyHandler);
-app.put('/api/admin/tenants/:tenantId/directory-auth/policy', updateDirectoryAuthTenantPolicyHandler);
+app.put(
+  '/api/admin/tenants/:tenantId/directory-auth/policy',
+  updateDirectoryAuthTenantPolicyHandler
+);
 app.get(
   '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
   listDirectoryAuthMigrationCampaignsHandler
@@ -1552,7 +1555,10 @@ app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/pending-users/:pendingId',
   updateDirectoryPendingUserHandler
 );
-app.get('/api/admin/tenants/:tenantId/directory-connectors/fleet', listDirectoryConnectorFleetHandler);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/fleet',
+  listDirectoryConnectorFleetHandler
+);
 app.post(
   '/api/admin/tenants/:tenantId/directory-connectors/fleet/:instanceId',
   updateDirectoryConnectorFleetInstanceHandler

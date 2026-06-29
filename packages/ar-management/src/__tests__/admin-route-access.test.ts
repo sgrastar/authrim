@@ -190,7 +190,9 @@ describe('declared admin route access', () => {
     const reader = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ]);
     const writer = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE]);
     const migrationWriter = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE]);
-    const evidenceExporter = createHarness([ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE]);
+    const evidenceExporter = createHarness([
+      ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
+    ]);
     const tenantAdmin = createHarness([], ['tenant_admin']);
 
     await expect(
@@ -216,14 +218,20 @@ describe('declared admin route access', () => {
       })
     ).resolves.toMatchObject({ status: 200 });
     await expect(
-      migrationWriter.request('/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports', {
-        method: 'POST',
-      })
+      migrationWriter.request(
+        '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports',
+        {
+          method: 'POST',
+        }
+      )
     ).resolves.toMatchObject({ status: 403 });
     await expect(
-      evidenceExporter.request('/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports', {
-        method: 'POST',
-      })
+      evidenceExporter.request(
+        '/api/admin/tenants/tenant-a/directory-auth/compliance/evidence-exports',
+        {
+          method: 'POST',
+        }
+      )
     ).resolves.toMatchObject({ status: 200 });
     await expect(
       reader.request(

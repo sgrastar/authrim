@@ -406,10 +406,22 @@ app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
 
 // Directory Password endpoint
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
-app.post('/api/auth/directory-password/migration/passkey/options', directoryMigrationPasskeyOptionsHandler);
-app.post('/api/auth/directory-password/migration/passkey/verify', directoryMigrationPasskeyVerifyHandler);
-app.post('/api/auth/directory-password/migration/email-code/send', directoryMigrationEmailCodeSendHandler);
-app.post('/api/auth/directory-password/migration/email-code/verify', directoryMigrationEmailCodeVerifyHandler);
+app.post(
+  '/api/auth/directory-password/migration/passkey/options',
+  directoryMigrationPasskeyOptionsHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/passkey/verify',
+  directoryMigrationPasskeyVerifyHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/email-code/send',
+  directoryMigrationEmailCodeSendHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/email-code/verify',
+  directoryMigrationEmailCodeVerifyHandler
+);
 app.post(
   '/api/auth/directory-connectors/heartbeat/:tenantId/:connectorId',
   directoryConnectorHeartbeatHandler

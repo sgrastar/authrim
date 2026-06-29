@@ -37,11 +37,13 @@ function createAdapter(): DatabaseAdapter {
       })
     ),
     batch: vi.fn(async () => []),
-    isHealthy: vi.fn(async (): Promise<HealthStatus> => ({
-      healthy: true,
-      latencyMs: 1,
-      type: 'mock',
-    })),
+    isHealthy: vi.fn(
+      async (): Promise<HealthStatus> => ({
+        healthy: true,
+        latencyMs: 1,
+        type: 'mock',
+      })
+    ),
     getType: vi.fn(() => 'mock'),
     close: vi.fn(async () => undefined),
   };
@@ -85,7 +87,12 @@ describe('directory auth service', () => {
     );
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_auth_migration_campaigns'),
-      expect.arrayContaining(['tenant-a', 'Default passwordless migration template', expect.any(String), 'disabled'])
+      expect.arrayContaining([
+        'tenant-a',
+        'Default passwordless migration template',
+        expect.any(String),
+        'disabled',
+      ])
     );
   });
 
@@ -340,7 +347,12 @@ describe('directory auth service', () => {
   it('marks ready evidence exports deleted after download without leaving an artifact key', async () => {
     const adapter = createAdapter();
 
-    const deleted = await markDirectoryAuthEvidenceExportDeleted(adapter, 'tenant-a', 'daex_1', 9000);
+    const deleted = await markDirectoryAuthEvidenceExportDeleted(
+      adapter,
+      'tenant-a',
+      'daex_1',
+      9000
+    );
 
     expect(deleted).toBe(true);
     expect(adapter.execute).toHaveBeenCalledWith(
@@ -352,7 +364,12 @@ describe('directory auth service', () => {
   it('marks ready support bundles deleted without leaving an artifact key', async () => {
     const adapter = createAdapter();
 
-    const deleted = await markDirectoryAuthSupportBundleDeleted(adapter, 'tenant-a', 'dasb_1', 9000);
+    const deleted = await markDirectoryAuthSupportBundleDeleted(
+      adapter,
+      'tenant-a',
+      'dasb_1',
+      9000
+    );
 
     expect(deleted).toBe(true);
     expect(adapter.execute).toHaveBeenCalledWith(
@@ -374,14 +391,20 @@ describe('directory auth service', () => {
     });
 
     expect(completed).toBe(true);
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('AND scope = ?'),
-      [9000, 9000, 'tenant-a', 'damt_email_1', 'email_code_fallback', 9000]
-    );
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining("state = 'recovered'"),
-      [9000, 'tenant-a', 'damc_1', 'user_1']
-    );
+    expect(adapter.execute).toHaveBeenCalledWith(expect.stringContaining('AND scope = ?'), [
+      9000,
+      9000,
+      'tenant-a',
+      'damt_email_1',
+      'email_code_fallback',
+      9000,
+    ]);
+    expect(adapter.execute).toHaveBeenCalledWith(expect.stringContaining("state = 'recovered'"), [
+      9000,
+      'tenant-a',
+      'damc_1',
+      'user_1',
+    ]);
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_auth_migration_transaction_events'),
       expect.arrayContaining([
@@ -460,10 +483,14 @@ describe('directory auth service', () => {
     });
 
     expect(completed).toBe(true);
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('AND scope = ?'),
-      [9000, 9000, 'tenant-a', 'damt_recovery_1', 'recovery', 9000]
-    );
+    expect(adapter.execute).toHaveBeenCalledWith(expect.stringContaining('AND scope = ?'), [
+      9000,
+      9000,
+      'tenant-a',
+      'damt_recovery_1',
+      'recovery',
+      9000,
+    ]);
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_auth_migration_transaction_events'),
       expect.arrayContaining([

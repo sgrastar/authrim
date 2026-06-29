@@ -80,10 +80,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     publishEvent: mocks.publishEvent,
     createAuditLog: mocks.createAuditLog,
     completeDirectoryAuthEmailCodeFallback: mocks.completeDirectoryAuthEmailCodeFallback,
-    resolveDirectoryAuthEffectiveEmailCodeFallbackMode: vi.fn(async (_adapter, _tenantId, campaign) =>
-      campaign.email_code_fallback_mode === 'tenant_default'
-        ? 'migration_recovery'
-        : campaign.email_code_fallback_mode
+    resolveDirectoryAuthEffectiveEmailCodeFallbackMode: vi.fn(
+      async (_adapter, _tenantId, campaign) =>
+        campaign.email_code_fallback_mode === 'tenant_default'
+          ? 'migration_recovery'
+          : campaign.email_code_fallback_mode
     ),
     resolveDirectoryAuthEmailFallbackRecoveryCampaign: vi.fn(
       async (
@@ -95,8 +96,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         },
         input: { tenantId: string; mode: string; userId: string }
       ) => {
-      const campaigns = await adapter.query(
-        `SELECT *
+        const campaigns = await adapter.query(
+          `SELECT *
            FROM directory_auth_migration_campaigns
           WHERE tenant_id = ?
             AND status = 'active'
@@ -104,18 +105,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             AND email_code_fallback_mode IN (?, 'tenant_default')
           ORDER BY updated_at DESC
           LIMIT 20`,
-        [input.tenantId, input.mode]
-      );
-      return (
-        campaigns.find((campaign: { target_policy_json?: string }) => {
-          const policy = JSON.parse(campaign.target_policy_json ?? '{}') as Record<string, unknown>;
-          return (
-            policy.type === 'all' ||
-            policy.tenant_default === true ||
-            (Array.isArray(policy.user_ids) && policy.user_ids.includes(input.userId))
-          );
-        }) ?? null
-      );
+          [input.tenantId, input.mode]
+        );
+        return (
+          campaigns.find((campaign: { target_policy_json?: string }) => {
+            const policy = JSON.parse(campaign.target_policy_json ?? '{}') as Record<
+              string,
+              unknown
+            >;
+            return (
+              policy.type === 'all' ||
+              policy.tenant_default === true ||
+              (Array.isArray(policy.user_ids) && policy.user_ids.includes(input.userId))
+            );
+          }) ?? null
+        );
       }
     ),
     findActiveInvitationByToken: mocks.findActiveInvitationByToken,
@@ -479,7 +483,9 @@ describe('directory password login handler', () => {
         masked_email: 'al***@example.com',
       },
     });
-    expect((body.migration as Record<string, unknown>).transaction_token).toEqual(expect.any(String));
+    expect((body.migration as Record<string, unknown>).transaction_token).toEqual(
+      expect.any(String)
+    );
     expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
     expect(response.headers.get('set-cookie')).toBeNull();
     expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(

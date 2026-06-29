@@ -117,7 +117,10 @@ describe('directory connector heartbeat handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createAuditLog.mockResolvedValue(undefined);
-    mocks.recordDirectoryConnectorHeartbeat.mockResolvedValue({ accepted: true, status: 'connected' });
+    mocks.recordDirectoryConnectorHeartbeat.mockResolvedValue({
+      accepted: true,
+      status: 'connected',
+    });
   });
 
   it('records a valid connector heartbeat without persisting secrets', async () => {

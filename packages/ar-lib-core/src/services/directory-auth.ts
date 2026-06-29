@@ -45,7 +45,13 @@ export type DirectoryAuthMigrationTransactionScope =
 
 export type DirectoryAuthMigrationTransactionState = 'active' | 'completed' | 'expired' | 'blocked';
 
-export type DirectoryAuthJobStatus = 'pending' | 'running' | 'ready' | 'failed' | 'deleted' | 'expired';
+export type DirectoryAuthJobStatus =
+  | 'pending'
+  | 'running'
+  | 'ready'
+  | 'failed'
+  | 'deleted'
+  | 'expired';
 
 export type DirectoryAuthSupportBundleRedactionLevel = 'minimal' | 'standard' | 'detailed';
 
@@ -220,8 +226,10 @@ export interface DirectoryAuthCreateCampaignInput {
   now?: number;
 }
 
-export interface DirectoryAuthUpdateCampaignInput
-  extends Omit<DirectoryAuthCreateCampaignInput, 'tenantId' | 'name' | 'isTemplate'> {
+export interface DirectoryAuthUpdateCampaignInput extends Omit<
+  DirectoryAuthCreateCampaignInput,
+  'tenantId' | 'name' | 'isTemplate'
+> {
   tenantId: string;
   campaignId: string;
   name?: string;
@@ -673,7 +681,12 @@ export async function resolveDirectoryAuthEmailFallbackRecoveryCampaign(
   adapter: DatabaseAdapter,
   input: DirectoryAuthResolveEmailFallbackRecoveryCampaignInput
 ): Promise<DirectoryAuthMigrationCampaignRow | null> {
-  const tenantPolicy = await ensureDirectoryAuthTenantPolicy(adapter, input.tenantId, null, input.now);
+  const tenantPolicy = await ensureDirectoryAuthTenantPolicy(
+    adapter,
+    input.tenantId,
+    null,
+    input.now
+  );
   const campaigns = await adapter.query<DirectoryAuthMigrationCampaignRow>(
     `SELECT *
        FROM directory_auth_migration_campaigns
@@ -795,7 +808,9 @@ export async function updateDirectoryAuthMigrationCampaign(
     ...existing,
     name: input.name?.trim() || existing.name,
     description:
-      input.description === undefined ? existing.description : normalizeOptionalString(input.description),
+      input.description === undefined
+        ? existing.description
+        : normalizeOptionalString(input.description),
     status: input.status ?? existing.status,
     mode: input.mode ?? existing.mode,
     passkey_prompt_mode: input.passkeyPromptMode ?? existing.passkey_prompt_mode,
@@ -805,7 +820,9 @@ export async function updateDirectoryAuthMigrationCampaign(
       input.transactionTtlSeconds ?? existing.transaction_ttl_seconds
     ),
     target_policy_json:
-      input.targetPolicy === undefined ? existing.target_policy_json : boundedJson(input.targetPolicy),
+      input.targetPolicy === undefined
+        ? existing.target_policy_json
+        : boundedJson(input.targetPolicy),
     updated_at: now,
   };
 
@@ -1614,7 +1631,9 @@ export function matchDirectoryAuthReleaseAdvisories(
   return advisories.map((advisory) => {
     const affectedVersions = parseStringArray(advisory.affected_versions_json);
     const normalized = normalizeVersion(version);
-    const affected = affectedVersions.some((candidate) => advisoryVersionMatches(candidate, normalized));
+    const affected = affectedVersions.some((candidate) =>
+      advisoryVersionMatches(candidate, normalized)
+    );
     return {
       advisory,
       affected,
@@ -1782,13 +1801,7 @@ async function upsertDirectoryAuthMigrationUserState(
         )
       ORDER BY updated_at DESC
       LIMIT 1`,
-    [
-      input.tenantId,
-      input.campaign.id,
-      input.userId,
-      input.connectorId,
-      input.directorySubject,
-    ]
+    [input.tenantId, input.campaign.id, input.userId, input.connectorId, input.directorySubject]
   );
   if (existing) {
     if (existing.first_directory_login_at !== null) return existing;
@@ -1917,7 +1930,8 @@ function directoryAuthTargetPolicyMatch(
   if (!policy) return { matches: false };
   if (policy.type === 'all' || policy.tenant_default === true) return { matches: true };
   if (stringArrayIncludes(policy.user_ids, input.userId)) return { matches: true };
-  if (stringArrayIncludes(policy.directory_subjects, input.directorySubject)) return { matches: true };
+  if (stringArrayIncludes(policy.directory_subjects, input.directorySubject))
+    return { matches: true };
 
   const assignments = Array.isArray(policy.assignments) ? policy.assignments : [];
   if (assignments.some((assignment) => assignmentTargetsDirectoryUser(assignment, input))) {
@@ -1955,13 +1969,22 @@ function matchingCohortKey(
     if (key) return key;
   }
 
-  const groupMatch = firstStringArrayMatch(policy.directory_groups, directoryGroupValues(input.directoryFacts));
+  const groupMatch = firstStringArrayMatch(
+    policy.directory_groups,
+    directoryGroupValues(input.directoryFacts)
+  );
   if (groupMatch) return `directory_group:${groupMatch}`;
 
-  const attributeMatch = attributePolicyMatch(policy.directory_attributes, input.directoryFacts.attributes);
+  const attributeMatch = attributePolicyMatch(
+    policy.directory_attributes,
+    input.directoryFacts.attributes
+  );
   if (attributeMatch) return `directory_attribute:${attributeMatch}`;
 
-  const profileMatch = attributePolicyMatch(policy.profile_attributes, input.directoryFacts.profileAttributes);
+  const profileMatch = attributePolicyMatch(
+    policy.profile_attributes,
+    input.directoryFacts.profileAttributes
+  );
   return profileMatch ? `profile_attribute:${profileMatch}` : null;
 }
 
@@ -1982,12 +2005,21 @@ function cohortMatches(cohort: unknown, facts: DirectoryAuthTargetFacts): string
 
   const attributeName = typeof record.attribute === 'string' ? record.attribute.trim() : '';
   const attributeValue = typeof record.value === 'string' ? record.value.trim() : '';
-  if (attributeName && attributeValue && attributeHasValue(facts.attributes, attributeName, attributeValue)) {
+  if (
+    attributeName &&
+    attributeValue &&
+    attributeHasValue(facts.attributes, attributeName, attributeValue)
+  ) {
     return id || `directory_attribute:${attributeName}:${attributeValue}`;
   }
 
-  const profileName = typeof record.profile_attribute === 'string' ? record.profile_attribute.trim() : '';
-  if (profileName && attributeValue && attributeHasValue(facts.profileAttributes, profileName, attributeValue)) {
+  const profileName =
+    typeof record.profile_attribute === 'string' ? record.profile_attribute.trim() : '';
+  if (
+    profileName &&
+    attributeValue &&
+    attributeHasValue(facts.profileAttributes, profileName, attributeValue)
+  ) {
     return id || `profile_attribute:${profileName}:${attributeValue}`;
   }
   return null;
@@ -2020,7 +2052,9 @@ function attributePolicyMatch(
 }
 
 function attributeHasValue(
-  attributes: DirectoryAuthTargetFacts['attributes'] | DirectoryAuthTargetFacts['profileAttributes'],
+  attributes:
+    | DirectoryAuthTargetFacts['attributes']
+    | DirectoryAuthTargetFacts['profileAttributes'],
   name: string,
   expected: string
 ): boolean {

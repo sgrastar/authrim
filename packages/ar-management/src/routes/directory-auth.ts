@@ -112,7 +112,9 @@ const CampaignSchema = z.object({
   target_policy: z.unknown().optional(),
 });
 
-const CampaignUpdateSchema = CampaignSchema.partial().refine((value) => Object.keys(value).length > 0);
+const CampaignUpdateSchema = CampaignSchema.partial().refine(
+  (value) => Object.keys(value).length > 0
+);
 
 const TenantPolicySchema = z
   .object({
@@ -166,7 +168,13 @@ const EvidenceExportCreateSchema = z.object({
 const SupportBundleScopeSchema = z
   .object({
     connector_ids: z
-      .array(z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/))
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9._:-]+$/)
+      )
       .max(20)
       .optional(),
     include_recent_episodes: z.boolean().optional(),
@@ -610,38 +618,44 @@ async function buildDirectoryAuthSupportBundleArtifact(
     generatedAt: number;
   }
 ): Promise<string> {
-  const [retentionPolicy, evidenceExports, supportBundles, advisories, connectorInstances, episodes] =
-    await Promise.all([
-      getDirectoryAuthRetentionPolicy(adapter, input.tenantId),
-      adapter.query<Record<string, unknown>>(
-        `SELECT id, tenant_id, status, requested_by, period_start_at, period_end_at,
+  const [
+    retentionPolicy,
+    evidenceExports,
+    supportBundles,
+    advisories,
+    connectorInstances,
+    episodes,
+  ] = await Promise.all([
+    getDirectoryAuthRetentionPolicy(adapter, input.tenantId),
+    adapter.query<Record<string, unknown>>(
+      `SELECT id, tenant_id, status, requested_by, period_start_at, period_end_at,
                 artifact_sha256, retention_expires_at, download_after_delete,
                 error_code, created_at, updated_at, completed_at, deleted_at
            FROM directory_auth_evidence_exports
           WHERE tenant_id = ?
           ORDER BY created_at DESC
           LIMIT 50`,
-        [input.tenantId]
-      ),
-      adapter.query<Record<string, unknown>>(
-        `SELECT id, tenant_id, requested_by, redaction_level, status,
+      [input.tenantId]
+    ),
+    adapter.query<Record<string, unknown>>(
+      `SELECT id, tenant_id, requested_by, redaction_level, status,
                 artifact_sha256, retention_expires_at, created_at, updated_at,
                 completed_at, deleted_at
            FROM directory_auth_support_bundles
           WHERE tenant_id = ?
           ORDER BY created_at DESC
           LIMIT 50`,
-        [input.tenantId]
-      ),
-      adapter.query<Record<string, unknown>>(
-        `SELECT id, channel, severity, affected_versions_json, fixed_version,
+      [input.tenantId]
+    ),
+    adapter.query<Record<string, unknown>>(
+      `SELECT id, channel, severity, affected_versions_json, fixed_version,
                 summary, published_at, updated_at, release_url
            FROM directory_auth_release_advisories
           ORDER BY updated_at DESC
           LIMIT 50`
-      ),
-      adapter.query<Record<string, unknown>>(
-        `SELECT tenant_id, connector_id, instance_id, display_name, transport, version,
+    ),
+    adapter.query<Record<string, unknown>>(
+      `SELECT tenant_id, connector_id, instance_id, display_name, transport, version,
                 COALESCE(release_channel, 'stable') AS release_channel,
                 started_at, first_seen_at, last_seen_at, status, health_status,
                 config_categories_json, drift_severity, deactivated_at,
@@ -651,10 +665,10 @@ async function buildDirectoryAuthSupportBundleArtifact(
           WHERE tenant_id = ?
           ORDER BY last_seen_at DESC
           LIMIT 50`,
-        [input.tenantId]
-      ),
-      adapter.query<Record<string, unknown>>(
-        `SELECT tenant_id, connector_id, instance_id, status, started_at,
+      [input.tenantId]
+    ),
+    adapter.query<Record<string, unknown>>(
+      `SELECT tenant_id, connector_id, instance_id, status, started_at,
                 ended_at, last_seen_at,
                 CASE WHEN reason IS NULL THEN 0 ELSE 1 END AS reason_present,
                 acknowledged_at, created_at, updated_at
@@ -662,9 +676,9 @@ async function buildDirectoryAuthSupportBundleArtifact(
           WHERE tenant_id = ?
           ORDER BY started_at DESC
           LIMIT 50`,
-        [input.tenantId]
-      ),
-    ]);
+      [input.tenantId]
+    ),
+  ]);
 
   return JSON.stringify(
     {
@@ -722,23 +736,24 @@ export async function getDirectoryAuthOverviewHandler(c: Context<{ Bindings: Env
     supportBundles,
     configHistory,
     advisories,
-  ] =
-    await Promise.all([
-      listDirectoryAuthMigrationCampaigns(adapter, tenantId),
-      listDirectoryAuthMigrationUserStates(adapter, tenantId, { limit: 20 }),
-      ensureDirectoryAuthTenantPolicy(adapter, tenantId, adminActorId(c)),
-      getDirectoryAuthRetentionPolicy(adapter, tenantId),
-      listDirectoryAuthEvidenceExports(adapter, tenantId, 10),
-      listDirectoryAuthSupportBundles(adapter, tenantId, 10),
-      listDirectoryAuthConfigHistory(adapter, tenantId, { limit: 20 }),
-      listDirectoryAuthReleaseAdvisories(adapter, 'stable', 10),
-    ]);
+  ] = await Promise.all([
+    listDirectoryAuthMigrationCampaigns(adapter, tenantId),
+    listDirectoryAuthMigrationUserStates(adapter, tenantId, { limit: 20 }),
+    ensureDirectoryAuthTenantPolicy(adapter, tenantId, adminActorId(c)),
+    getDirectoryAuthRetentionPolicy(adapter, tenantId),
+    listDirectoryAuthEvidenceExports(adapter, tenantId, 10),
+    listDirectoryAuthSupportBundles(adapter, tenantId, 10),
+    listDirectoryAuthConfigHistory(adapter, tenantId, { limit: 20 }),
+    listDirectoryAuthReleaseAdvisories(adapter, 'stable', 10),
+  ]);
 
   return c.json({
     tenantId,
     policy: tenantPolicy,
     migration: {
-      campaigns: campaigns.map((row) => serializeCampaign(row, tenantPolicy.email_code_fallback_mode)),
+      campaigns: campaigns.map((row) =>
+        serializeCampaign(row, tenantPolicy.email_code_fallback_mode)
+      ),
       user_states: userStates,
     },
     compliance: {
@@ -834,7 +849,11 @@ export async function createDirectoryAuthMigrationCampaignHandler(c: Context<{ B
   }
 
   const actorId = adminActorId(c);
-  const tenantPolicy = await ensureDirectoryAuthTenantPolicy(coreAdapter(c, tenantId), tenantId, actorId);
+  const tenantPolicy = await ensureDirectoryAuthTenantPolicy(
+    coreAdapter(c, tenantId),
+    tenantId,
+    actorId
+  );
   const campaign = await createDirectoryAuthMigrationCampaign(coreAdapter(c, tenantId), {
     tenantId,
     name: parsed.data.name,
@@ -856,7 +875,10 @@ export async function createDirectoryAuthMigrationCampaignHandler(c: Context<{ B
     tenantId,
     { status: campaign.status, mode: campaign.mode }
   );
-  return c.json({ tenantId, item: serializeCampaign(campaign, tenantPolicy.email_code_fallback_mode) }, 201);
+  return c.json(
+    { tenantId, item: serializeCampaign(campaign, tenantPolicy.email_code_fallback_mode) },
+    201
+  );
 }
 
 export async function updateDirectoryAuthMigrationCampaignHandler(c: Context<{ Bindings: Env }>) {
@@ -900,7 +922,10 @@ export async function updateDirectoryAuthMigrationCampaignHandler(c: Context<{ B
     tenantId,
     { status: campaign.status, mode: campaign.mode }
   );
-  return c.json({ tenantId, item: serializeCampaign(campaign, tenantPolicy.email_code_fallback_mode) });
+  return c.json({
+    tenantId,
+    item: serializeCampaign(campaign, tenantPolicy.email_code_fallback_mode),
+  });
 }
 
 export async function listDirectoryAuthMigrationUserStatesHandler(c: Context<{ Bindings: Env }>) {
@@ -1024,7 +1049,11 @@ export async function listDirectoryAuthEvidenceExportsHandler(c: Context<{ Bindi
   const permissionError = await requireEvidenceExportPermission(c);
   if (permissionError) return permissionError;
 
-  const items = await listDirectoryAuthEvidenceExports(coreAdapter(c, tenantId), tenantId, readLimit(c));
+  const items = await listDirectoryAuthEvidenceExports(
+    coreAdapter(c, tenantId),
+    tenantId,
+    readLimit(c)
+  );
   return c.json({ tenantId, items: items.map((row) => serializeEvidenceExport(row, tenantId)) });
 }
 
@@ -1049,7 +1078,12 @@ export async function createDirectoryAuthEvidenceExportHandler(c: Context<{ Bind
   const now = Date.now();
   const retention =
     (await getDirectoryAuthRetentionPolicy(coreAdapter(c, tenantId), tenantId)) ??
-    (await ensureDirectoryAuthRetentionPolicy(coreAdapter(c, tenantId), tenantId, adminActorId(c), now));
+    (await ensureDirectoryAuthRetentionPolicy(
+      coreAdapter(c, tenantId),
+      tenantId,
+      adminActorId(c),
+      now
+    ));
   const earliestAllowed = now - retention.authrim_audit_retention_days * 24 * 60 * 60 * 1000;
   if (periodStartAt < earliestAllowed || periodEndAt > now) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
@@ -1195,7 +1229,11 @@ export async function listDirectoryAuthSupportBundlesHandler(c: Context<{ Bindin
   const accessError = await requireTenantAccess(c, tenantId);
   if (accessError) return accessError;
 
-  const items = await listDirectoryAuthSupportBundles(coreAdapter(c, tenantId), tenantId, readLimit(c));
+  const items = await listDirectoryAuthSupportBundles(
+    coreAdapter(c, tenantId),
+    tenantId,
+    readLimit(c)
+  );
   return c.json({ tenantId, items: items.map((row) => serializeSupportBundle(row, tenantId)) });
 }
 
@@ -1333,7 +1371,10 @@ export async function downloadDirectoryAuthSupportBundleHandler(c: Context<{ Bin
 
   const headers = new Headers();
   headers.set('Content-Type', loaded.contentType || 'application/json');
-  headers.set('Content-Disposition', `attachment; filename="directory-auth-support-${row.id}.json"`);
+  headers.set(
+    'Content-Disposition',
+    `attachment; filename="directory-auth-support-${row.id}.json"`
+  );
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Cache-Control', 'no-store');
   return new Response(loaded.content, { status: 200, headers });
@@ -1345,7 +1386,11 @@ export async function listDirectoryAuthAdvisoriesHandler(c: Context<{ Bindings: 
   if (accessError) return accessError;
 
   const channel = c.req.query('channel') || 'stable';
-  const items = await listDirectoryAuthReleaseAdvisories(coreAdapter(c, tenantId), channel, readLimit(c));
+  const items = await listDirectoryAuthReleaseAdvisories(
+    coreAdapter(c, tenantId),
+    channel,
+    readLimit(c)
+  );
   return c.json({ tenantId, channel, items });
 }
 
@@ -1450,7 +1495,9 @@ export async function listDirectoryAuthManagedConnectorsHandler(c: Context<{ Bin
   ]);
   const items = instances.map((instance) => {
     const policy = policies.get(instance.connector_id);
-    const resolvedInstance = policy ? applyDirectoryConnectorFleetPolicy(instance, policy, now) : instance;
+    const resolvedInstance = policy
+      ? applyDirectoryConnectorFleetPolicy(instance, policy, now)
+      : instance;
     const advisoryMatches = matchDirectoryAuthReleaseAdvisories(instance.version, advisories);
     return {
       ...resolvedInstance,
