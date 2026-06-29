@@ -11,7 +11,12 @@
 		type DirectoryAuthSummaryLink,
 		type DirectoryAuthSupportBundle
 	} from '$lib/api/admin-directory-auth';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import DirectoryAuthenticationTabs from '../DirectoryAuthenticationTabs.svelte';
@@ -459,30 +464,28 @@
 				{$LL.admin_directory_authentication_compliance_no_config_history()}
 			</div>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_directory_authentication_compliance_time()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_action()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_resource()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_actor()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_after()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each configHistory as entry (entry.id)}
 						<tr>
-							<th>{$LL.admin_directory_authentication_compliance_time()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_action()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_resource()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_actor()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_after()}</th>
+							<td>{formatTime(entry.created_at)}</td>
+							<td>{entry.action}</td>
+							<td>{entry.resource_type}<br /><code>{entry.resource_id ?? '-'}</code></td>
+							<td>{entry.actor_id ?? '-'}</td>
+							<td><code>{JSON.stringify(entry.after_redacted)}</code></td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each configHistory as entry (entry.id)}
-							<tr>
-								<td>{formatTime(entry.created_at)}</td>
-								<td>{entry.action}</td>
-								<td>{entry.resource_type}<br /><code>{entry.resource_id ?? '-'}</code></td>
-								<td>{entry.actor_id ?? '-'}</td>
-								<td><code>{JSON.stringify(entry.after_redacted)}</code></td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</AdminSection>
 
@@ -512,67 +515,63 @@
 		{:else if managedConnectors.length === 0}
 			<div class="empty-state">{$LL.admin_directory_authentication_compliance_no_heartbeat()}</div>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable width="wide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_directory_authentication_compliance_connector()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_instance()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_version()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_channel()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_advisory()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_status()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_health()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_last_seen()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each managedConnectors as connector (connector.instance_id)}
 						<tr>
-							<th>{$LL.admin_directory_authentication_compliance_connector()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_instance()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_version()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_channel()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_advisory()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_status()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_health()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_last_seen()}</th>
+							<td><code>{connector.connector_id}</code></td>
+							<td><code>{connector.instance_id}</code></td>
+							<td>{connector.version}</td>
+							<td>{connector.release_channel}</td>
+							<td>
+								{#if affectedAdvisoryCount(connector) > 0}
+									{affectedAdvisoryCount(connector)}
+									{$LL.admin_directory_authentication_compliance_affected()}
+								{:else}
+									-
+								{/if}
+							</td>
+							<td>{connector.status}</td>
+							<td>{connector.health_status}</td>
+							<td>{formatTime(connector.last_seen_at)}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each managedConnectors as connector (connector.instance_id)}
-							<tr>
-								<td><code>{connector.connector_id}</code></td>
-								<td><code>{connector.instance_id}</code></td>
-								<td>{connector.version}</td>
-								<td>{connector.release_channel}</td>
-								<td>
-									{#if affectedAdvisoryCount(connector) > 0}
-										{affectedAdvisoryCount(connector)}
-										{$LL.admin_directory_authentication_compliance_affected()}
-									{:else}
-										-
-									{/if}
-								</td>
-								<td>{connector.status}</td>
-								<td>{connector.health_status}</td>
-								<td>{formatTime(connector.last_seen_at)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 		{#if managedConnectorEpisodes.length > 0}
-			<div class="table-wrap compact-table">
-				<table>
-					<thead>
+			<AdminDataTable compact>
+				<thead>
+					<tr>
+						<th>{$LL.admin_directory_authentication_compliance_recent_episode()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_status()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_started()}</th>
+						<th>{$LL.admin_directory_authentication_compliance_reason()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each managedConnectorEpisodes as episode (episode.id)}
 						<tr>
-							<th>{$LL.admin_directory_authentication_compliance_recent_episode()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_status()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_started()}</th>
-							<th>{$LL.admin_directory_authentication_compliance_reason()}</th>
+							<td><code>{episode.instance_id}</code></td>
+							<td>{episode.status}</td>
+							<td>{formatTime(episode.started_at)}</td>
+							<td>{episode.reason ?? '-'}</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each managedConnectorEpisodes as episode (episode.id)}
-							<tr>
-								<td><code>{episode.instance_id}</code></td>
-								<td>{episode.status}</td>
-								<td>{formatTime(episode.started_at)}</td>
-								<td>{episode.reason ?? '-'}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</AdminSection>
 
@@ -610,40 +609,38 @@
 	{:else if jobs.length === 0}
 		<div class="empty-state">{$LL.admin_directory_authentication_compliance_no_jobs()}</div>
 	{:else}
-		<div class="table-wrap">
-			<table>
-				<thead>
+		<AdminDataTable width="wide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_directory_authentication_compliance_id()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_status()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_requested_by()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_retention_expires()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_checksum()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_artifact()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each jobs as job (job.id)}
 					<tr>
-						<th>{$LL.admin_directory_authentication_compliance_id()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_status()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_requested_by()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_retention_expires()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_checksum()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_artifact()}</th>
+						<td><code>{job.id}</code></td>
+						<td>{job.status}</td>
+						<td>{job.requested_by}</td>
+						<td>{formatTime(job.retention_expires_at)}</td>
+						<td><code>{job.artifact_sha256?.slice(0, 16) ?? '-'}</code></td>
+						<td>
+							{#if job.artifact_download_url}
+								<a class="btn btn-secondary btn-small" href={job.artifact_download_url}>
+									{$LL.admin_directory_authentication_compliance_download()}
+								</a>
+							{:else}
+								<span class="state-text">{job.artifact_key ?? '-'}</span>
+							{/if}
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#each jobs as job (job.id)}
-						<tr>
-							<td><code>{job.id}</code></td>
-							<td>{job.status}</td>
-							<td>{job.requested_by}</td>
-							<td>{formatTime(job.retention_expires_at)}</td>
-							<td><code>{job.artifact_sha256?.slice(0, 16) ?? '-'}</code></td>
-							<td>
-								{#if job.artifact_download_url}
-									<a class="btn btn-secondary btn-small" href={job.artifact_download_url}>
-										{$LL.admin_directory_authentication_compliance_download()}
-									</a>
-								{:else}
-									<span class="state-text">{job.artifact_key ?? '-'}</span>
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+				{/each}
+			</tbody>
+		</AdminDataTable>
 	{/if}
 {/snippet}
 
@@ -653,38 +650,36 @@
 	{:else if jobs.length === 0}
 		<div class="empty-state">{$LL.admin_directory_authentication_compliance_no_jobs()}</div>
 	{:else}
-		<div class="table-wrap">
-			<table>
-				<thead>
+		<AdminDataTable width="wide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_directory_authentication_compliance_id()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_status()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_requested_by()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_retention_expires()}</th>
+					<th>{$LL.admin_directory_authentication_compliance_artifact()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each jobs as job (job.id)}
 					<tr>
-						<th>{$LL.admin_directory_authentication_compliance_id()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_status()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_requested_by()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_retention_expires()}</th>
-						<th>{$LL.admin_directory_authentication_compliance_artifact()}</th>
+						<td><code>{job.id}</code></td>
+						<td>{job.status}</td>
+						<td>{job.requested_by}</td>
+						<td>{formatTime(job.retention_expires_at)}</td>
+						<td>
+							{#if 'artifact_download_url' in job && job.artifact_download_url}
+								<a class="btn btn-secondary btn-small" href={job.artifact_download_url}>
+									{$LL.admin_directory_authentication_compliance_download()}
+								</a>
+							{:else}
+								<span class="state-text">{job.artifact_key ?? '-'}</span>
+							{/if}
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#each jobs as job (job.id)}
-						<tr>
-							<td><code>{job.id}</code></td>
-							<td>{job.status}</td>
-							<td>{job.requested_by}</td>
-							<td>{formatTime(job.retention_expires_at)}</td>
-							<td>
-								{#if 'artifact_download_url' in job && job.artifact_download_url}
-									<a class="btn btn-secondary btn-small" href={job.artifact_download_url}>
-										{$LL.admin_directory_authentication_compliance_download()}
-									</a>
-								{:else}
-									<span class="state-text">{job.artifact_key ?? '-'}</span>
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+				{/each}
+			</tbody>
+		</AdminDataTable>
 	{/if}
 {/snippet}
 

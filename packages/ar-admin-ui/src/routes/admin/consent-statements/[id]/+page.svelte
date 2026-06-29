@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { AdminPageShell } from '$lib/components/admin';
 	import { onMount } from 'svelte';
 
 	const statementId = $derived($page.params.id ?? '');
@@ -13,4 +14,6 @@
 	});
 </script>
 
-<div class="admin-loading-placeholder"></div>
+<AdminPageShell>
+	<div class="admin-loading-placeholder"></div>
+</AdminPageShell>

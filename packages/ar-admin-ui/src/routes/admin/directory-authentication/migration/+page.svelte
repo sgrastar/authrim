@@ -7,7 +7,12 @@
 		type DirectoryAuthMigrationUserStateRecord,
 		type DirectoryAuthTenantPolicy
 	} from '$lib/api/admin-directory-auth';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import DirectoryAuthenticationTabs from '../DirectoryAuthenticationTabs.svelte';
@@ -474,141 +479,134 @@
 		{:else if campaigns.length === 0}
 			<div class="empty-state">{$LL.admin_directory_authentication_migration_no_campaigns()}</div>
 		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
+			<AdminDataTable width="xwide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_directory_authentication_migration_campaign_name()}</th>
+						<th>{$LL.admin_directory_authentication_migration_status()}</th>
+						<th>{$LL.admin_directory_authentication_migration_campaign_mode()}</th>
+						<th>{$LL.admin_directory_authentication_migration_prompt()}</th>
+						<th>{$LL.admin_directory_authentication_migration_email_fallback()}</th>
+						<th>{$LL.admin_directory_authentication_migration_grace()}</th>
+						<th>{$LL.admin_directory_authentication_migration_target_policy()}</th>
+						<th>{$LL.admin_directory_authentication_migration_user_states_column()}</th>
+						<th>{$LL.admin_directory_authentication_migration_cohorts()}</th>
+						<th>{$LL.admin_directory_authentication_migration_reasons()}</th>
+						<th>{$LL.admin_directory_authentication_migration_actions()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each campaigns as campaign (campaign.id)}
 						<tr>
-							<th>{$LL.admin_directory_authentication_migration_campaign_name()}</th>
-							<th>{$LL.admin_directory_authentication_migration_status()}</th>
-							<th>{$LL.admin_directory_authentication_migration_campaign_mode()}</th>
-							<th>{$LL.admin_directory_authentication_migration_prompt()}</th>
-							<th>{$LL.admin_directory_authentication_migration_email_fallback()}</th>
-							<th>{$LL.admin_directory_authentication_migration_grace()}</th>
-							<th>{$LL.admin_directory_authentication_migration_target_policy()}</th>
-							<th>{$LL.admin_directory_authentication_migration_user_states_column()}</th>
-							<th>{$LL.admin_directory_authentication_migration_cohorts()}</th>
-							<th>{$LL.admin_directory_authentication_migration_reasons()}</th>
-							<th>{$LL.admin_directory_authentication_migration_actions()}</th>
+							<td>
+								<strong>{campaign.name}</strong>
+								{#if campaign.is_template}
+									<span class="muted"
+										>{$LL.admin_directory_authentication_migration_template()}</span
+									>
+								{/if}
+								<p class="meta-line">
+									{$LL.admin_directory_authentication_updated()}
+									{formatTime(campaign.updated_at)}
+								</p>
+							</td>
+							<td>
+								<select
+									bind:value={campaignDrafts[campaign.id].status}
+									disabled={!canEdit || saving}
+								>
+									<option value="disabled">{campaignStatusLabel('disabled')}</option>
+									<option value="draft">{campaignStatusLabel('draft')}</option>
+									<option value="active">{campaignStatusLabel('active')}</option>
+									<option value="paused">{campaignStatusLabel('paused')}</option>
+									<option value="archived">{campaignStatusLabel('archived')}</option>
+								</select>
+							</td>
+							<td>
+								<select bind:value={campaignDrafts[campaign.id].mode} disabled={!canEdit || saving}>
+									<option value="directory_login_allowed"
+										>{migrationModeLabel('directory_login_allowed')}</option
+									>
+									<option value="prompt_passkey">{migrationModeLabel('prompt_passkey')}</option>
+									<option value="grace_then_require_passkey"
+										>{migrationModeLabel('grace_then_require_passkey')}</option
+									>
+									<option value="require_passkey_after_directory"
+										>{migrationModeLabel('require_passkey_after_directory')}</option
+									>
+									<option value="disabled">{migrationModeLabel('disabled')}</option>
+								</select>
+							</td>
+							<td>
+								<select
+									bind:value={campaignDrafts[campaign.id].passkey_prompt_mode}
+									disabled={!canEdit || saving}
+								>
+									<option value="campaign_only">{promptModeLabel('campaign_only')}</option>
+									<option value="optional">{promptModeLabel('optional')}</option>
+									<option value="none">{promptModeLabel('none')}</option>
+								</select>
+							</td>
+							<td>
+								<select
+									bind:value={campaignDrafts[campaign.id].email_code_fallback_mode}
+									disabled={!canEdit || saving}
+								>
+									<option value="tenant_default">{emailFallbackModeLabel('tenant_default')}</option>
+									<option value="migration_recovery"
+										>{emailFallbackModeLabel('migration_recovery')}</option
+									>
+									<option value="admin_invitation_only"
+										>{emailFallbackModeLabel('admin_invitation_only')}</option
+									>
+									<option value="login_method">{emailFallbackModeLabel('login_method')}</option>
+									<option value="directory_unavailable_recovery"
+										>{emailFallbackModeLabel('directory_unavailable_recovery')}</option
+									>
+									<option value="disabled">{emailFallbackModeLabel('disabled')}</option>
+								</select>
+								<p class="meta-line">
+									{$LL.admin_directory_authentication_migration_effective()}
+									{emailFallbackModeLabel(campaign.effective_email_code_fallback_mode)}
+								</p>
+							</td>
+							<td>
+								<input
+									type="number"
+									min="0"
+									max="365"
+									bind:value={campaignDrafts[campaign.id].grace_period_days}
+									disabled={!canEdit || saving}
+								/>
+								<p class="meta-line">
+									{$LL.admin_directory_authentication_migration_ttl()}
+									{campaign.transaction_ttl_seconds}s
+								</p>
+							</td>
+							<td>
+								<textarea
+									bind:value={campaignDrafts[campaign.id].target_policy_text}
+									disabled={!canEdit || saving}
+									rows="5"
+								></textarea>
+							</td>
+							<td>{campaignStateCounts(campaign.id) || '-'}</td>
+							<td>{campaignCohortCounts(campaign.id) || '-'}</td>
+							<td>{campaignReasonCounts(campaign.id) || '-'}</td>
+							<td>
+								<button
+									type="button"
+									class="btn btn-secondary btn-small"
+									disabled={!canEdit || saving}
+									onclick={() => saveCampaign(campaign)}
+								>
+									{$LL.admin_directory_authentication_save()}
+								</button>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each campaigns as campaign (campaign.id)}
-							<tr>
-								<td>
-									<strong>{campaign.name}</strong>
-									{#if campaign.is_template}
-										<span class="muted"
-											>{$LL.admin_directory_authentication_migration_template()}</span
-										>
-									{/if}
-									<p class="meta-line">
-										{$LL.admin_directory_authentication_updated()}
-										{formatTime(campaign.updated_at)}
-									</p>
-								</td>
-								<td>
-									<select
-										bind:value={campaignDrafts[campaign.id].status}
-										disabled={!canEdit || saving}
-									>
-										<option value="disabled">{campaignStatusLabel('disabled')}</option>
-										<option value="draft">{campaignStatusLabel('draft')}</option>
-										<option value="active">{campaignStatusLabel('active')}</option>
-										<option value="paused">{campaignStatusLabel('paused')}</option>
-										<option value="archived">{campaignStatusLabel('archived')}</option>
-									</select>
-								</td>
-								<td>
-									<select
-										bind:value={campaignDrafts[campaign.id].mode}
-										disabled={!canEdit || saving}
-									>
-										<option value="directory_login_allowed"
-											>{migrationModeLabel('directory_login_allowed')}</option
-										>
-										<option value="prompt_passkey">{migrationModeLabel('prompt_passkey')}</option>
-										<option value="grace_then_require_passkey"
-											>{migrationModeLabel('grace_then_require_passkey')}</option
-										>
-										<option value="require_passkey_after_directory"
-											>{migrationModeLabel('require_passkey_after_directory')}</option
-										>
-										<option value="disabled">{migrationModeLabel('disabled')}</option>
-									</select>
-								</td>
-								<td>
-									<select
-										bind:value={campaignDrafts[campaign.id].passkey_prompt_mode}
-										disabled={!canEdit || saving}
-									>
-										<option value="campaign_only">{promptModeLabel('campaign_only')}</option>
-										<option value="optional">{promptModeLabel('optional')}</option>
-										<option value="none">{promptModeLabel('none')}</option>
-									</select>
-								</td>
-								<td>
-									<select
-										bind:value={campaignDrafts[campaign.id].email_code_fallback_mode}
-										disabled={!canEdit || saving}
-									>
-										<option value="tenant_default"
-											>{emailFallbackModeLabel('tenant_default')}</option
-										>
-										<option value="migration_recovery"
-											>{emailFallbackModeLabel('migration_recovery')}</option
-										>
-										<option value="admin_invitation_only"
-											>{emailFallbackModeLabel('admin_invitation_only')}</option
-										>
-										<option value="login_method">{emailFallbackModeLabel('login_method')}</option>
-										<option value="directory_unavailable_recovery"
-											>{emailFallbackModeLabel('directory_unavailable_recovery')}</option
-										>
-										<option value="disabled">{emailFallbackModeLabel('disabled')}</option>
-									</select>
-									<p class="meta-line">
-										{$LL.admin_directory_authentication_migration_effective()}
-										{emailFallbackModeLabel(campaign.effective_email_code_fallback_mode)}
-									</p>
-								</td>
-								<td>
-									<input
-										type="number"
-										min="0"
-										max="365"
-										bind:value={campaignDrafts[campaign.id].grace_period_days}
-										disabled={!canEdit || saving}
-									/>
-									<p class="meta-line">
-										{$LL.admin_directory_authentication_migration_ttl()}
-										{campaign.transaction_ttl_seconds}s
-									</p>
-								</td>
-								<td>
-									<textarea
-										bind:value={campaignDrafts[campaign.id].target_policy_text}
-										disabled={!canEdit || saving}
-										rows="5"
-									></textarea>
-								</td>
-								<td>{campaignStateCounts(campaign.id) || '-'}</td>
-								<td>{campaignCohortCounts(campaign.id) || '-'}</td>
-								<td>{campaignReasonCounts(campaign.id) || '-'}</td>
-								<td>
-									<button
-										type="button"
-										class="btn btn-secondary btn-small"
-										disabled={!canEdit || saving}
-										onclick={() => saveCampaign(campaign)}
-									>
-										{$LL.admin_directory_authentication_save()}
-									</button>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</AdminSection>
 

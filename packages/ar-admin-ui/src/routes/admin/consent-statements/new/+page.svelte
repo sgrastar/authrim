@@ -14,7 +14,7 @@
 		type IdentityMappingFieldMappingSetSummary
 	} from '$lib/api/admin-identity-mapping';
 	import { ToggleSwitch } from '$lib/components';
-	import { MonacoTextEditor, SanitizedHtmlPreview } from '$lib/components/admin';
+	import { AdminPageShell, MonacoTextEditor, SanitizedHtmlPreview } from '$lib/components/admin';
 	import { onMount } from 'svelte';
 
 	type TemplateId =
@@ -1386,589 +1386,605 @@
 	<title>{$LL.admin_consent_templates_page_title()}</title>
 </svelte:head>
 
-<div class="template-page">
-	{#if loadingStatement}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner" aria-hidden="true"></i>
-			<p>{$LL.admin_consent_statements_loading()}</p>
-		</div>
-	{:else}
-		<div class="template-header">
-			<div>
-				<h1>{$LL.admin_consent_templates_page_title()}</h1>
-				{#if editingStatementId}
-					<div class="statement-title-row">
-						<label class="statement-slug-field">
-							<span class="sr-only">Slug</span>
-							<input
-								class="admin-input"
-								bind:value={loadedStatementSlug}
-								placeholder="terms_of_service"
-								disabled={deletingStatement}
-							/>
-						</label>
-						<ToggleSwitch
-							id="statement-active"
-							bind:checked={loadedStatementActive}
-							disabled={savingStatement || deletingStatement}
-							label={$LL.admin_consent_statements_active()}
-							ariaLabel={$LL.admin_consent_statements_active()}
-							size="sm"
-						/>
-						<button
-							type="button"
-							class="btn btn-danger"
-							disabled={savingStatement || deletingStatement}
-							onclick={deleteCurrentStatement}
-						>
-							{#if deletingStatement}
-								<i class="i-ph-circle-notch loading-spinner" aria-hidden="true"></i>
-								{localText('deleting')}
-							{:else}
-								<i class="i-ph-trash" aria-hidden="true"></i>
-								{localText('delete')}
-							{/if}
-						</button>
-					</div>
-				{:else}
-					<p>{$LL.admin_consent_templates_page_description()}</p>
-				{/if}
+<AdminPageShell width="wide">
+	<div class="template-page">
+		{#if loadingStatement}
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner" aria-hidden="true"></i>
+				<p>{$LL.admin_consent_statements_loading()}</p>
 			</div>
-			<a href="/admin/consent-statements" class="btn btn-secondary">
-				{$LL.admin_consent_templates_back()}
-			</a>
-		</div>
-
-		{#if saveError}
-			<div class="alert alert-error">{saveError}</div>
-		{/if}
-
-		<section class="template-grid" aria-label={$LL.admin_consent_templates_template_aria()}>
-			{#each templates as template (template.id)}
-				<button
-					type="button"
-					class="template-card"
-					class:selected={selectedTemplateId === template.id}
-					onclick={() => selectTemplate(template.id)}
-				>
-					<span class="template-card__icon">
-						<i class={template.icon} aria-hidden="true"></i>
-					</span>
-					<span class="template-card__body">
-						<span class="template-card__title">{templateTitle(template.id)}</span>
-						<span class="template-card__description">{templateDescription(template.id)}</span>
-					</span>
-				</button>
-			{/each}
-		</section>
-
-		{#if selectedTemplate}
-			<section class="collection-panel" aria-label={$LL.admin_consent_templates_collection_aria()}>
-				<div class="collection-panel__header">
-					<div>
-						<p class="template-kicker">{$LL.admin_consent_templates_collection_kicker()}</p>
-						<h2>{templateTitle(selectedTemplate.id)}</h2>
-					</div>
-				</div>
-				<div
-					class="mode-list"
-					role="radiogroup"
-					aria-label={$LL.admin_consent_templates_collection_aria()}
-				>
-					{#each modeOptions as option (option)}
-						<label class="mode-card" class:selected={collectionMode === option}>
-							<input type="radio" bind:group={collectionMode} value={option} />
-							<span class="template-card__icon mode-card__icon">
-								<i class={modeIcon(option)} aria-hidden="true"></i>
-							</span>
-							<span class="template-card__body">
-								<span class="template-card__title">{modeLabel(option)}</span>
-								<span class="template-card__description">{modeDescription(option)}</span>
-							</span>
-						</label>
-					{/each}
-				</div>
-			</section>
-
-			<section class="binding-panel" aria-label={$LL.admin_consent_templates_binding_aria()}>
-				<div class="collection-panel__header">
-					<div>
-						<p class="template-kicker">{$LL.admin_consent_templates_binding_kicker()}</p>
-						<h2>{$LL.admin_consent_templates_binding_title()}</h2>
-						<p class="panel-description">
-							{$LL.admin_consent_templates_binding_description()}
-						</p>
-					</div>
-				</div>
-				<div class="binding-grid">
-					<div class="binding-type-stack">
-						<label class="admin-field">
-							<span class="admin-field__label">{$LL.admin_consent_templates_binding_type()}</span>
-							<select class="admin-select" bind:value={bindingType}>
-								<option value="subject">{$LL.admin_consent_templates_binding_subject()}</option>
-								<option value="identity_schema">
-									{$LL.admin_consent_templates_binding_identity_schema()}
-								</option>
-								<option value="destination_field_mapping_set">
-									{$LL.admin_consent_templates_binding_destination_field_mapping_sets()}
-								</option>
-								<option value="user_decision">
-									{$LL.admin_consent_templates_binding_user_decision()}
-								</option>
-							</select>
-						</label>
-						<div class="binding-help" aria-live="polite">
-							<strong>{selectedBindingLabel}</strong>
-							<p>{selectedBindingDescription}</p>
-						</div>
-					</div>
-					{#if bindingType === 'destination_field_mapping_set'}
-						<div class="binding-type-stack">
-							<label class="admin-field">
-								<span class="admin-field__label">
-									{$LL.admin_consent_templates_binding_field_mapping_set()}
-								</span>
-								<select
-									class="admin-select"
-									bind:value={selectedFieldMappingSetId}
-									disabled={activeFieldMappingSets.length === 0}
-								>
-									{#if activeFieldMappingSets.length === 0}
-										<option value="">
-											{fieldMappingSetsLoaded
-												? $LL.admin_consent_templates_binding_no_field_mapping_sets()
-												: $LL.admin_consent_templates_binding_loading_field_mapping_sets()}
-										</option>
-									{:else}
-										{#each activeFieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
-											<option value={fieldMappingSet.id}>{fieldMappingSet.displayName}</option>
-										{/each}
-									{/if}
-								</select>
+		{:else}
+			<div class="template-header">
+				<div>
+					<h1>{$LL.admin_consent_templates_page_title()}</h1>
+					{#if editingStatementId}
+						<div class="statement-title-row">
+							<label class="statement-slug-field">
+								<span class="sr-only">Slug</span>
+								<input
+									class="admin-input"
+									bind:value={loadedStatementSlug}
+									placeholder="terms_of_service"
+									disabled={deletingStatement}
+								/>
 							</label>
-							<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
-								{$LL.admin_consent_templates_option_open_field_mapping()}
-							</a>
+							<ToggleSwitch
+								id="statement-active"
+								bind:checked={loadedStatementActive}
+								disabled={savingStatement || deletingStatement}
+								label={$LL.admin_consent_statements_active()}
+								ariaLabel={$LL.admin_consent_statements_active()}
+								size="sm"
+							/>
+							<button
+								type="button"
+								class="btn btn-danger"
+								disabled={savingStatement || deletingStatement}
+								onclick={deleteCurrentStatement}
+							>
+								{#if deletingStatement}
+									<i class="i-ph-circle-notch loading-spinner" aria-hidden="true"></i>
+									{localText('deleting')}
+								{:else}
+									<i class="i-ph-trash" aria-hidden="true"></i>
+									{localText('delete')}
+								{/if}
+							</button>
 						</div>
+					{:else}
+						<p>{$LL.admin_consent_templates_page_description()}</p>
 					{/if}
 				</div>
+				<a href="/admin/consent-statements" class="btn btn-secondary">
+					{$LL.admin_consent_templates_back()}
+				</a>
+			</div>
+
+			{#if saveError}
+				<div class="alert alert-error">{saveError}</div>
+			{/if}
+
+			<section class="template-grid" aria-label={$LL.admin_consent_templates_template_aria()}>
+				{#each templates as template (template.id)}
+					<button
+						type="button"
+						class="template-card"
+						class:selected={selectedTemplateId === template.id}
+						onclick={() => selectTemplate(template.id)}
+					>
+						<span class="template-card__icon">
+							<i class={template.icon} aria-hidden="true"></i>
+						</span>
+						<span class="template-card__body">
+							<span class="template-card__title">{templateTitle(template.id)}</span>
+							<span class="template-card__description">{templateDescription(template.id)}</span>
+						</span>
+					</button>
+				{/each}
 			</section>
 
-			<section class="content-panel" aria-label={$LL.admin_consent_templates_content_aria()}>
-				<div class="collection-panel__header">
-					<div>
-						<h2>{$LL.admin_consent_templates_content_title()}</h2>
+			{#if selectedTemplate}
+				<section
+					class="collection-panel"
+					aria-label={$LL.admin_consent_templates_collection_aria()}
+				>
+					<div class="collection-panel__header">
+						<div>
+							<p class="template-kicker">{$LL.admin_consent_templates_collection_kicker()}</p>
+							<h2>{templateTitle(selectedTemplate.id)}</h2>
+						</div>
 					</div>
-				</div>
-				<div class="content-editor">
-					<label class="admin-field content-title-field">
-						<span class="admin-field__label">{$LL.admin_consent_templates_internal_title()}</span>
-						<input
-							class="admin-input"
-							bind:value={internalTitle}
-							placeholder={templateTitle(selectedTemplate.id)}
-						/>
-					</label>
-
 					<div
-						class="content-mode-panel"
+						class="mode-list"
 						role="radiogroup"
-						aria-label={$LL.admin_consent_templates_content_mode()}
+						aria-label={$LL.admin_consent_templates_collection_aria()}
 					>
-						{#each contentModeOptions as option (option)}
-							<label class="content-mode-card" class:selected={contentMode === option}>
-								<input
-									type="radio"
-									checked={contentMode === option}
-									value={option}
-									onchange={() => setContentMode(option)}
-								/>
-								<span>
-									<strong>{contentModeLabel(option)}</strong>
-									<small>{contentModeDescription(option)}</small>
+						{#each modeOptions as option (option)}
+							<label class="mode-card" class:selected={collectionMode === option}>
+								<input type="radio" bind:group={collectionMode} value={option} />
+								<span class="template-card__icon mode-card__icon">
+									<i class={modeIcon(option)} aria-hidden="true"></i>
+								</span>
+								<span class="template-card__body">
+									<span class="template-card__title">{modeLabel(option)}</span>
+									<span class="template-card__description">{modeDescription(option)}</span>
 								</span>
 							</label>
 						{/each}
 					</div>
+				</section>
 
-					<div class="content-mode-preview-panel">
-						<aside
-							class="language-panel preview-language-panel"
-							aria-label={$LL.admin_consent_templates_languages()}
-						>
-							<div class="language-list">
-								{#each activeLanguageCodes as languageCode (languageCode)}
-									<div
-										role="button"
-										tabindex="0"
-										class="language-item"
-										class:selected={selectedLanguage === languageCode}
-										onclick={() => selectLanguage(languageCode)}
-										onkeydown={(event) => handleLanguageKeydown(event, languageCode)}
-									>
-										<span>
-											{languageLabel(languageCode)}
-											{#if defaultLanguage === languageCode}
-												<span class="language-default">
-													{$LL.admin_consent_templates_default_language_badge()}
-												</span>
-											{/if}
-										</span>
-										{#if activeLanguageCodes.length > 1}
-											<button
-												type="button"
-												class="language-remove"
-												aria-label={$LL.admin_consent_templates_remove_language({
-													language: languageLabel(languageCode)
-												})}
-												onclick={(event) => {
-													event.stopPropagation();
-													removeLanguage(languageCode);
-												}}
-											>
-												<i class="i-ph-x" aria-hidden="true"></i>
-											</button>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						</aside>
-
-						<section
-							class="content-mode-preview"
-							aria-label={$LL.admin_consent_templates_preview_tab()}
-						>
-							<div class="language-editor__header">
-								<h3>
-									{$LL.admin_consent_templates_preview_tab()} ({languageLabel(selectedLanguage)})
-								</h3>
-								<label class="default-language-toggle">
-									<input
-										type="checkbox"
-										checked={defaultLanguage === selectedLanguage}
-										onchange={() => (defaultLanguage = selectedLanguage)}
-									/>
-									<span>{$LL.admin_consent_templates_default_language()}</span>
-								</label>
-							</div>
-							<div class="content-preview mode-preview" role="presentation">
-								<SanitizedHtmlPreview html={selectedModePreviewHtml} />
-							</div>
-						</section>
+				<section class="binding-panel" aria-label={$LL.admin_consent_templates_binding_aria()}>
+					<div class="collection-panel__header">
+						<div>
+							<p class="template-kicker">{$LL.admin_consent_templates_binding_kicker()}</p>
+							<h2>{$LL.admin_consent_templates_binding_title()}</h2>
+							<p class="panel-description">
+								{$LL.admin_consent_templates_binding_description()}
+							</p>
+						</div>
 					</div>
-
-					{#if contentMode !== 'display_only'}
-						<div class="content-options-panel">
-							<div class="content-links-panel__header">
-								<div>
-									<h3>{$LL.admin_consent_templates_options_title()}</h3>
-									<p>{$LL.admin_consent_templates_options_description()}</p>
-								</div>
-								{#if !singleOptionTemplate}
-									<button type="button" class="btn btn-secondary btn-sm" onclick={addContentOption}>
-										<i class="i-ph-plus" aria-hidden="true"></i>
-										{$LL.admin_consent_templates_options_add()}
-									</button>
-								{/if}
-							</div>
-
-							<div class="content-option-list">
-								{#each contentOptions as option, index (option.id)}
-									<section class="content-option-card">
-										<div class="content-option-card__header">
-											<h4>
-												{$LL.admin_consent_templates_option_title({ index: index + 1 })}
-											</h4>
-											<button
-												type="button"
-												class="content-link-remove"
-												disabled={contentOptions.length <= 1}
-												aria-label={$LL.admin_consent_templates_option_remove({
-													index: index + 1
-												})}
-												onclick={() => removeContentOption(option.id)}
-											>
-												<i class="i-ph-trash" aria-hidden="true"></i>
-											</button>
-										</div>
-
-										<div class="content-option-grid">
-											<div class="content-option-value-mode">
-												<span class="admin-field__label">
-													{$LL.admin_consent_templates_option_value_type()}
-												</span>
-												<div class="segmented-control">
-													<label>
-														<input
-															type="radio"
-															checked={option.valueMode === 'boolean'}
-															onchange={() => updateContentOptionValueMode(option.id, 'boolean')}
-														/>
-														<span>boolean</span>
-													</label>
-													<label>
-														<input
-															type="radio"
-															checked={option.valueMode === 'value'}
-															onchange={() => updateContentOptionValueMode(option.id, 'value')}
-														/>
-														<span>value</span>
-													</label>
-												</div>
-											</div>
-
-											<label class="admin-field">
-												<span class="admin-field__label">
-													{$LL.admin_consent_templates_option_value()}
-												</span>
-												<input
-													class="admin-input"
-													value={option.value}
-													disabled={option.valueMode === 'boolean'}
-													placeholder="once / always / minimal / none"
-													oninput={(event) =>
-														updateContentOptionValue(option.id, event.currentTarget.value)}
-												/>
-											</label>
-										</div>
-
-										<div class="option-text-panel">
-											<div class="option-text-panel__header">
-												<h5>
-													{$LL.admin_consent_templates_option_body({
-														language: languageLabel(selectedLanguage)
-													})}
-												</h5>
-												<p>{$LL.admin_consent_templates_option_body_description()}</p>
-											</div>
-
-											<section
-												class="option-text-editor"
-												aria-label={languageLabel(selectedLanguage)}
-											>
-												<div class="language-editor__header">
-													<h3>{languageLabel(selectedLanguage)}</h3>
-												</div>
-
-												<div class="admin-field content-textarea-field">
-													<span class="admin-field__label">
-														{$LL.admin_consent_templates_text_label()}
-													</span>
-													{#key `${option.id}-${selectedLanguage}`}
-														<MonacoTextEditor
-															value={option.descriptions[selectedLanguage]}
-															language="authrim-consent-html"
-															ariaLabel={$LL.admin_consent_templates_option_body({
-																language: languageLabel(selectedLanguage)
-															})}
-															minHeight={96}
-															onchange={(value) => updateContentOptionDescription(option.id, value)}
-														/>
-													{/key}
-												</div>
-												<p class="content-hint">{$LL.admin_consent_templates_text_hint()}</p>
-
-												<div class="content-links-panel option-links-panel">
-													<div class="content-links-panel__header">
-														<div>
-															<h3>{$LL.admin_consent_templates_links_title()}</h3>
-															<p>{$LL.admin_consent_templates_links_description()}</p>
-														</div>
-														<button
-															type="button"
-															class="btn btn-secondary btn-sm"
-															onclick={addContentLink}
-														>
-															<i class="i-ph-plus" aria-hidden="true"></i>
-															{$LL.admin_consent_templates_links_add()}
-														</button>
-													</div>
-
-													<div class="content-link-list">
-														{#each contentLinks as link, linkIndex (link.id)}
-															<div class="content-link-row">
-																<div class="content-link-token">
-																	<span class="admin-field__label">
-																		{$LL.admin_consent_templates_link_token()}
-																	</span>
-																	<code>{`%link${linkIndex + 1}%`}</code>
-																</div>
-																<label class="admin-field">
-																	<span class="admin-field__label">
-																		{$LL.admin_consent_templates_link_url()}
-																	</span>
-																	<input
-																		class="admin-input"
-																		value={link.href}
-																		placeholder="https://example.com/terms"
-																		oninput={(event) =>
-																			updateContentLinkHref(link.id, event.currentTarget.value)}
-																	/>
-																</label>
-																<label class="admin-field">
-																	<span class="admin-field__label">
-																		{$LL.admin_consent_templates_link_label({
-																			language: languageLabel(selectedLanguage)
-																		})}
-																	</span>
-																	<input
-																		class="admin-input"
-																		value={link.labels[selectedLanguage]}
-																		placeholder={contentLinkLabel(link, selectedLanguage) ||
-																			'Terms of Service'}
-																		oninput={(event) =>
-																			updateContentLinkLabel(link.id, event.currentTarget.value)}
-																	/>
-																</label>
-																<button
-																	type="button"
-																	class="content-link-remove"
-																	aria-label={$LL.admin_consent_templates_links_remove({
-																		token: `%link${linkIndex + 1}%`
-																	})}
-																	onclick={() => removeContentLink(link.id)}
-																>
-																	<i class="i-ph-trash" aria-hidden="true"></i>
-																</button>
-															</div>
-														{:else}
-															<p class="content-empty-note">
-																{$LL.admin_consent_templates_links_empty()}
-															</p>
-														{/each}
-													</div>
-												</div>
-											</section>
-										</div>
-									</section>
-								{/each}
+					<div class="binding-grid">
+						<div class="binding-type-stack">
+							<label class="admin-field">
+								<span class="admin-field__label">{$LL.admin_consent_templates_binding_type()}</span>
+								<select class="admin-select" bind:value={bindingType}>
+									<option value="subject">{$LL.admin_consent_templates_binding_subject()}</option>
+									<option value="identity_schema">
+										{$LL.admin_consent_templates_binding_identity_schema()}
+									</option>
+									<option value="destination_field_mapping_set">
+										{$LL.admin_consent_templates_binding_destination_field_mapping_sets()}
+									</option>
+									<option value="user_decision">
+										{$LL.admin_consent_templates_binding_user_decision()}
+									</option>
+								</select>
+							</label>
+							<div class="binding-help" aria-live="polite">
+								<strong>{selectedBindingLabel}</strong>
+								<p>{selectedBindingDescription}</p>
 							</div>
 						</div>
-					{/if}
-
-					{#if contentMode === 'display_only'}
-						<div class="option-text-panel">
-							<div class="option-text-panel__header">
-								<h5>{languageLabel(selectedLanguage)}</h5>
-								<p>{$LL.admin_consent_templates_option_body_description()}</p>
+						{#if bindingType === 'destination_field_mapping_set'}
+							<div class="binding-type-stack">
+								<label class="admin-field">
+									<span class="admin-field__label">
+										{$LL.admin_consent_templates_binding_field_mapping_set()}
+									</span>
+									<select
+										class="admin-select"
+										bind:value={selectedFieldMappingSetId}
+										disabled={activeFieldMappingSets.length === 0}
+									>
+										{#if activeFieldMappingSets.length === 0}
+											<option value="">
+												{fieldMappingSetsLoaded
+													? $LL.admin_consent_templates_binding_no_field_mapping_sets()
+													: $LL.admin_consent_templates_binding_loading_field_mapping_sets()}
+											</option>
+										{:else}
+											{#each activeFieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+												<option value={fieldMappingSet.id}>{fieldMappingSet.displayName}</option>
+											{/each}
+										{/if}
+									</select>
+								</label>
+								<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
+									{$LL.admin_consent_templates_option_open_field_mapping()}
+								</a>
 							</div>
+						{/if}
+					</div>
+				</section>
 
-							<section class="option-text-editor" aria-label={languageLabel(selectedLanguage)}>
-								<div class="language-editor__header">
-									<h3>{languageLabel(selectedLanguage)}</h3>
-								</div>
+				<section class="content-panel" aria-label={$LL.admin_consent_templates_content_aria()}>
+					<div class="collection-panel__header">
+						<div>
+							<h2>{$LL.admin_consent_templates_content_title()}</h2>
+						</div>
+					</div>
+					<div class="content-editor">
+						<label class="admin-field content-title-field">
+							<span class="admin-field__label">{$LL.admin_consent_templates_internal_title()}</span>
+							<input
+								class="admin-input"
+								bind:value={internalTitle}
+								placeholder={templateTitle(selectedTemplate.id)}
+							/>
+						</label>
 
-								<div class="admin-field content-textarea-field">
-									<span class="admin-field__label">{$LL.admin_consent_templates_text_label()}</span>
-									{#key selectedLanguage}
-										<MonacoTextEditor
-											value={contentDrafts[selectedLanguage]}
-											language="authrim-consent-html"
-											ariaLabel={$LL.admin_consent_templates_text_label()}
-											minHeight={96}
-											onchange={updateSelectedContent}
-										/>
-									{/key}
-								</div>
-								<p class="content-hint">{$LL.admin_consent_templates_text_hint()}</p>
+						<div
+							class="content-mode-panel"
+							role="radiogroup"
+							aria-label={$LL.admin_consent_templates_content_mode()}
+						>
+							{#each contentModeOptions as option (option)}
+								<label class="content-mode-card" class:selected={contentMode === option}>
+									<input
+										type="radio"
+										checked={contentMode === option}
+										value={option}
+										onchange={() => setContentMode(option)}
+									/>
+									<span>
+										<strong>{contentModeLabel(option)}</strong>
+										<small>{contentModeDescription(option)}</small>
+									</span>
+								</label>
+							{/each}
+						</div>
 
-								<div class="content-links-panel option-links-panel">
-									<div class="content-links-panel__header">
-										<div>
-											<h3>{$LL.admin_consent_templates_links_title()}</h3>
-											<p>{$LL.admin_consent_templates_links_description()}</p>
+						<div class="content-mode-preview-panel">
+							<aside
+								class="language-panel preview-language-panel"
+								aria-label={$LL.admin_consent_templates_languages()}
+							>
+								<div class="language-list">
+									{#each activeLanguageCodes as languageCode (languageCode)}
+										<div
+											role="button"
+											tabindex="0"
+											class="language-item"
+											class:selected={selectedLanguage === languageCode}
+											onclick={() => selectLanguage(languageCode)}
+											onkeydown={(event) => handleLanguageKeydown(event, languageCode)}
+										>
+											<span>
+												{languageLabel(languageCode)}
+												{#if defaultLanguage === languageCode}
+													<span class="language-default">
+														{$LL.admin_consent_templates_default_language_badge()}
+													</span>
+												{/if}
+											</span>
+											{#if activeLanguageCodes.length > 1}
+												<button
+													type="button"
+													class="language-remove"
+													aria-label={$LL.admin_consent_templates_remove_language({
+														language: languageLabel(languageCode)
+													})}
+													onclick={(event) => {
+														event.stopPropagation();
+														removeLanguage(languageCode);
+													}}
+												>
+													<i class="i-ph-x" aria-hidden="true"></i>
+												</button>
+											{/if}
 										</div>
-										<button type="button" class="btn btn-secondary btn-sm" onclick={addContentLink}>
-											<i class="i-ph-plus" aria-hidden="true"></i>
-											{$LL.admin_consent_templates_links_add()}
-										</button>
-									</div>
+									{/each}
+								</div>
+							</aside>
 
-									<div class="content-link-list">
-										{#each contentLinks as link, index (link.id)}
-											<div class="content-link-row">
-												<div class="content-link-token">
-													<span class="admin-field__label">
-														{$LL.admin_consent_templates_link_token()}
-													</span>
-													<code>{`%link${index + 1}%`}</code>
-												</div>
-												<label class="admin-field">
-													<span class="admin-field__label">
-														{$LL.admin_consent_templates_link_url()}
-													</span>
-													<input
-														class="admin-input"
-														value={link.href}
-														placeholder="https://example.com/terms"
-														oninput={(event) =>
-															updateContentLinkHref(link.id, event.currentTarget.value)}
-													/>
-												</label>
-												<label class="admin-field">
-													<span class="admin-field__label">
-														{$LL.admin_consent_templates_link_label({
-															language: languageLabel(selectedLanguage)
-														})}
-													</span>
-													<input
-														class="admin-input"
-														value={link.labels[selectedLanguage]}
-														placeholder={contentLinkLabel(link, selectedLanguage) ||
-															'Terms of Service'}
-														oninput={(event) =>
-															updateContentLinkLabel(link.id, event.currentTarget.value)}
-													/>
-												</label>
+							<section
+								class="content-mode-preview"
+								aria-label={$LL.admin_consent_templates_preview_tab()}
+							>
+								<div class="language-editor__header">
+									<h3>
+										{$LL.admin_consent_templates_preview_tab()} ({languageLabel(selectedLanguage)})
+									</h3>
+									<label class="default-language-toggle">
+										<input
+											type="checkbox"
+											checked={defaultLanguage === selectedLanguage}
+											onchange={() => (defaultLanguage = selectedLanguage)}
+										/>
+										<span>{$LL.admin_consent_templates_default_language()}</span>
+									</label>
+								</div>
+								<div class="content-preview mode-preview" role="presentation">
+									<SanitizedHtmlPreview html={selectedModePreviewHtml} />
+								</div>
+							</section>
+						</div>
+
+						{#if contentMode !== 'display_only'}
+							<div class="content-options-panel">
+								<div class="content-links-panel__header">
+									<div>
+										<h3>{$LL.admin_consent_templates_options_title()}</h3>
+										<p>{$LL.admin_consent_templates_options_description()}</p>
+									</div>
+									{#if !singleOptionTemplate}
+										<button
+											type="button"
+											class="btn btn-secondary btn-sm"
+											onclick={addContentOption}
+										>
+											<i class="i-ph-plus" aria-hidden="true"></i>
+											{$LL.admin_consent_templates_options_add()}
+										</button>
+									{/if}
+								</div>
+
+								<div class="content-option-list">
+									{#each contentOptions as option, index (option.id)}
+										<section class="content-option-card">
+											<div class="content-option-card__header">
+												<h4>
+													{$LL.admin_consent_templates_option_title({ index: index + 1 })}
+												</h4>
 												<button
 													type="button"
 													class="content-link-remove"
-													aria-label={$LL.admin_consent_templates_links_remove({
-														token: `%link${index + 1}%`
+													disabled={contentOptions.length <= 1}
+													aria-label={$LL.admin_consent_templates_option_remove({
+														index: index + 1
 													})}
-													onclick={() => removeContentLink(link.id)}
+													onclick={() => removeContentOption(option.id)}
 												>
 													<i class="i-ph-trash" aria-hidden="true"></i>
 												</button>
 											</div>
-										{:else}
-											<p class="content-empty-note">
-												{$LL.admin_consent_templates_links_empty()}
-											</p>
-										{/each}
-									</div>
-								</div>
-							</section>
-						</div>
-					{/if}
-				</div>
-			</section>
 
-			<div class="template-actions">
-				<a href="/admin/consent-statements" class="btn btn-secondary">
-					{$LL.admin_consent_templates_back()}
-				</a>
-				<button
-					type="button"
-					class="btn btn-primary"
-					disabled={savingStatement || deletingStatement}
-					onclick={saveTemplateStatement}
-				>
-					{#if savingStatement}
-						<i class="i-ph-circle-notch loading-spinner" aria-hidden="true"></i>
-						{localText('saving')}
-					{:else if editingStatementId}
-						{localText('save')}
-					{:else if customSelected}
-						{$LL.admin_consent_templates_create_custom()}
-					{:else}
-						{$LL.admin_consent_templates_create_from_template()}
-					{/if}
-				</button>
-			</div>
+											<div class="content-option-grid">
+												<div class="content-option-value-mode">
+													<span class="admin-field__label">
+														{$LL.admin_consent_templates_option_value_type()}
+													</span>
+													<div class="segmented-control">
+														<label>
+															<input
+																type="radio"
+																checked={option.valueMode === 'boolean'}
+																onchange={() => updateContentOptionValueMode(option.id, 'boolean')}
+															/>
+															<span>boolean</span>
+														</label>
+														<label>
+															<input
+																type="radio"
+																checked={option.valueMode === 'value'}
+																onchange={() => updateContentOptionValueMode(option.id, 'value')}
+															/>
+															<span>value</span>
+														</label>
+													</div>
+												</div>
+
+												<label class="admin-field">
+													<span class="admin-field__label">
+														{$LL.admin_consent_templates_option_value()}
+													</span>
+													<input
+														class="admin-input"
+														value={option.value}
+														disabled={option.valueMode === 'boolean'}
+														placeholder="once / always / minimal / none"
+														oninput={(event) =>
+															updateContentOptionValue(option.id, event.currentTarget.value)}
+													/>
+												</label>
+											</div>
+
+											<div class="option-text-panel">
+												<div class="option-text-panel__header">
+													<h5>
+														{$LL.admin_consent_templates_option_body({
+															language: languageLabel(selectedLanguage)
+														})}
+													</h5>
+													<p>{$LL.admin_consent_templates_option_body_description()}</p>
+												</div>
+
+												<section
+													class="option-text-editor"
+													aria-label={languageLabel(selectedLanguage)}
+												>
+													<div class="language-editor__header">
+														<h3>{languageLabel(selectedLanguage)}</h3>
+													</div>
+
+													<div class="admin-field content-textarea-field">
+														<span class="admin-field__label">
+															{$LL.admin_consent_templates_text_label()}
+														</span>
+														{#key `${option.id}-${selectedLanguage}`}
+															<MonacoTextEditor
+																value={option.descriptions[selectedLanguage]}
+																language="authrim-consent-html"
+																ariaLabel={$LL.admin_consent_templates_option_body({
+																	language: languageLabel(selectedLanguage)
+																})}
+																minHeight={96}
+																onchange={(value) =>
+																	updateContentOptionDescription(option.id, value)}
+															/>
+														{/key}
+													</div>
+													<p class="content-hint">{$LL.admin_consent_templates_text_hint()}</p>
+
+													<div class="content-links-panel option-links-panel">
+														<div class="content-links-panel__header">
+															<div>
+																<h3>{$LL.admin_consent_templates_links_title()}</h3>
+																<p>{$LL.admin_consent_templates_links_description()}</p>
+															</div>
+															<button
+																type="button"
+																class="btn btn-secondary btn-sm"
+																onclick={addContentLink}
+															>
+																<i class="i-ph-plus" aria-hidden="true"></i>
+																{$LL.admin_consent_templates_links_add()}
+															</button>
+														</div>
+
+														<div class="content-link-list">
+															{#each contentLinks as link, linkIndex (link.id)}
+																<div class="content-link-row">
+																	<div class="content-link-token">
+																		<span class="admin-field__label">
+																			{$LL.admin_consent_templates_link_token()}
+																		</span>
+																		<code>{`%link${linkIndex + 1}%`}</code>
+																	</div>
+																	<label class="admin-field">
+																		<span class="admin-field__label">
+																			{$LL.admin_consent_templates_link_url()}
+																		</span>
+																		<input
+																			class="admin-input"
+																			value={link.href}
+																			placeholder="https://example.com/terms"
+																			oninput={(event) =>
+																				updateContentLinkHref(link.id, event.currentTarget.value)}
+																		/>
+																	</label>
+																	<label class="admin-field">
+																		<span class="admin-field__label">
+																			{$LL.admin_consent_templates_link_label({
+																				language: languageLabel(selectedLanguage)
+																			})}
+																		</span>
+																		<input
+																			class="admin-input"
+																			value={link.labels[selectedLanguage]}
+																			placeholder={contentLinkLabel(link, selectedLanguage) ||
+																				'Terms of Service'}
+																			oninput={(event) =>
+																				updateContentLinkLabel(link.id, event.currentTarget.value)}
+																		/>
+																	</label>
+																	<button
+																		type="button"
+																		class="content-link-remove"
+																		aria-label={$LL.admin_consent_templates_links_remove({
+																			token: `%link${linkIndex + 1}%`
+																		})}
+																		onclick={() => removeContentLink(link.id)}
+																	>
+																		<i class="i-ph-trash" aria-hidden="true"></i>
+																	</button>
+																</div>
+															{:else}
+																<p class="content-empty-note">
+																	{$LL.admin_consent_templates_links_empty()}
+																</p>
+															{/each}
+														</div>
+													</div>
+												</section>
+											</div>
+										</section>
+									{/each}
+								</div>
+							</div>
+						{/if}
+
+						{#if contentMode === 'display_only'}
+							<div class="option-text-panel">
+								<div class="option-text-panel__header">
+									<h5>{languageLabel(selectedLanguage)}</h5>
+									<p>{$LL.admin_consent_templates_option_body_description()}</p>
+								</div>
+
+								<section class="option-text-editor" aria-label={languageLabel(selectedLanguage)}>
+									<div class="language-editor__header">
+										<h3>{languageLabel(selectedLanguage)}</h3>
+									</div>
+
+									<div class="admin-field content-textarea-field">
+										<span class="admin-field__label"
+											>{$LL.admin_consent_templates_text_label()}</span
+										>
+										{#key selectedLanguage}
+											<MonacoTextEditor
+												value={contentDrafts[selectedLanguage]}
+												language="authrim-consent-html"
+												ariaLabel={$LL.admin_consent_templates_text_label()}
+												minHeight={96}
+												onchange={updateSelectedContent}
+											/>
+										{/key}
+									</div>
+									<p class="content-hint">{$LL.admin_consent_templates_text_hint()}</p>
+
+									<div class="content-links-panel option-links-panel">
+										<div class="content-links-panel__header">
+											<div>
+												<h3>{$LL.admin_consent_templates_links_title()}</h3>
+												<p>{$LL.admin_consent_templates_links_description()}</p>
+											</div>
+											<button
+												type="button"
+												class="btn btn-secondary btn-sm"
+												onclick={addContentLink}
+											>
+												<i class="i-ph-plus" aria-hidden="true"></i>
+												{$LL.admin_consent_templates_links_add()}
+											</button>
+										</div>
+
+										<div class="content-link-list">
+											{#each contentLinks as link, index (link.id)}
+												<div class="content-link-row">
+													<div class="content-link-token">
+														<span class="admin-field__label">
+															{$LL.admin_consent_templates_link_token()}
+														</span>
+														<code>{`%link${index + 1}%`}</code>
+													</div>
+													<label class="admin-field">
+														<span class="admin-field__label">
+															{$LL.admin_consent_templates_link_url()}
+														</span>
+														<input
+															class="admin-input"
+															value={link.href}
+															placeholder="https://example.com/terms"
+															oninput={(event) =>
+																updateContentLinkHref(link.id, event.currentTarget.value)}
+														/>
+													</label>
+													<label class="admin-field">
+														<span class="admin-field__label">
+															{$LL.admin_consent_templates_link_label({
+																language: languageLabel(selectedLanguage)
+															})}
+														</span>
+														<input
+															class="admin-input"
+															value={link.labels[selectedLanguage]}
+															placeholder={contentLinkLabel(link, selectedLanguage) ||
+																'Terms of Service'}
+															oninput={(event) =>
+																updateContentLinkLabel(link.id, event.currentTarget.value)}
+														/>
+													</label>
+													<button
+														type="button"
+														class="content-link-remove"
+														aria-label={$LL.admin_consent_templates_links_remove({
+															token: `%link${index + 1}%`
+														})}
+														onclick={() => removeContentLink(link.id)}
+													>
+														<i class="i-ph-trash" aria-hidden="true"></i>
+													</button>
+												</div>
+											{:else}
+												<p class="content-empty-note">
+													{$LL.admin_consent_templates_links_empty()}
+												</p>
+											{/each}
+										</div>
+									</div>
+								</section>
+							</div>
+						{/if}
+					</div>
+				</section>
+
+				<div class="template-actions">
+					<a href="/admin/consent-statements" class="btn btn-secondary">
+						{$LL.admin_consent_templates_back()}
+					</a>
+					<button
+						type="button"
+						class="btn btn-primary"
+						disabled={savingStatement || deletingStatement}
+						onclick={saveTemplateStatement}
+					>
+						{#if savingStatement}
+							<i class="i-ph-circle-notch loading-spinner" aria-hidden="true"></i>
+							{localText('saving')}
+						{:else if editingStatementId}
+							{localText('save')}
+						{:else if customSelected}
+							{$LL.admin_consent_templates_create_custom()}
+						{:else}
+							{$LL.admin_consent_templates_create_from_template()}
+						{/if}
+					</button>
+				</div>
+			{/if}
 		{/if}
-	{/if}
-</div>
+	</div>
+</AdminPageShell>
 
 <style>
 	.template-page {
