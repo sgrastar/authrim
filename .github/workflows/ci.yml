@@ -13,8 +13,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  lint-and-test:
-    name: Lint, Type Check, and Test
+  dependency-audit:
+    name: Dependency Audit
     runs-on: ubuntu-latest
 
     steps:
@@ -38,6 +38,28 @@ jobs:
       - name: Audit dependencies
         run: pnpm run security:audit
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Setup environment variables
         run: |
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
@@ -46,22 +68,65 @@ jobs:
       - name: Run linter
         run: pnpm run lint
 
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
       - name: Run type checking
         run: pnpm run typecheck
 
+  api-tests:
+    name: API Tests with Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
       - name: Run API tests with coverage
         run: pnpm run test:coverage:api
-
-      - name: Run UI tests
-        run: pnpm run test:ui
-
-      - name: Build project
-        run: pnpm run build
-        env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
-
-      - name: Check code formatting
-        run: pnpm run format:check
 
       - name: Comment coverage summary
         if: ${{ github.event_name == 'pull_request' && success() }}
@@ -71,6 +136,117 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/ci-pr-coverage-comment.mjs
+
+  ui-tests:
+    name: UI Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
+      - name: Run UI tests
+        run: pnpm run test:ui
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
+      - name: Build project
+        run: pnpm run build
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check code formatting
+        run: pnpm run format:check
+
+  lint-and-test:
+    name: Lint, Type Check, and Test
+    runs-on: ubuntu-latest
+    needs:
+      - dependency-audit
+      - lint
+      - typecheck
+      - api-tests
+      - ui-tests
+      - build
+      - format
+    if: ${{ always() }}
+
+    steps:
+      - name: Check parallel CI jobs
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: |
+          echo "One or more parallel CI jobs did not pass."
+          exit 1
+
+      - name: Mark CI gate as passed
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}
+        run: echo "All parallel CI jobs passed."
 
   e2e-and-accessibility:
     name: E2E and Accessibility Tests
