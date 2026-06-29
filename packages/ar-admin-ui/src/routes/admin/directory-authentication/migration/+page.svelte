@@ -112,12 +112,12 @@
 	}
 
 	function campaignStateCounts(campaignId: string) {
-		const counts = new Map<string, number>();
+		const counts: Record<string, number> = {};
 		for (const state of userStates) {
 			if (state.campaign_id !== campaignId) continue;
-			counts.set(state.state, (counts.get(state.state) ?? 0) + 1);
+			counts[state.state] = (counts[state.state] ?? 0) + 1;
 		}
-		return Array.from(counts.entries())
+		return Object.entries(counts)
 			.map(
 				([state, count]) =>
 					`${migrationUserStateLabel(state as DirectoryAuthMigrationUserState)}: ${count}`
@@ -126,25 +126,25 @@
 	}
 
 	function campaignCohortCounts(campaignId: string) {
-		const counts = new Map<string, number>();
+		const counts: Record<string, number> = {};
 		for (const state of userStates) {
 			if (state.campaign_id !== campaignId || !state.cohort_key) continue;
-			counts.set(state.cohort_key, (counts.get(state.cohort_key) ?? 0) + 1);
+			counts[state.cohort_key] = (counts[state.cohort_key] ?? 0) + 1;
 		}
-		return Array.from(counts.entries())
+		return Object.entries(counts)
 			.map(([cohort, count]) => `${cohort}: ${count}`)
 			.join(', ');
 	}
 
 	function campaignReasonCounts(campaignId: string) {
-		const counts = new Map<string, number>();
+		const counts: Record<string, number> = {};
 		for (const state of userStates) {
 			if (state.campaign_id !== campaignId) continue;
 			const reason = state.blocked_reason || state.recovery_reason;
 			if (!reason) continue;
-			counts.set(reason, (counts.get(reason) ?? 0) + 1);
+			counts[reason] = (counts[reason] ?? 0) + 1;
 		}
-		return Array.from(counts.entries())
+		return Object.entries(counts)
 			.map(([reason, count]) => `${reason}: ${count}`)
 			.join(', ');
 	}

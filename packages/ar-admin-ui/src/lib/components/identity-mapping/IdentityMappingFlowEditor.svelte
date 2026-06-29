@@ -3712,15 +3712,15 @@
 		};
 	}
 
-	function evaluateNodeOutput(node: MappingNode, seen = new Set<string>()): DryRunValue {
-		if (seen.has(node.id)) {
+	function evaluateNodeOutput(node: MappingNode, seen: readonly string[] = []): DryRunValue {
+		if (seen.includes(node.id)) {
 			return {
 				ok: false,
 				value: $LL.admin_identity_mapping_flow_no_mapping_edge(),
 				trace: $LL.admin_identity_mapping_flow_no_mapping_edge()
 			};
 		}
-		const nextSeen = new Set(seen).add(node.id);
+		const nextSeen = [...seen, node.id];
 		if (node.role === 'source' || (node.role === 'target' && viewMode === 'destination')) {
 			return { ok: true, value: firstNodeExample(node) };
 		}
