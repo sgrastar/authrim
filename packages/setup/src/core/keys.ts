@@ -77,6 +77,7 @@ export interface KeyMetadata {
     objectEncryptionRootKey?: string;
     versionManagerSecret?: string;
     loggingCursorHmacSecret?: string;
+    flowRuntimeHmacSecret?: string;
     pluginEncryptionKey?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
@@ -109,6 +110,8 @@ export interface GeneratedSecrets {
   versionManagerSecret: string;
   /** HMAC secret for opaque logging Admin API cursors */
   loggingCursorHmacSecret: string;
+  /** HMAC secret for LoginUI Flow runtime contract signatures */
+  flowRuntimeHmacSecret: string;
   /** Dedicated encryption key for plugin configuration secrets */
   pluginEncryptionKey: string;
   /** Admin API secret */
@@ -296,6 +299,7 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
     objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
     versionManagerSecret: generateBase64Secret(32), // 256-bit secret
     loggingCursorHmacSecret: generateBase64Secret(32), // 256-bit secret
+    flowRuntimeHmacSecret: generateBase64Secret(32), // 256-bit secret
     pluginEncryptionKey: generateBase64Secret(32), // 256-bit secret
     adminApiSecret: generateBase64Secret(32), // 256-bit secret
     keyManagerSecret: generateBase64Secret(32), // 256-bit secret
@@ -516,6 +520,7 @@ export async function saveKeysToDirectory(
     objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
     versionManagerSecret: join(targetDir, 'version_manager_secret.txt'),
     loggingCursorHmacSecret: join(targetDir, 'logging_cursor_hmac_secret.txt'),
+    flowRuntimeHmacSecret: join(targetDir, 'flow_runtime_hmac_secret.txt'),
     pluginEncryptionKey: join(targetDir, 'plugin_encryption_key.txt'),
     adminApiSecret: join(targetDir, 'admin_api_secret.txt'),
     keyManagerSecret: join(targetDir, 'key_manager_secret.txt'),
@@ -559,6 +564,8 @@ export async function saveKeysToDirectory(
   await chmod(paths.versionManagerSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.loggingCursorHmacSecret, secrets.loggingCursorHmacSecret, 'utf-8');
   await chmod(paths.loggingCursorHmacSecret, SENSITIVE_FILE_MODE);
+  await writeFile(paths.flowRuntimeHmacSecret, secrets.flowRuntimeHmacSecret, 'utf-8');
+  await chmod(paths.flowRuntimeHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.pluginEncryptionKey, secrets.pluginEncryptionKey, 'utf-8');
   await chmod(paths.pluginEncryptionKey, SENSITIVE_FILE_MODE);
   await writeFile(paths.adminApiSecret, secrets.adminApiSecret, 'utf-8');
@@ -624,6 +631,7 @@ export async function saveKeysToDirectory(
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       versionManagerSecret: paths.versionManagerSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+      flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
       pluginEncryptionKey: paths.pluginEncryptionKey,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
@@ -739,6 +747,7 @@ export async function ensureSupplementalKeyFiles(
     objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
     versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+    flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
     pluginEncryptionKey: join(keysDir, 'plugin_encryption_key.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
@@ -768,6 +777,11 @@ export async function ensureSupplementalKeyFiles(
   if (!existsSync(paths.loggingCursorHmacSecret)) {
     await writeSensitiveFile(paths.loggingCursorHmacSecret, generateBase64Secret(32));
     createdFiles.push(paths.loggingCursorHmacSecret);
+  }
+
+  if (!existsSync(paths.flowRuntimeHmacSecret)) {
+    await writeSensitiveFile(paths.flowRuntimeHmacSecret, generateBase64Secret(32));
+    createdFiles.push(paths.flowRuntimeHmacSecret);
   }
 
   if (!existsSync(paths.pluginEncryptionKey)) {
@@ -823,6 +837,7 @@ export async function ensureSupplementalKeyFiles(
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       versionManagerSecret: paths.versionManagerSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+      flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
       pluginEncryptionKey: paths.pluginEncryptionKey,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
@@ -999,6 +1014,10 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'logging_cursor_hmac_secret.txt')})" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'flow_runtime_hmac_secret.txt')})" | wrangler secret put FLOW_RUNTIME_HMAC_SECRET${envFlag}`
   );
 
   commands.push(

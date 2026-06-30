@@ -1958,6 +1958,10 @@ export function createApiRoutes(): Hono {
               name: 'LOGGING_CURSOR_HMAC_SECRET',
             },
             {
+              file: join(keysDir, 'flow_runtime_hmac_secret.txt'),
+              name: 'FLOW_RUNTIME_HMAC_SECRET',
+            },
+            {
               file: join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'),
               name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
             },

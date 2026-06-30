@@ -318,7 +318,6 @@ const adminOther = {
 	admin_authentication_methods_icon_url: 'Icon URL',
 	admin_authentication_methods_button_color: 'Button Color',
 	admin_authentication_methods_enabled: 'Enabled',
-	admin_authentication_methods_start_mode_direct: 'Direct',
 	admin_authentication_methods_start_mode_saml_sp: 'SAML SP',
 	admin_authentication_methods_start_mode_oauth_redirect: 'OAuth Redirect',
 	admin_authentication_methods_validation_id_required: 'Provider ID is required.',

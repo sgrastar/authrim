@@ -4,6 +4,11 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
+	import {
+		flowRuntimeAPI,
+		type FlowRuntimeStartResponse,
+		type FlowRuntimeStep
+	} from '$lib/api/flow-runtime';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { auth } from '$lib/stores/auth';
@@ -18,6 +23,10 @@
 		getLoginUiSessionItem,
 		removeLoginUiSessionItems
 	} from '$lib/authrim/storage-keys';
+	import {
+		consumeFlowRuntimeState,
+		persistFlowRuntimeState
+	} from '$lib/authrim/flow-runtime-state';
 
 	let email = $state('');
 	let inviteToken = $state('');
@@ -26,6 +35,8 @@
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
 	let accountReturn = $state('');
+	let runtimeInteractionId = $state('');
+	let runtimeFlowKind = $state<'login' | 'registration'>('login');
 	let error = $state('');
 	let success = $state('');
 	let loading = $state(false);
@@ -92,6 +103,9 @@
 		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = $page.url.searchParams.get('return_to') || '';
 		accountReturn = $page.url.searchParams.get('account_return') || '';
+		runtimeInteractionId = $page.url.searchParams.get('runtime_interaction_id') || '';
+		runtimeFlowKind =
+			$page.url.searchParams.get('runtime_flow_kind') === 'registration' ? 'registration' : 'login';
 
 		// If no email, redirect to login
 		if (!email) {
@@ -175,11 +189,11 @@
 			// Restore authenticated state from the HttpOnly managed session cookie.
 			await auth.refreshFromSession();
 
+			const postVerifyRedirect = await resolveRuntimePostEmailRedirect(verifyData?.redirect_url);
+
 			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
-				void buildPostAuthRedirect(verifyData?.redirect_url).then((url) => {
-					window.location.href = url;
-				});
+				window.location.href = postVerifyRedirect;
 			}, 2000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
@@ -220,6 +234,86 @@
 		}
 
 		return '/';
+	}
+
+	function getRuntimeCurrentStep(flow: FlowRuntimeStartResponse): FlowRuntimeStep | null {
+		const currentStepId = flow.interaction.current_step_id;
+		if (!currentStepId) return null;
+		return flow.contract.ui.steps.find((step) => step.id === currentStepId) ?? null;
+	}
+
+	function getRuntimeResumePath(): string {
+		return runtimeFlowKind === 'registration' ? '/signup' : '/login';
+	}
+
+	async function resolveRuntimePostEmailRedirect(redirectUrl?: string): Promise<string> {
+		const postAuthRedirect = await buildPostAuthRedirect(redirectUrl);
+		if (!runtimeInteractionId) {
+			return postAuthRedirect;
+		}
+
+		const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+		if (!storedRuntime) {
+			throw new Error($LL.error_invalid_request());
+		}
+
+		const { data: resumedFlow, error: resumeError } = await flowRuntimeAPI.start({
+			resume_interaction_id: storedRuntime.interaction_id,
+			contract_hash: storedRuntime.contract_hash,
+			signature: storedRuntime.signature
+		});
+		if (resumeError || !resumedFlow) {
+			throw new Error(resumeError?.error_description || $LL.error_invalid_request());
+		}
+
+		let flow: FlowRuntimeStartResponse = resumedFlow;
+		let guard = 0;
+		while (guard < 10) {
+			guard += 1;
+			if (flow.interaction.state === 'completed') {
+				consumeFlowRuntimeState(flow.interaction.id);
+				return postAuthRedirect;
+			}
+
+			const step = getRuntimeCurrentStep(flow);
+			if (!step) {
+				throw new Error($LL.error_invalid_request());
+			}
+
+			if (step.render !== false && step.component !== 'email_verification') {
+				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
+					throw new Error($LL.error_invalid_request());
+				}
+				return `${getRuntimeResumePath()}?runtime_interaction_id=${encodeURIComponent(
+					flow.interaction.id
+				)}`;
+			}
+
+			const { data: submittedFlow, error: submitError } = await flowRuntimeAPI.submit(
+				flow.interaction.id,
+				{
+					step_id: step.id,
+					node_id: step.source_node_id,
+					selected_handle: step.component === 'email_verification' ? 'verified' : undefined,
+					contract_hash: flow.contract_hash,
+					signature: flow.signature
+				}
+			);
+			if (submitError || !submittedFlow) {
+				throw new Error(submitError?.error_description || $LL.error_invalid_request());
+			}
+
+			flow = {
+				...flow,
+				interaction: submittedFlow.interaction
+			};
+			if (submittedFlow.completed || flow.interaction.state === 'completed') {
+				consumeFlowRuntimeState(flow.interaction.id);
+				return postAuthRedirect;
+			}
+		}
+
+		throw new Error($LL.error_invalid_request());
 	}
 
 	async function handleResend() {

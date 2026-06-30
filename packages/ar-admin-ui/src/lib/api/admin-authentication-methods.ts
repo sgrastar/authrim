@@ -37,7 +37,7 @@ const HUMAN_VERIFICATION_REAUTH_ENABLED_KEY =
 export const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';
 
 export type AuthenticationMethodProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
-export type AuthenticationMethodProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+export type AuthenticationMethodProviderStartMode = 'oauth_redirect' | 'saml_sp';
 
 export interface AuthenticationMethodExternalProvider {
 	id: string;
@@ -157,10 +157,9 @@ function normalizeStartMode(
 	value: unknown,
 	type: AuthenticationMethodProviderType
 ): AuthenticationMethodProviderStartMode {
-	if (value === 'oauth_redirect' || value === 'saml_sp' || value === 'direct') return value;
+	if (value === 'oauth_redirect' || value === 'saml_sp') return value;
 	if (type === 'saml') return 'saml_sp';
-	if (type === 'oidc' || type === 'oauth2') return 'oauth_redirect';
-	return 'direct';
+	return 'oauth_redirect';
 }
 
 function serializeProviders(providers: AuthenticationMethodExternalProvider[]): string {

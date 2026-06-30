@@ -1800,22 +1800,13 @@ export const externalIdpAPI = {
 		providerId: string,
 		redirectUri?: string,
 		startUrl?: string,
-		startMode: 'oauth_redirect' | 'saml_sp' | 'direct' = 'oauth_redirect',
+		startMode: 'oauth_redirect' | 'saml_sp' = 'oauth_redirect',
 		humanVerification?: { token?: string }
 	): Promise<{
 		url: string;
 	}> {
 		const encodedProviderId = encodeURIComponent(providerId);
 		const targetUrl = new URL(startUrl || `/api/external/${encodedProviderId}/start`, API_BASE_URL);
-
-		if (startMode === 'direct') {
-			if (humanVerification?.token) {
-				throw new Error(
-					'Human verification requires an Authrim-managed external provider start URL.'
-				);
-			}
-			return { url: targetUrl.toString() };
-		}
 
 		if (humanVerification?.token) {
 			targetUrl.searchParams.set('human_verification_response', humanVerification.token);

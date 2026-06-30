@@ -122,6 +122,7 @@ describe('generateAllSecrets', () => {
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.versionManagerSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
+    expect(secrets.flowRuntimeHmacSecret).toBeDefined();
     expect(secrets.adminApiSecret).toBeDefined();
     expect(secrets.keyManagerSecret).toBeDefined();
     expect(secrets.setupToken).toBeDefined();
@@ -293,10 +294,11 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(11);
+    expect(result.createdFiles).toHaveLength(12);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
@@ -376,6 +378,9 @@ describe('generateWranglerSecretCommands', () => {
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/logging_cursor_hmac_secret.txt)" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/flow_runtime_hmac_secret.txt)" | wrangler secret put FLOW_RUNTIME_HMAC_SECRET --env dev'
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/plugin_encryption_key.txt)" | wrangler secret put PLUGIN_ENCRYPTION_KEY --env dev'

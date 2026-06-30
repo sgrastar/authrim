@@ -35,6 +35,7 @@ export * from './types/contracts';
 
 // Flow UI Types (Flow × UI Separation Architecture)
 export * from './schemas/flow-ui';
+export * from './schemas/flow-runtime';
 
 // API Versioning Types (Stripe-style date-based versioning)
 export * from './types/api-version';

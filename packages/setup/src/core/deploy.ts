@@ -57,6 +57,10 @@ function isValidEnv(env: string): boolean {
   return /^[a-z][a-z0-9-]*$/.test(env);
 }
 
+function sanitizeDeploymentErrorMessage(message: string): string {
+  return message.replace(/\/[^\s:]+/g, '[path]').replace(/\\[^\s:]+/g, '[path]');
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -589,6 +593,51 @@ export interface UiWorkerDeployOptions extends DeployOptions {
   adminUiBffSecrets?: AdminUiBffWorkerSecrets;
 }
 
+async function uploadUiWorkerSecretWithRetry(options: {
+  uiDir: string;
+  uiWorkerName: string;
+  secretName: string;
+  secretValue: string;
+  maxRetries: number;
+  retryDelayMs: number;
+  onProgress?: (message: string) => void;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const { uiDir, uiWorkerName, secretName, secretValue, maxRetries, retryDelayMs, onProgress } =
+    options;
+  let lastError = 'Unknown error';
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    onProgress?.(`[${attempt}/${maxRetries}] Uploading ${secretName} to ${uiWorkerName}...`);
+    const result = await execa(
+      'pnpm',
+      ['exec', 'wrangler', 'secret', 'put', secretName, '--name', uiWorkerName],
+      {
+        cwd: uiDir,
+        input: secretValue,
+        reject: false,
+      }
+    );
+
+    if (result.exitCode === 0) {
+      onProgress?.(`  ✓ ${secretName} uploaded`);
+      return { success: true };
+    }
+
+    lastError = sanitizeDeploymentErrorMessage(
+      String(result.stderr || result.stdout || 'Unknown error')
+    );
+    onProgress?.(`  ✗ Secret upload attempt ${attempt} failed: ${lastError}`);
+
+    if (attempt < maxRetries) {
+      const delay = retryDelayMs * attempt;
+      onProgress?.(`  ⏳ Retrying in ${delay / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  return { success: false, error: lastError };
+}
+
 /**
  * Deploy a single UI package to Cloudflare Workers static assets.
  *
@@ -788,16 +837,25 @@ export async function deployUiWorkerComponent(
 
     if (component === 'ar-admin-ui' && adminUiBffSecrets) {
       for (const [secretName, secretValue] of Object.entries(adminUiBffSecrets)) {
-        onProgress?.(`Uploading ${secretName} to ${uiWorkerName}...`);
-        await execa(
-          'pnpm',
-          ['exec', 'wrangler', 'secret', 'put', secretName, '--name', uiWorkerName],
-          {
-            cwd: uiDir,
-            input: secretValue,
-          }
-        );
-        onProgress?.(`  ✓ ${secretName} uploaded`);
+        const secretResult = await uploadUiWorkerSecretWithRetry({
+          uiDir,
+          uiWorkerName,
+          secretName,
+          secretValue,
+          maxRetries,
+          retryDelayMs,
+          onProgress,
+        });
+
+        if (!secretResult.success) {
+          return {
+            component,
+            projectName: uiWorkerName,
+            success: false,
+            error: `Failed to upload ${secretName}: ${secretResult.error}`,
+            duration: Date.now() - startTime,
+          };
+        }
       }
     }
 

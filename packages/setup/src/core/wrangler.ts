@@ -939,6 +939,9 @@ export function generateEnvVars(
   // Security settings
   vars['ENABLE_HTTP_REDIRECT'] = 'false';
   vars['ENABLE_OPEN_REGISTRATION'] = 'false';
+  if (component === 'ar-auth') {
+    vars['ENABLE_LOGIN_RUNTIME_FLOW'] = 'false';
+  }
 
   // Sharding configuration
   if (component === 'ar-lib-core' || component === 'ar-auth' || component === 'ar-token') {
@@ -953,6 +956,9 @@ export function generateEnvVars(
   }
   if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
     vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('FLOW_RUNTIME_HMAC_SECRET')) {
+    vars['FLOW_RUNTIME_HMAC_SECRET'] = ''; // Set via secret
   }
   if (componentSecrets.includes('VERSION_MANAGER_SECRET')) {
     vars['VERSION_MANAGER_SECRET'] = ''; // Set via secret

@@ -106,7 +106,6 @@ export const TENANT_TABLES_TO_DELETE = [
   'consent_history',
   'consent_item_history',
   'consent_policies',
-  'consent_policy_assignments',
   'consent_policy_items',
   'consent_policy_versions',
   'consent_statement_localizations',

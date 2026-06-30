@@ -100,7 +100,7 @@
 				label: $LL.admin_nav_directory_authentication(),
 				icon: 'i-ph-tree-structure'
 			},
-			{ path: '/admin/flows', label: 'Legacy Flows', icon: 'i-ph-flow-arrow' },
+			{ path: '/admin/flows', label: $LL.admin_nav_flows(), icon: 'i-ph-flow-arrow' },
 			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
 			{
 				path: '/admin/consent-policies',

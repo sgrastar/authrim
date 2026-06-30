@@ -4,16 +4,12 @@
 		adminAuthenticationMethodsAPI,
 		type AuthenticationMethodBuiltInSettings,
 		type AuthenticationMethodDirectoryPasswordSettings,
-		type AuthenticationMethodHumanVerificationSettings,
-		type AuthenticationMethodExternalProvider,
-		type AuthenticationMethodExternalProviderUsage
+		type AuthenticationMethodExternalProviderUsage,
+		type AuthenticationMethodHumanVerificationSettings
 	} from '$lib/api/admin-authentication-methods';
-	import { adminPluginsAPI, type PluginWithStatus } from '$lib/api/admin-plugins';
 	import type { CategorySettings } from '$lib/api/admin-settings';
-	import { ToggleSwitch } from '$lib/components';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { LL } from '$i18n/i18n-svelte';
 
 	const DEFAULT_BUILT_IN: AuthenticationMethodBuiltInSettings = {
 		passkeyLoginEnabled: true,
@@ -25,12 +21,6 @@
 		emailOtpReauthEnabled: true,
 		emailOtpAccountLinkEnabled: true
 	};
-	const DEFAULT_HUMAN_VERIFICATION: AuthenticationMethodHumanVerificationSettings = {
-		provider: 'human-verification-cloudflare-turnstile',
-		loginEnabled: false,
-		signupEnabled: false,
-		reauthEnabled: false
-	};
 	const DEFAULT_DIRECTORY_PASSWORD: AuthenticationMethodDirectoryPasswordSettings = {
 		loginEnabled: false,
 		configured: false,
@@ -39,52 +29,32 @@
 		autoProvision: false,
 		config: null
 	};
-	const HUMAN_VERIFICATION_PROVIDERS = [
-		{
-			id: 'human-verification-cloudflare-turnstile',
-			name: 'Cloudflare Turnstile',
-			description: $LL.admin_authentication_methods_turnstile_description()
-		},
-		{
-			id: 'human-verification-hcaptcha',
-			name: 'hCaptcha',
-			description: $LL.admin_authentication_methods_hcaptcha_description()
-		},
-		{
-			id: 'human-verification-google-recaptcha',
-			name: 'Google reCAPTCHA',
-			description: $LL.admin_authentication_methods_recaptcha_description()
-		}
-	] as const;
+	const DEFAULT_HUMAN_VERIFICATION: AuthenticationMethodHumanVerificationSettings = {
+		provider: 'human-verification-cloudflare-turnstile',
+		loginEnabled: false,
+		signupEnabled: false,
+		reauthEnabled: false
+	};
+
+	type Usage = 'signup' | 'login' | 'reauth' | 'account_link';
 
 	let loading = $state(true);
-	let saving = $state(false);
 	let error = $state('');
-	let successMessage = $state('');
 	let settings = $state<CategorySettings | null>(null);
 	let builtIn = $state<AuthenticationMethodBuiltInSettings>({ ...DEFAULT_BUILT_IN });
-	let initialBuiltInJson = $state(JSON.stringify(DEFAULT_BUILT_IN));
 	let directoryPassword = $state<AuthenticationMethodDirectoryPasswordSettings>({
 		...DEFAULT_DIRECTORY_PASSWORD
 	});
-	let initialDirectoryPasswordJson = $state(JSON.stringify(DEFAULT_DIRECTORY_PASSWORD));
 	let humanVerification = $state<AuthenticationMethodHumanVerificationSettings>({
 		...DEFAULT_HUMAN_VERIFICATION
 	});
-	let initialHumanVerificationJson = $state(JSON.stringify(DEFAULT_HUMAN_VERIFICATION));
-	let providers = $state<AuthenticationMethodExternalProvider[]>([]);
 	let externalProviderUsages = $state<AuthenticationMethodExternalProviderUsage[]>([]);
-	let initialExternalProviderUsagesJson = $state('[]');
-	let humanVerificationPluginStatuses = $state<Record<string, PluginWithStatus>>({});
 
 	const currentTenantId = $derived(settingsContext.tenantId);
-	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
-	const hasChanges = $derived(
-		JSON.stringify(builtIn) !== initialBuiltInJson ||
-			JSON.stringify(directoryPassword) !== initialDirectoryPasswordJson ||
-			JSON.stringify(humanVerification) !== initialHumanVerificationJson ||
-			JSON.stringify(externalProviderUsages) !== initialExternalProviderUsagesJson
-	);
+	const loginMethods = $derived(enabledMethods('login'));
+	const signupMethods = $derived(enabledMethods('signup'));
+	const reauthMethods = $derived(enabledMethods('reauth'));
+	const accountLinkMethods = $derived(enabledMethods('account_link'));
 
 	onMount(async () => {
 		await settingsContext.initialize();
@@ -104,469 +74,128 @@
 	async function loadData() {
 		loading = true;
 		error = '';
-		successMessage = '';
 		try {
 			const response = await adminAuthenticationMethodsAPI.get(currentTenantId);
 			settings = response.settings;
 			builtIn = response.builtIn;
-			initialBuiltInJson = JSON.stringify(response.builtIn);
 			directoryPassword = response.directoryPassword;
-			initialDirectoryPasswordJson = JSON.stringify(response.directoryPassword);
 			humanVerification = response.humanVerification;
-			initialHumanVerificationJson = JSON.stringify(response.humanVerification);
-			providers = response.providers;
 			externalProviderUsages = response.externalProviderUsages;
-			initialExternalProviderUsagesJson = JSON.stringify(response.externalProviderUsages);
-			humanVerificationPluginStatuses = await loadHumanVerificationPluginStatuses();
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_authentication_methods_error_load();
+			error = err instanceof Error ? err.message : '認証方式プロフィールの読み込みに失敗しました。';
 		} finally {
 			loading = false;
 		}
 	}
 
-	async function loadHumanVerificationPluginStatuses(): Promise<Record<string, PluginWithStatus>> {
-		try {
-			const response = await adminPluginsAPI.list({
-				category: 'security',
-				tenantId: currentTenantId
-			});
-			const entries = response.plugins
-				.filter((plugin) =>
-					HUMAN_VERIFICATION_PROVIDERS.some((provider) => provider.id === plugin.id)
-				)
-				.map((plugin) => [plugin.id, plugin] as const);
-			return Object.fromEntries(entries);
-		} catch {
-			return {};
+	function enabledMethods(usage: Usage): string[] {
+		const labels: string[] = [];
+		if (usage === 'signup' && builtIn.passkeySignupEnabled) labels.push('Passkey');
+		if (usage === 'login' && builtIn.passkeyLoginEnabled) labels.push('Passkey');
+		if (usage === 'reauth' && builtIn.passkeyReauthEnabled) labels.push('Passkey');
+		if (usage === 'account_link' && builtIn.passkeyAccountLinkEnabled) labels.push('Passkey');
+
+		if (usage === 'signup' && builtIn.emailOtpSignupEnabled) labels.push('Mail OTP');
+		if (usage === 'login' && builtIn.emailOtpLoginEnabled) labels.push('Mail OTP');
+		if (usage === 'reauth' && builtIn.emailOtpReauthEnabled) labels.push('Mail OTP');
+		if (usage === 'account_link' && builtIn.emailOtpAccountLinkEnabled) labels.push('Mail OTP');
+
+		if (usage === 'login' && directoryPassword.loginEnabled) {
+			labels.push('Directory password');
 		}
+
+		for (const provider of externalProviderUsages) {
+			if (!provider.enabled) continue;
+			if (usage === 'signup' && provider.signupEnabled) labels.push(provider.name);
+			if (usage === 'login' && provider.loginEnabled) labels.push(provider.name);
+			if (usage === 'reauth' && provider.reauthEnabled) labels.push(provider.name);
+			if (usage === 'account_link' && provider.accountLinkEnabled) labels.push(provider.name);
+		}
+		return labels;
 	}
 
-	async function saveProviders() {
-		if (!settings) return;
-		error = '';
-		successMessage = '';
-		saving = true;
-		try {
-			const result = await adminAuthenticationMethodsAPI.update(
-				settings,
-				builtIn,
-				directoryPassword,
-				humanVerification,
-				providers,
-				externalProviderUsages,
-				currentTenantId
-			);
-			settings = { ...settings, version: result.version };
-			directoryPassword = {
-				...directoryPassword,
-				config: directoryPassword.config
-					? { ...directoryPassword.config, enabled: directoryPassword.loginEnabled }
-					: null
-			};
-			initialBuiltInJson = JSON.stringify(builtIn);
-			initialDirectoryPasswordJson = JSON.stringify(directoryPassword);
-			initialHumanVerificationJson = JSON.stringify(humanVerification);
-			initialExternalProviderUsagesJson = JSON.stringify(externalProviderUsages);
-			successMessage = $LL.admin_authentication_methods_saved();
-		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_authentication_methods_error_save();
-		} finally {
-			saving = false;
-		}
+	function formatMethodList(methods: string[]): string {
+		if (methods.length === 0) return 'なし';
+		return methods.slice(0, 3).join(', ') + (methods.length > 3 ? ` +${methods.length - 3}` : '');
 	}
 
-	function updateExternalProviderUsage(
-		providerId: string,
-		key: keyof Pick<
-			AuthenticationMethodExternalProviderUsage,
-			'loginEnabled' | 'signupEnabled' | 'reauthEnabled' | 'accountLinkEnabled'
-		>,
-		value: boolean
-	) {
-		externalProviderUsages = externalProviderUsages.map((provider) => {
-			if (provider.id !== providerId) return provider;
-			if (key === 'accountLinkEnabled' && !provider.autoLinkEmail) {
-				return { ...provider, accountLinkEnabled: false };
-			}
-			return { ...provider, [key]: value };
-		});
+	function humanVerificationSummary(): string {
+		const enabled: string[] = [];
+		if (humanVerification.signupEnabled) enabled.push('登録');
+		if (humanVerification.loginEnabled) enabled.push('ログイン');
+		if (humanVerification.reauthEnabled) enabled.push('再認証');
+		return enabled.length > 0 ? enabled.join(', ') : '無効';
 	}
-
-	const selectedHumanVerificationProvider = $derived(
-		HUMAN_VERIFICATION_PROVIDERS.find((provider) => provider.id === humanVerification.provider) ??
-			HUMAN_VERIFICATION_PROVIDERS[0]
-	);
-	const selectedHumanVerificationPluginStatus = $derived(
-		humanVerificationPluginStatuses[humanVerification.provider] ?? null
-	);
-	const selectedHumanVerificationPluginWarning = $derived.by(() => {
-		const status = selectedHumanVerificationPluginStatus;
-		if (!status) {
-			return $LL.admin_authentication_methods_provider_status_unknown();
-		}
-		if (!status.enabled) {
-			return $LL.admin_authentication_methods_provider_disabled({
-				provider: selectedHumanVerificationProvider.name
-			});
-		}
-		if (!status.configured) {
-			const required = status.missingRequiredFields.join(', ');
-			return required
-				? $LL.admin_authentication_methods_provider_missing_config_with_fields({
-						provider: selectedHumanVerificationProvider.name,
-						fields: required
-					})
-				: $LL.admin_authentication_methods_provider_missing_config({
-						provider: selectedHumanVerificationProvider.name
-					});
-		}
-		return '';
-	});
 </script>
 
 <svelte:head>
-	<title>{$LL.admin_authentication_methods_page_title()}</title>
+	<title>認証方式プロフィール - Admin Dashboard - Authrim</title>
 </svelte:head>
 
 <AdminPageShell>
 	<AdminPageHeader
-		title={$LL.admin_authentication_methods_title()}
-		description={$LL.admin_authentication_methods_description({ tenantId: currentTenantId })}
+		title="認証方式プロフィール"
+		description={`ログイン、登録、再認証、アカウント連携で使う認証方式のプロフィールを管理します。現在のテナント: ${currentTenantId || '-'}`}
 	>
 		{#snippet actions()}
-			<span class="cache-notice">{$LL.admin_authentication_methods_cache_notice()}</span>
-			<button class="btn btn-secondary" disabled={!hasChanges || saving} onclick={loadData}>
-				{$LL.admin_authentication_methods_discard()}
-			</button>
-			<button
-				class="btn btn-primary"
-				disabled={!canEdit || !hasChanges || saving}
-				onclick={saveProviders}
-			>
-				{saving
-					? $LL.admin_authentication_methods_saving()
-					: $LL.admin_authentication_methods_save()}
-			</button>
+			<span class="cache-notice">変更がLoginUIに反映されるまで最大3分かかる場合があります。</span>
 		{/snippet}
 	</AdminPageHeader>
 
 	{#if loading}
 		<AdminSection>
-			<div class="state">{$LL.admin_authentication_methods_loading()}</div>
+			<div class="state">読み込み中...</div>
 		</AdminSection>
 	{:else}
 		{#if error}
 			<div class="alert alert-error">{error}</div>
 		{/if}
-		{#if successMessage}
-			<div class="alert alert-success">{successMessage}</div>
-		{/if}
 
 		<AdminSection
-			title={$LL.admin_authentication_methods_builtin_title()}
-			description={$LL.admin_authentication_methods_builtin_description()}
+			title="Profiles"
+			description="Flowではここで定義したプロフィールを選択します。認証方式の細かい有効/無効はプロフィール詳細で管理します。"
 		>
-			<div class="method-matrix">
-				<div class="method-matrix-header"></div>
-				<div class="method-matrix-column">{$LL.admin_authentication_methods_signup_enabled()}</div>
-				<div class="method-matrix-column">{$LL.admin_authentication_methods_login_enabled()}</div>
-				<div class="method-matrix-column">{$LL.admin_authentication_methods_reauth_enabled()}</div>
-				<div class="method-matrix-column">
-					{$LL.admin_authentication_methods_account_link_enabled()}
-				</div>
-
-				<div class="method-title">
-					<strong>{$LL.admin_authentication_methods_passkey()}</strong>
-					<span>{$LL.admin_authentication_methods_passkey_description()}</span>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch bind:checked={builtIn.passkeySignupEnabled} disabled={!canEdit} size="sm" />
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch bind:checked={builtIn.passkeyLoginEnabled} disabled={!canEdit} size="sm" />
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch bind:checked={builtIn.passkeyReauthEnabled} disabled={!canEdit} size="sm" />
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={builtIn.passkeyAccountLinkEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-
-				<div class="method-title">
-					<strong>{$LL.admin_authentication_methods_email_otp()}</strong>
-					<span>{$LL.admin_authentication_methods_email_otp_description()}</span>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={builtIn.emailOtpSignupEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch bind:checked={builtIn.emailOtpLoginEnabled} disabled={!canEdit} size="sm" />
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={builtIn.emailOtpReauthEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={builtIn.emailOtpAccountLinkEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-
-				<div class="method-title">
-					<div class="provider-title">
-						<strong>{$LL.admin_authentication_methods_directory_password()}</strong>
-						{#if !directoryPassword.configured}
-							<span class="badge muted">{$LL.admin_authentication_methods_not_configured()}</span>
-						{/if}
+			<div class="profile-grid">
+				<a class="profile-card" href="/admin/authentication-methods/default">
+					<div class="profile-card__header">
+						<div>
+							<p class="profile-card__eyebrow">Built-in</p>
+							<h2>Default profile</h2>
+						</div>
+						<span class="status-badge">Default</span>
 					</div>
-					<span>{$LL.admin_authentication_methods_directory_password_description()}</span>
-					<a href="/admin/directory-authentication" class="inline-link method-config-link">
-						{$LL.admin_authentication_methods_configure_directory()}
-					</a>
-				</div>
-				<div class="method-cell unavailable">
-					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={directoryPassword.loginEnabled}
-						disabled={!canEdit || !directoryPassword.configured}
-						size="sm"
-					/>
-				</div>
-				<div class="method-cell unavailable">
-					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
-				</div>
-				<div class="method-cell unavailable">
-					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
-				</div>
-			</div>
-		</AdminSection>
-
-		<AdminSection title={$LL.admin_authentication_methods_configured()}>
-			{#snippet actions()}
-				<span class="count">{externalProviderUsages.length}</span>
-			{/snippet}
-
-			{#if externalProviderUsages.length === 0}
-				<div class="empty">{$LL.admin_authentication_methods_empty()}</div>
-			{:else}
-				<div class="method-matrix provider-usage-matrix">
-					<div class="method-matrix-header"></div>
-					<div class="method-matrix-column">
-						{$LL.admin_authentication_methods_signup_enabled()}
+					<p class="profile-card__description">
+						既存の認証方式設定です。Flowから選択するDefault profileとして扱います。
+					</p>
+					<div class="profile-card__matrix">
+						<div>
+							<span>登録</span>
+							<strong>{formatMethodList(signupMethods)}</strong>
+						</div>
+						<div>
+							<span>ログイン</span>
+							<strong>{formatMethodList(loginMethods)}</strong>
+						</div>
+						<div>
+							<span>再認証</span>
+							<strong>{formatMethodList(reauthMethods)}</strong>
+						</div>
+						<div>
+							<span>連携</span>
+							<strong>{formatMethodList(accountLinkMethods)}</strong>
+						</div>
 					</div>
-					<div class="method-matrix-column">{$LL.admin_authentication_methods_login_enabled()}</div>
-					<div class="method-matrix-column">
-						{$LL.admin_authentication_methods_reauth_enabled()}
+					<div class="profile-card__footer">
+						<span>Human verification: {humanVerificationSummary()}</span>
+						<i class="i-ph-arrow-right" aria-hidden="true"></i>
 					</div>
-					<div class="method-matrix-column">
-						{$LL.admin_authentication_methods_account_link_enabled()}
-					</div>
-					{#each externalProviderUsages as provider (provider.id)}
-						<div class="method-title provider-method-title">
-							<div class="provider-title">
-								<span>{provider.name}</span>
-								{#if !provider.enabled}
-									<span class="badge muted">{$LL.admin_authentication_methods_disabled()}</span>
-								{/if}
-								<span class="badge">{provider.type}</span>
-							</div>
-							<code class="provider-id">{provider.providerId}</code>
-						</div>
-						<div class="method-cell">
-							<ToggleSwitch
-								checked={provider.signupEnabled}
-								disabled={!canEdit || !provider.enabled}
-								size="sm"
-								onchange={(checked) =>
-									updateExternalProviderUsage(provider.id, 'signupEnabled', checked)}
-							/>
-						</div>
-						<div class="method-cell">
-							<ToggleSwitch
-								checked={provider.loginEnabled}
-								disabled={!canEdit || !provider.enabled}
-								size="sm"
-								onchange={(checked) =>
-									updateExternalProviderUsage(provider.id, 'loginEnabled', checked)}
-							/>
-						</div>
-						<div class="method-cell">
-							<ToggleSwitch
-								checked={provider.reauthEnabled}
-								disabled={!canEdit || !provider.enabled}
-								size="sm"
-								onchange={(checked) =>
-									updateExternalProviderUsage(provider.id, 'reauthEnabled', checked)}
-							/>
-						</div>
-						<div class="method-cell">
-							<ToggleSwitch
-								checked={provider.accountLinkEnabled}
-								disabled={!canEdit || !provider.enabled || !provider.autoLinkEmail}
-								size="sm"
-								onchange={(checked) =>
-									updateExternalProviderUsage(provider.id, 'accountLinkEnabled', checked)}
-							/>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</AdminSection>
-
-		<AdminSection
-			title={$LL.admin_authentication_methods_human_verification_title()}
-			description={$LL.admin_authentication_methods_human_verification_description()}
-		>
-			<div class="method-matrix human-verification-matrix">
-				<div class="method-matrix-header"></div>
-				<div class="method-matrix-column">{$LL.admin_authentication_methods_signup_enabled()}</div>
-				<div class="method-matrix-column">{$LL.admin_authentication_methods_login_enabled()}</div>
-				<div class="method-matrix-column">{$LL.admin_authentication_methods_reauth_enabled()}</div>
-				<div class="method-matrix-column" aria-hidden="true"></div>
-
-				<div class="method-title">
-					<div class="provider-title">
-						<span>{selectedHumanVerificationProvider.name}</span>
-						<span class="badge">{$LL.admin_authentication_methods_plugin_managed()}</span>
-					</div>
-					<label class="provider-select-label" for="human-verification-provider">Provider</label>
-					<select
-						id="human-verification-provider"
-						class="provider-select"
-						bind:value={humanVerification.provider}
-						disabled={!canEdit}
-					>
-						{#each HUMAN_VERIFICATION_PROVIDERS as provider (provider.id)}
-							<option value={provider.id}>{provider.name}</option>
-						{/each}
-					</select>
-					<span>{selectedHumanVerificationProvider.description}</span>
-					{#if selectedHumanVerificationPluginWarning}
-						<div class="provider-warning">
-							{selectedHumanVerificationPluginWarning}
-						</div>
-					{/if}
-					<a
-						href={`/admin/plugins?plugin=${encodeURIComponent(humanVerification.provider)}`}
-						class="inline-link plugin-config-link"
-					>
-						{$LL.admin_authentication_methods_configure_plugin()}
-					</a>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={humanVerification.signupEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={humanVerification.loginEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-				<div class="method-cell">
-					<ToggleSwitch
-						bind:checked={humanVerification.reauthEnabled}
-						disabled={!canEdit}
-						size="sm"
-					/>
-				</div>
-				<div class="method-cell" aria-hidden="true"></div>
+				</a>
 			</div>
 		</AdminSection>
 	{/if}
 </AdminPageShell>
 
 <style>
-	:global(.admin-section) {
-		--section-margin-block: 10px;
-		--section-header-margin-bottom: 5px;
-	}
-
-	:global(.admin-section__description) {
-		margin-top: 2px;
-		font-size: 0.8rem;
-		line-height: 1.4;
-	}
-
-	:global(.admin-page__header) {
-		--page-header-margin: 14px;
-		--page-title-size: 1.55rem;
-		--page-description-size: 0.84rem;
-	}
-
-	:global(.admin-page__description) {
-		margin-top: 3px;
-		line-height: 1.4;
-	}
-
-	.empty,
-	.state {
-		color: var(--color-text-muted);
-	}
-
-	.method-matrix {
-		display: grid;
-		grid-template-columns: minmax(260px, 50%) repeat(4, minmax(96px, 1fr));
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-panel);
-		background: var(--color-surface);
-		overflow: hidden;
-	}
-
-	.method-matrix > div {
-		padding: 7px 16px;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.method-matrix > div:nth-last-child(-n + 5) {
-		border-bottom: 0;
-	}
-
-	.method-matrix-column {
-		font-size: 0.68rem;
-		font-weight: 800;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--color-text-muted);
-	}
-
-	.method-title {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		color: var(--color-text);
-	}
-
-	.method-title > span {
-		font-size: 0.8rem;
-		color: var(--color-text-muted);
-	}
-
-	.method-cell {
-		display: flex;
-		align-items: center;
-	}
-
 	.cache-notice {
 		color: var(--color-text-muted);
 		font-size: 0.78rem;
@@ -574,93 +203,104 @@
 		white-space: nowrap;
 	}
 
-	.inline-link {
-		color: var(--color-primary);
-		font-weight: 700;
+	.profile-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+		gap: 14px;
+	}
+
+	.profile-card {
+		display: grid;
+		gap: 14px;
+		padding: 18px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, 8px);
+		background: var(--color-surface);
+		color: var(--color-text);
 		text-decoration: none;
+		box-shadow: var(--card-shadow, none);
+		transition:
+			border-color 120ms ease,
+			transform 120ms ease,
+			background 120ms ease;
 	}
 
-	.plugin-config-link {
-		width: fit-content;
-		font-size: 0.8rem;
-		line-height: 1.35;
+	.profile-card:hover {
+		border-color: var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 5%, var(--color-surface));
+		transform: translateY(-1px);
 	}
 
-	.method-config-link {
-		width: fit-content;
-		font-size: 0.8rem;
-		line-height: 1.35;
-	}
-
-	.unavailable {
-		color: var(--color-text-subtle);
-		font-size: 0.78rem;
-		font-weight: 650;
-	}
-
-	.provider-warning {
-		border: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
-		border-radius: 6px;
-		background: color-mix(in srgb, var(--color-warning) 10%, transparent);
-		color: var(--color-warning);
-		font-size: 0.78rem;
-		font-weight: 650;
-		line-height: 1.4;
-		padding: 7px 9px;
-	}
-
-	.provider-title {
+	.profile-card__header,
+	.profile-card__footer {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap;
-		font-weight: 700;
-		color: var(--color-text);
-		font-size: 0.9rem;
+		justify-content: space-between;
+		gap: 12px;
 	}
 
-	.provider-select-label {
-		color: var(--color-text-muted);
-		font-size: 0.7rem;
-		font-weight: 700;
+	.profile-card__eyebrow {
+		margin: 0 0 4px;
+		color: var(--color-accent);
+		font-size: 0.66rem;
+		font-weight: 900;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 	}
 
-	.provider-select {
-		width: min(100%, 280px);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: var(--color-surface);
-		color: var(--color-text);
-		font: inherit;
-		font-size: 0.82rem;
-		padding: 7px 9px;
+	.profile-card h2 {
+		margin: 0;
+		font-family: var(--font-display);
+		font-size: 1.12rem;
+		line-height: 1.25;
 	}
 
-	.provider-id {
-		color: var(--color-text);
-		font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-		font-size: 0.78rem;
-	}
-
-	.badge,
-	.count {
-		display: inline-flex;
-		align-items: center;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		padding: 2px 8px;
-		font-size: 11px;
-		font-weight: 700;
+	.profile-card__description {
+		margin: 0;
 		color: var(--color-text-muted);
+		font-size: 0.84rem;
+		line-height: 1.55;
+	}
+
+	.profile-card__matrix {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+	}
+
+	.profile-card__matrix div {
+		display: grid;
+		gap: 4px;
+		min-height: 62px;
+		padding: 10px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
 		background: var(--color-surface-muted);
 	}
 
-	.badge.muted {
-		border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
-		background: color-mix(in srgb, var(--color-warning) 10%, transparent);
-		color: var(--color-warning);
+	.profile-card__matrix span,
+	.profile-card__footer {
+		color: var(--color-text-muted);
+		font-size: 0.76rem;
+	}
+
+	.profile-card__matrix strong {
+		color: var(--color-text);
+		font-size: 0.84rem;
+		line-height: 1.35;
+	}
+
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		min-height: 24px;
+		padding: 0 9px;
+		border: 1px solid color-mix(in srgb, var(--color-success) 40%, var(--color-border));
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
+		color: var(--color-success);
+		font-size: 0.72rem;
+		font-weight: 850;
 	}
 
 	.alert {
@@ -670,47 +310,23 @@
 	}
 
 	.alert-error {
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
 		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 		color: var(--color-danger);
-		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
 	}
 
-	.alert-success {
-		background: color-mix(in srgb, var(--color-success) 10%, transparent);
-		color: var(--color-success);
-		border: 1px solid color-mix(in srgb, var(--color-success) 32%, var(--color-border));
-	}
-
-	.empty,
 	.state {
 		padding: 14px 16px;
 		border: 1px dashed var(--color-border);
 		border-radius: var(--radius-panel);
 		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
-	@media (max-width: 980px) {
-		.method-matrix {
-			grid-template-columns: minmax(180px, 44%) repeat(4, minmax(82px, 1fr));
-		}
-	}
-
-	@media (max-width: 720px) {
-		.method-matrix {
+	@media (max-width: 640px) {
+		.profile-grid,
+		.profile-card__matrix {
 			grid-template-columns: 1fr;
-		}
-
-		.method-matrix-header,
-		.method-matrix-column {
-			display: none;
-		}
-
-		.method-matrix > div {
-			border-bottom: 1px solid var(--color-border);
-		}
-
-		.method-cell {
-			justify-content: space-between;
 		}
 	}
 </style>

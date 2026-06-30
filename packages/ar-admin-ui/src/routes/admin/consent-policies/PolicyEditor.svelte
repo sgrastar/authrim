@@ -6,8 +6,6 @@
 		type ClientTrustPolicy,
 		type ClientTrustPolicyTargetType,
 		type ConsentPolicy,
-		type ConsentPolicyAssignment,
-		type ConsentPolicyAssignmentType,
 		type ConsentPolicyItem
 	} from '$lib/api/admin-consent-policies';
 	import type {
@@ -52,7 +50,6 @@
 	let statements = $state<ConsentStatement[]>([]);
 	let clients = $state<Client[]>([]);
 	let samlProviders = $state<SAMLProvider[]>([]);
-	let assignments = $state<ConsentPolicyAssignment[]>([]);
 	let clientTrustPolicies = $state<ClientTrustPolicy[]>([]);
 	let signInPolicies = $state<SignInConfirmationPolicy[]>([]);
 	let policyForm = $state({
@@ -62,13 +59,6 @@
 		is_active: true
 	});
 	let itemDrafts = $state<PolicyItemDraft[]>([]);
-	let assignmentForm = $state<{
-		assignment_type: ConsentPolicyAssignmentType;
-		target_id: string;
-	}>({
-		assignment_type: 'registration',
-		target_id: ''
-	});
 	let trustForm = $state<{
 		target_type: ClientTrustPolicyTargetType;
 		target_id: string;
@@ -116,9 +106,6 @@
 	const samlSpProviders = $derived(
 		samlProviders.filter((provider) => provider.providerType === 'saml_sp')
 	);
-	const currentPolicyAssignments = $derived(
-		assignments.filter((assignment) => assignment.policy_id === policyForm.id)
-	);
 	const canWriteSettings = $derived(adminAuth.hasPermission('admin:settings:write'));
 	const writeDisabled = $derived(!canWriteSettings || saving || deleting);
 	let trustDisplayNameInitialized = $state(false);
@@ -141,25 +128,17 @@
 		loading = true;
 		error = '';
 		try {
-			const [
-				statementResult,
-				clientResult,
-				samlResult,
-				assignmentResult,
-				trustResult,
-				signInResult
-			] = await Promise.all([
-				adminConsentStatementsAPI.listStatements(),
-				adminClientsAPI.list({ limit: 500 }),
-				adminSAMLAPI.listProviders(),
-				adminConsentPoliciesAPI.listAssignments(),
-				adminConsentPoliciesAPI.listClientTrustPolicies(),
-				adminConsentPoliciesAPI.listSignInConfirmationPolicies()
-			]);
+			const [statementResult, clientResult, samlResult, trustResult, signInResult] =
+				await Promise.all([
+					adminConsentStatementsAPI.listStatements(),
+					adminClientsAPI.list({ limit: 500 }),
+					adminSAMLAPI.listProviders(),
+					adminConsentPoliciesAPI.listClientTrustPolicies(),
+					adminConsentPoliciesAPI.listSignInConfirmationPolicies()
+				]);
 			statements = statementResult.statements || [];
 			clients = clientResult.clients || [];
 			samlProviders = samlResult.providers || [];
-			assignments = assignmentResult.assignments || [];
 			clientTrustPolicies = trustResult.policies || [];
 			signInPolicies = signInResult.policies || [];
 			const loginPolicy = signInPolicies.find((candidate) => candidate.trigger_type === 'login');
@@ -334,42 +313,6 @@
 		}));
 	}
 
-	async function saveAssignment() {
-		if (!canWriteSettings) {
-			error = $LL.admin_consent_policies_permission_assignments();
-			return;
-		}
-		if (!policyForm.id) {
-			error = $LL.admin_consent_policies_save_assignment_first();
-			return;
-		}
-		if (
-			(assignmentForm.assignment_type === 'oidc_client' ||
-				assignmentForm.assignment_type === 'saml_sp') &&
-			!assignmentForm.target_id
-		) {
-			error = $LL.admin_consent_policies_target_id_required();
-			return;
-		}
-		saving = true;
-		error = '';
-		successMessage = '';
-		try {
-			const result = await adminConsentPoliciesAPI.upsertAssignment({
-				assignment_type: assignmentForm.assignment_type,
-				target_id: assignmentForm.target_id,
-				policy_id: policyForm.id
-			});
-			assignments = result.assignments || [];
-			successMessage = $LL.admin_consent_policies_assignment_saved();
-		} catch (err) {
-			error =
-				err instanceof Error ? err.message : $LL.admin_consent_policies_assignment_save_error();
-		} finally {
-			saving = false;
-		}
-	}
-
 	async function saveClientTrustPolicy() {
 		if (!canWriteSettings) {
 			error = $LL.admin_consent_policies_permission_trust();
@@ -418,18 +361,7 @@
 		return `${statement.slug} (${statement.category})`;
 	}
 
-	function assignmentLabel(type: ConsentPolicyAssignmentType) {
-		if (type === 'registration') return $LL.admin_consent_policies_registration();
-		if (type === 'login') return $LL.admin_consent_policies_login();
-		if (type === 'oidc_client') return $LL.admin_consent_policies_oidc_client();
-		return $LL.admin_consent_policies_saml_sp();
-	}
-
-	function targetName(
-		type: ConsentPolicyAssignmentType | ClientTrustPolicyTargetType,
-		targetId: string
-	) {
-		if (type === 'registration' || type === 'login') return assignmentLabel(type);
+	function targetName(type: ClientTrustPolicyTargetType, targetId: string) {
 		if (type === 'oidc_client') {
 			const client = clients.find((candidate) => candidate.client_id === targetId);
 			return client ? client.client_name : targetId;
@@ -449,21 +381,6 @@
 		if (mode === 'first_time') return $LL.admin_consent_policies_mode_first_time();
 		if (mode === 'every_time') return $LL.admin_consent_policies_mode_every_time();
 		return $LL.admin_consent_policies_mode_disabled();
-	}
-
-	function formatDate(timestamp: number) {
-		if (!timestamp) return '-';
-		const millis = timestamp > 100000000000 ? timestamp : timestamp * 1000;
-		return new Date(millis).toLocaleDateString();
-	}
-
-	function setAssignmentType(event: Event) {
-		assignmentForm = {
-			...assignmentForm,
-			assignment_type: (event.currentTarget as HTMLSelectElement)
-				.value as ConsentPolicyAssignmentType,
-			target_id: ''
-		};
 	}
 
 	function setTrustTargetType(event: Event) {
@@ -641,106 +558,6 @@
 					{$LL.admin_consent_policies_save_statements()}
 				</button>
 			</div>
-		</AdminSection>
-
-		<AdminSection
-			title={$LL.admin_consent_policies_assignments()}
-			description={policyForm.id
-				? $LL.admin_consent_policies_assignments_description()
-				: $LL.admin_consent_policies_assignments_create_first()}
-		>
-			<div class="inline-form">
-				<div class="admin-field">
-					<label for="assignment-type" class="admin-field__label">
-						{$LL.admin_consent_policies_target()}
-					</label>
-					<select
-						id="assignment-type"
-						class="admin-select"
-						value={assignmentForm.assignment_type}
-						onchange={setAssignmentType}
-						disabled={!policyForm.id || writeDisabled}
-					>
-						<option value="registration">{$LL.admin_consent_policies_registration()}</option>
-						<option value="login">{$LL.admin_consent_policies_login()}</option>
-						<option value="oidc_client">{$LL.admin_consent_policies_oidc_client()}</option>
-						<option value="saml_sp">{$LL.admin_consent_policies_saml_sp()}</option>
-					</select>
-				</div>
-				<div class="admin-field">
-					<label for="assignment-target" class="admin-field__label">
-						{$LL.admin_consent_policies_target_id()}
-					</label>
-					{#if assignmentForm.assignment_type === 'oidc_client'}
-						<select
-							id="assignment-target"
-							class="admin-select"
-							bind:value={assignmentForm.target_id}
-							disabled={!policyForm.id || writeDisabled}
-						>
-							<option value="">{$LL.admin_consent_policies_select_client()}</option>
-							{#each clients as client (client.client_id)}
-								<option value={client.client_id}>{client.client_name}</option>
-							{/each}
-						</select>
-					{:else if assignmentForm.assignment_type === 'saml_sp'}
-						<select
-							id="assignment-target"
-							class="admin-select"
-							bind:value={assignmentForm.target_id}
-							disabled={!policyForm.id || writeDisabled}
-						>
-							<option value="">{$LL.admin_consent_policies_select_saml_sp()}</option>
-							{#each samlSpProviders as provider (provider.id)}
-								<option value={provider.id}>{provider.name}</option>
-							{/each}
-						</select>
-					{:else}
-						<input
-							id="assignment-target"
-							class="admin-input"
-							value={$LL.admin_consent_policies_tenant_account_flow()}
-							disabled
-						/>
-					{/if}
-				</div>
-				<button
-					class="btn btn-primary align-end"
-					type="button"
-					onclick={saveAssignment}
-					disabled={!policyForm.id ||
-						writeDisabled ||
-						((assignmentForm.assignment_type === 'oidc_client' ||
-							assignmentForm.assignment_type === 'saml_sp') &&
-							!assignmentForm.target_id)}
-				>
-					<i class="i-ph-floppy-disk" aria-hidden="true"></i>
-					{$LL.admin_consent_policies_save_assignment()}
-				</button>
-			</div>
-
-			<AdminDataTable>
-				<thead>
-					<tr>
-						<th>{$LL.admin_consent_policies_target()}</th>
-						<th>{$LL.admin_consent_policies_target_id()}</th>
-						<th>{$LL.admin_consent_policies_table_updated()}</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each currentPolicyAssignments as assignment (assignment.id)}
-						<tr>
-							<td>{assignmentLabel(assignment.assignment_type)}</td>
-							<td>{targetName(assignment.assignment_type, assignment.target_id)}</td>
-							<td class="admin-muted nowrap">{formatDate(assignment.updated_at)}</td>
-						</tr>
-					{:else}
-						<tr>
-							<td colspan="3" class="empty-cell">{$LL.admin_consent_policies_no_assignments()}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</AdminDataTable>
 		</AdminSection>
 
 		<details class="advanced-details">
@@ -1094,18 +911,6 @@
 		align-items: end;
 	}
 
-	.inline-form {
-		display: grid;
-		grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1fr) auto;
-		gap: 14px;
-		align-items: end;
-		margin-bottom: 18px;
-	}
-
-	.align-end {
-		align-self: end;
-	}
-
 	.empty-cell {
 		padding: 18px;
 		text-align: center;
@@ -1233,7 +1038,6 @@
 
 	@media (max-width: 760px) {
 		.form-grid,
-		.inline-form,
 		.danger-row {
 			grid-template-columns: 1fr;
 		}

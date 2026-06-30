@@ -1,16 +1,14 @@
 <script lang="ts">
+	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 	import {
 		adminConsentPoliciesAPI,
 		type ClientTrustPolicy,
-		type ClientTrustPolicyTargetType,
-		type ConsentPolicy,
-		type ConsentPolicyAssignment,
-		type ConsentPolicyAssignmentType
+		type ClientTrustPolicyTargetType
 	} from '$lib/api/admin-consent-policies';
 	import { ToggleSwitch } from '$lib/components';
 
-	type TargetType = Extract<ConsentPolicyAssignmentType, 'oidc_client' | 'saml_sp'>;
+	type TargetType = ClientTrustPolicyTargetType;
 
 	interface Props {
 		targetType: TargetType;
@@ -18,10 +16,8 @@
 		title?: string;
 	}
 
-	let { targetType, targetId, title = 'Consent policy' }: Props = $props();
+	let { targetType, targetId, title = '' }: Props = $props();
 
-	let policies = $state<ConsentPolicy[]>([]);
-	let selectedPolicyId = $state('');
 	let firstParty = $state(false);
 	let trusted = $state(false);
 	let skipAuthorizationConsent = $state(false);
@@ -30,12 +26,6 @@
 	let saving = $state(false);
 	let message = $state('');
 	let error = $state('');
-
-	function findAssignment(assignments: ConsentPolicyAssignment[]) {
-		return assignments.find(
-			(item) => item.assignment_type === targetType && item.target_id === targetId
-		);
-	}
 
 	function findTrustPolicy(items: ClientTrustPolicy[]) {
 		return items.find((item) => item.target_type === targetType && item.target_id === targetId);
@@ -47,23 +37,14 @@
 		error = '';
 		message = '';
 		try {
-			const [policyResult, assignmentResult, trustResult] = await Promise.all([
-				adminConsentPoliciesAPI.listPolicies(),
-				adminConsentPoliciesAPI.listAssignments(),
-				adminConsentPoliciesAPI.listClientTrustPolicies()
-			]);
-			policies = policyResult.policies;
-
-			const assignment = findAssignment(assignmentResult.assignments);
-			selectedPolicyId = assignment?.policy_id ?? '';
-
+			const trustResult = await adminConsentPoliciesAPI.listClientTrustPolicies();
 			const trustPolicy = findTrustPolicy(trustResult.policies);
 			firstParty = trustPolicy?.first_party === 1;
 			trusted = trustPolicy?.trusted === 1;
 			skipAuthorizationConsent = trustPolicy?.skip_authorization_consent === 1;
 			trustPolicyActive = trustPolicy ? trustPolicy.is_active === 1 : true;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load consent policy settings';
+			error = err instanceof Error ? err.message : $LL.admin_flows_trust_policy_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -71,20 +52,10 @@
 
 	async function saveSettings() {
 		if (!targetId) return;
-		if (!selectedPolicyId) {
-			error = 'Select a consent policy before saving.';
-			return;
-		}
 		saving = true;
 		error = '';
 		message = '';
 		try {
-			await adminConsentPoliciesAPI.upsertAssignment({
-				assignment_type: targetType,
-				target_id: targetId,
-				policy_id: selectedPolicyId
-			});
-
 			await adminConsentPoliciesAPI.upsertClientTrustPolicy({
 				target_type: targetType as ClientTrustPolicyTargetType,
 				target_id: targetId,
@@ -94,10 +65,10 @@
 				is_active: trustPolicyActive
 			});
 
-			message = 'Consent policy settings saved.';
+			message = $LL.admin_flows_trust_policy_saved();
 			await loadSettings();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save consent policy settings';
+			error = err instanceof Error ? err.message : $LL.admin_flows_trust_policy_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -111,16 +82,16 @@
 <div class="consent-policy-target">
 	<div class="consent-policy-target__header">
 		<div>
-			<h3>{title}</h3>
-			<p>Assign the consent set and trust behavior used when this application requests access.</p>
+			<h3>{title || $LL.admin_flows_trust_policy_title()}</h3>
+			<p>{$LL.admin_flows_trust_policy_description()}</p>
 		</div>
 		<button type="button" class="btn btn-secondary btn-sm" onclick={() => void loadSettings()}>
-			Refresh
+			{$LL.admin_flows_refresh()}
 		</button>
 	</div>
 
 	{#if loading}
-		<p class="field-hint">Loading consent policy settings...</p>
+		<p class="field-hint">{$LL.admin_flows_trust_policy_loading()}</p>
 	{:else}
 		{#if error}
 			<div class="alert alert-error">{error}</div>
@@ -131,51 +102,43 @@
 
 		<div class="form-grid consent-policy-target__grid">
 			<div class="admin-field admin-field--full">
-				<label class="admin-field__label" for={`consent-policy-${targetType}-${targetId}`}>
-					Consent set
-				</label>
-				<select
-					id={`consent-policy-${targetType}-${targetId}`}
-					class="admin-select"
-					bind:value={selectedPolicyId}
-				>
-					<option value="">Select consent policy</option>
-					{#each policies as policy (policy.id)}
-						<option value={policy.id}>{policy.display_name || policy.name}</option>
-					{/each}
-				</select>
-				<p class="field-hint">A target-specific consent policy is required.</p>
+				<p class="field-hint">
+					{$LL.admin_flows_trust_policy_flow_hint()}
+				</p>
+				<a class="btn btn-secondary btn-sm" href="/admin/flows">
+					{$LL.admin_flows_open_flow_settings()}
+				</a>
 			</div>
 		</div>
 
 		<div class="behavior-settings-list">
 			<ToggleSwitch
 				bind:checked={firstParty}
-				label="First-party application"
-				description="Marks the application as operated by the same service owner."
+				label={$LL.admin_flows_trust_policy_first_party_label()}
+				description={$LL.admin_flows_trust_policy_first_party_description()}
 			/>
 			<ToggleSwitch
 				bind:checked={trusted}
-				label="Trusted application"
-				description="Allows authorization consent to be skipped unless prompt=consent is requested."
+				label={$LL.admin_flows_trust_policy_trusted_label()}
+				description={$LL.admin_flows_trust_policy_trusted_description()}
 			/>
 			<ToggleSwitch
 				bind:checked={skipAuthorizationConsent}
-				label="Skip authorization consent"
-				description="Skips the OAuth/SAML authorization consent screen for this target."
+				label={$LL.admin_flows_trust_policy_skip_consent_label()}
+				description={$LL.admin_flows_trust_policy_skip_consent_description()}
 			/>
 			<ToggleSwitch
 				bind:checked={trustPolicyActive}
-				label="Trust policy active"
-				description="Disabling this leaves the record saved but ignored at runtime."
+				label={$LL.admin_flows_trust_policy_active_label()}
+				description={$LL.admin_flows_trust_policy_active_description()}
 			/>
 		</div>
 
 		<div class="form-actions">
 			<button type="button" class="btn btn-primary" onclick={saveSettings} disabled={saving}>
-				{saving ? 'Saving...' : 'Save consent policy settings'}
+				{saving ? $LL.admin_flows_trust_policy_saving() : $LL.admin_flows_trust_policy_save()}
 			</button>
-			<a class="btn btn-secondary" href="/admin/consent-policies">Manage consent sets</a>
+			<a class="btn btn-secondary" href="/admin/flows">{$LL.admin_flows_manage_flows()}</a>
 		</div>
 	{/if}
 </div>

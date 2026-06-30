@@ -22,6 +22,16 @@
 		fetchAuthenticationMethods,
 		type ExternalProvider
 	} from '$lib/api/authentication-methods';
+	import {
+		flowRuntimeAPI,
+		type FlowRuntimeConsentPolicyContent,
+		type FlowRuntimeStartResponse,
+		type FlowRuntimeStep
+	} from '$lib/api/flow-runtime';
+	import {
+		consumeFlowRuntimeState,
+		persistFlowRuntimeState
+	} from '$lib/authrim/flow-runtime-state';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -67,13 +77,21 @@
 	let directoryMigrationPasskeyLoading = $state(false);
 	let directoryMigrationEmailLoading = $state(false);
 	let externalIdpLoading = $state<string | null>(null);
+	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
+	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
+	let runtimeFlowLoading = $state(false);
+	let runtimeFlowError = $state('');
+	let runtimeConsentDecisions = $state<Record<string, boolean>>({});
+	let runtimeConsentDecisionKey = $state('');
+	let pendingPostAuthRedirect = $state<string | null>(null);
 	const authActionLoading = $derived(
 		passkeyLoading ||
 			emailCodeLoading ||
 			directoryPasswordLoading ||
 			directoryMigrationPasskeyLoading ||
 			directoryMigrationEmailLoading ||
-			externalIdpLoading !== null
+			externalIdpLoading !== null ||
+			runtimeFlowLoading
 	);
 
 	// Authentication methods (from API)
@@ -96,6 +114,24 @@
 	let pendingTurnstileTarget = $state<string | null>(null);
 	const turnstileAction = 'authrim-login';
 
+	$effect(() => {
+		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
+		const key =
+			runtimeFlowStep?.id && policy
+				? `${runtimeFlowStep.id}:${policy.items.map((item) => item.statement_id).join(',')}`
+				: '';
+		if (key === runtimeConsentDecisionKey) return;
+		runtimeConsentDecisionKey = key;
+		runtimeConsentDecisions = policy
+			? Object.fromEntries(
+					policy.items.map((item) => [
+						item.statement_id,
+						item.checkbox_mode === 'none' || item.checkbox_default_checked
+					])
+				)
+			: {};
+	});
+
 	// OAuth login challenge client info
 	interface ClientInfo {
 		client_id: string;
@@ -113,6 +149,7 @@
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
 	let accountReturn = $state('');
+	let runtimeInteractionId = $state('');
 
 	// External IdP error
 	function getExternalIdpErrorMessage(
@@ -167,11 +204,25 @@
 
 	// Show passkey only if both server-enabled and browser-supported
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+	const showRuntimePasskey = $derived(showPasskey && runtimeAllowsAuthenticationHandle('passkey'));
+	const showRuntimeEmailCode = $derived(
+		emailCodeEnabled && runtimeAllowsAuthenticationHandle('mail_otp', ['email_code'])
+	);
+	const showRuntimeDirectoryPassword = $derived(
+		directoryPasswordEnabled &&
+			runtimeAllowsAuthenticationHandle('directory_password', ['password'])
+	);
+	const visibleExternalProviders = $derived(
+		externalProviders.filter((provider) =>
+			runtimeAllowsAuthenticationHandle(provider.id, [`external:${provider.id}`])
+		)
+	);
+	const showRuntimeExternal = $derived(externalEnabled && visibleExternalProviders.length > 0);
 	const hasVisibleAuthenticationMethod = $derived(
-		showPasskey ||
-			emailCodeEnabled ||
-			directoryPasswordEnabled ||
-			(externalEnabled && externalProviders.length > 0)
+		showRuntimePasskey ||
+			showRuntimeEmailCode ||
+			showRuntimeDirectoryPassword ||
+			showRuntimeExternal
 	);
 
 	function resolveTurnstileLanguage(): string {
@@ -234,6 +285,7 @@
 		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = $page.url.searchParams.get('return_to') || '';
 		accountReturn = $page.url.searchParams.get('account_return') || '';
+		runtimeInteractionId = $page.url.searchParams.get('runtime_interaction_id') || '';
 		const urlLoginHint = $page.url.searchParams.get('login_hint');
 		if (urlLoginHint) {
 			email = urlLoginHint;
@@ -244,6 +296,7 @@
 			tasks.push(loadChallengeData(urlChallengeId));
 		}
 		await Promise.all(tasks);
+		await startRuntimeFlowIfAvailable();
 	});
 
 	// ---------------------------------------------------------------------------
@@ -278,9 +331,7 @@
 					Boolean(data.methods.humanVerification.siteKey);
 				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
 				externalProviders = data.methods.external.providers.filter(
-					(provider) =>
-						(provider.loginEnabled ?? provider.enabled !== false) &&
-						(!humanVerificationRequired || provider.startMode !== 'direct')
+					(provider) => provider.loginEnabled ?? provider.enabled !== false
 				);
 				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
 			}
@@ -308,6 +359,199 @@
 			console.warn('Error loading login challenge data:', err);
 		} finally {
 			clientInfoLoading = false;
+		}
+	}
+
+	function getRuntimeCurrentStep(flow: FlowRuntimeStartResponse | null): FlowRuntimeStep | null {
+		if (!flow) return null;
+		const currentStepId = flow.interaction.current_step_id;
+		if (!currentStepId) return null;
+		return flow.contract.ui.steps.find((step) => step.id === currentStepId) ?? null;
+	}
+
+	function getRuntimeTarget() {
+		if (clientInfo?.client_id) {
+			return {
+				target_type: 'oidc_client' as const,
+				target_id: clientInfo.client_id,
+				client_id: clientInfo.client_id
+			};
+		}
+		if (samlSpEntityId) {
+			return {
+				target_type: 'saml_sp' as const,
+				target_id: samlSpEntityId,
+				saml_sp_id: samlSpEntityId
+			};
+		}
+		return {
+			target_type: 'tenant' as const,
+			target_id: null
+		};
+	}
+
+	function shouldFallbackToLegacyRuntime(errorCode: string): boolean {
+		return errorCode === 'flow_runtime_disabled';
+	}
+
+	async function startRuntimeFlowIfAvailable() {
+		runtimeFlowLoading = true;
+		runtimeFlowError = '';
+		try {
+			if (runtimeInteractionId) {
+				const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+				if (!storedRuntime) {
+					runtimeFlow = null;
+					runtimeFlowStep = null;
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				pendingPostAuthRedirect = storedRuntime.post_auth_redirect ?? null;
+				const { data, error: apiError } = await flowRuntimeAPI.start({
+					resume_interaction_id: storedRuntime.interaction_id,
+					contract_hash: storedRuntime.contract_hash,
+					signature: storedRuntime.signature
+				});
+				if (apiError) {
+					runtimeFlow = null;
+					runtimeFlowStep = null;
+					runtimeFlowError = apiError.error_description || apiError.error;
+					return;
+				}
+				if (!data) return;
+				runtimeFlow = data;
+				runtimeFlowStep = getRuntimeCurrentStep(data);
+				if (
+					data.interaction.state !== 'completed' &&
+					data.interaction.current_step_id &&
+					!runtimeFlowStep
+				) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				if (!persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect })) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				await advanceRuntimePastNonRenderedSteps();
+				await redirectIfCompletedRuntime();
+				return;
+			}
+
+			const { data, error: apiError } = await flowRuntimeAPI.start({
+				flow_kind: 'login',
+				locale: getLocale(),
+				authorization_challenge_id: authorizationChallengeId || undefined,
+				saml_request_id: samlRequestId || undefined,
+				saml_sp_entity_id: samlSpEntityId || undefined,
+				return_to: returnTo || undefined,
+				...getRuntimeTarget()
+			});
+			if (apiError) {
+				runtimeFlow = null;
+				runtimeFlowStep = null;
+				if (!shouldFallbackToLegacyRuntime(apiError.error)) {
+					runtimeFlowError = apiError.error_description || apiError.error;
+				}
+				return;
+			}
+			if (!data) return;
+			runtimeFlow = data;
+			runtimeFlowStep = getRuntimeCurrentStep(data);
+			if (
+				data.interaction.state !== 'completed' &&
+				data.interaction.current_step_id &&
+				!runtimeFlowStep
+			) {
+				runtimeFlowError = $LL.error_invalid_request();
+				return;
+			}
+			await advanceRuntimePastNonRenderedSteps();
+		} finally {
+			runtimeFlowLoading = false;
+		}
+	}
+
+	async function submitRuntimeStep(selectedHandle?: string, input?: unknown): Promise<boolean> {
+		const flow = runtimeFlow;
+		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
+		if (!flow || !step || flow.interaction.state === 'completed') {
+			return true;
+		}
+
+		const { data, error: apiError } = await flowRuntimeAPI.submit(flow.interaction.id, {
+			step_id: step.id,
+			node_id: step.source_node_id,
+			selected_handle: selectedHandle,
+			contract_hash: flow.contract_hash,
+			signature: flow.signature,
+			input
+		});
+		if (apiError) {
+			runtimeFlowError = apiError.error_description || apiError.error;
+			return false;
+		}
+		if (!data) return false;
+
+		runtimeFlow = {
+			...flow,
+			interaction: data.interaction
+		};
+		runtimeFlowStep = data.step ?? getRuntimeCurrentStep(runtimeFlow);
+		if (data.completed) {
+			runtimeFlowStep = null;
+			const redirect = await resolveRuntimeCompletionRedirect(data.output);
+			if (redirect) {
+				pendingPostAuthRedirect = redirect;
+			}
+		} else if (!runtimeFlowStep) {
+			runtimeFlowError = $LL.error_invalid_request();
+			return false;
+		}
+		await advanceRuntimePastNonRenderedSteps();
+		return true;
+	}
+
+	async function advanceRuntimePastNonRenderedSteps() {
+		let guard = 0;
+		while (runtimeFlow && runtimeFlowStep && runtimeFlowStep.render === false && guard < 10) {
+			guard += 1;
+			const ok = await submitRuntimeStep();
+			if (!ok) return;
+		}
+	}
+
+	async function redirectIfCompletedRuntime(): Promise<boolean> {
+		if (runtimeFlow?.interaction.state !== 'completed') return false;
+		const redirect = pendingPostAuthRedirect || (await buildPostAuthRedirect());
+		consumeFlowRuntimeState(runtimeFlow.interaction.id);
+		window.location.href = redirect;
+		return true;
+	}
+
+	async function continueAfterRuntimeStep(
+		selectedHandle: string,
+		redirectUrl?: string
+	): Promise<boolean> {
+		if (!runtimeFlow) return true;
+		const ok = await submitRuntimeStep(selectedHandle);
+		if (!ok) return false;
+		if (runtimeFlow?.interaction.state !== 'completed') {
+			pendingPostAuthRedirect = await buildPostAuthRedirect(redirectUrl);
+			return false;
+		}
+		return true;
+	}
+
+	async function completeRuntimeOnlyStep(selectedHandle: string, input?: unknown) {
+		if (!runtimeFlow || authActionLoading) return;
+		runtimeFlowLoading = true;
+		try {
+			const ok = await submitRuntimeStep(selectedHandle, input);
+			if (!ok) return;
+			await redirectIfCompletedRuntime();
+		} finally {
+			runtimeFlowLoading = false;
 		}
 	}
 
@@ -405,6 +649,48 @@
 		return '/';
 	}
 
+	function readRuntimeContinuationString(
+		continuation: Record<string, unknown> | undefined,
+		key: string
+	): string {
+		const value = continuation?.[key];
+		return typeof value === 'string' ? value : '';
+	}
+
+	async function resolveRuntimeCompletionRedirect(
+		output: {
+			action: string;
+			protocol_continuation?: Record<string, unknown>;
+			redirect_url?: string;
+		} | null
+	): Promise<string | null> {
+		if (output?.redirect_url && isValidRedirectUrl(output.redirect_url)) {
+			return output.redirect_url;
+		}
+		const continuation = output?.protocol_continuation;
+		const protocol = readRuntimeContinuationString(continuation, 'protocol');
+		if (protocol === 'saml') {
+			const requestId =
+				readRuntimeContinuationString(continuation, 'saml_request_id') || samlRequestId;
+			const spEntityId =
+				readRuntimeContinuationString(continuation, 'saml_sp_entity_id') ||
+				readRuntimeContinuationString(continuation, 'saml_sp_id') ||
+				samlSpEntityId;
+			if (requestId && spEntityId) {
+				const params = new SvelteURLSearchParams({
+					saml_request_id: requestId,
+					saml_sp_entity_id: spEntityId,
+					return_to: 'saml_sso'
+				});
+				return `/saml/idp/sso?${params.toString()}`;
+			}
+		}
+		if (protocol === 'direct' || output?.action === 'complete') {
+			return buildPostAuthRedirect();
+		}
+		return null;
+	}
+
 	async function handlePasskeyLogin() {
 		if (authActionLoading) return;
 		error = '';
@@ -437,6 +723,8 @@
 
 			await auth.refreshFromSession();
 
+			const continueRedirect = await continueAfterRuntimeStep('passkey', verifyData?.redirect_url);
+			if (!continueRedirect) return;
 			window.location.href = await buildPostAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
 			error =
@@ -484,6 +772,17 @@
 				params.set('saml_request_id', samlRequestId);
 				params.set('saml_sp_entity_id', samlSpEntityId);
 				params.set('return_to', 'saml_sso');
+			}
+			if (runtimeFlow) {
+				const ok = await submitRuntimeStep('mail_otp');
+				if (!ok) return;
+				const flowAfterSelection = runtimeFlow;
+				if (!flowAfterSelection || !persistFlowRuntimeState(flowAfterSelection)) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				params.set('runtime_interaction_id', flowAfterSelection.interaction.id);
+				params.set('runtime_flow_kind', 'login');
 			}
 			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {
@@ -573,6 +872,8 @@
 
 			await auth.refreshFromSession();
 			const redirectUrl = data && 'redirect_url' in data ? data.redirect_url : undefined;
+			const continueRedirect = await continueAfterRuntimeStep('directory_password', redirectUrl);
+			if (!continueRedirect) return;
 			window.location.href = await buildPostAuthRedirect(redirectUrl);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.login_errorDirectoryFailed();
@@ -686,16 +987,43 @@
 		externalIdpLoading = providerId;
 		try {
 			const accountReturnRedirect = await resolveAccountReturnRedirect();
-			if (accountReturnRedirect) {
+			if (accountReturnRedirect && provider.startMode !== 'saml_sp') {
 				setLoginUiSessionItem(
 					LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,
 					accountReturnRedirect
 				);
 			}
+			let runtimeResumeUrl: string | null = null;
+			if (runtimeFlow) {
+				const ok = await submitRuntimeStep(providerId);
+				if (!ok) return;
+				const flowAfterSelection = runtimeFlow;
+				const postAuthRedirect =
+					provider.startMode === 'saml_sp'
+						? accountReturnRedirect || (await buildPostAuthRedirect())
+						: null;
+				if (
+					!flowAfterSelection ||
+					!persistFlowRuntimeState(flowAfterSelection, { postAuthRedirect })
+				) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				runtimeResumeUrl = `/login?runtime_interaction_id=${encodeURIComponent(
+					flowAfterSelection.interaction.id
+				)}`;
+				setLoginUiSessionItem(
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
+					flowAfterSelection.interaction.id
+				);
+				setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind, 'login');
+			}
 			const redirectUri =
-				provider.startMode === 'saml_sp'
-					? `${window.location.origin}/`
-					: `${window.location.origin}/callback`;
+				provider.startMode === 'saml_sp' && runtimeResumeUrl
+					? `${window.location.origin}${runtimeResumeUrl}`
+					: provider.startMode === 'saml_sp'
+						? `${window.location.origin}/`
+						: `${window.location.origin}/callback`;
 			const { url } = await externalIdpAPI.startLogin(
 				providerId,
 				redirectUri,
@@ -730,6 +1058,72 @@
 	function getProviderButtonText(provider: ExternalProvider): string {
 		if (provider.buttonText) return provider.buttonText;
 		return $LL.login_continueWith({ provider: provider.name });
+	}
+
+	function getRuntimeStepTitle(step: FlowRuntimeStep): string {
+		const title = step.content?.title ?? step.config?.title;
+		return typeof title === 'string' && title.trim() ? title : step.component.replace(/_/g, ' ');
+	}
+
+	function getRuntimeStepDescription(step: FlowRuntimeStep): string {
+		const description = step.content?.description ?? step.config?.description;
+		return typeof description === 'string' ? description : '';
+	}
+
+	function getRuntimeConsentPolicy(
+		step: FlowRuntimeStep | null
+	): FlowRuntimeConsentPolicyContent | null {
+		const policy = step?.content?.consent_policy;
+		if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return null;
+		const items = (policy as FlowRuntimeConsentPolicyContent).items;
+		return Array.isArray(items) ? (policy as FlowRuntimeConsentPolicyContent) : null;
+	}
+
+	function getRuntimeConsentItemDecisionPayload() {
+		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
+		if (!policy) return { consent_item_decisions: {} };
+		return {
+			consent_item_decisions: Object.fromEntries(
+				policy.items.map((item) => [
+					item.statement_id,
+					item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
+						? 'granted'
+						: 'denied'
+				])
+			)
+		};
+	}
+
+	function isRuntimeAuthStep(step: FlowRuntimeStep | null): boolean {
+		return (
+			!step ||
+			step.component === 'authentication_method_selector' ||
+			step.component === 'registration_method_selector'
+		);
+	}
+
+	function runtimeAllowsAuthenticationHandle(handle: string, aliases: string[] = []): boolean {
+		const step = runtimeFlowStep;
+		if (!isRuntimeAuthStep(step)) {
+			return true;
+		}
+		const configured = step?.config?.output_handles;
+		if (!Array.isArray(configured) || configured.length === 0) {
+			return true;
+		}
+		const allowed = new Set(
+			configured
+				.map((value) => {
+					if (typeof value === 'string') return value;
+					if (value && typeof value === 'object' && 'id' in value) {
+						const id = (value as { id?: unknown }).id;
+						return typeof id === 'string' ? id : null;
+					}
+					return null;
+				})
+				.filter((value): value is string => Boolean(value))
+		);
+		return [handle, ...aliases].some((candidate) => allowed.has(candidate));
 	}
 
 	function handleKeyPress(event: KeyboardEvent) {
@@ -904,6 +1298,114 @@
 					</Alert>
 				{/if}
 
+				{#if runtimeFlowError}
+					<Alert
+						variant="error"
+						dismissible={true}
+						onDismiss={() => (runtimeFlowError = '')}
+						class="mb-4"
+					>
+						{runtimeFlowError}
+					</Alert>
+				{/if}
+
+				{#if runtimeFlowStep && runtimeFlowStep.render && !isRuntimeAuthStep(runtimeFlowStep)}
+					<Alert variant="info" class="mb-4">
+						<div class="space-y-3">
+							<div>
+								<p class="font-semibold">{getRuntimeStepTitle(runtimeFlowStep)}</p>
+								{#if getRuntimeStepDescription(runtimeFlowStep)}
+									<p class="text-sm mt-1" style="color: var(--text-secondary);">
+										{getRuntimeStepDescription(runtimeFlowStep)}
+									</p>
+								{/if}
+							</div>
+							{#if runtimeFlowStep.component === 'consent_policy'}
+								{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
+								{#if consentPolicy?.items.length}
+									<div class="space-y-3">
+										{#each consentPolicy.items as item (item.statement_id)}
+											<div class="runtime-consent-item">
+												{#if item.checkbox_mode === 'none'}
+													<div>
+														<p class="font-semibold">{item.title}</p>
+														{#if item.description}
+															<p class="text-sm" style="color: var(--text-secondary);">
+																{item.description}
+															</p>
+														{/if}
+													</div>
+												{:else}
+													<label class="runtime-consent-choice">
+														<input
+															type="checkbox"
+															bind:checked={runtimeConsentDecisions[item.statement_id]}
+															required={item.is_required || item.checkbox_mode === 'required'}
+														/>
+														<span>
+															<strong>{item.title}</strong>
+															{#if item.description}
+																<small>{item.description}</small>
+															{/if}
+														</span>
+													</label>
+												{/if}
+												{#if item.document_url && isValidLinkUrl(item.document_url)}
+													<a
+														class="runtime-consent-link"
+														href={item.document_url}
+														target="_blank"
+														rel="noopener noreferrer"
+													>
+														{item.document_url}
+													</a>
+												{/if}
+												{#if item.inline_content}
+													<p class="runtime-consent-inline">{item.inline_content}</p>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								{:else}
+									<p class="text-sm" style="color: var(--text-secondary);">
+										{getRuntimeStepDescription(runtimeFlowStep)}
+									</p>
+								{/if}
+								<Button
+									variant="primary"
+									class="w-full"
+									loading={runtimeFlowLoading}
+									disabled={authActionLoading}
+									onclick={() =>
+										completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{:else if runtimeFlowStep.component === 'completion'}
+								<Button
+									variant="primary"
+									class="w-full"
+									loading={runtimeFlowLoading}
+									disabled={authActionLoading}
+									onclick={() => completeRuntimeOnlyStep('completed')}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{:else}
+								<Button
+									variant="secondary"
+									class="w-full"
+									loading={runtimeFlowLoading}
+									disabled={authActionLoading}
+									onclick={() => completeRuntimeOnlyStep('completed')}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{/if}
+						</div>
+					</Alert>
+				{/if}
+
 				{#if directoryMigrationNotice && (directoryMigrationTransaction || directoryRecoveryTransaction)}
 					<Alert variant="info" class="mb-4">
 						<div class="space-y-3">
@@ -981,7 +1483,7 @@
 				{/if}
 
 				<!-- Passkey Button -->
-				{#if showPasskey}
+				{#if showRuntimePasskey}
 					<Button
 						variant="primary"
 						class="w-full mb-4"
@@ -1007,7 +1509,7 @@
 						/>
 					{/if}
 
-					{#if directoryPasswordEnabled || emailCodeEnabled}
+					{#if showRuntimeDirectoryPassword || showRuntimeEmailCode}
 						<div class="auth-divider">
 							<div class="auth-divider__line"></div>
 							<span class="auth-divider__text">{$LL.common_or()}</span>
@@ -1017,7 +1519,7 @@
 				{/if}
 
 				<!-- Directory Password -->
-				{#if directoryPasswordEnabled}
+				{#if showRuntimeDirectoryPassword}
 					<div class="mb-4">
 						<Input
 							label={directoryPasswordLabel}
@@ -1069,7 +1571,7 @@
 						/>
 					{/if}
 
-					{#if emailCodeEnabled}
+					{#if showRuntimeEmailCode}
 						<div class="auth-divider">
 							<div class="auth-divider__line"></div>
 							<span class="auth-divider__text">{$LL.common_or()}</span>
@@ -1079,7 +1581,7 @@
 				{/if}
 
 				<!-- Email Input + Email Code -->
-				{#if emailCodeEnabled}
+				{#if showRuntimeEmailCode}
 					<div class="mb-4">
 						<Input
 							label={$LL.common_email()}
@@ -1120,7 +1622,7 @@
 				{/if}
 
 				<!-- External Login Section -->
-				{#if externalEnabled && externalProviders.length > 0}
+				{#if showRuntimeExternal}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -1128,7 +1630,7 @@
 					</div>
 
 					<div class="space-y-3">
-						{#each externalProviders as provider (provider.id)}
+						{#each visibleExternalProviders as provider (provider.id)}
 							{@const safeColor =
 								isDarkMode && provider.buttonColorDark
 									? sanitizeColor(provider.buttonColorDark)
@@ -1189,3 +1691,46 @@
 		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>
+
+<style>
+	.runtime-consent-item {
+		display: grid;
+		gap: 8px;
+		padding: 12px;
+		border: 1px solid var(--border-color, var(--border));
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+	}
+
+	.runtime-consent-choice {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		font-size: 0.92rem;
+		line-height: 1.45;
+	}
+
+	.runtime-consent-choice input {
+		margin-top: 3px;
+		flex: 0 0 auto;
+	}
+
+	.runtime-consent-choice span,
+	.runtime-consent-choice small {
+		display: block;
+	}
+
+	.runtime-consent-choice small,
+	.runtime-consent-inline {
+		margin-top: 3px;
+		color: var(--text-secondary, var(--text-muted));
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
+	.runtime-consent-link {
+		color: var(--accent-color, var(--primary));
+		font-size: 0.82rem;
+		overflow-wrap: anywhere;
+	}
+</style>

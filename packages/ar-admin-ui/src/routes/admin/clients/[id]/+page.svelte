@@ -32,6 +32,7 @@
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import AdminDetailHeader from '$lib/components/admin/AdminDetailHeader.svelte';
 	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
+	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
@@ -974,8 +975,7 @@
 			// Security tab
 			consent_required: (clientSettings.values['client.consent_required'] as boolean) ?? false,
 			first_party: (clientSettings.values['client.first_party'] as boolean) ?? false,
-			app_login_enabled:
-				(clientSettings.values['client.app_login_enabled'] as boolean) ?? false,
+			app_login_enabled: (clientSettings.values['client.app_login_enabled'] as boolean) ?? false,
 			sso_enabled: (clientSettings.values['client.sso_enabled'] as boolean) ?? false,
 			strict_redirect_matching:
 				(clientSettings.values['client.strict_redirect_matching'] as boolean) ?? false,
@@ -2326,6 +2326,10 @@
 							</div>
 						{/if}
 					</div>
+				</section>
+
+				<section class="section-spacing">
+					<FlowAssignmentSettings targetType="oidc_client" targetId={clientId} />
 				</section>
 
 				<section class="section-spacing">

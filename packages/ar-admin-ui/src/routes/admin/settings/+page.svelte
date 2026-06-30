@@ -254,6 +254,23 @@
 					</a>
 				{/if}
 
+				{#if currentScope === 'tenant'}
+					<a href="/admin/settings/flows" class="icon-card">
+						<div class="icon-card-header">
+							<span class="icon-card-icon">🧩</span>
+							<div>
+								<h2 class="icon-card-title">{$LL.admin_flows_assignments_title()}</h2>
+								<span class="icon-card-badge icon-card-badge--special">
+									{$LL.admin_settings_special()}
+								</span>
+							</div>
+						</div>
+						<p class="icon-card-description">
+							{$LL.admin_flows_description()}
+						</p>
+					</a>
+				{/if}
+
 				{#each filteredCategories as category (category.category)}
 					{@const style = getStyle(category.category)}
 					{@const isReadOnly = isPlatformCategory(category.category)}

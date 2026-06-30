@@ -210,6 +210,53 @@ describe('deployUiWorkerComponent', () => {
       })
     );
   });
+
+  it('retries Admin UI BFF secret upload before failing the UI deploy', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-admin-ui');
+    const successResult = {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    } as Awaited<ReturnType<typeof execa>>;
+
+    vi.mocked(execa)
+      .mockResolvedValueOnce(successResult)
+      .mockResolvedValueOnce(successResult)
+      .mockResolvedValueOnce(successResult)
+      .mockResolvedValueOnce(successResult)
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'fetch failed',
+      } as Awaited<ReturnType<typeof execa>>)
+      .mockResolvedValueOnce(successResult)
+      .mockResolvedValueOnce(successResult);
+
+    const progressMessages: string[] = [];
+    const result = await deployUiWorkerComponent('ar-admin-ui', {
+      env: 'test',
+      rootDir,
+      retryDelayMs: 1,
+      onProgress: (message) => progressMessages.push(message),
+      adminUiBffSecrets: {
+        ADMIN_UI_BFF_CLIENT_ID: 'authrim-admin-ui-bff',
+        ADMIN_UI_BFF_KEY_ID: 'bff-key-1',
+        ADMIN_UI_BFF_PRIVATE_KEY_PEM:
+          '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
+        ADMIN_UI_BFF_SCOPES: 'admin-ui:proxy',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.filter(([, args]) => args?.includes('ADMIN_UI_BFF_PRIVATE_KEY_PEM'))
+    ).toHaveLength(2);
+    expect(progressMessages).toContain('  ✗ Secret upload attempt 1 failed: fetch failed');
+    expect(progressMessages).toContain('  ✓ ADMIN_UI_BFF_PRIVATE_KEY_PEM uploaded');
+  });
 });
 
 describe('deployUiWorkerBindingTargets', () => {

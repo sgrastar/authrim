@@ -1,7 +1,6 @@
 import { Context } from 'hono';
 import type {
   ClientTrustPolicyTargetType,
-  ConsentPolicyAssignmentType,
   ConsentPolicyCheckboxMode,
   ConsentPolicyItemBindingType,
   ConsentPolicyRequirement,
@@ -28,12 +27,6 @@ const BINDING_TYPES = new Set<ConsentPolicyItemBindingType>([
   'claim',
   'saml_attribute',
   'destination_field_set',
-]);
-const ASSIGNMENT_TYPES = new Set<ConsentPolicyAssignmentType>([
-  'registration',
-  'login',
-  'oidc_client',
-  'saml_sp',
 ]);
 const TRUST_TARGET_TYPES = new Set<ClientTrustPolicyTargetType>(['oidc_client', 'saml_sp']);
 const SIGN_IN_MODES = new Set<SignInConfirmationMode>(['disabled', 'first_time', 'every_time']);
@@ -81,11 +74,6 @@ function readIntegerInRange(
 }
 
 function normalizeTargetId(targetType: string, targetId: unknown): string {
-  return readTrimmed(targetId) ?? '';
-}
-
-function normalizeAssignmentTargetId(assignmentType: string, targetId: unknown): string {
-  if (assignmentType === 'registration' || assignmentType === 'login') return assignmentType;
   return readTrimmed(targetId) ?? '';
 }
 
@@ -423,86 +411,6 @@ export async function adminConsentPolicyItemsReplaceHandler(c: Context<{ Binding
       { error: 'server_error', error_description: 'Failed to replace consent policy items' },
       500
     );
-  }
-}
-
-export async function adminConsentPolicyAssignmentsListHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT_POLICIES');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const rows = await authCtx.coreAdapter.query(
-      `SELECT a.*, p.name AS policy_name, p.display_name AS policy_display_name
-         FROM consent_policy_assignments a
-         JOIN consent_policies p ON p.id = a.policy_id AND p.tenant_id = a.tenant_id
-        WHERE a.tenant_id = ?
-        ORDER BY a.assignment_type ASC, a.target_id ASC`,
-      [tenantId]
-    );
-    return c.json({ assignments: rows });
-  } catch (error) {
-    log.error(
-      'Failed to list consent policy assignments',
-      { action: 'list_assignments' },
-      error as Error
-    );
-    return c.json({ error: 'server_error', error_description: 'Failed to list assignments' }, 500);
-  }
-}
-
-export async function adminConsentPolicyAssignmentUpsertHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT_POLICIES');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const body = await c.req.json<Row>();
-    const assignmentType = readTrimmed(body.assignment_type);
-    if (!assignmentType || !ASSIGNMENT_TYPES.has(assignmentType as ConsentPolicyAssignmentType)) {
-      return invalid(c, 'assignment_type is invalid');
-    }
-    const targetId = normalizeAssignmentTargetId(assignmentType, body.target_id);
-    if (!targetId) return invalid(c, 'target_id is required');
-    const policyId = readTrimmed(body.policy_id);
-    if (!policyId) {
-      await authCtx.coreAdapter.execute(
-        `DELETE FROM consent_policy_assignments
-          WHERE tenant_id = ? AND assignment_type = ? AND target_id = ?`,
-        [tenantId, assignmentType, targetId]
-      );
-      return adminConsentPolicyAssignmentsListHandler(c);
-    }
-    if (!(await rowExists(c, 'consent_policies', tenantId, policyId))) {
-      return invalid(c, 'policy_id does not reference an existing policy');
-    }
-    const now = Date.now();
-    const existing = await authCtx.coreAdapter.query(
-      `SELECT id FROM consent_policy_assignments
-        WHERE tenant_id = ? AND assignment_type = ? AND target_id = ?`,
-      [tenantId, assignmentType, targetId]
-    );
-    if (existing.length > 0) {
-      await authCtx.coreAdapter.execute(
-        `UPDATE consent_policy_assignments
-            SET policy_id = ?, updated_at = ?
-          WHERE tenant_id = ? AND assignment_type = ? AND target_id = ?`,
-        [policyId, now, tenantId, assignmentType, targetId]
-      );
-    } else {
-      await authCtx.coreAdapter.execute(
-        `INSERT INTO consent_policy_assignments
-         (id, tenant_id, assignment_type, target_id, policy_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [crypto.randomUUID(), tenantId, assignmentType, targetId, policyId, now, now]
-      );
-    }
-    return adminConsentPolicyAssignmentsListHandler(c);
-  } catch (error) {
-    log.error(
-      'Failed to upsert consent policy assignment',
-      { action: 'upsert_assignment' },
-      error as Error
-    );
-    return c.json({ error: 'server_error', error_description: 'Failed to upsert assignment' }, 500);
   }
 }
 

@@ -1,8 +1,11 @@
 export const LOGIN_UI_SESSION_STORAGE_KEYS = {
 	diagnosticSessionId: 'authrim:loginui:diagnostic:session_id',
 	directEmailCodeStatePrefix: 'authrim:loginui:direct:email_code:',
+	externalFlowRuntimeInteractionId: 'authrim:loginui:external:flow_runtime_interaction_id',
+	externalFlowRuntimeKind: 'authrim:loginui:external:flow_runtime_kind',
 	externalProviderId: 'authrim:loginui:external:provider_id',
 	externalReturnUrl: 'authrim:loginui:external:return_url',
+	flowRuntimeStatePrefix: 'authrim:loginui:flow_runtime:',
 	signupCustomFields: 'authrim:loginui:signup:custom_fields'
 } as const;
 

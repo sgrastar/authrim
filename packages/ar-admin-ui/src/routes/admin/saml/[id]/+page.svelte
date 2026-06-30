@@ -27,6 +27,7 @@
 		AdminSection
 	} from '$lib/components/admin';
 	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
+	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -1278,6 +1279,8 @@
 							description={$LL.admin_saml_detail_sign_responses_desc()}
 						/>
 					</div>
+
+					<FlowAssignmentSettings targetType="saml_sp" targetId={providerId ?? ''} />
 
 					<ConsentPolicyTargetSettings
 						targetType="saml_sp"

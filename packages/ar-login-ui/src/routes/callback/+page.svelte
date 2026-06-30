@@ -17,6 +17,7 @@
 		consumeLoginUiSessionItem,
 		removeLoginUiSessionItems
 	} from '$lib/authrim/storage-keys';
+	import { updateFlowRuntimePostAuthRedirect } from '$lib/authrim/flow-runtime-state';
 
 	let status = $state<'processing' | 'success' | 'error'>('processing');
 	let errorMessage = $state('');
@@ -147,9 +148,22 @@
 						: finalizeRedirectUrl && isValidRedirectUrl(finalizeRedirectUrl)
 							? finalizeRedirectUrl
 							: '/';
+			const runtimeInteractionId = consumeLoginUiSessionItem(
+				LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId
+			);
+			const runtimeFlowKind = consumeLoginUiSessionItem(
+				LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind
+			);
+			const runtimeResumePath = runtimeFlowKind === 'registration' ? '/signup' : '/login';
+			const runtimeReturnUrl =
+				runtimeInteractionId && updateFlowRuntimePostAuthRedirect(runtimeInteractionId, returnUrl)
+					? `${runtimeResumePath}?runtime_interaction_id=${encodeURIComponent(
+							runtimeInteractionId
+						)}`
+					: null;
 
 			setTimeout(() => {
-				window.location.href = returnUrl;
+				window.location.href = runtimeReturnUrl || returnUrl;
 			}, 1000);
 		} catch (error) {
 			console.error('[Authrim] Handoff error:', error);
@@ -194,6 +208,8 @@
 				]);
 				removeLoginUiSessionItems([
 					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.pkceCodeVerifier,
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind,
 					LOGIN_UI_SESSION_STORAGE_KEYS.externalReturnUrl,
 					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.externalReturnUrl
 				]);

@@ -27,6 +27,7 @@ tags:
   - name: Logout
   - name: DID Auth
   - name: Login Challenges
+  - name: Login Runtime
   - name: Direct Auth
   - name: Invitations
   - name: Registration
@@ -38,15 +39,15 @@ paths:
         - Health
       summary: Return authentication Worker health.
       responses:
-        "200":
-          $ref: "#/components/responses/AuthHealth"
+        '200':
+          $ref: '#/components/responses/AuthHealth'
   /authorize:
     get:
       tags:
         - OAuth
       summary: Start or continue an OAuth/OIDC authorization request.
       parameters:
-        - $ref: "#/components/parameters/ClientIdQuery"
+        - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri
           in: query
           schema:
@@ -64,20 +65,20 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
-        "302":
+        '200':
+          $ref: '#/components/responses/Any'
+        '302':
           description: Redirect response.
     post:
       tags:
         - OAuth
       summary: Submit an OAuth/OIDC authorization request.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
-        "302":
+        '200':
+          $ref: '#/components/responses/Any'
+        '302':
           description: Redirect response.
   /par:
     post:
@@ -85,12 +86,12 @@ paths:
         - OAuth
       summary: Create a pushed authorization request.
       requestBody:
-        $ref: "#/components/requestBodies/PushedAuthorization"
+        $ref: '#/components/requestBodies/PushedAuthorization'
       responses:
-        "201":
-          $ref: "#/components/responses/PushedAuthorization"
-        "400":
-          $ref: "#/components/responses/Error"
+        '201':
+          $ref: '#/components/responses/PushedAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
       description: Stores OAuth/OIDC authorization parameters and returns a request_uri per RFC 9126.
     get:
       tags:
@@ -100,178 +101,178 @@ paths:
       description: The pushed authorization request endpoint only supports POST. GET returns a
         method-not-allowed OAuth-style error.
       responses:
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
   /flow/login:
     get:
       tags:
         - OAuth
       summary: Render a built-in login flow page when enabled.
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
     post:
       tags:
         - OAuth
       summary: Submit a built-in login flow step when enabled.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /flow/confirm:
     get:
       tags:
         - OAuth
       summary: Render a built-in confirmation step when enabled.
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
     post:
       tags:
         - OAuth
       summary: Submit a built-in confirmation step when enabled.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /api/auth/passkeys/register/options:
     post:
       tags:
         - Passkeys
       summary: Create WebAuthn registration options.
       requestBody:
-        $ref: "#/components/requestBodies/PasskeyRegisterOptions"
+        $ref: '#/components/requestBodies/PasskeyRegisterOptions'
       responses:
-        "200":
-          $ref: "#/components/responses/PasskeyRegisterOptions"
+        '200':
+          $ref: '#/components/responses/PasskeyRegisterOptions'
   /api/auth/passkeys/register/verify:
     post:
       tags:
         - Passkeys
       summary: Verify WebAuthn registration and create a session.
       requestBody:
-        $ref: "#/components/requestBodies/PasskeyRegisterVerify"
+        $ref: '#/components/requestBodies/PasskeyRegisterVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/PasskeyRegisterVerify"
+        '200':
+          $ref: '#/components/responses/PasskeyRegisterVerify'
   /api/auth/passkeys/login/options:
     post:
       tags:
         - Passkeys
       summary: Create discoverable WebAuthn login options.
       requestBody:
-        $ref: "#/components/requestBodies/PasskeyLoginOptions"
+        $ref: '#/components/requestBodies/PasskeyLoginOptions'
       responses:
-        "200":
-          $ref: "#/components/responses/PasskeyLoginOptions"
+        '200':
+          $ref: '#/components/responses/PasskeyLoginOptions'
   /api/auth/passkeys/login/verify:
     post:
       tags:
         - Passkeys
       summary: Verify WebAuthn login and create a session.
       requestBody:
-        $ref: "#/components/requestBodies/PasskeyLoginVerify"
+        $ref: '#/components/requestBodies/PasskeyLoginVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/PasskeyLoginVerify"
+        '200':
+          $ref: '#/components/responses/PasskeyLoginVerify'
   /api/auth/email-codes/send:
     post:
       tags:
         - Email Codes
       summary: Send an email verification code.
       requestBody:
-        $ref: "#/components/requestBodies/EmailCodeSend"
+        $ref: '#/components/requestBodies/EmailCodeSend'
       responses:
-        "200":
-          $ref: "#/components/responses/EmailCodeSend"
+        '200':
+          $ref: '#/components/responses/EmailCodeSend'
   /api/auth/email-codes/verify:
     post:
       tags:
         - Email Codes
       summary: Verify an email code and create a session.
       requestBody:
-        $ref: "#/components/requestBodies/EmailCodeVerify"
+        $ref: '#/components/requestBodies/EmailCodeVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/EmailCodeVerify"
+        '200':
+          $ref: '#/components/responses/EmailCodeVerify'
   /api/auth/directory-password/login:
     post:
       tags:
         - Directory Password
       summary: Authenticate with a directory password and create a managed browser session.
       requestBody:
-        $ref: "#/components/requestBodies/DirectoryPasswordLogin"
+        $ref: '#/components/requestBodies/DirectoryPasswordLogin'
       responses:
-        "200":
-          $ref: "#/components/responses/DirectoryPasswordLogin"
+        '200':
+          $ref: '#/components/responses/DirectoryPasswordLogin'
   /api/auth/directory-password/migration/passkey/options:
     post:
       tags:
         - Directory Password
       summary: Create WebAuthn registration options for a directory password migration transaction.
       requestBody:
-        $ref: "#/components/requestBodies/DirectoryMigrationPasskeyOptions"
+        $ref: '#/components/requestBodies/DirectoryMigrationPasskeyOptions'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
-        "400":
-          $ref: "#/components/responses/Any"
-        "401":
-          $ref: "#/components/responses/Any"
-        "403":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
   /api/auth/directory-password/migration/passkey/verify:
     post:
       tags:
         - Directory Password
       summary: Verify WebAuthn registration for a directory password migration transaction and create a session.
       requestBody:
-        $ref: "#/components/requestBodies/DirectoryMigrationPasskeyVerify"
+        $ref: '#/components/requestBodies/DirectoryMigrationPasskeyVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/DirectoryPasswordLogin"
-        "400":
-          $ref: "#/components/responses/Any"
-        "401":
-          $ref: "#/components/responses/Any"
-        "403":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/DirectoryPasswordLogin'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
   /api/auth/directory-password/migration/email-code/send:
     post:
       tags:
         - Directory Password
       summary: Send an email code for a directory password migration fallback or recovery transaction.
       requestBody:
-        $ref: "#/components/requestBodies/DirectoryMigrationEmailCodeSend"
+        $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeSend'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
-        "400":
-          $ref: "#/components/responses/Any"
-        "401":
-          $ref: "#/components/responses/Any"
-        "403":
-          $ref: "#/components/responses/Any"
-        "429":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
+        '429':
+          $ref: '#/components/responses/Any'
   /api/auth/directory-password/migration/email-code/verify:
     post:
       tags:
         - Directory Password
       summary: Verify an email code for a directory password migration fallback or recovery transaction and create a session.
       requestBody:
-        $ref: "#/components/requestBodies/DirectoryMigrationEmailCodeVerify"
+        $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/DirectoryPasswordLogin"
-        "400":
-          $ref: "#/components/responses/Any"
-        "401":
-          $ref: "#/components/responses/Any"
-        "403":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/DirectoryPasswordLogin'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
   /api/auth/directory-connectors/heartbeat/{tenantId}/{connectorId}:
     post:
       tags:
@@ -294,7 +295,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^wwcon_[a-zA-Z0-9]{16}$"
+            pattern: '^wwcon_[a-zA-Z0-9]{16}$'
         - name: X-Authrim-Heartbeat-Key-Id
           in: header
           required: true
@@ -312,20 +313,20 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^(sha256=)?[a-fA-F0-9]{64}$"
+            pattern: '^(sha256=)?[a-fA-F0-9]{64}$'
       requestBody:
-        $ref: "#/components/requestBodies/DirectoryConnectorHeartbeat"
+        $ref: '#/components/requestBodies/DirectoryConnectorHeartbeat'
       responses:
-        "200":
-          $ref: "#/components/responses/DirectoryConnectorHeartbeat"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "413":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectoryConnectorHeartbeat'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
   /api/auth/directory-relay/connect/{tenantId}/{connectorId}:
     get:
       tags:
@@ -348,38 +349,38 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^[a-zA-Z0-9_-]{1,64}$"
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
       responses:
-        "101":
+        '101':
           description: WebSocket connection accepted.
-        "400":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-        "426":
-          $ref: "#/components/responses/Error"
-        "503":
-          $ref: "#/components/responses/Error"
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '426':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/auth/dids/challenge:
     post:
       tags:
         - DID
       summary: Create a DID authentication challenge.
       requestBody:
-        $ref: "#/components/requestBodies/DIDChallenge"
+        $ref: '#/components/requestBodies/DIDChallenge'
       responses:
-        "200":
-          $ref: "#/components/responses/DIDChallenge"
+        '200':
+          $ref: '#/components/responses/DIDChallenge'
   /api/auth/dids/verify:
     post:
       tags:
         - DID
       summary: Verify a DID authentication proof and create a session.
       requestBody:
-        $ref: "#/components/requestBodies/DIDVerify"
+        $ref: '#/components/requestBodies/DIDVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/DIDVerify"
+        '200':
+          $ref: '#/components/responses/DIDVerify'
   /api/auth/dids:
     get:
       tags:
@@ -388,8 +389,8 @@ paths:
       security:
         - sessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/DIDList"
+        '200':
+          $ref: '#/components/responses/DIDList'
   /api/auth/dids/{did}:
     delete:
       tags:
@@ -404,110 +405,110 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          $ref: "#/components/responses/DIDUnlink"
+        '200':
+          $ref: '#/components/responses/DIDUnlink'
   /api/auth/anon-login/challenge:
     post:
       tags:
         - Anonymous Login
       summary: Create an anonymous-login challenge.
       requestBody:
-        $ref: "#/components/requestBodies/AnonLoginChallenge"
+        $ref: '#/components/requestBodies/AnonLoginChallenge'
       responses:
-        "200":
-          $ref: "#/components/responses/AnonLoginChallenge"
+        '200':
+          $ref: '#/components/responses/AnonLoginChallenge'
   /api/auth/anon-login/verify:
     post:
       tags:
         - Anonymous Login
       summary: Verify anonymous-login challenge and create or resume an anonymous session.
       requestBody:
-        $ref: "#/components/requestBodies/AnonLoginVerify"
+        $ref: '#/components/requestBodies/AnonLoginVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/AnonLoginVerify"
+        '200':
+          $ref: '#/components/responses/AnonLoginVerify'
   /api/auth/upgrade:
     post:
       tags:
         - Upgrade
       summary: Start an anonymous-user upgrade.
       requestBody:
-        $ref: "#/components/requestBodies/UpgradeStart"
+        $ref: '#/components/requestBodies/UpgradeStart'
       responses:
-        "200":
-          $ref: "#/components/responses/UpgradeStart"
+        '200':
+          $ref: '#/components/responses/UpgradeStart'
   /api/auth/upgrade/complete:
     post:
       tags:
         - Upgrade
       summary: Complete an anonymous-user upgrade.
       requestBody:
-        $ref: "#/components/requestBodies/UpgradeComplete"
+        $ref: '#/components/requestBodies/UpgradeComplete'
       responses:
-        "200":
-          $ref: "#/components/responses/UpgradeComplete"
+        '200':
+          $ref: '#/components/responses/UpgradeComplete'
   /api/auth/upgrade/status:
     get:
       tags:
         - Upgrade
       summary: Return anonymous-user upgrade eligibility and history.
       responses:
-        "200":
-          $ref: "#/components/responses/UpgradeStatus"
+        '200':
+          $ref: '#/components/responses/UpgradeStatus'
   /api/auth/consents:
     get:
       tags:
         - Consent
       summary: Return consent request state for a consent challenge.
       responses:
-        "200":
-          $ref: "#/components/responses/ConsentGet"
+        '200':
+          $ref: '#/components/responses/ConsentGet'
     post:
       tags:
         - Consent
       summary: Submit a consent decision.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /auth/consent:
     get:
       tags:
         - Consent
       summary: Render built-in consent page when enabled.
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
     post:
       tags:
         - Consent
       summary: Submit built-in consent page decision when enabled.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /api/sessions:
     post:
       tags:
         - Sessions
       summary: Issue a short-lived session handoff token.
       requestBody:
-        $ref: "#/components/requestBodies/SessionIssue"
+        $ref: '#/components/requestBodies/SessionIssue'
       responses:
-        "200":
-          $ref: "#/components/responses/SessionIssue"
+        '200':
+          $ref: '#/components/responses/SessionIssue'
   /api/sessions/verify:
     post:
       tags:
         - Sessions
       summary: Verify a session handoff token and create an RP session.
       requestBody:
-        $ref: "#/components/requestBodies/SessionVerify"
+        $ref: '#/components/requestBodies/SessionVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/SessionVerify"
+        '200':
+          $ref: '#/components/responses/SessionVerify'
   /api/sessions/status:
     get:
       tags:
@@ -516,8 +517,8 @@ paths:
       security:
         - sessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/SessionStatus"
+        '200':
+          $ref: '#/components/responses/SessionStatus'
   /api/sessions/refresh:
     post:
       tags:
@@ -526,25 +527,25 @@ paths:
       security:
         - sessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/SessionRefresh"
+        '200':
+          $ref: '#/components/responses/SessionRefresh'
   /session/check:
     get:
       tags:
         - Sessions
       summary: OIDC Session Management check-session iframe endpoint.
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /logout:
     get:
       tags:
         - Logout
       summary: Start front-channel logout.
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
-        "302":
+        '200':
+          $ref: '#/components/responses/Any'
+        '302':
           description: Redirect response.
   /logout/backchannel:
     post:
@@ -552,29 +553,30 @@ paths:
         - Logout
       summary: Receive OIDC back-channel logout token.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /api/auth/dids/register/challenge:
     post:
       tags:
         - DID Auth
       operationId: postApiAuthDidsRegisterChallenge
       summary: Create a DID registration challenge for the current session.
-      description: Creates a DID proof challenge for an authenticated browser session so the DID can be
+      description:
+        Creates a DID proof challenge for an authenticated browser session so the DID can be
         linked to the current user.
       responses:
-        "200":
-          $ref: "#/components/responses/DIDRegisterChallenge"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DIDRegisterChallenge'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DIDRegisterChallenge"
+        $ref: '#/components/requestBodies/DIDRegisterChallenge'
       security:
         - sessionCookie: []
   /api/auth/dids/register/verify:
@@ -583,19 +585,20 @@ paths:
         - DID Auth
       operationId: postApiAuthDidsRegisterVerify
       summary: Verify and link a DID registration proof.
-      description: Verifies the DID proof for a prior registration challenge and links the DID to the
+      description:
+        Verifies the DID proof for a prior registration challenge and links the DID to the
         current authenticated session user.
       responses:
-        "200":
-          $ref: "#/components/responses/DIDRegisterVerify"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DIDRegisterVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DIDRegisterVerify"
+        $ref: '#/components/requestBodies/DIDRegisterVerify'
       security:
         - sessionCookie: []
   /api/auth/login-challenges:
@@ -604,17 +607,18 @@ paths:
         - Login Challenges
       operationId: getApiAuthLoginChallenges
       summary: Read login challenge metadata.
-      description: Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
+      description:
+        Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
         and web-origin policy for a login or re-auth challenge.
       responses:
-        "200":
-          $ref: "#/components/responses/LoginChallenge"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/LoginChallenge'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: challenge_id
           in: query
@@ -622,245 +626,472 @@ paths:
           schema:
             type: string
           description: Challenge id returned by the authorization flow.
+  /api/v1/login/interactions/start:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsStart
+      summary: Start or resume a LoginUI runtime Flow interaction.
+      description: >
+        Creates a LoginUI runtime Flow interaction for login, registration, approve, or account flows,
+        or resumes an existing interaction when a signed resume request is supplied. The endpoint is
+        feature-flagged and returns a signed runtime contract without AdminUI editor state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                flow_kind:
+                  type: string
+                  example: login
+                target_type:
+                  type: string
+                  enum:
+                    - tenant
+                    - oidc_client
+                    - saml_sp
+                target_id:
+                  type:
+                    - string
+                    - 'null'
+                client_id:
+                  type: string
+                saml_sp_id:
+                  type: string
+                scope:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                  description: Requested scopes used to filter Flow consent policy bindings.
+                requested_scope:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                  description: Requested scopes used to filter Flow consent policy bindings.
+                locale:
+                  type: string
+                  description: Preferred language for runtime Flow content.
+                requested_locale:
+                  type: string
+                  description: Preferred language for runtime Flow content.
+                authorization_challenge_id:
+                  type: string
+                  description: >
+                    OIDC authorization login challenge to continue when the Flow completes without
+                    a direct authentication endpoint returning the continuation URL.
+                saml_request_id:
+                  type: string
+                  description: SAML IdP request identifier to continue after the Flow completes.
+                saml_sp_entity_id:
+                  type: string
+                  description: SAML service provider entity ID for Flow protocol continuation.
+                return_to:
+                  type: string
+                  description: LoginUI return mode associated with the protocol request.
+                resume_interaction_id:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: Runtime interaction state and signed contract.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - schema_version
+                  - interaction
+                  - contract
+                  - contract_hash
+                  - signature
+                  - expires_in
+                  - resumed
+                properties:
+                  schema_version:
+                    type: string
+                  interaction:
+                    type: object
+                    additionalProperties: true
+                  assignment:
+                    type: object
+                    additionalProperties: true
+                  contract:
+                    type: object
+                    additionalProperties: true
+                  contract_hash:
+                    type: string
+                  signature:
+                    type: string
+                  expires_in:
+                    type: integer
+                  resumed:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /api/v1/login/interactions/{interaction_id}/submit:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsInteractionIdSubmit
+      summary: Submit the active LoginUI runtime Flow step.
+      description: >
+        Advances the active runtime Flow step after verifying CSRF, interaction state, expiry,
+        contract hash, HMAC signature, and current step identity. Step input is interpreted by the
+        active runtime component; consent-policy input records consent item decisions for the
+        authenticated user.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - step_id
+                - contract_hash
+                - signature
+              properties:
+                step_id:
+                  type: string
+                node_id:
+                  type: string
+                selected_handle:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+                input:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Updated runtime interaction state and next step.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - schema_version
+                  - interaction
+                  - step
+                  - completed
+                  - output
+                properties:
+                  schema_version:
+                    type: string
+                  interaction:
+                    type: object
+                    additionalProperties: true
+                  step:
+                    type:
+                      - object
+                      - 'null'
+                    additionalProperties: true
+                  completed:
+                    type: boolean
+                  output:
+                    type:
+                      - object
+                      - 'null'
+                    additionalProperties: true
+                    properties:
+                      action:
+                        type: string
+                        description: Runtime completion action, such as complete or continue_protocol.
+                      redirect_url:
+                        type: string
+                        description: URL that LoginUI should navigate to after Flow completion.
+                      protocol_continuation:
+                        type: object
+                        additionalProperties: true
+                        description: Protocol-specific continuation metadata for OIDC, SAML, or direct flows.
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /api/v1/auth/direct/email-code/send:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectEmailCodeSend
       summary: Send a Direct Auth email code.
-      description: Creates an email-code challenge for Direct Auth after validating the client, channel,
+      description:
+        Creates an email-code challenge for Direct Auth after validating the client, channel,
         origin, and requested email identifier.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectEmailCodeSend"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectEmailCodeSend'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectEmailCodeSend"
+        $ref: '#/components/requestBodies/DirectEmailCodeSend'
   /api/v1/auth/direct/email-code/verify:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectEmailCodeVerify
       summary: Verify a Direct Auth email code.
-      description: Verifies the email code and returns a short-lived Direct Auth artifact bound to client,
+      description:
+        Verifies the email code and returns a short-lived Direct Auth artifact bound to client,
         channel, provider, and PKCE metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectAuthArtifact"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectAuthArtifact'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectEmailCodeVerify"
+        $ref: '#/components/requestBodies/DirectEmailCodeVerify'
   /api/v1/auth/direct/logout:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectLogout
       summary: End a Direct Auth managed browser session.
-      description: Invalidates the current Direct Auth session when present, optionally revokes associated
+      description:
+        Invalidates the current Direct Auth session when present, optionally revokes associated
         device secrets according to logout_scope, and clears Direct Auth cookies.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectLogout"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectLogout'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectLogout"
+        $ref: '#/components/requestBodies/DirectLogout'
   /api/v1/auth/direct/passkey/login/finish:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectPasskeyLoginFinish
       summary: Finish Direct Auth passkey login.
-      description: Verifies the passkey authentication response and returns a short-lived Direct Auth
+      description:
+        Verifies the passkey authentication response and returns a short-lived Direct Auth
         artifact for session redemption or token exchange.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectAuthArtifact"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectAuthArtifact'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectPasskeyLoginFinish"
+        $ref: '#/components/requestBodies/DirectPasskeyLoginFinish'
   /api/v1/auth/direct/passkey/login/start:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectPasskeyLoginStart
       summary: Start Direct Auth passkey login.
-      description: Creates WebAuthn authentication options for a Direct Auth passkey login request after
+      description:
+        Creates WebAuthn authentication options for a Direct Auth passkey login request after
         validating client, channel, origin, and login hints.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectPasskeyStart"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectPasskeyStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectPasskeyLoginStart"
+        $ref: '#/components/requestBodies/DirectPasskeyLoginStart'
   /api/v1/auth/direct/passkey/register/finish:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectPasskeyRegisterFinish
       summary: Finish authenticated-user Direct Auth passkey registration.
-      description: Verifies a passkey registration response for the currently authenticated Direct Auth
+      description:
+        Verifies a passkey registration response for the currently authenticated Direct Auth
         session and stores the new passkey.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectPasskeyRegisterFinish"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectPasskeyRegisterFinish'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectPasskeyRegisterFinish"
+        $ref: '#/components/requestBodies/DirectPasskeyRegisterFinish'
   /api/v1/auth/direct/passkey/register/start:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectPasskeyRegisterStart
       summary: Start authenticated-user Direct Auth passkey registration.
-      description: Creates WebAuthn registration options for adding a passkey to the current Direct Auth
+      description:
+        Creates WebAuthn registration options for adding a passkey to the current Direct Auth
         session user.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectPasskeyStart"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectPasskeyStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectPasskeyRegisterStart"
+        $ref: '#/components/requestBodies/DirectPasskeyRegisterStart'
   /api/v1/auth/direct/passkey/signup/finish:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectPasskeySignupFinish
       summary: Finish Direct Auth passkey signup.
-      description: Verifies a signup passkey registration response, creates the user when needed, and
+      description:
+        Verifies a signup passkey registration response, creates the user when needed, and
         returns a Direct Auth artifact.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectAuthArtifact"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectAuthArtifact'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectPasskeySignupFinish"
+        $ref: '#/components/requestBodies/DirectPasskeySignupFinish'
   /api/v1/auth/direct/passkey/signup/start:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectPasskeySignupStart
       summary: Start Direct Auth passkey signup.
-      description: Creates WebAuthn registration options for Direct Auth signup after validating client,
+      description:
+        Creates WebAuthn registration options for Direct Auth signup after validating client,
         channel, origin, and email policy.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectPasskeyStart"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectPasskeyStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectPasskeySignupStart"
+        $ref: '#/components/requestBodies/DirectPasskeySignupStart'
   /api/v1/auth/direct/session:
     get:
       tags:
         - Direct Auth
       operationId: getApiV1AuthDirectSession
       summary: Read the current Direct Auth managed browser session.
-      description: Returns the current managed browser session and user profile when a valid Direct Auth
+      description:
+        Returns the current managed browser session and user profile when a valid Direct Auth
         session cookie or bearer session id is present.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectSessionStatus"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectSessionStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectSession
       summary: Redeem a Direct Auth artifact into a managed browser session.
-      description: Consumes a short-lived Direct Auth artifact, verifies its client/channel/provider/PKCE
+      description:
+        Consumes a short-lived Direct Auth artifact, verifies its client/channel/provider/PKCE
         bindings, creates an HttpOnly managed browser session, and returns session and user
         metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/DirectSessionCreate"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DirectSessionCreate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DirectSessionCreate"
+        $ref: '#/components/requestBodies/DirectSessionCreate'
   /api/v1/auth/direct/token:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectToken
       summary: Return the legacy Direct Auth token compatibility error.
-      description: This legacy endpoint never issues tokens. Use the canonical OAuth token endpoint with
+      description:
+        This legacy endpoint never issues tokens. Use the canonical OAuth token endpoint with
         the Direct Auth finish grant instead.
       responses:
-        "400":
-          $ref: "#/components/responses/DirectTokenCompatibility"
+        '400':
+          $ref: '#/components/responses/DirectTokenCompatibility'
       requestBody:
-        $ref: "#/components/requestBodies/DirectToken"
+        $ref: '#/components/requestBodies/DirectToken'
   /api/v1/invitations/use:
     post:
       tags:
         - Invitations
       operationId: postApiV1InvitationsUse
       summary: Consume an invitation after signup.
-      description: Marks an invitation token as used for a verified user in the invited tenant and applies
+      description:
+        Marks an invitation token as used for a verified user in the invited tenant and applies
         configured role or organization assignments.
       responses:
-        "200":
-          $ref: "#/components/responses/InvitationUse"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/InvitationUse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/InvitationUse"
+        $ref: '#/components/requestBodies/InvitationUse'
       security: []
   /api/v1/invitations/validate:
     get:
@@ -868,17 +1099,18 @@ paths:
         - Invitations
       operationId: getApiV1InvitationsValidate
       summary: Validate an invitation token.
-      description: Validates a public invitation token and returns tenant and invited-email metadata used
+      description:
+        Validates a public invitation token and returns tenant and invited-email metadata used
         by the invitation landing page.
       responses:
-        "200":
-          $ref: "#/components/responses/InvitationValidate"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/InvitationValidate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       security: []
       parameters:
         - name: token
@@ -893,17 +1125,18 @@ paths:
         - Registration
       operationId: getApiV1RegistrationFields
       summary: List registration-visible custom fields.
-      description: Returns custom claim schema definitions marked as visible on the registration form for
+      description:
+        Returns custom claim schema definitions marked as visible on the registration form for
         the resolved tenant.
       responses:
-        "200":
-          $ref: "#/components/responses/RegistrationFields"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/RegistrationFields'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       security: []
   /auth/login-challenge:
     get:
@@ -911,17 +1144,18 @@ paths:
         - Login Challenges
       operationId: getAuthLoginChallenge
       summary: Read login challenge metadata.
-      description: Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
+      description:
+        Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
         and web-origin policy for a login or re-auth challenge.
       responses:
-        "200":
-          $ref: "#/components/responses/LoginChallenge"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/LoginChallenge'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: challenge_id
           in: query
@@ -935,11 +1169,12 @@ paths:
         - Auth
       operationId: getAdminInitSetup
       summary: Render the initial admin setup page.
-      description: Returns the browser setup HTML page when a valid setup token is supplied, or an HTML
+      description:
+        Returns the browser setup HTML page when a valid setup token is supplied, or an HTML
         error/completed page when setup is unavailable.
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
       parameters:
         - name: token
           in: query
@@ -953,208 +1188,219 @@ paths:
         - Auth
       operationId: postApiAdminInitSetupComplete
       summary: Complete router-side initial setup.
-      description: Validates the temporary setup session, permanently disables router-side setup, cleans
+      description:
+        Validates the temporary setup session, permanently disables router-side setup, cleans
         up setup CSRF state, and returns Admin UI passkey setup handoff details.
       responses:
-        "200":
-          $ref: "#/components/responses/SetupComplete"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/SetupComplete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/SetupComplete"
+        $ref: '#/components/requestBodies/SetupComplete'
   /api/admin-init-setup/initialize:
     post:
       tags:
         - Auth
       operationId: postApiAdminInitSetupInitialize
       summary: Initialize the first administrator.
-      description: Validates the one-time setup token and CSRF token, creates the initial administrator,
+      description:
+        Validates the one-time setup token and CSRF token, creates the initial administrator,
         assigns the system admin role, and returns a temporary setup session plus Admin UI setup
         token.
       responses:
-        "200":
-          $ref: "#/components/responses/SetupInitialize"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/SetupInitialize'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/SetupInitialize"
+        $ref: '#/components/requestBodies/SetupInitialize'
   /api/admin-init-setup/status:
     get:
       tags:
         - Auth
       operationId: getApiAdminInitSetupStatus
       summary: Read initial setup status.
-      description: Returns whether the system has an administrator, whether setup is disabled, and whether
+      description:
+        Returns whether the system has an administrator, whether setup is disabled, and whether
         a setup token is currently present.
       responses:
-        "200":
-          $ref: "#/components/responses/SetupStatus"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/SetupStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /api/admin/auth/passkey/options:
     post:
       tags:
         - Auth
       operationId: postApiAdminAuthPasskeyOptions
       summary: Create Admin passkey login options.
-      description: Creates discoverable WebAuthn authentication options for Admin UI passkey login and
+      description:
+        Creates discoverable WebAuthn authentication options for Admin UI passkey login and
         stores a short-lived challenge.
       responses:
-        "200":
-          $ref: "#/components/responses/AdminPasskeyOptions"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AdminPasskeyOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/AdminPasskeyOptions"
+        $ref: '#/components/requestBodies/AdminPasskeyOptions'
   /api/admin/auth/passkey/verify:
     post:
       tags:
         - Auth
       operationId: postApiAdminAuthPasskeyVerify
       summary: Verify Admin passkey login.
-      description: Verifies an Admin UI passkey authentication response, updates the passkey counter, and
+      description:
+        Verifies an Admin UI passkey authentication response, updates the passkey counter, and
         returns the authenticated admin identity.
       responses:
-        "200":
-          $ref: "#/components/responses/AdminPasskeyVerify"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AdminPasskeyVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/AdminPasskeyVerify"
+        $ref: '#/components/requestBodies/AdminPasskeyVerify'
   /api/admin/setup-token/generate:
     post:
       tags:
         - Auth
       operationId: postApiAdminSetupTokenGenerate
       summary: Generate a replacement Admin UI setup token.
-      description: Uses the recovery key to revoke pending setup tokens for an admin user and issue a new
+      description:
+        Uses the recovery key to revoke pending setup tokens for an admin user and issue a new
         Admin UI setup token for passkey registration.
       responses:
-        "200":
-          $ref: "#/components/responses/SetupTokenGenerate"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/SetupTokenGenerate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/SetupTokenGenerate"
+        $ref: '#/components/requestBodies/SetupTokenGenerate'
   /api/admin/setup-token/passkey/complete:
     post:
       tags:
         - Auth
       operationId: postApiAdminSetupTokenPasskeyComplete
       summary: Complete Admin UI setup passkey registration.
-      description: Verifies the setup-token passkey registration response, stores the admin passkey, and
+      description:
+        Verifies the setup-token passkey registration response, stores the admin passkey, and
         marks the setup token as used.
       responses:
-        "200":
-          $ref: "#/components/responses/AdminPasskeyVerify"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AdminPasskeyVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/AdminPasskeyVerify"
+        $ref: '#/components/requestBodies/AdminPasskeyVerify'
   /api/admin/setup-token/passkey/options:
     post:
       tags:
         - Auth
       operationId: postApiAdminSetupTokenPasskeyOptions
       summary: Create setup-token WebAuthn registration options.
-      description: Validates an Admin UI setup token and returns WebAuthn registration options plus a
+      description:
+        Validates an Admin UI setup token and returns WebAuthn registration options plus a
         challenge identifier.
       responses:
-        "200":
-          $ref: "#/components/responses/AdminPasskeyOptions"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AdminPasskeyOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/AdminPasskeyOptions"
+        $ref: '#/components/requestBodies/AdminPasskeyOptions'
   /api/admin/setup-token/verify:
     post:
       tags:
         - Auth
       operationId: postApiAdminSetupTokenVerify
       summary: Verify an Admin UI setup token.
-      description: Checks whether a setup token is pending and unexpired and returns the associated admin
+      description:
+        Checks whether a setup token is pending and unexpired and returns the associated admin
         user identity.
       responses:
-        "200":
-          $ref: "#/components/responses/SetupTokenVerify"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/SetupTokenVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/SetupTokenVerify"
+        $ref: '#/components/requestBodies/SetupTokenVerify'
   /api/flow/cancel:
     post:
       tags:
         - Auth
       operationId: postApiFlowCancel
       summary: Cancel a Flow Engine session.
-      description: Cancels a server-driven Flow Engine session for the current tenant context and returns
+      description:
+        Cancels a server-driven Flow Engine session for the current tenant context and returns
         the cancellation status.
       responses:
-        "200":
-          $ref: "#/components/responses/FlowCancel"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/FlowCancel'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/FlowCancel"
+        $ref: '#/components/requestBodies/FlowCancel'
   /api/flow/init:
     post:
       tags:
         - Auth
       operationId: postApiFlowInit
       summary: Initialize a Flow Engine session.
-      description: Creates a Flow Engine runtime session for login, authorization, consent, or logout and
+      description:
+        Creates a Flow Engine runtime session for login, authorization, consent, or logout and
         returns the initial UI contract.
       responses:
-        "200":
-          $ref: "#/components/responses/FlowInit"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/FlowInit'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/FlowInit"
+        $ref: '#/components/requestBodies/FlowInit'
   /api/flow/state/{sessionId}:
     get:
       tags:
@@ -1163,14 +1409,14 @@ paths:
       summary: Read current Flow Engine state.
       description: Returns the current public Flow Engine state and UI contract for an existing session.
       responses:
-        "200":
-          $ref: "#/components/responses/FlowState"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/FlowState'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: sessionId
           in: path
@@ -1186,16 +1432,16 @@ paths:
       description: Submits a capability-specific response and returns the next UI contract, redirect
         instruction, or flow error.
       responses:
-        "200":
-          $ref: "#/components/responses/FlowSubmit"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/FlowSubmit'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/FlowSubmit"
+        $ref: '#/components/requestBodies/FlowSubmit'
 components:
   securitySchemes:
     sessionCookie:
@@ -1215,13 +1461,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     FormOrJson:
       required: false
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
         application/x-www-form-urlencoded:
           schema:
             type: object
@@ -1231,7 +1477,7 @@ components:
       content:
         application/x-www-form-urlencoded:
           schema:
-            $ref: "#/components/schemas/PushedAuthorizationRequest"
+            $ref: '#/components/schemas/PushedAuthorizationRequest'
           example:
             client_id: client_123
             redirect_uri: https://app.example.com/callback
@@ -1244,7 +1490,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyRegisterOptionsRequest"
+            $ref: '#/components/schemas/PasskeyRegisterOptionsRequest'
           example:
             email: user@example.com
             name: Example User
@@ -1253,7 +1499,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyRegisterVerifyRequest"
+            $ref: '#/components/schemas/PasskeyRegisterVerifyRequest'
           example:
             userId: user_123
             credential:
@@ -1266,14 +1512,14 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyLoginOptionsRequest"
+            $ref: '#/components/schemas/PasskeyLoginOptionsRequest'
           example: {}
     PasskeyLoginVerify:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyLoginVerifyRequest"
+            $ref: '#/components/schemas/PasskeyLoginVerifyRequest'
           example:
             challengeId: challenge_123
             credential:
@@ -1285,7 +1531,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/EmailCodeSendRequest"
+            $ref: '#/components/schemas/EmailCodeSendRequest'
           example:
             email: user@example.com
     EmailCodeVerify:
@@ -1293,16 +1539,16 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/EmailCodeVerifyRequest"
+            $ref: '#/components/schemas/EmailCodeVerifyRequest'
           example:
             email: user@example.com
-            code: "123456"
+            code: '123456'
     DirectoryPasswordLogin:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryPasswordLoginRequest"
+            $ref: '#/components/schemas/DirectoryPasswordLoginRequest'
           example:
             username: alice
             password: correct-horse-battery-staple
@@ -1312,7 +1558,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryMigrationPasskeyOptionsRequest"
+            $ref: '#/components/schemas/DirectoryMigrationPasskeyOptionsRequest'
           example:
             transaction_id: damt_123
             transaction_token: migration-transaction-token
@@ -1322,7 +1568,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryMigrationPasskeyVerifyRequest"
+            $ref: '#/components/schemas/DirectoryMigrationPasskeyVerifyRequest'
           example:
             transaction_id: damt_123
             transaction_token: migration-transaction-token
@@ -1337,7 +1583,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryMigrationEmailCodeSendRequest"
+            $ref: '#/components/schemas/DirectoryMigrationEmailCodeSendRequest'
           example:
             transaction_id: damt_email_123
             transaction_token: migration-email-token
@@ -1346,25 +1592,25 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryMigrationEmailCodeVerifyRequest"
+            $ref: '#/components/schemas/DirectoryMigrationEmailCodeVerifyRequest'
           example:
             transaction_id: damt_email_123
             transaction_token: migration-email-token
             challenge_id: challenge_123
-            code: "123456"
+            code: '123456'
     DirectoryConnectorHeartbeat:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryConnectorHeartbeatRequest"
+            $ref: '#/components/schemas/DirectoryConnectorHeartbeatRequest'
           example:
             instance_id: wwi_1234567890123456789012
             display_name: campus-a
             transport: direct
             version: 0.13.0
             release_channel: stable
-            started_at: "2026-06-24T00:00:00.000Z"
+            started_at: '2026-06-24T00:00:00.000Z'
             health_status: healthy
             health_summary:
               ldap: ok
@@ -1377,7 +1623,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDChallengeRequest"
+            $ref: '#/components/schemas/DIDChallengeRequest'
           example:
             did: did:web:example.com
     DIDVerify:
@@ -1385,7 +1631,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDVerifyRequest"
+            $ref: '#/components/schemas/DIDVerifyRequest'
           example:
             challenge_id: challenge_123
             proof: eyJhbGciOiJFZERTQSJ9...
@@ -1394,7 +1640,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDRegisterChallengeRequest"
+            $ref: '#/components/schemas/DIDRegisterChallengeRequest'
           example:
             did: did:web:example.com
     DIDRegisterVerify:
@@ -1402,7 +1648,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDVerifyRequest"
+            $ref: '#/components/schemas/DIDVerifyRequest'
           example:
             challenge_id: challenge_123
             proof: eyJhbGciOiJFZERTQSJ9...
@@ -1411,7 +1657,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AnonLoginChallengeRequest"
+            $ref: '#/components/schemas/AnonLoginChallengeRequest'
           example:
             client_id: client_123
             device_signature: device_sig_123
@@ -1421,7 +1667,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AnonLoginVerifyRequest"
+            $ref: '#/components/schemas/AnonLoginVerifyRequest'
           example:
             challenge_id: challenge_123
             device_signature: device_sig_123
@@ -1431,7 +1677,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UpgradeStartRequest"
+            $ref: '#/components/schemas/UpgradeStartRequest'
           example:
             method: email
     UpgradeComplete:
@@ -1439,7 +1685,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UpgradeCompleteRequest"
+            $ref: '#/components/schemas/UpgradeCompleteRequest'
           example:
             upgrade_token: upgrade_123
             method: email
@@ -1449,7 +1695,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SessionIssueRequest"
+            $ref: '#/components/schemas/SessionIssueRequest'
           example:
             session_id: sess_123
             rp_origin: https://app.example.com
@@ -1458,7 +1704,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SessionVerifyRequest"
+            $ref: '#/components/schemas/SessionVerifyRequest'
           example:
             token: session_token_123
             rp_origin: https://app.example.com
@@ -1467,7 +1713,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectEmailCodeSendRequest"
+            $ref: '#/components/schemas/DirectEmailCodeSendRequest'
           example:
             client_id: client_123
             email: user@example.com
@@ -1479,10 +1725,10 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectEmailCodeVerifyRequest"
+            $ref: '#/components/schemas/DirectEmailCodeVerifyRequest'
           example:
             attempt_id: attempt_123
-            code: "123456"
+            code: '123456'
             code_verifier: rfc7636-code-verifier
             channel: browser
     DirectLogout:
@@ -1490,7 +1736,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectLogoutRequest"
+            $ref: '#/components/schemas/DirectLogoutRequest'
           example:
             client_id: client_123
             revoke_tokens: false
@@ -1499,7 +1745,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyLoginStartRequest"
+            $ref: '#/components/schemas/DirectPasskeyLoginStartRequest'
           example:
             client_id: client_123
             code_challenge: rfc7636-code-challenge
@@ -1510,7 +1756,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyFinishRequest"
+            $ref: '#/components/schemas/DirectPasskeyFinishRequest'
           example:
             challenge_id: challenge_123
             credential:
@@ -1524,7 +1770,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeySignupStartRequest"
+            $ref: '#/components/schemas/DirectPasskeySignupStartRequest'
           example:
             client_id: client_123
             email: user@example.com
@@ -1537,7 +1783,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyFinishRequest"
+            $ref: '#/components/schemas/DirectPasskeyFinishRequest'
           example:
             challenge_id: challenge_123
             credential:
@@ -1551,7 +1797,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyRegisterStartRequest"
+            $ref: '#/components/schemas/DirectPasskeyRegisterStartRequest'
           example:
             display_name: MacBook Pro
             authenticator_type: platform
@@ -1560,7 +1806,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyRegisterFinishRequest"
+            $ref: '#/components/schemas/DirectPasskeyRegisterFinishRequest'
           example:
             challenge_id: challenge_123
             credential:
@@ -1573,7 +1819,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectSessionCreateRequest"
+            $ref: '#/components/schemas/DirectSessionCreateRequest'
           example:
             direct_auth_artifact: direct_auth_code_123
             client_id: client_123
@@ -1584,7 +1830,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectTokenRequest"
+            $ref: '#/components/schemas/DirectTokenRequest'
           example:
             direct_auth_artifact: direct_auth_code_123
             client_id: client_123
@@ -1594,7 +1840,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/InvitationUseRequest"
+            $ref: '#/components/schemas/InvitationUseRequest'
           example:
             token: invite_123
             user_id: user_123
@@ -1603,7 +1849,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupInitializeRequest"
+            $ref: '#/components/schemas/SetupInitializeRequest'
           example:
             setup_token: setup_123
             email: admin@example.com
@@ -1614,14 +1860,14 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupCompleteRequest"
+            $ref: '#/components/schemas/SetupCompleteRequest'
           example: {}
     AdminPasskeyOptions:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminPasskeyOptionsRequest"
+            $ref: '#/components/schemas/AdminPasskeyOptionsRequest'
           example:
             token: admin_setup_token_123
             rp_id: admin.example.com
@@ -1630,7 +1876,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminPasskeyVerifyRequest"
+            $ref: '#/components/schemas/AdminPasskeyVerifyRequest'
           example:
             token: admin_setup_token_123
             challenge_id: challenge_123
@@ -1644,7 +1890,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupTokenGenerateRequest"
+            $ref: '#/components/schemas/SetupTokenGenerateRequest'
           example:
             admin_user_id: admin_123
             recovery_key: recovery_key
@@ -1653,7 +1899,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupTokenVerifyRequest"
+            $ref: '#/components/schemas/SetupTokenVerifyRequest'
           example:
             token: setup_token_123
     FlowCancel:
@@ -1661,7 +1907,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowCancelRequest"
+            $ref: '#/components/schemas/FlowCancelRequest'
           example:
             sessionId: flow_sess_123
     FlowInit:
@@ -1669,7 +1915,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowInitRequest"
+            $ref: '#/components/schemas/FlowInitRequest'
           example:
             flowType: authorization
             clientId: client_123
@@ -1684,20 +1930,20 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowSubmitRequest"
+            $ref: '#/components/schemas/FlowSubmitRequest'
           example:
             sessionId: flow_sess_123
             requestId: req_123
             capabilityId: email_code.verify
             response:
-              code: "123456"
+              code: '123456'
   responses:
     Ok:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     Any:
       description: Successful response. The representation can be JSON, HTML, or a redirect.
     Error:
@@ -1705,13 +1951,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: '#/components/schemas/Error'
     AuthHealth:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AuthHealthResponse"
+            $ref: '#/components/schemas/AuthHealthResponse'
           example:
             status: ok
             service: ar-auth
@@ -1724,7 +1970,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PushedAuthorizationResponse"
+            $ref: '#/components/schemas/PushedAuthorizationResponse'
           example:
             request_uri: urn:ietf:params:oauth:request_uri:par_123
             expires_in: 90
@@ -1733,7 +1979,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyRegisterOptionsResponse"
+            $ref: '#/components/schemas/PasskeyRegisterOptionsResponse'
           example:
             options:
               challenge: challenge
@@ -1751,7 +1997,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyRegisterVerifyResponse"
+            $ref: '#/components/schemas/PasskeyRegisterVerifyResponse'
           example:
             verified: true
             passkeyId: passkey_123
@@ -1768,7 +2014,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyLoginOptionsResponse"
+            $ref: '#/components/schemas/PasskeyLoginOptionsResponse'
           example:
             options:
               challenge: challenge
@@ -1781,7 +2027,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PasskeyLoginVerifyResponse"
+            $ref: '#/components/schemas/PasskeyLoginVerifyResponse'
           example:
             verified: true
             sessionId: sess_123
@@ -1796,7 +2042,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/EmailCodeSendResponse"
+            $ref: '#/components/schemas/EmailCodeSendResponse'
           example:
             success: true
             message: Verification code sent to your email
@@ -1806,7 +2052,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/EmailCodeVerifyResponse"
+            $ref: '#/components/schemas/EmailCodeVerifyResponse'
           example:
             success: true
             sessionId: sess_123
@@ -1821,7 +2067,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryPasswordLoginResponse"
+            $ref: '#/components/schemas/DirectoryPasswordLoginResponse'
           example:
             ok: true
             expires_in: 86400
@@ -1843,7 +2089,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectoryConnectorHeartbeatResponse"
+            $ref: '#/components/schemas/DirectoryConnectorHeartbeatResponse'
           example:
             ok: true
             status: connected
@@ -1854,7 +2100,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDChallengeResponse"
+            $ref: '#/components/schemas/DIDChallengeResponse'
           example:
             challenge_id: challenge_123
             challenge: Sign this challenge
@@ -1873,7 +2119,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDVerifyResponse"
+            $ref: '#/components/schemas/DIDVerifyResponse'
           example:
             session_id: sess_123
             user_id: user_123
@@ -1883,7 +2129,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDChallengeResponse"
+            $ref: '#/components/schemas/DIDChallengeResponse'
           example:
             challenge_id: challenge_123
             challenge: Sign this challenge
@@ -1902,7 +2148,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDRegisterVerifyResponse"
+            $ref: '#/components/schemas/DIDRegisterVerifyResponse'
           example:
             success: true
             did: did:web:example.com
@@ -1912,7 +2158,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDListResponse"
+            $ref: '#/components/schemas/DIDListResponse'
           example:
             dids:
               - did: did:web:example.com
@@ -1925,7 +2171,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDUnlinkResponse"
+            $ref: '#/components/schemas/DIDUnlinkResponse'
           example:
             success: true
             did: did:web:example.com
@@ -1935,7 +2181,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AnonLoginChallengeResponse"
+            $ref: '#/components/schemas/AnonLoginChallengeResponse'
           example:
             challenge_id: challenge_123
             challenge: anon_challenge_123
@@ -1945,7 +2191,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AnonLoginVerifyResponse"
+            $ref: '#/components/schemas/AnonLoginVerifyResponse'
           example:
             success: true
             session_id: sess_123
@@ -1960,7 +2206,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UpgradeStartResponse"
+            $ref: '#/components/schemas/UpgradeStartResponse'
           example:
             success: true
             user_id: anon_123
@@ -1975,7 +2221,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UpgradeCompleteResponse"
+            $ref: '#/components/schemas/UpgradeCompleteResponse'
           example:
             success: true
             user_id: user_123
@@ -1990,7 +2236,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UpgradeStatusResponse"
+            $ref: '#/components/schemas/UpgradeStatusResponse'
           example:
             user_id: user_123
             is_anonymous: false
@@ -2008,7 +2254,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ConsentGetResponse"
+            $ref: '#/components/schemas/ConsentGetResponse'
           example:
             challenge_id: consent_123
             client:
@@ -2033,7 +2279,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SessionIssueResponse"
+            $ref: '#/components/schemas/SessionIssueResponse'
           example:
             token: session_token_123
             expires_in: 300
@@ -2043,7 +2289,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SessionVerifyResponse"
+            $ref: '#/components/schemas/SessionVerifyResponse'
           example:
             session_id: sess_456
             user_id: user_123
@@ -2054,7 +2300,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SessionStatusResponse"
+            $ref: '#/components/schemas/SessionStatusResponse'
           example:
             active: true
             session_id: sess_123
@@ -2072,7 +2318,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SessionRefreshResponse"
+            $ref: '#/components/schemas/SessionRefreshResponse'
           example:
             session_id: sess_123
             user_id: user_123
@@ -2084,7 +2330,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyStartResponse"
+            $ref: '#/components/schemas/DirectPasskeyStartResponse'
           example:
             challenge_id: challenge_123
             options:
@@ -2097,7 +2343,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectAuthArtifactResponse"
+            $ref: '#/components/schemas/DirectAuthArtifactResponse'
           example:
             direct_auth_artifact: direct_auth_code_123
             expires_in: 60
@@ -2107,7 +2353,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectEmailCodeSendResponse"
+            $ref: '#/components/schemas/DirectEmailCodeSendResponse'
           example:
             attempt_id: attempt_123
             expires_in: 300
@@ -2117,7 +2363,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectLogoutResponse"
+            $ref: '#/components/schemas/DirectLogoutResponse'
           example:
             success: true
             message: Logged out successfully
@@ -2126,7 +2372,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectPasskeyRegisterFinishResponse"
+            $ref: '#/components/schemas/DirectPasskeyRegisterFinishResponse'
           example:
             credential_id: cred_123
             public_key: base64-public-key
@@ -2139,7 +2385,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/BrowserSessionResponse"
+            $ref: '#/components/schemas/BrowserSessionResponse'
           example:
             ok: true
             expires_in: 86400
@@ -2161,7 +2407,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CompatibilityErrorResponse"
+            $ref: '#/components/schemas/CompatibilityErrorResponse'
           example:
             error: legacy_endpoint_not_supported
             error_description: This endpoint is no longer supported.
@@ -2170,7 +2416,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/InvitationUseResponse"
+            $ref: '#/components/schemas/InvitationUseResponse'
           example:
             success: true
             invitation_id: inv_123
@@ -2182,7 +2428,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupInitializeResponse"
+            $ref: '#/components/schemas/SetupInitializeResponse'
           example:
             success: true
             user_id: admin_123
@@ -2195,7 +2441,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupCompleteResponse"
+            $ref: '#/components/schemas/SetupCompleteResponse'
           example:
             success: true
             user:
@@ -2207,14 +2453,15 @@ components:
             admin_ui_url: https://admin.example.com
             admin_ui_setup_url: https://admin.example.com/setup/complete?token=admin_setup_token_123
             setup_token: admin_setup_token_123
-            cli_fallback: "If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env
-              <env>"
+            cli_fallback:
+              'If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env
+              <env>'
     AdminPasskeyOptions:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminPasskeyOptionsResponse"
+            $ref: '#/components/schemas/AdminPasskeyOptionsResponse'
           example:
             options:
               challenge: challenge
@@ -2231,7 +2478,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminPasskeyVerifyResponse"
+            $ref: '#/components/schemas/AdminPasskeyVerifyResponse'
           example:
             success: true
             user:
@@ -2243,7 +2490,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupTokenGenerateResponse"
+            $ref: '#/components/schemas/SetupTokenGenerateResponse'
           example:
             token: admin_setup_token_123
             expires_at: 1770086400000
@@ -2255,7 +2502,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupTokenVerifyResponse"
+            $ref: '#/components/schemas/SetupTokenVerifyResponse'
           example:
             valid: true
             user:
@@ -2267,7 +2514,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowCancelResponse"
+            $ref: '#/components/schemas/FlowCancelResponse'
           example:
             success: true
             sessionId: flow_sess_123
@@ -2276,12 +2523,12 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowInitResponse"
+            $ref: '#/components/schemas/FlowInitResponse'
           example:
             sessionId: flow_sess_123
-            uiContractVersion: "0.1"
+            uiContractVersion: '0.1'
             uiContract:
-              version: "0.1"
+              version: '0.1'
               sessionId: flow_sess_123
               nodeId: start
               capabilities: []
@@ -2290,11 +2537,11 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowSubmitResponse"
+            $ref: '#/components/schemas/FlowSubmitResponse'
           example:
             type: continue
             uiContract:
-              version: "0.1"
+              version: '0.1'
               sessionId: flow_sess_123
               nodeId: email_code
               capabilities: []
@@ -2303,43 +2550,43 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/MethodNotAllowedError"
+            $ref: '#/components/schemas/MethodNotAllowedError'
     LoginChallenge:
       description: Login challenge metadata for Login UI rendering.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/LoginChallengeResponse"
+            $ref: '#/components/schemas/LoginChallengeResponse'
     DirectSessionStatus:
       description: Current Direct Auth managed browser session.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DirectSessionStatusResponse"
+            $ref: '#/components/schemas/DirectSessionStatusResponse'
     InvitationValidate:
       description: Invitation validation response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/InvitationValidateResponse"
+            $ref: '#/components/schemas/InvitationValidateResponse'
     RegistrationFields:
       description: Registration fields visible to the signup form.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RegistrationFieldsResponse"
+            $ref: '#/components/schemas/RegistrationFieldsResponse'
     SetupStatus:
       description: Initial setup status response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SetupStatusResponse"
+            $ref: '#/components/schemas/SetupStatusResponse'
     FlowState:
       description: Current Flow Engine state and UI contract.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/FlowStateResponse"
+            $ref: '#/components/schemas/FlowStateResponse'
   schemas:
     JsonObject:
       type: object
@@ -2355,7 +2602,7 @@ components:
         message:
           type: string
         webauthn_signal:
-          $ref: "#/components/schemas/WebAuthnSignalHint"
+          $ref: '#/components/schemas/WebAuthnSignalHint'
     WebAuthnSignalHint:
       type: object
       description:
@@ -2452,12 +2699,12 @@ components:
             - type: string
               format: email
               example: user@example.com
-            - type: "null"
+            - type: 'null'
         name:
           anyOf:
             - type: string
               example: Example User
-            - type: "null"
+            - type: 'null'
         email_verified:
           oneOf:
             - type: boolean
@@ -2474,7 +2721,7 @@ components:
           anyOf:
             - type: string
               example: 2026-06-20T00:00:00.000Z
-            - type: "null"
+            - type: 'null'
         user_type:
           type: string
           example: anonymous
@@ -2505,7 +2752,7 @@ components:
       type: object
       properties:
         options:
-          $ref: "#/components/schemas/WebAuthnOptions"
+          $ref: '#/components/schemas/WebAuthnOptions'
         userId:
           type: string
           example: user_123
@@ -2519,7 +2766,7 @@ components:
           type: string
           example: user_123
         credential:
-          $ref: "#/components/schemas/WebAuthnCredential"
+          $ref: '#/components/schemas/WebAuthnCredential'
         deviceName:
           type: string
           example: MacBook Pro
@@ -2545,7 +2792,7 @@ components:
           type: string
           example: user_123
         user:
-          $ref: "#/components/schemas/AuthUser"
+          $ref: '#/components/schemas/AuthUser'
       required:
         - verified
         - passkeyId
@@ -2565,7 +2812,7 @@ components:
       type: object
       properties:
         options:
-          $ref: "#/components/schemas/WebAuthnOptions"
+          $ref: '#/components/schemas/WebAuthnOptions'
         challengeId:
           type: string
           example: challenge_123
@@ -2579,7 +2826,7 @@ components:
           type: string
           example: challenge_123
         credential:
-          $ref: "#/components/schemas/WebAuthnCredential"
+          $ref: '#/components/schemas/WebAuthnCredential'
       required:
         - challengeId
         - credential
@@ -2596,7 +2843,7 @@ components:
           type: string
           example: user_123
         user:
-          $ref: "#/components/schemas/AuthUser"
+          $ref: '#/components/schemas/AuthUser'
       required:
         - verified
         - sessionId
@@ -2641,7 +2888,7 @@ components:
           example: user@example.com
         code:
           type: string
-          example: "123456"
+          example: '123456'
       required:
         - email
         - code
@@ -2658,7 +2905,7 @@ components:
           type: string
           example: user_123
         user:
-          $ref: "#/components/schemas/AuthUser"
+          $ref: '#/components/schemas/AuthUser'
       required:
         - success
         - sessionId
@@ -2773,7 +3020,7 @@ components:
         code:
           type: string
           pattern: "^\\d{6}$"
-          example: "123456"
+          example: '123456'
       required:
         - transaction_id
         - transaction_token
@@ -2793,7 +3040,7 @@ components:
         instance_id:
           type: string
           maxLength: 128
-          pattern: "^[a-zA-Z0-9._:-]+$"
+          pattern: '^[a-zA-Z0-9._:-]+$'
           description: Immutable Wordwarden instance identifier persisted in the connector state directory.
         display_name:
           type: string
@@ -2811,7 +3058,7 @@ components:
         release_channel:
           type: string
           maxLength: 32
-          pattern: "^[a-zA-Z0-9_.-]{1,32}$"
+          pattern: '^[a-zA-Z0-9_.-]{1,32}$'
           default: stable
         started_at:
           type: string
@@ -2828,7 +3075,7 @@ components:
           description: Redacted operational health summary. Must not include PII, LDAP secrets, or LDAP internal values.
         config_fingerprint:
           type: string
-          pattern: "^sha256:[a-f0-9]{64}$"
+          pattern: '^sha256:[a-f0-9]{64}$'
         config_categories:
           type: array
           maxItems: 32
@@ -2864,7 +3111,7 @@ components:
           type: string
         connector_id:
           type: string
-          pattern: "^wwcon_[a-zA-Z0-9]{16}$"
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
     BrowserSessionResponse:
       type: object
       properties:
@@ -2914,7 +3161,7 @@ components:
               anyOf:
                 - type: string
                   example: Example User
-                - type: "null"
+                - type: 'null'
         authorization:
           type: object
           additionalProperties: true
@@ -2929,9 +3176,9 @@ components:
         - user
     DirectoryPasswordLoginResponse:
       oneOf:
-        - $ref: "#/components/schemas/BrowserSessionResponse"
-        - $ref: "#/components/schemas/DirectoryPasswordMigrationRequiredResponse"
-        - $ref: "#/components/schemas/DirectoryPasswordRecoveryRequiredResponse"
+        - $ref: '#/components/schemas/BrowserSessionResponse'
+        - $ref: '#/components/schemas/DirectoryPasswordMigrationRequiredResponse'
+        - $ref: '#/components/schemas/DirectoryPasswordRecoveryRequiredResponse'
     DirectoryPasswordMigrationRequiredResponse:
       type: object
       additionalProperties: false
@@ -2971,12 +3218,12 @@ components:
               anyOf:
                 - type: string
                   example: immediate
-                - type: "null"
+                - type: 'null'
             passkey_required_at:
               anyOf:
                 - type: integer
                   example: 1770000000000
-                - type: "null"
+                - type: 'null'
             email_code_fallback_mode:
               type: string
               enum:
@@ -2989,8 +3236,8 @@ components:
               type: boolean
             email_code_fallback:
               anyOf:
-                - $ref: "#/components/schemas/DirectoryPasswordEmailCodeTransaction"
-                - type: "null"
+                - $ref: '#/components/schemas/DirectoryPasswordEmailCodeTransaction'
+                - type: 'null'
           required:
             - required
             - action
@@ -3002,7 +3249,7 @@ components:
             - email_code_fallback_mode
             - email_code_fallback_available
         user:
-          $ref: "#/components/schemas/AuthUser"
+          $ref: '#/components/schemas/AuthUser'
       required:
         - ok
         - migration
@@ -3047,7 +3294,7 @@ components:
             - expires_at
             - masked_email
         user:
-          $ref: "#/components/schemas/AuthUser"
+          $ref: '#/components/schemas/AuthUser'
       required:
         - ok
         - recovery
@@ -3114,7 +3361,7 @@ components:
         allowed_verification_methods:
           type: array
           items:
-            $ref: "#/components/schemas/DIDVerificationMethod"
+            $ref: '#/components/schemas/DIDVerificationMethod'
         expires_in:
           type: integer
           example: 300
@@ -3186,12 +3433,12 @@ components:
                 anyOf:
                   - type: integer
                     example: 1770000000000
-                  - type: "null"
+                  - type: 'null'
               raw_attributes:
                 anyOf:
                   - type: object
                     additionalProperties: true
-                  - type: "null"
+                  - type: 'null'
         count:
           type: integer
           example: 1
@@ -3382,7 +3629,7 @@ components:
         missing_required_custom_claims:
           type: array
           items:
-            $ref: "#/components/schemas/MissingRequiredField"
+            $ref: '#/components/schemas/MissingRequiredField'
         account_lifecycle_state:
           type: string
           example: active
@@ -3425,7 +3672,7 @@ components:
         missing_required_custom_claims:
           type: array
           items:
-            $ref: "#/components/schemas/MissingRequiredField"
+            $ref: '#/components/schemas/MissingRequiredField'
         account_lifecycle_state:
           type: string
           example: active
@@ -3501,7 +3748,7 @@ components:
           anyOf:
             - type: object
               additionalProperties: true
-            - type: "null"
+            - type: 'null'
         roles:
           type: array
           items:
@@ -3679,7 +3926,7 @@ components:
             - S256
           example: S256
         channel:
-          $ref: "#/components/schemas/DirectAuthChannel"
+          $ref: '#/components/schemas/DirectAuthChannel'
         scope:
           type: string
           example: openid profile email
@@ -3701,7 +3948,7 @@ components:
           type: string
           example: challenge_123
         options:
-          $ref: "#/components/schemas/WebAuthnOptions"
+          $ref: '#/components/schemas/WebAuthnOptions'
       required:
         - challenge_id
         - options
@@ -3712,12 +3959,12 @@ components:
           type: string
           example: challenge_123
         credential:
-          $ref: "#/components/schemas/WebAuthnCredential"
+          $ref: '#/components/schemas/WebAuthnCredential'
         code_verifier:
           type: string
           example: rfc7636-code-verifier
         channel:
-          $ref: "#/components/schemas/DirectAuthChannel"
+          $ref: '#/components/schemas/DirectAuthChannel'
       required:
         - challenge_id
         - credential
@@ -3760,7 +4007,7 @@ components:
             - S256
           example: S256
         channel:
-          $ref: "#/components/schemas/DirectAuthChannel"
+          $ref: '#/components/schemas/DirectAuthChannel'
         scope:
           type: string
           example: openid profile email
@@ -3812,7 +4059,7 @@ components:
             - S256
           example: S256
         channel:
-          $ref: "#/components/schemas/DirectAuthChannel"
+          $ref: '#/components/schemas/DirectAuthChannel'
         scope:
           type: string
           example: openid profile email
@@ -3864,12 +4111,12 @@ components:
           example: attempt_123
         code:
           type: string
-          example: "123456"
+          example: '123456'
         code_verifier:
           type: string
           example: rfc7636-code-verifier
         channel:
-          $ref: "#/components/schemas/DirectAuthChannel"
+          $ref: '#/components/schemas/DirectAuthChannel'
       required:
         - attempt_id
         - code
@@ -3936,7 +4183,7 @@ components:
           type: string
           example: challenge_123
         credential:
-          $ref: "#/components/schemas/WebAuthnCredential"
+          $ref: '#/components/schemas/WebAuthnCredential'
         device_name:
           type: string
           example: MacBook Pro
@@ -4085,13 +4332,13 @@ components:
             - type: string
               format: uri
               example: https://admin.example.com
-            - type: "null"
+            - type: 'null'
         admin_ui_setup_url:
           anyOf:
             - type: string
               format: uri
               example: https://admin.example.com/setup/complete?token=admin_setup_token_123
-            - type: "null"
+            - type: 'null'
       required:
         - success
         - user_id
@@ -4122,7 +4369,7 @@ components:
               anyOf:
                 - type: string
                   example: Admin User
-                - type: "null"
+                - type: 'null'
             role:
               type: string
               example: system_admin
@@ -4134,20 +4381,21 @@ components:
             - type: string
               format: uri
               example: https://admin.example.com
-            - type: "null"
+            - type: 'null'
         admin_ui_setup_url:
           anyOf:
             - type: string
               format: uri
               example: https://admin.example.com/setup/complete?token=admin_setup_token_123
-            - type: "null"
+            - type: 'null'
         setup_token:
           type: string
           example: admin_setup_token_123
         cli_fallback:
           type: string
-          example: "If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env
-            <env>"
+          example:
+            'If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env
+            <env>'
       required:
         - success
         - user
@@ -4170,7 +4418,7 @@ components:
       type: object
       properties:
         options:
-          $ref: "#/components/schemas/WebAuthnOptions"
+          $ref: '#/components/schemas/WebAuthnOptions'
         challenge_id:
           type: string
           example: challenge_123
@@ -4187,7 +4435,7 @@ components:
           type: string
           example: challenge_123
         passkey_response:
-          $ref: "#/components/schemas/WebAuthnCredential"
+          $ref: '#/components/schemas/WebAuthnCredential'
         origin:
           type: string
           format: uri
@@ -4217,7 +4465,7 @@ components:
               anyOf:
                 - type: string
                   example: Admin User
-                - type: "null"
+                - type: 'null'
       required:
         - success
         - user
@@ -4297,7 +4545,7 @@ components:
             name:
               type:
                 - string
-                - "null"
+                - 'null'
     FlowCancelRequest:
       type: object
       required:
@@ -4328,7 +4576,7 @@ components:
               enum:
                 - false
             error:
-              $ref: "#/components/schemas/FlowError"
+              $ref: '#/components/schemas/FlowError'
     FlowInitRequest:
       type: object
       required:
@@ -4347,7 +4595,7 @@ components:
         tenantId:
           type: string
         oauthParams:
-          $ref: "#/components/schemas/OAuthFlowParams"
+          $ref: '#/components/schemas/OAuthFlowParams'
     OAuthFlowParams:
       type: object
       properties:
@@ -4387,9 +4635,9 @@ components:
         uiContractVersion:
           type: string
           enum:
-            - "0.1"
+            - '0.1'
         uiContract:
-          $ref: "#/components/schemas/UIContract"
+          $ref: '#/components/schemas/UIContract'
     UIContract:
       type: object
       description: Server-driven Flow Engine UI contract for the current node.
@@ -4438,7 +4686,7 @@ components:
               enum:
                 - continue
             uiContract:
-              $ref: "#/components/schemas/UIContract"
+              $ref: '#/components/schemas/UIContract'
         - type: object
           required:
             - type
@@ -4449,7 +4697,7 @@ components:
               enum:
                 - redirect
             redirect:
-              $ref: "#/components/schemas/FlowRedirect"
+              $ref: '#/components/schemas/FlowRedirect'
         - type: object
           required:
             - type
@@ -4460,7 +4708,7 @@ components:
               enum:
                 - error
             error:
-              $ref: "#/components/schemas/FlowError"
+              $ref: '#/components/schemas/FlowError'
     FlowRedirect:
       type: object
       required:
@@ -4494,7 +4742,7 @@ components:
           additionalProperties: true
     MethodNotAllowedError:
       allOf:
-        - $ref: "#/components/schemas/Error"
+        - $ref: '#/components/schemas/Error'
       example:
         error: invalid_request
         error_description: Method not allowed
@@ -4673,13 +4921,13 @@ components:
             email:
               type:
                 - string
-                - "null"
+                - 'null'
               format: email
               example: user@example.com
             name:
               type:
                 - string
-                - "null"
+                - 'null'
               example: Example User
             emailVerified:
               type: boolean
@@ -4693,7 +4941,7 @@ components:
             lastLoginAt:
               type:
                 - integer
-                - "null"
+                - 'null'
               example: 1770000000000
     InvitationValidateResponse:
       type: object
@@ -4720,7 +4968,7 @@ components:
         invited_email:
           type:
             - string
-            - "null"
+            - 'null'
           format: email
           example: user@example.com
         expires_at:
@@ -4798,4 +5046,4 @@ components:
               example:
                 - identifier
         uiContract:
-          $ref: "#/components/schemas/UIContract"
+          $ref: '#/components/schemas/UIContract'

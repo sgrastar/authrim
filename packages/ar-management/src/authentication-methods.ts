@@ -84,7 +84,7 @@ interface HumanVerificationMethod {
 }
 
 type ExternalLoginProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
-type ExternalLoginStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+type ExternalLoginStartMode = 'oauth_redirect' | 'saml_sp';
 
 interface ExternalLoginProvider {
   id: string;
@@ -537,12 +537,8 @@ function normalizeExternalStartMode(
   if (normalized === 'saml_sp' || normalized === 'saml') {
     return 'saml_sp';
   }
-  if (normalized === 'direct' || normalized === 'url') {
-    return 'direct';
-  }
   if (type === 'saml') return 'saml_sp';
-  if (type === 'oidc' || type === 'oauth2') return 'oauth_redirect';
-  return 'direct';
+  return 'oauth_redirect';
 }
 
 function isValidStartUrl(value: string | undefined): value is string {
@@ -1152,30 +1148,6 @@ function applyExternalProviderUsage(
     .filter((provider) => provider.enabled);
 }
 
-function applyHumanVerificationToExternalProviders(
-  providers: ExternalLoginProvider[],
-  humanVerification: HumanVerificationMethod
-): ExternalLoginProvider[] {
-  if (!humanVerification.enabled) return providers;
-
-  return providers
-    .map((provider) => {
-      if (provider.startMode !== 'direct') return provider;
-
-      const loginEnabled = humanVerification.loginEnabled ? false : provider.loginEnabled;
-      const signupEnabled = humanVerification.signupEnabled ? false : provider.signupEnabled;
-      const reauthEnabled = humanVerification.reauthEnabled ? false : provider.reauthEnabled;
-      return {
-        ...provider,
-        loginEnabled,
-        signupEnabled,
-        reauthEnabled,
-        enabled: loginEnabled || signupEnabled || reauthEnabled,
-      };
-    })
-    .filter((provider) => provider.enabled);
-}
-
 /**
  * Build UI config from resolved Login UI settings
  */
@@ -1290,12 +1262,9 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       resolveHumanVerificationMethod(env, tenantId),
       resolveExternalProviderUsage(env, tenantId),
     ]);
-    const externalProviders = applyHumanVerificationToExternalProviders(
-      applyExternalProviderUsage(
-        mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
-        externalProviderUsage
-      ),
-      humanVerification
+    const externalProviders = applyExternalProviderUsage(
+      mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
+      externalProviderUsage
     );
 
     const builtInMethods = await resolveBuiltInAuthenticationMethods(env, tenantId, settings);
