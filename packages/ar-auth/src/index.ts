@@ -92,6 +92,10 @@ import {
 } from './direct-auth';
 import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
+import {
+  loginRuntimeInteractionStartHandler,
+  loginRuntimeInteractionSubmitHandler,
+} from './login-runtime-flow';
 
 function escapeHtml(value: string): string {
   return value
@@ -350,6 +354,7 @@ app.use(
 );
 app.use('/api/sessions/*', csrfProtectionMiddleware());
 app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
+app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
 
@@ -581,6 +586,17 @@ app.use('/api/v1/auth/direct/*', async (c, next) => {
     endpoints: ['/api/v1/auth/direct'],
   })(c, next);
 });
+
+app.use('/api/v1/login/interactions/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/login/interactions'],
+  })(c, next);
+});
+
+app.post('/api/v1/login/interactions/start', loginRuntimeInteractionStartHandler);
+app.post('/api/v1/login/interactions/:interaction_id/submit', loginRuntimeInteractionSubmitHandler);
 
 // Passkey Login endpoints
 app.post('/api/v1/auth/direct/passkey/login/start', directPasskeyLoginStartHandler);

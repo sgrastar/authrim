@@ -7,7 +7,7 @@ import {
 	consumeLoginUiSessionItem,
 	removeLoginUiSessionItems,
 	setLoginUiSessionItem
-} from './storage-keys';
+} from '../storage-keys';
 
 describe('LoginUI session storage keys', () => {
 	beforeEach(() => {
@@ -16,8 +16,15 @@ describe('LoginUI session storage keys', () => {
 
 	it('uses namespaced keys for new LoginUI session state', () => {
 		setLoginUiSessionItem(LOGIN_UI_SESSION_STORAGE_KEYS.externalProviderId, 'github');
+		setLoginUiSessionItem(
+			LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
+			'interaction_1'
+		);
 
 		expect(sessionStorage.getItem('authrim:loginui:external:provider_id')).toBe('github');
+		expect(sessionStorage.getItem('authrim:loginui:external:flow_runtime_interaction_id')).toBe(
+			'interaction_1'
+		);
 		expect(sessionStorage.getItem('oauth_provider_id')).toBeNull();
 	});
 

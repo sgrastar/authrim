@@ -569,6 +569,40 @@ interface DevFlow {
 	created_at: number;
 	updated_by: string | null;
 	updated_at: number;
+	slug?: string;
+	display_name?: string;
+	kind?: 'login' | 'registration' | 'approve' | 'account' | `custom:${string}`;
+	status?: 'draft' | 'published' | 'disabled';
+	draft_editor_json?: Record<string, unknown> | null;
+	draft_runtime_base_json?: Record<string, unknown> | null;
+	published_version_id?: string | null;
+	deleted_at?: number | null;
+}
+
+interface DevFlowAssignment {
+	id: string;
+	tenant_id: string;
+	target_type: 'tenant' | 'oidc_client' | 'saml_sp';
+	target_id: string | null;
+	flow_kind: 'login' | 'registration' | 'approve' | 'account' | `custom:${string}`;
+	flow_id: string;
+	enabled: boolean;
+	created_at: number;
+	updated_at: number;
+}
+
+interface DevFlowVersion {
+	id: string;
+	tenant_id: string;
+	flow_id: string;
+	version_number: number;
+	schema_version: 'authrim.login_ui.contract.v1';
+	runtime_snapshot: Record<string, unknown>;
+	editor_snapshot: Record<string, unknown> | null;
+	validation_result: Record<string, unknown>;
+	published_by: string | null;
+	published_at: number;
+	created_at: number;
 }
 
 interface DevAdminAttribute {
@@ -984,16 +1018,6 @@ interface DevConsentPolicyItem {
 	evidence_profile?: string | null;
 	language_fallback?: string | null;
 	display_order: number;
-	created_at: number;
-	updated_at: number;
-}
-
-interface DevConsentPolicyAssignment {
-	id: string;
-	tenant_id: string;
-	assignment_type: 'tenant_default' | 'registration' | 'login' | 'oidc_client' | 'saml_sp';
-	target_id: string;
-	policy_id: string;
 	created_at: number;
 	updated_at: number;
 }
@@ -2596,6 +2620,331 @@ const flows = new Map<string, DevFlow>([
 	]
 ]);
 
+const flowVersions = new Map<string, DevFlowVersion[]>([]);
+const flowAssignments = new Map<string, DevFlowAssignment>();
+
+function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> {
+	if (kind === 'registration') {
+		return {
+			nodes: [
+				{
+					id: 'request',
+					type: 'entry',
+					title: 'Registration Request',
+					position: { x: 360, y: 0 },
+					config: { ui_kind: 'start' }
+				},
+				{
+					id: 'registration-method',
+					type: 'registration',
+					title: 'Registration Method',
+					position: { x: 360, y: 144 },
+					config: {
+						ui_kind: 'registration',
+						authentication_profile_ref: 'default',
+						outputs: [
+							{ id: 'mail_otp', label: 'Email OTP' },
+							{ id: 'passkey', label: 'Passkey' },
+							{ id: 'facebook', label: 'Facebook' }
+						]
+					}
+				},
+				{
+					id: 'profile-input',
+					type: 'profile_form',
+					title: 'Profile input',
+					position: { x: 360, y: 288 },
+					config: { ui_kind: 'profile', profile_form_ref: 'basic_profile' }
+				},
+				{
+					id: 'consent',
+					type: 'consent',
+					title: 'Registration consent',
+					position: { x: 360, y: 432 },
+					config: { ui_kind: 'consent', consent_policy_ref: 'registration_consent_policy' }
+				},
+				{
+					id: 'account-create',
+					type: 'account_action',
+					title: 'Account creation',
+					position: { x: 360, y: 576 },
+					config: { ui_kind: 'account' }
+				},
+				{
+					id: 'complete',
+					type: 'complete',
+					title: 'Complete',
+					position: { x: 360, y: 720 },
+					config: { ui_kind: 'end' }
+				}
+			],
+			edges: [
+				{
+					id: 'request:next->registration-method',
+					source: 'request',
+					source_handle: 'next',
+					target: 'registration-method'
+				},
+				{
+					id: 'registration-method:mail_otp->profile-input',
+					source: 'registration-method',
+					source_handle: 'mail_otp',
+					target: 'profile-input'
+				},
+				{
+					id: 'registration-method:passkey->profile-input',
+					source: 'registration-method',
+					source_handle: 'passkey',
+					target: 'profile-input'
+				},
+				{
+					id: 'registration-method:facebook->profile-input',
+					source: 'registration-method',
+					source_handle: 'facebook',
+					target: 'profile-input'
+				},
+				{
+					id: 'profile-input:submitted->consent',
+					source: 'profile-input',
+					source_handle: 'submitted',
+					target: 'consent'
+				},
+				{
+					id: 'consent:accepted->account-create',
+					source: 'consent',
+					source_handle: 'accepted',
+					target: 'account-create'
+				},
+				{
+					id: 'account-create:completed->complete',
+					source: 'account-create',
+					source_handle: 'completed',
+					target: 'complete'
+				}
+			],
+			viewport: { x: 36, y: 36, zoom: 1 }
+		};
+	}
+	return {
+		nodes: [
+			{
+				id: 'request',
+				type: 'entry',
+				title: 'Login Request',
+				position: { x: 360, y: 0 },
+				config: { ui_kind: 'start' }
+			},
+			{
+				id: 'session-check',
+				type: 'session_check',
+				title: 'Session Check',
+				position: { x: 360, y: 144 },
+				config: { ui_kind: 'decision' }
+			},
+			{
+				id: 'authentication-method',
+				type: 'authentication',
+				title: 'Authentication Method',
+				position: { x: 360, y: 288 },
+				config: {
+					ui_kind: 'authentication',
+					authentication_profile_ref: 'default',
+					outputs: [
+						{ id: 'mail_otp', label: 'Email OTP' },
+						{ id: 'passkey', label: 'Passkey' },
+						{ id: 'facebook', label: 'Facebook' }
+					]
+				}
+			},
+			{
+				id: 'consent',
+				type: 'consent',
+				title: 'Consent',
+				position: { x: 360, y: 432 },
+				config: { ui_kind: 'consent', consent_policy_ref: 'oidc_authorization_consent_policy' }
+			},
+			{
+				id: 'complete',
+				type: 'complete',
+				title: 'Complete',
+				position: { x: 360, y: 576 },
+				config: { ui_kind: 'end' }
+			}
+		],
+		edges: [
+			{
+				id: 'request:next->session-check',
+				source: 'request',
+				source_handle: 'next',
+				target: 'session-check'
+			},
+			{
+				id: 'session-check:authenticated->complete',
+				source: 'session-check',
+				source_handle: 'authenticated',
+				target: 'complete'
+			},
+			{
+				id: 'session-check:login_required->authentication-method',
+				source: 'session-check',
+				source_handle: 'login_required',
+				target: 'authentication-method'
+			},
+			{
+				id: 'session-check:reauth_required->authentication-method',
+				source: 'session-check',
+				source_handle: 'reauth_required',
+				target: 'authentication-method'
+			},
+			{
+				id: 'authentication-method:mail_otp->consent',
+				source: 'authentication-method',
+				source_handle: 'mail_otp',
+				target: 'consent'
+			},
+			{
+				id: 'authentication-method:passkey->consent',
+				source: 'authentication-method',
+				source_handle: 'passkey',
+				target: 'consent'
+			},
+			{
+				id: 'authentication-method:facebook->consent',
+				source: 'authentication-method',
+				source_handle: 'facebook',
+				target: 'consent'
+			},
+			{
+				id: 'consent:accepted->complete',
+				source: 'consent',
+				source_handle: 'accepted',
+				target: 'complete'
+			}
+		],
+		viewport: { x: 36, y: 36, zoom: 1 }
+	};
+}
+
+function devFlowRuntime(
+	flowId: string,
+	kind: 'login' | 'registration',
+	editor: Record<string, unknown>
+): Record<string, unknown> {
+	const nodes = Array.isArray(editor.nodes) ? editor.nodes : [];
+	return {
+		flow_id: flowId,
+		flow_kind: kind,
+		ui: {
+			steps: nodes
+				.filter(
+					(node): node is Record<string, unknown> => Boolean(node) && typeof node === 'object'
+				)
+				.map((node) => ({
+					id: `${String(node.id)}:step`,
+					source_node_id: String(node.id),
+					component: devRuntimeComponentForNode(String(node.type || 'entry')),
+					render: node.type !== 'entry',
+					config:
+						node.config && typeof node.config === 'object' && !Array.isArray(node.config)
+							? node.config
+							: {}
+				}))
+		}
+	};
+}
+
+function devRuntimeComponentForNode(type: string): string {
+	switch (type) {
+		case 'session_check':
+			return 'session_check';
+		case 'registration':
+			return 'registration_method_selector';
+		case 'authentication':
+			return 'authentication_method_selector';
+		case 'profile_form':
+			return 'profile_form';
+		case 'consent':
+			return 'consent_policy';
+		case 'account_action':
+			return 'account_action';
+		case 'complete':
+			return 'completion';
+		default:
+			return 'interaction_context';
+	}
+}
+
+function installDevFlow(id: string, kind: 'login' | 'registration', displayName: string) {
+	const editor = devFlowEditor(kind);
+	const runtime = devFlowRuntime(id, kind, editor);
+	const publishedVersionId = `${id}-version-1`;
+	flows.set(id, {
+		id,
+		tenant_id: TENANT_ID,
+		client_id: null,
+		profile_id: 'human-basic',
+		name: displayName,
+		display_name: displayName,
+		description: `Dev mock ${displayName}.`,
+		graph_definition: null,
+		compiled_plan: runtime,
+		version: '1.0.0',
+		is_active: true,
+		is_builtin: false,
+		created_by: 'dev-admin',
+		created_at: NOW_SECONDS - 86400 * 2,
+		updated_by: 'dev-admin',
+		updated_at: NOW_SECONDS - 3600,
+		slug: id.replace(/^flow-/, ''),
+		kind,
+		status: 'published',
+		draft_editor_json: editor,
+		draft_runtime_base_json: runtime,
+		published_version_id: publishedVersionId,
+		deleted_at: null
+	});
+	flowVersions.set(id, [
+		{
+			id: publishedVersionId,
+			tenant_id: TENANT_ID,
+			flow_id: id,
+			version_number: 1,
+			schema_version: 'authrim.login_ui.contract.v1',
+			runtime_snapshot: runtime,
+			editor_snapshot: editor,
+			validation_result: { valid: true, errors: [], warnings: [], issues: [] },
+			published_by: 'dev-admin',
+			published_at: NOW_SECONDS - 3600,
+			created_at: NOW_SECONDS - 3600
+		}
+	]);
+}
+
+installDevFlow('flow-default-login', 'login', 'Default Login Flow');
+installDevFlow('flow-default-registration', 'registration', 'Default Registration Flow');
+flowAssignments.set(flowAssignmentKey('tenant', null, 'login'), {
+	id: 'flow-assignment-tenant-login',
+	tenant_id: TENANT_ID,
+	target_type: 'tenant',
+	target_id: null,
+	flow_kind: 'login',
+	flow_id: 'flow-default-login',
+	enabled: true,
+	created_at: NOW_SECONDS - 3600,
+	updated_at: NOW_SECONDS - 3600
+});
+flowAssignments.set(flowAssignmentKey('tenant', null, 'registration'), {
+	id: 'flow-assignment-tenant-registration',
+	tenant_id: TENANT_ID,
+	target_type: 'tenant',
+	target_id: null,
+	flow_kind: 'registration',
+	flow_id: 'flow-default-registration',
+	enabled: true,
+	created_at: NOW_SECONDS - 3600,
+	updated_at: NOW_SECONDS - 3600
+});
+
 const samlProviders = new Map<string, DevSamlProvider>([
 	[
 		'dev-saml-sp',
@@ -3350,57 +3699,6 @@ const consentPolicyItems = new Map<string, DevConsentPolicyItem[]>([
 				updated_at: NOW - 86400 * 1000
 			}
 		]
-	]
-]);
-
-const consentPolicyAssignments = new Map<string, DevConsentPolicyAssignment>([
-	[
-		'tenant_default:',
-		{
-			id: 'assignment-tenant-default',
-			tenant_id: TENANT_ID,
-			assignment_type: 'tenant_default',
-			target_id: '',
-			policy_id: 'policy-default-account',
-			created_at: NOW - 86400 * 1000 * 7,
-			updated_at: NOW - 86400 * 1000
-		}
-	],
-	[
-		'registration:',
-		{
-			id: 'assignment-registration',
-			tenant_id: TENANT_ID,
-			assignment_type: 'registration',
-			target_id: '',
-			policy_id: 'policy-default-account',
-			created_at: NOW - 86400 * 1000 * 7,
-			updated_at: NOW - 86400 * 1000
-		}
-	],
-	[
-		'login:',
-		{
-			id: 'assignment-login',
-			tenant_id: TENANT_ID,
-			assignment_type: 'login',
-			target_id: '',
-			policy_id: 'policy-default-account',
-			created_at: NOW - 86400 * 1000 * 7,
-			updated_at: NOW - 86400 * 1000
-		}
-	],
-	[
-		'oidc_client:dev-oidc-client',
-		{
-			id: 'assignment-oidc-dev',
-			tenant_id: TENANT_ID,
-			assignment_type: 'oidc_client',
-			target_id: 'dev-oidc-client',
-			policy_id: 'policy-research-release',
-			created_at: NOW - 86400 * 1000 * 6,
-			updated_at: NOW - 86400 * 1000
-		}
 	]
 ]);
 
@@ -6242,9 +6540,36 @@ function createFlowId(name: unknown): string {
 
 function flowFromInput(input: Record<string, unknown>, existing?: DevFlow): DevFlow {
 	const now = Math.floor(Date.now() / 1000);
-	const name = typeof input.name === 'string' ? input.name : existing?.name || 'Custom Flow';
+	const name =
+		typeof input.display_name === 'string'
+			? input.display_name
+			: typeof input.name === 'string'
+				? input.name
+				: existing?.display_name || existing?.name || 'Custom Flow';
+	const kind =
+		input.kind === 'registration' ||
+		input.kind === 'approve' ||
+		input.kind === 'account' ||
+		(typeof input.kind === 'string' && input.kind.startsWith('custom:'))
+			? (input.kind as DevFlow['kind'])
+			: existing?.kind || 'login';
+	const editor =
+		input.editor && typeof input.editor === 'object' && !Array.isArray(input.editor)
+			? (input.editor as Record<string, unknown>)
+			: existing?.draft_editor_json ||
+				devFlowEditor(kind === 'registration' ? 'registration' : 'login');
+	const runtime =
+		input.runtime && typeof input.runtime === 'object' && !Array.isArray(input.runtime)
+			? (input.runtime as Record<string, unknown>)
+			: existing?.draft_runtime_base_json ||
+				devFlowRuntime(
+					existing?.id || createFlowId(name),
+					kind === 'registration' ? 'registration' : 'login',
+					editor
+				);
+	const id = existing?.id || createFlowId(name);
 	return {
-		id: existing?.id || createFlowId(name),
+		id,
 		tenant_id: existing?.tenant_id || TENANT_ID,
 		client_id:
 			typeof input.client_id === 'string' || input.client_id === null
@@ -6259,47 +6584,234 @@ function flowFromInput(input: Record<string, unknown>, existing?: DevFlow): DevF
 		name,
 		description:
 			typeof input.description === 'string' ? input.description : existing?.description || null,
-		graph_definition:
-			input.graph_definition && typeof input.graph_definition === 'object'
-				? (input.graph_definition as DevFlow['graph_definition'])
-				: existing?.graph_definition || null,
-		compiled_plan:
-			input.compiled_plan && typeof input.compiled_plan === 'object'
-				? (input.compiled_plan as Record<string, unknown>)
-				: existing?.compiled_plan || null,
+		graph_definition: editor as DevFlow['graph_definition'],
+		compiled_plan: runtime,
 		version: typeof input.version === 'string' ? input.version : existing?.version || 'v1',
 		is_active:
-			typeof input.is_active === 'boolean' ? input.is_active : (existing?.is_active ?? true),
+			input.status === 'disabled'
+				? false
+				: typeof input.is_active === 'boolean'
+					? input.is_active
+					: (existing?.is_active ?? true),
 		is_builtin: existing?.is_builtin || false,
 		created_by: existing?.created_by || 'dev-admin',
 		created_at: existing?.created_at || now,
 		updated_by: 'dev-admin',
-		updated_at: now
+		updated_at: now,
+		slug: typeof input.slug === 'string' ? input.slug : existing?.slug || id.replace(/^flow-/, ''),
+		display_name: name,
+		kind,
+		status:
+			input.status === 'published' || input.status === 'disabled' || input.status === 'draft'
+				? input.status
+				: existing?.status || 'draft',
+		draft_editor_json: editor,
+		draft_runtime_base_json: { ...runtime, flow_id: id, flow_kind: kind },
+		published_version_id: existing?.published_version_id || null,
+		deleted_at: existing?.deleted_at || null
 	};
+}
+
+function normalizeDevFlow(flow: DevFlow): DevFlow {
+	if (flow.kind && flow.status && flow.draft_editor_json && flow.draft_runtime_base_json) {
+		return flow;
+	}
+	const kind = flow.kind || (flow.id.includes('registration') ? 'registration' : 'login');
+	const editor =
+		flow.draft_editor_json ||
+		(flow.graph_definition && typeof flow.graph_definition === 'object'
+			? (flow.graph_definition as Record<string, unknown>)
+			: devFlowEditor(kind === 'registration' ? 'registration' : 'login'));
+	const runtime =
+		flow.draft_runtime_base_json ||
+		(flow.compiled_plan && typeof flow.compiled_plan === 'object'
+			? flow.compiled_plan
+			: devFlowRuntime(flow.id, kind === 'registration' ? 'registration' : 'login', editor));
+	const status = flow.status || (flow.is_active ? 'published' : 'disabled');
+	return {
+		...flow,
+		slug: flow.slug || flow.id.replace(/^flow-/, ''),
+		display_name: flow.display_name || flow.name,
+		kind,
+		status,
+		draft_editor_json: editor,
+		draft_runtime_base_json: { ...runtime, flow_id: flow.id, flow_kind: kind },
+		published_version_id:
+			flow.published_version_id || (status === 'published' ? `${flow.id}-version-1` : null),
+		deleted_at: flow.deleted_at ?? null
+	};
+}
+
+function flowToAdminFlow(flow: DevFlow) {
+	const normalized = normalizeDevFlow(flow);
+	return {
+		id: normalized.id,
+		tenant_id: normalized.tenant_id,
+		slug: normalized.slug || normalized.id,
+		name: normalized.name,
+		display_name: normalized.display_name || normalized.name,
+		description: normalized.description,
+		kind: normalized.kind || 'login',
+		status: normalized.status || 'draft',
+		editor: normalized.draft_editor_json ?? null,
+		runtime: normalized.draft_runtime_base_json ?? null,
+		published_version_id: normalized.published_version_id ?? null,
+		is_active: normalized.is_active,
+		is_builtin: normalized.is_builtin,
+		created_by: normalized.created_by,
+		created_at: normalized.created_at,
+		updated_by: normalized.updated_by,
+		updated_at: normalized.updated_at
+	};
+}
+
+function flowValidationOk() {
+	return { valid: true, errors: [], warnings: [], issues: [] };
+}
+
+function flowAssignmentKey(
+	targetType: DevFlowAssignment['target_type'],
+	targetId: string | null,
+	flowKind: DevFlowAssignment['flow_kind']
+): string {
+	return `${targetType}:${targetId || 'default'}:${flowKind}`;
+}
+
+function flowAssignmentToResponse(assignment: DevFlowAssignment) {
+	return { ...assignment };
+}
+
+function flowExportPackage(flow: DevFlow) {
+	const normalized = normalizeDevFlow(flow);
+	return {
+		schema_version: 'authrim.login_ui.contract.v1',
+		mode: 'export',
+		runtime: normalized.draft_runtime_base_json || {
+			flow_id: normalized.id,
+			flow_kind: normalized.kind || 'login',
+			ui: { steps: [] }
+		},
+		preview: {
+			flow_id: normalized.id,
+			slug: normalized.slug || normalized.id,
+			display_name: normalized.display_name || normalized.name
+		},
+		editor:
+			normalized.draft_editor_json ||
+			devFlowEditor(normalized.kind === 'registration' ? 'registration' : 'login')
+	};
+}
+
+async function handleFlowAssignments(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	if (segments[0] !== 'flow-assignments') return null;
+	const method = event.request.method;
+
+	if (segments.length === 1 && method === 'GET') {
+		const flowId = event.url.searchParams.get('flow_id');
+		const targetType = event.url.searchParams.get('target_type');
+		const targetId = event.url.searchParams.get('target_id');
+		const assignments = [...flowAssignments.values()].filter((assignment) => {
+			if (flowId && assignment.flow_id !== flowId) return false;
+			if (targetType && assignment.target_type !== targetType) return false;
+			if (targetId && assignment.target_id !== targetId) return false;
+			return true;
+		});
+		return json({ assignments: assignments.map(flowAssignmentToResponse) });
+	}
+
+	if (segments.length === 1 && method === 'PUT') {
+		const input = await readJson(event.request);
+		const flowId = String(input.flow_id || '');
+		const flow = flows.get(flowId);
+		if (!flow)
+			return json({ error: 'not_found', error_description: 'Dev mock Flow not found' }, 404);
+		const normalized = normalizeDevFlow(flow);
+		const flowKind = String(
+			input.flow_kind || normalized.kind || 'login'
+		) as DevFlowAssignment['flow_kind'];
+		const targetType = String(input.target_type || 'tenant') as DevFlowAssignment['target_type'];
+		const targetId = targetType === 'tenant' ? null : String(input.target_id || '');
+		if (targetType !== 'tenant' && !targetId) {
+			return json({ error: 'invalid_request', error_description: 'target_id is required' }, 400);
+		}
+		if (input.enabled !== false && normalized.status !== 'published') {
+			return json(
+				{
+					error: 'invalid_request',
+					error_description: 'Only published Flows can be enabled for runtime assignment'
+				},
+				400
+			);
+		}
+		const key = flowAssignmentKey(targetType, targetId, flowKind);
+		const now = Math.floor(Date.now() / 1000);
+		const existing = flowAssignments.get(key);
+		flowAssignments.set(key, {
+			id: existing?.id || `flow-assignment-${flowAssignments.size + 1}`,
+			tenant_id: TENANT_ID,
+			target_type: targetType,
+			target_id: targetId,
+			flow_kind: flowKind,
+			flow_id: flowId,
+			enabled: input.enabled !== false,
+			created_at: existing?.created_at || now,
+			updated_at: now
+		});
+		return json({ success: true });
+	}
+
+	if (segments.length === 1 && method === 'DELETE') {
+		const input = await readJson(event.request);
+		const flowKind = String(input.flow_kind || 'login') as DevFlowAssignment['flow_kind'];
+		const targetType = String(input.target_type || 'tenant') as DevFlowAssignment['target_type'];
+		const targetId = targetType === 'tenant' ? null : String(input.target_id || '');
+		if (targetType !== 'tenant' && !targetId) {
+			return json({ error: 'invalid_request', error_description: 'target_id is required' }, 400);
+		}
+		flowAssignments.delete(flowAssignmentKey(targetType, targetId, flowKind));
+		return json({ success: true });
+	}
+
+	return null;
 }
 
 async function handleFlows(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
+	const assignmentResponse = await handleFlowAssignments(event, segments);
+	if (assignmentResponse) return assignmentResponse;
 	if (segments[0] !== 'flows') return null;
 
 	if (segments.length === 1 && method === 'GET') {
 		const profile = event.url.searchParams.get('profile_id');
 		const active = event.url.searchParams.get('is_active');
+		const kind = event.url.searchParams.get('kind');
+		const status = event.url.searchParams.get('status');
 		const search = (event.url.searchParams.get('search') || '').toLowerCase();
 		const page = Math.max(1, Number(event.url.searchParams.get('page') || '1'));
 		const limit = Math.max(1, Number(event.url.searchParams.get('limit') || '20'));
-		const filtered = [...flows.values()].filter((flow) => {
+		const filtered = [...flows.values()].map(normalizeDevFlow).filter((flow) => {
+			if (flow.deleted_at) return false;
 			if (profile && flow.profile_id !== profile) return false;
 			if (active === 'true' && !flow.is_active) return false;
 			if (active === 'false' && flow.is_active) return false;
-			if (search && !`${flow.name} ${flow.description || ''}`.toLowerCase().includes(search)) {
+			if (kind && flow.kind !== kind) return false;
+			if (status && flow.status !== status) return false;
+			if (
+				search &&
+				!`${flow.name} ${flow.display_name || ''} ${flow.description || ''} ${flow.slug || ''}`
+					.toLowerCase()
+					.includes(search)
+			) {
 				return false;
 			}
 			return true;
 		});
 		const start = (page - 1) * limit;
 		return json({
-			flows: filtered.slice(start, start + limit),
+			flows: filtered.slice(start, start + limit).map(flowToAdminFlow),
 			pagination: {
 				page,
 				limit,
@@ -6313,7 +6825,54 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 		const input = await readJson(event.request);
 		const flow = flowFromInput(input);
 		flows.set(flow.id, flow);
-		return json({ success: true, flow_id: flow.id }, 201);
+		return json({ flow: flowToAdminFlow(flow), validation: flowValidationOk() }, 201);
+	}
+
+	if (segments[1] === 'node-types' && method === 'GET') {
+		return json({
+			node_types: [
+				{ type: 'entry', label: 'Entry', runtime_component: 'interaction_context' },
+				{ type: 'session_check', label: 'Session Check', runtime_component: 'session_check' },
+				{
+					type: 'registration',
+					label: 'Registration',
+					runtime_component: 'registration_method_selector'
+				},
+				{
+					type: 'authentication',
+					label: 'Authentication',
+					runtime_component: 'authentication_method_selector'
+				},
+				{ type: 'profile_form', label: 'Profile Form', runtime_component: 'profile_form' },
+				{ type: 'consent', label: 'Consent', runtime_component: 'consent_policy' },
+				{ type: 'account_action', label: 'Account Action', runtime_component: 'account_action' },
+				{ type: 'complete', label: 'Complete', runtime_component: 'completion' },
+				{ type: 'condition', label: 'Condition', runtime_component: 'condition' }
+			]
+		});
+	}
+
+	if (segments[1] === 'import' && method === 'POST') {
+		const input = await readJson(event.request);
+		const runtime =
+			input.runtime && typeof input.runtime === 'object' && !Array.isArray(input.runtime)
+				? (input.runtime as Record<string, unknown>)
+				: { flow_kind: 'login', ui: { steps: [] } };
+		const preview =
+			input.preview && typeof input.preview === 'object' && !Array.isArray(input.preview)
+				? (input.preview as Record<string, unknown>)
+				: {};
+		const flowKind = runtime.flow_kind === 'registration' ? 'registration' : 'login';
+		const imported = flowFromInput({
+			display_name:
+				typeof preview.display_name === 'string' ? preview.display_name : 'Imported Flow',
+			slug: typeof preview.slug === 'string' ? preview.slug : undefined,
+			kind: flowKind,
+			editor: input.editor,
+			runtime
+		});
+		flows.set(imported.id, imported);
+		return json({ flow_id: imported.id, validation: flowValidationOk() }, 201);
 	}
 
 	const flowId = segments[1];
@@ -6323,24 +6882,40 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 	}
 
 	if (segments.length === 2 && method === 'GET') {
-		return json({ flow });
+		const assignments = [...flowAssignments.values()].filter(
+			(assignment) => assignment.flow_id === flowId
+		);
+		return json({
+			flow: flowToAdminFlow(flow),
+			assignments: assignments.map(flowAssignmentToResponse)
+		});
 	}
 
-	if (segments.length === 2 && method === 'PUT') {
+	if (segments.length === 2 && (method === 'PUT' || method === 'PATCH')) {
 		const input = await readJson(event.request);
 		const updated = flowFromInput(input, flow);
 		flows.set(flowId, updated);
-		return json({ success: true });
+		return json({ flow: flowToAdminFlow(updated) });
 	}
 
 	if (segments.length === 2 && method === 'DELETE') {
+		if (normalizeDevFlow(flow).status === 'published') {
+			return json(
+				{ error: 'conflict', error_description: 'Published Flows cannot be deleted' },
+				409
+			);
+		}
 		flows.delete(flowId);
 		return json({ success: true });
 	}
 
 	if (segments[2] === 'copy' && method === 'POST') {
 		const input = await readJson(event.request);
-		const copied = flowFromInput({ ...flow, name: input.name || `${flow.name} Copy` });
+		const copied = flowFromInput({
+			...flow,
+			display_name: input.display_name || input.name || `${flow.name} Copy`,
+			slug: input.slug
+		});
 		flows.set(copied.id, copied);
 		return json({ success: true, flow_id: copied.id }, 201);
 	}
@@ -6361,7 +6936,67 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 	}
 
 	if (segments[2] === 'validate' && method === 'POST') {
-		return json({ valid: true, errors: [], warnings: [] });
+		return json(flowValidationOk());
+	}
+
+	if (segments[2] === 'publish' && method === 'POST') {
+		const normalized = normalizeDevFlow(flow);
+		const now = Math.floor(Date.now() / 1000);
+		const versions = flowVersions.get(flowId) || [];
+		const versionNumber = versions.length + 1;
+		const version: DevFlowVersion = {
+			id: `${flowId}-version-${versionNumber}`,
+			tenant_id: TENANT_ID,
+			flow_id: flowId,
+			version_number: versionNumber,
+			schema_version: 'authrim.login_ui.contract.v1',
+			runtime_snapshot: normalized.draft_runtime_base_json || {},
+			editor_snapshot: normalized.draft_editor_json || null,
+			validation_result: flowValidationOk(),
+			published_by: 'dev-admin',
+			published_at: now,
+			created_at: now
+		};
+		flowVersions.set(flowId, [version, ...versions]);
+		flows.set(flowId, {
+			...normalized,
+			status: 'published',
+			is_active: true,
+			published_version_id: version.id,
+			updated_at: now
+		});
+		return json({
+			version: {
+				id: version.id,
+				version_number: version.version_number,
+				flow_id: version.flow_id,
+				schema_version: version.schema_version,
+				published_at: version.published_at
+			},
+			validation: flowValidationOk()
+		});
+	}
+
+	if (segments[2] === 'versions' && method === 'GET') {
+		return json({
+			versions: (flowVersions.get(flowId) || []).map((version) => ({
+				id: version.id,
+				tenant_id: version.tenant_id,
+				flow_id: version.flow_id,
+				version_number: version.version_number,
+				schema_version: version.schema_version,
+				runtime_snapshot: version.runtime_snapshot,
+				editor_snapshot: version.editor_snapshot,
+				validation_result: version.validation_result,
+				published_by: version.published_by,
+				published_at: version.published_at,
+				created_at: version.created_at
+			}))
+		});
+	}
+
+	if (segments[2] === 'export' && method === 'GET') {
+		return json(flowExportPackage(flow));
 	}
 
 	return null;
@@ -9539,19 +10174,6 @@ function consentPolicyItemsFor(
 		.sort((a, b) => a.display_order - b.display_order);
 }
 
-function consentPolicyAssignmentsList(): Array<
-	DevConsentPolicyAssignment & Record<string, unknown>
-> {
-	return [...consentPolicyAssignments.values()].map((assignment) => {
-		const policy = consentPolicies.get(assignment.policy_id);
-		return {
-			...assignment,
-			policy_name: policy?.name,
-			policy_display_name: policy?.display_name
-		};
-	});
-}
-
 function normalizedPolicyTarget(type: string, targetId: unknown): string {
 	return type === 'tenant_default' ? '' : typeof targetId === 'string' ? targetId.trim() : '';
 }
@@ -9562,40 +10184,6 @@ async function handleConsentPolicies(
 ): Promise<Response | null> {
 	const method = event.request.method.toUpperCase();
 	const now = Date.now();
-
-	if (segments[0] === 'consent-policy-assignments') {
-		if (method === 'GET') return json({ assignments: consentPolicyAssignmentsList() });
-		if (method === 'PUT') {
-			const input = await readJson(event.request);
-			const assignmentType =
-				typeof input.assignment_type === 'string' ? input.assignment_type.trim() : '';
-			const targetId = normalizedPolicyTarget(assignmentType, input.target_id);
-			const policyId = typeof input.policy_id === 'string' ? input.policy_id.trim() : '';
-			if (!assignmentType) {
-				return json({ error: 'invalid_request', error_description: 'Invalid assignment' }, 400);
-			}
-			const key = `${assignmentType}:${targetId}`;
-			if (!policyId) {
-				consentPolicyAssignments.delete(key);
-				return json({ assignments: consentPolicyAssignmentsList() });
-			}
-			if (!consentPolicies.has(policyId)) {
-				return json({ error: 'invalid_request', error_description: 'Invalid assignment' }, 400);
-			}
-			const existing = consentPolicyAssignments.get(key);
-			consentPolicyAssignments.set(key, {
-				id: existing?.id ?? `assignment-${assignmentType}-${targetId || 'default'}`,
-				tenant_id: TENANT_ID,
-				assignment_type: assignmentType as DevConsentPolicyAssignment['assignment_type'],
-				target_id: targetId,
-				policy_id: policyId,
-				created_at: existing?.created_at ?? now,
-				updated_at: now
-			});
-			return json({ assignments: consentPolicyAssignmentsList() });
-		}
-		return null;
-	}
 
 	if (segments[0] === 'client-trust-policies') {
 		if (method === 'GET') return json({ policies: [...clientTrustPolicies.values()] });
@@ -9738,9 +10326,6 @@ async function handleConsentPolicies(
 	if (segments.length === 2 && method === 'DELETE') {
 		consentPolicies.delete(policyId);
 		consentPolicyItems.delete(policyId);
-		for (const [key, assignment] of consentPolicyAssignments) {
-			if (assignment.policy_id === policyId) consentPolicyAssignments.delete(key);
-		}
 		return json({ success: true });
 	}
 

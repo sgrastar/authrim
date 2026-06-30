@@ -72,9 +72,6 @@ function createMockAdapter(
       if (sql.includes('FROM consent_statement_localizations')) {
         return queryResults.get('localizations') || [];
       }
-      if (sql.includes('FROM consent_policy_assignments')) {
-        return queryResults.get('consent_policy_assignments') || [];
-      }
       if (sql.includes('FROM consent_policy_items')) {
         return queryResults.get('consent_policy_items') || [];
       }
@@ -573,7 +570,7 @@ describe('Consent Statements Utility', () => {
   });
 
   describe('resolveConsentRequirements', () => {
-    it('should resolve target consent policy assignment before legacy requirements', async () => {
+    it('should resolve legacy tenant requirements without reading direct consent policy assignments', async () => {
       const now = Date.now();
       const adapter = createMockAdapter({
         queryResults: new Map([
@@ -599,16 +596,42 @@ describe('Consent Statements Utility', () => {
               },
             ],
           ],
-          ['consent_policy_assignments', [{ policy_id: 'policy-1' }]],
           [
-            'consent_policy_items',
+            'tenant_requirements',
             [
               {
+                id: 'req-1',
+                tenant_id: 'default',
                 statement_id: 'stmt-1',
                 requirement: 'required',
-                version_mode: 'current',
-                version_id: null,
                 min_version: null,
+                conditional_rules_json: null,
+                display_order: 5,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'consent_statement_settings',
+            [
+              {
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                reconsent_interval_days: 180,
+              },
+            ],
+          ],
+          [
+            'client_overrides',
+            [
+              {
+                id: 'override-1',
+                client_id: 'client-1',
+                statement_id: 'stmt-1',
+                requirement: 'required',
+                min_version: '20260601',
+                enforcement: 'block',
                 checkbox_mode: 'required',
                 checkbox_default_checked: 0,
                 binding_type: 'scope',
@@ -616,6 +639,7 @@ describe('Consent Statements Utility', () => {
                 evidence_profile: 'attribute_release',
                 language_fallback: 'tenant_default',
                 display_order: 5,
+                conditional_rules_json: null,
               },
             ],
           ],
@@ -657,210 +681,12 @@ describe('Consent Statements Utility', () => {
         min_version: '20260601',
         reconsent_interval_days: 180,
         checkbox_mode: 'required',
-        checkbox_default_checked: false,
-        binding_type: 'scope',
-        binding_value: 'profile email',
-        evidence_profile: 'attribute_release',
-        language_fallback: 'tenant_default',
+        checkbox_default_checked: true,
       });
-      const policyAssignmentQuery = vi
+      const directPolicyAssignmentQuery = vi
         .mocked(adapter.query)
-        .mock.calls.find(([sql]) => String(sql).includes('FROM consent_policy_assignments'));
-      expect(policyAssignmentQuery?.[0]).toContain('AND a.assignment_type = ?');
-      expect(policyAssignmentQuery?.[0]).toContain('AND a.target_id = ?');
-      expect(policyAssignmentQuery?.[1]).toEqual(['default', 'oidc_client', 'client-1']);
-    });
-
-    it('should skip policy items whose scope binding is not requested', async () => {
-      const now = Date.now();
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'active_statements',
-            [
-              {
-                id: 'stmt-1',
-                tenant_id: 'default',
-                slug: 'privacy',
-                category: 'privacy_policy',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 10,
-                is_active: 1,
-                reconsent_on_version_change: 1,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          ['consent_policy_assignments', [{ policy_id: 'policy-1' }]],
-          [
-            'consent_policy_items',
-            [
-              {
-                statement_id: 'stmt-1',
-                requirement: 'required',
-                version_mode: 'current',
-                version_id: null,
-                min_version: null,
-                checkbox_mode: 'required',
-                checkbox_default_checked: 0,
-                binding_type: 'scope',
-                binding_value: 'email',
-                evidence_profile: null,
-                language_fallback: null,
-                display_order: 5,
-              },
-            ],
-          ],
-          [
-            'current_version',
-            [
-              {
-                id: 'ver-1',
-                version: '20260601',
-                content_type: 'url',
-                is_current: 1,
-                status: 'active',
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-        ]),
-      });
-
-      const result = await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          requested_scopes: ['openid', 'profile'],
-        }
-      );
-
-      expect(result).toEqual([]);
-    });
-
-    it('should resolve subject-bound policy items for the current subject', async () => {
-      const now = Date.now();
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'active_statements',
-            [
-              {
-                id: 'stmt-1',
-                tenant_id: 'default',
-                slug: 'terms',
-                category: 'terms_of_service',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 10,
-                is_active: 1,
-                reconsent_on_version_change: 1,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          ['consent_policy_assignments', [{ policy_id: 'policy-1' }]],
-          [
-            'consent_policy_items',
-            [
-              {
-                statement_id: 'stmt-1',
-                requirement: 'required',
-                version_mode: 'current',
-                version_id: null,
-                min_version: null,
-                checkbox_mode: 'required',
-                checkbox_default_checked: 0,
-                binding_type: 'subject',
-                binding_value: 'self',
-                evidence_profile: null,
-                language_fallback: null,
-                display_order: 5,
-              },
-            ],
-          ],
-          [
-            'current_version',
-            [
-              {
-                id: 'ver-1',
-                version: '20260601',
-                content_type: 'url',
-                is_current: 1,
-                status: 'active',
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-        ]),
-      });
-
-      const result = await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          subject_id: 'user-1',
-        }
-      );
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        statement_id: 'stmt-1',
-        binding_type: 'subject',
-        binding_value: 'self',
-      });
-    });
-
-    it('should only resolve active consent policies from assignments', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'active_statements',
-            [
-              {
-                id: 'stmt-1',
-                tenant_id: 'default',
-                slug: 'privacy',
-                category: 'privacy_policy',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 10,
-                is_active: 1,
-                created_at: 1,
-                updated_at: 1,
-              },
-            ],
-          ],
-        ]),
-      });
-
-      await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          target_type: 'oidc_client',
-          target_id: 'client-1',
-        }
-      );
-
-      const policyAssignmentQuery = vi
-        .mocked(adapter.query)
-        .mock.calls.find(([sql]) => String(sql).includes('FROM consent_policy_assignments'));
-      expect(policyAssignmentQuery?.[0]).toContain('JOIN consent_policies');
-      expect(policyAssignmentQuery?.[0]).toContain('p.is_active = 1');
-      expect(policyAssignmentQuery?.[0]).not.toContain('tenant_default');
-      expect(policyAssignmentQuery?.[1]).toEqual(['default', 'oidc_client', 'client-1']);
+        .mock.calls.find(([sql]) => String(sql).includes('consent_policy_assignments'));
+      expect(directPolicyAssignmentQuery).toBeUndefined();
     });
   });
 

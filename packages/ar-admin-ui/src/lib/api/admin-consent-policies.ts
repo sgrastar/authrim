@@ -5,7 +5,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 export type ConsentPolicyRequirement = 'required' | 'optional' | 'hidden';
 export type ConsentPolicyVersionMode = 'current' | 'fixed' | 'minimum';
 export type ConsentPolicyCheckboxMode = 'none' | 'required' | 'optional';
-export type ConsentPolicyAssignmentType = 'registration' | 'login' | 'oidc_client' | 'saml_sp';
 export type ClientTrustPolicyTargetType = 'oidc_client' | 'saml_sp';
 export type SignInConfirmationMode = 'disabled' | 'first_time' | 'every_time';
 export type ConsentPolicyItemBindingType =
@@ -45,18 +44,6 @@ export interface ConsentPolicyItem {
 	evidence_profile?: string | null;
 	language_fallback?: string | null;
 	display_order: number;
-}
-
-export interface ConsentPolicyAssignment {
-	id: string;
-	tenant_id: string;
-	assignment_type: ConsentPolicyAssignmentType;
-	target_id: string;
-	policy_id: string;
-	policy_name?: string;
-	policy_display_name?: string;
-	created_at: number;
-	updated_at: number;
 }
 
 export interface ClientTrustPolicy {
@@ -150,21 +137,6 @@ export const adminConsentPoliciesAPI = {
 		return apiRequest(`/api/admin/consent-policies/${encodeURIComponent(id)}/items`, {
 			method: 'PUT',
 			body: JSON.stringify({ items })
-		});
-	},
-
-	async listAssignments(): Promise<{ assignments: ConsentPolicyAssignment[] }> {
-		return apiRequest('/api/admin/consent-policy-assignments');
-	},
-
-	async upsertAssignment(data: {
-		assignment_type: ConsentPolicyAssignmentType;
-		target_id?: string;
-		policy_id: string;
-	}): Promise<{ assignments: ConsentPolicyAssignment[] }> {
-		return apiRequest('/api/admin/consent-policy-assignments', {
-			method: 'PUT',
-			body: JSON.stringify(data)
 		});
 	},
 

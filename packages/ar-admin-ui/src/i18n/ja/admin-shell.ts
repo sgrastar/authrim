@@ -50,6 +50,7 @@ const adminShell = {
 	admin_nav_token_refresh: 'トークン更新',
 	admin_nav_saml: 'SAML',
 	admin_nav_directory_authentication: 'ディレクトリ認証',
+	admin_nav_flows: 'Flows',
 	admin_nav_consents: '同意',
 	admin_nav_consent_statements: '同意文',
 	admin_nav_schema_settings: 'スキーマ設定',

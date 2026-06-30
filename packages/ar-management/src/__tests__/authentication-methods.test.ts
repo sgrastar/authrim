@@ -630,7 +630,7 @@ describe('Authentication Methods API', () => {
       );
     });
 
-    it('should include configured VC/custom providers from authentication-methods settings', async () => {
+    it('should normalize legacy URL providers to managed OAuth redirect mode', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:authentication-methods': JSON.stringify({
           'authentication-methods.external_providers': [
@@ -638,7 +638,7 @@ describe('Authentication Methods API', () => {
               id: 'wallet-vp',
               name: 'Wallet Presentation',
               type: 'vc',
-              startMode: 'direct',
+              startMode: 'url',
               startUrl: '/vp/login',
               iconName: 'none',
               enabled: true,
@@ -657,14 +657,14 @@ describe('Authentication Methods API', () => {
           id: 'wallet-vp',
           name: 'Wallet Presentation',
           type: 'vc',
-          startMode: 'direct',
+          startMode: 'oauth_redirect',
           startUrl: '/vp/login',
           iconName: 'none',
         })
       );
     });
 
-    it('should disable direct external providers for human-verification protected usages', async () => {
+    it('should keep managed external providers available for human-verification protected usages', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:authentication-methods': JSON.stringify({
           'authentication-methods.human_verification.provider':
@@ -677,7 +677,7 @@ describe('Authentication Methods API', () => {
               id: 'wallet-vp',
               name: 'Wallet Presentation',
               type: 'vc',
-              startMode: 'direct',
+              startMode: 'url',
               startUrl: '/vp/login',
               enabled: true,
             },
@@ -697,8 +697,11 @@ describe('Authentication Methods API', () => {
 
       expect(res.status).toBe(200);
       expect(body.methods.humanVerification.enabled).toBe(true);
-      expect(body.methods.external.providers).not.toContainEqual(
-        expect.objectContaining({ id: 'wallet-vp' })
+      expect(body.methods.external.providers).toContainEqual(
+        expect.objectContaining({
+          id: 'wallet-vp',
+          startMode: 'oauth_redirect',
+        })
       );
     });
 

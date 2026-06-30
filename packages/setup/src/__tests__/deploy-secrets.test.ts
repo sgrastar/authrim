@@ -94,6 +94,13 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-token')).not.toContain('LOGGING_CURSOR_HMAC_SECRET');
   });
 
+  it('uploads the Flow runtime HMAC secret only to the auth runtime worker', () => {
+    expect(getSecretNamesForWorker('ar-auth')).toContain('FLOW_RUNTIME_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-token')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-router')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
+  });
+
   it('uploads plugin encryption key only to plugin config/runtime workers', () => {
     expect(getSecretNamesForWorker('ar-management')).toContain('PLUGIN_ENCRYPTION_KEY');
     expect(getSecretNamesForWorker('ar-auth')).toContain('PLUGIN_ENCRYPTION_KEY');

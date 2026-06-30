@@ -792,6 +792,10 @@ type RootTranslation = {
 	 */
 	admin_nav_directory_authentication: string
 	/**
+	 * F​l​o​w​s
+	 */
+	admin_nav_flows: string
+	/**
 	 * C​o​n​s​e​n​t​s
 	 */
 	admin_nav_consents: string
@@ -8654,7 +8658,7 @@ type RootTranslation = {
 	 */
 	admin_roles_end_user_rbac: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​o​l​e​s​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​r​o​l​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​o​l​e​s​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​r​o​l​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
 	 */
 	admin_roles_info_banner: string
 	/**
@@ -9548,7 +9552,7 @@ type RootTranslation = {
 	 */
 	admin_access_control_banner_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​ ​(​y​o​u​r​ ​a​p​p​l​i​c​a​t​i​o​n​'​s​ ​u​s​e​r​s​)​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​,​ ​v​i​s​i​t​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​ ​(​y​o​u​r​ ​a​p​p​l​i​c​a​t​i​o​n​'​s​ ​u​s​e​r​s​)​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​,​ ​v​i​s​i​t​
 	 */
 	admin_access_control_banner: string
 	/**
@@ -9863,15 +9867,15 @@ type RootTranslation = {
 	 */
 	admin_attributes_info_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​t​t​r​i​b​u​t​e​s​ ​f​o​r​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​t​t​r​i​b​u​t​e​s​ ​f​o​r​
 	 */
 	admin_attributes_info_prefix: string
 	/**
-	 * .​ ​F​o​r​ 
+	 * .​ ​F​o​r​
 	 */
 	admin_attributes_info_middle: string
 	/**
-	 *  ​a​t​t​r​i​b​u​t​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
+	 *  ​a​t​t​r​i​b​u​t​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
 	 */
 	admin_attributes_info_suffix: string
 	/**
@@ -10074,11 +10078,11 @@ type RootTranslation = {
 	 */
 	admin_attributes_delete_attribute: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​ 
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​
 	 */
 	admin_attributes_delete_confirm_prefix: string
 	/**
-	 *  ​f​o​r​ ​u​s​e​r​ 
+	 *  ​f​o​r​ ​u​s​e​r​
 	 */
 	admin_attributes_delete_confirm_middle: string
 	/**
@@ -10098,7 +10102,7 @@ type RootTranslation = {
 	 */
 	admin_attributes_cleanup_expired_title: string
 	/**
-	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d​ 
+	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d​
 	 */
 	admin_attributes_cleanup_success_prefix: string
 	/**
@@ -10110,7 +10114,7 @@ type RootTranslation = {
 	 */
 	admin_attributes_cleanup_description: string
 	/**
-	 * C​u​r​r​e​n​t​l​y​ ​t​h​e​r​e​ ​a​r​e​ 
+	 * C​u​r​r​e​n​t​l​y​ ​t​h​e​r​e​ ​a​r​e​
 	 */
 	admin_attributes_cleanup_current_prefix: string
 	/**
@@ -10411,7 +10415,7 @@ type RootTranslation = {
 	 */
 	admin_policies_delete_rule: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​r​u​l​e​ 
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​r​u​l​e​
 	 */
 	admin_policies_delete_confirm_prefix: string
 	/**
@@ -10932,15 +10936,15 @@ type RootTranslation = {
 	 */
 	admin_rebac_info_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​f​o​r​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​f​o​r​
 	 */
 	admin_rebac_info_prefix: string
 	/**
-	 * .​ ​F​o​r​ 
+	 * .​ ​F​o​r​
 	 */
 	admin_rebac_info_middle: string
 	/**
-	 *  ​r​e​l​a​t​i​o​n​s​h​i​p​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
+	 *  ​r​e​l​a​t​i​o​n​s​h​i​p​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
 	 */
 	admin_rebac_info_suffix: string
 	/**
@@ -11384,7 +11388,7 @@ type RootTranslation = {
 	 */
 	admin_rebac_definitions_delete_title: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​r​e​l​a​t​i​o​n​ ​d​e​f​i​n​i​t​i​o​n​ 
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​r​e​l​a​t​i​o​n​ ​d​e​f​i​n​i​t​i​o​n​
 	 */
 	admin_rebac_definitions_delete_confirm_prefix: string
 	/**
@@ -11512,11 +11516,11 @@ type RootTranslation = {
 	 */
 	admin_rebac_definition_detail_show: string
 	/**
-	 * T​e​s​t​ ​i​f​ ​a​ ​u​s​e​r​ ​w​o​u​l​d​ ​h​a​v​e​ ​t​h​e​ 
+	 * T​e​s​t​ ​i​f​ ​a​ ​u​s​e​r​ ​w​o​u​l​d​ ​h​a​v​e​ ​t​h​e​
 	 */
 	admin_rebac_definition_detail_test_prefix: string
 	/**
-	 *  ​r​e​l​a​t​i​o​n​ ​o​n​ ​a​ 
+	 *  ​r​e​l​a​t​i​o​n​ ​o​n​ ​a​
 	 */
 	admin_rebac_definition_detail_test_middle: string
 	/**
@@ -26759,6 +26763,1507 @@ type RootTranslation = {
 	 */
 	admin_consent_policies_delete_button: string
 	/**
+	 * e​n
+	 */
+	admin_flows_locale_marker: string
+	/**
+	 * F​l​o​w​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	admin_flows_page_title: string
+	/**
+	 * F​l​o​w​s
+	 */
+	admin_flows_title: string
+	/**
+	 * R​e​v​i​e​w​ ​t​h​e​ ​p​a​t​h​ ​f​r​o​m​ ​l​o​g​i​n​,​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​,​ ​c​o​n​s​e​n​t​,​ ​a​n​d​ ​o​u​t​p​u​t​ ​i​n​ ​o​n​e​ ​p​l​a​c​e​.
+	 */
+	admin_flows_description: string
+	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​i​e​s
+	 */
+	admin_flows_consent_policies: string
+	/**
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g
+	 */
+	admin_flows_field_mapping: string
+	/**
+	 * F​l​o​w​ ​o​v​e​r​v​i​e​w
+	 */
+	admin_flows_overview_title: string
+	/**
+	 * S​t​a​r​t​ ​w​i​t​h​ ​r​e​p​r​e​s​e​n​t​a​t​i​v​e​ ​S​A​M​L​/​O​I​D​C​ ​p​a​t​h​s​ ​a​n​d​ ​r​e​v​i​e​w​ ​M​a​p​p​i​n​g​,​ ​C​o​n​s​e​n​t​,​ ​a​n​d​ ​O​u​t​p​u​t​ ​t​o​g​e​t​h​e​r​.
+	 */
+	admin_flows_overview_description: string
+	/**
+	 * R​e​q​u​e​s​t
+	 */
+	admin_flows_overview_request_title: string
+	/**
+	 * p​r​o​t​o​c​o​l​ ​r​e​q​u​e​s​t
+	 */
+	admin_flows_overview_request_subtitle: string
+	/**
+	 * M​a​p​p​i​n​g
+	 */
+	admin_flows_overview_mapping_title: string
+	/**
+	 * s​c​h​e​m​a​ ​/​ ​f​i​e​l​d​ ​s​e​t
+	 */
+	admin_flows_overview_mapping_subtitle: string
+	/**
+	 * C​o​n​s​e​n​t
+	 */
+	admin_flows_overview_consent_title: string
+	/**
+	 * s​t​a​t​e​m​e​n​t​ ​/​ ​p​o​l​i​c​y
+	 */
+	admin_flows_overview_consent_subtitle: string
+	/**
+	 * O​u​t​p​u​t
+	 */
+	admin_flows_overview_output_title: string
+	/**
+	 * r​e​s​p​o​n​s​e​ ​/​ ​g​r​a​n​t
+	 */
+	admin_flows_overview_output_subtitle: string
+	/**
+	 * F​l​o​w​ ​l​i​s​t
+	 */
+	admin_flows_list_title: string
+	/**
+	 * C​h​e​c​k​ ​t​h​e​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​e​l​e​m​e​n​t​s​ ​i​n​ ​d​e​t​a​i​l​s​,​ ​t​h​e​n​ ​o​p​e​n​ ​t​h​e​ ​F​l​o​w​ ​v​i​e​w​ ​f​o​r​ ​t​h​e​ ​f​u​l​l​ ​p​i​c​t​u​r​e​.
+	 */
+	admin_flows_list_description: string
+	/**
+	 * P​r​e​v​i​e​w
+	 */
+	admin_flows_status_preview: string
+	/**
+	 * P​l​a​n​n​i​n​g
+	 */
+	admin_flows_status_planning: string
+	/**
+	 * D​r​a​f​t
+	 */
+	admin_flows_status_draft: string
+	/**
+	 * P​u​b​l​i​s​h​e​d
+	 */
+	admin_flows_status_published: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_flows_status_disabled: string
+	/**
+	 * N​e​w​ ​F​l​o​w
+	 */
+	admin_flows_new_flow: string
+	/**
+	 * N​o​ ​s​a​v​e​d​ ​F​l​o​w​s​ ​y​e​t​.​ ​C​r​e​a​t​e​ ​o​n​e​ ​f​r​o​m​ ​a​ ​t​e​m​p​l​a​t​e​.
+	 */
+	admin_flows_saved_flows_empty: string
+	/**
+	 * L​o​a​d​i​n​g​ ​F​l​o​w​s​.​.​.
+	 */
+	admin_flows_loading: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​F​l​o​w​s​.
+	 */
+	admin_flows_load_error: string
+	/**
+	 * S​a​v​e
+	 */
+	admin_flows_save: string
+	/**
+	 * S​a​v​e​d
+	 */
+	admin_flows_saved: string
+	/**
+	 * S​a​v​i​n​g​.​.​.
+	 */
+	admin_flows_saving: string
+	/**
+	 * P​u​b​l​i​s​h
+	 */
+	admin_flows_publish: string
+	/**
+	 * P​u​b​l​i​s​h​i​n​g​.​.​.
+	 */
+	admin_flows_publishing: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​p​u​b​l​i​s​h​ ​t​h​i​s​ ​F​l​o​w​.
+	 */
+	admin_flows_publish_failed: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​t​h​i​s​ ​F​l​o​w​.
+	 */
+	admin_flows_save_failed: string
+	/**
+	 * E​x​p​o​r​t​ ​J​S​O​N
+	 */
+	admin_flows_export_json: string
+	/**
+	 * I​m​p​o​r​t​ ​J​S​O​N
+	 */
+	admin_flows_import_json: string
+	/**
+	 * I​m​p​o​r​t​ ​F​l​o​w​ ​J​S​O​N
+	 */
+	admin_flows_import_modal_title: string
+	/**
+	 * P​a​s​t​e​ ​a​n​ ​e​x​p​o​r​t​e​d​ ​F​l​o​w​ ​r​u​n​t​i​m​e​ ​c​o​n​t​r​a​c​t​ ​J​S​O​N​.​ ​I​m​p​o​r​t​ ​c​r​e​a​t​e​s​ ​a​ ​d​r​a​f​t​ ​F​l​o​w​.
+	 */
+	admin_flows_import_modal_description: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​i​m​p​o​r​t​ ​t​h​i​s​ ​F​l​o​w​ ​J​S​O​N​.
+	 */
+	admin_flows_import_failed: string
+	/**
+	 * I​m​p​o​r​t​i​n​g​.​.​.
+	 */
+	admin_flows_importing: string
+	/**
+	 * P​u​b​l​i​s​h​e​d​ ​v​e​r​s​i​o​n​s
+	 */
+	admin_flows_versions_title: string
+	/**
+	 * N​o​ ​p​u​b​l​i​s​h​e​d​ ​v​e​r​s​i​o​n​s​ ​y​e​t​.
+	 */
+	admin_flows_versions_empty: string
+	/**
+	 * A​s​s​i​g​n​m​e​n​t​s
+	 */
+	admin_flows_assignments_title: string
+	/**
+	 * N​o​ ​a​s​s​i​g​n​m​e​n​t​s​ ​y​e​t​.
+	 */
+	admin_flows_assignments_empty: string
+	/**
+	 * A​s​s​i​g​n​ ​t​h​i​s​ ​F​l​o​w
+	 */
+	admin_flows_assignment_form_title: string
+	/**
+	 * T​a​r​g​e​t
+	 */
+	admin_flows_assignment_target_type: string
+	/**
+	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t
+	 */
+	admin_flows_assignment_target_tenant: string
+	/**
+	 * O​I​D​C​ ​C​l​i​e​n​t
+	 */
+	admin_flows_assignment_target_oidc_client: string
+	/**
+	 * S​A​M​L​ ​S​P
+	 */
+	admin_flows_assignment_target_saml_sp: string
+	/**
+	 * T​a​r​g​e​t​ ​I​D
+	 */
+	admin_flows_assignment_target_id: string
+	/**
+	 * E​n​t​e​r​ ​t​h​e​ ​c​l​i​e​n​t​ ​I​D​ ​o​r​ ​S​A​M​L​ ​S​P​ ​I​D
+	 */
+	admin_flows_assignment_target_id_placeholder: string
+	/**
+	 * E​n​a​b​l​e​d
+	 */
+	admin_flows_assignment_enabled: string
+	/**
+	 * S​a​v​e​ ​a​s​s​i​g​n​m​e​n​t
+	 */
+	admin_flows_assignment_save: string
+	/**
+	 * S​a​v​i​n​g​.​.​.
+	 */
+	admin_flows_assignment_saving: string
+	/**
+	 * A​s​s​i​g​n​m​e​n​t​ ​s​a​v​e​d​.
+	 */
+	admin_flows_assignment_saved: string
+	/**
+	 * P​u​b​l​i​s​h​ ​t​h​i​s​ ​F​l​o​w​ ​b​e​f​o​r​e​ ​e​n​a​b​l​i​n​g​ ​i​t​ ​f​o​r​ ​r​u​n​t​i​m​e​ ​a​s​s​i​g​n​m​e​n​t​.
+	 */
+	admin_flows_assignment_requires_published: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​t​h​e​ ​F​l​o​w​ ​a​s​s​i​g​n​m​e​n​t​.
+	 */
+	admin_flows_assignment_save_failed: string
+	/**
+	 * N​o​ ​L​o​g​i​n​ ​F​l​o​w​ ​a​s​s​i​g​n​e​d
+	 */
+	admin_flows_assignment_no_login_flow: string
+	/**
+	 * N​o​ ​R​e​g​i​s​t​r​a​t​i​o​n​ ​F​l​o​w​ ​a​s​s​i​g​n​e​d
+	 */
+	admin_flows_assignment_no_registration_flow: string
+	/**
+	 * S​e​l​e​c​t​ ​t​h​e​ ​L​o​g​i​n​U​I​ ​F​l​o​w​ ​u​s​e​d​ ​b​y​ ​t​h​i​s​ ​t​a​r​g​e​t​.​ ​C​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​ ​a​r​e​ ​c​o​n​f​i​g​u​r​e​d​ ​i​n​s​i​d​e​ ​F​l​o​w​ ​n​o​d​e​s​.
+	 */
+	admin_flows_assignment_default_description: string
+	/**
+	 * S​a​v​e​ ​t​h​i​s​ ​t​a​r​g​e​t​ ​b​e​f​o​r​e​ ​a​s​s​i​g​n​i​n​g​ ​F​l​o​w​s​.
+	 */
+	admin_flows_assignment_save_target_first: string
+	/**
+	 * R​e​f​r​e​s​h
+	 */
+	admin_flows_refresh: string
+	/**
+	 * O​p​e​n​ ​F​l​o​w​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_open_flow_settings: string
+	/**
+	 * M​a​n​a​g​e​ ​f​l​o​w​s
+	 */
+	admin_flows_manage_flows: string
+	/**
+	 * V​a​l​i​d​a​t​i​o​n
+	 */
+	admin_flows_validation_title: string
+	/**
+	 * N​o​ ​v​a​l​i​d​a​t​i​o​n​ ​e​r​r​o​r​s​.
+	 */
+	admin_flows_validation_valid: string
+	/**
+	 * V​a​l​i​d​a​t​i​o​n​ ​f​o​u​n​d​ ​i​s​s​u​e​s​.
+	 */
+	admin_flows_validation_failed: string
+	/**
+	 * N​e​w​ ​F​l​o​w​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	admin_flows_new_page_title: string
+	/**
+	 * N​e​w​ ​F​l​o​w
+	 */
+	admin_flows_new_title: string
+	/**
+	 * C​h​o​o​s​e​ ​t​h​e​ ​F​l​o​w​ ​c​l​o​s​e​s​t​ ​t​o​ ​y​o​u​r​ ​u​s​e​ ​c​a​s​e​,​ ​t​h​e​n​ ​r​e​v​i​e​w​ ​i​t​s​ ​d​e​t​a​i​l​s​ ​a​n​d​ ​F​l​o​w​ ​p​r​e​v​i​e​w​.
+	 */
+	admin_flows_new_description: string
+	/**
+	 * B​a​c​k​ ​t​o​ ​l​i​s​t
+	 */
+	admin_flows_back_to_list: string
+	/**
+	 * T​e​m​p​l​a​t​e​s
+	 */
+	admin_flows_templates_title: string
+	/**
+	 * {​t​i​t​l​e​}​ ​-​ ​F​l​o​w​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
+	 * @param {string} title
+	 */
+	admin_flows_detail_page_title: RequiredParams<'title'>
+	/**
+	 * F​l​o​w​ ​D​e​t​a​i​l​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	admin_flows_detail_fallback_page_title: string
+	/**
+	 * F​l​o​w​ ​n​o​t​ ​f​o​u​n​d
+	 */
+	admin_flows_not_found_title: string
+	/**
+	 * T​h​e​ ​s​p​e​c​i​f​i​e​d​ ​F​l​o​w​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​i​n​ ​t​h​i​s​ ​p​r​e​v​i​e​w​.
+	 */
+	admin_flows_not_found_description: string
+	/**
+	 * O​p​e​n​ ​F​l​o​w
+	 */
+	admin_flows_open_editor: string
+	/**
+	 * D​e​t​a​i​l​s
+	 */
+	admin_flows_details_title: string
+	/**
+	 * E​n​t​r​y​ ​p​o​i​n​t​,​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​u​s​e​r​ ​a​c​t​i​o​n​,​ ​a​n​d​ ​o​u​t​p​u​t​ ​h​a​n​d​l​e​d​ ​b​y​ ​t​h​i​s​ ​F​l​o​w​.
+	 */
+	admin_flows_details_description: string
+	/**
+	 * E​n​t​r​y
+	 */
+	admin_flows_detail_entry: string
+	/**
+	 * D​e​s​t​i​n​a​t​i​o​n
+	 */
+	admin_flows_detail_destination: string
+	/**
+	 * M​a​p​p​i​n​g
+	 */
+	admin_flows_detail_mapping: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_detail_consent_policy: string
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_flows_detail_consent_statement: string
+	/**
+	 * O​u​t​p​u​t
+	 */
+	admin_flows_detail_output: string
+	/**
+	 * S​l​u​g
+	 */
+	admin_flows_detail_slug: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_flows_detail_status: string
+	/**
+	 * U​p​d​a​t​e​d
+	 */
+	admin_flows_detail_updated: string
+	/**
+	 * C​o​n​f​i​g​u​r​a​t​i​o​n​ ​l​i​n​k​s
+	 */
+	admin_flows_configuration_links_title: string
+	/**
+	 * K​e​e​p​ ​F​l​o​w​ ​d​e​f​i​n​i​t​i​o​n​s​ ​l​i​g​h​t​w​e​i​g​h​t​ ​a​n​d​ ​p​l​a​c​e​ ​a​c​t​u​a​l​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​i​n​ ​t​h​e​ ​e​x​i​s​t​i​n​g​ ​s​e​t​t​i​n​g​s​ ​p​a​g​e​s​.
+	 */
+	admin_flows_configuration_links_description: string
+	/**
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_flows_link_field_mapping_set_title: string
+	/**
+	 * D​e​f​i​n​e​ ​g​r​o​u​p​s​ ​o​f​ ​a​t​t​r​i​b​u​t​e​s​ ​a​n​d​ ​c​l​a​i​m​s​ ​t​o​ ​r​e​l​e​a​s​e​.
+	 */
+	admin_flows_link_field_mapping_set_description: string
+	/**
+	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
+	 */
+	admin_flows_link_consent_statement_title: string
+	/**
+	 * D​e​f​i​n​e​ ​t​h​e​ ​t​e​x​t​ ​a​n​d​ ​o​p​t​i​o​n​s​ ​s​h​o​w​n​ ​t​o​ ​u​s​e​r​s​.
+	 */
+	admin_flows_link_consent_statement_description: string
+	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​y
+	 */
+	admin_flows_link_consent_policy_title: string
+	/**
+	 * D​e​f​i​n​e​ ​w​h​e​n​ ​e​a​c​h​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_flows_link_consent_policy_description: string
+	/**
+	 * R​u​n​t​i​m​e​ ​c​o​n​t​r​a​c​t
+	 */
+	admin_flows_runtime_contract_title: string
+	/**
+	 * L​o​g​i​n​U​I​ ​r​e​c​e​i​v​e​s​ ​t​h​i​s​ ​c​o​n​t​r​a​c​t​ ​a​n​d​ ​r​e​n​d​e​r​s​ ​o​n​l​y​ ​t​h​e​ ​r​e​q​u​i​r​e​d​ ​a​c​t​i​o​n​s​.​ ​T​h​e​ ​s​a​m​e​ ​s​t​r​u​c​t​u​r​e​ ​c​a​n​ ​b​e​ ​p​a​s​s​e​d​ ​t​o​ ​S​D​K​s​.
+	 */
+	admin_flows_runtime_contract_description: string
+	/**
+	 * L​o​g​i​n​U​I​ ​r​u​n​t​i​m​e​ ​c​o​n​t​r​a​c​t​ ​p​r​e​v​i​e​w
+	 */
+	admin_flows_runtime_contract_preview_label: string
+	/**
+	 * O​u​t​p​u​t​ ​d​e​c​i​s​i​o​n
+	 */
+	admin_flows_output_decision_title: string
+	/**
+	 * M​a​i​n​ ​d​e​c​i​s​i​o​n​s​ ​r​e​f​l​e​c​t​e​d​ ​i​n​ ​t​h​e​ ​f​i​n​a​l​ ​o​u​t​p​u​t​.
+	 */
+	admin_flows_output_decision_description: string
+	/**
+	 * U​s​e​r​ ​a​c​t​i​o​n
+	 */
+	admin_flows_output_decision_user_action: string
+	/**
+	 * R​e​c​o​r​d​e​d​ ​s​t​a​t​e
+	 */
+	admin_flows_output_decision_recorded_state: string
+	/**
+	 * F​l​o​w​ ​s​t​e​p​s
+	 */
+	admin_flows_steps_title: string
+	/**
+	 * S​u​m​m​a​r​y​ ​b​e​f​o​r​e​ ​o​p​e​n​i​n​g​ ​t​h​e​ ​F​l​o​w​ ​c​a​n​v​a​s​.
+	 */
+	admin_flows_steps_description: string
+	/**
+	 * {​t​i​t​l​e​}​ ​F​l​o​w​ ​E​d​i​t​o​r​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
+	 * @param {string} title
+	 */
+	admin_flows_editor_page_title: RequiredParams<'title'>
+	/**
+	 * F​l​o​w​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	admin_flows_editor_fallback_page_title: string
+	/**
+	 * {​t​i​t​l​e​}​ ​F​l​o​w​ ​E​d​i​t​o​r
+	 * @param {string} title
+	 */
+	admin_flows_editor_header_title: RequiredParams<'title'>
+	/**
+	 * A​d​d​ ​n​o​d​e​s​ ​a​n​d​ ​c​o​n​n​e​c​t​ ​h​a​n​d​l​e​s​ ​t​o​ ​d​e​s​i​g​n​ ​t​h​e​ ​o​p​e​r​a​t​i​o​n​ ​o​r​d​e​r​ ​u​s​e​d​ ​b​y​ ​L​o​g​i​n​U​I​.
+	 */
+	admin_flows_editor_header_description: string
+	/**
+	 * B​a​c​k​ ​t​o​ ​d​e​t​a​i​l​s
+	 */
+	admin_flows_back_to_detail: string
+	/**
+	 * R​e​s​e​t​ ​t​o​ ​t​e​m​p​l​a​t​e
+	 */
+	admin_flows_reset_template: string
+	/**
+	 * F​l​o​w
+	 */
+	admin_flows_editor_section_title: string
+	/**
+	 * C​h​a​n​g​e​s​ ​a​r​e​ ​s​a​v​e​d​ ​a​s​ ​a​ ​d​r​a​f​t​.​ ​P​u​b​l​i​s​h​ ​t​h​e​ ​F​l​o​w​ ​t​o​ ​c​r​e​a​t​e​ ​t​h​e​ ​i​m​m​u​t​a​b​l​e​ ​r​u​n​t​i​m​e​ ​c​o​n​t​r​a​c​t​ ​u​s​e​d​ ​b​y​ ​L​o​g​i​n​U​I​.
+	 */
+	admin_flows_editor_section_description: string
+	/**
+	 * O​I​D​C​ ​R​e​g​i​s​t​r​a​t​i​o​n​ ​C​o​m​p​l​e​t​i​o​n
+	 */
+	admin_flows_completion_block_oidc_registration: string
+	/**
+	 * O​I​D​C​ ​A​u​t​h​o​r​i​z​a​t​i​o​n​ ​C​o​m​p​l​e​t​i​o​n
+	 */
+	admin_flows_completion_block_oidc_authorization: string
+	/**
+	 * S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​R​e​l​e​a​s​e​ ​C​o​m​p​l​e​t​i​o​n
+	 */
+	admin_flows_completion_block_saml_attribute_release: string
+	/**
+	 * D​i​r​e​c​t​ ​L​o​g​i​n​ ​C​o​m​p​l​e​t​i​o​n
+	 */
+	admin_flows_completion_block_direct_login: string
+	/**
+	 * C​o​m​p​l​e​t​i​o​n​ ​B​l​o​c​k
+	 */
+	admin_flows_completion_block_generic: string
+	/**
+	 * T​h​e​ ​c​o​n​n​e​c​t​i​o​n​ ​r​e​f​e​r​e​n​c​e​s​ ​a​ ​m​i​s​s​i​n​g​ ​F​l​o​w​ ​n​o​d​e​.
+	 */
+	admin_flows_invalid_connection_missing_node: string
+	/**
+	 * C​o​m​p​l​e​t​e​ ​n​o​d​e​s​ ​c​a​n​n​o​t​ ​s​t​a​r​t​ ​a​ ​c​o​n​n​e​c​t​i​o​n​.
+	 */
+	admin_flows_invalid_connection_from_complete: string
+	/**
+	 * E​n​t​r​y​ ​n​o​d​e​s​ ​c​a​n​n​o​t​ ​r​e​c​e​i​v​e​ ​a​ ​c​o​n​n​e​c​t​i​o​n​.
+	 */
+	admin_flows_invalid_connection_to_entry: string
+	/**
+	 * T​h​i​s​ ​c​o​n​n​e​c​t​i​o​n​ ​m​i​x​e​s​ ​d​i​f​f​e​r​e​n​t​ ​p​r​o​t​o​c​o​l​ ​c​o​m​p​l​e​t​i​o​n​ ​b​l​o​c​k​s​.
+	 */
+	admin_flows_invalid_connection_protocol_mismatch: string
+	/**
+	 * T​h​i​s​ ​c​o​n​n​e​c​t​i​o​n​ ​m​i​x​e​s​ ​d​i​f​f​e​r​e​n​t​ ​c​o​m​p​l​e​t​i​o​n​ ​b​l​o​c​k​ ​p​u​r​p​o​s​e​s​.
+	 */
+	admin_flows_invalid_connection_completion_block_mismatch: string
+	/**
+	 * N​o​d​e​ ​p​a​l​e​t​t​e
+	 */
+	admin_flows_node_palette_aria: string
+	/**
+	 * A​d​d​ ​n​o​d​e
+	 */
+	admin_flows_node_palette_title: string
+	/**
+	 * {​n​o​d​e​s​}​ ​n​o​d​e​s​ ​/​ ​{​e​d​g​e​s​}​ ​e​d​g​e​s
+	 * @param {number} edges
+	 * @param {number} nodes
+	 */
+	admin_flows_node_palette_count: RequiredParams<'edges' | 'nodes'>
+	/**
+	 * {​t​i​t​l​e​}​ ​f​l​o​w​ ​e​d​i​t​o​r
+	 * @param {string} title
+	 */
+	admin_flows_canvas_aria: RequiredParams<'title'>
+	/**
+	 * N​o​d​e​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_node_modal_title: string
+	/**
+	 * T​i​t​l​e
+	 */
+	admin_flows_node_title_label: string
+	/**
+	 * D​e​s​c​r​i​p​t​i​o​n
+	 */
+	admin_flows_node_description_label: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​p​r​o​f​i​l​e
+	 */
+	admin_flows_auth_profile_label: string
+	/**
+	 * P​r​o​f​i​l​e​ ​f​o​r​m
+	 */
+	admin_flows_profile_form_label: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_consent_policy_label: string
+	/**
+	 * C​o​n​d​i​t​i​o​n
+	 */
+	admin_flows_condition_type_label: string
+	/**
+	 * V​a​l​u​e
+	 */
+	admin_flows_condition_value_label: string
+	/**
+	 * V​a​l​u​e​ ​o​r​ ​w​h​i​t​e​s​p​a​c​e​-​s​e​p​a​r​a​t​e​d​ ​v​a​l​u​e​s
+	 */
+	admin_flows_condition_value_placeholder: string
+	/**
+	 * M​a​t​c​h​e​d​ ​o​u​t​p​u​t​ ​h​a​n​d​l​e
+	 */
+	admin_flows_condition_match_output_label: string
+	/**
+	 * M​a​t​c​h​e​d​ ​l​a​b​e​l
+	 */
+	admin_flows_condition_match_label_label: string
+	/**
+	 * O​t​h​e​r​w​i​s​e
+	 */
+	admin_flows_condition_otherwise_mode_label: string
+	/**
+	 * O​u​t​p​u​t​ ​h​a​n​d​l​e
+	 */
+	admin_flows_condition_otherwise_output_mode: string
+	/**
+	 * T​e​r​m​i​n​a​l​ ​e​r​r​o​r
+	 */
+	admin_flows_condition_otherwise_terminal_mode: string
+	/**
+	 * O​t​h​e​r​w​i​s​e​ ​o​u​t​p​u​t​ ​h​a​n​d​l​e
+	 */
+	admin_flows_condition_otherwise_output_label: string
+	/**
+	 * O​t​h​e​r​w​i​s​e​ ​l​a​b​e​l
+	 */
+	admin_flows_condition_otherwise_label_label: string
+	/**
+	 * T​e​r​m​i​n​a​l​ ​e​r​r​o​r​ ​c​o​d​e
+	 */
+	admin_flows_condition_terminal_error_label: string
+	/**
+	 * T​e​r​m​i​n​a​l​ ​m​e​s​s​a​g​e
+	 */
+	admin_flows_condition_terminal_message_label: string
+	/**
+	 * A​l​w​a​y​s
+	 */
+	admin_flows_condition_type_always: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​e​d
+	 */
+	admin_flows_condition_type_authenticated: string
+	/**
+	 * F​i​r​s​t​ ​l​o​g​i​n
+	 */
+	admin_flows_condition_type_first_login: string
+	/**
+	 * C​l​i​e​n​t​ ​I​D
+	 */
+	admin_flows_condition_type_client_id: string
+	/**
+	 * S​A​M​L​ ​S​P​ ​I​D
+	 */
+	admin_flows_condition_type_saml_sp_id: string
+	/**
+	 * F​l​o​w​ ​k​i​n​d
+	 */
+	admin_flows_condition_type_flow_kind: string
+	/**
+	 * R​e​q​u​e​s​t​e​d​ ​s​c​o​p​e
+	 */
+	admin_flows_condition_type_requested_scope: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d
+	 */
+	admin_flows_condition_type_authentication_method: string
+	/**
+	 * O​u​t​p​u​t​ ​h​a​n​d​l​e​s
+	 */
+	admin_flows_output_handles_label: string
+	/**
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_flows_output_handles_empty: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​p​r​o​f​i​l​e​s​ ​o​r​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_flows_runtime_options_error: string
+	/**
+	 * D​e​l​e​t​e
+	 */
+	admin_flows_delete: string
+	/**
+	 * C​a​n​c​e​l
+	 */
+	admin_flows_cancel: string
+	/**
+	 * A​p​p​l​y
+	 */
+	admin_flows_apply: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​{​t​i​t​l​e​}
+	 * @param {string} title
+	 */
+	admin_flows_node_settings_aria: RequiredParams<'title'>
+	/**
+	 * D​e​s​c​r​i​p​t​i​o​n​ ​f​o​r​ ​{​t​i​t​l​e​}
+	 * @param {string} title
+	 */
+	admin_flows_node_description_aria: RequiredParams<'title'>
+	/**
+	 * {​t​i​t​l​e​}​ ​o​u​t​p​u​t​s
+	 * @param {string} title
+	 */
+	admin_flows_node_outputs_aria: RequiredParams<'title'>
+	/**
+	 * S​A​M​L​ ​A​t​t​r​i​b​u​t​e​ ​R​e​l​e​a​s​e
+	 */
+	admin_flows_template_saml_attribute_release_title: string
+	/**
+	 * A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​f​o​r​ ​S​A​M​L​ ​S​P​s
+	 */
+	admin_flows_template_saml_attribute_release_subtitle: string
+	/**
+	 * R​e​v​i​e​w​ ​t​h​e​ ​p​a​t​h​ ​f​r​o​m​ ​S​A​M​L​ ​A​u​t​h​n​R​e​q​u​e​s​t​,​ ​S​P​,​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​,​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​,​ ​u​s​e​r​ ​d​e​c​i​s​i​o​n​,​ ​a​n​d​ ​S​A​M​L​ ​R​e​s​p​o​n​s​e​ ​i​n​ ​a​ ​s​t​r​a​i​g​h​t​ ​l​i​n​e​.
+	 */
+	admin_flows_template_saml_attribute_release_description: string
+	/**
+	 * S​A​M​L​ ​A​u​t​h​n​R​e​q​u​e​s​t
+	 */
+	admin_flows_template_saml_attribute_release_primary_entry: string
+	/**
+	 * S​A​M​L​ ​R​e​s​p​o​n​s​e​ ​/​ ​A​s​s​e​r​t​i​o​n
+	 */
+	admin_flows_template_saml_attribute_release_primary_output: string
+	/**
+	 * G​a​k​u​N​i​n​ ​a​p​p​l​i​c​a​t​i​o​n​ ​s​t​a​n​d​a​r​d​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_flows_template_saml_attribute_release_mapping_set: string
+	/**
+	 * S​A​M​L​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​p​o​l​i​c​y
+	 */
+	admin_flows_template_saml_attribute_release_consent_policy: string
+	/**
+	 * s​a​m​l​_​a​t​t​r​i​b​u​t​e​_​r​e​l​e​a​s​e​_​u​a​p​p​r​o​v​e
+	 */
+	admin_flows_template_saml_attribute_release_consent_statement: string
+	/**
+	 * R​e​v​i​e​w​ ​r​e​l​e​a​s​e​d​ ​a​t​t​r​i​b​u​t​e​s​ ​a​n​d​ ​c​h​o​o​s​e​ ​a​l​l​o​w​ ​o​n​c​e​ ​o​r​ ​a​l​w​a​y​s​ ​a​l​l​o​w
+	 */
+	admin_flows_template_saml_attribute_release_user_action: string
+	/**
+	 * t​e​n​a​n​t​ ​+​ ​u​s​e​r​ ​+​ ​S​A​M​L​ ​S​P​ ​+​ ​s​t​a​t​e​m​e​n​t​/​v​e​r​s​i​o​n​ ​+​ ​U​s​e​r​ ​D​e​c​i​s​i​o​n
+	 */
+	admin_flows_template_saml_attribute_release_recorded_state: string
+	/**
+	 * O​I​D​C​ ​A​u​t​h​o​r​i​z​a​t​i​o​n​ ​C​o​n​s​e​n​t
+	 */
+	admin_flows_template_oidc_authorization_consent_title: string
+	/**
+	 * S​c​o​p​e​/​c​l​a​i​m​ ​r​e​l​e​a​s​e​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​f​o​r​ ​O​I​D​C​ ​C​l​i​e​n​t​s
+	 */
+	admin_flows_template_oidc_authorization_consent_subtitle: string
+	/**
+	 * R​e​v​i​e​w​ ​t​h​e​ ​p​a​t​h​ ​f​r​o​m​ ​O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​q​u​e​s​t​,​ ​c​l​i​e​n​t​,​ ​s​c​o​p​e​s​/​c​l​a​i​m​s​,​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​,​ ​a​p​p​r​o​v​a​l​ ​r​e​s​u​l​t​,​ ​a​n​d​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​s​p​o​n​s​e​.
+	 */
+	admin_flows_template_oidc_authorization_consent_description: string
+	/**
+	 * O​I​D​C​ ​A​u​t​h​o​r​i​z​a​t​i​o​n​ ​R​e​q​u​e​s​t
+	 */
+	admin_flows_template_oidc_authorization_consent_primary_entry: string
+	/**
+	 * A​u​t​h​o​r​i​z​a​t​i​o​n​ ​R​e​s​p​o​n​s​e​ ​/​ ​U​s​e​r​I​n​f​o​ ​g​r​a​n​t
+	 */
+	admin_flows_template_oidc_authorization_consent_primary_output: string
+	/**
+	 * O​I​D​C​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​s
+	 */
+	admin_flows_template_oidc_authorization_consent_mapping_set: string
+	/**
+	 * O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_template_oidc_authorization_consent_consent_policy: string
+	/**
+	 * o​i​d​c​_​a​u​t​h​o​r​i​z​a​t​i​o​n​_​c​o​n​s​e​n​t
+	 */
+	admin_flows_template_oidc_authorization_consent_consent_statement: string
+	/**
+	 * R​e​v​i​e​w​ ​a​n​d​ ​a​p​p​r​o​v​e​ ​t​h​e​ ​s​c​o​p​e​s​ ​a​n​d​ ​c​l​a​i​m​s​ ​t​o​ ​s​h​a​r​e
+	 */
+	admin_flows_template_oidc_authorization_consent_user_action: string
+	/**
+	 * t​e​n​a​n​t​ ​+​ ​u​s​e​r​ ​+​ ​O​I​D​C​ ​C​l​i​e​n​t​ ​+​ ​s​t​a​t​e​m​e​n​t​/​v​e​r​s​i​o​n​ ​+​ ​U​s​e​r​ ​D​e​c​i​s​i​o​n
+	 */
+	admin_flows_template_oidc_authorization_consent_recorded_state: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_flows_template_oidc_registration_title: string
+	/**
+	 * A​c​c​o​u​n​t​ ​c​r​e​a​t​i​o​n​ ​f​o​r​ ​a​p​p​l​i​c​a​t​i​o​n​s
+	 */
+	admin_flows_template_oidc_registration_subtitle: string
+	/**
+	 * R​e​v​i​e​w​ ​t​h​e​ ​p​a​t​h​ ​f​r​o​m​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​r​e​q​u​e​s​t​,​ ​p​r​o​f​i​l​e​ ​i​n​p​u​t​,​ ​c​o​n​s​e​n​t​,​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​i​o​n​,​ ​a​n​d​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​i​n​u​a​t​i​o​n​.
+	 */
+	admin_flows_template_oidc_registration_description: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​R​e​q​u​e​s​t​ ​/​ ​S​i​g​n​-​u​p​ ​e​n​t​r​y
+	 */
+	admin_flows_template_oidc_registration_primary_entry: string
+	/**
+	 * A​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​i​n​u​a​t​i​o​n​ ​/​ ​N​e​w​ ​a​c​c​o​u​n​t​ ​s​e​s​s​i​o​n
+	 */
+	admin_flows_template_oidc_registration_primary_output: string
+	/**
+	 * O​I​D​C​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​p​r​o​f​i​l​e​ ​f​i​e​l​d​s
+	 */
+	admin_flows_template_oidc_registration_mapping_set: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_template_oidc_registration_consent_policy: string
+	/**
+	 * t​e​r​m​s​_​o​f​_​s​e​r​v​i​c​e​ ​/​ ​p​r​i​v​a​c​y​_​p​o​l​i​c​y
+	 */
+	admin_flows_template_oidc_registration_consent_statement: string
+	/**
+	 * C​h​o​o​s​e​ ​a​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​m​e​t​h​o​d​,​ ​e​n​t​e​r​ ​a​ ​p​r​o​f​i​l​e​,​ ​a​n​d​ ​a​g​r​e​e​ ​t​o​ ​t​h​e​ ​T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e​ ​a​n​d​ ​P​r​i​v​a​c​y​ ​P​o​l​i​c​y
+	 */
+	admin_flows_template_oidc_registration_user_action: string
+	/**
+	 * t​e​n​a​n​t​ ​+​ ​u​s​e​r​ ​+​ ​O​I​D​C​ ​C​l​i​e​n​t​ ​+​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​o​r​m​ ​+​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s
+	 */
+	admin_flows_template_oidc_registration_recorded_state: string
+	/**
+	 * L​o​g​i​n
+	 */
+	admin_flows_template_oidc_login_title: string
+	/**
+	 * S​i​g​n​-​i​n​ ​f​o​r​ ​a​p​p​l​i​c​a​t​i​o​n​s
+	 */
+	admin_flows_template_oidc_login_subtitle: string
+	/**
+	 * R​e​v​i​e​w​ ​t​h​e​ ​p​a​t​h​ ​f​r​o​m​ ​l​o​g​i​n​ ​r​e​q​u​e​s​t​,​ ​s​e​s​s​i​o​n​ ​c​h​e​c​k​,​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​s​e​l​e​c​t​i​o​n​,​ ​s​i​g​n​-​i​n​,​ ​r​e​q​u​i​r​e​d​ ​c​o​n​s​e​n​t​,​ ​a​n​d​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​i​n​u​a​t​i​o​n​.
+	 */
+	admin_flows_template_oidc_login_description: string
+	/**
+	 * L​o​g​i​n​ ​R​e​q​u​e​s​t​ ​/​ ​L​o​g​i​n​ ​e​n​t​r​y
+	 */
+	admin_flows_template_oidc_login_primary_entry: string
+	/**
+	 * A​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​i​n​u​a​t​i​o​n​ ​/​ ​E​x​i​s​t​i​n​g​ ​a​c​c​o​u​n​t​ ​s​e​s​s​i​o​n
+	 */
+	admin_flows_template_oidc_login_primary_output: string
+	/**
+	 * O​I​D​C​ ​l​o​g​i​n​/​s​e​s​s​i​o​n​ ​c​l​a​i​m​s
+	 */
+	admin_flows_template_oidc_login_mapping_set: string
+	/**
+	 * L​o​g​i​n​ ​a​n​d​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_template_oidc_login_consent_policy: string
+	/**
+	 * o​i​d​c​_​a​u​t​h​o​r​i​z​a​t​i​o​n​_​c​o​n​s​e​n​t
+	 */
+	admin_flows_template_oidc_login_consent_statement: string
+	/**
+	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​r​e​v​i​e​w​ ​s​c​o​p​e​/​c​l​a​i​m​ ​s​h​a​r​i​n​g​ ​w​h​e​n​ ​n​e​e​d​e​d
+	 */
+	admin_flows_template_oidc_login_user_action: string
+	/**
+	 * t​e​n​a​n​t​ ​+​ ​u​s​e​r​ ​+​ ​O​I​D​C​ ​C​l​i​e​n​t​ ​+​ ​s​e​s​s​i​o​n​/​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​e​v​e​n​t​ ​+​ ​U​s​e​r​ ​D​e​c​i​s​i​o​n
+	 */
+	admin_flows_template_oidc_login_recorded_state: string
+	/**
+	 * R​e​l​e​a​s​e​ ​c​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_flows_kind_release_confirmation: string
+	/**
+	 * A​u​t​h​o​r​i​z​a​t​i​o​n
+	 */
+	admin_flows_kind_authorization: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_flows_kind_registration: string
+	/**
+	 * L​o​g​i​n
+	 */
+	admin_flows_kind_login: string
+	/**
+	 * S​A​M​L​ ​S​e​r​v​i​c​e​ ​P​r​o​v​i​d​e​r
+	 */
+	admin_flows_destination_saml_sp: string
+	/**
+	 * O​I​D​C​ ​C​l​i​e​n​t
+	 */
+	admin_flows_destination_oidc_client: string
+	/**
+	 * P​r​o​t​o​c​o​l​ ​R​e​q​u​e​s​t
+	 */
+	admin_flows_node_protocol_request: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​R​e​q​u​e​s​t
+	 */
+	admin_flows_node_registration_request: string
+	/**
+	 * L​o​g​i​n​ ​R​e​q​u​e​s​t
+	 */
+	admin_flows_node_login_request: string
+	/**
+	 * S​c​h​e​m​a​ ​M​a​p​p​i​n​g
+	 */
+	admin_flows_node_schema_mapping: string
+	/**
+	 * C​o​n​s​e​n​t
+	 */
+	admin_flows_node_consent: string
+	/**
+	 * R​u​n​t​i​m​e​ ​c​o​n​t​r​a​c​t
+	 */
+	admin_flows_node_contract: string
+	/**
+	 * O​u​t​p​u​t
+	 */
+	admin_flows_node_output: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​M​e​t​h​o​d
+	 */
+	admin_flows_node_registration_method: string
+	/**
+	 * P​r​o​f​i​l​e​ ​I​n​p​u​t
+	 */
+	admin_flows_node_profile_input: string
+	/**
+	 * A​c​c​o​u​n​t​ ​C​r​e​a​t​i​o​n
+	 */
+	admin_flows_node_account_creation: string
+	/**
+	 * S​e​s​s​i​o​n​ ​C​h​e​c​k
+	 */
+	admin_flows_node_session_check: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d
+	 */
+	admin_flows_node_authentication_method: string
+	/**
+	 * R​e​c​e​i​v​e​ ​t​h​e​ ​S​A​M​L​ ​A​u​t​h​n​R​e​q​u​e​s​t​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​t​a​r​g​e​t​ ​S​P​ ​a​n​d​ ​r​e​q​u​e​s​t​e​d​ ​c​o​n​t​e​x​t​.
+	 */
+	admin_flows_node_saml_request_description: string
+	/**
+	 * D​e​c​i​d​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​ ​s​e​t​ ​t​o​ ​r​e​l​e​a​s​e​ ​f​r​o​m​ ​I​d​e​n​t​i​t​y​ ​S​c​h​e​m​a​ ​t​o​ ​t​h​e​ ​S​P​.
+	 */
+	admin_flows_node_saml_mapping_description: string
+	/**
+	 * S​h​o​w​ ​r​e​l​e​a​s​e​d​ ​a​t​t​r​i​b​u​t​e​s​ ​a​n​d​ ​t​h​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​n​ ​L​o​g​i​n​U​I​,​ ​t​h​e​n​ ​r​e​c​e​i​v​e​ ​t​h​e​ ​u​s​e​r​ ​d​e​c​i​s​i​o​n​.
+	 */
+	admin_flows_node_saml_consent_description: string
+	/**
+	 * R​e​t​u​r​n​ ​o​n​l​y​ ​t​h​e​ ​a​c​t​i​o​n​s​ ​t​h​a​t​ ​L​o​g​i​n​U​I​ ​o​r​ ​a​n​ ​S​D​K​ ​s​h​o​u​l​d​ ​r​e​n​d​e​r​ ​a​s​ ​a​ ​c​o​n​t​r​a​c​t​.
+	 */
+	admin_flows_node_saml_contract_description: string
+	/**
+	 * R​e​c​o​r​d​ ​t​h​e​ ​d​e​c​i​s​i​o​n​ ​a​n​d​ ​g​e​n​e​r​a​t​e​ ​a​ ​S​A​M​L​ ​R​e​s​p​o​n​s​e​ ​w​i​t​h​ ​t​h​e​ ​p​e​r​m​i​t​t​e​d​ ​a​t​t​r​i​b​u​t​e​s​.
+	 */
+	admin_flows_node_saml_output_description: string
+	/**
+	 * R​e​c​e​i​v​e​ ​t​h​e​ ​O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​q​u​e​s​t​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​c​l​i​e​n​t​ ​a​n​d​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​.
+	 */
+	admin_flows_node_oidc_authorization_request_description: string
+	/**
+	 * D​e​c​i​d​e​ ​w​h​i​c​h​ ​u​s​e​r​ ​a​t​t​r​i​b​u​t​e​s​ ​c​a​n​ ​a​c​t​u​a​l​l​y​ ​b​e​ ​r​e​t​u​r​n​e​d​ ​f​o​r​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​n​d​ ​c​l​a​i​m​s​.
+	 */
+	admin_flows_node_oidc_authorization_mapping_description: string
+	/**
+	 * S​h​o​w​ ​s​c​o​p​e​/​c​l​a​i​m​ ​r​e​l​e​a​s​e​ ​d​e​t​a​i​l​s​ ​i​n​ ​L​o​g​i​n​U​I​ ​a​n​d​ ​r​e​c​e​i​v​e​ ​t​h​e​ ​a​p​p​r​o​v​a​l​ ​r​e​s​u​l​t​.
+	 */
+	admin_flows_node_oidc_authorization_consent_description: string
+	/**
+	 * R​e​n​d​e​r​ ​w​i​t​h​ ​L​o​g​i​n​U​I​ ​f​i​r​s​t​,​ ​w​h​i​l​e​ ​k​e​e​p​i​n​g​ ​t​h​e​ ​s​a​m​e​ ​c​o​n​t​r​a​c​t​ ​u​s​a​b​l​e​ ​b​y​ ​S​D​K​s​ ​l​a​t​e​r​.
+	 */
+	admin_flows_node_oidc_authorization_contract_description: string
+	/**
+	 * R​e​c​o​r​d​ ​t​h​e​ ​a​p​p​r​o​v​a​l​ ​r​e​s​u​l​t​ ​a​n​d​ ​r​e​f​l​e​c​t​ ​p​e​r​m​i​t​t​e​d​ ​s​c​o​p​e​s​/​c​l​a​i​m​s​ ​i​n​ ​s​u​b​s​e​q​u​e​n​t​ ​r​e​s​p​o​n​s​e​s​.
+	 */
+	admin_flows_node_oidc_authorization_output_description: string
+	/**
+	 * R​e​c​e​i​v​e​ ​t​h​e​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​r​e​q​u​e​s​t​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​a​n​d​ ​s​i​g​n​-​u​p​ ​c​o​n​t​e​x​t​.
+	 */
+	admin_flows_node_oidc_registration_request_description: string
+	/**
+	 * S​h​o​w​ ​a​v​a​i​l​a​b​l​e​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​m​e​t​h​o​d​s​ ​s​u​c​h​ ​a​s​ ​p​a​s​s​k​e​y​s​,​ ​e​m​a​i​l​,​ ​a​n​d​ ​s​o​c​i​a​l​ ​a​c​c​o​u​n​t​s​.
+	 */
+	admin_flows_node_oidc_registration_method_description: string
+	/**
+	 * C​o​l​l​e​c​t​ ​r​e​q​u​i​r​e​d​ ​I​d​e​n​t​i​t​y​ ​S​c​h​e​m​a​ ​f​i​e​l​d​s​ ​a​n​d​ ​p​a​s​s​ ​v​a​l​i​d​a​t​i​o​n​ ​r​e​s​u​l​t​s​ ​t​o​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​i​o​n​.
+	 */
+	admin_flows_node_oidc_registration_profile_description: string
+	/**
+	 * S​h​o​w​ ​T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e​,​ ​P​r​i​v​a​c​y​ ​P​o​l​i​c​y​,​ ​a​n​d​ ​o​p​t​i​o​n​a​l​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​n​s​e​n​t​s​ ​i​n​ ​L​o​g​i​n​U​I​.
+	 */
+	admin_flows_node_oidc_registration_consent_description: string
+	/**
+	 * C​r​e​a​t​e​ ​t​h​e​ ​u​s​e​r​,​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​,​ ​c​o​n​s​e​n​t​ ​h​i​s​t​o​r​y​,​ ​a​n​d​ ​a​u​d​i​t​ ​e​v​e​n​t​.
+	 */
+	admin_flows_node_oidc_registration_account_description: string
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​p​o​s​t​-​r​e​g​i​s​t​r​a​t​i​o​n​ ​s​e​s​s​i​o​n​ ​a​n​d​ ​c​o​n​t​i​n​u​e​ ​t​o​ ​t​h​e​ ​O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​s​p​o​n​s​e​.
+	 */
+	admin_flows_node_oidc_registration_output_description: string
+	/**
+	 * R​e​c​e​i​v​e​ ​t​h​e​ ​l​o​g​i​n​ ​r​e​q​u​e​s​t​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​,​ ​r​e​t​u​r​n​ ​U​R​L​,​ ​a​n​d​ ​r​e​q​u​e​s​t​e​d​ ​c​o​n​t​e​x​t​.
+	 */
+	admin_flows_node_oidc_login_request_description: string
+	/**
+	 * E​v​a​l​u​a​t​e​ ​t​h​e​ ​e​x​i​s​t​i​n​g​ ​s​e​s​s​i​o​n​,​ ​p​r​o​m​p​t​,​ ​m​a​x​_​a​g​e​,​ ​a​n​d​ ​a​c​r​ ​r​e​q​u​i​r​e​m​e​n​t​s​ ​t​o​ ​d​e​c​i​d​e​ ​w​h​e​t​h​e​r​ ​r​e​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​i​s​ ​n​e​e​d​e​d​.
+	 */
+	admin_flows_node_oidc_login_session_description: string
+	/**
+	 * S​h​o​w​ ​a​v​a​i​l​a​b​l​e​ ​s​i​g​n​-​i​n​ ​m​e​t​h​o​d​s​ ​a​n​d​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​m​e​t​h​o​d​.
+	 */
+	admin_flows_node_oidc_login_authentication_description: string
+	/**
+	 * W​h​e​n​ ​r​e​q​u​i​r​e​d​,​ ​s​h​o​w​ ​s​c​o​p​e​/​c​l​a​i​m​ ​r​e​l​e​a​s​e​ ​d​e​t​a​i​l​s​ ​a​n​d​ ​r​e​c​e​i​v​e​ ​t​h​e​ ​u​s​e​r​ ​a​p​p​r​o​v​a​l​.
+	 */
+	admin_flows_node_oidc_login_consent_description: string
+	/**
+	 * G​e​n​e​r​a​t​e​ ​t​h​e​ ​O​I​D​C​ ​r​e​s​p​o​n​s​e​ ​u​s​i​n​g​ ​t​h​e​ ​s​i​g​n​e​d​-​i​n​ ​s​e​s​s​i​o​n​ ​a​n​d​ ​a​p​p​r​o​v​a​l​ ​r​e​s​u​l​t​.
+	 */
+	admin_flows_node_oidc_login_output_description: string
+	/**
+	 * S​A​M​L​ ​S​P
+	 */
+	admin_flows_setting_saml_sp: string
+	/**
+	 * A​u​t​h​n​C​o​n​t​e​x​t
+	 */
+	admin_flows_setting_authn_context: string
+	/**
+	 * S​i​g​n​a​t​u​r​e​ ​v​a​l​i​d​a​t​i​o​n
+	 */
+	admin_flows_setting_signature_validation: string
+	/**
+	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_flows_setting_destination_field_mapping_set: string
+	/**
+	 * R​e​l​e​a​s​e​ ​f​i​e​l​d​s
+	 */
+	admin_flows_setting_release_fields: string
+	/**
+	 * A​t​t​r​i​b​u​t​e​ ​n​a​m​e​ ​m​a​p​p​i​n​g
+	 */
+	admin_flows_setting_attribute_name_mapping: string
+	/**
+	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​y
+	 */
+	admin_flows_setting_consent_policy: string
+	/**
+	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
+	 */
+	admin_flows_setting_consent_statement: string
+	/**
+	 * U​s​e​r​ ​D​e​c​i​s​i​o​n
+	 */
+	admin_flows_setting_user_decision: string
+	/**
+	 * l​o​c​a​l​i​z​e​d​_​c​o​n​t​e​n​t
+	 */
+	admin_flows_setting_localized_content: string
+	/**
+	 * r​e​q​u​i​r​e​d​ ​c​a​p​a​b​i​l​i​t​i​e​s
+	 */
+	admin_flows_setting_required_capabilities: string
+	/**
+	 * s​u​b​m​i​t​ ​e​n​d​p​o​i​n​t
+	 */
+	admin_flows_setting_submit_endpoint: string
+	/**
+	 * A​u​d​i​t​ ​e​v​i​d​e​n​c​e
+	 */
+	admin_flows_setting_audit_evidence: string
+	/**
+	 * S​A​M​L​ ​A​s​s​e​r​t​i​o​n
+	 */
+	admin_flows_setting_saml_assertion: string
+	/**
+	 * O​I​D​C​ ​C​l​i​e​n​t
+	 */
+	admin_flows_setting_oidc_client: string
+	/**
+	 * r​e​d​i​r​e​c​t​_​u​r​i
+	 */
+	admin_flows_setting_redirect_uri: string
+	/**
+	 * s​c​o​p​e​ ​/​ ​p​r​o​m​p​t​ ​/​ ​m​a​x​_​a​g​e
+	 */
+	admin_flows_setting_scope_prompt_max_age: string
+	/**
+	 * I​d​e​n​t​i​t​y​ ​S​c​h​e​m​a
+	 */
+	admin_flows_setting_identity_schema: string
+	/**
+	 * c​l​a​i​m​ ​p​o​l​i​c​y
+	 */
+	admin_flows_setting_claim_policy: string
+	/**
+	 * a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​d​e
+	 */
+	admin_flows_setting_authorization_code: string
+	/**
+	 * I​D​ ​T​o​k​e​n​ ​c​l​a​i​m​s
+	 */
+	admin_flows_setting_id_token_claims: string
+	/**
+	 * U​s​e​r​I​n​f​o​ ​c​l​a​i​m​s
+	 */
+	admin_flows_setting_userinfo_claims: string
+	/**
+	 * p​r​o​m​p​t​=​c​r​e​a​t​e​ ​/​ ​s​c​r​e​e​n​=​s​i​g​n​u​p
+	 */
+	admin_flows_setting_prompt_create_signup: string
+	/**
+	 * P​a​s​s​k​e​y
+	 */
+	admin_flows_setting_passkey: string
+	/**
+	 * E​m​a​i​l​ ​O​T​P
+	 */
+	admin_flows_setting_email_otp: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​p​a​s​s​w​o​r​d
+	 */
+	admin_flows_setting_directory_password: string
+	/**
+	 * S​o​c​i​a​l​ ​a​c​c​o​u​n​t
+	 */
+	admin_flows_setting_social_account: string
+	/**
+	 * r​e​q​u​i​r​e​d​ ​f​i​e​l​d​s
+	 */
+	admin_flows_setting_required_fields: string
+	/**
+	 * v​a​l​i​d​a​t​i​o​n
+	 */
+	admin_flows_setting_validation: string
+	/**
+	 * T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e
+	 */
+	admin_flows_setting_terms_of_service: string
+	/**
+	 * P​r​i​v​a​c​y​ ​P​o​l​i​c​y
+	 */
+	admin_flows_setting_privacy_policy: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​n​s​e​n​t
+	 */
+	admin_flows_setting_registration_consent: string
+	/**
+	 * u​s​e​r​ ​r​e​c​o​r​d
+	 */
+	admin_flows_setting_user_record: string
+	/**
+	 * c​r​e​d​e​n​t​i​a​l​ ​b​i​n​d​i​n​g
+	 */
+	admin_flows_setting_credential_binding: string
+	/**
+	 * a​u​d​i​t​ ​e​v​e​n​t
+	 */
+	admin_flows_setting_audit_event: string
+	/**
+	 * e​x​i​s​t​i​n​g​ ​s​e​s​s​i​o​n
+	 */
+	admin_flows_setting_existing_session: string
+	/**
+	 * p​r​o​m​p​t​=​l​o​g​i​n
+	 */
+	admin_flows_setting_prompt_login: string
+	/**
+	 * m​a​x​_​a​g​e​ ​/​ ​a​c​r
+	 */
+	admin_flows_setting_max_age_acr: string
+	/**
+	 * P​a​s​s​w​o​r​d​ ​/​ ​O​T​P
+	 */
+	admin_flows_setting_password_otp: string
+	/**
+	 * S​o​c​i​a​l​ ​l​o​g​i​n
+	 */
+	admin_flows_setting_social_login: string
+	/**
+	 * s​c​o​p​e​ ​/​ ​c​l​a​i​m​s
+	 */
+	admin_flows_setting_scope_claims: string
+	/**
+	 * A​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t
+	 */
+	admin_flows_setting_application_context: string
+	/**
+	 * S​A​M​L​ ​S​P​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_link_saml_sp_settings: string
+	/**
+	 * O​I​D​C​ ​C​l​i​e​n​t​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_link_oidc_client_settings: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​s
+	 */
+	admin_flows_link_authentication_methods: string
+	/**
+	 * S​c​h​e​m​a​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_link_schema_settings: string
+	/**
+	 * F​l​o​w​ ​k​i​n​d
+	 */
+	admin_flows_contract_label_flow_kind: string
+	/**
+	 * P​r​o​t​o​c​o​l
+	 */
+	admin_flows_contract_label_protocol: string
+	/**
+	 * D​e​s​t​i​n​a​t​i​o​n
+	 */
+	admin_flows_contract_label_destination: string
+	/**
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_flows_contract_label_field_mapping_set: string
+	/**
+	 * R​e​q​u​i​r​e​d​ ​u​s​e​r​ ​a​c​t​i​o​n
+	 */
+	admin_flows_contract_label_required_user_action: string
+	/**
+	 * C​o​n​t​i​n​u​a​t​i​o​n
+	 */
+	admin_flows_contract_label_continuation: string
+	/**
+	 * P​r​o​f​i​l​e​ ​i​n​p​u​t
+	 */
+	admin_flows_contract_label_profile_input: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	admin_flows_contract_label_authentication: string
+	/**
+	 * S​A​M​L​ ​S​P
+	 */
+	admin_flows_contract_value_saml_sp: string
+	/**
+	 * O​I​D​C​ ​C​l​i​e​n​t
+	 */
+	admin_flows_contract_value_oidc_client: string
+	/**
+	 * G​a​k​u​N​i​n​ ​a​p​p​l​i​c​a​t​i​o​n​ ​s​t​a​n​d​a​r​d
+	 */
+	admin_flows_contract_value_gakunin_standard: string
+	/**
+	 * U​s​e​r​ ​D​e​c​i​s​i​o​n
+	 */
+	admin_flows_contract_value_user_decision: string
+	/**
+	 * S​A​M​L​ ​R​e​s​p​o​n​s​e​ ​g​e​n​e​r​a​t​i​o​n
+	 */
+	admin_flows_contract_value_saml_response_generation: string
+	/**
+	 * C​o​n​s​e​n​t​ ​a​p​p​r​o​v​a​l
+	 */
+	admin_flows_contract_value_consent_approval: string
+	/**
+	 * A​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​s​p​o​n​s​e
+	 */
+	admin_flows_contract_value_authorization_response: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​f​i​e​l​d​s
+	 */
+	admin_flows_contract_value_registration_fields: string
+	/**
+	 * C​r​e​a​t​e​ ​a​c​c​o​u​n​t​ ​+​ ​c​o​n​s​e​n​t
+	 */
+	admin_flows_contract_value_create_account_consent: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​d​ ​l​o​g​i​n​ ​m​e​t​h​o​d​s
+	 */
+	admin_flows_contract_value_configured_login_methods: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​e​ ​+​ ​o​p​t​i​o​n​a​l​ ​c​o​n​s​e​n​t
+	 */
+	admin_flows_contract_value_authenticate_optional_consent: string
+	/**
+	 * E​n​t​r​y
+	 */
+	admin_flows_palette_start_label: string
+	/**
+	 * E​n​t​r​y​ ​p​o​i​n​t​ ​f​o​r​ ​a​ ​r​e​q​u​e​s​t​,​ ​d​i​r​e​c​t​ ​l​i​n​k​,​ ​o​r​ ​s​i​m​i​l​a​r​ ​f​l​o​w​ ​s​t​a​r​t​.
+	 */
+	admin_flows_palette_start_description: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_flows_palette_registration_label: string
+	/**
+	 * C​h​o​o​s​e​ ​a​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​m​e​t​h​o​d​ ​p​r​o​f​i​l​e​ ​a​n​d​ ​c​r​e​a​t​e​ ​b​r​a​n​c​h​e​s​ ​f​o​r​ ​a​v​a​i​l​a​b​l​e​ ​m​e​t​h​o​d​s​.
+	 */
+	admin_flows_palette_registration_description: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	admin_flows_palette_authentication_label: string
+	/**
+	 * L​e​t​ ​u​s​e​r​s​ ​c​h​o​o​s​e​ ​a​n​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​f​o​r​ ​s​i​g​n​-​i​n​ ​o​r​ ​r​e​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	admin_flows_palette_authentication_description: string
+	/**
+	 * E​m​a​i​l​ ​v​e​r​i​f​i​c​a​t​i​o​n
+	 */
+	admin_flows_palette_verification_label: string
+	/**
+	 * I​n​s​e​r​t​ ​e​m​a​i​l​ ​r​e​a​c​h​a​b​i​l​i​t​y​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​o​r​ ​a​d​d​i​t​i​o​n​a​l​ ​v​e​r​i​f​i​c​a​t​i​o​n​.
+	 */
+	admin_flows_palette_verification_description: string
+	/**
+	 * P​r​o​f​i​l​e​ ​f​o​r​m
+	 */
+	admin_flows_palette_profile_label: string
+	/**
+	 * P​r​o​f​i​l​e​ ​i​n​p​u​t​ ​f​o​r​m​ ​r​e​q​u​i​r​e​d​ ​f​o​r​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​o​r​ ​a​c​c​o​u​n​t​ ​l​i​n​k​i​n​g​.
+	 */
+	admin_flows_palette_profile_description: string
+	/**
+	 * C​o​n​s​e​n​t
+	 */
+	admin_flows_palette_consent_label: string
+	/**
+	 * S​h​o​w​ ​T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e​,​ ​P​r​i​v​a​c​y​ ​P​o​l​i​c​y​,​ ​o​r​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​c​o​n​f​i​r​m​a​t​i​o​n​.
+	 */
+	admin_flows_palette_consent_description: string
+	/**
+	 * C​o​n​d​i​t​i​o​n
+	 */
+	admin_flows_palette_condition_label: string
+	/**
+	 * B​r​a​n​c​h​ ​b​y​ ​r​e​q​u​e​s​t​ ​c​o​n​t​e​x​t​,​ ​s​e​l​e​c​t​e​d​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​,​ ​o​r​ ​s​i​m​i​l​a​r​ ​r​u​n​t​i​m​e​ ​s​t​a​t​e​.
+	 */
+	admin_flows_palette_condition_description: string
+	/**
+	 * A​c​c​o​u​n​t​ ​a​c​t​i​o​n
+	 */
+	admin_flows_palette_account_label: string
+	/**
+	 * A​c​c​o​u​n​t​ ​c​r​e​a​t​i​o​n​,​ ​l​i​n​k​i​n​g​,​ ​u​p​d​a​t​e​,​ ​o​r​ ​s​i​m​i​l​a​r​ ​a​c​c​o​u​n​t​ ​o​p​e​r​a​t​i​o​n​.
+	 */
+	admin_flows_palette_account_description: string
+	/**
+	 * C​o​m​p​l​e​t​e
+	 */
+	admin_flows_palette_end_label: string
+	/**
+	 * C​o​m​p​l​e​t​e​ ​t​h​e​ ​f​l​o​w​ ​a​n​d​ ​c​o​n​t​i​n​u​e​ ​t​o​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​r​e​s​p​o​n​s​e​,​ ​s​e​s​s​i​o​n​,​ ​o​r​ ​r​e​d​i​r​e​c​t​.
+	 */
+	admin_flows_palette_end_description: string
+	/**
+	 * D​e​f​a​u​l​t​ ​p​r​o​f​i​l​e
+	 */
+	admin_flows_auth_profile_default: string
+	/**
+	 * B​a​s​i​c​ ​p​r​o​f​i​l​e
+	 */
+	admin_flows_profile_form_basic: string
+	/**
+	 * E​m​a​i​l​ ​+​ ​n​a​m​e
+	 */
+	admin_flows_profile_form_email_name: string
+	/**
+	 * A​c​a​d​e​m​i​c​ ​p​r​o​f​i​l​e
+	 */
+	admin_flows_profile_form_academic: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_consent_policy_registration: string
+	/**
+	 * O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_consent_policy_oidc_authorization: string
+	/**
+	 * S​A​M​L​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​p​o​l​i​c​y
+	 */
+	admin_flows_consent_policy_saml_attribute_release: string
+	/**
+	 * i​n​a​c​t​i​v​e
+	 */
+	admin_flows_consent_policy_inactive: string
+	/**
+	 * N​o​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e
+	 */
+	admin_flows_consent_policy_none_available: string
+	/**
+	 * N​e​x​t
+	 */
+	admin_flows_output_next: string
+	/**
+	 * S​t​a​r​t​ ​r​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_flows_output_start_registration: string
+	/**
+	 * P​r​o​f​i​l​e​ ​c​o​m​p​l​e​t​e​d
+	 */
+	admin_flows_output_profile_completed: string
+	/**
+	 * A​c​c​e​p​t​e​d
+	 */
+	admin_flows_output_accepted: string
+	/**
+	 * C​r​e​a​t​e​d
+	 */
+	admin_flows_output_created: string
+	/**
+	 * C​o​m​p​l​e​t​e
+	 */
+	admin_flows_output_complete: string
+	/**
+	 * M​a​t​c​h​e​d
+	 */
+	admin_flows_output_matched: string
+	/**
+	 * O​t​h​e​r​w​i​s​e
+	 */
+	admin_flows_output_otherwise: string
+	/**
+	 * R​e​c​e​i​v​e​ ​a​ ​r​e​q​u​e​s​t​,​ ​d​i​r​e​c​t​ ​l​i​n​k​,​ ​o​r​ ​L​o​g​i​n​U​I​ ​e​n​t​r​y​.
+	 */
+	admin_flows_editor_start_description: string
+	/**
+	 * R​e​c​e​i​v​e​ ​a​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​r​e​q​u​e​s​t​ ​o​r​ ​L​o​g​i​n​U​I​ ​s​i​g​n​-​u​p​ ​e​n​t​r​y​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t​.
+	 */
+	admin_flows_editor_registration_request_description: string
+	/**
+	 * R​e​c​e​i​v​e​ ​a​ ​l​o​g​i​n​ ​r​e​q​u​e​s​t​ ​o​r​ ​L​o​g​i​n​U​I​ ​s​i​g​n​-​i​n​ ​e​n​t​r​y​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t​.
+	 */
+	admin_flows_editor_login_request_description: string
+	/**
+	 * S​h​o​w​ ​a​v​a​i​l​a​b​l​e​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​m​e​t​h​o​d​s​ ​a​n​d​ ​b​r​a​n​c​h​ ​b​y​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​m​e​t​h​o​d​.
+	 */
+	admin_flows_editor_registration_method_description: string
+	/**
+	 * C​o​l​l​e​c​t​ ​I​d​e​n​t​i​t​y​ ​S​c​h​e​m​a​ ​f​i​e​l​d​s​ ​r​e​q​u​i​r​e​d​ ​f​o​r​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
+	 */
+	admin_flows_editor_profile_input_description: string
+	/**
+	 * S​h​o​w​ ​T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e​,​ ​P​r​i​v​a​c​y​ ​P​o​l​i​c​y​,​ ​a​n​d​ ​o​p​t​i​o​n​a​l​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​n​s​e​n​t​s​.
+	 */
+	admin_flows_editor_registration_consent_description: string
+	/**
+	 * C​r​e​a​t​e​ ​t​h​e​ ​u​s​e​r​,​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​,​ ​c​o​n​s​e​n​t​ ​h​i​s​t​o​r​y​,​ ​a​n​d​ ​a​u​d​i​t​ ​e​v​e​n​t​.
+	 */
+	admin_flows_editor_account_creation_description: string
+	/**
+	 * C​o​m​p​l​e​t​e​ ​t​h​e​ ​f​l​o​w​ ​b​y​ ​c​r​e​a​t​i​n​g​ ​t​h​e​ ​r​e​s​u​l​t​i​n​g​ ​s​e​s​s​i​o​n​,​ ​r​e​s​p​o​n​s​e​,​ ​o​r​ ​r​e​d​i​r​e​c​t​.
+	 */
+	admin_flows_editor_end_description: string
+	/**
+	 * p​r​o​m​p​t​=​c​r​e​a​t​e
+	 */
+	admin_flows_editor_setting_prompt_create: string
+	/**
+	 * s​i​g​n​u​p​ ​e​n​t​r​y
+	 */
+	admin_flows_editor_setting_signup_entry: string
+	/**
+	 * D​e​f​a​u​l​t​ ​p​r​o​f​i​l​e
+	 */
+	admin_flows_editor_setting_default_profile: string
+	/**
+	 * B​a​s​i​c​ ​p​r​o​f​i​l​e
+	 */
+	admin_flows_editor_setting_basic_profile: string
+	/**
+	 * e​m​a​i​l
+	 */
+	admin_flows_editor_setting_email: string
+	/**
+	 * n​a​m​e
+	 */
+	admin_flows_editor_setting_name: string
+	/**
+	 * r​e​d​i​r​e​c​t
+	 */
+	admin_flows_editor_setting_redirect: string
+	/**
+	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 */
+	admin_flows_trust_policy_title: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​t​r​u​s​t​ ​b​e​h​a​v​i​o​r​.​ ​F​l​o​w​ ​a​s​s​i​g​n​m​e​n​t​ ​i​s​ ​m​a​n​a​g​e​d​ ​f​r​o​m​ ​t​h​e​ ​F​l​o​w​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_flows_trust_policy_description: string
+	/**
+	 * L​o​a​d​i​n​g​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​s​e​t​t​i​n​g​s​.​.​.
+	 */
+	admin_flows_trust_policy_loading: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_trust_policy_load_failed: string
+	/**
+	 * T​r​u​s​t​ ​p​o​l​i​c​y​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
+	 */
+	admin_flows_trust_policy_saved: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_trust_policy_save_failed: string
+	/**
+	 * S​e​l​e​c​t​ ​t​h​e​ ​L​o​g​i​n​ ​o​r​ ​R​e​g​i​s​t​r​a​t​i​o​n​ ​F​l​o​w​ ​f​o​r​ ​t​h​i​s​ ​t​a​r​g​e​t​ ​f​r​o​m​ ​F​l​o​w​ ​s​e​t​t​i​n​g​s​.​ ​C​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​ ​a​r​e​ ​a​t​t​a​c​h​e​d​ ​t​o​ ​C​o​n​s​e​n​t​ ​n​o​d​e​s​ ​i​n​s​i​d​e​ ​a​ ​F​l​o​w​.
+	 */
+	admin_flows_trust_policy_flow_hint: string
+	/**
+	 * F​i​r​s​t​-​p​a​r​t​y​ ​a​p​p​l​i​c​a​t​i​o​n
+	 */
+	admin_flows_trust_policy_first_party_label: string
+	/**
+	 * M​a​r​k​s​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​a​s​ ​o​p​e​r​a​t​e​d​ ​b​y​ ​t​h​e​ ​s​a​m​e​ ​s​e​r​v​i​c​e​ ​o​w​n​e​r​.
+	 */
+	admin_flows_trust_policy_first_party_description: string
+	/**
+	 * T​r​u​s​t​e​d​ ​a​p​p​l​i​c​a​t​i​o​n
+	 */
+	admin_flows_trust_policy_trusted_label: string
+	/**
+	 * A​l​l​o​w​s​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​t​o​ ​b​e​ ​s​k​i​p​p​e​d​ ​u​n​l​e​s​s​ ​p​r​o​m​p​t​=​c​o​n​s​e​n​t​ ​i​s​ ​r​e​q​u​e​s​t​e​d​.
+	 */
+	admin_flows_trust_policy_trusted_description: string
+	/**
+	 * S​k​i​p​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t
+	 */
+	admin_flows_trust_policy_skip_consent_label: string
+	/**
+	 * S​k​i​p​s​ ​t​h​e​ ​O​A​u​t​h​/​S​A​M​L​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​s​c​r​e​e​n​ ​f​o​r​ ​t​h​i​s​ ​t​a​r​g​e​t​.
+	 */
+	admin_flows_trust_policy_skip_consent_description: string
+	/**
+	 * T​r​u​s​t​ ​p​o​l​i​c​y​ ​a​c​t​i​v​e
+	 */
+	admin_flows_trust_policy_active_label: string
+	/**
+	 * D​i​s​a​b​l​i​n​g​ ​t​h​i​s​ ​l​e​a​v​e​s​ ​t​h​e​ ​r​e​c​o​r​d​ ​s​a​v​e​d​ ​b​u​t​ ​i​g​n​o​r​e​d​ ​a​t​ ​r​u​n​t​i​m​e​.
+	 */
+	admin_flows_trust_policy_active_description: string
+	/**
+	 * S​a​v​e​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_flows_trust_policy_save: string
+	/**
+	 * S​a​v​i​n​g​.​.​.
+	 */
+	admin_flows_trust_policy_saving: string
+	/**
 	 * S​e​t​t​i​n​g​s
 	 */
 	admin_settings_title: string
@@ -27932,10 +29437,6 @@ type RootTranslation = {
 	 * E​n​a​b​l​e​d
 	 */
 	admin_authentication_methods_enabled: string
-	/**
-	 * D​i​r​e​c​t
-	 */
-	admin_authentication_methods_start_mode_direct: string
 	/**
 	 * S​A​M​L​ ​S​P
 	 */
@@ -30384,6 +31885,10 @@ export type TranslationFunctions = {
 	 * Directory Authentication
 	 */
 	admin_nav_directory_authentication: () => LocalizedString
+	/**
+	 * Flows
+	 */
+	admin_nav_flows: () => LocalizedString
 	/**
 	 * Consents
 	 */
@@ -38125,7 +39630,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_roles_end_user_rbac: () => LocalizedString
 	/**
-	 * This page manages roles for End Users. For Admin Operator role management, visit 
+	 * This page manages roles for End Users. For Admin Operator role management, visit
 	 */
 	admin_roles_info_banner: () => LocalizedString
 	/**
@@ -39005,7 +40510,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_access_control_banner_title: () => LocalizedString
 	/**
-	 * This page manages access control for End Users (your application's users). For Admin Operator access control, visit 
+	 * This page manages access control for End Users (your application's users). For Admin Operator access control, visit
 	 */
 	admin_access_control_banner: () => LocalizedString
 	/**
@@ -39309,15 +40814,15 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_info_title: () => LocalizedString
 	/**
-	 * This page manages attributes for 
+	 * This page manages attributes for
 	 */
 	admin_attributes_info_prefix: () => LocalizedString
 	/**
-	 * . For 
+	 * . For
 	 */
 	admin_attributes_info_middle: () => LocalizedString
 	/**
-	 *  attribute management, visit 
+	 *  attribute management, visit
 	 */
 	admin_attributes_info_suffix: () => LocalizedString
 	/**
@@ -39517,11 +41022,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_delete_attribute: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the attribute 
+	 * Are you sure you want to delete the attribute
 	 */
 	admin_attributes_delete_confirm_prefix: () => LocalizedString
 	/**
-	 *  for user 
+	 *  for user
 	 */
 	admin_attributes_delete_confirm_middle: () => LocalizedString
 	/**
@@ -39541,7 +41046,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_cleanup_expired_title: () => LocalizedString
 	/**
-	 * Successfully deleted 
+	 * Successfully deleted
 	 */
 	admin_attributes_cleanup_success_prefix: () => LocalizedString
 	/**
@@ -39553,7 +41058,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_cleanup_description: () => LocalizedString
 	/**
-	 * Currently there are 
+	 * Currently there are
 	 */
 	admin_attributes_cleanup_current_prefix: () => LocalizedString
 	/**
@@ -39849,7 +41354,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_policies_delete_rule: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the policy rule 
+	 * Are you sure you want to delete the policy rule
 	 */
 	admin_policies_delete_confirm_prefix: () => LocalizedString
 	/**
@@ -40349,15 +41854,15 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_info_title: () => LocalizedString
 	/**
-	 * This page manages relationships for 
+	 * This page manages relationships for
 	 */
 	admin_rebac_info_prefix: () => LocalizedString
 	/**
-	 * . For 
+	 * . For
 	 */
 	admin_rebac_info_middle: () => LocalizedString
 	/**
-	 *  relationship management, visit 
+	 *  relationship management, visit
 	 */
 	admin_rebac_info_suffix: () => LocalizedString
 	/**
@@ -40797,7 +42302,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_definitions_delete_title: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the relation definition 
+	 * Are you sure you want to delete the relation definition
 	 */
 	admin_rebac_definitions_delete_confirm_prefix: () => LocalizedString
 	/**
@@ -40925,11 +42430,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_definition_detail_show: () => LocalizedString
 	/**
-	 * Test if a user would have the 
+	 * Test if a user would have the
 	 */
 	admin_rebac_definition_detail_test_prefix: () => LocalizedString
 	/**
-	 *  relation on a 
+	 *  relation on a
 	 */
 	admin_rebac_definition_detail_test_middle: () => LocalizedString
 	/**
@@ -55955,6 +57460,1498 @@ Remove this role from {email}?
 	 */
 	admin_consent_policies_delete_button: () => LocalizedString
 	/**
+	 * en
+	 */
+	admin_flows_locale_marker: () => LocalizedString
+	/**
+	 * Flows - Admin Dashboard - Authrim
+	 */
+	admin_flows_page_title: () => LocalizedString
+	/**
+	 * Flows
+	 */
+	admin_flows_title: () => LocalizedString
+	/**
+	 * Review the path from login, attribute release, consent, and output in one place.
+	 */
+	admin_flows_description: () => LocalizedString
+	/**
+	 * Consent Policies
+	 */
+	admin_flows_consent_policies: () => LocalizedString
+	/**
+	 * Field Mapping
+	 */
+	admin_flows_field_mapping: () => LocalizedString
+	/**
+	 * Flow overview
+	 */
+	admin_flows_overview_title: () => LocalizedString
+	/**
+	 * Start with representative SAML/OIDC paths and review Mapping, Consent, and Output together.
+	 */
+	admin_flows_overview_description: () => LocalizedString
+	/**
+	 * Request
+	 */
+	admin_flows_overview_request_title: () => LocalizedString
+	/**
+	 * protocol request
+	 */
+	admin_flows_overview_request_subtitle: () => LocalizedString
+	/**
+	 * Mapping
+	 */
+	admin_flows_overview_mapping_title: () => LocalizedString
+	/**
+	 * schema / field set
+	 */
+	admin_flows_overview_mapping_subtitle: () => LocalizedString
+	/**
+	 * Consent
+	 */
+	admin_flows_overview_consent_title: () => LocalizedString
+	/**
+	 * statement / policy
+	 */
+	admin_flows_overview_consent_subtitle: () => LocalizedString
+	/**
+	 * Output
+	 */
+	admin_flows_overview_output_title: () => LocalizedString
+	/**
+	 * response / grant
+	 */
+	admin_flows_overview_output_subtitle: () => LocalizedString
+	/**
+	 * Flow list
+	 */
+	admin_flows_list_title: () => LocalizedString
+	/**
+	 * Check the configuration elements in details, then open the Flow view for the full picture.
+	 */
+	admin_flows_list_description: () => LocalizedString
+	/**
+	 * Preview
+	 */
+	admin_flows_status_preview: () => LocalizedString
+	/**
+	 * Planning
+	 */
+	admin_flows_status_planning: () => LocalizedString
+	/**
+	 * Draft
+	 */
+	admin_flows_status_draft: () => LocalizedString
+	/**
+	 * Published
+	 */
+	admin_flows_status_published: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_flows_status_disabled: () => LocalizedString
+	/**
+	 * New Flow
+	 */
+	admin_flows_new_flow: () => LocalizedString
+	/**
+	 * No saved Flows yet. Create one from a template.
+	 */
+	admin_flows_saved_flows_empty: () => LocalizedString
+	/**
+	 * Loading Flows...
+	 */
+	admin_flows_loading: () => LocalizedString
+	/**
+	 * Could not load Flows.
+	 */
+	admin_flows_load_error: () => LocalizedString
+	/**
+	 * Save
+	 */
+	admin_flows_save: () => LocalizedString
+	/**
+	 * Saved
+	 */
+	admin_flows_saved: () => LocalizedString
+	/**
+	 * Saving...
+	 */
+	admin_flows_saving: () => LocalizedString
+	/**
+	 * Publish
+	 */
+	admin_flows_publish: () => LocalizedString
+	/**
+	 * Publishing...
+	 */
+	admin_flows_publishing: () => LocalizedString
+	/**
+	 * Could not publish this Flow.
+	 */
+	admin_flows_publish_failed: () => LocalizedString
+	/**
+	 * Could not save this Flow.
+	 */
+	admin_flows_save_failed: () => LocalizedString
+	/**
+	 * Export JSON
+	 */
+	admin_flows_export_json: () => LocalizedString
+	/**
+	 * Import JSON
+	 */
+	admin_flows_import_json: () => LocalizedString
+	/**
+	 * Import Flow JSON
+	 */
+	admin_flows_import_modal_title: () => LocalizedString
+	/**
+	 * Paste an exported Flow runtime contract JSON. Import creates a draft Flow.
+	 */
+	admin_flows_import_modal_description: () => LocalizedString
+	/**
+	 * Could not import this Flow JSON.
+	 */
+	admin_flows_import_failed: () => LocalizedString
+	/**
+	 * Importing...
+	 */
+	admin_flows_importing: () => LocalizedString
+	/**
+	 * Published versions
+	 */
+	admin_flows_versions_title: () => LocalizedString
+	/**
+	 * No published versions yet.
+	 */
+	admin_flows_versions_empty: () => LocalizedString
+	/**
+	 * Assignments
+	 */
+	admin_flows_assignments_title: () => LocalizedString
+	/**
+	 * No assignments yet.
+	 */
+	admin_flows_assignments_empty: () => LocalizedString
+	/**
+	 * Assign this Flow
+	 */
+	admin_flows_assignment_form_title: () => LocalizedString
+	/**
+	 * Target
+	 */
+	admin_flows_assignment_target_type: () => LocalizedString
+	/**
+	 * Tenant default
+	 */
+	admin_flows_assignment_target_tenant: () => LocalizedString
+	/**
+	 * OIDC Client
+	 */
+	admin_flows_assignment_target_oidc_client: () => LocalizedString
+	/**
+	 * SAML SP
+	 */
+	admin_flows_assignment_target_saml_sp: () => LocalizedString
+	/**
+	 * Target ID
+	 */
+	admin_flows_assignment_target_id: () => LocalizedString
+	/**
+	 * Enter the client ID or SAML SP ID
+	 */
+	admin_flows_assignment_target_id_placeholder: () => LocalizedString
+	/**
+	 * Enabled
+	 */
+	admin_flows_assignment_enabled: () => LocalizedString
+	/**
+	 * Save assignment
+	 */
+	admin_flows_assignment_save: () => LocalizedString
+	/**
+	 * Saving...
+	 */
+	admin_flows_assignment_saving: () => LocalizedString
+	/**
+	 * Assignment saved.
+	 */
+	admin_flows_assignment_saved: () => LocalizedString
+	/**
+	 * Publish this Flow before enabling it for runtime assignment.
+	 */
+	admin_flows_assignment_requires_published: () => LocalizedString
+	/**
+	 * Could not save the Flow assignment.
+	 */
+	admin_flows_assignment_save_failed: () => LocalizedString
+	/**
+	 * No Login Flow assigned
+	 */
+	admin_flows_assignment_no_login_flow: () => LocalizedString
+	/**
+	 * No Registration Flow assigned
+	 */
+	admin_flows_assignment_no_registration_flow: () => LocalizedString
+	/**
+	 * Select the LoginUI Flow used by this target. Consent policies are configured inside Flow nodes.
+	 */
+	admin_flows_assignment_default_description: () => LocalizedString
+	/**
+	 * Save this target before assigning Flows.
+	 */
+	admin_flows_assignment_save_target_first: () => LocalizedString
+	/**
+	 * Refresh
+	 */
+	admin_flows_refresh: () => LocalizedString
+	/**
+	 * Open Flow settings
+	 */
+	admin_flows_open_flow_settings: () => LocalizedString
+	/**
+	 * Manage flows
+	 */
+	admin_flows_manage_flows: () => LocalizedString
+	/**
+	 * Validation
+	 */
+	admin_flows_validation_title: () => LocalizedString
+	/**
+	 * No validation errors.
+	 */
+	admin_flows_validation_valid: () => LocalizedString
+	/**
+	 * Validation found issues.
+	 */
+	admin_flows_validation_failed: () => LocalizedString
+	/**
+	 * New Flow - Admin Dashboard - Authrim
+	 */
+	admin_flows_new_page_title: () => LocalizedString
+	/**
+	 * New Flow
+	 */
+	admin_flows_new_title: () => LocalizedString
+	/**
+	 * Choose the Flow closest to your use case, then review its details and Flow preview.
+	 */
+	admin_flows_new_description: () => LocalizedString
+	/**
+	 * Back to list
+	 */
+	admin_flows_back_to_list: () => LocalizedString
+	/**
+	 * Templates
+	 */
+	admin_flows_templates_title: () => LocalizedString
+	/**
+	 * {title} - Flows - Admin Dashboard - Authrim
+	 */
+	admin_flows_detail_page_title: (arg: { title: string }) => LocalizedString
+	/**
+	 * Flow Details - Admin Dashboard - Authrim
+	 */
+	admin_flows_detail_fallback_page_title: () => LocalizedString
+	/**
+	 * Flow not found
+	 */
+	admin_flows_not_found_title: () => LocalizedString
+	/**
+	 * The specified Flow is not available in this preview.
+	 */
+	admin_flows_not_found_description: () => LocalizedString
+	/**
+	 * Open Flow
+	 */
+	admin_flows_open_editor: () => LocalizedString
+	/**
+	 * Details
+	 */
+	admin_flows_details_title: () => LocalizedString
+	/**
+	 * Entry point, configuration, user action, and output handled by this Flow.
+	 */
+	admin_flows_details_description: () => LocalizedString
+	/**
+	 * Entry
+	 */
+	admin_flows_detail_entry: () => LocalizedString
+	/**
+	 * Destination
+	 */
+	admin_flows_detail_destination: () => LocalizedString
+	/**
+	 * Mapping
+	 */
+	admin_flows_detail_mapping: () => LocalizedString
+	/**
+	 * Consent policy
+	 */
+	admin_flows_detail_consent_policy: () => LocalizedString
+	/**
+	 * Consent statement
+	 */
+	admin_flows_detail_consent_statement: () => LocalizedString
+	/**
+	 * Output
+	 */
+	admin_flows_detail_output: () => LocalizedString
+	/**
+	 * Slug
+	 */
+	admin_flows_detail_slug: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_flows_detail_status: () => LocalizedString
+	/**
+	 * Updated
+	 */
+	admin_flows_detail_updated: () => LocalizedString
+	/**
+	 * Configuration links
+	 */
+	admin_flows_configuration_links_title: () => LocalizedString
+	/**
+	 * Keep Flow definitions lightweight and place actual configuration in the existing settings pages.
+	 */
+	admin_flows_configuration_links_description: () => LocalizedString
+	/**
+	 * Field Mapping Set
+	 */
+	admin_flows_link_field_mapping_set_title: () => LocalizedString
+	/**
+	 * Define groups of attributes and claims to release.
+	 */
+	admin_flows_link_field_mapping_set_description: () => LocalizedString
+	/**
+	 * Consent Statement
+	 */
+	admin_flows_link_consent_statement_title: () => LocalizedString
+	/**
+	 * Define the text and options shown to users.
+	 */
+	admin_flows_link_consent_statement_description: () => LocalizedString
+	/**
+	 * Consent Policy
+	 */
+	admin_flows_link_consent_policy_title: () => LocalizedString
+	/**
+	 * Define when each consent statement is required.
+	 */
+	admin_flows_link_consent_policy_description: () => LocalizedString
+	/**
+	 * Runtime contract
+	 */
+	admin_flows_runtime_contract_title: () => LocalizedString
+	/**
+	 * LoginUI receives this contract and renders only the required actions. The same structure can be passed to SDKs.
+	 */
+	admin_flows_runtime_contract_description: () => LocalizedString
+	/**
+	 * LoginUI runtime contract preview
+	 */
+	admin_flows_runtime_contract_preview_label: () => LocalizedString
+	/**
+	 * Output decision
+	 */
+	admin_flows_output_decision_title: () => LocalizedString
+	/**
+	 * Main decisions reflected in the final output.
+	 */
+	admin_flows_output_decision_description: () => LocalizedString
+	/**
+	 * User action
+	 */
+	admin_flows_output_decision_user_action: () => LocalizedString
+	/**
+	 * Recorded state
+	 */
+	admin_flows_output_decision_recorded_state: () => LocalizedString
+	/**
+	 * Flow steps
+	 */
+	admin_flows_steps_title: () => LocalizedString
+	/**
+	 * Summary before opening the Flow canvas.
+	 */
+	admin_flows_steps_description: () => LocalizedString
+	/**
+	 * {title} Flow Editor - Admin Dashboard - Authrim
+	 */
+	admin_flows_editor_page_title: (arg: { title: string }) => LocalizedString
+	/**
+	 * Flow - Admin Dashboard - Authrim
+	 */
+	admin_flows_editor_fallback_page_title: () => LocalizedString
+	/**
+	 * {title} Flow Editor
+	 */
+	admin_flows_editor_header_title: (arg: { title: string }) => LocalizedString
+	/**
+	 * Add nodes and connect handles to design the operation order used by LoginUI.
+	 */
+	admin_flows_editor_header_description: () => LocalizedString
+	/**
+	 * Back to details
+	 */
+	admin_flows_back_to_detail: () => LocalizedString
+	/**
+	 * Reset to template
+	 */
+	admin_flows_reset_template: () => LocalizedString
+	/**
+	 * Flow
+	 */
+	admin_flows_editor_section_title: () => LocalizedString
+	/**
+	 * Changes are saved as a draft. Publish the Flow to create the immutable runtime contract used by LoginUI.
+	 */
+	admin_flows_editor_section_description: () => LocalizedString
+	/**
+	 * OIDC Registration Completion
+	 */
+	admin_flows_completion_block_oidc_registration: () => LocalizedString
+	/**
+	 * OIDC Authorization Completion
+	 */
+	admin_flows_completion_block_oidc_authorization: () => LocalizedString
+	/**
+	 * SAML Attribute Release Completion
+	 */
+	admin_flows_completion_block_saml_attribute_release: () => LocalizedString
+	/**
+	 * Direct Login Completion
+	 */
+	admin_flows_completion_block_direct_login: () => LocalizedString
+	/**
+	 * Completion Block
+	 */
+	admin_flows_completion_block_generic: () => LocalizedString
+	/**
+	 * The connection references a missing Flow node.
+	 */
+	admin_flows_invalid_connection_missing_node: () => LocalizedString
+	/**
+	 * Complete nodes cannot start a connection.
+	 */
+	admin_flows_invalid_connection_from_complete: () => LocalizedString
+	/**
+	 * Entry nodes cannot receive a connection.
+	 */
+	admin_flows_invalid_connection_to_entry: () => LocalizedString
+	/**
+	 * This connection mixes different protocol completion blocks.
+	 */
+	admin_flows_invalid_connection_protocol_mismatch: () => LocalizedString
+	/**
+	 * This connection mixes different completion block purposes.
+	 */
+	admin_flows_invalid_connection_completion_block_mismatch: () => LocalizedString
+	/**
+	 * Node palette
+	 */
+	admin_flows_node_palette_aria: () => LocalizedString
+	/**
+	 * Add node
+	 */
+	admin_flows_node_palette_title: () => LocalizedString
+	/**
+	 * {nodes} nodes / {edges} edges
+	 */
+	admin_flows_node_palette_count: (arg: { edges: number, nodes: number }) => LocalizedString
+	/**
+	 * {title} flow editor
+	 */
+	admin_flows_canvas_aria: (arg: { title: string }) => LocalizedString
+	/**
+	 * Node settings
+	 */
+	admin_flows_node_modal_title: () => LocalizedString
+	/**
+	 * Title
+	 */
+	admin_flows_node_title_label: () => LocalizedString
+	/**
+	 * Description
+	 */
+	admin_flows_node_description_label: () => LocalizedString
+	/**
+	 * Authentication method profile
+	 */
+	admin_flows_auth_profile_label: () => LocalizedString
+	/**
+	 * Profile form
+	 */
+	admin_flows_profile_form_label: () => LocalizedString
+	/**
+	 * Consent policy
+	 */
+	admin_flows_consent_policy_label: () => LocalizedString
+	/**
+	 * Condition
+	 */
+	admin_flows_condition_type_label: () => LocalizedString
+	/**
+	 * Value
+	 */
+	admin_flows_condition_value_label: () => LocalizedString
+	/**
+	 * Value or whitespace-separated values
+	 */
+	admin_flows_condition_value_placeholder: () => LocalizedString
+	/**
+	 * Matched output handle
+	 */
+	admin_flows_condition_match_output_label: () => LocalizedString
+	/**
+	 * Matched label
+	 */
+	admin_flows_condition_match_label_label: () => LocalizedString
+	/**
+	 * Otherwise
+	 */
+	admin_flows_condition_otherwise_mode_label: () => LocalizedString
+	/**
+	 * Output handle
+	 */
+	admin_flows_condition_otherwise_output_mode: () => LocalizedString
+	/**
+	 * Terminal error
+	 */
+	admin_flows_condition_otherwise_terminal_mode: () => LocalizedString
+	/**
+	 * Otherwise output handle
+	 */
+	admin_flows_condition_otherwise_output_label: () => LocalizedString
+	/**
+	 * Otherwise label
+	 */
+	admin_flows_condition_otherwise_label_label: () => LocalizedString
+	/**
+	 * Terminal error code
+	 */
+	admin_flows_condition_terminal_error_label: () => LocalizedString
+	/**
+	 * Terminal message
+	 */
+	admin_flows_condition_terminal_message_label: () => LocalizedString
+	/**
+	 * Always
+	 */
+	admin_flows_condition_type_always: () => LocalizedString
+	/**
+	 * Authenticated
+	 */
+	admin_flows_condition_type_authenticated: () => LocalizedString
+	/**
+	 * First login
+	 */
+	admin_flows_condition_type_first_login: () => LocalizedString
+	/**
+	 * Client ID
+	 */
+	admin_flows_condition_type_client_id: () => LocalizedString
+	/**
+	 * SAML SP ID
+	 */
+	admin_flows_condition_type_saml_sp_id: () => LocalizedString
+	/**
+	 * Flow kind
+	 */
+	admin_flows_condition_type_flow_kind: () => LocalizedString
+	/**
+	 * Requested scope
+	 */
+	admin_flows_condition_type_requested_scope: () => LocalizedString
+	/**
+	 * Authentication method
+	 */
+	admin_flows_condition_type_authentication_method: () => LocalizedString
+	/**
+	 * Output handles
+	 */
+	admin_flows_output_handles_label: () => LocalizedString
+	/**
+	 * No authentication method is enabled for this profile.
+	 */
+	admin_flows_output_handles_empty: () => LocalizedString
+	/**
+	 * Could not load the current authentication method profiles or consent policies.
+	 */
+	admin_flows_runtime_options_error: () => LocalizedString
+	/**
+	 * Delete
+	 */
+	admin_flows_delete: () => LocalizedString
+	/**
+	 * Cancel
+	 */
+	admin_flows_cancel: () => LocalizedString
+	/**
+	 * Apply
+	 */
+	admin_flows_apply: () => LocalizedString
+	/**
+	 * Configure {title}
+	 */
+	admin_flows_node_settings_aria: (arg: { title: string }) => LocalizedString
+	/**
+	 * Description for {title}
+	 */
+	admin_flows_node_description_aria: (arg: { title: string }) => LocalizedString
+	/**
+	 * {title} outputs
+	 */
+	admin_flows_node_outputs_aria: (arg: { title: string }) => LocalizedString
+	/**
+	 * SAML Attribute Release
+	 */
+	admin_flows_template_saml_attribute_release_title: () => LocalizedString
+	/**
+	 * Attribute release confirmation for SAML SPs
+	 */
+	admin_flows_template_saml_attribute_release_subtitle: () => LocalizedString
+	/**
+	 * Review the path from SAML AuthnRequest, SP, Field Mapping Set, consent statement, user decision, and SAML Response in a straight line.
+	 */
+	admin_flows_template_saml_attribute_release_description: () => LocalizedString
+	/**
+	 * SAML AuthnRequest
+	 */
+	admin_flows_template_saml_attribute_release_primary_entry: () => LocalizedString
+	/**
+	 * SAML Response / Assertion
+	 */
+	admin_flows_template_saml_attribute_release_primary_output: () => LocalizedString
+	/**
+	 * GakuNin application standard Field Mapping Set
+	 */
+	admin_flows_template_saml_attribute_release_mapping_set: () => LocalizedString
+	/**
+	 * SAML attribute release policy
+	 */
+	admin_flows_template_saml_attribute_release_consent_policy: () => LocalizedString
+	/**
+	 * saml_attribute_release_uapprove
+	 */
+	admin_flows_template_saml_attribute_release_consent_statement: () => LocalizedString
+	/**
+	 * Review released attributes and choose allow once or always allow
+	 */
+	admin_flows_template_saml_attribute_release_user_action: () => LocalizedString
+	/**
+	 * tenant + user + SAML SP + statement/version + User Decision
+	 */
+	admin_flows_template_saml_attribute_release_recorded_state: () => LocalizedString
+	/**
+	 * OIDC Authorization Consent
+	 */
+	admin_flows_template_oidc_authorization_consent_title: () => LocalizedString
+	/**
+	 * Scope/claim release confirmation for OIDC Clients
+	 */
+	admin_flows_template_oidc_authorization_consent_subtitle: () => LocalizedString
+	/**
+	 * Review the path from OIDC authorization request, client, scopes/claims, consent statement, approval result, and authorization response.
+	 */
+	admin_flows_template_oidc_authorization_consent_description: () => LocalizedString
+	/**
+	 * OIDC Authorization Request
+	 */
+	admin_flows_template_oidc_authorization_consent_primary_entry: () => LocalizedString
+	/**
+	 * Authorization Response / UserInfo grant
+	 */
+	admin_flows_template_oidc_authorization_consent_primary_output: () => LocalizedString
+	/**
+	 * OIDC standard claims
+	 */
+	admin_flows_template_oidc_authorization_consent_mapping_set: () => LocalizedString
+	/**
+	 * OIDC authorization consent policy
+	 */
+	admin_flows_template_oidc_authorization_consent_consent_policy: () => LocalizedString
+	/**
+	 * oidc_authorization_consent
+	 */
+	admin_flows_template_oidc_authorization_consent_consent_statement: () => LocalizedString
+	/**
+	 * Review and approve the scopes and claims to share
+	 */
+	admin_flows_template_oidc_authorization_consent_user_action: () => LocalizedString
+	/**
+	 * tenant + user + OIDC Client + statement/version + User Decision
+	 */
+	admin_flows_template_oidc_authorization_consent_recorded_state: () => LocalizedString
+	/**
+	 * Registration
+	 */
+	admin_flows_template_oidc_registration_title: () => LocalizedString
+	/**
+	 * Account creation for applications
+	 */
+	admin_flows_template_oidc_registration_subtitle: () => LocalizedString
+	/**
+	 * Review the path from registration request, profile input, consent, account creation, and application continuation.
+	 */
+	admin_flows_template_oidc_registration_description: () => LocalizedString
+	/**
+	 * Registration Request / Sign-up entry
+	 */
+	admin_flows_template_oidc_registration_primary_entry: () => LocalizedString
+	/**
+	 * Application continuation / New account session
+	 */
+	admin_flows_template_oidc_registration_primary_output: () => LocalizedString
+	/**
+	 * OIDC registration profile fields
+	 */
+	admin_flows_template_oidc_registration_mapping_set: () => LocalizedString
+	/**
+	 * Registration consent policy
+	 */
+	admin_flows_template_oidc_registration_consent_policy: () => LocalizedString
+	/**
+	 * terms_of_service / privacy_policy
+	 */
+	admin_flows_template_oidc_registration_consent_statement: () => LocalizedString
+	/**
+	 * Choose a registration method, enter a profile, and agree to the Terms of Service and Privacy Policy
+	 */
+	admin_flows_template_oidc_registration_user_action: () => LocalizedString
+	/**
+	 * tenant + user + OIDC Client + registration form + consent statements
+	 */
+	admin_flows_template_oidc_registration_recorded_state: () => LocalizedString
+	/**
+	 * Login
+	 */
+	admin_flows_template_oidc_login_title: () => LocalizedString
+	/**
+	 * Sign-in for applications
+	 */
+	admin_flows_template_oidc_login_subtitle: () => LocalizedString
+	/**
+	 * Review the path from login request, session check, authentication method selection, sign-in, required consent, and application continuation.
+	 */
+	admin_flows_template_oidc_login_description: () => LocalizedString
+	/**
+	 * Login Request / Login entry
+	 */
+	admin_flows_template_oidc_login_primary_entry: () => LocalizedString
+	/**
+	 * Application continuation / Existing account session
+	 */
+	admin_flows_template_oidc_login_primary_output: () => LocalizedString
+	/**
+	 * OIDC login/session claims
+	 */
+	admin_flows_template_oidc_login_mapping_set: () => LocalizedString
+	/**
+	 * Login and authorization consent policy
+	 */
+	admin_flows_template_oidc_login_consent_policy: () => LocalizedString
+	/**
+	 * oidc_authorization_consent
+	 */
+	admin_flows_template_oidc_login_consent_statement: () => LocalizedString
+	/**
+	 * Sign in with an existing account and review scope/claim sharing when needed
+	 */
+	admin_flows_template_oidc_login_user_action: () => LocalizedString
+	/**
+	 * tenant + user + OIDC Client + session/authentication event + User Decision
+	 */
+	admin_flows_template_oidc_login_recorded_state: () => LocalizedString
+	/**
+	 * Release confirmation
+	 */
+	admin_flows_kind_release_confirmation: () => LocalizedString
+	/**
+	 * Authorization
+	 */
+	admin_flows_kind_authorization: () => LocalizedString
+	/**
+	 * Registration
+	 */
+	admin_flows_kind_registration: () => LocalizedString
+	/**
+	 * Login
+	 */
+	admin_flows_kind_login: () => LocalizedString
+	/**
+	 * SAML Service Provider
+	 */
+	admin_flows_destination_saml_sp: () => LocalizedString
+	/**
+	 * OIDC Client
+	 */
+	admin_flows_destination_oidc_client: () => LocalizedString
+	/**
+	 * Protocol Request
+	 */
+	admin_flows_node_protocol_request: () => LocalizedString
+	/**
+	 * Registration Request
+	 */
+	admin_flows_node_registration_request: () => LocalizedString
+	/**
+	 * Login Request
+	 */
+	admin_flows_node_login_request: () => LocalizedString
+	/**
+	 * Schema Mapping
+	 */
+	admin_flows_node_schema_mapping: () => LocalizedString
+	/**
+	 * Consent
+	 */
+	admin_flows_node_consent: () => LocalizedString
+	/**
+	 * Runtime contract
+	 */
+	admin_flows_node_contract: () => LocalizedString
+	/**
+	 * Output
+	 */
+	admin_flows_node_output: () => LocalizedString
+	/**
+	 * Registration Method
+	 */
+	admin_flows_node_registration_method: () => LocalizedString
+	/**
+	 * Profile Input
+	 */
+	admin_flows_node_profile_input: () => LocalizedString
+	/**
+	 * Account Creation
+	 */
+	admin_flows_node_account_creation: () => LocalizedString
+	/**
+	 * Session Check
+	 */
+	admin_flows_node_session_check: () => LocalizedString
+	/**
+	 * Authentication Method
+	 */
+	admin_flows_node_authentication_method: () => LocalizedString
+	/**
+	 * Receive the SAML AuthnRequest and resolve the target SP and requested context.
+	 */
+	admin_flows_node_saml_request_description: () => LocalizedString
+	/**
+	 * Decide the attribute set to release from Identity Schema to the SP.
+	 */
+	admin_flows_node_saml_mapping_description: () => LocalizedString
+	/**
+	 * Show released attributes and the consent statement in LoginUI, then receive the user decision.
+	 */
+	admin_flows_node_saml_consent_description: () => LocalizedString
+	/**
+	 * Return only the actions that LoginUI or an SDK should render as a contract.
+	 */
+	admin_flows_node_saml_contract_description: () => LocalizedString
+	/**
+	 * Record the decision and generate a SAML Response with the permitted attributes.
+	 */
+	admin_flows_node_saml_output_description: () => LocalizedString
+	/**
+	 * Receive the OIDC authorization request and resolve the client and requested scopes.
+	 */
+	admin_flows_node_oidc_authorization_request_description: () => LocalizedString
+	/**
+	 * Decide which user attributes can actually be returned for requested scopes and claims.
+	 */
+	admin_flows_node_oidc_authorization_mapping_description: () => LocalizedString
+	/**
+	 * Show scope/claim release details in LoginUI and receive the approval result.
+	 */
+	admin_flows_node_oidc_authorization_consent_description: () => LocalizedString
+	/**
+	 * Render with LoginUI first, while keeping the same contract usable by SDKs later.
+	 */
+	admin_flows_node_oidc_authorization_contract_description: () => LocalizedString
+	/**
+	 * Record the approval result and reflect permitted scopes/claims in subsequent responses.
+	 */
+	admin_flows_node_oidc_authorization_output_description: () => LocalizedString
+	/**
+	 * Receive the registration request and resolve the application and sign-up context.
+	 */
+	admin_flows_node_oidc_registration_request_description: () => LocalizedString
+	/**
+	 * Show available registration methods such as passkeys, email, and social accounts.
+	 */
+	admin_flows_node_oidc_registration_method_description: () => LocalizedString
+	/**
+	 * Collect required Identity Schema fields and pass validation results to account creation.
+	 */
+	admin_flows_node_oidc_registration_profile_description: () => LocalizedString
+	/**
+	 * Show Terms of Service, Privacy Policy, and optional registration consents in LoginUI.
+	 */
+	admin_flows_node_oidc_registration_consent_description: () => LocalizedString
+	/**
+	 * Create the user, authentication method, consent history, and audit event.
+	 */
+	admin_flows_node_oidc_registration_account_description: () => LocalizedString
+	/**
+	 * Create a post-registration session and continue to the OIDC authorization response.
+	 */
+	admin_flows_node_oidc_registration_output_description: () => LocalizedString
+	/**
+	 * Receive the login request and resolve the application, return URL, and requested context.
+	 */
+	admin_flows_node_oidc_login_request_description: () => LocalizedString
+	/**
+	 * Evaluate the existing session, prompt, max_age, and acr requirements to decide whether reauthentication is needed.
+	 */
+	admin_flows_node_oidc_login_session_description: () => LocalizedString
+	/**
+	 * Show available sign-in methods and authenticate with the selected method.
+	 */
+	admin_flows_node_oidc_login_authentication_description: () => LocalizedString
+	/**
+	 * When required, show scope/claim release details and receive the user approval.
+	 */
+	admin_flows_node_oidc_login_consent_description: () => LocalizedString
+	/**
+	 * Generate the OIDC response using the signed-in session and approval result.
+	 */
+	admin_flows_node_oidc_login_output_description: () => LocalizedString
+	/**
+	 * SAML SP
+	 */
+	admin_flows_setting_saml_sp: () => LocalizedString
+	/**
+	 * AuthnContext
+	 */
+	admin_flows_setting_authn_context: () => LocalizedString
+	/**
+	 * Signature validation
+	 */
+	admin_flows_setting_signature_validation: () => LocalizedString
+	/**
+	 * Destination Field Mapping Set
+	 */
+	admin_flows_setting_destination_field_mapping_set: () => LocalizedString
+	/**
+	 * Release fields
+	 */
+	admin_flows_setting_release_fields: () => LocalizedString
+	/**
+	 * Attribute name mapping
+	 */
+	admin_flows_setting_attribute_name_mapping: () => LocalizedString
+	/**
+	 * Consent Policy
+	 */
+	admin_flows_setting_consent_policy: () => LocalizedString
+	/**
+	 * Consent Statement
+	 */
+	admin_flows_setting_consent_statement: () => LocalizedString
+	/**
+	 * User Decision
+	 */
+	admin_flows_setting_user_decision: () => LocalizedString
+	/**
+	 * localized_content
+	 */
+	admin_flows_setting_localized_content: () => LocalizedString
+	/**
+	 * required capabilities
+	 */
+	admin_flows_setting_required_capabilities: () => LocalizedString
+	/**
+	 * submit endpoint
+	 */
+	admin_flows_setting_submit_endpoint: () => LocalizedString
+	/**
+	 * Audit evidence
+	 */
+	admin_flows_setting_audit_evidence: () => LocalizedString
+	/**
+	 * SAML Assertion
+	 */
+	admin_flows_setting_saml_assertion: () => LocalizedString
+	/**
+	 * OIDC Client
+	 */
+	admin_flows_setting_oidc_client: () => LocalizedString
+	/**
+	 * redirect_uri
+	 */
+	admin_flows_setting_redirect_uri: () => LocalizedString
+	/**
+	 * scope / prompt / max_age
+	 */
+	admin_flows_setting_scope_prompt_max_age: () => LocalizedString
+	/**
+	 * Identity Schema
+	 */
+	admin_flows_setting_identity_schema: () => LocalizedString
+	/**
+	 * claim policy
+	 */
+	admin_flows_setting_claim_policy: () => LocalizedString
+	/**
+	 * authorization code
+	 */
+	admin_flows_setting_authorization_code: () => LocalizedString
+	/**
+	 * ID Token claims
+	 */
+	admin_flows_setting_id_token_claims: () => LocalizedString
+	/**
+	 * UserInfo claims
+	 */
+	admin_flows_setting_userinfo_claims: () => LocalizedString
+	/**
+	 * prompt=create / screen=signup
+	 */
+	admin_flows_setting_prompt_create_signup: () => LocalizedString
+	/**
+	 * Passkey
+	 */
+	admin_flows_setting_passkey: () => LocalizedString
+	/**
+	 * Email OTP
+	 */
+	admin_flows_setting_email_otp: () => LocalizedString
+	/**
+	 * Directory password
+	 */
+	admin_flows_setting_directory_password: () => LocalizedString
+	/**
+	 * Social account
+	 */
+	admin_flows_setting_social_account: () => LocalizedString
+	/**
+	 * required fields
+	 */
+	admin_flows_setting_required_fields: () => LocalizedString
+	/**
+	 * validation
+	 */
+	admin_flows_setting_validation: () => LocalizedString
+	/**
+	 * Terms of Service
+	 */
+	admin_flows_setting_terms_of_service: () => LocalizedString
+	/**
+	 * Privacy Policy
+	 */
+	admin_flows_setting_privacy_policy: () => LocalizedString
+	/**
+	 * Registration consent
+	 */
+	admin_flows_setting_registration_consent: () => LocalizedString
+	/**
+	 * user record
+	 */
+	admin_flows_setting_user_record: () => LocalizedString
+	/**
+	 * credential binding
+	 */
+	admin_flows_setting_credential_binding: () => LocalizedString
+	/**
+	 * audit event
+	 */
+	admin_flows_setting_audit_event: () => LocalizedString
+	/**
+	 * existing session
+	 */
+	admin_flows_setting_existing_session: () => LocalizedString
+	/**
+	 * prompt=login
+	 */
+	admin_flows_setting_prompt_login: () => LocalizedString
+	/**
+	 * max_age / acr
+	 */
+	admin_flows_setting_max_age_acr: () => LocalizedString
+	/**
+	 * Password / OTP
+	 */
+	admin_flows_setting_password_otp: () => LocalizedString
+	/**
+	 * Social login
+	 */
+	admin_flows_setting_social_login: () => LocalizedString
+	/**
+	 * scope / claims
+	 */
+	admin_flows_setting_scope_claims: () => LocalizedString
+	/**
+	 * Application context
+	 */
+	admin_flows_setting_application_context: () => LocalizedString
+	/**
+	 * SAML SP settings
+	 */
+	admin_flows_link_saml_sp_settings: () => LocalizedString
+	/**
+	 * OIDC Client settings
+	 */
+	admin_flows_link_oidc_client_settings: () => LocalizedString
+	/**
+	 * Authentication methods
+	 */
+	admin_flows_link_authentication_methods: () => LocalizedString
+	/**
+	 * Schema settings
+	 */
+	admin_flows_link_schema_settings: () => LocalizedString
+	/**
+	 * Flow kind
+	 */
+	admin_flows_contract_label_flow_kind: () => LocalizedString
+	/**
+	 * Protocol
+	 */
+	admin_flows_contract_label_protocol: () => LocalizedString
+	/**
+	 * Destination
+	 */
+	admin_flows_contract_label_destination: () => LocalizedString
+	/**
+	 * Field Mapping Set
+	 */
+	admin_flows_contract_label_field_mapping_set: () => LocalizedString
+	/**
+	 * Required user action
+	 */
+	admin_flows_contract_label_required_user_action: () => LocalizedString
+	/**
+	 * Continuation
+	 */
+	admin_flows_contract_label_continuation: () => LocalizedString
+	/**
+	 * Profile input
+	 */
+	admin_flows_contract_label_profile_input: () => LocalizedString
+	/**
+	 * Authentication
+	 */
+	admin_flows_contract_label_authentication: () => LocalizedString
+	/**
+	 * SAML SP
+	 */
+	admin_flows_contract_value_saml_sp: () => LocalizedString
+	/**
+	 * OIDC Client
+	 */
+	admin_flows_contract_value_oidc_client: () => LocalizedString
+	/**
+	 * GakuNin application standard
+	 */
+	admin_flows_contract_value_gakunin_standard: () => LocalizedString
+	/**
+	 * User Decision
+	 */
+	admin_flows_contract_value_user_decision: () => LocalizedString
+	/**
+	 * SAML Response generation
+	 */
+	admin_flows_contract_value_saml_response_generation: () => LocalizedString
+	/**
+	 * Consent approval
+	 */
+	admin_flows_contract_value_consent_approval: () => LocalizedString
+	/**
+	 * Authorization response
+	 */
+	admin_flows_contract_value_authorization_response: () => LocalizedString
+	/**
+	 * Registration fields
+	 */
+	admin_flows_contract_value_registration_fields: () => LocalizedString
+	/**
+	 * Create account + consent
+	 */
+	admin_flows_contract_value_create_account_consent: () => LocalizedString
+	/**
+	 * Configured login methods
+	 */
+	admin_flows_contract_value_configured_login_methods: () => LocalizedString
+	/**
+	 * Authenticate + optional consent
+	 */
+	admin_flows_contract_value_authenticate_optional_consent: () => LocalizedString
+	/**
+	 * Entry
+	 */
+	admin_flows_palette_start_label: () => LocalizedString
+	/**
+	 * Entry point for a request, direct link, or similar flow start.
+	 */
+	admin_flows_palette_start_description: () => LocalizedString
+	/**
+	 * Registration
+	 */
+	admin_flows_palette_registration_label: () => LocalizedString
+	/**
+	 * Choose a registration method profile and create branches for available methods.
+	 */
+	admin_flows_palette_registration_description: () => LocalizedString
+	/**
+	 * Authentication
+	 */
+	admin_flows_palette_authentication_label: () => LocalizedString
+	/**
+	 * Let users choose an authentication method for sign-in or reauthentication.
+	 */
+	admin_flows_palette_authentication_description: () => LocalizedString
+	/**
+	 * Email verification
+	 */
+	admin_flows_palette_verification_label: () => LocalizedString
+	/**
+	 * Insert email reachability confirmation or additional verification.
+	 */
+	admin_flows_palette_verification_description: () => LocalizedString
+	/**
+	 * Profile form
+	 */
+	admin_flows_palette_profile_label: () => LocalizedString
+	/**
+	 * Profile input form required for registration or account linking.
+	 */
+	admin_flows_palette_profile_description: () => LocalizedString
+	/**
+	 * Consent
+	 */
+	admin_flows_palette_consent_label: () => LocalizedString
+	/**
+	 * Show Terms of Service, Privacy Policy, or attribute release confirmation.
+	 */
+	admin_flows_palette_consent_description: () => LocalizedString
+	/**
+	 * Condition
+	 */
+	admin_flows_palette_condition_label: () => LocalizedString
+	/**
+	 * Branch by request context, selected authentication method, or similar runtime state.
+	 */
+	admin_flows_palette_condition_description: () => LocalizedString
+	/**
+	 * Account action
+	 */
+	admin_flows_palette_account_label: () => LocalizedString
+	/**
+	 * Account creation, linking, update, or similar account operation.
+	 */
+	admin_flows_palette_account_description: () => LocalizedString
+	/**
+	 * Complete
+	 */
+	admin_flows_palette_end_label: () => LocalizedString
+	/**
+	 * Complete the flow and continue to the service response, session, or redirect.
+	 */
+	admin_flows_palette_end_description: () => LocalizedString
+	/**
+	 * Default profile
+	 */
+	admin_flows_auth_profile_default: () => LocalizedString
+	/**
+	 * Basic profile
+	 */
+	admin_flows_profile_form_basic: () => LocalizedString
+	/**
+	 * Email + name
+	 */
+	admin_flows_profile_form_email_name: () => LocalizedString
+	/**
+	 * Academic profile
+	 */
+	admin_flows_profile_form_academic: () => LocalizedString
+	/**
+	 * Registration consent policy
+	 */
+	admin_flows_consent_policy_registration: () => LocalizedString
+	/**
+	 * OIDC authorization consent policy
+	 */
+	admin_flows_consent_policy_oidc_authorization: () => LocalizedString
+	/**
+	 * SAML attribute release policy
+	 */
+	admin_flows_consent_policy_saml_attribute_release: () => LocalizedString
+	/**
+	 * inactive
+	 */
+	admin_flows_consent_policy_inactive: () => LocalizedString
+	/**
+	 * No consent policies are available
+	 */
+	admin_flows_consent_policy_none_available: () => LocalizedString
+	/**
+	 * Next
+	 */
+	admin_flows_output_next: () => LocalizedString
+	/**
+	 * Start registration
+	 */
+	admin_flows_output_start_registration: () => LocalizedString
+	/**
+	 * Profile completed
+	 */
+	admin_flows_output_profile_completed: () => LocalizedString
+	/**
+	 * Accepted
+	 */
+	admin_flows_output_accepted: () => LocalizedString
+	/**
+	 * Created
+	 */
+	admin_flows_output_created: () => LocalizedString
+	/**
+	 * Complete
+	 */
+	admin_flows_output_complete: () => LocalizedString
+	/**
+	 * Matched
+	 */
+	admin_flows_output_matched: () => LocalizedString
+	/**
+	 * Otherwise
+	 */
+	admin_flows_output_otherwise: () => LocalizedString
+	/**
+	 * Receive a request, direct link, or LoginUI entry.
+	 */
+	admin_flows_editor_start_description: () => LocalizedString
+	/**
+	 * Receive a registration request or LoginUI sign-up entry and resolve the application context.
+	 */
+	admin_flows_editor_registration_request_description: () => LocalizedString
+	/**
+	 * Receive a login request or LoginUI sign-in entry and resolve the application context.
+	 */
+	admin_flows_editor_login_request_description: () => LocalizedString
+	/**
+	 * Show available registration methods and branch by the selected method.
+	 */
+	admin_flows_editor_registration_method_description: () => LocalizedString
+	/**
+	 * Collect Identity Schema fields required for registration.
+	 */
+	admin_flows_editor_profile_input_description: () => LocalizedString
+	/**
+	 * Show Terms of Service, Privacy Policy, and optional registration consents.
+	 */
+	admin_flows_editor_registration_consent_description: () => LocalizedString
+	/**
+	 * Create the user, authentication method, consent history, and audit event.
+	 */
+	admin_flows_editor_account_creation_description: () => LocalizedString
+	/**
+	 * Complete the flow by creating the resulting session, response, or redirect.
+	 */
+	admin_flows_editor_end_description: () => LocalizedString
+	/**
+	 * prompt=create
+	 */
+	admin_flows_editor_setting_prompt_create: () => LocalizedString
+	/**
+	 * signup entry
+	 */
+	admin_flows_editor_setting_signup_entry: () => LocalizedString
+	/**
+	 * Default profile
+	 */
+	admin_flows_editor_setting_default_profile: () => LocalizedString
+	/**
+	 * Basic profile
+	 */
+	admin_flows_editor_setting_basic_profile: () => LocalizedString
+	/**
+	 * email
+	 */
+	admin_flows_editor_setting_email: () => LocalizedString
+	/**
+	 * name
+	 */
+	admin_flows_editor_setting_name: () => LocalizedString
+	/**
+	 * redirect
+	 */
+	admin_flows_editor_setting_redirect: () => LocalizedString
+	/**
+	 * Consent policy
+	 */
+	admin_flows_trust_policy_title: () => LocalizedString
+	/**
+	 * Configure trust behavior. Flow assignment is managed from the Flow settings.
+	 */
+	admin_flows_trust_policy_description: () => LocalizedString
+	/**
+	 * Loading consent policy settings...
+	 */
+	admin_flows_trust_policy_loading: () => LocalizedString
+	/**
+	 * Failed to load consent policy settings
+	 */
+	admin_flows_trust_policy_load_failed: () => LocalizedString
+	/**
+	 * Trust policy settings saved.
+	 */
+	admin_flows_trust_policy_saved: () => LocalizedString
+	/**
+	 * Failed to save consent policy settings
+	 */
+	admin_flows_trust_policy_save_failed: () => LocalizedString
+	/**
+	 * Select the Login or Registration Flow for this target from Flow settings. Consent policies are attached to Consent nodes inside a Flow.
+	 */
+	admin_flows_trust_policy_flow_hint: () => LocalizedString
+	/**
+	 * First-party application
+	 */
+	admin_flows_trust_policy_first_party_label: () => LocalizedString
+	/**
+	 * Marks the application as operated by the same service owner.
+	 */
+	admin_flows_trust_policy_first_party_description: () => LocalizedString
+	/**
+	 * Trusted application
+	 */
+	admin_flows_trust_policy_trusted_label: () => LocalizedString
+	/**
+	 * Allows authorization consent to be skipped unless prompt=consent is requested.
+	 */
+	admin_flows_trust_policy_trusted_description: () => LocalizedString
+	/**
+	 * Skip authorization consent
+	 */
+	admin_flows_trust_policy_skip_consent_label: () => LocalizedString
+	/**
+	 * Skips the OAuth/SAML authorization consent screen for this target.
+	 */
+	admin_flows_trust_policy_skip_consent_description: () => LocalizedString
+	/**
+	 * Trust policy active
+	 */
+	admin_flows_trust_policy_active_label: () => LocalizedString
+	/**
+	 * Disabling this leaves the record saved but ignored at runtime.
+	 */
+	admin_flows_trust_policy_active_description: () => LocalizedString
+	/**
+	 * Save consent policy settings
+	 */
+	admin_flows_trust_policy_save: () => LocalizedString
+	/**
+	 * Saving...
+	 */
+	admin_flows_trust_policy_saving: () => LocalizedString
+	/**
 	 * Settings
 	 */
 	admin_settings_title: () => LocalizedString
@@ -57114,10 +60111,6 @@ Remove this role from {email}?
 	 * Enabled
 	 */
 	admin_authentication_methods_enabled: () => LocalizedString
-	/**
-	 * Direct
-	 */
-	admin_authentication_methods_start_mode_direct: () => LocalizedString
 	/**
 	 * SAML SP
 	 */

@@ -2,15 +2,37 @@
 	import { Button, Input, Card, Alert, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI, externalIdpAPI, type APIError } from '$lib/api/client';
+	import {
+		passkeyAPI,
+		emailCodeAPI,
+		externalIdpAPI,
+		loginChallengeAPI,
+		type APIError
+	} from '$lib/api/client';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
 	import { brandingStore } from '$lib/stores/branding.svelte';
-	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
+	import {
+		isValidImageUrl,
+		isValidLinkUrl,
+		isValidRedirectUrl,
+		sanitizeColor
+	} from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
 		type ExternalProvider
 	} from '$lib/api/authentication-methods';
+	import {
+		flowRuntimeAPI,
+		type FlowRuntimeConsentPolicyContent,
+		type FlowRuntimeStartResponse,
+		type FlowRuntimeSubmitResponse,
+		type FlowRuntimeStep
+	} from '$lib/api/flow-runtime';
+	import {
+		consumeFlowRuntimeState,
+		persistFlowRuntimeState
+	} from '$lib/authrim/flow-runtime-state';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -34,6 +56,9 @@
 	let name = $state('');
 	let inviteToken = $state('');
 	let inviteTenantName = $state('');
+	let runtimeInteractionId = $state('');
+	let authorizationChallengeId = $state('');
+	let clientInfo = $state<{ client_id: string } | null>(null);
 
 	let registrationFields = $state<RegistrationField[]>([]);
 	let customFieldValues = $state<Record<string, string>>({});
@@ -45,8 +70,15 @@
 	let emailError = $state('');
 	let nameError = $state('');
 	let externalIdpLoading = $state<string | null>(null);
+	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
+	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
+	let runtimeFlowLoading = $state(false);
+	let runtimeFlowError = $state('');
+	let runtimeConsentDecisions = $state<Record<string, boolean>>({});
+	let runtimeConsentDecisionKey = $state('');
+	let pendingPostAuthRedirect = $state<string | null>(null);
 	const authActionLoading = $derived(
-		passkeyLoading || emailCodeLoading || externalIdpLoading !== null
+		passkeyLoading || emailCodeLoading || externalIdpLoading !== null || runtimeFlowLoading
 	);
 
 	// Authentication methods (from API)
@@ -66,6 +98,24 @@
 	let pendingTurnstileTarget = $state<string | null>(null);
 	const turnstileAction = 'authrim-signup';
 
+	$effect(() => {
+		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
+		const key =
+			runtimeFlowStep?.id && policy
+				? `${runtimeFlowStep.id}:${policy.items.map((item) => item.statement_id).join(',')}`
+				: '';
+		if (key === runtimeConsentDecisionKey) return;
+		runtimeConsentDecisionKey = key;
+		runtimeConsentDecisions = policy
+			? Object.fromEntries(
+					policy.items.map((item) => [
+						item.statement_id,
+						item.checkbox_mode === 'none' || item.checkbox_default_checked
+					])
+				)
+			: {};
+	});
+
 	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
 	let turnstileLanguage = $state('en');
@@ -79,8 +129,18 @@
 	);
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+	const showRuntimePasskey = $derived(showPasskey && runtimeAllowsAuthenticationHandle('passkey'));
+	const showRuntimeEmailCode = $derived(
+		emailCodeEnabled && runtimeAllowsAuthenticationHandle('mail_otp', ['email_code'])
+	);
+	const visibleExternalProviders = $derived(
+		externalProviders.filter((provider) =>
+			runtimeAllowsAuthenticationHandle(provider.id, [`external:${provider.id}`])
+		)
+	);
+	const showRuntimeExternal = $derived(externalEnabled && visibleExternalProviders.length > 0);
 	const hasVisibleSignupMethod = $derived(
-		showPasskey || emailCodeEnabled || (externalEnabled && externalProviders.length > 0)
+		showRuntimePasskey || showRuntimeEmailCode || showRuntimeExternal
 	);
 	const NAME_REGISTRATION_FIELD_KEYS = new Set(['name', 'field.canonical.name']);
 	const EMAIL_REGISTRATION_FIELD_KEYS = new Set(['email', 'field.canonical.email']);
@@ -154,6 +214,8 @@
 		const token = params.get('invite_token');
 		const prefilledEmail = params.get('email');
 		const tenant = params.get('tenant');
+		runtimeInteractionId = params.get('runtime_interaction_id') || '';
+		authorizationChallengeId = params.get('challenge_id') || '';
 
 		if (token) {
 			inviteToken = token;
@@ -165,7 +227,12 @@
 			inviteTenantName = tenant;
 		}
 
-		await Promise.all([loadAuthenticationMethods(), loadRegistrationFields()]);
+		const tasks: Promise<void>[] = [loadAuthenticationMethods(), loadRegistrationFields()];
+		if (authorizationChallengeId) {
+			tasks.push(loadChallengeData(authorizationChallengeId));
+		}
+		await Promise.all(tasks);
+		await startRuntimeFlowIfAvailable();
 	});
 
 	async function loadAuthenticationMethods() {
@@ -191,9 +258,7 @@
 					Boolean(data.methods.humanVerification.siteKey);
 				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
 				externalProviders = data.methods.external.providers.filter(
-					(provider) =>
-						(provider.signupEnabled ?? provider.enabled !== false) &&
-						(!humanVerificationRequired || provider.startMode !== 'direct')
+					(provider) => provider.signupEnabled ?? provider.enabled !== false
 				);
 				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
 			} else {
@@ -223,6 +288,265 @@
 				customFieldValues[f.field_key] = f.field_type === 'boolean' ? 'false' : '';
 			}
 		}
+	}
+
+	async function loadChallengeData(challengeId: string) {
+		try {
+			const { data } = await loginChallengeAPI.getData(challengeId);
+			if (data?.client?.client_id) {
+				clientInfo = { client_id: data.client.client_id };
+			}
+			if (data?.login_hint && !email) {
+				email = data.login_hint;
+			}
+		} catch {
+			// Non-fatal. The runtime falls back to the tenant registration Flow.
+		}
+	}
+
+	function getRuntimeTarget() {
+		if (clientInfo?.client_id) {
+			return {
+				target_type: 'oidc_client' as const,
+				target_id: clientInfo.client_id,
+				client_id: clientInfo.client_id
+			};
+		}
+		return {
+			target_type: 'tenant' as const,
+			target_id: null
+		};
+	}
+
+	function getRuntimeCurrentStep(flow: FlowRuntimeStartResponse | null): FlowRuntimeStep | null {
+		if (!flow?.interaction.current_step_id) return null;
+		return (
+			flow.contract.ui.steps.find((step) => step.id === flow.interaction.current_step_id) ?? null
+		);
+	}
+
+	function shouldFallbackToLegacyRuntime(errorCode: string): boolean {
+		return errorCode === 'flow_runtime_disabled';
+	}
+
+	async function startRuntimeFlowIfAvailable() {
+		runtimeFlowLoading = true;
+		runtimeFlowError = '';
+		try {
+			if (runtimeInteractionId) {
+				const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+				if (!storedRuntime) {
+					runtimeFlow = null;
+					runtimeFlowStep = null;
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				pendingPostAuthRedirect = storedRuntime.post_auth_redirect ?? null;
+				const { data, error: apiError } = await flowRuntimeAPI.start({
+					resume_interaction_id: storedRuntime.interaction_id,
+					contract_hash: storedRuntime.contract_hash,
+					signature: storedRuntime.signature
+				});
+				if (apiError) {
+					runtimeFlow = null;
+					runtimeFlowStep = null;
+					runtimeFlowError = apiError.error_description || apiError.error;
+					return;
+				}
+				if (!data) return;
+				runtimeFlow = data;
+				runtimeFlowStep = getRuntimeCurrentStep(data);
+				if (
+					data.interaction.state !== 'completed' &&
+					data.interaction.current_step_id &&
+					!runtimeFlowStep
+				) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				if (!persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect })) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				await advanceRuntimePastNonRenderedSteps();
+				redirectIfCompletedRuntime();
+				return;
+			}
+
+			const { data, error: apiError } = await flowRuntimeAPI.start({
+				flow_kind: 'registration',
+				locale: getLocale(),
+				authorization_challenge_id: authorizationChallengeId || undefined,
+				...getRuntimeTarget()
+			});
+			if (apiError) {
+				runtimeFlow = null;
+				runtimeFlowStep = null;
+				if (!shouldFallbackToLegacyRuntime(apiError.error)) {
+					runtimeFlowError = apiError.error_description || apiError.error;
+				}
+				return;
+			}
+			if (!data) return;
+			runtimeFlow = data;
+			runtimeFlowStep = getRuntimeCurrentStep(data);
+			if (
+				data.interaction.state !== 'completed' &&
+				data.interaction.current_step_id &&
+				!runtimeFlowStep
+			) {
+				runtimeFlowError = $LL.error_invalid_request();
+				return;
+			}
+			await advanceRuntimePastNonRenderedSteps();
+		} finally {
+			runtimeFlowLoading = false;
+		}
+	}
+
+	async function submitRuntimeStep(selectedHandle?: string, input?: unknown): Promise<boolean> {
+		const flow = runtimeFlow;
+		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
+		if (!flow || !step || flow.interaction.state === 'completed') {
+			return true;
+		}
+
+		const { data, error: apiError } = await flowRuntimeAPI.submit(flow.interaction.id, {
+			step_id: step.id,
+			node_id: step.source_node_id,
+			selected_handle: selectedHandle,
+			contract_hash: flow.contract_hash,
+			signature: flow.signature,
+			input
+		});
+		if (apiError) {
+			runtimeFlowError = apiError.error_description || apiError.error;
+			return false;
+		}
+		if (!data) return false;
+
+		runtimeFlow = {
+			...flow,
+			interaction: data.interaction
+		};
+		runtimeFlowStep = data.step ?? getRuntimeCurrentStep(runtimeFlow);
+		if (data.completed) {
+			runtimeFlowStep = null;
+			const redirect = resolveRuntimeCompletionRedirect(data.output);
+			if (redirect) {
+				pendingPostAuthRedirect = redirect;
+			}
+		} else if (!runtimeFlowStep) {
+			runtimeFlowError = $LL.error_invalid_request();
+			return false;
+		}
+		await advanceRuntimePastNonRenderedSteps();
+		return true;
+	}
+
+	function resolveRuntimeCompletionRedirect(
+		output: FlowRuntimeSubmitResponse['output']
+	): string | null {
+		return output?.redirect_url && isValidRedirectUrl(output.redirect_url)
+			? output.redirect_url
+			: null;
+	}
+
+	async function advanceRuntimePastNonRenderedSteps() {
+		let guard = 0;
+		while (runtimeFlow && runtimeFlowStep && runtimeFlowStep.render === false && guard < 10) {
+			guard += 1;
+			const ok = await submitRuntimeStep();
+			if (!ok) return;
+		}
+	}
+
+	function redirectIfCompletedRuntime(): boolean {
+		if (runtimeFlow?.interaction.state !== 'completed') return false;
+		consumeFlowRuntimeState(runtimeFlow.interaction.id);
+		window.location.href = pendingPostAuthRedirect || '/';
+		return true;
+	}
+
+	async function completeRuntimeOnlyStep(selectedHandle: string, input?: unknown) {
+		if (!runtimeFlow || authActionLoading) return;
+		runtimeFlowLoading = true;
+		try {
+			const ok = await submitRuntimeStep(selectedHandle, input);
+			if (!ok) return;
+			redirectIfCompletedRuntime();
+		} finally {
+			runtimeFlowLoading = false;
+		}
+	}
+
+	function getRuntimeStepTitle(step: FlowRuntimeStep): string {
+		const title = step.content?.title;
+		if (typeof title === 'string' && title.trim()) return title;
+		if (step.component === 'consent_policy') return 'Consent';
+		if (step.component === 'completion') return 'Complete';
+		return 'Continue';
+	}
+
+	function getRuntimeStepDescription(step: FlowRuntimeStep): string {
+		const description = step.content?.description;
+		return typeof description === 'string' ? description : '';
+	}
+
+	function getRuntimeConsentPolicy(
+		step: FlowRuntimeStep | null
+	): FlowRuntimeConsentPolicyContent | null {
+		const policy = step?.content?.consent_policy;
+		if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return null;
+		const items = (policy as FlowRuntimeConsentPolicyContent).items;
+		return Array.isArray(items) ? (policy as FlowRuntimeConsentPolicyContent) : null;
+	}
+
+	function getRuntimeConsentItemDecisionPayload() {
+		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
+		if (!policy) return { consent_item_decisions: {} };
+		return {
+			consent_item_decisions: Object.fromEntries(
+				policy.items.map((item) => [
+					item.statement_id,
+					item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
+						? 'granted'
+						: 'denied'
+				])
+			)
+		};
+	}
+
+	function isRuntimeAuthStep(step: FlowRuntimeStep | null): boolean {
+		return (
+			!step ||
+			step.component === 'authentication_method_selector' ||
+			step.component === 'registration_method_selector'
+		);
+	}
+
+	function runtimeAllowsAuthenticationHandle(handle: string, aliases: string[] = []): boolean {
+		const step = runtimeFlowStep;
+		if (!isRuntimeAuthStep(step)) {
+			return true;
+		}
+		const configured = step?.config?.output_handles;
+		if (!Array.isArray(configured) || configured.length === 0) {
+			return true;
+		}
+		const allowed = new Set(
+			configured
+				.map((value) => {
+					if (typeof value === 'string') return value;
+					if (value && typeof value === 'object' && 'id' in value) {
+						const id = (value as { id?: unknown }).id;
+						return typeof id === 'string' ? id : null;
+					}
+					return null;
+				})
+				.filter((value): value is string => Boolean(value))
+		);
+		return [handle, ...aliases].some((candidate) => allowed.has(candidate));
 	}
 
 	// ---------------------------------------------------------------------------
@@ -388,7 +712,8 @@
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration({
 				userId: optionsData.userId,
 				credential,
-				deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop'
+				deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop',
+				authorizationChallengeId: authorizationChallengeId || undefined
 			});
 
 			if (verifyError) {
@@ -426,6 +751,14 @@
 				// Non-fatal
 			}
 
+			if (runtimeFlow) {
+				const ok = await submitRuntimeStep('passkey');
+				if (!ok) return;
+				if (runtimeFlow?.interaction.state !== 'completed') {
+					pendingPostAuthRedirect = '/';
+					return;
+				}
+			}
 			window.location.href = '/';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
@@ -473,6 +806,20 @@
 			}
 			let verifyQs = `email=${encodeURIComponent(email)}`;
 			if (inviteToken) verifyQs += `&invite_token=${encodeURIComponent(inviteToken)}`;
+			if (authorizationChallengeId) {
+				verifyQs += `&challenge_id=${encodeURIComponent(authorizationChallengeId)}`;
+			}
+			if (runtimeFlow) {
+				const ok = await submitRuntimeStep('mail_otp');
+				if (!ok) return;
+				const flowAfterSelection = runtimeFlow;
+				if (!flowAfterSelection || !persistFlowRuntimeState(flowAfterSelection)) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				verifyQs += `&runtime_interaction_id=${encodeURIComponent(flowAfterSelection.interaction.id)}`;
+				verifyQs += '&runtime_flow_kind=registration';
+			}
 			window.location.href = `/verify-email-code?${verifyQs}`;
 		} catch (err) {
 			error =
@@ -488,10 +835,38 @@
 		if (turnstileRequired && !cfTurnstileResponse) return;
 		externalIdpLoading = providerId;
 		try {
+			let runtimeResumeUrl: string | null = null;
+			if (runtimeFlow) {
+				const ok = await submitRuntimeStep(providerId);
+				if (!ok) return;
+				const flowAfterSelection = runtimeFlow;
+				if (
+					!flowAfterSelection ||
+					!persistFlowRuntimeState(flowAfterSelection, {
+						postAuthRedirect: provider.startMode === 'saml_sp' ? '/' : null
+					})
+				) {
+					runtimeFlowError = $LL.error_invalid_request();
+					return;
+				}
+				runtimeResumeUrl = `/signup?runtime_interaction_id=${encodeURIComponent(
+					flowAfterSelection.interaction.id
+				)}`;
+				setLoginUiSessionItem(
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId,
+					flowAfterSelection.interaction.id
+				);
+				setLoginUiSessionItem(
+					LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind,
+					'registration'
+				);
+			}
 			const redirectUri =
-				provider.startMode === 'saml_sp'
-					? `${window.location.origin}/`
-					: `${window.location.origin}/callback`;
+				provider.startMode === 'saml_sp' && runtimeResumeUrl
+					? `${window.location.origin}${runtimeResumeUrl}`
+					: provider.startMode === 'saml_sp'
+						? `${window.location.origin}/`
+						: `${window.location.origin}/callback`;
 			const { url } = await externalIdpAPI.startLogin(
 				providerId,
 				redirectUri,
@@ -529,7 +904,7 @@
 	}
 
 	function handleKeyPress(event: KeyboardEvent) {
-		if (event.key === 'Enter' && emailCodeEnabled) {
+		if (event.key === 'Enter' && showRuntimeEmailCode) {
 			handleEmailCodeSignup();
 		}
 	}
@@ -599,6 +974,114 @@
 				{#if error}
 					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 						{error}
+					</Alert>
+				{/if}
+
+				{#if runtimeFlowError}
+					<Alert
+						variant="error"
+						dismissible={true}
+						onDismiss={() => (runtimeFlowError = '')}
+						class="mb-4"
+					>
+						{runtimeFlowError}
+					</Alert>
+				{/if}
+
+				{#if runtimeFlowStep && runtimeFlowStep.render && !isRuntimeAuthStep(runtimeFlowStep)}
+					<Alert variant="info" class="mb-4">
+						<div class="space-y-3">
+							<div>
+								<p class="font-semibold">{getRuntimeStepTitle(runtimeFlowStep)}</p>
+								{#if getRuntimeStepDescription(runtimeFlowStep)}
+									<p class="text-sm mt-1" style="color: var(--text-secondary);">
+										{getRuntimeStepDescription(runtimeFlowStep)}
+									</p>
+								{/if}
+							</div>
+							{#if runtimeFlowStep.component === 'consent_policy'}
+								{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
+								{#if consentPolicy?.items.length}
+									<div class="space-y-3">
+										{#each consentPolicy.items as item (item.statement_id)}
+											<div class="runtime-consent-item">
+												{#if item.checkbox_mode === 'none'}
+													<div>
+														<p class="font-semibold">{item.title}</p>
+														{#if item.description}
+															<p class="text-sm" style="color: var(--text-secondary);">
+																{item.description}
+															</p>
+														{/if}
+													</div>
+												{:else}
+													<label class="runtime-consent-choice">
+														<input
+															type="checkbox"
+															bind:checked={runtimeConsentDecisions[item.statement_id]}
+															required={item.is_required || item.checkbox_mode === 'required'}
+														/>
+														<span>
+															<strong>{item.title}</strong>
+															{#if item.description}
+																<small>{item.description}</small>
+															{/if}
+														</span>
+													</label>
+												{/if}
+												{#if item.document_url && isValidLinkUrl(item.document_url)}
+													<a
+														class="runtime-consent-link"
+														href={item.document_url}
+														target="_blank"
+														rel="noopener noreferrer"
+													>
+														{item.document_url}
+													</a>
+												{/if}
+												{#if item.inline_content}
+													<p class="runtime-consent-inline">{item.inline_content}</p>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								{:else}
+									<p class="text-sm" style="color: var(--text-secondary);">
+										{getRuntimeStepDescription(runtimeFlowStep)}
+									</p>
+								{/if}
+								<Button
+									variant="primary"
+									class="w-full"
+									loading={runtimeFlowLoading}
+									disabled={authActionLoading}
+									onclick={() =>
+										completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{:else if runtimeFlowStep.component === 'completion'}
+								<Button
+									variant="primary"
+									class="w-full"
+									loading={runtimeFlowLoading}
+									disabled={authActionLoading}
+									onclick={() => completeRuntimeOnlyStep('completed')}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{:else}
+								<Button
+									variant="secondary"
+									class="w-full"
+									loading={runtimeFlowLoading}
+									disabled={authActionLoading}
+									onclick={() => completeRuntimeOnlyStep('completed')}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{/if}
+						</div>
 					</Alert>
 				{/if}
 
@@ -716,7 +1199,7 @@
 				{/if}
 
 				<!-- Passkey Button -->
-				{#if showPasskey}
+				{#if showRuntimePasskey}
 					<Button
 						variant="primary"
 						class="w-full mb-3"
@@ -742,7 +1225,7 @@
 						/>
 					{/if}
 
-					{#if emailCodeEnabled}
+					{#if showRuntimeEmailCode}
 						<div class="auth-divider">
 							<div class="auth-divider__line"></div>
 							<span class="auth-divider__text">{$LL.common_or()}</span>
@@ -752,7 +1235,7 @@
 				{/if}
 
 				<!-- Email Code Button -->
-				{#if emailCodeEnabled}
+				{#if showRuntimeEmailCode}
 					<Button
 						variant="secondary"
 						class="w-full"
@@ -780,7 +1263,7 @@
 				{/if}
 
 				<!-- External Login Section -->
-				{#if externalEnabled && externalProviders.length > 0}
+				{#if showRuntimeExternal}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -788,7 +1271,7 @@
 					</div>
 
 					<div class="space-y-3">
-						{#each externalProviders as provider (provider.id)}
+						{#each visibleExternalProviders as provider (provider.id)}
 							{@const safeColor =
 								isDarkMode && provider.buttonColorDark
 									? sanitizeColor(provider.buttonColorDark)
@@ -896,5 +1379,46 @@
 		font-size: 0.8125rem;
 		color: var(--danger);
 		margin-top: 6px;
+	}
+
+	.runtime-consent-item {
+		display: grid;
+		gap: 8px;
+		padding: 12px;
+		border: 1px solid var(--border-color, var(--border));
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+	}
+
+	.runtime-consent-choice {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		font-size: 0.92rem;
+		line-height: 1.45;
+	}
+
+	.runtime-consent-choice input {
+		margin-top: 3px;
+		flex: 0 0 auto;
+	}
+
+	.runtime-consent-choice span,
+	.runtime-consent-choice small {
+		display: block;
+	}
+
+	.runtime-consent-choice small,
+	.runtime-consent-inline {
+		margin-top: 3px;
+		color: var(--text-secondary, var(--text-muted));
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
+	.runtime-consent-link {
+		color: var(--accent-color, var(--primary));
+		font-size: 0.82rem;
+		overflow-wrap: anywhere;
 	}
 </style>

@@ -37,7 +37,7 @@ export interface DirectoryPasswordMethod {
 }
 
 export type ExternalProviderType = 'oidc' | 'oauth2' | 'saml' | 'vc' | 'custom';
-export type ExternalProviderStartMode = 'oauth_redirect' | 'saml_sp' | 'direct';
+export type ExternalProviderStartMode = 'oauth_redirect' | 'saml_sp';
 
 export interface ExternalProvider {
 	id: string;

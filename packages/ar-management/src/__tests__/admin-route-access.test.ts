@@ -45,8 +45,6 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.put('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
   app.delete('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
   app.put('/api/admin/consent-policies/policy-1/items', (c) => c.json({ ok: true }));
-  app.get('/api/admin/consent-policy-assignments', (c) => c.json({ ok: true }));
-  app.put('/api/admin/consent-policy-assignments', (c) => c.json({ ok: true }));
   app.get('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
   app.put('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
   app.get('/api/admin/sign-in-confirmation-policies', (c) => c.json({ ok: true }));
@@ -129,9 +127,6 @@ describe('declared admin route access', () => {
     await expect(reader.request('/api/admin/consent-policies/policy-1')).resolves.toMatchObject({
       status: 200,
     });
-    await expect(reader.request('/api/admin/consent-policy-assignments')).resolves.toMatchObject({
-      status: 200,
-    });
     await expect(reader.request('/api/admin/client-trust-policies')).resolves.toMatchObject({
       status: 200,
     });
@@ -154,9 +149,6 @@ describe('declared admin route access', () => {
       reader.request('/api/admin/consent-policies/policy-1/items', { method: 'PUT' })
     ).resolves.toMatchObject({ status: 403 });
     await expect(
-      reader.request('/api/admin/consent-policy-assignments', { method: 'PUT' })
-    ).resolves.toMatchObject({ status: 403 });
-    await expect(
       reader.request('/api/admin/client-trust-policies', { method: 'PUT' })
     ).resolves.toMatchObject({ status: 403 });
     await expect(
@@ -174,9 +166,6 @@ describe('declared admin route access', () => {
     ).resolves.toMatchObject({ status: 200 });
     await expect(
       writer.request('/api/admin/consent-policies/policy-1/items', { method: 'PUT' })
-    ).resolves.toMatchObject({ status: 200 });
-    await expect(
-      writer.request('/api/admin/consent-policy-assignments', { method: 'PUT' })
     ).resolves.toMatchObject({ status: 200 });
     await expect(
       writer.request('/api/admin/client-trust-policies', { method: 'PUT' })

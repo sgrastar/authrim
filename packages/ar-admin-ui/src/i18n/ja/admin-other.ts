@@ -314,7 +314,6 @@ const adminOther = {
 	admin_authentication_methods_icon_url: 'アイコンURL',
 	admin_authentication_methods_button_color: 'ボタン色',
 	admin_authentication_methods_enabled: '有効',
-	admin_authentication_methods_start_mode_direct: '直接開始',
 	admin_authentication_methods_start_mode_saml_sp: 'SAML SP',
 	admin_authentication_methods_start_mode_oauth_redirect: 'OAuthリダイレクト',
 	admin_authentication_methods_validation_id_required: 'プロバイダIDは必須です。',

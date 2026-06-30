@@ -669,6 +669,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'flow definitions',
     TENANT_ADMIN_ROLES
   ),
+  ...byMethod(
+    '/api/admin/flow-assignments',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'flow assignments',
+    TENANT_ADMIN_ROLES
+  ),
 
   ...byMethod(
     '/api/admin/signing-keys',
@@ -1219,13 +1227,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'consent policies'
-  ),
-  ...byMethod(
-    '/api/admin/consent-policy-assignments',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'consent policy assignments'
   ),
   ...byMethod(
     '/api/admin/client-trust-policies',

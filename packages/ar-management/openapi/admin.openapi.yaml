@@ -4702,92 +4702,6 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/consent-policy-assignments:
-    get:
-      tags:
-        - Consent
-      operationId: getApiAdminConsentPolicyAssignments
-      summary: List consent policy assignments.
-      description: Lists account-flow, OIDC client, and SAML SP consent policy assignments.
-      responses:
-        '200':
-          description: Consent policy assignments.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - assignments
-                properties:
-                  assignments:
-                    type: array
-                    items:
-                      type: object
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Consent
-      operationId: putApiAdminConsentPolicyAssignments
-      summary: Upsert a consent policy assignment.
-      description: >-
-        Assigns a consent policy to an account flow, OIDC client, or SAML SP.
-        Send an empty policy_id to clear the selected target-specific assignment.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - assignment_type
-                - policy_id
-              properties:
-                assignment_type:
-                  type: string
-                  enum:
-                    - registration
-                    - login
-                    - oidc_client
-                    - saml_sp
-                target_id:
-                  type: string
-                policy_id:
-                  type: string
-      responses:
-        '200':
-          description: Updated consent policy assignments.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - assignments
-                properties:
-                  assignments:
-                    type: array
-                    items:
-                      type: object
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
   /api/admin/client-trust-policies:
     get:
       tags:
@@ -8369,25 +8283,19 @@ paths:
       tags:
         - Flows
       operationId: getApiAdminFlows
-      summary: List authentication flows.
+      summary: List Flow definitions.
       description: >-
-        Lists tenant authentication or authorization flows with pagination and optional filters for
-        profile, client, active state, and text search. Passing an empty client_id filters
-        tenant-default flows.
+        Lists tenant Flow definitions with pagination and optional filters for Flow kind, status,
+        and text search. Deleted Flows are not returned.
       parameters:
-        - name: profile_id
+        - name: kind
           in: query
           schema:
-            $ref: '#/components/schemas/AdminFlowProfileId'
-        - name: client_id
+            $ref: '#/components/schemas/AdminFlowKind'
+        - name: status
           in: query
           schema:
-            type: string
-          description: Filter by client ID. Pass an empty string to list tenant-default flows.
-        - name: is_active
-          in: query
-          schema:
-            type: boolean
+            $ref: '#/components/schemas/AdminFlowStatus'
         - name: search
           in: query
           schema:
@@ -8423,11 +8331,10 @@ paths:
       tags:
         - Flows
       operationId: postApiAdminFlows
-      summary: Create an authentication flow.
+      summary: Create a draft Flow.
       description: >-
-        Creates a custom tenant flow for a profile and optional client. The server validates the
-        graph definition, rejects duplicate tenant/client/profile combinations, audits the creation,
-        and returns the generated flow id.
+        Creates a draft Flow. The Flow is not published by this endpoint; use the publish endpoint
+        to create an immutable runtime snapshot.
       responses:
         '201':
           $ref: '#/components/responses/AdminFlowCreate'
@@ -8451,10 +8358,10 @@ paths:
       tags:
         - Flows
       operationId: deleteApiAdminFlowsById
-      summary: Delete an authentication flow.
+      summary: Delete a Flow.
       description: >-
-        Deletes a custom flow by id after verifying tenant ownership. Built-in flows cannot be
-        deleted and return forbidden.
+        Soft-deletes a custom Flow after verifying tenant ownership. Built-in or assigned Flows
+        cannot be deleted.
       responses:
         '200':
           $ref: '#/components/responses/AdminFlowMutation'
@@ -8481,10 +8388,10 @@ paths:
       tags:
         - Flows
       operationId: getApiAdminFlowsById
-      summary: Get an authentication flow.
+      summary: Get a Flow.
       description: >-
-        Fetches one tenant flow by id, including graph definition, optional compiled plan, active
-        state, builtin flag, and audit timestamps.
+        Fetches one tenant Flow, including draft editor state, draft runtime base, assignment
+        references, publication metadata, and audit timestamps.
       responses:
         '200':
           $ref: '#/components/responses/AdminFlow'
@@ -8511,13 +8418,13 @@ paths:
       tags:
         - Flows
       operationId: putApiAdminFlowsById
-      summary: Update an authentication flow.
+      summary: Update a draft Flow.
       description: >-
-        Updates mutable fields on a custom flow. Graph changes are validated and clear any compiled
-        plan; built-in flows cannot be modified.
+        Updates mutable draft Flow fields. Published snapshots are immutable; publish again to
+        expose draft changes at runtime.
       responses:
         '200':
-          $ref: '#/components/responses/AdminFlowMutation'
+          $ref: '#/components/responses/AdminFlow'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -8539,18 +8446,75 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+    patch:
+      tags:
+        - Flows
+      operationId: patchApiAdminFlowsById
+      summary: Update a draft Flow.
+      description: Same behavior as PUT, allowing partial draft updates.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlow'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: '#/components/requestBodies/AdminFlowUpdate'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/flows/import:
+    post:
+      tags:
+        - Flows
+      operationId: postApiAdminFlowsImport
+      summary: Import a Flow JSON package.
+      description: >-
+        Imports a Flow contract package as a draft after stripping runtime-only fields and
+        validating the package shape. Imported Flows require explicit publish before runtime use.
+      responses:
+        '201':
+          $ref: '#/components/responses/AdminFlowImport'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminFlowImport'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/flows/{id}/compile':
     post:
       tags:
         - Flows
       operationId: postApiAdminFlowsByIdCompile
-      summary: Compile an authentication flow.
+      summary: Publish a Flow snapshot.
       description: >-
-        Loads a flow graph, validates that it can be parsed, compiles it with the flow compiler, and
-        returns a JSON-safe compiled plan without persisting it.
+        Compatibility alias for the publish endpoint. Validates the draft and creates an immutable
+        runtime snapshot when there are no validation errors.
       responses:
         '200':
-          $ref: '#/components/responses/AdminFlowCompile'
+          $ref: '#/components/responses/AdminFlowPublish'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -8575,10 +8539,10 @@ paths:
       tags:
         - Flows
       operationId: postApiAdminFlowsByIdCopy
-      summary: Copy an authentication flow.
+      summary: Copy a Flow.
       description: >-
-        Duplicates an existing flow into a new custom flow, optionally overriding name, client_id,
-        and profile_id. Duplicate tenant/client/profile combinations return conflict.
+        Duplicates an existing Flow into a new draft Flow, optionally overriding display name and
+        slug.
       responses:
         '201':
           $ref: '#/components/responses/AdminFlowCreate'
@@ -8610,11 +8574,10 @@ paths:
       tags:
         - Flows
       operationId: postApiAdminFlowsByIdValidate
-      summary: Validate a flow graph definition.
+      summary: Validate a Flow draft or package.
       description: >-
-        Validates the supplied graph definition and returns valid=false with validation errors when
-        the graph is syntactically invalid. The path id is accepted by the route but the
-        implementation validates only the request body.
+        Validates the supplied editor state or contract package. If the body is empty, validates
+        the stored draft editor state for the path Flow.
       responses:
         '200':
           $ref: '#/components/responses/AdminFlowValidation'
@@ -8642,10 +8605,10 @@ paths:
       tags:
         - Flows
       operationId: getApiAdminFlowsNodeTypes
-      summary: List flow designer node types.
+      summary: List Flow node types.
       description: >-
-        Returns static node type metadata, categories, and edge types used by the Admin UI flow
-        designer. This endpoint does not read or mutate tenant data.
+        Returns static node type metadata used by the Admin UI Flow editor. This endpoint does not
+        read or mutate tenant data.
       responses:
         '200':
           $ref: '#/components/responses/AdminFlowNodeTypes'
@@ -8653,6 +8616,168 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/flows/{id}/publish':
+    post:
+      tags:
+        - Flows
+      operationId: postApiAdminFlowsByIdPublish
+      summary: Publish a Flow snapshot.
+      description: >-
+        Validates the draft editor state, stores an immutable runtime contract snapshot in
+        flow_versions, and marks the Flow as published.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlowPublish'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/flows/{id}/versions':
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminFlowsByIdVersions
+      summary: List published Flow versions.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlowVersions'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/flows/{id}/export':
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminFlowsByIdExport
+      summary: Export a Flow contract package.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlowExport'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/flow-assignments:
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminFlowAssignments
+      summary: List Flow assignments.
+      parameters:
+        - name: flow_id
+          in: query
+          schema:
+            type: string
+        - name: target_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/AdminFlowAssignmentTargetType'
+        - name: target_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlowAssignments'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Flows
+      operationId: putApiAdminFlowAssignments
+      summary: Upsert a Flow assignment.
+      description: >-
+        Assigns a published Flow to a tenant default, OIDC client, or SAML SP for the selected Flow
+        kind.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlowAssignmentMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminFlowAssignmentUpsert'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Flows
+      operationId: deleteApiAdminFlowAssignments
+      summary: Delete a Flow assignment.
+      description: >-
+        Removes the Flow assignment for a tenant default, OIDC client, or SAML SP and Flow kind.
+        Removing a client or SP assignment allows the runtime to fall back to a broader assignment.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminFlowAssignmentMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminFlowAssignmentDelete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -25350,21 +25475,22 @@ components:
           schema:
             $ref: '#/components/schemas/AdminFlowCreateRequest'
           example:
-            name: Human basic login
-            description: Passwordless login flow for browser users.
-            profile_id: human-basic
-            client_id: null
-            version: 1.0.0
-            is_active: true
-            graph_definition:
-              id: draft
-              name: Human basic login
+            display_name: Login Flow
+            slug: login-flow
+            kind: login
+            description: Login flow for browser users.
+            editor:
               nodes:
-                - id: start
-                  type: start
+                - id: entry
+                  type: entry
                   position:
                     x: 0
                     'y': 0
+                - id: complete
+                  type: complete
+                  position:
+                    x: 0
+                    'y': 160
               edges: []
     AdminFlowUpdate:
       required: true
@@ -25373,8 +25499,8 @@ components:
           schema:
             $ref: '#/components/schemas/AdminFlowUpdateRequest'
           example:
-            name: Human basic login v2
-            is_active: true
+            display_name: Login Flow v2
+            status: draft
     AdminFlowCopy:
       required: true
       content:
@@ -25382,9 +25508,8 @@ components:
           schema:
             $ref: '#/components/schemas/AdminFlowCopyRequest'
           example:
-            name: Human basic login copy
-            client_id: web_app
-            profile_id: human-basic
+            display_name: Login Flow copy
+            slug: login-flow-copy
     AdminFlowValidate:
       required: true
       content:
@@ -25392,16 +25517,42 @@ components:
           schema:
             $ref: '#/components/schemas/AdminFlowValidateRequest'
           example:
-            graph_definition:
-              id: draft
-              name: Human basic login
+            editor:
               nodes:
-                - id: start
-                  type: start
+                - id: entry
+                  type: entry
                   position:
                     x: 0
                     'y': 0
               edges: []
+    AdminFlowImport:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowContractPackage'
+    AdminFlowAssignmentUpsert:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowAssignmentUpsertRequest'
+          example:
+            target_type: oidc_client
+            target_id: client_123
+            flow_kind: login
+            flow_id: flow_01HR0X
+            enabled: true
+    AdminFlowAssignmentDelete:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowAssignmentDeleteRequest'
+          example:
+            target_type: oidc_client
+            target_id: client_123
+            flow_kind: login
     IATTokenCreate:
       required: true
       content:
@@ -30101,16 +30252,21 @@ components:
             flows:
               - id: flow_01HR0X
                 tenant_id: default
-                client_id: null
-                profile_id: human-basic
-                name: Human basic login
+                slug: login-flow
+                name: Login Flow
+                display_name: Login Flow
                 description: Passwordless login flow for browser users.
-                graph_definition:
-                  id: flow_01HR0X
+                kind: login
+                status: draft
+                editor:
                   nodes: []
                   edges: []
-                compiled_plan: null
-                version: 1.0.0
+                runtime:
+                  flow_kind: login
+                  flow_id: flow_01HR0X
+                  ui:
+                    steps: []
+                published_version_id: null
                 is_active: true
                 is_builtin: false
                 created_by: admin_123
@@ -30135,8 +30291,35 @@ components:
           schema:
             $ref: '#/components/schemas/AdminFlowCreateResponse'
           example:
-            success: true
-            flow_id: flow_01HR0X
+            flow:
+              id: flow_01HR0X
+              tenant_id: default
+              slug: login-flow
+              name: Login Flow
+              display_name: Login Flow
+              description: Login flow.
+              kind: login
+              status: draft
+              editor:
+                nodes: []
+                edges: []
+              runtime:
+                flow_kind: login
+                flow_id: flow_01HR0X
+                ui:
+                  steps: []
+              published_version_id: null
+              is_active: true
+              is_builtin: false
+              created_by: admin_123
+              created_at: 1770000000
+              updated_by: admin_123
+              updated_at: 1770000000
+            validation:
+              valid: true
+              errors: []
+              warnings: []
+              issues: []
     AdminFlowMutation:
       description: Flow update or delete response.
       content:
@@ -30156,23 +30339,68 @@ components:
               value:
                 valid: true
                 errors: []
+                warnings: []
+                issues: []
             invalid:
               value:
                 valid: false
                 errors:
-                  - Graph must have exactly one start node
+                  - level: error
+                    code: missing_entry_node
+                    message: Flow must have one Entry node.
+                warnings: []
+                issues:
+                  - level: error
+                    code: missing_entry_node
+                    message: Flow must have one Entry node.
     AdminFlowCompile:
       description: Flow compile response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminFlowCompileResponse'
+    AdminFlowPublish:
+      description: Flow publish response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowPublishResponse'
+    AdminFlowVersions:
+      description: Published Flow version list response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowVersionsResponse'
+    AdminFlowExport:
+      description: Flow export package response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowContractPackage'
+    AdminFlowImport:
+      description: Flow import response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowImportResponse'
     AdminFlowNodeTypes:
       description: Flow designer node type metadata.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminFlowNodeTypesResponse'
+    AdminFlowAssignments:
+      description: Flow assignment list response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminFlowAssignmentsResponse'
+    AdminFlowAssignmentMutation:
+      description: Flow assignment mutation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SuccessResponse'
     IATTokenList:
       description: Initial Access Token list response.
       content:
@@ -40064,48 +40292,229 @@ components:
           type: string
         deleted:
           type: boolean
-    AdminFlowProfileId:
+    AdminFlowKind:
+      type: string
+      description: Built-in Flow kind or a custom kind prefixed with custom:.
+      examples:
+        - login
+        - registration
+      pattern: '^(login|registration|approve|account|custom:[a-z0-9][a-z0-9_-]{0,63})$'
+    AdminFlowStatus:
       type: string
       enum:
-        - human-basic
-        - human-org
-        - ai-agent
-        - iot-device
-    AdminFlowGraphDefinition:
+        - draft
+        - published
+        - disabled
+    AdminFlowAssignmentTargetType:
+      type: string
+      enum:
+        - tenant
+        - oidc_client
+        - saml_sp
+    AdminFlowEditorState:
       type: object
-      additionalProperties: true
-      description: Flow engine graph definition. The handler validates required node and edge structure.
+      additionalProperties: false
       required:
         - nodes
         - edges
       properties:
-        id:
-          type: string
-        name:
-          type: string
         nodes:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/AdminFlowEditorNode'
         edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFlowEditorEdge'
+        viewport:
+          type: object
+          additionalProperties: false
+          properties:
+            x:
+              type: number
+            'y':
+              type: number
+            zoom:
+              type: number
+    AdminFlowEditorNode:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        position:
+          type: object
+          additionalProperties: false
+          properties:
+            x:
+              type: number
+            'y':
+              type: number
+        config:
+          type: object
+          additionalProperties: true
+        data:
+          type: object
+          additionalProperties: true
+    AdminFlowEditorEdge:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - source
+        - target
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        source_handle:
+          type: string
+        target_handle:
+          type: string
+        label:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+    AdminFlowRuntimeContract:
+      type: object
+      additionalProperties: true
+      required:
+        - flow_kind
+        - ui
+      properties:
+        flow_kind:
+          $ref: '#/components/schemas/AdminFlowKind'
+        flow_id:
+          type: string
+        flow_version_id:
+          type: string
+        ui:
+          type: object
+          additionalProperties: true
+          required:
+            - steps
+          properties:
+            steps:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+        capabilities:
           type: array
           items:
             type: object
             additionalProperties: true
+        runtime_bindings:
+          type: object
+          additionalProperties: true
+        protocol_context:
+          type: object
+          additionalProperties: true
+    AdminFlowContractPackage:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - mode
+        - runtime
+      properties:
+        schema_version:
+          type: string
+          enum:
+            - authrim.login_ui.contract.v1
+        mode:
+          type: string
+          enum:
+            - draft
+            - preview
+            - runtime
+            - export
+        runtime:
+          $ref: '#/components/schemas/AdminFlowRuntimeContract'
+        preview:
+          type: object
+          additionalProperties: true
+        editor:
+          $ref: '#/components/schemas/AdminFlowEditorState'
+    AdminFlowValidationIssue:
+      type: object
+      additionalProperties: false
+      required:
+        - level
+        - code
+        - message
+      properties:
+        level:
+          type: string
+          enum:
+            - error
+            - warning
+        code:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+        node_id:
+          type:
+            - string
+            - 'null'
+        edge_id:
+          type:
+            - string
+            - 'null'
+        ref:
+          type: object
+          additionalProperties: true
+    AdminFlowValidationResult:
+      type: object
+      additionalProperties: false
+      required:
+        - valid
+        - errors
+        - warnings
+        - issues
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFlowValidationIssue'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFlowValidationIssue'
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFlowValidationIssue'
     AdminFlow:
       type: object
       additionalProperties: false
       required:
         - id
         - tenant_id
-        - client_id
-        - profile_id
+        - slug
         - name
+        - display_name
         - description
-        - graph_definition
-        - compiled_plan
-        - version
+        - kind
+        - status
+        - editor
+        - runtime
+        - published_version_id
         - is_active
         - is_builtin
         - created_by
@@ -40117,29 +40526,32 @@ components:
           type: string
         tenant_id:
           type: string
-        client_id:
-          type:
-            - string
-            - 'null'
-        profile_id:
-          $ref: '#/components/schemas/AdminFlowProfileId'
+        slug:
+          type: string
         name:
+          type: string
+        display_name:
           type: string
         description:
           type:
             - string
             - 'null'
-        graph_definition:
+        kind:
+          $ref: '#/components/schemas/AdminFlowKind'
+        status:
+          $ref: '#/components/schemas/AdminFlowStatus'
+        editor:
           oneOf:
-            - $ref: '#/components/schemas/AdminFlowGraphDefinition'
+            - $ref: '#/components/schemas/AdminFlowEditorState'
             - type: 'null'
-        compiled_plan:
+        runtime:
+          oneOf:
+            - $ref: '#/components/schemas/AdminFlowRuntimeContract'
+            - type: 'null'
+        published_version_id:
           type:
-            - object
+            - string
             - 'null'
-          additionalProperties: true
-        version:
-          type: string
         is_active:
           type: boolean
         is_builtin:
@@ -40199,68 +40611,152 @@ components:
       properties:
         flow:
           $ref: '#/components/schemas/AdminFlow'
+        assignments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFlowAssignment'
     AdminFlowCreateRequest:
       type: object
       additionalProperties: false
       required:
-        - name
-        - profile_id
-        - graph_definition
+        - display_name
       properties:
+        slug:
+          type: string
         name:
           type: string
           minLength: 1
-        description:
+        display_name:
           type: string
-        profile_id:
-          $ref: '#/components/schemas/AdminFlowProfileId'
-        client_id:
+          minLength: 1
+        description:
           type:
             - string
             - 'null'
-        graph_definition:
-          $ref: '#/components/schemas/AdminFlowGraphDefinition'
-        version:
+        kind:
+          $ref: '#/components/schemas/AdminFlowKind'
+        editor:
+          $ref: '#/components/schemas/AdminFlowEditorState'
+        runtime:
+          $ref: '#/components/schemas/AdminFlowRuntimeContract'
+        status:
           type: string
-          default: 1.0.0
-        is_active:
-          type: boolean
-          default: true
+          enum:
+            - draft
+            - disabled
     AdminFlowUpdateRequest:
       type: object
       additionalProperties: false
       minProperties: 1
       properties:
+        slug:
+          type: string
         name:
           type: string
+        display_name:
+          type: string
         description:
+          type:
+            - string
+            - 'null'
+        kind:
+          $ref: '#/components/schemas/AdminFlowKind'
+        editor:
+          $ref: '#/components/schemas/AdminFlowEditorState'
+        runtime:
+          $ref: '#/components/schemas/AdminFlowRuntimeContract'
+        status:
           type: string
-        graph_definition:
-          $ref: '#/components/schemas/AdminFlowGraphDefinition'
-        version:
-          type: string
-        is_active:
-          type: boolean
+          enum:
+            - draft
+            - disabled
     AdminFlowCopyRequest:
       type: object
       additionalProperties: false
       properties:
-        name:
+        display_name:
           type: string
-        client_id:
-          type:
-            - string
-            - 'null'
-        profile_id:
-          $ref: '#/components/schemas/AdminFlowProfileId'
+        slug:
+          type: string
     AdminFlowValidateRequest:
       type: object
       additionalProperties: false
-      required:
-        - graph_definition
       properties:
-        graph_definition:
-          $ref: '#/components/schemas/AdminFlowGraphDefinition'
+        editor:
+          $ref: '#/components/schemas/AdminFlowEditorState'
+        contract:
+          $ref: '#/components/schemas/AdminFlowContractPackage'
+    AdminFlowAssignment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - target_type
+        - target_id
+        - flow_kind
+        - flow_id
+        - enabled
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        target_type:
+          $ref: '#/components/schemas/AdminFlowAssignmentTargetType'
+        target_id:
+          type:
+            - string
+            - 'null'
+        flow_kind:
+          $ref: '#/components/schemas/AdminFlowKind'
+        flow_id:
+          type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    AdminFlowAssignmentUpsertRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - target_type
+        - flow_kind
+        - flow_id
+      properties:
+        target_type:
+          $ref: '#/components/schemas/AdminFlowAssignmentTargetType'
+        target_id:
+          type:
+            - string
+            - 'null'
+        flow_kind:
+          $ref: '#/components/schemas/AdminFlowKind'
+        flow_id:
+          type: string
+        enabled:
+          type: boolean
+    AdminFlowAssignmentDeleteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - target_type
+        - flow_kind
+      properties:
+        target_type:
+          $ref: '#/components/schemas/AdminFlowAssignmentTargetType'
+        target_id:
+          type:
+            - string
+            - 'null'
+        flow_kind:
+          $ref: '#/components/schemas/AdminFlowKind'
     SuccessResponse:
       type: object
       additionalProperties: false
@@ -40275,110 +40771,137 @@ components:
       type: object
       additionalProperties: false
       required:
-        - success
-        - flow_id
+        - flow
+        - validation
       properties:
-        success:
-          type: boolean
-          enum:
-            - true
-        flow_id:
-          type: string
+        flow:
+          $ref: '#/components/schemas/AdminFlow'
+        validation:
+          $ref: '#/components/schemas/AdminFlowValidationResult'
     AdminFlowValidationResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - valid
-        - errors
-      properties:
-        valid:
-          type: boolean
-        errors:
-          type: array
-          items:
-            type: string
+      $ref: '#/components/schemas/AdminFlowValidationResult'
     AdminFlowCompileResponse:
+      $ref: '#/components/schemas/AdminFlowPublishResponse'
+    AdminFlowPublishResponse:
       type: object
       additionalProperties: false
       required:
-        - success
-        - compiled_plan
+        - version
+        - validation
       properties:
-        success:
-          type: boolean
-          enum:
-            - true
-        compiled_plan:
+        version:
           type: object
-          additionalProperties: true
+          additionalProperties: false
+          required:
+            - id
+            - version_number
+            - flow_id
+            - schema_version
+            - published_at
           properties:
             id:
               type: string
-            version:
+            version_number:
+              type: integer
+              minimum: 1
+            flow_id:
               type: string
-            sourceVersion:
+            schema_version:
               type: string
-            profileId:
-              type: string
-            entryNodeId:
-              type: string
-            nodes:
-              type: object
-              additionalProperties: true
-            transitions:
-              type: object
-              additionalProperties: true
-            compiledAt:
-              type: string
+            published_at:
+              type: integer
+              format: int64
+        validation:
+          $ref: '#/components/schemas/AdminFlowValidationResult'
+    AdminFlowVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - flow_id
+        - version_number
+        - schema_version
+        - runtime_snapshot
+        - editor_snapshot
+        - validation_result
+        - published_by
+        - published_at
+        - created_at
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        flow_id:
+          type: string
+        version_number:
+          type: integer
+        schema_version:
+          type: string
+        runtime_snapshot:
+          oneOf:
+            - $ref: '#/components/schemas/AdminFlowRuntimeContract'
+            - type: 'null'
+        editor_snapshot:
+          oneOf:
+            - $ref: '#/components/schemas/AdminFlowEditorState'
+            - type: 'null'
+        validation_result:
+          type: object
+          additionalProperties: true
+        published_by:
+          type:
+            - string
+            - 'null'
+        published_at:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+    AdminFlowVersionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - versions
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFlowVersion'
+    AdminFlowImportResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - flow_id
+        - validation
+      properties:
+        flow_id:
+          type: string
+        validation:
+          $ref: '#/components/schemas/AdminFlowValidationResult'
     AdminFlowNodeTypesResponse:
       type: object
       additionalProperties: false
       required:
         - node_types
-        - categories
-        - edge_types
       properties:
         node_types:
           type: array
           items:
             type: object
             additionalProperties: true
-        categories:
+    AdminFlowAssignmentsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - assignments
+      properties:
+        assignments:
           type: array
           items:
-            type: object
-            additionalProperties: false
-            required:
-              - id
-              - label
-              - icon
-            properties:
-              id:
-                type: string
-              label:
-                type: string
-              icon:
-                type: string
-        edge_types:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - type
-              - label
-              - color
-            properties:
-              type:
-                type: string
-                enum:
-                  - success
-                  - error
-                  - conditional
-              label:
-                type: string
-              color:
-                type: string
+            $ref: '#/components/schemas/AdminFlowAssignment'
     IATTokenCreateRequest:
       type: object
       additionalProperties: false

@@ -121,8 +121,6 @@ import {
   adminClientTrustPoliciesListHandler,
   adminClientTrustPolicyUpsertHandler,
   adminConsentPoliciesListHandler,
-  adminConsentPolicyAssignmentUpsertHandler,
-  adminConsentPolicyAssignmentsListHandler,
   adminConsentPolicyCreateHandler,
   adminConsentPolicyDeleteHandler,
   adminConsentPolicyGetHandler,
@@ -281,6 +279,13 @@ import {
   adminFlowValidateHandler,
   adminFlowCompileHandler,
   adminFlowNodeTypesHandler,
+  adminFlowPublishHandler,
+  adminFlowVersionsHandler,
+  adminFlowExportHandler,
+  adminFlowImportHandler,
+  adminFlowAssignmentsListHandler,
+  adminFlowAssignmentUpsertHandler,
+  adminFlowAssignmentDeleteHandler,
 } from './admin-flows';
 import {
   adminAccessTraceListHandler,
@@ -2155,17 +2160,29 @@ app.use(
   '/api/admin/flows/*',
   requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
 );
+app.use(
+  '/api/admin/flow-assignments',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
 
 // Flow CRUD endpoints
 app.get('/api/admin/flows', adminFlowsListHandler);
 app.post('/api/admin/flows', adminFlowCreateHandler);
 app.get('/api/admin/flows/node-types', adminFlowNodeTypesHandler);
+app.post('/api/admin/flows/import', adminFlowImportHandler);
 app.get('/api/admin/flows/:id', adminFlowGetHandler);
 app.put('/api/admin/flows/:id', adminFlowUpdateHandler);
+app.patch('/api/admin/flows/:id', adminFlowUpdateHandler);
 app.delete('/api/admin/flows/:id', adminFlowDeleteHandler);
 app.post('/api/admin/flows/:id/copy', adminFlowCopyHandler);
 app.post('/api/admin/flows/:id/validate', adminFlowValidateHandler);
 app.post('/api/admin/flows/:id/compile', adminFlowCompileHandler);
+app.post('/api/admin/flows/:id/publish', adminFlowPublishHandler);
+app.get('/api/admin/flows/:id/versions', adminFlowVersionsHandler);
+app.get('/api/admin/flows/:id/export', adminFlowExportHandler);
+app.get('/api/admin/flow-assignments', adminFlowAssignmentsListHandler);
+app.put('/api/admin/flow-assignments', adminFlowAssignmentUpsertHandler);
+app.delete('/api/admin/flow-assignments', adminFlowAssignmentDeleteHandler);
 
 // =============================================================================
 // Access Trace (Permission Check Audit Logs)
@@ -3278,15 +3295,13 @@ app.post(
 );
 app.delete('/api/admin/consent-statements/:sid/versions/:vid', adminConsentVersionDeleteHandler);
 
-// Consent policies, assignments, client/SP trust, and sign-in confirmation
+// Consent policies, client/SP trust, and sign-in confirmation
 app.get('/api/admin/consent-policies', adminConsentPoliciesListHandler);
 app.post('/api/admin/consent-policies', adminConsentPolicyCreateHandler);
 app.get('/api/admin/consent-policies/:id', adminConsentPolicyGetHandler);
 app.put('/api/admin/consent-policies/:id', adminConsentPolicyUpdateHandler);
 app.delete('/api/admin/consent-policies/:id', adminConsentPolicyDeleteHandler);
 app.put('/api/admin/consent-policies/:id/items', adminConsentPolicyItemsReplaceHandler);
-app.get('/api/admin/consent-policy-assignments', adminConsentPolicyAssignmentsListHandler);
-app.put('/api/admin/consent-policy-assignments', adminConsentPolicyAssignmentUpsertHandler);
 app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
 app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
 app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);
@@ -3694,6 +3709,45 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       });
     }
 
+    let flowInteractionsExpired = 0;
+    let flowInteractionStepsDeleted = 0;
+    try {
+      for (const tenantId of maintenanceTenantIds) {
+        const expiredResult = await coreAdapter.execute(
+          `UPDATE flow_interactions
+           SET state = 'expired', updated_at = ?
+           WHERE tenant_id = ?
+             AND state IN ('created', 'active')
+             AND expires_at <= ?`,
+          [now, tenantId, now]
+        );
+        flowInteractionsExpired += expiredResult.rowsAffected || 0;
+
+        const deletedStepsResult = await coreAdapter.execute(
+          `DELETE FROM flow_interaction_steps
+           WHERE tenant_id = ?
+             AND interaction_id IN (
+               SELECT id
+               FROM flow_interactions
+               WHERE tenant_id = ?
+                 AND state IN ('completed', 'expired', 'failed')
+                 AND updated_at <= ?
+             )`,
+          [tenantId, tenantId, now - 86400]
+        );
+        flowInteractionStepsDeleted += deletedStepsResult.rowsAffected || 0;
+      }
+      log.debug('Cleaned up Flow runtime interactions', {
+        expired: flowInteractionsExpired,
+        deletedSteps: flowInteractionStepsDeleted,
+        tenantCount: maintenanceTenantIds.length,
+      });
+    } catch (flowRuntimeCleanupError) {
+      log.warn('Flow runtime cleanup failed (table may not exist)', {
+        error: (flowRuntimeCleanupError as Error).message,
+      });
+    }
+
     let unifiedAuditCleanup = {
       tenantCount: 0,
       processedTenants: 0,
@@ -3722,6 +3776,8 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       deviceSecretsDeleted,
       operationalLogsDeleted,
       idempotencyKeysDeleted,
+      flowInteractionsExpired,
+      flowInteractionStepsDeleted,
       unifiedAuditCleanup,
     });
   } catch (error) {

@@ -175,6 +175,8 @@ export interface Env {
 
   ENABLE_CLIENT_CREDENTIALS?: string; // "true" to enable RFC 6749 Section 4.4 Client Credentials Grant
   ENABLE_RAR?: string; // "true" to enable RFC 9396 Rich Authorization Requests
+  ENABLE_LOGIN_RUNTIME_FLOW?: string; // "true" to enable new LoginUI runtime Flow interactions
+  FLOW_RUNTIME_HMAC_SECRET?: string; // HMAC secret for Flow runtime contract signatures
 
   // AI Ephemeral Auth Features
   ENABLE_AI_SCOPES?: string; // "true" to enable ai:* scope namespace (ai:read, ai:write, ai:execute, ai:admin)

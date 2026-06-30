@@ -5408,7 +5408,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </div>
         </div>
         <div id="worker-update-progress" class="hidden logbox">
-          <div class="cap"><span data-i18n="web.envDetail.updateProgress">Update Progress:</span></div>
+          <div class="cap">
+            <span data-i18n="web.envDetail.updateProgress">Update Progress:</span>
+            <button type="button" id="worker-update-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
+          </div>
           <pre id="worker-update-log"></pre>
         </div>
 
@@ -5427,7 +5430,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             </div>
           </div>
         </div>
-        <div id="ui-update-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.updateProgress">Update Progress:</span></div><pre id="ui-update-log"></pre></div>
+        <div id="ui-update-progress" class="hidden logbox">
+          <div class="cap">
+            <span data-i18n="web.envDetail.updateProgress">Update Progress:</span>
+            <button type="button" id="ui-update-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
+          </div>
+          <pre id="ui-update-log"></pre>
+        </div>
 
         <div class="sechead">
           <span class="idx">APP</span><h3 data-i18n="web.envDetail.serviceSiteFallback">Service Site Binding</h3>
@@ -6643,6 +6652,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     setupLogCopyButton('deploy-log-copy-btn', 'deploy-output');
     setupLogCopyButton('provision-log-copy-btn', 'provision-output');
     setupLogCopyButton('delete-log-copy-btn', 'delete-output');
+    setupLogCopyButton('worker-update-log-copy-btn', 'worker-update-log');
+    setupLogCopyButton('ui-update-log-copy-btn', 'ui-update-log');
 
     // Progress UI update helper
     function updateProgressUI(prefix, current, total, currentTask) {
