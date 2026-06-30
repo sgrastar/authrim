@@ -107,9 +107,8 @@ CREATE TABLE flow_audit_events (
   created_at INTEGER NOT NULL
 );
 
-CREATE UNIQUE INDEX idx_flows_runtime_slug
-  ON flows(tenant_id, slug)
-  WHERE deleted_at IS NULL;
+CREATE INDEX idx_flows_runtime_slug
+  ON flows(tenant_id, slug, deleted_at);
 
 CREATE INDEX idx_flows_runtime_kind_status
   ON flows(tenant_id, kind, status);
@@ -120,13 +119,11 @@ CREATE INDEX idx_flow_versions_lookup
 CREATE INDEX idx_flow_versions_published
   ON flow_versions(tenant_id, flow_id, published_at);
 
-CREATE UNIQUE INDEX idx_flow_assignments_tenant_default
-  ON flow_assignments(tenant_id, flow_kind)
-  WHERE target_type = 'tenant' AND target_id IS NULL;
+CREATE INDEX idx_flow_assignments_tenant_default
+  ON flow_assignments(tenant_id, target_type, flow_kind, target_id);
 
-CREATE UNIQUE INDEX idx_flow_assignments_target
-  ON flow_assignments(tenant_id, target_type, target_id, flow_kind)
-  WHERE target_id IS NOT NULL;
+CREATE INDEX idx_flow_assignments_target
+  ON flow_assignments(tenant_id, target_type, target_id, flow_kind);
 
 CREATE INDEX idx_flow_assignments_flow
   ON flow_assignments(tenant_id, flow_id);

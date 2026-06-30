@@ -270,7 +270,8 @@ CREATE TABLE IF NOT EXISTS tenant_runtime_cache_generations (
       'identity_pii',
       'clients',
       'consent',
-      'rebac'
+      'rebac',
+      'flow_runtime'
     )
   ),
   generation INTEGER NOT NULL DEFAULT 1,
