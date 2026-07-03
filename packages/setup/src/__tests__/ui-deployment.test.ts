@@ -526,9 +526,7 @@ describe('resolveUiDeploymentSettings', () => {
     expect(admin.needsProxy).toBe(scenario.expectedAdminProxy);
     expect(admin.adminUiApiMode).toBe(scenario.expectedAdminMode);
     expect(login.serviceBindingName).toBe('AR_ROUTER');
-    expect(admin.serviceBindingName).toBe(
-      scenario.expectedAdminProxy ? 'AR_ROUTER' : undefined
-    );
+    expect(admin.serviceBindingName).toBe(scenario.expectedAdminProxy ? 'AR_ROUTER' : undefined);
   });
 
   it('keeps relative same-origin API calls when the UI is served on the API domain', () => {

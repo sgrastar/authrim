@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		getFlowAuthProfileOptions,
@@ -658,7 +659,7 @@
 			}
 		}
 
-		const groupedNodeById = new Map<string, EditorNode>();
+		const groupedNodeById = new SvelteMap<string, EditorNode>();
 		const groups = groupItems
 			.filter((group) => group.nodes.length > 1)
 			.map<CompletionGroupNode>((group) => {
@@ -1614,7 +1615,7 @@
 
 	function normalizeEditorEdges(edges: Edge[]): EditorEdge[] {
 		const normalized: EditorEdge[] = [];
-		const signatures = new Set<string>();
+		const signatures = new SvelteSet<string>();
 		for (const edge of edges) {
 			const nextEdge = normalizeEditorEdge(edge);
 			const signature = edgeSignature(nextEdge);
@@ -2036,8 +2037,8 @@
 	}
 
 	function getDeleteTargetNodeIds(nodes: Node[]): Set<string> {
-		const deletedNodeIds = new Set<string>();
-		const deletedGroupIds = new Set<string>();
+		const deletedNodeIds = new SvelteSet<string>();
+		const deletedGroupIds = new SvelteSet<string>();
 
 		for (const node of nodes) {
 			if (isEditorNode(node)) {
@@ -2783,7 +2784,7 @@
 					<div class="registration-form-check field-wide">
 						<strong>{ft('組み合わせチェック', 'Compatibility check')}</strong>
 						<ul>
-							{#each getRegistrationFormValidationMessages() as item}
+							{#each getRegistrationFormValidationMessages() as item (item.text)}
 								<li data-level={item.level}>{item.text}</li>
 							{/each}
 						</ul>

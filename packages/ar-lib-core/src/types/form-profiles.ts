@@ -1,4 +1,9 @@
-export type FormProfileKind = 'registration' | 'profile_completion' | 'login' | 'consent' | 'custom';
+export type FormProfileKind =
+  | 'registration'
+  | 'profile_completion'
+  | 'login'
+  | 'consent'
+  | 'custom';
 export type FormProfileBlockType =
   | 'identity_field'
   | 'auth_widget'

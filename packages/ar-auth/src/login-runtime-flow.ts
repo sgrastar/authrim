@@ -442,16 +442,18 @@ function writeRuntimeStartTiming(
     'Server-Timing',
     allSpans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ')
   );
-  getLogger(c).module('LOGIN-RUNTIME-FLOW-TIMING').info('LoginUI runtime Flow start timing', {
-    result: metadata.result,
-    flow_kind: metadata.flowKind,
-    target_type: metadata.targetType,
-    current_step_id: metadata.currentStepId,
-    auto_advanced_steps: metadata.autoAdvancedSteps,
-    error: metadata.error,
-    total_ms: totalMs,
-    spans_ms: Object.fromEntries(allSpans.map((span) => [span.name, span.durationMs])),
-  });
+  getLogger(c)
+    .module('LOGIN-RUNTIME-FLOW-TIMING')
+    .info('LoginUI runtime Flow start timing', {
+      result: metadata.result,
+      flow_kind: metadata.flowKind,
+      target_type: metadata.targetType,
+      current_step_id: metadata.currentStepId,
+      auto_advanced_steps: metadata.autoAdvancedSteps,
+      error: metadata.error,
+      total_ms: totalMs,
+      spans_ms: Object.fromEntries(allSpans.map((span) => [span.name, span.durationMs])),
+    });
 }
 
 async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {

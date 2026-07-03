@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import {
 		adminCustomClaimsAPI,
@@ -18,6 +19,7 @@
 		type FormProfileValueType
 	} from '$lib/api/admin-form-profiles';
 	import {
+		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
@@ -330,7 +332,7 @@
 	}
 
 	function normalizeIdentitySchemaOptions(schemas: CustomClaimSchema[]): IdentitySchemaOption[] {
-		const options = new Map<string, IdentitySchemaOption>();
+		const options = new SvelteMap<string, IdentitySchemaOption>();
 		for (const option of fallbackIdentitySchemaOptions) {
 			options.set(option.field, option);
 		}
@@ -398,7 +400,9 @@
 			}
 			current.items.push({ field, index });
 		}
-		return sections.filter((section, index) => index === 0 || section.row || section.items.length > 0);
+		return sections.filter(
+			(section, index) => index === 0 || section.row || section.items.length > 0
+		);
 	}
 
 	function previewGridColumn(field: FormProfileField, columns: number): string | undefined {
@@ -420,8 +424,7 @@
 
 	function builderColumnItems(section: LayoutSection, column: number) {
 		return section.items.filter(
-			(item, position) =>
-				displayColumnForItem(item.field, position, section.columns) === column
+			(item, position) => displayColumnForItem(item.field, position, section.columns) === column
 		);
 	}
 
@@ -564,7 +567,7 @@
 			fields.length > 0
 				? fields
 				: [createBlock('identity_field', 10, { field: 'email', label: 'Email' })];
-		const seen = new Set<string>();
+		const seen = new SvelteSet<string>();
 		return source
 			.map((field, index) => {
 				const baseId = normalizeInternalId(field.block_id ?? createStableBlockId(field, index));
@@ -794,11 +797,7 @@
 		editorTab = 'items';
 	}
 
-	function moveBlock(
-		fromIndex: number,
-		toIndex: number,
-		patch: Partial<FormProfileField> = {}
-	) {
+	function moveBlock(fromIndex: number, toIndex: number, patch: Partial<FormProfileField> = {}) {
 		const next = [...orderedDraftBlocks];
 		if (fromIndex < 0 || fromIndex >= next.length) return;
 		const [item] = next.splice(fromIndex, 1);
@@ -834,11 +833,7 @@
 		const layoutColumnPatch =
 			column && column > 1 ? { layout_column: column } : column === 1 ? { layout_column: 1 } : {};
 		if (draggedPartType) {
-			addBlock(
-				draggedPartType,
-				index,
-				draggedPartType === 'layout_row' ? {} : layoutColumnPatch
-			);
+			addBlock(draggedPartType, index, draggedPartType === 'layout_row' ? {} : layoutColumnPatch);
 		} else if (draggedBlockIndex !== null) {
 			const adjustedIndex = draggedBlockIndex < index ? index - 1 : index;
 			const draggedBlock = orderedDraftBlocks[draggedBlockIndex];
@@ -940,11 +935,7 @@
 		>
 			<span aria-hidden="true"></span>
 		</button>
-		<button
-			type="button"
-			class="block-select"
-			onclick={() => (selectedBlockIndex = index)}
-		>
+		<button type="button" class="block-select" onclick={() => (selectedBlockIndex = index)}>
 			<span class="block-main">
 				<strong>{blockTitle(field)}</strong>
 				<small>{blockSubtitle(field)}</small>
@@ -1119,7 +1110,9 @@
 															<div class="preview-consent-widget">
 																<div class="preview-consent-widget__heading">
 																	<span class="i-ph-handshake"></span>
-																	<strong>{field.label || t('同意確認', 'Consent confirmation')}</strong>
+																	<strong
+																		>{field.label || t('同意確認', 'Consent confirmation')}</strong
+																	>
 																</div>
 																<p>
 																	{field.text ||
@@ -1130,7 +1123,12 @@
 																</p>
 																<label class="preview-check-field">
 																	<input type="checkbox" disabled />
-																	<span>{t('内容を確認しました', 'I have reviewed the consent items')}</span>
+																	<span
+																		>{t(
+																			'内容を確認しました',
+																			'I have reviewed the consent items'
+																		)}</span
+																	>
 																</label>
 															</div>
 														{:else if blockType === 'heading'}
@@ -1195,7 +1193,7 @@
 								<label>
 									<span>{$LL.admin_forms_kind()}</span>
 									<select bind:value={draft.form_kind}>
-										{#each kindOptions as kind}
+										{#each kindOptions as kind (kind)}
 											<option value={kind}>{kindLabel(kind)}</option>
 										{/each}
 									</select>
@@ -1274,7 +1272,8 @@
 													type="button"
 													class:active={isDropTarget(section.row.index)}
 													class="drop-zone"
-													ondragover={(event) => handleCanvasDragOver(event, section.row?.index ?? 0)}
+													ondragover={(event) =>
+														handleCanvasDragOver(event, section.row?.index ?? 0)}
 													ondrop={(event) => handleCanvasDrop(event, section.row?.index ?? 0)}
 												>
 													{isDropTarget(section.row.index) ? t('ここに配置', 'Drop here') : ''}
@@ -1294,8 +1293,11 @@
 														class:empty={columnItems.length === 0}
 														class="builder-layout-column"
 														role="group"
-														aria-label={section.columns > 1 ? columnLabel(column) : t('フォーム行', 'Form row')}
-														ondragover={(event) => handleCanvasDragOver(event, columnEndIndex, column)}
+														aria-label={section.columns > 1
+															? columnLabel(column)
+															: t('フォーム行', 'Form row')}
+														ondragover={(event) =>
+															handleCanvasDragOver(event, columnEndIndex, column)}
 														ondrop={(event) => handleCanvasDrop(event, columnEndIndex, column)}
 													>
 														{#if section.columns > 1}
@@ -1306,10 +1308,13 @@
 																type="button"
 																class:active={isDropTarget(item.index, column)}
 																class="drop-zone"
-																ondragover={(event) => handleCanvasDragOver(event, item.index, column)}
+																ondragover={(event) =>
+																	handleCanvasDragOver(event, item.index, column)}
 																ondrop={(event) => handleCanvasDrop(event, item.index, column)}
 															>
-																{isDropTarget(item.index, column) ? t('ここに配置', 'Drop here') : ''}
+																{isDropTarget(item.index, column)
+																	? t('ここに配置', 'Drop here')
+																	: ''}
 															</button>
 															{@render canvasBlock(item.field, item.index)}
 														{/each}
@@ -1623,27 +1628,35 @@
 																			{field.label || authWidgetDefaultLabel(method)}
 																		</button>
 																	{/if}
-															</div>
-														{:else if blockType === 'consent_widget'}
-															<div class="preview-consent-widget">
-																<div class="preview-consent-widget__heading">
-																	<span class="i-ph-handshake"></span>
-																	<strong>{field.label || t('同意確認', 'Consent confirmation')}</strong>
 																</div>
-																<p>
-																	{field.text ||
-																		t(
-																			'Flowノードで選択した同意ポリシーがここに表示されます。',
-																			'The consent policy selected on the Flow node is rendered here.'
-																		)}
-																</p>
-																<label class="preview-check-field">
-																	<input type="checkbox" disabled />
-																	<span>{t('内容を確認しました', 'I have reviewed the consent items')}</span>
-																</label>
-															</div>
-														{:else if blockType === 'heading'}
-															<div class="preview-heading-block">
+															{:else if blockType === 'consent_widget'}
+																<div class="preview-consent-widget">
+																	<div class="preview-consent-widget__heading">
+																		<span class="i-ph-handshake"></span>
+																		<strong
+																			>{field.label ||
+																				t('同意確認', 'Consent confirmation')}</strong
+																		>
+																	</div>
+																	<p>
+																		{field.text ||
+																			t(
+																				'Flowノードで選択した同意ポリシーがここに表示されます。',
+																				'The consent policy selected on the Flow node is rendered here.'
+																			)}
+																	</p>
+																	<label class="preview-check-field">
+																		<input type="checkbox" disabled />
+																		<span
+																			>{t(
+																				'内容を確認しました',
+																				'I have reviewed the consent items'
+																			)}</span
+																		>
+																	</label>
+																</div>
+															{:else if blockType === 'heading'}
+																<div class="preview-heading-block">
 																	<h2>{field.label}</h2>
 																	{#if field.text}
 																		<p>{field.text}</p>
@@ -1679,45 +1692,43 @@
 											'Set per-language labels for each item. Internal IDs are generated automatically and used as localization keys.'
 										)}
 									</p>
-									<div class="localization-table-wrap">
-										<table class="localization-table">
-											<thead>
+									<AdminDataTable width="wide">
+										<thead>
+											<tr>
+												<th>{t('項目名', 'Item')}</th>
+												<th>{t('内部ID', 'Internal ID')}</th>
+												{#each localizationLanguages as language (language.code)}
+													<th>{t(language.labelJa, language.labelEn)}</th>
+												{/each}
+											</tr>
+										</thead>
+										<tbody>
+											{#each localizableDraftBlocks as field, index (blockKey(field, index))}
 												<tr>
-													<th>{t('項目名', 'Item')}</th>
-													<th>{t('内部ID', 'Internal ID')}</th>
+													<td>
+														<strong>{blockTitle(field)}</strong>
+														<small>{blockSubtitle(field)}</small>
+													</td>
+													<td><code>{localizationKey(field, index)}</code></td>
 													{#each localizationLanguages as language (language.code)}
-														<th>{t(language.labelJa, language.labelEn)}</th>
+														<td>
+															<input
+																value={localizedFieldLabel(field, language.code, index)}
+																placeholder={field.label || field.field}
+																oninput={(event) =>
+																	updateLocalizationLabel(
+																		field,
+																		language.code,
+																		event.currentTarget.value,
+																		index
+																	)}
+															/>
+														</td>
 													{/each}
 												</tr>
-											</thead>
-											<tbody>
-												{#each localizableDraftBlocks as field, index (blockKey(field, index))}
-													<tr>
-														<td>
-															<strong>{blockTitle(field)}</strong>
-															<small>{blockSubtitle(field)}</small>
-														</td>
-														<td><code>{localizationKey(field, index)}</code></td>
-														{#each localizationLanguages as language (language.code)}
-															<td>
-																<input
-																	value={localizedFieldLabel(field, language.code, index)}
-																	placeholder={field.label || field.field}
-																	oninput={(event) =>
-																		updateLocalizationLabel(
-																			field,
-																			language.code,
-																			event.currentTarget.value,
-																			index
-																		)}
-																/>
-															</td>
-														{/each}
-													</tr>
-												{/each}
-											</tbody>
-										</table>
-									</div>
+											{/each}
+										</tbody>
+									</AdminDataTable>
 								</div>
 							{/if}
 
@@ -2014,41 +2025,22 @@
 	.localization-panel p {
 		margin: 0;
 	}
-	.localization-table-wrap {
-		overflow-x: auto;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-surface);
-	}
-	.localization-table {
-		width: 100%;
+	.localization-panel :global(table) {
 		min-width: 760px;
-		border-collapse: collapse;
 	}
-	.localization-table th,
-	.localization-table td {
-		border-bottom: 1px solid var(--color-border);
-		padding: 0.75rem;
-		text-align: left;
+	.localization-panel :global(th),
+	.localization-panel :global(td) {
 		vertical-align: top;
 	}
-	.localization-table th {
-		color: var(--color-text-muted);
-		font-size: 0.78rem;
-		text-transform: uppercase;
-	}
-	.localization-table tr:last-child td {
-		border-bottom: 0;
-	}
-	.localization-table td:first-child {
+	.localization-panel :global(td:first-child) {
 		display: grid;
 		gap: 0.2rem;
 		min-width: 180px;
 	}
-	.localization-table td:first-child small {
+	.localization-panel :global(td:first-child small) {
 		color: var(--color-text-muted);
 	}
-	.localization-table code {
+	.localization-panel :global(code) {
 		display: inline-block;
 		max-width: 220px;
 		overflow: hidden;
@@ -2061,7 +2053,7 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.localization-table input {
+	.localization-panel :global(input) {
 		width: 100%;
 		min-width: 180px;
 	}

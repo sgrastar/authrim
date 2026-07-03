@@ -5,11 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../../types/env';
-import {
-  clearRateLimitFastPathCache,
-  rateLimitMiddleware,
-  RateLimitProfiles,
-} from '../rate-limit';
+import { clearRateLimitFastPathCache, rateLimitMiddleware, RateLimitProfiles } from '../rate-limit';
 
 // Mock environment
 const mockEnv: Env = {
@@ -59,9 +55,7 @@ const createMockKV = (): KVNamespace => {
   } as unknown as KVNamespace;
 };
 
-const createMockRateLimiter = (
-  incrementRpc: ReturnType<typeof vi.fn>
-): Env['RATE_LIMITER'] => {
+const createMockRateLimiter = (incrementRpc: ReturnType<typeof vi.fn>): Env['RATE_LIMITER'] => {
   return {
     idFromName: vi.fn((name: string) => name),
     get: vi.fn(() => ({ incrementRpc })),

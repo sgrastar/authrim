@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingAttributeField,
@@ -813,7 +814,7 @@
 	}
 
 	function toggleOidcClaimScope(index: number, scopeName: string, checked: boolean) {
-		const current = new Set(getSelectedOidcScopes(oidcClaims[index]));
+		const current = new SvelteSet(getSelectedOidcScopes(oidcClaims[index]));
 		if (checked) current.add(scopeName);
 		else current.delete(scopeName);
 		updateOidcClaim(index, 'requiredScopes', Array.from(current).sort().join(','));
