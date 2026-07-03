@@ -8,7 +8,9 @@ import {
 	type NewFlowTemplate
 } from '../new-flow-templates';
 
-function requireTemplate(id: 'oidc-login' | 'oidc-registration'): NewFlowTemplate {
+function requireTemplate(
+	id: 'oidc-login' | 'oidc-registration' | 'academic-saml-login'
+): NewFlowTemplate {
 	const template = getNewFlowTemplate(id);
 	if (!template) {
 		throw new Error(`Missing test fixture template: ${id}`);
@@ -73,7 +75,9 @@ describe('new flow templates', () => {
 		]);
 		expect(contract.runtime.capabilities).toHaveLength(2);
 		expect(contract.editor.nodes.map((node) => node.id)).toContain('authentication');
-		expect(contract.editor.nodes.find((node) => node.id === 'consent')?.config).toMatchObject({
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'oidc-authorization-consent')?.config
+		).toMatchObject({
 			completion_block: {
 				id: 'oidc-authorization-completion',
 				protocol: 'oidc',
@@ -81,12 +85,24 @@ describe('new flow templates', () => {
 				role: 'consent'
 			}
 		});
-		expect(contract.editor.nodes.find((node) => node.id === 'output')?.config).toMatchObject({
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'oidc-authorization-complete')?.config
+		).toMatchObject({
 			completion_block: {
 				id: 'oidc-authorization-completion',
 				protocol: 'oidc',
 				purpose: 'authorization',
 				role: 'output'
+			}
+		});
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'saml-attribute-release-consent')?.config
+		).toMatchObject({
+			completion_block: {
+				id: 'saml-attribute-release-completion',
+				protocol: 'saml',
+				purpose: 'attribute_release',
+				role: 'consent'
 			}
 		});
 	});
@@ -108,6 +124,55 @@ describe('new flow templates', () => {
 				id: 'oidc-registration-completion',
 				protocol: 'oidc',
 				purpose: 'registration'
+			}
+		});
+	});
+
+	it('creates an Academic SAML login template with a single Entry node and SAML completion', () => {
+		const template = requireTemplate('academic-saml-login');
+
+		const contract = createLoginUiRuntimeContractPreview(template);
+
+		expect(contract).toMatchObject({
+			runtime: {
+				flow_id: 'preview:academic-saml-login',
+				flow_kind: 'login',
+				protocol_context: {
+					protocol: 'saml'
+				}
+			},
+			preview: {
+				flow: {
+					id: 'academic-saml-login',
+					kind: 'login',
+					protocol: 'saml'
+				}
+			}
+		});
+		expect(contract.runtime.ui.steps.map((step) => step.component)).toEqual([
+			'interaction_context',
+			'session_check',
+			'authentication_method_selector',
+			'consent_policy',
+			'completion'
+		]);
+		expect(contract.editor.nodes.find((node) => node.id === 'request')).toMatchObject({
+			type: 'entry',
+			title: 'Entry'
+		});
+		expect(contract.editor.nodes.map((node) => node.id)).not.toContain('saml-login-request');
+		expect(contract.editor.nodes.map((node) => node.id)).not.toContain(
+			'oidc-authorization-consent'
+		);
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'saml-attribute-release-consent')?.config
+		).toMatchObject({
+			consent_policy_ref: 'saml_attribute_release_policy',
+			completion_block: {
+				id: 'saml-attribute-release-completion',
+				protocol: 'saml',
+				purpose: 'attribute_release',
+				role: 'consent'
 			}
 		});
 	});

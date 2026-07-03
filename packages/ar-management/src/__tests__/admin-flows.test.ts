@@ -37,9 +37,11 @@ import {
   adminFlowAssignmentUpsertHandler,
   adminFlowCreateHandler,
   adminFlowDeleteHandler,
+  adminFlowExportHandler,
   adminFlowImportHandler,
   adminFlowPublishHandler,
   adminFlowUpdateHandler,
+  adminFlowValidateHandler,
 } from '../admin-flows';
 
 interface TestFlowRow {
@@ -66,6 +68,7 @@ interface TestFlowRow {
   draft_runtime_base_json: string | null;
   published_version_id: string | null;
   deleted_at: number | null;
+  template_id: string | null;
 }
 
 const validEditor = {
@@ -225,6 +228,7 @@ function installDbMock() {
         draft_runtime_base_json: params[20] as string,
         published_version_id: null,
         deleted_at: null,
+        template_id: params[21] as string | null,
       });
     }
 
@@ -292,6 +296,9 @@ function installDbMock() {
               break;
             case 'published_version_id':
               flow.published_version_id = String(value);
+              break;
+            case 'template_id':
+              flow.template_id = value as string | null;
               break;
             default:
               break;
@@ -363,6 +370,7 @@ function seedFlow(overrides: Partial<TestFlowRow> = {}) {
     draft_runtime_base_json: null,
     published_version_id: null,
     deleted_at: null,
+    template_id: null,
     ...overrides,
   });
 }
@@ -373,6 +381,7 @@ describe('admin Flow management handlers', () => {
     versions = [];
     assignments = [];
     vi.clearAllMocks();
+    mocks.generateId.mockReset();
     mocks.generateId.mockReturnValue('generated-id');
     installDbMock();
   });
@@ -395,6 +404,33 @@ describe('admin Flow management handlers', () => {
     expect(flows).toHaveLength(0);
   });
 
+  it('stores template id separately from localized template descriptions', async () => {
+    const response = await adminFlowCreateHandler(
+      createContext({
+        body: {
+          slug: 'academic-saml-login',
+          display_name: 'Academic SAML Login',
+          description: null,
+          template_id: 'academic-saml-login',
+          kind: 'login',
+          editor: validEditor,
+        },
+      })
+    );
+    const body = await readJson(response);
+
+    expect(response.status).toBe(201);
+    expect(flows[0]).toMatchObject({
+      slug: 'academic-saml-login',
+      description: null,
+      template_id: 'academic-saml-login',
+    });
+    expect(body.flow).toMatchObject({
+      description: null,
+      template_id: 'academic-saml-login',
+    });
+  });
+
   it('publishes a valid draft as an immutable version snapshot', async () => {
     seedFlow();
     mocks.generateId.mockReturnValue('version-1');
@@ -408,6 +444,221 @@ describe('admin Flow management handlers', () => {
       flow_id: 'flow-1',
       flow_kind: 'login',
     });
+    expect(assignments).toHaveLength(0);
+  });
+
+  it('keeps single-protocol missing consent policy references publish-blocking', async () => {
+    const editor = {
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'oidc-consent',
+          type: 'consent',
+          config: {
+            consent_policy_ref: 'missing-oidc-policy',
+            completion_block: {
+              id: 'oidc-authorization-completion',
+              protocol: 'oidc',
+              purpose: 'authorization',
+              role: 'consent',
+            },
+          },
+        },
+        {
+          id: 'oidc-complete',
+          type: 'complete',
+          config: {
+            completion_block: {
+              id: 'oidc-authorization-completion',
+              protocol: 'oidc',
+              purpose: 'authorization',
+              role: 'output',
+            },
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'entry:next->oidc-consent',
+          source: 'entry',
+          source_handle: 'next',
+          target: 'oidc-consent',
+        },
+        {
+          id: 'oidc-consent:accepted->oidc-complete',
+          source: 'oidc-consent',
+          source_handle: 'accepted',
+          target: 'oidc-complete',
+        },
+      ],
+    };
+
+    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
+    const body = await readJson(response);
+
+    expect(body.valid).toBe(false);
+    expect(body.errors).toMatchObject([
+      {
+        level: 'error',
+        code: 'missing_consent_policy',
+        node_id: 'oidc-consent',
+      },
+    ]);
+  });
+
+  it('treats missing consent policy references in multi-protocol completion branches as warnings', async () => {
+    const editor = {
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'saml-consent',
+          type: 'consent',
+          config: {
+            consent_policy_ref: 'missing-saml-policy',
+            completion_block: {
+              id: 'saml-attribute-release-completion',
+              protocol: 'saml',
+              purpose: 'attribute_release',
+              role: 'consent',
+            },
+          },
+        },
+        {
+          id: 'saml-complete',
+          type: 'complete',
+          config: {
+            completion_block: {
+              id: 'saml-attribute-release-completion',
+              protocol: 'saml',
+              purpose: 'attribute_release',
+              role: 'output',
+            },
+          },
+        },
+        {
+          id: 'oidc-consent',
+          type: 'consent',
+          config: {
+            consent_policy_ref: 'missing-oidc-policy',
+            completion_block: {
+              id: 'oidc-authorization-completion',
+              protocol: 'oidc',
+              purpose: 'authorization',
+              role: 'consent',
+            },
+          },
+        },
+        {
+          id: 'oidc-complete',
+          type: 'complete',
+          config: {
+            completion_block: {
+              id: 'oidc-authorization-completion',
+              protocol: 'oidc',
+              purpose: 'authorization',
+              role: 'output',
+            },
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'entry:next->saml-consent',
+          source: 'entry',
+          source_handle: 'next',
+          target: 'saml-consent',
+        },
+        {
+          id: 'entry:next->oidc-consent',
+          source: 'entry',
+          source_handle: 'next',
+          target: 'oidc-consent',
+        },
+        {
+          id: 'saml-consent:accepted->saml-complete',
+          source: 'saml-consent',
+          source_handle: 'accepted',
+          target: 'saml-complete',
+        },
+        {
+          id: 'oidc-consent:accepted->oidc-complete',
+          source: 'oidc-consent',
+          source_handle: 'accepted',
+          target: 'oidc-complete',
+        },
+      ],
+    };
+
+    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
+    const body = await readJson(response);
+
+    expect(body.valid).toBe(true);
+    expect(body.errors).toEqual([]);
+    expect(body.warnings).toMatchObject([
+      {
+        level: 'warning',
+        code: 'missing_consent_policy',
+        node_id: 'saml-consent',
+      },
+      {
+        level: 'warning',
+        code: 'missing_consent_policy',
+        node_id: 'oidc-consent',
+      },
+    ]);
+  });
+
+  it('accepts session check continue and authenticate output handles', async () => {
+    const editor = {
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        { id: 'session-check', type: 'session_check' },
+        {
+          id: 'authentication',
+          type: 'authentication',
+          config: {
+            authentication_profile_ref: 'default',
+            outputs: [{ id: 'passkey', label: 'Passkey' }],
+          },
+        },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        {
+          id: 'entry:next->session-check',
+          source: 'entry',
+          source_handle: 'next',
+          target: 'session-check',
+        },
+        {
+          id: 'session-check:continue->complete',
+          source: 'session-check',
+          source_handle: 'continue',
+          target: 'complete',
+        },
+        {
+          id: 'session-check:authenticate->authentication',
+          source: 'session-check',
+          source_handle: 'authenticate',
+          target: 'authentication',
+        },
+        {
+          id: 'authentication:passkey->complete',
+          source: 'authentication',
+          source_handle: 'passkey',
+          target: 'complete',
+        },
+      ],
+    };
+
+    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
+    const body = await readJson(response);
+
+    expect(body.valid).toBe(true);
+    expect(body.errors).toEqual([]);
+    expect(Array.isArray(body.issues)).toBe(true);
+    const issueCodes = (body.issues as Array<{ code: string }>).map((issue) => issue.code);
+    expect(issueCodes).not.toContain('invalid_output_handle');
   });
 
   it('increments publish version numbers returned as strings by adapters', async () => {
@@ -475,6 +726,7 @@ describe('admin Flow management handlers', () => {
           preview: {
             display_name: 'Imported Login',
             slug: 'imported-login',
+            template_id: 'oidc-login',
           },
           editor: validEditor,
         },
@@ -489,9 +741,25 @@ describe('admin Flow management handlers', () => {
     });
     expect(saved).not.toContain('secret-csrf');
     expect(saved).not.toContain('secret-token');
+    expect(flows[0].template_id).toBe('oidc-login');
     expect(parseRuntimeJson(flows[0]?.draft_runtime_base_json)).toMatchObject({
       flow_id: 'flow-imported',
       flow_kind: 'login',
+    });
+  });
+
+  it('exports template id in the Flow preview metadata', async () => {
+    seedFlow({ template_id: 'academic-saml-login' });
+
+    const response = await adminFlowExportHandler(createContext({ params: { id: 'flow-1' } }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.preview).toMatchObject({
+      flow_id: 'flow-1',
+      slug: 'login-flow',
+      display_name: 'Login Flow',
+      template_id: 'academic-saml-login',
     });
   });
 

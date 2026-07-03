@@ -15,6 +15,9 @@ export * from './types/check-api';
 export * from './types/support-ops';
 export * from './types/runtime-profile';
 export * from './types/approval';
+export * from './types/form-profiles';
+export * from './types/oidc-scopes';
+export * from './types/consent-records';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';

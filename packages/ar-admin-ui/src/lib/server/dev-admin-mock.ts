@@ -571,6 +571,7 @@ interface DevFlow {
 	updated_at: number;
 	slug?: string;
 	display_name?: string;
+	template_id?: string | null;
 	kind?: 'login' | 'registration' | 'approve' | 'account' | `custom:${string}`;
 	status?: 'draft' | 'published' | 'disabled';
 	draft_editor_json?: Record<string, unknown> | null;
@@ -2642,6 +2643,7 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 					config: {
 						ui_kind: 'registration',
 						authentication_profile_ref: 'default',
+						profile_form_ref: 'basic_profile',
 						outputs: [
 							{ id: 'mail_otp', label: 'Email OTP' },
 							{ id: 'passkey', label: 'Passkey' },
@@ -2739,7 +2741,13 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 				type: 'session_check',
 				title: 'Session Check',
 				position: { x: 360, y: 144 },
-				config: { ui_kind: 'decision' }
+				config: {
+					ui_kind: 'session',
+					outputs: [
+						{ id: 'continue', label: 'Existing session' },
+						{ id: 'authenticate', label: 'Authenticate' }
+					]
+				}
 			},
 			{
 				id: 'authentication-method',
@@ -2779,21 +2787,15 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 				target: 'session-check'
 			},
 			{
-				id: 'session-check:authenticated->complete',
+				id: 'session-check:continue->consent',
 				source: 'session-check',
-				source_handle: 'authenticated',
-				target: 'complete'
+				source_handle: 'continue',
+				target: 'consent'
 			},
 			{
-				id: 'session-check:login_required->authentication-method',
+				id: 'session-check:authenticate->authentication-method',
 				source: 'session-check',
-				source_handle: 'login_required',
-				target: 'authentication-method'
-			},
-			{
-				id: 'session-check:reauth_required->authentication-method',
-				source: 'session-check',
-				source_handle: 'reauth_required',
+				source_handle: 'authenticate',
 				target: 'authentication-method'
 			},
 			{
@@ -6600,6 +6602,12 @@ function flowFromInput(input: Record<string, unknown>, existing?: DevFlow): DevF
 		updated_at: now,
 		slug: typeof input.slug === 'string' ? input.slug : existing?.slug || id.replace(/^flow-/, ''),
 		display_name: name,
+		template_id:
+			typeof input.template_id === 'string'
+				? input.template_id
+				: input.template_id === null
+					? null
+					: (existing?.template_id ?? null),
 		kind,
 		status:
 			input.status === 'published' || input.status === 'disabled' || input.status === 'draft'
@@ -6632,6 +6640,7 @@ function normalizeDevFlow(flow: DevFlow): DevFlow {
 		...flow,
 		slug: flow.slug || flow.id.replace(/^flow-/, ''),
 		display_name: flow.display_name || flow.name,
+		template_id: flow.template_id ?? null,
 		kind,
 		status,
 		draft_editor_json: editor,
@@ -6651,6 +6660,7 @@ function flowToAdminFlow(flow: DevFlow) {
 		name: normalized.name,
 		display_name: normalized.display_name || normalized.name,
 		description: normalized.description,
+		template_id: normalized.template_id ?? null,
 		kind: normalized.kind || 'login',
 		status: normalized.status || 'draft',
 		editor: normalized.draft_editor_json ?? null,
@@ -6694,7 +6704,8 @@ function flowExportPackage(flow: DevFlow) {
 		preview: {
 			flow_id: normalized.id,
 			slug: normalized.slug || normalized.id,
-			display_name: normalized.display_name || normalized.name
+			display_name: normalized.display_name || normalized.name,
+			template_id: normalized.template_id ?? null
 		},
 		editor:
 			normalized.draft_editor_json ||
@@ -6867,6 +6878,7 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 			display_name:
 				typeof preview.display_name === 'string' ? preview.display_name : 'Imported Flow',
 			slug: typeof preview.slug === 'string' ? preview.slug : undefined,
+			template_id: typeof preview.template_id === 'string' ? preview.template_id : null,
 			kind: flowKind,
 			editor: input.editor,
 			runtime

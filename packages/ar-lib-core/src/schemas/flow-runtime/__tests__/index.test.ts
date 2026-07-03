@@ -193,6 +193,58 @@ describe('flow runtime schema helpers', () => {
     expect(issues.every((issue) => issue.level === 'error')).toBe(true);
   });
 
+  it('accepts protocol-neutral session check output handles', () => {
+    const issues = validateFlowEditorState(
+      {
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          { id: 'session-check', type: 'session_check' },
+          {
+            id: 'authentication',
+            type: 'authentication',
+            config: {
+              authentication_profile_ref: 'default',
+              outputs: [{ id: 'passkey', label: 'Passkey' }],
+            },
+          },
+          {
+            id: 'complete',
+            type: 'complete',
+          },
+        ],
+        edges: [
+          {
+            id: 'entry:next->session-check',
+            source: 'entry',
+            source_handle: 'next',
+            target: 'session-check',
+          },
+          {
+            id: 'session-check:continue->complete',
+            source: 'session-check',
+            source_handle: 'continue',
+            target: 'complete',
+          },
+          {
+            id: 'session-check:authenticate->authentication',
+            source: 'session-check',
+            source_handle: 'authenticate',
+            target: 'authentication',
+          },
+          {
+            id: 'authentication:passkey->complete',
+            source: 'authentication',
+            source_handle: 'passkey',
+            target: 'complete',
+          },
+        ],
+      },
+      { for_publish: true }
+    );
+
+    expect(issues.filter((issue) => issue.code === 'invalid_output_handle')).toEqual([]);
+  });
+
   it('rejects edges that directly connect incompatible completion blocks', () => {
     const issues = validateFlowEditorState(
       {

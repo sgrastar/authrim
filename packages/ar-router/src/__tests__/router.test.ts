@@ -216,6 +216,26 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route LoginUI runtime interactions to OP_AUTH', async () => {
+        const env = { ...mockEnv, BASE_DOMAIN: 'example.com', DEFAULT_TENANT_ID: 'acme' };
+        await app.fetch(
+          new Request('https://acme.example.com/api/v1/login/interactions/start', {
+            method: 'POST',
+            headers: { Origin: 'https://acme.example.com' },
+          }),
+          env
+        );
+        await app.fetch(
+          new Request('https://acme.example.com/api/v1/login/interactions/interaction_1/submit', {
+            method: 'POST',
+            headers: { Origin: 'https://acme.example.com' },
+          }),
+          env
+        );
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(2);
+      });
+
       it('should route /api/sessions/* to OP_AUTH', async () => {
         const req = new Request('https://example.com/api/sessions/status');
         await app.fetch(req, mockEnv);

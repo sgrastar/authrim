@@ -25,12 +25,13 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(layout).toContain('/admin/field-mapping');
 		expect(layout).toContain('admin_nav_source_destination');
 		expect(layout).toContain('admin_nav_mapping_policies');
-		expect(layout).toContain('admin_nav_resolution_center');
 		expect(layout).toContain('/admin/field-mapping/profiles');
 		expect(layout).toContain('/admin/field-mapping/field-mapping-sets');
-		expect(layout).toContain('/admin/field-mapping/resolution-center');
 		expect(layout).toContain('/admin/field-mapping/edit');
 		expect(layout).toContain("activePaths: ['/admin/field-mapping/edit']");
+		expect(layout).toContain('/admin/resolution-center');
+		expect(layout).toContain('showInSidebar: false');
+		expect(layout).not.toContain("href: '/admin/field-mapping/resolution-center'");
 		expect(layout).not.toContain('Mapping Rules');
 		expect(layout).not.toContain('/admin/field-mapping/operations');
 		expect(layout).not.toContain('/admin/field-mapping/overview');
@@ -248,7 +249,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		const operations = readRoute('admin/field-mapping/field-mapping-sets/+page.svelte');
 		const profiles = readRoute('admin/field-mapping/profiles/+page.svelte');
 		const profileEditor = readRoute('admin/field-mapping/profiles/edit/+page.svelte');
-		const resolution = readRoute('admin/field-mapping/resolution-center/+page.svelte');
+		const resolution = readRoute('admin/resolution-center/+page.svelte');
 		const federation = readRoute('admin/field-mapping/federation-trust/+page.svelte');
 
 		expect(api).toContain('/api/admin/field-mapping/review-tasks');
@@ -361,10 +362,16 @@ describe('field mapping Admin UI smoke checks', () => {
 	});
 
 	it('keeps operator naming separate from internal review task storage names', () => {
-		const resolution = readRoute('admin/field-mapping/resolution-center/+page.svelte');
+		const resolution = readRoute('admin/resolution-center/+page.svelte');
 
 		expect(resolution).toContain('admin_identity_mapping_resolution_title');
 		expect(resolution).not.toContain('review_tasks');
 		expect(resolution).not.toContain('Review Queue');
+	});
+
+	it('redirects the legacy field mapping resolution route to the dashboard-adjacent URL', () => {
+		const legacyRoute = readRoute('admin/field-mapping/resolution-center/+page.server.ts');
+
+		expect(legacyRoute).toContain("redirect(301, '/admin/resolution-center')");
 	});
 });

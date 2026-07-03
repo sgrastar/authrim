@@ -288,6 +288,19 @@ import {
   adminFlowAssignmentDeleteHandler,
 } from './admin-flows';
 import {
+  adminFormProfileCreateHandler,
+  adminFormProfileDeleteHandler,
+  adminFormProfileGetHandler,
+  adminFormProfilesListHandler,
+  adminFormProfileUpdateHandler,
+} from './admin-form-profiles';
+import {
+  adminOidcScopeCreateHandler,
+  adminOidcScopeDeleteHandler,
+  adminOidcScopesListHandler,
+  adminOidcScopeUpdateHandler,
+} from './admin-oidc-scopes';
+import {
   adminAccessTraceListHandler,
   adminAccessTraceGetHandler,
   adminAccessTraceStatsHandler,
@@ -680,6 +693,7 @@ import {
   getAccountReauthStatusHandler,
 } from './account-page';
 import { getAccountCapabilitiesHandler } from './account-capabilities';
+import { listAccountConsentsHandler } from './account-consents';
 import { listAccountOperationsHandler } from './account-operations';
 import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
 import {
@@ -1137,6 +1151,7 @@ app.use('/api/auth/authentication-methods', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/authentication-methods'],
+    nonBlockingRead: true,
   })(c, next);
 });
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
@@ -1145,6 +1160,7 @@ app.use('/api/auth/discovery', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/discovery'],
+    nonBlockingRead: true,
   })(c, next);
 });
 app.use('/api/auth/discovery/grant', async (c, next) => {
@@ -1227,6 +1243,7 @@ app.post('/api/account/reauth/passkey/options', createAccountPasskeyReauthOption
 app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHandler);
 app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
+app.get('/api/account/consents', listAccountConsentsHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
@@ -2184,6 +2201,33 @@ app.get('/api/admin/flow-assignments', adminFlowAssignmentsListHandler);
 app.put('/api/admin/flow-assignments', adminFlowAssignmentUpsertHandler);
 app.delete('/api/admin/flow-assignments', adminFlowAssignmentDeleteHandler);
 
+// Form profiles used by Flow form nodes.
+app.get(
+  '/api/admin/form-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminFormProfilesListHandler
+);
+app.post(
+  '/api/admin/form-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminFormProfileCreateHandler
+);
+app.get(
+  '/api/admin/form-profiles/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminFormProfileGetHandler
+);
+app.put(
+  '/api/admin/form-profiles/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminFormProfileUpdateHandler
+);
+app.delete(
+  '/api/admin/form-profiles/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminFormProfileDeleteHandler
+);
+
 // =============================================================================
 // Access Trace (Permission Check Audit Logs)
 // =============================================================================
@@ -2536,6 +2580,26 @@ app.post(
   '/api/admin/field-mapping/preview/oidc',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcReleasePreviewHandler
+);
+app.get(
+  '/api/admin/field-mapping/oidc-scopes',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminOidcScopesListHandler
+);
+app.post(
+  '/api/admin/field-mapping/oidc-scopes',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminOidcScopeCreateHandler
+);
+app.put(
+  '/api/admin/field-mapping/oidc-scopes/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminOidcScopeUpdateHandler
+);
+app.delete(
+  '/api/admin/field-mapping/oidc-scopes/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminOidcScopeDeleteHandler
 );
 app.get(
   '/api/admin/field-mapping/persistent-identifier-profiles',

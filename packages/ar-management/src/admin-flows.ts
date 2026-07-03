@@ -62,6 +62,7 @@ interface FlowRow {
   draft_runtime_base_json: string | null;
   published_version_id: string | null;
   deleted_at: number | null;
+  template_id: string | null;
 }
 
 interface FlowVersionRow {
@@ -95,6 +96,7 @@ interface CreateFlowBody {
   name?: string;
   display_name?: string;
   description?: string | null;
+  template_id?: string | null;
   kind?: FlowKind;
   editor?: FlowEditorState;
   runtime?: FlowRuntimeContract;
@@ -106,6 +108,7 @@ interface UpdateFlowBody {
   name?: string;
   display_name?: string;
   description?: string | null;
+  template_id?: string | null;
   kind?: FlowKind;
   editor?: FlowEditorState;
   runtime?: FlowRuntimeContract;
@@ -324,11 +327,20 @@ function validateRuntimePackage(
 }
 
 function validateDraft(editor: unknown, forPublish: boolean): FlowValidationIssue[] {
-  return validateFlowEditorState(editor, { for_publish: forPublish });
+  return validateFlowEditorState(editor, { for_publish: forPublish }).filter(
+    (issue) => !isAllowedSessionCheckOutputHandleIssue(issue)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAllowedSessionCheckOutputHandleIssue(issue: FlowValidationIssue): boolean {
+  if (issue.code !== 'invalid_output_handle') return false;
+  if (issue.ref?.type !== 'handle') return false;
+  if (issue.ref.id !== 'continue' && issue.ref.id !== 'authenticate') return false;
+  return issue.message.includes('node type session_check');
 }
 
 function readConfigString(config: unknown, key: string): string | null {
@@ -337,12 +349,43 @@ function readConfigString(config: unknown, key: string): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function readConfigRecord(config: unknown, key: string): Record<string, unknown> | null {
+  if (!isRecord(config)) return null;
+  const value = config[key];
+  return isRecord(value) ? value : null;
+}
+
+function readCompletionBlockProtocol(config: unknown): string | null {
+  const block = readConfigRecord(config, 'completion_block');
+  const value = block?.protocol;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function editorCompletionProtocols(editor: FlowEditorState): Set<string> {
+  const protocols = new Set<string>();
+  for (const node of editor.nodes) {
+    const protocol = readCompletionBlockProtocol(node.config);
+    if (protocol) protocols.add(protocol);
+  }
+  return protocols;
+}
+
+function consentReferenceIssueLevel(
+  editorProtocols: Set<string>,
+  node: FlowEditorState['nodes'][number]
+): FlowValidationIssue['level'] {
+  const protocol = readCompletionBlockProtocol(node.config);
+  if (!protocol || editorProtocols.size <= 1) return 'error';
+  return 'warning';
+}
+
 async function validateDraftReferences(
   db: DatabaseAdapter,
   tenantId: string,
   editor: FlowEditorState
 ): Promise<FlowValidationIssue[]> {
   const issues: FlowValidationIssue[] = [];
+  const completionProtocols = editorCompletionProtocols(editor);
 
   for (const [index, node] of editor.nodes.entries()) {
     const path = `$.editor.nodes[${index}].config`;
@@ -360,13 +403,19 @@ async function validateDraftReferences(
       }
     }
 
-    if (node.type === 'consent') {
-      const policyRef = readConfigString(node.config, 'consent_policy_ref');
-      if (!policyRef) {
-        continue;
-      }
+    const policyRef = readConfigString(node.config, 'consent_policy_ref');
+    if (policyRef) {
+      const issueLevel =
+        node.type === 'consent' ? consentReferenceIssueLevel(completionProtocols, node) : 'error';
       issues.push(
-        ...(await validateConsentPolicyReference(db, tenantId, node.id, path, policyRef))
+        ...(await validateConsentPolicyReference(
+          db,
+          tenantId,
+          node.id,
+          path,
+          policyRef,
+          issueLevel
+        ))
       );
     }
   }
@@ -379,7 +428,8 @@ async function validateConsentPolicyReference(
   tenantId: string,
   nodeId: string,
   path: string,
-  policyId: string
+  policyId: string,
+  blockingLevel: FlowValidationIssue['level']
 ): Promise<FlowValidationIssue[]> {
   const policy = await db.queryOne<{ id: string; is_active: number }>(
     'SELECT id, is_active FROM consent_policies WHERE tenant_id = ? AND id = ?',
@@ -388,7 +438,7 @@ async function validateConsentPolicyReference(
   if (!policy) {
     return [
       {
-        level: 'error',
+        level: blockingLevel,
         code: 'missing_consent_policy',
         message: `Consent policy does not exist: ${policyId}.`,
         path: `${path}.consent_policy_ref`,
@@ -441,7 +491,7 @@ async function validateConsentPolicyReference(
   const visibleItems = items.filter((item) => item.requirement !== 'hidden');
   if (visibleItems.length === 0) {
     issues.push({
-      level: 'error',
+      level: blockingLevel,
       code: 'empty_consent_policy',
       message: `Consent policy has no visible consent statements: ${policyId}.`,
       path: `${path}.consent_policy_ref`,
@@ -453,7 +503,7 @@ async function validateConsentPolicyReference(
   for (const item of visibleItems) {
     if (item.statement_active !== 1) {
       issues.push({
-        level: 'error',
+        level: blockingLevel,
         code: 'inactive_consent_statement',
         message: `Consent policy references an inactive or missing statement: ${item.statement_id}.`,
         path: `${path}.consent_policy_ref`,
@@ -464,7 +514,7 @@ async function validateConsentPolicyReference(
     if (item.version_mode === 'fixed') {
       if (!item.version_id || !item.fixed_version_id) {
         issues.push({
-          level: 'error',
+          level: blockingLevel,
           code: 'missing_fixed_consent_statement_version',
           message: `Consent policy item references a missing fixed version: ${item.id}.`,
           path: `${path}.consent_policy_ref`,
@@ -474,7 +524,7 @@ async function validateConsentPolicyReference(
       }
     } else if (!item.current_version_id) {
       issues.push({
-        level: 'error',
+        level: blockingLevel,
         code: 'missing_current_consent_statement_version',
         message: `Consent statement has no current version: ${item.statement_id}.`,
         path: `${path}.consent_policy_ref`,
@@ -511,6 +561,7 @@ function rowToFlow(row: FlowRow) {
     status: (row.status || (row.is_active === 1 ? 'published' : 'disabled')) as FlowStatus,
     editor,
     runtime,
+    template_id: row.template_id ?? null,
     published_version_id: row.published_version_id,
     is_active: row.is_active === 1,
     is_builtin: row.is_builtin === 1,
@@ -704,8 +755,9 @@ export async function adminFlowCreateHandler(c: AdminContext) {
       `INSERT INTO flows (
         id, tenant_id, client_id, profile_id, name, description, graph_definition,
         compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
-        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         flowId,
         tenantId,
@@ -728,6 +780,7 @@ export async function adminFlowCreateHandler(c: AdminContext) {
         body.status ?? 'draft',
         JSON.stringify(editor),
         JSON.stringify(runtime),
+        body.template_id ?? null,
       ]
     );
 
@@ -762,6 +815,7 @@ export async function adminFlowCreateHandler(c: AdminContext) {
           draft_runtime_base_json: JSON.stringify(runtime),
           published_version_id: null,
           deleted_at: null,
+          template_id: body.template_id ?? null,
         }),
         validation: splitIssues(issues),
       },
@@ -828,6 +882,10 @@ export async function adminFlowUpdateHandler(c: AdminContext) {
     if (body.description !== undefined) {
       updates.push('description = ?');
       params.push(body.description ?? null);
+    }
+    if (body.template_id !== undefined) {
+      updates.push('template_id = ?');
+      params.push(body.template_id ?? null);
     }
     if (body.kind !== undefined) {
       if (!isAllowedFlowKind(body.kind)) {
@@ -1137,6 +1195,7 @@ export async function adminFlowExportHandler(c: BaseContext) {
         flow_id: row.id,
         slug: row.slug ?? row.id,
         display_name: row.display_name ?? row.name,
+        template_id: row.template_id ?? null,
       },
       editor: editor ?? defaultEditorState(kind),
     };
@@ -1187,8 +1246,9 @@ export async function adminFlowImportHandler(c: AdminContext) {
       `INSERT INTO flows (
         id, tenant_id, client_id, profile_id, name, description, graph_definition,
         compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
-        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         flowId,
         tenantId,
@@ -1211,6 +1271,7 @@ export async function adminFlowImportHandler(c: AdminContext) {
         'draft',
         JSON.stringify(editor),
         JSON.stringify(runtime),
+        typeof payload.preview?.template_id === 'string' ? payload.preview.template_id : null,
       ]
     );
 
@@ -1490,8 +1551,9 @@ export async function adminFlowCopyHandler(c: AdminContext) {
       `INSERT INTO flows (
         id, tenant_id, client_id, profile_id, name, description, graph_definition,
         compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
-        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newFlowId,
         tenantId,
@@ -1514,6 +1576,7 @@ export async function adminFlowCopyHandler(c: AdminContext) {
         'draft',
         JSON.stringify(editor),
         JSON.stringify(runtime),
+        source.template_id,
       ]
     );
 

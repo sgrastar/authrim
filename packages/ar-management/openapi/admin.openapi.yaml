@@ -7595,6 +7595,219 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/field-mapping/oidc-scopes:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingOidcScopes
+      summary: List tenant OIDC scopes.
+      description: >-
+        Lists OIDC scopes that can be attached to destination field-mapping claims. Built-in scopes
+        are created lazily for the tenant when missing.
+      responses:
+        '200':
+          description: OIDC scopes for the current tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - scopes
+                properties:
+                  scopes:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - tenant_id
+                        - name
+                        - display_name
+                        - scope_type
+                        - enabled
+                        - created_at
+                        - updated_at
+                      properties:
+                        id:
+                          type: string
+                        tenant_id:
+                          type: string
+                        name:
+                          type: string
+                        display_name:
+                          type: string
+                        description:
+                          type:
+                            - string
+                            - 'null'
+                        scope_type:
+                          type: string
+                          enum:
+                            - system
+                            - custom
+                        enabled:
+                          type: boolean
+                        localizations:
+                          type: object
+                          additionalProperties: true
+                        created_at:
+                          type: integer
+                        updated_at:
+                          type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminFieldMappingOidcScopes
+      summary: Create an OIDC scope.
+      description: >-
+        Creates a tenant-scoped custom OIDC scope for use from the field-mapping editor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - display_name
+              properties:
+                name:
+                  type: string
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,127}$'
+                display_name:
+                  type: string
+                description:
+                  type:
+                    - string
+                    - 'null'
+                scope_type:
+                  type: string
+                  enum:
+                    - custom
+                  default: custom
+                enabled:
+                  type: boolean
+                  default: true
+                localizations:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Created OIDC scope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scope:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/field-mapping/oidc-scopes/{id}':
+    put:
+      tags:
+        - Field Mapping
+      operationId: putApiAdminFieldMappingOidcScopesById
+      summary: Update an OIDC scope.
+      description: Updates mutable fields for a tenant OIDC scope.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                description:
+                  type:
+                    - string
+                    - 'null'
+                enabled:
+                  type: boolean
+                localizations:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Updated OIDC scope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scope:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Field Mapping
+      operationId: deleteApiAdminFieldMappingOidcScopesById
+      summary: Delete an OIDC scope.
+      description: Deletes a custom tenant OIDC scope. Built-in system scopes cannot be deleted.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: OIDC scope deletion result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/field-mapping/protocol-schemas:
     get:
       tags:
@@ -8350,6 +8563,373 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminFlowCreate'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/form-profiles:
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminFormProfiles
+      summary: List form profiles.
+      description: >-
+        Lists reusable form profiles for Flow form nodes. Built-in registration, profile
+        completion, and login profiles are created lazily for the tenant when missing.
+      responses:
+        '200':
+          description: Form profiles for the current tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - profiles
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Flows
+      operationId: postApiAdminFormProfiles
+      summary: Create a form profile.
+      description: Creates a custom reusable form profile for Flow form nodes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - display_name
+                - form_kind
+                - fields
+              properties:
+                profile_key:
+                  type: string
+                display_name:
+                  type: string
+                description:
+                  type:
+                    - string
+                    - 'null'
+                form_kind:
+                  type: string
+                  enum:
+                    - registration
+                    - profile_completion
+                    - login
+                    - consent
+                    - custom
+                fields:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - field
+                      - label
+                    properties:
+                      field:
+                        type: string
+                      label:
+                        type: string
+                      required:
+                        type: boolean
+                      block_type:
+                        type: string
+                        enum:
+                          - identity_field
+                          - auth_widget
+                          - consent_widget
+                          - heading
+                          - text
+                          - security_verification
+                          - divider
+                          - layout_row
+                      block_id:
+                        type: string
+                      value_type:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - text
+                          - boolean
+                          - null
+                      auth_method:
+                        type:
+                          - string
+                          - 'null'
+                      text:
+                        type:
+                          - string
+                          - 'null'
+                      help_text:
+                        type:
+                          - string
+                          - 'null'
+                      placeholder:
+                        type:
+                          - string
+                          - 'null'
+                      layout_columns:
+                        type:
+                          - integer
+                          - 'null'
+                        minimum: 1
+                        maximum: 4
+                      layout_column:
+                        type:
+                          - integer
+                          - 'null'
+                        minimum: 1
+                        maximum: 4
+                      order:
+                        type: integer
+                localizations:
+                  type: object
+                  additionalProperties: true
+                settings:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    canvas_layout:
+                      type: string
+                      enum:
+                        - narrow
+                        - wide
+                is_active:
+                  type: boolean
+      responses:
+        '201':
+          description: Created form profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/form-profiles/{id}':
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminFormProfilesById
+      summary: Get a form profile.
+      description: Returns one tenant form profile by id.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Form profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    type: object
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Flows
+      operationId: putApiAdminFormProfilesById
+      summary: Update a form profile.
+      description: Updates mutable fields for a tenant form profile.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                description:
+                  type:
+                    - string
+                    - 'null'
+                form_kind:
+                  type: string
+                  enum:
+                    - registration
+                    - profile_completion
+                    - login
+                    - consent
+                    - custom
+                fields:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - field
+                      - label
+                    properties:
+                      field:
+                        type: string
+                      label:
+                        type: string
+                      required:
+                        type: boolean
+                      block_type:
+                        type: string
+                        enum:
+                          - identity_field
+                          - auth_widget
+                          - consent_widget
+                          - heading
+                          - text
+                          - security_verification
+                          - divider
+                          - layout_row
+                      block_id:
+                        type: string
+                      value_type:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - text
+                          - boolean
+                          - null
+                      auth_method:
+                        type:
+                          - string
+                          - 'null'
+                      text:
+                        type:
+                          - string
+                          - 'null'
+                      help_text:
+                        type:
+                          - string
+                          - 'null'
+                      placeholder:
+                        type:
+                          - string
+                          - 'null'
+                      layout_columns:
+                        type:
+                          - integer
+                          - 'null'
+                        minimum: 1
+                        maximum: 4
+                      layout_column:
+                        type:
+                          - integer
+                          - 'null'
+                        minimum: 1
+                        maximum: 4
+                      order:
+                        type: integer
+                localizations:
+                  type: object
+                  additionalProperties: true
+                settings:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    canvas_layout:
+                      type: string
+                      enum:
+                        - narrow
+                        - wide
+                is_active:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated form profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Flows
+      operationId: deleteApiAdminFormProfilesById
+      summary: Delete a form profile.
+      description: Deletes a custom form profile. Built-in system form profiles cannot be deleted.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Form profile deletion result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -40510,6 +41090,7 @@ components:
         - name
         - display_name
         - description
+        - template_id
         - kind
         - status
         - editor
@@ -40533,6 +41114,10 @@ components:
         display_name:
           type: string
         description:
+          type:
+            - string
+            - 'null'
+        template_id:
           type:
             - string
             - 'null'
@@ -40633,6 +41218,10 @@ components:
           type:
             - string
             - 'null'
+        template_id:
+          type:
+            - string
+            - 'null'
         kind:
           $ref: '#/components/schemas/AdminFlowKind'
         editor:
@@ -40656,6 +41245,10 @@ components:
         display_name:
           type: string
         description:
+          type:
+            - string
+            - 'null'
+        template_id:
           type:
             - string
             - 'null'

@@ -49,6 +49,7 @@
 		labels: Record<ContentLanguageCode, string>;
 	};
 	type ContentOptionValueMode = 'boolean' | 'value';
+	type AttributeValueDisplay = 'names' | 'masked_values' | 'full_values';
 	type ContentOption = {
 		id: string;
 		valueMode: ContentOptionValueMode;
@@ -131,6 +132,7 @@
 	let contentLinks = $state<ContentLink[]>(initialContentLinks);
 	let nextContentLinkId = $state(initialContentLinks.length + 1);
 	let contentOptions = $state<ContentOption[]>(initialContentOptions);
+	let attributeValueDisplay = $state<AttributeValueDisplay>('masked_values');
 	let nextContentOptionId = $state(initialContentOptions.length + 1);
 	let selectedLanguage = $state<ContentLanguageCode>('en');
 	let defaultLanguage = $state<ContentLanguageCode>('en');
@@ -218,6 +220,7 @@
 		nextContentLinkId = contentLinks.length + 1;
 		contentOptions = createDefaultContentOptions(templateId);
 		nextContentOptionId = contentOptions.length + 1;
+		attributeValueDisplay = 'masked_values';
 		selectedLanguage = 'en';
 		defaultLanguage = 'en';
 		activeLanguageCodes = languageOptions.map((language) => language.code);
@@ -271,6 +274,22 @@
 			localizations[0]?.title ||
 			templateTitle(templateId);
 		collectionMode = collectionModeFromRequirement(statement, requirement);
+		const requirementRules = parseRequirementRules(requirement);
+		if (isBindingType(requirementRules.binding_type)) {
+			bindingType = requirementRules.binding_type;
+		}
+		if (
+			bindingType === 'destination_field_mapping_set' &&
+			typeof requirementRules.binding_value === 'string'
+		) {
+			selectedFieldMappingSetId = requirementRules.binding_value;
+		}
+		if (isContentMode(requirementRules.content_mode)) {
+			contentMode = requirementRules.content_mode;
+		}
+		if (isAttributeValueDisplay(requirementRules.attribute_value_display)) {
+			attributeValueDisplay = requirementRules.attribute_value_display;
+		}
 
 		const knownLanguages = localizations
 			.map((localization) => localization.language)
@@ -295,8 +314,8 @@
 			}
 		}
 		contentDrafts = drafts;
-		contentOptions = options;
-		nextContentOptionId = options.length + 1;
+		contentOptions = normalizeContentOptions(requirementRules.content_options, options);
+		nextContentOptionId = contentOptions.length + 1;
 	}
 
 	async function saveTemplateStatement() {
@@ -313,9 +332,11 @@
 			if (statementId) {
 				await adminConsentStatementsAPI.updateStatement(statementId, statementData);
 			} else {
-				const result = await adminConsentStatementsAPI.createStatement(statementData);
-				statementId = result.statement.id;
+				const statement = await createOrReuseStatement(statementData);
+				statementId = statement.id;
 				loadedStatementId = statementId;
+				loadedStatementSlug = statement.slug;
+				loadedStatementActive = Boolean(statement.is_active);
 			}
 
 			let versionId = loadedVersionId;
@@ -330,15 +351,15 @@
 					});
 				}
 			} else {
-				const result = await adminConsentStatementsAPI.createVersion(statementId, {
+				const version = await createOrReuseVersion(statementId, {
 					version: versionName,
 					content_type: 'inline',
 					effective_at: Date.now(),
 					effective_until: null
 				});
-				versionId = result.version.id;
+				versionId = version.id;
 				loadedVersionId = versionId;
-				loadedVersionStatus = result.version.status;
+				loadedVersionStatus = version.status;
 			}
 			loadedVersionName = versionName;
 
@@ -354,6 +375,68 @@
 		} finally {
 			savingStatement = false;
 		}
+	}
+
+	async function createOrReuseStatement(
+		statementData: ReturnType<typeof createStatementPayload>
+	): Promise<ConsentStatement> {
+		try {
+			const result = await adminConsentStatementsAPI.createStatement(statementData);
+			return result.statement;
+		} catch (error) {
+			if (!isConflictLikeError(error)) throw error;
+			const existing = await findStatementBySlug(statementData.slug);
+			if (!existing) throw error;
+			await adminConsentStatementsAPI.updateStatement(existing.id, statementData);
+			const result = await adminConsentStatementsAPI.getStatement(existing.id);
+			return result.statement;
+		}
+	}
+
+	async function findStatementBySlug(slug: string): Promise<ConsentStatement | null> {
+		const result = await adminConsentStatementsAPI.listStatements();
+		return result.statements.find((statement) => statement.slug === slug) ?? null;
+	}
+
+	async function createOrReuseVersion(
+		statementId: string,
+		versionData: {
+			version: string;
+			content_type?: string;
+			effective_at: number;
+			effective_until?: number | null;
+		}
+	): Promise<ConsentStatementVersion> {
+		try {
+			const result = await adminConsentStatementsAPI.createVersion(statementId, versionData);
+			return result.version;
+		} catch (error) {
+			if (!isConflictLikeError(error)) throw error;
+			const existing = await findStatementVersion(statementId, versionData.version);
+			if (!existing) throw error;
+			if (existing.status === 'draft') {
+				const result = await adminConsentStatementsAPI.updateVersion(statementId, existing.id, {
+					version: versionData.version,
+					content_type: versionData.content_type,
+					effective_at: versionData.effective_at,
+					effective_until: versionData.effective_until ?? null
+				});
+				return result.version;
+			}
+			return existing;
+		}
+	}
+
+	async function findStatementVersion(
+		statementId: string,
+		versionName: string
+	): Promise<ConsentStatementVersion | null> {
+		const result = await adminConsentStatementsAPI.listVersions(statementId);
+		return result.versions.find((version) => version.version === versionName) ?? null;
+	}
+
+	function isConflictLikeError(error: unknown): boolean {
+		return error instanceof Error && error.message.toLowerCase().includes('exist');
 	}
 
 	async function deleteCurrentStatement() {
@@ -413,7 +496,15 @@
 				binding_type: bindingType,
 				binding_value:
 					bindingType === 'destination_field_mapping_set' ? selectedFieldMappingSetId : null,
-				content_mode: contentMode
+				content_mode: contentMode,
+				content_options: contentOptions.map((option) => ({
+					id: option.id,
+					value_mode: option.valueMode,
+					value: option.value,
+					labels: option.labels,
+					descriptions: option.descriptions
+				})),
+				attribute_value_display: attributeValueDisplay
 			}),
 			display_order: 0
 		});
@@ -422,18 +513,20 @@
 	async function saveLocalizations(statementId: string, versionId: string) {
 		if (!selectedTemplateId) throw new Error(localText('templateRequired'));
 		const templateId = selectedTemplateId;
-		await Promise.all(
-			activeLanguageCodes.map((language) =>
-				adminConsentStatementsAPI.upsertLocalization(statementId, versionId, language, {
+		for (const language of activeLanguageCodes) {
+			try {
+				await adminConsentStatementsAPI.upsertLocalization(statementId, versionId, language, {
 					title: internalTitle.trim() || templateTitle(templateId),
 					description: templateDescription(templateId),
 					processing_purpose: templateProcessingPurpose(templateId),
-					withdrawal_impact: '',
-					document_url: '',
 					inline_content: buildInlineContent(language)
-				})
-			)
-		);
+				});
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : localText('localizationSaveFailed');
+				throw new Error(`${localText('localizationSaveFailed')} (${language}): ${message}`);
+			}
+		}
 	}
 
 	function buildInlineContent(language: ContentLanguageCode): string {
@@ -491,6 +584,64 @@
 		const day = Number(value.slice(6, 8));
 		const date = new Date(year, month - 1, day);
 		return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+	}
+
+	function parseRequirementRules(
+		requirement: TenantConsentRequirement | undefined
+	): Record<string, unknown> {
+		if (!requirement?.conditional_rules_json) return {};
+		try {
+			const parsed = JSON.parse(requirement.conditional_rules_json) as unknown;
+			return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+				? (parsed as Record<string, unknown>)
+				: {};
+		} catch {
+			return {};
+		}
+	}
+
+	function isContentMode(value: unknown): value is ContentMode {
+		return value === 'display_only' || value === 'checkbox' || value === 'radio';
+	}
+
+	function isBindingType(value: unknown): value is BindingType {
+		return (
+			value === 'subject' ||
+			value === 'identity_schema' ||
+			value === 'destination_field_mapping_set' ||
+			value === 'user_decision'
+		);
+	}
+
+	function isAttributeValueDisplay(value: unknown): value is AttributeValueDisplay {
+		return value === 'names' || value === 'masked_values' || value === 'full_values';
+	}
+
+	function normalizeContentOptions(value: unknown, fallback: ContentOption[]): ContentOption[] {
+		if (!Array.isArray(value)) return fallback;
+		const options = value
+			.map((raw, index) => {
+				if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+				const record = raw as Record<string, unknown>;
+				const id =
+					typeof record.id === 'string' && record.id.trim()
+						? record.id.trim()
+						: `option-${index + 1}`;
+				const value = typeof record.value === 'string' ? record.value : '';
+				const labels =
+					record.labels && typeof record.labels === 'object' && !Array.isArray(record.labels)
+						? (record.labels as Partial<Record<ContentLanguageCode, string>>)
+						: {};
+				const descriptions =
+					record.descriptions &&
+					typeof record.descriptions === 'object' &&
+					!Array.isArray(record.descriptions)
+						? (record.descriptions as Partial<Record<ContentLanguageCode, string>>)
+						: {};
+				return createContentOption(id, value, labels, descriptions);
+			})
+			.filter((option): option is ContentOption => Boolean(option));
+		return options.length > 0 ? options : fallback;
 	}
 
 	function collectionModeFromRequirement(
@@ -575,10 +726,22 @@
 				en: 'Delete consent statement "{title}"?'
 			},
 			templateRequired: { ja: 'テンプレートを選択してください。', en: 'Select a template.' },
+			localizationSaveFailed: {
+				ja: '同意文の言語別コンテンツ保存に失敗しました。',
+				en: 'Failed to save localized consent content.'
+			},
 			delete: { ja: '削除', en: 'Delete' },
 			deleting: { ja: '削除中...', en: 'Deleting...' },
 			save: { ja: '保存', en: 'Save' },
-			saving: { ja: '保存中...', en: 'Saving...' }
+			saving: { ja: '保存中...', en: 'Saving...' },
+			attributeValueDisplay: { ja: '属性値表示', en: 'Attribute value display' },
+			attributeValueDisplayDescription: {
+				ja: 'SAML属性送信確認で、ユーザーに属性値をどの粒度で表示するかを指定します。',
+				en: 'Controls how attribute values are shown in SAML attribute release confirmation.'
+			},
+			attributeValueNames: { ja: '属性名のみ表示', en: 'Show attribute names only' },
+			attributeValueMasked: { ja: '値をマスクして表示', en: 'Show masked values' },
+			attributeValueFull: { ja: '値をそのまま表示', en: 'Show full values' }
 		};
 		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
 	}
@@ -1556,6 +1719,22 @@
 							</div>
 						{/if}
 					</div>
+					{#if selectedTemplate.id === 'saml-attribute-release-confirmation'}
+						<div class="binding-extra-grid">
+							<label class="admin-field">
+								<span class="admin-field__label">{localText('attributeValueDisplay')}</span>
+								<select class="admin-select" bind:value={attributeValueDisplay}>
+									<option value="names">{localText('attributeValueNames')}</option>
+									<option value="masked_values">{localText('attributeValueMasked')}</option>
+									<option value="full_values">{localText('attributeValueFull')}</option>
+								</select>
+							</label>
+							<div class="binding-help">
+								<strong>{localText('attributeValueDisplay')}</strong>
+								<p>{localText('attributeValueDisplayDescription')}</p>
+							</div>
+						</div>
+					{/if}
 				</section>
 
 				<section class="content-panel" aria-label={$LL.admin_consent_templates_content_aria()}>
@@ -2131,6 +2310,13 @@
 		display: grid;
 		grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
 		gap: 14px;
+	}
+
+	.binding-extra-grid {
+		display: grid;
+		grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
+		gap: 14px;
+		margin-top: 14px;
 	}
 
 	.binding-type-stack {
@@ -2748,7 +2934,8 @@
 			justify-content: center;
 			width: 100%;
 		}
-		.binding-grid {
+		.binding-grid,
+		.binding-extra-grid {
 			grid-template-columns: 1fr;
 		}
 

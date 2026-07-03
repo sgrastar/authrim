@@ -90,7 +90,7 @@ export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
     accepts_input: true,
     emits_output: true,
     default_render: false,
-    output_handles: ['authenticated', 'login_required', 'reauth_required'],
+    output_handles: ['continue', 'authenticate'],
   },
   {
     type: 'registration',
@@ -152,7 +152,7 @@ export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
     category: 'input',
     accepts_input: true,
     emits_output: true,
-    default_render: true,
+    default_render: false,
     output_handles: ['completed', 'cancelled'],
   },
   {

@@ -140,6 +140,41 @@ describe('admin consent statement URL validation', () => {
     ]);
   });
 
+  it('falls back when optional localization user-facing columns are not present yet', async () => {
+    const coreAdapter = createMockAdapter({ localizationExists: true });
+    vi.mocked(coreAdapter.execute)
+      .mockRejectedValueOnce(
+        new Error('no such column: consent_statement_localizations.processing_purpose')
+      )
+      .mockResolvedValueOnce({ success: true, rowsAffected: 1 });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await adminConsentLocalizationUpsertHandler(
+      createMockContext({
+        params: { vid: 'ver-1', lang: 'en' },
+        body: {
+          title: 'Attribute release',
+          description: 'Review released attributes',
+          processing_purpose: 'SAML attribute release confirmation',
+          inline_content: '<p>Allow release?</p>',
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(coreAdapter.execute).mock.calls[1]?.[0]).not.toContain('processing_purpose');
+    expect(vi.mocked(coreAdapter.execute).mock.calls[1]?.[1]).toEqual([
+      'Attribute release',
+      'Review released attributes',
+      null,
+      '<p>Allow release?</p>',
+      expect.any(Number),
+      'ver-1',
+      'en',
+    ]);
+  });
+
   it('rejects unsafe consent requirement deletion_url before writing to storage', async () => {
     const coreAdapter = createMockAdapter({ requirementExists: true });
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });

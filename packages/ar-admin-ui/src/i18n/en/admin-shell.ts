@@ -51,6 +51,7 @@ const adminShell = {
 	admin_nav_saml: 'SAML',
 	admin_nav_directory_authentication: 'Directory Authentication',
 	admin_nav_flows: 'Flows',
+	admin_nav_forms: 'Forms',
 	admin_nav_consents: 'Consents',
 	admin_nav_consent_statements: 'Consent Statements',
 	admin_nav_schema_settings: 'Schema Settings',

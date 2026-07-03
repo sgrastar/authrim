@@ -35,6 +35,15 @@
 	const adminUiVersion = `v${adminUiPackage.version}`;
 	const runtimeEnvironment = import.meta.env.MODE || 'development';
 
+	const hiddenDashboardRoutes = $derived([
+		{
+			path: '/admin/resolution-center',
+			label: $LL.admin_nav_resolution_center(),
+			icon: 'i-ph-check-circle',
+			showInSidebar: false
+		}
+	]);
+
 	// Close mobile menu on navigation
 	$effect(() => {
 		// Track pathname changes - assign to unused variable to satisfy linter
@@ -101,6 +110,7 @@
 				icon: 'i-ph-tree-structure'
 			},
 			{ path: '/admin/flows', label: $LL.admin_nav_flows(), icon: 'i-ph-flow-arrow' },
+			{ path: '/admin/forms', label: $LL.admin_nav_forms(), icon: 'i-ph-textbox' },
 			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
 			{
 				path: '/admin/consent-policies',
@@ -137,10 +147,6 @@
 					href: '/admin/field-mapping/field-mapping-sets',
 					label: $LL.admin_nav_mapping_policies(),
 					activePaths: ['/admin/field-mapping/edit']
-				},
-				{
-					href: '/admin/field-mapping/resolution-center',
-					label: $LL.admin_nav_resolution_center()
 				}
 			]
 		},
@@ -250,6 +256,8 @@
 
 	// All nav items flattened for breadcrumb lookup
 	const allNavItems = $derived([
+		// Dashboard-adjacent hidden routes
+		...hiddenDashboardRoutes,
 		// End User
 		...navEndUser.identity,
 		{
@@ -563,6 +571,14 @@
 				label={$LL.admin_nav_dashboard()}
 				active={isActive('/admin', true)}
 			/>
+			{#each hiddenDashboardRoutes.filter((item) => item.showInSidebar) as item (item.path)}
+				<NavItem
+					href={item.path}
+					icon={item.icon}
+					label={item.label}
+					active={isActive(item.path)}
+				/>
+			{/each}
 
 			<!-- END USER Section -->
 			<NavSection level="enduser">

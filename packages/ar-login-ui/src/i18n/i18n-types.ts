@@ -292,6 +292,74 @@ type RootTranslation = {
 	 */
 	account_operationSessionRevoked: string
 	/**
+	 * Consent confirmations
+	 */
+	account_consentTitle: string
+	/**
+	 * Review applications and scopes you have confirmed access for on this account.
+	 */
+	account_consentDescription: string
+	/**
+	 * No active consent confirmations
+	 */
+	account_consentEmpty: string
+	/**
+	 * Scopes
+	 */
+	account_consentScopes: string
+	/**
+	 * Confirmed at
+	 */
+	account_consentGrantedAt: string
+	/**
+	 * Expires
+	 */
+	account_consentExpiresAt: string
+	/**
+	 * No expiration
+	 */
+	account_consentNoExpiry: string
+	/**
+	 * Policy versions
+	 */
+	account_consentPolicyVersions: string
+	/**
+	 * Privacy policy
+	 */
+	account_consentPrivacyPolicy: string
+	/**
+	 * Terms
+	 */
+	account_consentTerms: string
+	/**
+	 * Consent
+	 */
+	account_consentVersion: string
+	/**
+	 * Status
+	 */
+	account_consentStatus: string
+	/**
+	 * Granted
+	 */
+	account_consentStatusGranted: string
+	/**
+	 * Withdrawn
+	 */
+	account_consentStatusWithdrawn: string
+	/**
+	 * Denied
+	 */
+	account_consentStatusDenied: string
+	/**
+	 * Version
+	 */
+	account_consentVersionLabel: string
+	/**
+	 * Statement ID
+	 */
+	account_consentStatementId: string
+	/**
 	 * W​e​l​c​o​m​e​ ​b​a​c​k
 	 */
 	login_title: string
@@ -1323,6 +1391,74 @@ export type TranslationFunctions = {
 	 * Session logged out
 	 */
 	account_operationSessionRevoked: () => LocalizedString
+	/**
+	 * Consent confirmations
+	 */
+	account_consentTitle: () => LocalizedString
+	/**
+	 * Review applications and scopes you have confirmed access for on this account.
+	 */
+	account_consentDescription: () => LocalizedString
+	/**
+	 * No active consent confirmations
+	 */
+	account_consentEmpty: () => LocalizedString
+	/**
+	 * Scopes
+	 */
+	account_consentScopes: () => LocalizedString
+	/**
+	 * Confirmed at
+	 */
+	account_consentGrantedAt: () => LocalizedString
+	/**
+	 * Expires
+	 */
+	account_consentExpiresAt: () => LocalizedString
+	/**
+	 * No expiration
+	 */
+	account_consentNoExpiry: () => LocalizedString
+	/**
+	 * Policy versions
+	 */
+	account_consentPolicyVersions: () => LocalizedString
+	/**
+	 * Privacy policy
+	 */
+	account_consentPrivacyPolicy: () => LocalizedString
+	/**
+	 * Terms
+	 */
+	account_consentTerms: () => LocalizedString
+	/**
+	 * Consent
+	 */
+	account_consentVersion: () => LocalizedString
+	/**
+	 * Status
+	 */
+	account_consentStatus: () => LocalizedString
+	/**
+	 * Granted
+	 */
+	account_consentStatusGranted: () => LocalizedString
+	/**
+	 * Withdrawn
+	 */
+	account_consentStatusWithdrawn: () => LocalizedString
+	/**
+	 * Denied
+	 */
+	account_consentStatusDenied: () => LocalizedString
+	/**
+	 * Version
+	 */
+	account_consentVersionLabel: () => LocalizedString
+	/**
+	 * Statement ID
+	 */
+	account_consentStatementId: () => LocalizedString
 	/**
 	 * Welcome back
 	 */

@@ -1,0 +1,48 @@
+const adminForms = {
+	admin_forms_page_title: 'Forms - Authrim Admin',
+	admin_forms_title: 'Forms',
+	admin_forms_description:
+		'Manage reusable form profiles used by Flow nodes for registration, profile completion, and login.',
+	admin_forms_loading: 'Loading form profiles...',
+	admin_forms_load_failed: 'Failed to load form profiles.',
+	admin_forms_save_failed: 'Failed to save form profile.',
+	admin_forms_saved: 'Form profile saved.',
+	admin_forms_delete_failed: 'Failed to delete form profile.',
+	admin_forms_deleted: 'Form profile deleted.',
+	admin_forms_create: 'Create form',
+	admin_forms_edit: 'Edit',
+	admin_forms_cancel: 'Cancel',
+	admin_forms_preview: 'Preview',
+	admin_forms_delete: 'Delete',
+	admin_forms_delete_confirm: 'Delete this form profile? This action cannot be undone.',
+	admin_forms_new_profile: 'New form profile',
+	admin_forms_profile_key: 'Profile key',
+	admin_forms_display_name: 'Display name',
+	admin_forms_description_label: 'Description',
+	admin_forms_kind: 'Kind',
+	admin_forms_kind_registration: 'Registration',
+	admin_forms_kind_profile_completion: 'Profile completion',
+	admin_forms_kind_login: 'Login',
+	admin_forms_kind_custom: 'Custom',
+	admin_forms_active: 'Active',
+	admin_forms_system: 'System',
+	admin_forms_fields: 'Fields',
+	admin_forms_field_name: 'Identity Schema field',
+	admin_forms_field_label: 'Label',
+	admin_forms_field_required: 'Required in this form',
+	admin_forms_add_field: 'Add field',
+	admin_forms_remove_field: 'Remove',
+	admin_forms_no_fields: 'This form does not have any fields.',
+	admin_forms_required_mark: 'Required',
+	admin_forms_preview_checkbox_text: 'I have reviewed the entered information',
+	admin_forms_preview_footer_text:
+		'In the actual flow, this form is shown according to the Flow configuration.',
+	admin_forms_save: 'Save',
+	admin_forms_saving: 'Saving...',
+	admin_forms_empty: 'No form profiles are available.',
+	admin_forms_select_profile: 'Select a form profile to edit.',
+	admin_forms_schema_required_note:
+		'Schema required fields remain required. A form can only add required display rules for optional schema fields.'
+};
+
+export default adminForms;

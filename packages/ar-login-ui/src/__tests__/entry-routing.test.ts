@@ -4,6 +4,7 @@ import { actions as loginActions, load as loginLoad } from '../routes/login/+pag
 import { load as discoverLoad } from '../routes/discover/+page.server';
 import { load as signupLoad } from '../routes/signup/+page.server';
 import { clearLoginDiscoveryConfigCacheForTests } from '../lib/login-discovery-config-cache';
+import { clearAuthenticationMethodsServerCache } from '../lib/server/authentication-methods-cache';
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -25,9 +26,53 @@ function createCookies(initial: Record<string, string> = {}) {
 	};
 }
 
+function createAuthenticationMethodsResponse(cacheTTL = 180) {
+	return {
+		methods: {
+			passkey: { enabled: true, capabilities: [] },
+			emailCode: { enabled: true, steps: [] },
+			directoryPassword: { enabled: false, label: 'Organization ID', steps: [] },
+			humanVerification: {
+				enabled: false,
+				provider: 'none',
+				siteKey: null,
+				loginEnabled: false,
+				signupEnabled: false,
+				reauthEnabled: false,
+				failurePolicy: 'fail_closed',
+				widget: {
+					actionPrefix: 'authrim',
+					theme: 'auto',
+					size: 'flexible',
+					mode: 'managed'
+				}
+			},
+			external: { enabled: false, providers: [] }
+		},
+		ui: {
+			theme: 'default',
+			variant: 'default',
+			branding: {
+				logoUrl: null,
+				brandName: 'Authrim'
+			},
+			supportedLocales: ['en', 'ja'],
+			selfService: {
+				accountPageEnabled: true,
+				accountPagePath: '/account'
+			}
+		},
+		meta: {
+			cacheTTL,
+			revision: 'test'
+		}
+	};
+}
+
 describe('common-entry routing', () => {
 	beforeEach(() => {
 		clearLoginDiscoveryConfigCacheForTests();
+		clearAuthenticationMethodsServerCache();
 	});
 
 	it('does not redirect the root page for single-tenant deployments', async () => {
@@ -372,6 +417,94 @@ describe('common-entry routing', () => {
 		} as never);
 
 		expect(result).toEqual({});
+	});
+
+	it('embeds authentication methods when rendering the tenant login page', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				config: {
+					tenant_id: 'first',
+					mode: 'tenant_only',
+					discovery_methods: ['tenant_code', 'tenant_slug'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: false,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		);
+		const authenticationMethods = createAuthenticationMethodsResponse();
+		const routerFetch = vi.fn().mockResolvedValueOnce(jsonResponse(authenticationMethods));
+
+		const result = await loginLoad({
+			cookies: createCookies(),
+			fetch,
+			getClientAddress: () => '192.0.2.10',
+			platform: {
+				env: {
+					PUBLIC_API_BASE_URL: 'https://api.multi-tenant.authrim.com',
+					AR_ROUTER: { fetch: routerFetch }
+				}
+			},
+			request: new Request('https://mt-ar-login-ui.pages.dev/login', {
+				headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
+			}),
+			url: new URL('https://mt-ar-login-ui.pages.dev/login')
+		} as never);
+
+		expect(result).toEqual({ authenticationMethods });
+		expect(routerFetch).toHaveBeenCalledTimes(1);
+		const request = routerFetch.mock.calls[0]?.[0] as Request;
+		expect(request.url).toBe(
+			'https://api.multi-tenant.authrim.com/api/auth/authentication-methods'
+		);
+		expect(request.headers.get('x-authrim-original-host')).toBe('first.multi-tenant.authrim.com');
+	});
+
+	it('renders the tenant login page without embedded authentication methods when the server lookup fails', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				config: {
+					tenant_id: 'first',
+					mode: 'tenant_only',
+					discovery_methods: ['tenant_code', 'tenant_slug'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true,
+					redirect_tenant_discover_to_common_entry: true
+				},
+				single_tenant_mode: false,
+				is_common_entry_host: false,
+				common_discover_url: 'https://multi-tenant.authrim.com/discover'
+			})
+		);
+		const routerFetch = vi.fn().mockResolvedValueOnce(jsonResponse({ error: 'unavailable' }, 503));
+
+		const result = await loginLoad({
+			cookies: createCookies(),
+			fetch,
+			getClientAddress: () => '192.0.2.10',
+			platform: {
+				env: {
+					PUBLIC_API_BASE_URL: 'https://api.multi-tenant.authrim.com',
+					AR_ROUTER: { fetch: routerFetch }
+				}
+			},
+			request: new Request('https://mt-ar-login-ui.pages.dev/login', {
+				headers: { 'x-authrim-original-host': 'first.multi-tenant.authrim.com' }
+			}),
+			url: new URL('https://mt-ar-login-ui.pages.dev/login')
+		} as never);
+
+		expect(result).toEqual({});
+		expect(routerFetch).toHaveBeenCalledTimes(1);
 	});
 
 	it('reuses login discovery config for repeated tenant-host page loads', async () => {

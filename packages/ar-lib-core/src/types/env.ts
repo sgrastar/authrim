@@ -364,6 +364,7 @@ export interface Env {
   LOG_LEVEL?: string; // "debug", "info", "warn", "error" (default: "info")
   LOG_FORMAT?: string; // "json" (structured), "pretty" (human-readable) (default: "json")
   ENABLE_LOG_HASH_USER_ID?: string; // "true" to hash user IDs in logs for privacy
+  AUTHRIM_FLOW_RUNTIME_TIMING?: string; // Temporary: "true" to emit Flow runtime timing diagnostics
 
   // ============================================================
   // Environment Detection & Version Management

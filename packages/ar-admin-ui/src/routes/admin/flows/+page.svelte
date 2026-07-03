@@ -1,11 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { LL } from '$i18n/i18n-svelte';
-	import {
-		getFlowDestinationLabel,
-		getFlowKindLabel,
-		getFlowTemplateText
-	} from '$lib/admin/flow-i18n';
+	import { getFlowKindLabel, getSavedFlowDescription } from '$lib/admin/flow-i18n';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
@@ -15,7 +11,6 @@
 	} from '$lib/api/admin-flows';
 	import { Modal } from '$lib/components';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { newFlowTemplates } from '$lib/admin/new-flow-templates';
 	import { onMount } from 'svelte';
 
 	const MAX_IMPORT_JSON_BYTES = 512 * 1024;
@@ -33,19 +28,6 @@
 	onMount(() => {
 		void loadFlows();
 	});
-
-	const localizedFlows = $derived(
-		newFlowTemplates.map((flow) => ({
-			flow,
-			text: getFlowTemplateText($LL, flow),
-			statusLabel:
-				flow.status === 'preview'
-					? $LL.admin_flows_status_preview()
-					: $LL.admin_flows_status_planning(),
-			destinationLabel: getFlowDestinationLabel($LL, flow.destinationType),
-			flowKindLabel: getFlowKindLabel($LL, flow.flowKind)
-		}))
-	);
 
 	async function loadFlows() {
 		flowsLoading = true;
@@ -246,7 +228,7 @@
 										{getAdminFlowStatusLabel(flow.status)}
 									</span>
 								</div>
-								<p>{flow.description || flow.slug}</p>
+								<p>{getSavedFlowDescription($LL, flow)}</p>
 							</div>
 						</div>
 						<div class="flow-row__meta">
@@ -259,36 +241,6 @@
 				{/each}
 			{:else}
 				<div class="flow-empty">{$LL.admin_flows_saved_flows_empty()}</div>
-			{/if}
-
-			{#if !flowsLoading && flows.length === 0}
-				{#each localizedFlows as { flow, text, statusLabel, destinationLabel, flowKindLabel } (flow.id)}
-					<a class="flow-row" href={`/admin/flows/${flow.id}`}>
-						<div class="flow-row__main">
-							<div class="flow-row__icon">
-								<i
-									class={flow.protocol === 'SAML' ? 'i-ph-arrows-left-right' : 'i-ph-monitor'}
-									aria-hidden="true"
-								></i>
-							</div>
-							<div>
-								<div class="flow-row__title">
-									<strong>{text.title}</strong>
-									<span class="status-badge" data-state={flow.status}>
-										{statusLabel}
-									</span>
-								</div>
-								<p>{text.subtitle}</p>
-							</div>
-						</div>
-						<div class="flow-row__meta">
-							<span>{flow.protocol}</span>
-							<span>{destinationLabel}</span>
-							<span>{flowKindLabel}</span>
-						</div>
-						<i class="i-ph-caret-right flow-row__arrow" aria-hidden="true"></i>
-					</a>
-				{/each}
 			{/if}
 		</div>
 	</AdminSection>

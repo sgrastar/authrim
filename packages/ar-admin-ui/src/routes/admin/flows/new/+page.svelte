@@ -18,6 +18,7 @@
 
 	function getTemplateKind(flow: NewFlowTemplate): AdminFlowKind {
 		if (flow.id === 'oidc-registration') return 'registration';
+		if (flow.id === 'academic-saml-login') return 'login';
 		if (flow.id === 'oidc-login') return 'login';
 		return 'approve';
 	}
@@ -45,6 +46,7 @@
 						config: {
 							ui_kind: 'registration',
 							authentication_profile_ref: 'default',
+							profile_form_ref: 'basic_profile',
 							outputs: [
 								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
 								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() },
@@ -132,6 +134,113 @@
 			};
 		}
 
+		if (flow.id === 'academic-saml-login') {
+			return {
+				nodes: [
+					{
+						id: 'request',
+						type: 'entry',
+						title: $LL.admin_flows_palette_start_label(),
+						position: { x: 360, y: 0 },
+						config: { ui_kind: 'start' }
+					},
+					{
+						id: 'session-check',
+						type: 'session_check',
+						title: $LL.admin_flows_node_session_check(),
+						position: { x: 360, y: 144 },
+						config: { ui_kind: 'session' }
+					},
+					{
+						id: 'authentication',
+						type: 'authentication',
+						title: $LL.admin_flows_node_authentication_method(),
+						position: { x: 522, y: 288 },
+						config: {
+							ui_kind: 'authentication',
+							authentication_profile_ref: 'default',
+							outputs: [
+								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() }
+							]
+						}
+					},
+					{
+						id: 'saml-attribute-release-consent',
+						type: 'consent',
+						title: $LL.admin_flows_node_consent(),
+						position: { x: 360, y: 468 },
+						config: {
+							ui_kind: 'consent',
+							consent_policy_ref: 'saml_attribute_release_policy',
+							completion_block: {
+								id: 'saml-attribute-release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'consent'
+							}
+						}
+					},
+					{
+						id: 'saml-attribute-release-complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: { x: 360, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'saml-attribute-release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'output'
+							}
+						}
+					}
+				],
+				edges: [
+					{
+						id: 'request:next->session-check',
+						source: 'request',
+						source_handle: 'next',
+						target: 'session-check'
+					},
+					{
+						id: 'session-check:continue->saml-attribute-release-consent',
+						source: 'session-check',
+						source_handle: 'continue',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'session-check:authenticate->authentication',
+						source: 'session-check',
+						source_handle: 'authenticate',
+						target: 'authentication'
+					},
+					{
+						id: 'authentication:mail_otp->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'mail_otp',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'authentication:passkey->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'passkey',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'saml-attribute-release-consent:accepted->saml-attribute-release-complete',
+						source: 'saml-attribute-release-consent',
+						source_handle: 'accepted',
+						target: 'saml-attribute-release-complete'
+					}
+				],
+				viewport: { x: 36, y: 36, zoom: 1 }
+			};
+		}
+
 		if (flow.id === 'oidc-login') {
 			return {
 				nodes: [
@@ -139,21 +248,21 @@
 						id: 'request',
 						type: 'entry',
 						title: $LL.admin_flows_node_login_request(),
-						position: createPosition(0),
+						position: { x: 360, y: 0 },
 						config: { ui_kind: 'start' }
 					},
 					{
 						id: 'session-check',
 						type: 'session_check',
 						title: $LL.admin_flows_node_session_check(),
-						position: createPosition(1),
-						config: { ui_kind: 'decision' }
+						position: { x: 360, y: 144 },
+						config: { ui_kind: 'session' }
 					},
 					{
-						id: 'authentication-method',
+						id: 'authentication',
 						type: 'authentication',
 						title: $LL.admin_flows_node_authentication_method(),
-						position: createPosition(2),
+						position: { x: 522, y: 288 },
 						config: {
 							ui_kind: 'authentication',
 							authentication_profile_ref: 'default',
@@ -165,21 +274,70 @@
 						}
 					},
 					{
-						id: 'consent',
+						id: 'saml-attribute-release-consent',
 						type: 'consent',
 						title: $LL.admin_flows_node_consent(),
-						position: createPosition(3),
+						position: { x: 108, y: 468 },
 						config: {
 							ui_kind: 'consent',
-							consent_policy_ref: 'oidc_authorization_consent_policy'
+							consent_policy_ref: 'saml_attribute_release_policy',
+							completion_block: {
+								id: 'saml-attribute_release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'consent'
+							}
 						}
 					},
 					{
-						id: 'complete',
+						id: 'saml-attribute-release-complete',
 						type: 'complete',
 						title: $LL.admin_flows_palette_end_label(),
-						position: createPosition(4),
-						config: { ui_kind: 'end' }
+						position: { x: 108, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'saml-attribute_release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'output'
+							}
+						}
+					},
+					{
+						id: 'oidc-authorization-consent',
+						type: 'consent',
+						title: $LL.admin_flows_node_consent(),
+						position: { x: 594, y: 468 },
+						config: {
+							ui_kind: 'consent',
+							consent_policy_ref: 'oidc_authorization_consent_policy',
+							completion_block: {
+								id: 'oidc-authorization-completion',
+								label: $LL.admin_flows_completion_block_oidc_authorization(),
+								protocol: 'oidc',
+								purpose: 'authorization',
+								role: 'consent'
+							}
+						}
+					},
+					{
+						id: 'oidc-authorization-complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: { x: 594, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'oidc-authorization-completion',
+								label: $LL.admin_flows_completion_block_oidc_authorization(),
+								protocol: 'oidc',
+								purpose: 'authorization',
+								role: 'output'
+							}
+						}
 					}
 				],
 				edges: [
@@ -190,46 +348,70 @@
 						target: 'session-check'
 					},
 					{
-						id: 'session-check:authenticated->complete',
+						id: 'session-check:continue->saml-attribute-release-consent',
 						source: 'session-check',
-						source_handle: 'authenticated',
-						target: 'complete'
+						source_handle: 'continue',
+						target: 'saml-attribute-release-consent'
 					},
 					{
-						id: 'session-check:login_required->authentication-method',
+						id: 'session-check:continue->oidc-authorization-consent',
 						source: 'session-check',
-						source_handle: 'login_required',
-						target: 'authentication-method'
+						source_handle: 'continue',
+						target: 'oidc-authorization-consent'
 					},
 					{
-						id: 'session-check:reauth_required->authentication-method',
+						id: 'session-check:authenticate->authentication',
 						source: 'session-check',
-						source_handle: 'reauth_required',
-						target: 'authentication-method'
+						source_handle: 'authenticate',
+						target: 'authentication'
 					},
 					{
-						id: 'authentication-method:mail_otp->consent',
-						source: 'authentication-method',
+						id: 'authentication:mail_otp->saml-attribute-release-consent',
+						source: 'authentication',
 						source_handle: 'mail_otp',
-						target: 'consent'
+						target: 'saml-attribute-release-consent'
 					},
 					{
-						id: 'authentication-method:passkey->consent',
-						source: 'authentication-method',
+						id: 'authentication:mail_otp->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'mail_otp',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'authentication:passkey->saml-attribute-release-consent',
+						source: 'authentication',
 						source_handle: 'passkey',
-						target: 'consent'
+						target: 'saml-attribute-release-consent'
 					},
 					{
-						id: 'authentication-method:facebook->consent',
-						source: 'authentication-method',
+						id: 'authentication:passkey->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'passkey',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'authentication:facebook->saml-attribute-release-consent',
+						source: 'authentication',
 						source_handle: 'facebook',
-						target: 'consent'
+						target: 'saml-attribute-release-consent'
 					},
 					{
-						id: 'consent:accepted->complete',
-						source: 'consent',
+						id: 'authentication:facebook->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'facebook',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'saml-attribute-release-consent:accepted->saml-attribute-release-complete',
+						source: 'saml-attribute-release-consent',
 						source_handle: 'accepted',
-						target: 'complete'
+						target: 'saml-attribute-release-complete'
+					},
+					{
+						id: 'oidc-authorization-consent:accepted->oidc-authorization-complete',
+						source: 'oidc-authorization-consent',
+						source_handle: 'accepted',
+						target: 'oidc-authorization-complete'
 					}
 				],
 				viewport: { x: 36, y: 36, zoom: 1 }
@@ -292,7 +474,8 @@
 			const response = await adminFlowsAPI.create({
 				slug: flow.id,
 				display_name: text.title,
-				description: text.description,
+				description: null,
+				template_id: flow.id,
 				kind: getTemplateKind(flow),
 				editor: createTemplateEditorState(flow)
 			});

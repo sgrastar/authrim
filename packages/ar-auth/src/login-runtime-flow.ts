@@ -12,7 +12,6 @@ import {
   getTenantIdFromContext,
   hashIpAddress,
   isShardedSessionId,
-  processConsentItemDecisions,
   type DatabaseAdapter,
   type Env,
   type FlowAssignmentTargetType,
@@ -31,6 +30,7 @@ import {
 type AuthContext = Context<{ Bindings: Env }>;
 type FlowRuntimeEnv = Env & {
   FLOW_RUNTIME_HMAC_SECRET?: string;
+  AUTHRIM_FLOW_RUNTIME_TIMING?: string;
 };
 
 interface StartRequest {
@@ -130,6 +130,12 @@ interface CachedFlowVersion {
   expiresAt: number;
 }
 
+interface CachedPreparedRuntimeContract {
+  contract: FlowRuntimeContract;
+  contractHash: string;
+  expiresAt: number;
+}
+
 interface RuntimeConsentPolicyItem extends FlowRuntimeJsonObject {
   statement_id: string;
   slug: string;
@@ -141,6 +147,9 @@ interface RuntimeConsentPolicyItem extends FlowRuntimeJsonObject {
   version: string;
   version_id: string;
   is_required: boolean;
+  content_mode: 'display_only' | 'checkbox' | 'radio';
+  options: RuntimeConsentPolicyOption[];
+  attribute_value_display: 'names' | 'masked_values' | 'full_values' | null;
   checkbox_mode: 'none' | 'required' | 'optional';
   checkbox_default_checked: boolean;
   binding_type: string | null;
@@ -150,6 +159,13 @@ interface RuntimeConsentPolicyItem extends FlowRuntimeJsonObject {
   display_order: number;
 }
 
+interface RuntimeConsentPolicyOption extends FlowRuntimeJsonObject {
+  id: string;
+  value: string;
+  label: string;
+  description: string;
+}
+
 interface RuntimeConsentPolicyContent extends FlowRuntimeJsonObject {
   id: string;
   display_name: string;
@@ -157,6 +173,66 @@ interface RuntimeConsentPolicyContent extends FlowRuntimeJsonObject {
   language: string;
   default_language: string;
   items: RuntimeConsentPolicyItem[];
+}
+
+interface RuntimeFormProfileRow {
+  id: string;
+  profile_key: string;
+  display_name: string;
+  description: string | null;
+  form_kind: string;
+  fields_json: string | null;
+  localizations_json: string | null;
+  settings_json: string | null;
+}
+
+type RuntimeConsentRecordBindingType =
+  | 'subject'
+  | 'identity_schema'
+  | 'destination_field_mapping_set'
+  | 'user_decision';
+
+type RuntimeConsentRecordKind =
+  | 'terms'
+  | 'privacy'
+  | 'attribute_release'
+  | 'scope_claim_release'
+  | 'form_confirmation'
+  | 'custom';
+
+type RuntimeConsentRecordResourceType =
+  | 'userinfo'
+  | 'id_token'
+  | 'saml_attributes'
+  | 'document'
+  | 'custom';
+
+type RuntimeConsentRecordDecision = 'accepted' | 'rejected' | 'once' | 'always' | 'selected';
+
+interface RuntimeConsentItemDecision {
+  decision: RuntimeConsentRecordDecision;
+  selectedValue: string | null;
+}
+
+interface FlowRuntimeTerminalError {
+  error: string;
+  message?: string;
+}
+
+interface RuntimeAutoAdvancedStep {
+  step: FlowRuntimeStep;
+  selectedHandle: string | null;
+  userId?: string | null;
+}
+
+interface RuntimeStartTimingSpan {
+  name: string;
+  durationMs: number;
+}
+
+interface RuntimeStartTiming {
+  startedAtMs: number;
+  spans: RuntimeStartTimingSpan[];
 }
 
 const LOGIN_RUNTIME_FEATURE_KEYS = [
@@ -169,9 +245,11 @@ const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve
 const FLOW_VERSION_CACHE_TTL_SECONDS = 180;
 const FLOW_VERSION_CACHE_MAX_ENTRIES = 256;
 const flowVersionCache = new Map<string, CachedFlowVersion>();
+const preparedRuntimeContractCache = new Map<string, CachedPreparedRuntimeContract>();
 
 export function clearLoginRuntimeFlowVersionCacheForTests(): void {
   flowVersionCache.clear();
+  preparedRuntimeContractCache.clear();
 }
 
 function nowSeconds(): number {
@@ -223,6 +301,24 @@ function parseJsonObject(value: string | null): Record<string, unknown> {
   }
 }
 
+function parseJsonObjectArray(value: string | null): FlowRuntimeJsonObject[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is FlowRuntimeJsonObject =>
+        Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+    );
+  } catch {
+    return [];
+  }
+}
+
+function parseRuntimeJsonObject(value: string | null): FlowRuntimeJsonObject {
+  return parseJsonObject(value) as FlowRuntimeJsonObject;
+}
+
 function jsonError(
   c: AuthContext,
   status: 400 | 403 | 404 | 409 | 500,
@@ -261,6 +357,101 @@ function runtimeError(
     },
     status
   );
+}
+
+function isRuntimeStartTimingEnabled(env: FlowRuntimeEnv): boolean {
+  const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function runtimeStartTimingNowMs(): number {
+  return Date.now();
+}
+
+function roundRuntimeStartDurationMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function createRuntimeStartTiming(env: FlowRuntimeEnv): RuntimeStartTiming | null {
+  if (!isRuntimeStartTimingEnabled(env)) {
+    return null;
+  }
+  return {
+    startedAtMs: runtimeStartTimingNowMs(),
+    spans: [],
+  };
+}
+
+async function timeRuntimeStartSpan<T>(
+  timing: RuntimeStartTiming | null,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!timing) {
+    return operation();
+  }
+  const startedAtMs = runtimeStartTimingNowMs();
+  try {
+    return await operation();
+  } finally {
+    timing.spans.push({
+      name,
+      durationMs: roundRuntimeStartDurationMs(runtimeStartTimingNowMs() - startedAtMs),
+    });
+  }
+}
+
+function timeRuntimeStartValue<T>(
+  timing: RuntimeStartTiming | null,
+  name: string,
+  operation: () => T
+): T {
+  if (!timing) {
+    return operation();
+  }
+  const startedAtMs = runtimeStartTimingNowMs();
+  try {
+    return operation();
+  } finally {
+    timing.spans.push({
+      name,
+      durationMs: roundRuntimeStartDurationMs(runtimeStartTimingNowMs() - startedAtMs),
+    });
+  }
+}
+
+function writeRuntimeStartTiming(
+  c: AuthContext,
+  timing: RuntimeStartTiming | null,
+  metadata: {
+    result: 'success' | 'disabled' | 'resume' | 'error';
+    flowKind?: FlowKind;
+    targetType?: FlowAssignmentTargetType;
+    currentStepId?: string | null;
+    autoAdvancedSteps?: number;
+    error?: string;
+  }
+): void {
+  if (!timing) {
+    return;
+  }
+
+  const totalMs = roundRuntimeStartDurationMs(runtimeStartTimingNowMs() - timing.startedAtMs);
+  const allSpans = [...timing.spans, { name: 'total', durationMs: totalMs }];
+  c.header(
+    'Server-Timing',
+    allSpans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ')
+  );
+  getLogger(c).module('LOGIN-RUNTIME-FLOW-TIMING').info('LoginUI runtime Flow start timing', {
+    result: metadata.result,
+    flow_kind: metadata.flowKind,
+    target_type: metadata.targetType,
+    current_step_id: metadata.currentStepId,
+    auto_advanced_steps: metadata.autoAdvancedSteps,
+    error: metadata.error,
+    total_ms: totalMs,
+    spans_ms: Object.fromEntries(allSpans.map((span) => [span.name, span.durationMs])),
+  });
 }
 
 async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {
@@ -478,6 +669,83 @@ function normalizeRuntime(
   };
 }
 
+function getPreparedRuntimeContractCacheKey(
+  tenantId: string,
+  assignment: FlowAssignmentRow,
+  version: FlowVersionRow,
+  requestContext: FlowRequestContext
+): string {
+  return JSON.stringify([
+    tenantId,
+    assignment.flow_id,
+    version.id,
+    assignment.flow_kind,
+    assignment.target_type,
+    assignment.target_id,
+    requestContext.protocol,
+    requestContext.target_type,
+    requestContext.target_id,
+    requestContext.client_id,
+    requestContext.saml_sp_id,
+    requestContext.authorization_challenge_id,
+    requestContext.saml_request_id,
+    requestContext.saml_sp_entity_id,
+    requestContext.return_to,
+    requestContext.locale,
+    requestContext.requested_scope,
+  ]);
+}
+
+function rememberPreparedRuntimeContract(
+  cacheKey: string,
+  contract: FlowRuntimeContract,
+  contractHash: string,
+  now: number
+): void {
+  preparedRuntimeContractCache.set(cacheKey, {
+    contract,
+    contractHash,
+    expiresAt: now + FLOW_VERSION_CACHE_TTL_SECONDS,
+  });
+  if (preparedRuntimeContractCache.size > FLOW_VERSION_CACHE_MAX_ENTRIES) {
+    const firstKey = preparedRuntimeContractCache.keys().next().value;
+    if (firstKey) preparedRuntimeContractCache.delete(firstKey);
+  }
+}
+
+async function prepareRuntimeContract(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  assignment: FlowAssignmentRow;
+  version: FlowVersionRow;
+  runtimeSnapshot: FlowRuntimeContract;
+  requestContext: FlowRequestContext;
+}): Promise<{ contract: FlowRuntimeContract; contractHash: string }> {
+  const cacheKey = getPreparedRuntimeContractCacheKey(
+    input.tenantId,
+    input.assignment,
+    input.version,
+    input.requestContext
+  );
+  const now = nowSeconds();
+  const cached = preparedRuntimeContractCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return { contract: cached.contract, contractHash: cached.contractHash };
+  }
+
+  const contract = await hydrateRuntimeContract(
+    input.c,
+    input.db,
+    input.tenantId,
+    normalizeRuntime(input.runtimeSnapshot, input.assignment, input.version, input.requestContext),
+    input.requestContext
+  );
+  const contractHash = await sha256Base64Url(JSON.stringify(contract));
+  rememberPreparedRuntimeContract(cacheKey, contract, contractHash, now);
+  return { contract, contractHash };
+}
+
 function parseJsonRecord(value: unknown): Record<string, unknown> {
   if (!value) return {};
   if (typeof value === 'string') {
@@ -493,6 +761,90 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readLocalizedRuntimeString(
+  value: unknown,
+  language: string,
+  defaultLanguage = 'en'
+): string {
+  if (typeof value === 'string') return value;
+  const record = parseJsonRecord(value);
+  const preferred = record[language] ?? record[defaultLanguage] ?? record.en;
+  return typeof preferred === 'string' ? preferred : '';
+}
+
+function normalizeRuntimeConsentContentMode(
+  value: unknown,
+  category: string,
+  checkboxMode: string
+): RuntimeConsentPolicyItem['content_mode'] {
+  if (value === 'display_only' || value === 'checkbox' || value === 'radio') return value;
+  if (category === 'saml_attribute_release_confirmation') return 'radio';
+  return checkboxMode === 'required' || checkboxMode === 'optional' ? 'checkbox' : 'display_only';
+}
+
+function normalizeRuntimeAttributeValueDisplay(
+  value: unknown,
+  category: string
+): RuntimeConsentPolicyItem['attribute_value_display'] {
+  if (value === 'names' || value === 'masked_values' || value === 'full_values') return value;
+  return category === 'saml_attribute_release_confirmation' ? 'masked_values' : null;
+}
+
+function defaultRuntimeConsentOptions(
+  category: string,
+  language: string
+): RuntimeConsentPolicyOption[] {
+  if (category !== 'saml_attribute_release_confirmation') return [];
+  const ja = language === 'ja';
+  return [
+    {
+      id: 'option-1',
+      value: 'once',
+      label: ja ? '今回のみ同意' : 'Allow this time only',
+      description: ja
+        ? '今回のログインに限って属性送信を許可します。'
+        : 'Allow this attribute release only for the current sign-in.',
+    },
+    {
+      id: 'option-2',
+      value: 'always',
+      label: ja ? '今後も同意' : 'Always allow for this service',
+      description: ja
+        ? 'このサービスへの今後のログインでも、この選択を利用します。'
+        : 'Remember this choice for future sign-ins to this service.',
+    },
+  ];
+}
+
+function normalizeRuntimeConsentOptions(
+  value: unknown,
+  category: string,
+  language: string,
+  defaultLanguage: string
+): RuntimeConsentPolicyOption[] {
+  if (!Array.isArray(value)) return defaultRuntimeConsentOptions(category, language);
+  const options = value
+    .map((raw, index) => {
+      const record = parseJsonRecord(raw);
+      const selectedValue = readString(record.value, 128) ?? `option-${index + 1}`;
+      const label =
+        readLocalizedRuntimeString(record.labels, language, defaultLanguage) ||
+        readLocalizedRuntimeString(record.label, language, defaultLanguage) ||
+        selectedValue;
+      const description =
+        readLocalizedRuntimeString(record.descriptions, language, defaultLanguage) ||
+        readLocalizedRuntimeString(record.description, language, defaultLanguage);
+      return {
+        id: readString(record.id, 128) ?? `option-${index + 1}`,
+        value: selectedValue,
+        label,
+        description,
+      };
+    })
+    .filter((option) => option.value);
+  return options.length > 0 ? options : defaultRuntimeConsentOptions(category, language);
 }
 
 function readBooleanSetting(
@@ -719,13 +1071,16 @@ async function resolveRuntimeConsentPolicyContent(
     display_order: number;
     slug: string;
     category: string;
+    conditional_rules_json: string | null;
   }>(
     `SELECT i.statement_id, i.requirement, i.version_mode, i.version_id,
             i.checkbox_mode, i.checkbox_default_checked, i.binding_type, i.binding_value,
             i.evidence_profile, i.language_fallback, i.display_order,
-            s.slug, s.category
+            s.slug, s.category, r.conditional_rules_json
        FROM consent_policy_items i
        JOIN consent_statements s ON s.id = i.statement_id AND s.tenant_id = i.tenant_id
+       LEFT JOIN tenant_consent_requirements r
+         ON r.statement_id = i.statement_id AND r.tenant_id = i.tenant_id
       WHERE i.tenant_id = ? AND i.policy_id = ? AND s.is_active = 1
       ORDER BY i.display_order ASC, i.created_at ASC`,
     [tenantId, policyId]
@@ -747,6 +1102,12 @@ async function resolveRuntimeConsentPolicyContent(
     );
     if (!version) continue;
     const localization = await getConsentLocalizationForRuntime(db, tenantId, version.id, language);
+    const statementRules = parseJsonRecord(row.conditional_rules_json);
+    const contentMode = normalizeRuntimeConsentContentMode(
+      statementRules.content_mode,
+      row.category,
+      row.checkbox_mode
+    );
     items.push({
       statement_id: row.statement_id,
       slug: row.slug,
@@ -758,6 +1119,20 @@ async function resolveRuntimeConsentPolicyContent(
       version: version.version,
       version_id: version.id,
       is_required: row.requirement === 'required',
+      content_mode: contentMode,
+      options:
+        contentMode === 'radio' || contentMode === 'checkbox'
+          ? normalizeRuntimeConsentOptions(
+              statementRules.content_options,
+              row.category,
+              language,
+              'en'
+            )
+          : [],
+      attribute_value_display: normalizeRuntimeAttributeValueDisplay(
+        statementRules.attribute_value_display,
+        row.category
+      ),
       checkbox_mode:
         row.checkbox_mode === 'required' || row.checkbox_mode === 'optional'
           ? row.checkbox_mode
@@ -781,6 +1156,35 @@ async function resolveRuntimeConsentPolicyContent(
   };
 }
 
+async function resolveRuntimeFormProfileContent(
+  db: DatabaseAdapter,
+  tenantId: string,
+  profileRef: string | null
+): Promise<FlowRuntimeJsonObject | null> {
+  if (!profileRef) return null;
+  const row = await db.queryOne<RuntimeFormProfileRow>(
+    `SELECT id, profile_key, display_name, description, form_kind, fields_json,
+            localizations_json, settings_json
+       FROM form_profiles
+      WHERE tenant_id = ?
+        AND is_active = 1
+        AND (id = ? OR profile_key = ?)
+      LIMIT 1`,
+    [tenantId, profileRef, profileRef]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    profile_key: row.profile_key,
+    display_name: row.display_name,
+    description: row.description,
+    form_kind: row.form_kind,
+    fields: parseJsonObjectArray(row.fields_json),
+    localizations: parseRuntimeJsonObject(row.localizations_json),
+    settings: parseRuntimeJsonObject(row.settings_json),
+  };
+}
+
 async function hydrateRuntimeContract(
   c: AuthContext,
   db: DatabaseAdapter,
@@ -792,6 +1196,9 @@ async function hydrateRuntimeContract(
     runtime.ui.steps.map(async (step) => {
       const config = parseJsonRecord(step.config);
       const content = parseJsonRecord(step.content);
+      const nextConfig: FlowRuntimeJsonObject = { ...(config as FlowRuntimeJsonObject) };
+      const nextContent: FlowRuntimeJsonObject = { ...(content as FlowRuntimeJsonObject) };
+
       if (
         step.component === 'authentication_method_selector' ||
         step.component === 'registration_method_selector'
@@ -802,37 +1209,32 @@ async function hydrateRuntimeContract(
           runtime.flow_kind,
           step.component
         );
-        return {
-          ...step,
-          config: {
-            ...config,
-            output_handles: handles,
-          },
-          content: {
-            ...content,
-            authentication_profile: {
-              id: readString(config.authentication_profile_ref, 200) ?? 'default',
-              output_handles: handles,
-            },
-          },
+        nextConfig.output_handles = handles;
+        nextContent.authentication_profile = {
+          id: readString(config.authentication_profile_ref, 200) ?? 'default',
+          output_handles: handles,
         };
       }
 
-      if (step.component === 'consent_policy') {
-        const policyId = readString(config.consent_policy_ref, 200);
+      const profileRef = readString(config.profile_form_ref, 200);
+      if (profileRef) {
+        const formProfile = await resolveRuntimeFormProfileContent(db, tenantId, profileRef);
+        nextConfig.form_profile = formProfile;
+      }
+
+      const policyId = readString(config.consent_policy_ref, 200);
+      if (policyId) {
         const policy = policyId
           ? await resolveRuntimeConsentPolicyContent(db, tenantId, policyId, requestContext)
           : null;
-        return {
-          ...step,
-          content: {
-            ...content,
-            consent_policy: policy,
-          },
-        };
+        nextContent.consent_policy = policy;
       }
 
-      return step;
+      return {
+        ...step,
+        config: nextConfig,
+        content: nextContent,
+      };
     })
   );
 
@@ -917,11 +1319,7 @@ function getRequestContextFromInteraction(interaction: FlowInteractionRow): Flow
   };
 }
 
-function getFirstStep(runtime: FlowRuntimeContract): {
-  id: string;
-  source_node_id: string;
-  render?: boolean;
-} | null {
+function getFirstStep(runtime: FlowRuntimeContract): FlowRuntimeStep | null {
   const first = runtime.ui.steps[0];
   if (!first || typeof first.id !== 'string' || typeof first.source_node_id !== 'string') {
     return null;
@@ -1062,6 +1460,36 @@ function resolveNextStep(
   }
 
   return { step: runtime.ui.steps[currentIndex + 1] ?? null };
+}
+
+function getRuntimeStepIndex(runtime: FlowRuntimeContract, step: FlowRuntimeStep): number {
+  return runtime.ui.steps.findIndex(
+    (candidate) => candidate.id === step.id && candidate.source_node_id === step.source_node_id
+  );
+}
+
+function readRuntimeConsentPolicyContent(
+  step: FlowRuntimeStep
+): RuntimeConsentPolicyContent | null {
+  const content = parseJsonRecord(step.content);
+  const policy = parseJsonRecord(content.consent_policy);
+  const id = readString(policy.id, 200);
+  if (!id || !Array.isArray(policy.items)) return null;
+  return policy as RuntimeConsentPolicyContent;
+}
+
+function withRuntimeConsentPolicyContent(
+  step: FlowRuntimeStep,
+  policy: RuntimeConsentPolicyContent
+): FlowRuntimeStep {
+  const content = parseJsonRecord(step.content);
+  return {
+    ...step,
+    content: {
+      ...content,
+      consent_policy: policy,
+    },
+  };
 }
 
 function parseConditionConfig(value: unknown): FlowConditionConfig | null {
@@ -1259,6 +1687,17 @@ async function resolveConditionSelectedHandle(input: {
   return { selectedHandle: result.output_handle ?? null };
 }
 
+async function resolveSessionCheckSelectedHandle(
+  c: AuthContext,
+  tenantId: string
+): Promise<{ selectedHandle: 'continue' | 'authenticate'; userId: string | null }> {
+  const session = await getCurrentSession(c, tenantId);
+  return {
+    selectedHandle: session?.userId ? 'continue' : 'authenticate',
+    userId: session?.userId ?? null,
+  };
+}
+
 function getStepStateForRuntimeStep(step: FlowRuntimeStep): 'pending' | 'waiting_input' {
   return step.render === false ? 'pending' : 'waiting_input';
 }
@@ -1292,6 +1731,62 @@ function readRuntimeCompletionBlock(step: FlowRuntimeStep): FlowRuntimeJsonObjec
   if (purpose) block.purpose = purpose;
   if (role) block.role = role;
   return block;
+}
+
+function isImplicitAccountActionStep(step: FlowRuntimeStep): boolean {
+  if (step.component !== 'account_action') return false;
+  const config = parseJsonRecord(step.config);
+  return (
+    config.interaction_ui !== true &&
+    config.render_ui !== true &&
+    typeof config.profile_form_ref !== 'string'
+  );
+}
+
+function autoAdvanceHandleForStep(step: FlowRuntimeStep): string | null {
+  if (isImplicitAccountActionStep(step)) {
+    return 'completed';
+  }
+  return null;
+}
+
+async function resolveAutoAdvanceForStep(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  runtime: FlowRuntimeContract;
+  step: FlowRuntimeStep;
+}): Promise<{
+  selectedHandle: string | null;
+  userId?: string | null;
+  terminalError?: FlowRuntimeTerminalError;
+  errorCode?: string;
+} | null> {
+  if (input.step.component === 'condition') {
+    return resolveConditionSelectedHandle({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      runtime: input.runtime,
+      step: input.step,
+    });
+  }
+
+  if (input.step.component === 'session_check') {
+    return resolveSessionCheckSelectedHandle(input.c, input.tenantId);
+  }
+
+  const selectedHandle = autoAdvanceHandleForStep(input.step);
+  if (selectedHandle) {
+    return { selectedHandle };
+  }
+
+  if (input.step.render === false && input.step.component !== 'email_verification') {
+    return { selectedHandle: null };
+  }
+
+  return null;
 }
 
 function buildCompletedRuntimeOutput(input: {
@@ -1465,16 +1960,593 @@ async function getCurrentSession(c: AuthContext, tenantId: string): Promise<Sess
   return session;
 }
 
-function readConsentDecisionMap(input: unknown): Record<string, 'granted' | 'denied'> {
+function readConsentDecisionMap(input: unknown): Record<string, 'granted' | 'denied' | 'selected'> {
   const inputRecord = parseJsonRecord(input);
   const raw = parseJsonRecord(inputRecord.consent_item_decisions ?? inputRecord.decisions);
-  const decisions: Record<string, 'granted' | 'denied'> = {};
+  const decisions: Record<string, 'granted' | 'denied' | 'selected'> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (value === 'granted' || value === 'denied') {
+    if (value === 'granted' || value === 'denied' || value === 'selected') {
       decisions[key] = value;
     }
   }
   return decisions;
+}
+
+function readConsentSelectedValueMap(input: unknown): Record<string, string> {
+  const inputRecord = parseJsonRecord(input);
+  const raw = parseJsonRecord(
+    inputRecord.consent_item_selected_values ?? inputRecord.selected_values
+  );
+  const selectedValues: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const selectedValue = readString(value, 256);
+    if (selectedValue) {
+      selectedValues[key] = selectedValue;
+    }
+  }
+  return selectedValues;
+}
+
+function consentOptionValueSet(item: RuntimeConsentPolicyItem): Set<string> {
+  return new Set(item.options.map((option) => option.value));
+}
+
+function consentItemDecision(input: {
+  item: RuntimeConsentPolicyItem;
+  submittedDecision: 'granted' | 'denied' | 'selected' | undefined;
+  submittedSelectedValue: string | undefined;
+}): RuntimeConsentItemDecision {
+  const { item, submittedDecision, submittedSelectedValue } = input;
+  if (item.content_mode === 'radio') {
+    const allowedValues = consentOptionValueSet(item);
+    const selectedValue =
+      submittedSelectedValue && allowedValues.has(submittedSelectedValue)
+        ? submittedSelectedValue
+        : null;
+    if (!selectedValue) return { decision: 'rejected', selectedValue: null };
+    if (selectedValue === 'once') return { decision: 'once', selectedValue };
+    if (selectedValue === 'always') return { decision: 'always', selectedValue };
+    if (
+      selectedValue === 'none' ||
+      selectedValue === 'false' ||
+      selectedValue === 'deny' ||
+      selectedValue === 'denied' ||
+      selectedValue === 'rejected'
+    ) {
+      return { decision: 'rejected', selectedValue };
+    }
+    return { decision: submittedDecision === 'denied' ? 'rejected' : 'selected', selectedValue };
+  }
+
+  if (item.checkbox_mode === 'none') return { decision: 'accepted', selectedValue: null };
+  return {
+    decision: submittedDecision === 'granted' ? 'accepted' : 'rejected',
+    selectedValue: null,
+  };
+}
+
+function consentItemInputSatisfied(
+  item: RuntimeConsentPolicyItem,
+  decision: RuntimeConsentItemDecision
+): boolean {
+  if (!item.is_required) return true;
+  if (item.content_mode === 'radio') return Boolean(decision.selectedValue);
+  return decision.decision !== 'rejected';
+}
+
+function normalizeConsentRecordKind(category: string): RuntimeConsentRecordKind {
+  const normalized = category.trim().toLowerCase();
+  if (
+    normalized === 'terms' ||
+    normalized === 'terms_of_service' ||
+    normalized === 'service_terms'
+  ) {
+    return 'terms';
+  }
+  if (normalized === 'privacy' || normalized === 'privacy_policy') return 'privacy';
+  if (
+    normalized === 'attribute_release' ||
+    normalized === 'saml_attribute_release' ||
+    normalized === 'saml_attribute_release_confirmation'
+  ) {
+    return 'attribute_release';
+  }
+  if (
+    normalized === 'scope_claim_release' ||
+    normalized === 'oidc_scope_claim_release' ||
+    normalized === 'data_release'
+  ) {
+    return 'scope_claim_release';
+  }
+  if (normalized === 'form_confirmation' || normalized === 'profile_form') {
+    return 'form_confirmation';
+  }
+  return 'custom';
+}
+
+function normalizeConsentRecordBindingType(
+  bindingType: string | null,
+  requestContext: FlowRequestContext
+): RuntimeConsentRecordBindingType {
+  const normalized = bindingType?.trim().toLowerCase() ?? '';
+  if (
+    normalized === 'identity_schema' ||
+    normalized === 'claim' ||
+    normalized === 'saml_attribute'
+  ) {
+    return 'identity_schema';
+  }
+  if (
+    normalized === 'destination_field_mapping_set' ||
+    normalized === 'destination_field_set' ||
+    normalized === 'field_mapping_set'
+  ) {
+    return 'destination_field_mapping_set';
+  }
+  if (normalized === 'user_decision' || normalized === 'scope') return 'user_decision';
+  if (requestContext.protocol === 'saml') return 'user_decision';
+  return 'subject';
+}
+
+function consentRecordResourceType(
+  item: RuntimeConsentPolicyItem,
+  requestContext: FlowRequestContext
+): RuntimeConsentRecordResourceType {
+  const kind = normalizeConsentRecordKind(item.category);
+  if (kind === 'terms' || kind === 'privacy') return 'document';
+  if (requestContext.protocol === 'saml') return 'saml_attributes';
+  if (kind === 'scope_claim_release') return 'userinfo';
+  return 'custom';
+}
+
+function consentRecordRecipient(input: {
+  interaction: FlowInteractionRow;
+  requestContext: FlowRequestContext;
+}): { recipientType: 'oidc_client' | 'saml_sp' | 'tenant'; recipientId: string | null } {
+  const recipientType =
+    input.requestContext.protocol === 'saml'
+      ? 'saml_sp'
+      : input.requestContext.protocol === 'oidc'
+        ? 'oidc_client'
+        : 'tenant';
+  const recipientId =
+    input.interaction.saml_sp_id ?? input.interaction.client_id ?? input.requestContext.target_id;
+  return { recipientType, recipientId };
+}
+
+async function hasActiveAcceptedConsentRecord(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  requestContext: FlowRequestContext;
+  userId: string;
+  policyId: string;
+  item: RuntimeConsentPolicyItem;
+}): Promise<boolean> {
+  const { recipientType, recipientId } = consentRecordRecipient(input);
+  const bindingType = normalizeConsentRecordBindingType(
+    input.item.binding_type,
+    input.requestContext
+  );
+  const protocol =
+    input.requestContext.protocol === 'direct' ? 'custom' : input.requestContext.protocol;
+  const now = nowSeconds();
+  const row = await input.db.queryOne<{ id: string }>(
+    `SELECT id
+       FROM consent_records
+      WHERE tenant_id = ?
+        AND subject_user_id = ?
+        AND protocol = ?
+        AND recipient_type = ?
+        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
+        AND binding_type = ?
+        AND ((binding_key = ?) OR (binding_key IS NULL AND ? IS NULL))
+        AND statement_id = ?
+        AND statement_version = ?
+        AND policy_id = ?
+        AND decision IN ('accepted', 'always', 'selected')
+        AND status = 'active'
+        AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [
+      input.tenantId,
+      input.userId,
+      protocol,
+      recipientType,
+      recipientId,
+      recipientId,
+      bindingType,
+      input.item.binding_value,
+      input.item.binding_value,
+      input.item.statement_id,
+      input.item.version,
+      input.policyId,
+      now,
+    ]
+  );
+  return Boolean(row);
+}
+
+async function removeAcceptedConsentItems(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  requestContext: FlowRequestContext;
+  userId: string | null;
+  step: FlowRuntimeStep;
+}): Promise<FlowRuntimeStep> {
+  if (input.step.component !== 'consent_policy' || !input.userId) return input.step;
+  const policy = readRuntimeConsentPolicyContent(input.step);
+  if (!policy) return input.step;
+  const remainingItems: RuntimeConsentPolicyItem[] = [];
+  for (const item of policy.items) {
+    const alreadyAccepted = await hasActiveAcceptedConsentRecord({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      requestContext: input.requestContext,
+      userId: input.userId,
+      policyId: policy.id,
+      item,
+    });
+    if (!alreadyAccepted) {
+      remainingItems.push(item);
+    }
+  }
+  return withRuntimeConsentPolicyContent(input.step, {
+    ...policy,
+    items: remainingItems,
+  });
+}
+
+async function resolveNextDisplayStep(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  runtime: FlowRuntimeContract;
+  editor: FlowEditorState | null;
+  requestContext: FlowRequestContext;
+  userId: string | null;
+  initialStep: FlowRuntimeStep | null;
+  completeTerminalStep?: boolean;
+}): Promise<{
+  step: FlowRuntimeStep | null;
+  terminalStep: FlowRuntimeStep | null;
+  terminalError?: FlowRuntimeTerminalError;
+  errorCode?: string;
+  userId: string | null;
+  autoAdvancedSteps: RuntimeAutoAdvancedStep[];
+}> {
+  let step = input.initialStep;
+  let userId = input.userId;
+  const autoAdvancedSteps: RuntimeAutoAdvancedStep[] = [];
+  const visited = new Set<string>();
+
+  while (step) {
+    const visitKey = `${step.source_node_id}:${step.id}`;
+    if (visited.has(visitKey)) {
+      return {
+        step: null,
+        terminalStep: null,
+        errorCode: 'AR_FLOW_RUNTIME_LOOP',
+        userId,
+        autoAdvancedSteps,
+      };
+    }
+    visited.add(visitKey);
+
+    if (step.component === 'completion') {
+      return input.completeTerminalStep === false
+        ? { step, terminalStep: null, userId, autoAdvancedSteps }
+        : { step: null, terminalStep: step, userId, autoAdvancedSteps };
+    }
+
+    const autoAdvance = await resolveAutoAdvanceForStep({
+      c: input.c,
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      runtime: input.runtime,
+      step,
+    });
+    if (autoAdvance) {
+      if (autoAdvance.terminalError) {
+        return {
+          step: null,
+          terminalStep: null,
+          terminalError: autoAdvance.terminalError,
+          userId,
+          autoAdvancedSteps,
+        };
+      }
+      if (autoAdvance.errorCode) {
+        return {
+          step: null,
+          terminalStep: null,
+          errorCode: autoAdvance.errorCode,
+          userId,
+          autoAdvancedSteps,
+        };
+      }
+      if (autoAdvance.userId) {
+        userId = autoAdvance.userId;
+      }
+      autoAdvancedSteps.push({
+        step,
+        selectedHandle: autoAdvance.selectedHandle,
+        userId: autoAdvance.userId,
+      });
+      const stepIndex = getRuntimeStepIndex(input.runtime, step);
+      if (stepIndex < 0) {
+        return {
+          step: null,
+          terminalStep: null,
+          errorCode: 'AR_FLOW_RUNTIME_INVALID',
+          userId,
+          autoAdvancedSteps,
+        };
+      }
+      const nextResolution = resolveNextStep(
+        input.runtime,
+        stepIndex,
+        input.editor,
+        autoAdvance.selectedHandle
+      );
+      if (nextResolution.errorCode) {
+        return {
+          step: null,
+          terminalStep: null,
+          errorCode: nextResolution.errorCode,
+          userId,
+          autoAdvancedSteps,
+        };
+      }
+      step = nextResolution.step;
+      continue;
+    }
+
+    if (step.component === 'consent_policy') {
+      const filteredStep = await removeAcceptedConsentItems({
+        db: input.db,
+        tenantId: input.tenantId,
+        interaction: input.interaction,
+        requestContext: input.requestContext,
+        userId,
+        step,
+      });
+      const policy = readRuntimeConsentPolicyContent(filteredStep);
+      if (!policy || policy.items.length > 0) {
+        return { step: filteredStep, terminalStep: null, userId, autoAdvancedSteps };
+      }
+
+      autoAdvancedSteps.push({
+        step,
+        selectedHandle: null,
+        userId,
+      });
+      const stepIndex = getRuntimeStepIndex(input.runtime, step);
+      if (stepIndex < 0) {
+        return {
+          step: null,
+          terminalStep: null,
+          errorCode: 'AR_FLOW_RUNTIME_INVALID',
+          userId,
+          autoAdvancedSteps,
+        };
+      }
+      const nextResolution = resolveNextStep(input.runtime, stepIndex, input.editor, null);
+      if (nextResolution.errorCode) {
+        return {
+          step: null,
+          terminalStep: null,
+          errorCode: nextResolution.errorCode,
+          userId,
+          autoAdvancedSteps,
+        };
+      }
+      step = nextResolution.step;
+      continue;
+    }
+
+    return { step, terminalStep: null, userId, autoAdvancedSteps };
+  }
+
+  return { step: null, terminalStep: null, userId, autoAdvancedSteps };
+}
+
+async function persistInitialAutoAdvancedSteps(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  initialStepRowId: string;
+  autoAdvancedSteps: RuntimeAutoAdvancedStep[];
+  nextStep: FlowRuntimeStep;
+  userId: string | null;
+  now: number;
+}): Promise<void> {
+  if (input.autoAdvancedSteps.length === 0) return;
+
+  await input.db.transaction(async (tx) => {
+    for (let index = 0; index < input.autoAdvancedSteps.length; index += 1) {
+      const advanced = input.autoAdvancedSteps[index];
+      const stateJson = JSON.stringify({
+        selected_handle: advanced.selectedHandle,
+        submitted_handle: advanced.selectedHandle,
+        completed_at: input.now,
+        auto_advanced: true,
+      });
+
+      if (index === 0) {
+        await tx.execute(
+          `UPDATE flow_interaction_steps
+             SET state = 'completed', selected_handle = ?, state_json = ?, updated_at = ?
+           WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input', 'processing')`,
+          [advanced.selectedHandle, stateJson, input.now, input.tenantId, input.initialStepRowId]
+        );
+      } else {
+        await tx.execute(
+          `INSERT INTO flow_interaction_steps (
+            id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)`,
+          [
+            generateId(),
+            input.tenantId,
+            input.interaction.id,
+            advanced.step.source_node_id,
+            advanced.step.id,
+            advanced.selectedHandle,
+            stateJson,
+            input.now,
+            input.now,
+          ]
+        );
+      }
+    }
+
+    await tx.execute(
+      `INSERT INTO flow_interaction_steps (
+        id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [
+        generateId(),
+        input.tenantId,
+        input.interaction.id,
+        input.nextStep.source_node_id,
+        input.nextStep.id,
+        getStepStateForRuntimeStep(input.nextStep),
+        input.now,
+        input.now,
+      ]
+    );
+
+    await tx.execute(
+      `UPDATE flow_interactions
+         SET user_id = COALESCE(user_id, ?), current_node_id = ?, current_step_id = ?,
+             updated_at = ?, completed_at = NULL
+       WHERE tenant_id = ? AND id = ?`,
+      [
+        input.userId,
+        input.nextStep.source_node_id,
+        input.nextStep.id,
+        input.now,
+        input.tenantId,
+        input.interaction.id,
+      ]
+    );
+  });
+
+  for (const advanced of input.autoAdvancedSteps) {
+    await insertAuditEvent(input.db, input.tenantId, input.interaction, {
+      eventType: eventTypeForCompletedStep(advanced.step),
+      result: 'success',
+      nodeId: advanced.step.source_node_id,
+      branchHandleId: advanced.selectedHandle,
+      userId: advanced.userId ?? input.userId,
+    });
+  }
+
+  await insertAuditEvent(input.db, input.tenantId, input.interaction, {
+    eventType: 'flow.node.entered',
+    result: 'success',
+    nodeId: input.nextStep.source_node_id,
+    userId: input.userId,
+  });
+}
+
+async function insertFlowConsentRecords(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  step: FlowRuntimeStep;
+  policy: RuntimeConsentPolicyContent;
+  requestContext: FlowRequestContext;
+  userId: string;
+  decisions: Record<string, RuntimeConsentItemDecision>;
+  ipHash?: string;
+  userAgent?: string;
+}): Promise<void> {
+  const now = nowSeconds();
+  const { recipientType, recipientId } = consentRecordRecipient(input);
+  const releasedScopes =
+    input.requestContext.protocol === 'oidc' && input.requestContext.requested_scope.length > 0
+      ? JSON.stringify(input.requestContext.requested_scope)
+      : null;
+
+  for (const item of input.policy.items) {
+    const itemDecision = input.decisions[item.statement_id] ?? {
+      decision: 'rejected',
+      selectedValue: null,
+    };
+    const bindingType = normalizeConsentRecordBindingType(item.binding_type, input.requestContext);
+    const resourceType = consentRecordResourceType(item, input.requestContext);
+    await input.db.execute(
+      `INSERT INTO consent_records (
+        id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+        client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+        resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+        flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+        released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+        revoked_at, evidence_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        generateId(),
+        input.tenantId,
+        input.userId,
+        input.userId,
+        input.requestContext.protocol === 'direct' ? 'custom' : input.requestContext.protocol,
+        normalizeConsentRecordKind(item.category),
+        input.interaction.client_id,
+        input.interaction.saml_sp_id,
+        recipientType,
+        recipientId,
+        bindingType,
+        item.binding_value,
+        resourceType,
+        item.binding_value,
+        item.category,
+        item.statement_id,
+        item.version,
+        input.policy.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        itemDecision.decision,
+        itemDecision.selectedValue,
+        itemDecision.selectedValue ? JSON.stringify([itemDecision.selectedValue]) : null,
+        releasedScopes,
+        null,
+        null,
+        'active',
+        null,
+        null,
+        JSON.stringify({
+          source: 'flow_runtime',
+          interaction_id: input.interaction.id,
+          step_id: input.step.id,
+          node_id: input.step.source_node_id,
+          statement_slug: item.slug,
+          statement_version_id: item.version_id,
+          content_mode: item.content_mode,
+          checkbox_mode: item.checkbox_mode,
+          is_required: item.is_required,
+          selected_value: itemDecision.selectedValue,
+          attribute_value_display: item.attribute_value_display,
+          requested_scope: input.requestContext.requested_scope,
+          authorization_challenge_id: input.requestContext.authorization_challenge_id,
+          saml_request_id: input.requestContext.saml_request_id,
+          saml_sp_entity_id: input.requestContext.saml_sp_entity_id,
+          user_agent: input.userAgent,
+          ip_address_hash: input.ipHash,
+        }),
+        now,
+        now,
+      ]
+    );
+  }
 }
 
 async function persistRuntimeConsentStep(input: {
@@ -1485,11 +2557,11 @@ async function persistRuntimeConsentStep(input: {
   step: FlowRuntimeStep;
   submitInput: unknown;
 }): Promise<{ ok: boolean; response?: Response; userId?: string | null }> {
-  if (input.step.component !== 'consent_policy') return { ok: true };
   const requestContext = getRequestContextFromInteraction(input.interaction);
   const config = parseJsonRecord(input.step.config);
   const policyId = readString(config.consent_policy_ref, 200);
   if (!policyId) {
+    if (input.step.component !== 'consent_policy') return { ok: true };
     return {
       ok: false,
       response: runtimeError(
@@ -1529,6 +2601,12 @@ async function persistRuntimeConsentStep(input: {
 
   const userId = await getCurrentSessionUserId(input.c, input.tenantId);
   if (!userId) {
+    if (
+      input.step.component === 'authentication_method_selector' ||
+      input.step.component === 'registration_method_selector'
+    ) {
+      return { ok: true };
+    }
     return {
       ok: false,
       response: runtimeError(
@@ -1545,18 +2623,19 @@ async function persistRuntimeConsentStep(input: {
   }
 
   const submitted = readConsentDecisionMap(input.submitInput);
+  const submittedSelectedValues = readConsentSelectedValueMap(input.submitInput);
   const decisions = Object.fromEntries(
     policy.items.map((item) => [
       item.statement_id,
-      submitted[item.statement_id] === 'granted' || submitted[item.statement_id] === 'denied'
-        ? submitted[item.statement_id]
-        : item.checkbox_mode === 'none'
-          ? 'granted'
-          : 'denied',
+      consentItemDecision({
+        item,
+        submittedDecision: submitted[item.statement_id],
+        submittedSelectedValue: submittedSelectedValues[item.statement_id],
+      }),
     ])
-  ) as Record<string, 'granted' | 'denied'>;
+  ) as Record<string, RuntimeConsentItemDecision>;
   const missingRequired = policy.items.filter(
-    (item) => item.is_required && decisions[item.statement_id] !== 'granted'
+    (item) => !consentItemInputSatisfied(item, decisions[item.statement_id])
   );
   if (missingRequired.length > 0) {
     return {
@@ -1574,15 +2653,6 @@ async function persistRuntimeConsentStep(input: {
     };
   }
 
-  const targets = Object.fromEntries(
-    policy.items.map((item) => [
-      item.statement_id,
-      {
-        version_id: item.version_id,
-        version: item.version,
-      },
-    ])
-  );
   const ipAddress =
     getRequestHeader(input.c, 'CF-Connecting-IP') ||
     getRequestHeader(input.c, 'X-Forwarded-For') ||
@@ -1590,19 +2660,18 @@ async function persistRuntimeConsentStep(input: {
   const ipHash = ipAddress
     ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null)
     : undefined;
-  await processConsentItemDecisions(
-    input.db,
-    input.tenantId,
+  await insertFlowConsentRecords({
+    db: input.db,
+    tenantId: input.tenantId,
+    interaction: input.interaction,
+    step: input.step,
+    policy,
+    requestContext,
     userId,
     decisions,
-    {
-      ip_address: ipAddress || undefined,
-      user_agent: getRequestHeader(input.c, 'User-Agent'),
-      client_id: input.interaction.client_id ?? undefined,
-    },
     ipHash,
-    targets
-  );
+    userAgent: getRequestHeader(input.c, 'User-Agent'),
+  });
 
   await input.db.execute(
     `UPDATE flow_interactions
@@ -1717,29 +2786,26 @@ async function resumeInteraction(
   }
 
   const requestContext = getRequestContextFromInteraction(interaction);
-  const contract = await hydrateRuntimeContract(
+  const assignment: FlowAssignmentRow = {
+    flow_id: interaction.flow_id,
+    flow_kind: runtime.flow_kind,
+    target_type: interaction.saml_sp_id
+      ? 'saml_sp'
+      : interaction.client_id
+        ? 'oidc_client'
+        : 'tenant',
+    target_id: interaction.saml_sp_id ?? interaction.client_id,
+    published_version_id: interaction.flow_version_id,
+  };
+  const { contract, contractHash } = await prepareRuntimeContract({
     c,
     db,
     tenantId,
-    normalizeRuntime(
-      runtime,
-      {
-        flow_id: interaction.flow_id,
-        flow_kind: runtime.flow_kind,
-        target_type: interaction.saml_sp_id
-          ? 'saml_sp'
-          : interaction.client_id
-            ? 'oidc_client'
-            : 'tenant',
-        target_id: interaction.saml_sp_id ?? interaction.client_id,
-        published_version_id: interaction.flow_version_id,
-      },
-      version,
-      requestContext
-    ),
-    requestContext
-  );
-  const contractHash = await sha256Base64Url(JSON.stringify(contract));
+    assignment,
+    version,
+    runtimeSnapshot: runtime,
+    requestContext,
+  });
   const signature = await signContract({
     interactionId: interaction.id,
     contractHash,
@@ -1773,37 +2839,62 @@ async function resumeInteraction(
 }
 
 export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
+  const timing = createRuntimeStartTiming(c.env);
   const tenantId = getTenantIdFromContext(c);
-  const enabled = await isLoginRuntimeFlowEnabled(c.env, tenantId);
+  const enabled = await timeRuntimeStartSpan(timing, 'feature_flag', () =>
+    isLoginRuntimeFlowEnabled(c.env, tenantId)
+  );
   if (!enabled) {
+    writeRuntimeStartTiming(c, timing, { result: 'disabled', error: 'flow_runtime_disabled' });
     return jsonError(c, 403, 'flow_runtime_disabled', 'LoginUI runtime Flow is disabled');
   }
 
-  const body = await c.req.json<StartRequest>().catch((): StartRequest => ({}));
+  const body = await timeRuntimeStartSpan(timing, 'parse_body', () =>
+    c.req.json<StartRequest>().catch((): StartRequest => ({}))
+  );
   const resumeInteractionId = readString(body.resume_interaction_id, 128);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = timeRuntimeStartValue(timing, 'auth_context', () =>
+    createAuthContextFromHono(c, tenantId)
+  );
   const db = authCtx.coreAdapter;
 
   if (resumeInteractionId) {
-    return resumeInteraction(
-      c,
-      db,
-      tenantId,
-      resumeInteractionId,
-      readString(body.contract_hash, 256),
-      readString(body.signature, 512)
+    const response = await timeRuntimeStartSpan(timing, 'resume_interaction', () =>
+      resumeInteraction(
+        c,
+        db,
+        tenantId,
+        resumeInteractionId,
+        readString(body.contract_hash, 256),
+        readString(body.signature, 512)
+      )
     );
+    writeRuntimeStartTiming(c, timing, { result: 'resume' });
+    return response;
   }
 
-  const target = resolveTarget(body);
+  const target = timeRuntimeStartValue(timing, 'resolve_target', () => resolveTarget(body));
   if (!target) {
+    writeRuntimeStartTiming(c, timing, { result: 'error', error: 'invalid_target' });
     return jsonError(c, 400, 'invalid_target', 'Flow assignment target is invalid');
   }
 
-  const flowKind = normalizeFlowKind(body.flow_kind);
-  const requestContext = createRequestContext(target, body);
-  const assignment = await resolveAssignment(db, tenantId, flowKind, target);
+  const flowKind = timeRuntimeStartValue(timing, 'normalize_flow', () =>
+    normalizeFlowKind(body.flow_kind)
+  );
+  const requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
+    createRequestContext(target, body)
+  );
+  const assignment = await timeRuntimeStartSpan(timing, 'resolve_assignment', () =>
+    resolveAssignment(db, tenantId, flowKind, target)
+  );
   if (!assignment) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind,
+      targetType: target.targetType,
+      error: 'flow_assignment_missing',
+    });
     return jsonError(
       c,
       409,
@@ -1812,21 +2903,47 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     );
   }
 
-  const version = await getPublishedVersion(db, tenantId, assignment);
-  const runtimeSnapshot = version ? parseRuntimeSnapshot(version.runtime_snapshot_json) : null;
+  const version = await timeRuntimeStartSpan(timing, 'published_version', () =>
+    getPublishedVersion(db, tenantId, assignment)
+  );
+  const runtimeSnapshot = timeRuntimeStartValue(timing, 'parse_snapshot', () =>
+    version ? parseRuntimeSnapshot(version.runtime_snapshot_json) : null
+  );
   if (!version || !runtimeSnapshot) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind,
+      targetType: target.targetType,
+      error: 'flow_version_unavailable',
+    });
     return jsonError(c, 409, 'flow_version_unavailable', 'Published Flow version is unavailable');
   }
 
-  const runtime = await hydrateRuntimeContract(
-    c,
-    db,
-    tenantId,
-    normalizeRuntime(runtimeSnapshot, assignment, version, requestContext),
-    requestContext
+  const { contract: runtime, contractHash } = await timeRuntimeStartSpan(
+    timing,
+    'prepare_contract',
+    () =>
+      prepareRuntimeContract({
+        c,
+        db,
+        tenantId,
+        assignment,
+        version,
+        runtimeSnapshot,
+        requestContext,
+      })
   );
-  const firstStep = getFirstStep(runtime);
+  const editor = timeRuntimeStartValue(timing, 'parse_editor', () =>
+    parseEditorSnapshot(version.editor_snapshot_json)
+  );
+  const firstStep = timeRuntimeStartValue(timing, 'first_step', () => getFirstStep(runtime));
   if (!firstStep) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind,
+      targetType: target.targetType,
+      error: 'flow_runtime_invalid',
+    });
     return jsonError(
       c,
       409,
@@ -1837,6 +2954,12 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
 
   const secret = getRuntimeHmacSecret(c.env);
   if (!secret) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind,
+      targetType: target.targetType,
+      error: 'flow_runtime_secret_missing',
+    });
     return jsonError(
       c,
       500,
@@ -1850,86 +2973,205 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const auditEventId = generateId();
   const now = nowSeconds();
   const expiresAt = now + FLOW_RUNTIME_INTERACTION_TTL_SECONDS;
-  const contractHash = await sha256Base64Url(JSON.stringify(runtime));
-  const signature = await signContract({
-    interactionId,
-    contractHash,
-    expiresAt,
-    secret,
-  });
+  const signature = await timeRuntimeStartSpan(timing, 'sign_contract', () =>
+    signContract({
+      interactionId,
+      contractHash,
+      expiresAt,
+      secret,
+    })
+  );
 
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      `INSERT INTO flow_interactions (
+  await timeRuntimeStartSpan(timing, 'initial_tx', () =>
+    db.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO flow_interactions (
         id, tenant_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state,
         current_node_id, current_step_id, context_json, contract_hash, signature, expires_at, created_at,
         updated_at, completed_at
       ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-      [
-        interactionId,
-        tenantId,
-        assignment.flow_id,
-        version.id,
-        target.clientId,
-        target.samlSpId,
-        firstStep.source_node_id,
-        firstStep.id,
-        JSON.stringify(requestContext),
-        contractHash,
-        signature,
-        expiresAt,
-        now,
-        now,
-      ]
-    );
-    await tx.execute(
-      `INSERT INTO flow_interaction_steps (
+        [
+          interactionId,
+          tenantId,
+          assignment.flow_id,
+          version.id,
+          target.clientId,
+          target.samlSpId,
+          firstStep.source_node_id,
+          firstStep.id,
+          JSON.stringify(requestContext),
+          contractHash,
+          signature,
+          expiresAt,
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO flow_interaction_steps (
         id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-      [
-        stepRowId,
-        tenantId,
-        interactionId,
-        firstStep.source_node_id,
-        firstStep.id,
-        firstStep.render === false ? 'pending' : 'waiting_input',
-        now,
-        now,
-      ]
-    );
-    await tx.execute(
-      `INSERT INTO flow_audit_events (
+        [
+          stepRowId,
+          tenantId,
+          interactionId,
+          firstStep.source_node_id,
+          firstStep.id,
+          firstStep.render === false ? 'pending' : 'waiting_input',
+          now,
+          now,
+        ]
+      );
+      await tx.execute(
+        `INSERT INTO flow_audit_events (
         id, tenant_id, interaction_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id,
         node_id, branch_handle_id, event_type, result, error_code, contract_hash, metadata_json,
         created_at
       ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, 'flow.interaction.started', 'success', NULL, ?, ?, ?)`,
-      [
-        auditEventId,
-        tenantId,
-        interactionId,
-        assignment.flow_id,
-        version.id,
-        target.clientId,
-        target.samlSpId,
-        firstStep.source_node_id,
-        contractHash,
-        JSON.stringify({
-          target_type: assignment.target_type,
-          target_id: assignment.target_id,
-          flow_kind: assignment.flow_kind,
-          requested_scope: requestContext.requested_scope,
-        }),
-        now,
-      ]
+        [
+          auditEventId,
+          tenantId,
+          interactionId,
+          assignment.flow_id,
+          version.id,
+          target.clientId,
+          target.samlSpId,
+          firstStep.source_node_id,
+          contractHash,
+          JSON.stringify({
+            target_type: assignment.target_type,
+            target_id: assignment.target_id,
+            flow_kind: assignment.flow_kind,
+            requested_scope: requestContext.requested_scope,
+          }),
+          now,
+        ]
+      );
+    })
+  );
+
+  const startedInteraction: FlowInteractionRow = {
+    id: interactionId,
+    flow_id: assignment.flow_id,
+    flow_version_id: version.id,
+    user_id: null,
+    client_id: target.clientId,
+    saml_sp_id: target.samlSpId,
+    state: 'active',
+    current_node_id: firstStep.source_node_id,
+    current_step_id: firstStep.id,
+    context_json: JSON.stringify(requestContext),
+    contract_hash: contractHash,
+    signature,
+    expires_at: expiresAt,
+  };
+  const initialDisplayResolution = await timeRuntimeStartSpan(timing, 'resolve_initial_step', () =>
+    resolveNextDisplayStep({
+      c,
+      db,
+      tenantId,
+      interaction: startedInteraction,
+      runtime,
+      editor,
+      requestContext,
+      userId: null,
+      initialStep: firstStep,
+      completeTerminalStep: false,
+    })
+  );
+  if (initialDisplayResolution.terminalError) {
+    await insertAuditEvent(db, tenantId, startedInteraction, {
+      eventType: 'flow.interaction.failed',
+      result: 'terminal_error',
+      errorCode: initialDisplayResolution.terminalError.error,
+      nodeId: firstStep.source_node_id,
+    });
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind: assignment.flow_kind,
+      targetType: assignment.target_type,
+      error: initialDisplayResolution.terminalError.error,
+    });
+    return runtimeError(
+      c,
+      409,
+      initialDisplayResolution.terminalError.error,
+      initialDisplayResolution.terminalError.message ?? 'Flow condition ended this interaction',
+      'AR_FLOW_TERMINAL',
+      'terminal_error',
+      'show_terminal_error',
+      interactionId
     );
-  });
+  }
+  if (initialDisplayResolution.errorCode) {
+    await insertAuditEvent(db, tenantId, startedInteraction, {
+      eventType: 'flow.interaction.failed',
+      result: 'configuration_error',
+      errorCode: initialDisplayResolution.errorCode,
+      nodeId: firstStep.source_node_id,
+    });
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind: assignment.flow_kind,
+      targetType: assignment.target_type,
+      error: initialDisplayResolution.errorCode,
+    });
+    return runtimeError(
+      c,
+      409,
+      'invalid_flow_branch',
+      'Published Flow initial branch cannot be evaluated',
+      initialDisplayResolution.errorCode,
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+  const initialCurrentStep = initialDisplayResolution.step;
+  if (!initialCurrentStep) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind: assignment.flow_kind,
+      targetType: assignment.target_type,
+      error: 'flow_runtime_invalid',
+    });
+    return jsonError(
+      c,
+      409,
+      'flow_runtime_invalid',
+      'Published Flow runtime has no displayable initial step'
+    );
+  }
+  if (initialDisplayResolution.autoAdvancedSteps.length > 0) {
+    await timeRuntimeStartSpan(timing, 'persist_auto_advance', () =>
+      persistInitialAutoAdvancedSteps({
+        db,
+        tenantId,
+        interaction: startedInteraction,
+        initialStepRowId: stepRowId,
+        autoAdvancedSteps: initialDisplayResolution.autoAdvancedSteps,
+        nextStep: initialCurrentStep,
+        userId: initialDisplayResolution.userId,
+        now,
+      })
+    );
+  }
 
   getLogger(c).module('LOGIN-RUNTIME-FLOW').info('Started LoginUI runtime Flow interaction', {
     interaction_id: interactionId,
     flow_id: assignment.flow_id,
     flow_version_id: version.id,
     flow_kind: assignment.flow_kind,
+    current_step_id: initialCurrentStep.id,
+    auto_advanced_steps: initialDisplayResolution.autoAdvancedSteps.length,
+  });
+  writeRuntimeStartTiming(c, timing, {
+    result: 'success',
+    flowKind: assignment.flow_kind,
+    targetType: assignment.target_type,
+    currentStepId: initialCurrentStep.id,
+    autoAdvancedSteps: initialDisplayResolution.autoAdvancedSteps.length,
   });
 
   return c.json({
@@ -1939,8 +3181,8 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       state: 'active',
       flow_id: assignment.flow_id,
       flow_version_id: version.id,
-      current_node_id: firstStep.source_node_id,
-      current_step_id: firstStep.id,
+      current_node_id: initialCurrentStep.source_node_id,
+      current_step_id: initialCurrentStep.id,
       expires_at: expiresAt,
     },
     assignment: {
@@ -2211,6 +3453,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
 
   let branchResolution: {
     selectedHandle: string | null;
+    userId?: string | null;
     terminalError?: { error: string; message?: string };
     errorCode?: string;
   };
@@ -2222,6 +3465,8 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       runtime,
       step: current.step,
     });
+  } else if (current.step.component === 'session_check') {
+    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId);
   } else {
     branchResolution = { selectedHandle };
   }
@@ -2265,7 +3510,10 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   const effectiveSelectedHandle = branchResolution.selectedHandle ?? selectedHandle;
-  const nextResolution = resolveNextStep(runtime, current.index, editor, effectiveSelectedHandle);
+  const nextResolution =
+    current.step.component === 'completion'
+      ? { step: null as FlowRuntimeStep | null }
+      : resolveNextStep(runtime, current.index, editor, effectiveSelectedHandle);
   if (nextResolution.errorCode) {
     await insertAuditEvent(db, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
@@ -2286,10 +3534,6 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
-  const nextStep = nextResolution.step;
-  const completed = nextStep === null;
-  const nextState = completed ? 'completed' : 'active';
-  const completedAt = completed ? now : null;
   const consentResult = await persistRuntimeConsentStep({
     c,
     db,
@@ -2313,12 +3557,14 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       )
     );
   }
-  let resolvedUserId = consentResult.userId ?? interaction.user_id;
+  let resolvedUserId = consentResult.userId ?? branchResolution.userId ?? interaction.user_id;
   if (
     !resolvedUserId &&
     (current.step.component === 'authentication_method_selector' ||
       current.step.component === 'registration_method_selector' ||
-      completed)
+      current.step.component === 'completion' ||
+      nextResolution.step?.component === 'consent_policy' ||
+      nextResolution.step?.component === 'completion')
   ) {
     resolvedUserId = await getCurrentSessionUserId(c, tenantId);
     if (resolvedUserId) {
@@ -2330,6 +3576,82 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       );
     }
   }
+
+  const visibleStepResolution =
+    current.step.component === 'completion'
+      ? {
+          step: null as FlowRuntimeStep | null,
+          terminalStep: current.step,
+          userId: resolvedUserId ?? null,
+          autoAdvancedSteps: [],
+        }
+      : await resolveNextDisplayStep({
+          c,
+          db,
+          tenantId,
+          interaction,
+          runtime,
+          editor,
+          requestContext,
+          userId: resolvedUserId ?? null,
+          initialStep: nextResolution.step,
+        });
+  if (visibleStepResolution.terminalError) {
+    await insertAuditEvent(db, tenantId, interaction, {
+      eventType: 'flow.interaction.failed',
+      result: 'terminal_error',
+      errorCode: visibleStepResolution.terminalError.error,
+      nodeId: interaction.current_node_id,
+      branchHandleId: effectiveSelectedHandle,
+      userId: resolvedUserId,
+    });
+    return runtimeError(
+      c,
+      409,
+      visibleStepResolution.terminalError.error,
+      visibleStepResolution.terminalError.message ?? 'Flow condition ended this interaction',
+      'AR_FLOW_TERMINAL',
+      'terminal_error',
+      'show_terminal_error',
+      interactionId
+    );
+  }
+  if (visibleStepResolution.errorCode) {
+    await insertAuditEvent(db, tenantId, interaction, {
+      eventType: 'flow.interaction.failed',
+      result: 'configuration_error',
+      errorCode: visibleStepResolution.errorCode,
+      nodeId: interaction.current_node_id,
+      branchHandleId: effectiveSelectedHandle,
+      userId: resolvedUserId,
+    });
+    return runtimeError(
+      c,
+      409,
+      'invalid_flow_branch',
+      'Submitted Flow branch does not match the active Flow step',
+      visibleStepResolution.errorCode,
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+  resolvedUserId = visibleStepResolution.userId ?? resolvedUserId;
+  if (visibleStepResolution.userId && visibleStepResolution.userId !== interaction.user_id) {
+    await db.execute(
+      `UPDATE flow_interactions
+         SET user_id = COALESCE(user_id, ?), updated_at = ?
+       WHERE tenant_id = ? AND id = ?`,
+      [visibleStepResolution.userId, now, tenantId, interactionId]
+    );
+  }
+
+  const nextStep = visibleStepResolution.step;
+  const terminalStep = visibleStepResolution.terminalStep;
+  const outputStep = terminalStep ?? current.step;
+  const completed = nextStep === null;
+  const nextState = completed ? 'completed' : 'active';
+  const completedAt = completed ? now : null;
 
   await db.transaction(async (tx) => {
     await tx.execute(
@@ -2402,7 +3724,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       await insertAuditEvent(db, tenantId, interaction, {
         eventType: 'flow.output.completed',
         result: 'success',
-        nodeId: current.step.source_node_id,
+        nodeId: outputStep.source_node_id,
         branchHandleId: effectiveSelectedHandle,
         userId: resolvedUserId,
       });
@@ -2459,7 +3781,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       ? buildCompletedRuntimeOutput({
           interaction,
           requestContext,
-          currentStep: current.step,
+          currentStep: outputStep,
           effectiveSelectedHandle,
           redirectUrl: completedProtocolRedirect.redirectUrl,
         })

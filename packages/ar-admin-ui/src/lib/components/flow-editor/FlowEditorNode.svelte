@@ -4,6 +4,7 @@
 
 	export type FlowEditorNodeKind =
 		| 'start'
+		| 'session'
 		| 'registration'
 		| 'authentication'
 		| 'verification'
@@ -11,7 +12,9 @@
 		| 'consent'
 		| 'account'
 		| 'end'
-		| 'decision';
+		| 'decision'
+		| 'oidc_completion'
+		| 'saml_completion';
 
 	export interface FlowEditorNodeOutput {
 		id: string;
@@ -34,6 +37,7 @@
 		outputs: FlowEditorNodeOutput[];
 		completionBlock?: FlowEditorCompletionBlock;
 		configure?: (nodeId: string) => void;
+		hover?: (nodeId: string | null) => void;
 	}
 
 	type EditorNode = Node<FlowEditorNodeData, 'editor'>;
@@ -65,6 +69,11 @@
 	function stopNodeEvent(event: Event) {
 		event.stopPropagation();
 	}
+
+	function setHoverState(nextVisible: boolean) {
+		showDescription = nextVisible;
+		data.hover?.(nextVisible ? id : null);
+	}
 </script>
 
 <div
@@ -74,10 +83,10 @@
 	data-completion-block={data.completionBlock?.role ?? undefined}
 	role="group"
 	aria-label={data.title}
-	onpointerenter={() => (showDescription = true)}
-	onpointerleave={() => (showDescription = false)}
-	onfocusin={() => (showDescription = true)}
-	onfocusout={() => (showDescription = false)}
+	onpointerenter={() => setHoverState(true)}
+	onpointerleave={() => setHoverState(false)}
+	onfocusin={() => setHoverState(true)}
+	onfocusout={() => setHoverState(false)}
 >
 	{#if data.kind !== 'start'}
 		<Handle type="target" position={Position.Top} class="flow-editor-node__target" />
@@ -173,6 +182,10 @@
 
 	.flow-editor-node[data-kind='start'] {
 		--flow-node-accent: var(--color-success);
+	}
+
+	.flow-editor-node[data-kind='session'] {
+		--flow-node-accent: var(--color-info);
 	}
 
 	.flow-editor-node[data-kind='registration'],
@@ -356,6 +369,13 @@
 		font-size: 0.62rem;
 		font-weight: 800;
 		text-align: center;
+		line-height: 1.15;
+	}
+
+	.flow-editor-node__output span {
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 

@@ -27,6 +27,9 @@ const BINDING_TYPES = new Set<ConsentPolicyItemBindingType>([
   'claim',
   'saml_attribute',
   'destination_field_set',
+  'identity_schema',
+  'destination_field_mapping_set',
+  'user_decision',
 ]);
 const TRUST_TARGET_TYPES = new Set<ClientTrustPolicyTargetType>(['oidc_client', 'saml_sp']);
 const SIGN_IN_MODES = new Set<SignInConfirmationMode>(['disabled', 'first_time', 'every_time']);
@@ -341,7 +344,7 @@ export async function adminConsentPolicyItemsReplaceHandler(c: Context<{ Binding
       if (bindingType && !BINDING_TYPES.has(bindingType as ConsentPolicyItemBindingType)) {
         return invalid(
           c,
-          'items[].binding_type must be subject, scope, claim, saml_attribute, or destination_field_set'
+          'items[].binding_type must be subject, scope, claim, saml_attribute, destination_field_set, identity_schema, destination_field_mapping_set, or user_decision'
         );
       }
 

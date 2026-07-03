@@ -109,6 +109,13 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-token')).not.toContain('PLUGIN_ENCRYPTION_KEY');
   });
 
+  it('keeps email sender metadata out of Workers secrets because wrangler vars own those bindings', () => {
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain('EMAIL_FROM');
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain('EMAIL_FROM_NAME');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain('EMAIL_FROM');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain('EMAIL_FROM_NAME');
+  });
+
   it('does not upload Admin API root bearer material to SAML or bridge workers', () => {
     expect(getSecretNamesForWorker('ar-saml')).toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');

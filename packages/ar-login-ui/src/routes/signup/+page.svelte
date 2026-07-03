@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { Button, Input, Card, Alert, TurnstileWidget } from '$lib/components';
+	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import RuntimeFormProfile from '$lib/components/RuntimeFormProfile.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import {
 		passkeyAPI,
@@ -33,6 +34,7 @@
 		consumeFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
+	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -75,6 +77,7 @@
 	let runtimeFlowLoading = $state(false);
 	let runtimeFlowError = $state('');
 	let runtimeConsentDecisions = $state<Record<string, boolean>>({});
+	let runtimeConsentSelectedValues = $state<Record<string, string>>({});
 	let runtimeConsentDecisionKey = $state('');
 	let pendingPostAuthRedirect = $state<string | null>(null);
 	const authActionLoading = $derived(
@@ -114,6 +117,7 @@
 					])
 				)
 			: {};
+		runtimeConsentSelectedValues = {};
 	});
 
 	// Dark mode detection for external provider button colors
@@ -141,6 +145,43 @@
 	const showRuntimeExternal = $derived(externalEnabled && visibleExternalProviders.length > 0);
 	const hasVisibleSignupMethod = $derived(
 		showRuntimePasskey || showRuntimeEmailCode || showRuntimeExternal
+	);
+	type RuntimeAuthMethod = 'passkey' | 'mail_otp' | 'external_idp' | 'directory_password';
+	const runtimeFormProfile = $derived(getRuntimeFormProfile(runtimeFlowStep));
+	const useRuntimeAuthFormLayout = $derived(
+		Boolean(runtimeFormProfile) && isRuntimeAuthStep(runtimeFlowStep)
+	);
+	const runtimeFormFieldValues = $derived<Record<string, string>>({
+		...customFieldValues,
+		email,
+		name
+	});
+	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
+		passkey: showRuntimePasskey,
+		mail_otp: showRuntimeEmailCode,
+		external_idp: showRuntimeExternal,
+		directory_password: false
+	});
+	const runtimeMethodLoading = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
+		passkey: passkeyLoading,
+		mail_otp: emailCodeLoading,
+		external_idp: externalIdpLoading !== null,
+		directory_password: false
+	});
+	const runtimeExternalProviders = $derived(
+		visibleExternalProviders.map((provider) => {
+			const safeColor =
+				isDarkMode && provider.buttonColorDark
+					? sanitizeColor(provider.buttonColorDark)
+					: sanitizeColor(provider.buttonColor);
+			return {
+				id: provider.id,
+				label: getProviderButtonText(provider),
+				iconUrl: provider.iconUrl && isValidImageUrl(provider.iconUrl) ? provider.iconUrl : null,
+				iconClass: getProviderIcon(provider),
+				style: safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''
+			};
+		})
 	);
 	const NAME_REGISTRATION_FIELD_KEYS = new Set(['name', 'field.canonical.name']);
 	const EMAIL_REGISTRATION_FIELD_KEYS = new Set(['email', 'field.canonical.email']);
@@ -228,11 +269,16 @@
 		}
 
 		const tasks: Promise<void>[] = [loadAuthenticationMethods(), loadRegistrationFields()];
+		let runtimeTargetReady: Promise<void> = Promise.resolve();
 		if (authorizationChallengeId) {
-			tasks.push(loadChallengeData(authorizationChallengeId));
+			const challengeTask = loadChallengeData(authorizationChallengeId);
+			tasks.push(challengeTask);
+			if (!runtimeInteractionId) {
+				runtimeTargetReady = challengeTask;
+			}
 		}
+		tasks.push(runtimeTargetReady.then(() => startRuntimeFlowIfAvailable()));
 		await Promise.all(tasks);
-		await startRuntimeFlowIfAvailable();
 	});
 
 	async function loadAuthenticationMethods() {
@@ -452,11 +498,30 @@
 			: null;
 	}
 
+	function hasInteractiveAccountActionUi(step: FlowRuntimeStep): boolean {
+		return (
+			step.config?.interaction_ui === true ||
+			step.config?.render_ui === true ||
+			typeof step.config?.profile_form_ref === 'string'
+		);
+	}
+
+	function getRuntimeAutoSubmitHandle(step: FlowRuntimeStep): string | undefined | null {
+		if (step.component === 'completion') return 'completed';
+		if (step.component === 'account_action' && !hasInteractiveAccountActionUi(step)) {
+			return 'completed';
+		}
+		if (step.render === false) return undefined;
+		return null;
+	}
+
 	async function advanceRuntimePastNonRenderedSteps() {
 		let guard = 0;
-		while (runtimeFlow && runtimeFlowStep && runtimeFlowStep.render === false && guard < 10) {
+		while (runtimeFlow && runtimeFlowStep && guard < 10) {
+			const autoSubmitHandle = getRuntimeAutoSubmitHandle(runtimeFlowStep);
+			if (autoSubmitHandle === null) return;
 			guard += 1;
-			const ok = await submitRuntimeStep();
+			const ok = await submitRuntimeStep(autoSubmitHandle);
 			if (!ok) return;
 		}
 	}
@@ -493,6 +558,13 @@
 		return typeof description === 'string' ? description : '';
 	}
 
+	function getRuntimeFormProfile(step: FlowRuntimeStep | null): Record<string, unknown> | null {
+		const profile = step?.config?.form_profile;
+		return profile && typeof profile === 'object' && !Array.isArray(profile)
+			? (profile as Record<string, unknown>)
+			: null;
+	}
+
 	function getRuntimeConsentPolicy(
 		step: FlowRuntimeStep | null
 	): FlowRuntimeConsentPolicyContent | null {
@@ -509,12 +581,60 @@
 			consent_item_decisions: Object.fromEntries(
 				policy.items.map((item) => [
 					item.statement_id,
-					item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
-						? 'granted'
-						: 'denied'
+					item.content_mode === 'radio'
+						? runtimeConsentSelectedValues[item.statement_id]
+							? 'selected'
+							: 'denied'
+						: item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
+							? 'granted'
+							: 'denied'
 				])
+			),
+			consent_item_selected_values: Object.fromEntries(
+				policy.items
+					.filter((item) => item.content_mode === 'radio')
+					.map((item) => [item.statement_id, runtimeConsentSelectedValues[item.statement_id] || ''])
 			)
 		};
+	}
+
+	function getRuntimeStepSubmitInputForAuthenticatedAction() {
+		return getRuntimeConsentPolicy(runtimeFlowStep)
+			? getRuntimeConsentItemDecisionPayload()
+			: undefined;
+	}
+
+	function getRuntimeConsentItemHtml(
+		item: FlowRuntimeConsentPolicyContent['items'][number]
+	): string {
+		if (item.inline_content) return sanitizeRuntimeConsentHtml(item.inline_content);
+		const fallback = item.description
+			? `<strong>${item.title}</strong><br>${item.description}`
+			: item.title;
+		return sanitizeRuntimeConsentHtml(fallback);
+	}
+
+	function canSubmitRuntimeConsent(): boolean {
+		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
+		if (!policy) return true;
+		return policy.items.every(
+			(item) =>
+				!item.is_required ||
+				(item.content_mode === 'radio' &&
+					Boolean(runtimeConsentSelectedValues[item.statement_id])) ||
+				item.checkbox_mode === 'none' ||
+				runtimeConsentDecisions[item.statement_id] === true
+		);
+	}
+
+	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
+		return !isRuntimeAuthStep(step) || Boolean(getRuntimeFormProfile(step));
+	}
+
+	function getRuntimeFormContinueHandle(step: FlowRuntimeStep | null): string {
+		if (step?.component === 'consent_policy') return 'accepted';
+		if (step?.component === 'profile_form') return 'submitted';
+		return 'completed';
 	}
 
 	function isRuntimeAuthStep(step: FlowRuntimeStep | null): boolean {
@@ -629,11 +749,71 @@
 		);
 	}
 
+	function getRuntimeProfileFields(): Array<{
+		field: string;
+		label: string;
+		required: boolean;
+		block_type: string;
+	}> {
+		const profile = getRuntimeFormProfile(runtimeFlowStep);
+		const fields = Array.isArray(profile?.fields) ? profile.fields : [];
+		return fields
+			.filter(
+				(field): field is Record<string, unknown> => Boolean(field) && typeof field === 'object'
+			)
+			.map((field) => ({
+				field: typeof field.field === 'string' ? field.field : '',
+				label:
+					typeof field.label === 'string' && field.label.trim()
+						? field.label
+						: typeof field.field === 'string'
+							? field.field
+							: 'Field',
+				required: field.required === true,
+				block_type: typeof field.block_type === 'string' ? field.block_type : 'identity_field'
+			}))
+			.filter((field) => field.field);
+	}
+
+	function getRuntimeFormFieldValue(field: string): string {
+		const normalized = field.toLowerCase();
+		if (normalized === 'email' || normalized.endsWith('.email')) return email;
+		if (normalized === 'name' || normalized.endsWith('.name')) return name;
+		return customFieldValues[field] ?? '';
+	}
+
+	function setRuntimeFormFieldError(field: string, message: string) {
+		const normalized = field.toLowerCase();
+		if (normalized === 'email' || normalized.endsWith('.email')) {
+			emailError = message;
+			return;
+		}
+		if (normalized === 'name' || normalized.endsWith('.name')) {
+			nameError = message;
+			return;
+		}
+		customFieldErrors[field] = message;
+	}
+
+	function validateRuntimeFormFields(): boolean {
+		if (!useRuntimeAuthFormLayout) return true;
+		for (const field of getRuntimeProfileFields()) {
+			if (field.block_type !== 'identity_field' || !field.required) continue;
+			if (getRuntimeFormFieldValue(field.field).trim()) continue;
+			setRuntimeFormFieldError(field.field, `${field.label} is required`);
+		}
+		return !nameError && !emailError && Object.values(customFieldErrors).every((value) => !value);
+	}
+
 	function validateForm(): boolean {
 		emailError = '';
 		nameError = '';
+		customFieldErrors = {};
 
 		if (!validateCustomFields()) {
+			return false;
+		}
+		if (!validateRuntimeFormFields()) {
 			return false;
 		}
 		if (email.trim() && !validateEmail(email)) {
@@ -752,7 +932,10 @@
 			}
 
 			if (runtimeFlow) {
-				const ok = await submitRuntimeStep('passkey');
+				const ok = await submitRuntimeStep(
+					'passkey',
+					getRuntimeStepSubmitInputForAuthenticatedAction()
+				);
 				if (!ok) return;
 				if (runtimeFlow?.interaction.state !== 'completed') {
 					pendingPostAuthRedirect = '/';
@@ -908,6 +1091,51 @@
 			handleEmailCodeSignup();
 		}
 	}
+
+	function handleRuntimeFormFieldValueChange(field: string, value: string | boolean) {
+		const stringValue = typeof value === 'string' ? value : value ? 'true' : 'false';
+		const normalized = field.toLowerCase();
+		if (normalized === 'email' || normalized.endsWith('.email')) {
+			email = stringValue;
+			return;
+		}
+		if (normalized === 'name' || normalized.endsWith('.name')) {
+			name = stringValue;
+			return;
+		}
+		setCustomFieldValue(field, stringValue);
+	}
+
+	function handleRuntimeFormAuthAction(method: RuntimeAuthMethod) {
+		if (method === 'passkey') {
+			void handlePasskeyRegister();
+			return;
+		}
+		if (method === 'mail_otp') {
+			void handleEmailCodeSignup();
+		}
+	}
+
+	function handleRuntimeExternalProviderAction(providerId: string) {
+		const provider = visibleExternalProviders.find((candidate) => candidate.id === providerId);
+		if (provider) {
+			void handleExternalLogin(provider);
+		}
+	}
+
+	function setRuntimeConsentDecision(statementId: string, checked: boolean) {
+		runtimeConsentDecisions = {
+			...runtimeConsentDecisions,
+			[statementId]: checked
+		};
+	}
+
+	function setRuntimeConsentSelectedValue(statementId: string, value: string) {
+		runtimeConsentSelectedValues = {
+			...runtimeConsentSelectedValues,
+			[statementId]: value
+		};
+	}
 </script>
 
 <svelte:head>
@@ -988,7 +1216,7 @@
 					</Alert>
 				{/if}
 
-				{#if runtimeFlowStep && runtimeFlowStep.render && !isRuntimeAuthStep(runtimeFlowStep)}
+				{#if runtimeFlowStep && runtimeFlowStep.render && shouldRenderRuntimeStep(runtimeFlowStep)}
 					<Alert variant="info" class="mb-4">
 						<div class="space-y-3">
 							<div>
@@ -999,21 +1227,56 @@
 									</p>
 								{/if}
 							</div>
-							{#if runtimeFlowStep.component === 'consent_policy'}
+							{#if getRuntimeFormProfile(runtimeFlowStep)}
+								<RuntimeFormProfile
+									profile={getRuntimeFormProfile(runtimeFlowStep)}
+									disabled={authActionLoading}
+									fieldValues={runtimeFormFieldValues}
+									fieldErrors={{
+										email: emailError,
+										name: nameError,
+										...customFieldErrors
+									}}
+									methodAvailability={runtimeMethodAvailability}
+									methodLoading={runtimeMethodLoading}
+									externalProviders={runtimeExternalProviders}
+									consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
+									consentDecisions={runtimeConsentDecisions}
+									consentSelectedValues={runtimeConsentSelectedValues}
+									consentReady={canSubmitRuntimeConsent()}
+									onFieldValueChange={handleRuntimeFormFieldValueChange}
+									onAuthAction={handleRuntimeFormAuthAction}
+									onExternalProviderAction={handleRuntimeExternalProviderAction}
+									onConsentDecisionChange={setRuntimeConsentDecision}
+									onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
+								/>
+								{#if !isRuntimeAuthStep(runtimeFlowStep)}
+									<Button
+										variant="primary"
+										class="w-full"
+										loading={runtimeFlowLoading}
+										disabled={authActionLoading || !canSubmitRuntimeConsent()}
+										onclick={() =>
+											completeRuntimeOnlyStep(
+												getRuntimeFormContinueHandle(runtimeFlowStep),
+												getRuntimeConsentItemDecisionPayload()
+											)}
+									>
+										{$LL.common_continue()}
+									</Button>
+								{/if}
+							{:else if runtimeFlowStep.component === 'consent_policy'}
 								{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
 								{#if consentPolicy?.items.length}
 									<div class="space-y-3">
 										{#each consentPolicy.items as item (item.statement_id)}
 											<div class="runtime-consent-item">
 												{#if item.checkbox_mode === 'none'}
-													<div>
-														<p class="font-semibold">{item.title}</p>
-														{#if item.description}
-															<p class="text-sm" style="color: var(--text-secondary);">
-																{item.description}
-															</p>
-														{/if}
-													</div>
+													<SanitizedHtml
+														tag="div"
+														class="runtime-consent-content"
+														sanitizedHtml={getRuntimeConsentItemHtml(item)}
+													/>
 												{:else}
 													<label class="runtime-consent-choice">
 														<input
@@ -1021,12 +1284,10 @@
 															bind:checked={runtimeConsentDecisions[item.statement_id]}
 															required={item.is_required || item.checkbox_mode === 'required'}
 														/>
-														<span>
-															<strong>{item.title}</strong>
-															{#if item.description}
-																<small>{item.description}</small>
-															{/if}
-														</span>
+														<SanitizedHtml
+															class="runtime-consent-content"
+															sanitizedHtml={getRuntimeConsentItemHtml(item)}
+														/>
 													</label>
 												{/if}
 												{#if item.document_url && isValidLinkUrl(item.document_url)}
@@ -1038,9 +1299,6 @@
 													>
 														{item.document_url}
 													</a>
-												{/if}
-												{#if item.inline_content}
-													<p class="runtime-consent-inline">{item.inline_content}</p>
 												{/if}
 											</div>
 										{/each}
@@ -1054,7 +1312,7 @@
 									variant="primary"
 									class="w-full"
 									loading={runtimeFlowLoading}
-									disabled={authActionLoading}
+									disabled={authActionLoading || !canSubmitRuntimeConsent()}
 									onclick={() =>
 										completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
 								>
@@ -1085,14 +1343,14 @@
 					</Alert>
 				{/if}
 
-				{#if !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
+				{#if !useRuntimeAuthFormLayout && !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
 					<Alert variant="error" class="mb-4">
 						{methodsError || $LL.register_noMethodsAvailable()}
 					</Alert>
 				{/if}
 
 				<!-- Registration Fields -->
-				{#if registrationFields.length > 0}
+				{#if !useRuntimeAuthFormLayout && registrationFields.length > 0}
 					{#each registrationFields as field (field.field_key)}
 						<div class="mb-4">
 							{#if isNameRegistrationField(field)}
@@ -1199,7 +1457,7 @@
 				{/if}
 
 				<!-- Passkey Button -->
-				{#if showRuntimePasskey}
+				{#if !useRuntimeAuthFormLayout && showRuntimePasskey}
 					<Button
 						variant="primary"
 						class="w-full mb-3"
@@ -1235,7 +1493,7 @@
 				{/if}
 
 				<!-- Email Code Button -->
-				{#if showRuntimeEmailCode}
+				{#if !useRuntimeAuthFormLayout && showRuntimeEmailCode}
 					<Button
 						variant="secondary"
 						class="w-full"
@@ -1263,7 +1521,7 @@
 				{/if}
 
 				<!-- External Login Section -->
-				{#if showRuntimeExternal}
+				{#if !useRuntimeAuthFormLayout && showRuntimeExternal}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -1317,9 +1575,11 @@
 				{/if}
 
 				<!-- Terms Agreement -->
-				<p class="mt-4 text-xs text-center" style="color: var(--text-muted);">
-					{$LL.register_termsAgreement()}
-				</p>
+				{#if !useRuntimeAuthFormLayout}
+					<p class="mt-4 text-xs text-center" style="color: var(--text-muted);">
+						{$LL.register_termsAgreement()}
+					</p>
+				{/if}
 			</Card>
 		{/if}
 
@@ -1403,17 +1663,31 @@
 		flex: 0 0 auto;
 	}
 
-	.runtime-consent-choice span,
-	.runtime-consent-choice small {
+	.runtime-consent-content {
 		display: block;
+		color: var(--text-secondary, var(--text-muted));
+		font-size: 0.9rem;
+		line-height: 1.5;
+		min-width: 0;
 	}
 
-	.runtime-consent-choice small,
-	.runtime-consent-inline {
-		margin-top: 3px;
-		color: var(--text-secondary, var(--text-muted));
-		font-size: 0.82rem;
-		line-height: 1.5;
+	.runtime-consent-content :global(p) {
+		margin: 0;
+	}
+
+	.runtime-consent-content :global(p + p) {
+		margin-top: 6px;
+	}
+
+	.runtime-consent-content :global(strong) {
+		color: var(--text-primary);
+	}
+
+	.runtime-consent-content :global(a) {
+		color: var(--accent-color, var(--primary));
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		overflow-wrap: anywhere;
 	}
 
 	.runtime-consent-link {

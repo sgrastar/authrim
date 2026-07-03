@@ -2,10 +2,14 @@
  * Tests for Rate Limiting Middleware
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../../types/env';
-import { rateLimitMiddleware, RateLimitProfiles } from '../rate-limit';
+import {
+  clearRateLimitFastPathCache,
+  rateLimitMiddleware,
+  RateLimitProfiles,
+} from '../rate-limit';
 
 // Mock environment
 const mockEnv: Env = {
@@ -55,6 +59,15 @@ const createMockKV = (): KVNamespace => {
   } as unknown as KVNamespace;
 };
 
+const createMockRateLimiter = (
+  incrementRpc: ReturnType<typeof vi.fn>
+): Env['RATE_LIMITER'] => {
+  return {
+    idFromName: vi.fn((name: string) => name),
+    get: vi.fn(() => ({ incrementRpc })),
+  } as unknown as Env['RATE_LIMITER'];
+};
+
 describe('Rate Limiting Middleware', () => {
   let app: Hono<{ Bindings: Env }>;
 
@@ -67,6 +80,9 @@ describe('Rate Limiting Middleware', () => {
 
     // Setup mock KV namespace
     mockEnv.STATE_STORE = createMockKV();
+    delete (mockEnv as Partial<Env>).RATE_LIMITER;
+    clearRateLimitFastPathCache();
+    vi.clearAllMocks();
   });
 
   describe('Basic Rate Limiting', () => {
@@ -594,6 +610,156 @@ describe('Rate Limiting Middleware', () => {
 
         expect(res2.status).toBe(200);
       }
+    });
+  });
+
+  describe('Non-blocking read fast path', () => {
+    it('allows low-volume GET requests without waiting for the RateLimiter DO result', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(
+              () =>
+                resolve({
+                  allowed: true,
+                  current: 1,
+                  limit: 2,
+                  resetAt,
+                  retryAfter: 0,
+                }),
+              25
+            );
+          })
+      );
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 2,
+          windowSeconds: 60,
+          nonBlockingRead: true,
+        })
+      );
+
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const res = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-RateLimit-Limit')).toBe('2');
+      expect(res.headers.get('X-RateLimit-Remaining')).toBe('1');
+      expect(res.headers.get('X-RateLimit-Reset')).toBeDefined();
+      expect(incrementRpc).toHaveBeenCalledWith('tenant:default:rate-limit:192.168.1.1', {
+        maxRequests: 2,
+        windowSeconds: 60,
+      });
+    });
+
+    it('falls back to synchronous DO enforcement after the local fast path limit is reached', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi
+        .fn()
+        .mockResolvedValueOnce({
+          allowed: true,
+          current: 1,
+          limit: 1,
+          resetAt,
+          retryAfter: 0,
+        })
+        .mockResolvedValueOnce({
+          allowed: false,
+          current: 2,
+          limit: 1,
+          resetAt,
+          retryAfter: 60,
+        });
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+          nonBlockingRead: true,
+        })
+      );
+
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const first = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
+        },
+        mockEnv
+      );
+      expect(first.status).toBe(200);
+
+      const second = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
+        },
+        mockEnv
+      );
+
+      expect(second.status).toBe(429);
+      expect(second.headers.get('Retry-After')).toBeDefined();
+      expect(incrementRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps POST requests on the synchronous enforcement path', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn().mockResolvedValue({
+        allowed: false,
+        current: 2,
+        limit: 1,
+        resetAt,
+        retryAfter: 60,
+      });
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+          nonBlockingRead: true,
+        })
+      );
+
+      app.post('/test', (c) => c.json({ success: true }));
+
+      const res = await app.request(
+        '/test',
+        {
+          method: 'POST',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(429);
+      expect(incrementRpc).toHaveBeenCalledTimes(1);
     });
   });
 

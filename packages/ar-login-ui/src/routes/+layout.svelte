@@ -5,8 +5,13 @@
 	import { setLocale, getLocale } from '$i18n/i18n-svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { brandingStore } from '$lib/stores/branding.svelte';
-	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
+	import {
+		fetchAuthenticationMethods,
+		type AuthenticationMethodsResponse
+	} from '$lib/api/authentication-methods';
+	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 
@@ -27,24 +32,41 @@
 		}
 	});
 
+	function applyTenantBranding(authenticationMethods: AuthenticationMethodsResponse) {
+		if (!authenticationMethods.ui) return;
+		themeStore.setTenantDefaults(authenticationMethods.ui.theme, authenticationMethods.ui.variant);
+		brandingStore.set(
+			authenticationMethods.ui.branding.brandName || '',
+			authenticationMethods.ui.branding.logoUrl || null
+		);
+	}
+
+	function getEmbeddedAuthenticationMethods(): AuthenticationMethodsResponse | null {
+		const authenticationMethods = (get(page).data as {
+			authenticationMethods?: AuthenticationMethodsResponse;
+		}).authenticationMethods;
+		return authenticationMethods ?? null;
+	}
+
 	// Initialize theme on mount
 	// Resolution order: localStorage → tenant (API) → system → default
 	onMount(async () => {
 		if (data.shouldLoadTenantBranding) {
-			// Fetch tenant theme defaults (non-blocking for theme init)
+			const embeddedAuthenticationMethods = getEmbeddedAuthenticationMethods();
+			if (embeddedAuthenticationMethods) {
+				applyTenantBranding(embeddedAuthenticationMethods);
+				document.documentElement.setAttribute('data-branding-loaded', '');
+				themeStore.init();
+				return;
+			}
+
+			// Fetch tenant theme defaults when route data does not already embed them.
 			try {
 				const { data: authenticationMethods } = await fetchAuthenticationMethods();
-				if (authenticationMethods?.ui) {
-					themeStore.setTenantDefaults(
-						authenticationMethods.ui.theme,
-						authenticationMethods.ui.variant
-					);
-					brandingStore.set(
-						authenticationMethods.ui.branding.brandName || '',
-						authenticationMethods.ui.branding.logoUrl || null
-					);
-					document.documentElement.setAttribute('data-branding-loaded', '');
+				if (authenticationMethods) {
+					applyTenantBranding(authenticationMethods);
 				}
+				document.documentElement.setAttribute('data-branding-loaded', '');
 			} catch {
 				// Theme defaults are optional, proceed with system/default
 				document.documentElement.setAttribute('data-branding-loaded', '');

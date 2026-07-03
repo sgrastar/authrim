@@ -6,9 +6,11 @@ import type {
 	NewFlowTemplate,
 	NewFlowTemplateId
 } from '$lib/admin/new-flow-templates';
+import { getNewFlowTemplate } from '$lib/admin/new-flow-templates';
 
 type FlowEditorNodeKind =
 	| 'start'
+	| 'session'
 	| 'registration'
 	| 'authentication'
 	| 'verification'
@@ -16,7 +18,9 @@ type FlowEditorNodeKind =
 	| 'consent'
 	| 'account'
 	| 'end'
-	| 'decision';
+	| 'decision'
+	| 'oidc_completion'
+	| 'saml_completion';
 
 export interface LocalizedFlowTemplateText {
 	title: string;
@@ -45,6 +49,38 @@ export interface FlowNodePaletteItem {
 	kind: FlowEditorNodeKind;
 	label: string;
 	description: string;
+}
+
+function getAcademicSamlLoginText(LL: TranslationFunctions): LocalizedFlowTemplateText {
+	if (LL.admin_flows_locale_marker() === 'ja') {
+		return {
+			title: 'Academic SAML Login',
+			subtitle: '学術出版社・図書館系SP向けログイン',
+			description:
+				'SAML AuthnRequestからセッション確認、認証方式選択、属性送信確認、SAML Responseまでを確認します。',
+			primaryEntry: 'SAML AuthnRequest',
+			primaryOutput: 'SAML Response / Assertion',
+			mappingSet: 'GakuNin application standard Field Mapping Set',
+			consentPolicy: 'SAML attribute release policy',
+			consentStatement: 'saml_attribute_release_uapprove',
+			userAction: '既存アカウントでログインし、SPへ送信する属性を確認して許可',
+			recordedState: 'tenant + user + SAML SP + statement/version + User Decision'
+		};
+	}
+	return {
+		title: 'Academic SAML Login',
+		subtitle: 'Login for academic publisher and library SPs',
+		description:
+			'Review the path from SAML AuthnRequest, session check, authentication method selection, attribute release confirmation, and SAML Response.',
+		primaryEntry: 'SAML AuthnRequest',
+		primaryOutput: 'SAML Response / Assertion',
+		mappingSet: 'GakuNin application standard Field Mapping Set',
+		consentPolicy: 'SAML attribute release policy',
+		consentStatement: 'saml_attribute_release_uapprove',
+		userAction:
+			'Sign in with an existing account, review the attributes released to the SP, and allow the release',
+		recordedState: 'tenant + user + SAML SP + statement/version + User Decision'
+	};
 }
 
 export function getFlowTemplateText(
@@ -91,6 +127,8 @@ export function getFlowTemplateText(
 				userAction: LL.admin_flows_template_oidc_registration_user_action(),
 				recordedState: LL.admin_flows_template_oidc_registration_recorded_state()
 			};
+		case 'academic-saml-login':
+			return getAcademicSamlLoginText(LL);
 		case 'oidc-login':
 			return {
 				title: LL.admin_flows_template_oidc_login_title(),
@@ -105,6 +143,17 @@ export function getFlowTemplateText(
 				recordedState: LL.admin_flows_template_oidc_login_recorded_state()
 			};
 	}
+}
+
+export function getSavedFlowDescription(
+	LL: TranslationFunctions,
+	flow: { description?: string | null; template_id?: string | null; slug?: string | null }
+): string {
+	const explicitDescription = flow.description?.trim();
+	if (explicitDescription) return explicitDescription;
+	const template = flow.template_id ? getNewFlowTemplate(flow.template_id) : undefined;
+	if (template) return getFlowTemplateText(LL, template).description;
+	return flow.slug ?? '';
 }
 
 export function getFlowStatusLabel(
@@ -180,6 +229,11 @@ export function getFlowNodePalette(LL: TranslationFunctions): FlowNodePaletteIte
 			description: LL.admin_flows_palette_start_description()
 		},
 		{
+			kind: 'session',
+			label: LL.admin_flows_node_session_check(),
+			description: LL.admin_flows_node_oidc_login_session_description()
+		},
+		{
 			kind: 'registration',
 			label: LL.admin_flows_palette_registration_label(),
 			description: LL.admin_flows_palette_registration_description()
@@ -218,6 +272,16 @@ export function getFlowNodePalette(LL: TranslationFunctions): FlowNodePaletteIte
 			kind: 'end',
 			label: LL.admin_flows_palette_end_label(),
 			description: LL.admin_flows_palette_end_description()
+		},
+		{
+			kind: 'oidc_completion',
+			label: LL.admin_flows_completion_block_oidc_authorization(),
+			description: LL.admin_flows_node_oidc_authorization_output_description()
+		},
+		{
+			kind: 'saml_completion',
+			label: LL.admin_flows_completion_block_saml_attribute_release(),
+			description: LL.admin_flows_node_saml_output_description()
 		}
 	];
 }

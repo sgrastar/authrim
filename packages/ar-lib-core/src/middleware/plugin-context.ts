@@ -29,6 +29,19 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('PluginContext');
 
+function isFlowRuntimeTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function diagnosticTimingNowMs(): number {
+  return Date.now();
+}
+
+function roundDiagnosticDurationMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -393,13 +406,22 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
     // Initialize or get cached registry
     let registry: PluginCapabilityRegistry;
     let initialized = false;
+    const timingEnabled =
+      isFlowRuntimeTimingEnabled(c.env) &&
+      new URL(c.req.url).pathname === '/api/v1/login/interactions/start';
+    const startedAtMs = timingEnabled ? diagnosticTimingNowMs() : 0;
+    let cacheStatus: 'disabled' | 'hit' | 'miss' | 'empty' | 'error' = loadPlugins
+      ? 'miss'
+      : 'disabled';
 
     try {
       if (loadPlugins) {
         registry = getCachedRegistry(c.env, tenantId) ?? emptyRegistry;
         if (registry !== emptyRegistry) {
           initialized = true;
+          cacheStatus = 'hit';
         } else {
+          cacheStatus = 'miss';
           const initPromises = getScopedPromiseMap(registryInitPromisesByEnv, c.env);
           let initPromise = initPromises.get(tenantId);
           if (!initPromise) {
@@ -412,12 +434,16 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
           }
           registry = await initPromise;
           initialized = true;
+          if (registry === emptyRegistry) {
+            cacheStatus = 'empty';
+          }
         }
       } else {
         // No custom loader, use empty registry
         registry = emptyRegistry;
       }
     } catch (error) {
+      cacheStatus = 'error';
       log.error('Failed to initialize plugins', {}, error as Error);
       clearRegistryCache(c.env, tenantId);
 
@@ -432,6 +458,15 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
       }
 
       registry = emptyRegistry;
+    } finally {
+      if (timingEnabled) {
+        log.info('Plugin context timing', {
+          path: new URL(c.req.url).pathname,
+          cache_status: cacheStatus,
+          initialized,
+          duration_ms: roundDiagnosticDurationMs(diagnosticTimingNowMs() - startedAtMs),
+        });
+      }
     }
 
     // Create plugin context for this request

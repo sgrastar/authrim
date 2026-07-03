@@ -108,6 +108,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'consent_policies',
   'consent_policy_items',
   'consent_policy_versions',
+  'consent_records',
   'consent_statement_localizations',
   'consent_statement_versions',
   'consent_statements',
@@ -115,6 +116,9 @@ export const TENANT_TABLES_TO_DELETE = [
   'sign_in_confirmation_policies',
   'tenant_consent_requirements',
   'user_consent_records',
+  // Flow runtime resources
+  'form_profiles',
+  'oidc_scopes',
   // Compliance
   'compliance_reports',
   'data_export_requests',

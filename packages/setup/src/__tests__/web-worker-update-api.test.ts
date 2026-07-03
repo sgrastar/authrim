@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 const buildApiPackagesMock = vi.hoisted(() => vi.fn());
 const deployAllMock = vi.hoisted(() => vi.fn());
 const deployWorkerMock = vi.hoisted(() => vi.fn());
 const deployUiWorkerBindingTargetsMock = vi.hoisted(() => vi.fn());
+const uploadSecretsMock = vi.hoisted(() => vi.fn());
 const getWorkersSubdomainMock = vi.hoisted(() => vi.fn());
 const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
 const syncWranglerConfigsMock = vi.hoisted(() => vi.fn());
@@ -25,6 +27,7 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     deployAll: deployAllMock,
     deployWorker: deployWorkerMock,
     deployUiWorkerBindingTargets: deployUiWorkerBindingTargetsMock,
+    uploadSecrets: uploadSecretsMock,
   };
 });
 
@@ -154,6 +157,7 @@ describe('setup web worker update API', () => {
     deployAllMock.mockReset();
     deployWorkerMock.mockReset();
     deployUiWorkerBindingTargetsMock.mockReset();
+    uploadSecretsMock.mockReset();
     getWorkersSubdomainMock.mockReset();
     saveMasterWranglerConfigsMock.mockReset();
     syncWranglerConfigsMock.mockReset();
@@ -175,6 +179,7 @@ describe('setup web worker update API', () => {
       failedCount: 0,
       results: [],
     });
+    uploadSecretsMock.mockResolvedValue({ success: true, errors: [] });
     getWorkersSubdomainMock.mockResolvedValue('example-subdomain');
     saveMasterWranglerConfigsMock.mockResolvedValue({ success: true, errors: [] });
     syncWranglerConfigsMock.mockResolvedValue({ success: true, errors: [], synced: ['ar-auth'] });
@@ -476,6 +481,123 @@ describe('setup web worker update API', () => {
         rootDir: tempDir,
       }),
       { loginUi: true, adminUi: true }
+    );
+  });
+
+  it('does not overwrite existing UI workers with placeholder env during router updates', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await addVersionedWorkerPackage(env, 'ar-router', '0.1.0', '0.2.0');
+    await addVersionedWorkerPackage(env, 'ar-login-ui', '0.1.0', '0.1.0');
+    await addVersionedWorkerPackage(env, 'ar-admin-ui', '0.1.0', '0.1.0');
+
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 1,
+      failedCount: 0,
+      results: [
+        {
+          component: 'ar-router',
+          workerName: 'test-ar-router',
+          version: '0.2.0',
+          deployedAt: '2026-06-18T00:00:00.000Z',
+          success: true,
+        },
+      ],
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, onlyChanged: true }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ success: true });
+    expect(deployUiWorkerBindingTargetsMock).not.toHaveBeenCalled();
+  });
+
+  it('uploads supplemental API worker secrets before bulk worker updates', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await saveKeysToDirectory(generateAllSecrets('test-key'), { keysBaseDir: tempDir!, env });
+
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 1,
+      failedCount: 0,
+      results: [
+        {
+          component: 'ar-auth',
+          workerName: 'test-ar-auth',
+          version: '0.2.0',
+          deployedAt: '2026-06-18T00:00:00.000Z',
+          success: true,
+        },
+      ],
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, onlyChanged: true }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ success: true });
+    expect(uploadSecretsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        FLOW_RUNTIME_HMAC_SECRET: expect.any(String),
+        PLUGIN_ENCRYPTION_KEY: expect.any(String),
+      }),
+      expect.objectContaining({ env, rootDir: tempDir }),
+      expect.arrayContaining(['ar-auth'])
+    );
+  });
+
+  it('uploads supplemental API worker secrets before single worker deploys', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await saveKeysToDirectory(generateAllSecrets('test-key'), { keysBaseDir: tempDir!, env });
+
+    deployWorkerMock.mockResolvedValue({
+      success: true,
+      component: 'ar-auth',
+      workerName: 'test-ar-auth',
+      version: '0.2.0',
+      deployedAt: '2026-06-18T00:00:00.000Z',
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy/component/ar-auth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, skipBuild: true }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ success: true, component: 'ar-auth' });
+    expect(uploadSecretsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        FLOW_RUNTIME_HMAC_SECRET: expect.any(String),
+        PLUGIN_ENCRYPTION_KEY: expect.any(String),
+      }),
+      expect.objectContaining({ env, rootDir: tempDir }),
+      ['ar-auth']
     );
   });
 

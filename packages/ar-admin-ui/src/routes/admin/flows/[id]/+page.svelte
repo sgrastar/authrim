@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		getFlowDestinationLabel,
 		getFlowTemplateText,
 		getLocalizedContractSummary,
-		getLocalizedFlowNodes
+		getLocalizedFlowNodes,
+		getSavedFlowDescription
 	} from '$lib/admin/flow-i18n';
 	import {
 		adminFlowsAPI,
@@ -15,6 +17,7 @@
 		type FlowVersion
 	} from '$lib/api/admin-flows';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import { Modal } from '$lib/components';
 	import {
 		formatLoginUiRuntimeContractPreview,
 		getNewFlowTemplate
@@ -47,7 +50,17 @@
 	let loadError = $state('');
 	let loading = $state(true);
 	let publishing = $state(false);
+	let deleting = $state(false);
+	let assignmentSaving = $state(false);
+	let assignmentMessage = $state('');
+	let assignmentTargetType = $state<'tenant' | 'oidc_client' | 'saml_sp'>('tenant');
+	let assignmentTargetId = $state('');
+	let assignmentEnabled = $state(true);
+	let deleteModalOpen = $state(false);
 	let actionError = $state('');
+	const assignmentTargetIdMissing = $derived(
+		assignmentTargetType !== 'tenant' && assignmentTargetId.trim().length === 0
+	);
 
 	onMount(() => {
 		void loadSavedFlow();
@@ -131,6 +144,55 @@
 		}
 	}
 
+	async function saveAssignment() {
+		if (!savedFlow) return;
+		assignmentSaving = true;
+		assignmentMessage = '';
+		actionError = '';
+		try {
+			await adminFlowsAPI.upsertAssignment({
+				target_type: assignmentTargetType,
+				target_id: assignmentTargetType === 'tenant' ? null : assignmentTargetId.trim(),
+				flow_kind: savedFlow.kind,
+				flow_id: savedFlow.id,
+				enabled: assignmentEnabled
+			});
+			assignmentMessage = $LL.admin_flows_assignment_saved();
+			await loadSavedFlow();
+		} catch (error) {
+			actionError =
+				error instanceof Error ? error.message : $LL.admin_flows_assignment_save_failed();
+		} finally {
+			assignmentSaving = false;
+		}
+	}
+
+	function openDeleteModal() {
+		if (!savedFlow) return;
+		deleteModalOpen = true;
+		actionError = '';
+	}
+
+	function closeDeleteModal() {
+		if (deleting) return;
+		deleteModalOpen = false;
+	}
+
+	async function deleteFlow() {
+		if (!savedFlow) return;
+		deleting = true;
+		actionError = '';
+		try {
+			await adminFlowsAPI.delete(savedFlow.id);
+			await goto('/admin/flows');
+		} catch (error) {
+			actionError = error instanceof Error ? error.message : $LL.admin_flows_delete_failed();
+			deleteModalOpen = false;
+		} finally {
+			deleting = false;
+		}
+	}
+
 	function downloadJson() {
 		if (!savedFlow || !savedContractJson) return;
 		const blob = new Blob([savedContractJson], { type: 'application/json' });
@@ -169,7 +231,7 @@
 		{@const currentFlow = savedFlow}
 		<AdminPageHeader
 			title={currentFlow.display_name || currentFlow.name || currentFlow.slug}
-			description={currentFlow.description || currentFlow.slug}
+			description={getSavedFlowDescription($LL, currentFlow)}
 			eyebrow={getAdminFlowKindLabel(currentFlow.kind)}
 		>
 			{#snippet titleAccessory()}
@@ -189,6 +251,10 @@
 				<button type="button" class="btn btn-secondary" onclick={publishFlow} disabled={publishing}>
 					<i class="i-ph-upload-simple" aria-hidden="true"></i>
 					{publishing ? $LL.admin_flows_publishing() : $LL.admin_flows_publish()}
+				</button>
+				<button type="button" class="btn btn-danger" onclick={openDeleteModal}>
+					<i class="i-ph-trash" aria-hidden="true"></i>
+					{$LL.admin_flows_delete_flow()}
 				</button>
 				<a href={`/admin/flows/${currentFlow.id}/edit`} class="btn btn-primary">
 					<i class="i-ph-flow-arrow" aria-hidden="true"></i>
@@ -256,6 +322,57 @@
 		</div>
 
 		<AdminSection title={$LL.admin_flows_assignments_title()}>
+			<div class="assignment-form">
+				<div class="assignment-form__header">
+					<div>
+						<strong>{$LL.admin_flows_assignment_form_title()}</strong>
+						<span>
+							{currentFlow.status === 'published'
+								? $LL.admin_flows_assignment_default_description()
+								: $LL.admin_flows_assignment_requires_published()}
+						</span>
+					</div>
+					<button
+						type="button"
+						class="btn btn-primary"
+						onclick={saveAssignment}
+						disabled={assignmentSaving ||
+							currentFlow.status !== 'published' ||
+							assignmentTargetIdMissing}
+					>
+						{assignmentSaving
+							? $LL.admin_flows_assignment_saving()
+							: $LL.admin_flows_assignment_save()}
+					</button>
+				</div>
+				<div class="assignment-form__fields">
+					<label>
+						<span>{$LL.admin_flows_assignment_target_type()}</span>
+						<select bind:value={assignmentTargetType} disabled={assignmentSaving}>
+							<option value="tenant">{$LL.admin_flows_assignment_target_tenant()}</option>
+							<option value="oidc_client">{$LL.admin_flows_assignment_target_oidc_client()}</option>
+							<option value="saml_sp">{$LL.admin_flows_assignment_target_saml_sp()}</option>
+						</select>
+					</label>
+					{#if assignmentTargetType !== 'tenant'}
+						<label>
+							<span>{$LL.admin_flows_assignment_target_id()}</span>
+							<input
+								bind:value={assignmentTargetId}
+								placeholder={$LL.admin_flows_assignment_target_id_placeholder()}
+								disabled={assignmentSaving}
+							/>
+						</label>
+					{/if}
+					<label class="assignment-form__check">
+						<input type="checkbox" bind:checked={assignmentEnabled} disabled={assignmentSaving} />
+						<span>{$LL.admin_flows_assignment_enabled()}</span>
+					</label>
+				</div>
+				{#if assignmentMessage}
+					<div class="assignment-form__message">{assignmentMessage}</div>
+				{/if}
+			</div>
 			<div class="decision-list">
 				{#if assignments.length === 0}
 					<div><strong>{$LL.admin_flows_assignments_empty()}</strong></div>
@@ -437,6 +554,27 @@
 	{/if}
 </AdminPageShell>
 
+<Modal
+	open={deleteModalOpen}
+	onClose={closeDeleteModal}
+	title={$LL.admin_flows_delete_flow_confirm_title()}
+>
+	<p class="confirm-text">
+		{$LL.admin_flows_delete_flow_confirm_description({
+			title: savedFlow?.display_name || savedFlow?.name || savedFlow?.slug || ''
+		})}
+	</p>
+
+	{#snippet footer()}
+		<button type="button" class="btn btn-secondary" onclick={closeDeleteModal} disabled={deleting}>
+			{$LL.admin_flows_cancel()}
+		</button>
+		<button type="button" class="btn btn-danger" onclick={deleteFlow} disabled={deleting}>
+			{deleting ? $LL.admin_flows_deleting() : $LL.admin_flows_delete_flow()}
+		</button>
+	{/snippet}
+</Modal>
+
 <style>
 	.btn {
 		min-height: var(--control-height, 36px);
@@ -469,9 +607,21 @@
 		color: var(--button-primary-color, var(--color-accent-contrast));
 	}
 
+	.btn-danger {
+		border-color: var(--color-danger);
+		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+		color: var(--color-danger);
+	}
+
 	.btn:disabled {
 		opacity: 0.68;
 		cursor: wait;
+	}
+
+	.confirm-text {
+		margin: 0;
+		color: var(--color-text);
+		line-height: 1.6;
 	}
 
 	.page-alert {
@@ -692,6 +842,78 @@
 		gap: 10px;
 	}
 
+	.assignment-form {
+		display: grid;
+		gap: 14px;
+		margin-bottom: 14px;
+		padding: 15px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+	}
+
+	.assignment-form__header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 14px;
+	}
+
+	.assignment-form__header strong,
+	.assignment-form__header span {
+		display: block;
+	}
+
+	.assignment-form__header span {
+		margin-top: 5px;
+		color: var(--color-text-muted);
+		font-size: 0.84rem;
+		line-height: 1.55;
+	}
+
+	.assignment-form__fields {
+		display: grid;
+		grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1fr) auto;
+		gap: 12px;
+		align-items: end;
+	}
+
+	.assignment-form label {
+		display: grid;
+		gap: 6px;
+		color: var(--color-text);
+		font-size: 0.82rem;
+		font-weight: 800;
+	}
+
+	.assignment-form select,
+	.assignment-form input:not([type]) {
+		width: 100%;
+		min-height: var(--control-height, 36px);
+		padding: 0 11px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font: inherit;
+	}
+
+	.assignment-form__check {
+		min-height: var(--control-height, 36px);
+		display: flex !important;
+		align-items: center;
+		gap: 8px !important;
+		padding: 0 11px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+	}
+
+	.assignment-form__message {
+		color: var(--color-success);
+		font-size: 0.82rem;
+		font-weight: 800;
+	}
+
 	.decision-list div {
 		padding: 14px;
 		border: 1px solid var(--color-border);
@@ -765,8 +987,13 @@
 
 	@media (max-width: 900px) {
 		.contract-panels,
-		.contract-layout {
+		.contract-layout,
+		.assignment-form__fields {
 			grid-template-columns: 1fr;
+		}
+
+		.assignment-form__header {
+			display: grid;
 		}
 	}
 </style>

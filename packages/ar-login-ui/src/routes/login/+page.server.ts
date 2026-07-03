@@ -7,6 +7,8 @@ import {
 	verifyDiscoveryGrant
 } from '../../lib/discovery-entry';
 import { fetchCachedLoginDiscoveryConfig } from '../../lib/login-discovery-config-cache';
+import type { AuthenticationMethodsResponse } from '../../lib/api/authentication-methods';
+import { getCachedAuthenticationMethodsForRequest } from '../../hooks.server';
 
 const DISCOVERY_GRANT_VERIFIED_COOKIE = 'authrim_discovery_grant_verified';
 
@@ -57,6 +59,21 @@ function getDiscoveryConfigCacheKey(event: Parameters<PageServerLoad>[0]): strin
 	return event.request.headers.get('x-authrim-original-host')?.trim() || event.url.host;
 }
 
+function getPlatformEnv(event: Parameters<PageServerLoad>[0]): Record<string, unknown> | undefined {
+	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
+}
+
+async function getLoginPageData(event: Parameters<PageServerLoad>[0]): Promise<{
+	authenticationMethods?: AuthenticationMethodsResponse;
+}> {
+	const authenticationMethods = await getCachedAuthenticationMethodsForRequest(
+		event as never,
+		getPlatformEnv(event)
+	).catch(() => null);
+
+	return authenticationMethods ? { authenticationMethods } : {};
+}
+
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
@@ -72,7 +89,7 @@ export const load: PageServerLoad = async (event) => {
 			discoveryHeaders
 		).catch(() => false);
 		if (challengeBelongsToCurrentTenant) {
-			return {};
+			return getLoginPageData(event);
 		}
 	}
 
@@ -91,7 +108,7 @@ export const load: PageServerLoad = async (event) => {
 		discoveryHeaders
 	).catch(() => null);
 	if (!config) {
-		return {};
+		return getLoginPageData(event);
 	}
 
 	const currentUrlWithoutGrant = buildCurrentUrlWithoutGrant(event.url, event.request);
@@ -131,7 +148,7 @@ export const load: PageServerLoad = async (event) => {
 				});
 				throw redirect(303, currentUrlWithoutGrant);
 			}
-			return {};
+			return getLoginPageData(event);
 		}
 
 		if (config.common_discover_url) {
@@ -159,7 +176,7 @@ export const load: PageServerLoad = async (event) => {
 		config.common_discover_url
 	) {
 		if (consumeVerifiedGrantCookie(event, currentUrlWithoutGrant)) {
-			return {};
+			return getLoginPageData(event);
 		}
 
 		throw redirect(
@@ -173,7 +190,7 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	return {};
+	return getLoginPageData(event);
 };
 
 export const actions: Actions = {

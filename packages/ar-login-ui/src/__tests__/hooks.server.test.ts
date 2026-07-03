@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$env/dynamic/public', () => ({ env: {} }));
 vi.mock('$lib/discovery-session', () => ({
@@ -6,7 +6,33 @@ vi.mock('$lib/discovery-session', () => ({
 	getRememberedTenantHost: () => undefined
 }));
 
+function createAuthenticationMethodsResponse(
+	provider: 'turnstile' | 'hcaptcha' | 'recaptcha' = 'turnstile',
+	enabled = true
+) {
+	return {
+		methods: {
+			humanVerification: {
+				enabled,
+				provider,
+				siteKey: enabled ? 'site-key' : null
+			}
+		},
+		meta: {
+			cacheTTL: 180,
+			revision: 'test'
+		}
+	};
+}
+
 describe('Login UI proxy hooks', () => {
+	beforeEach(async () => {
+		const { clearAuthenticationMethodsServerCache } =
+			await import('$lib/server/authentication-methods-cache');
+		clearAuthenticationMethodsServerCache();
+		vi.clearAllMocks();
+	});
+
 	it('proxies browser-facing OIDC and SAML protocol paths', async () => {
 		const { shouldProxyPath } = await import('../hooks.server');
 		expect(shouldProxyPath('/api/v1/auth/direct/session')).toBe(true);
@@ -131,5 +157,111 @@ describe('Login UI proxy hooks', () => {
 		expect(provider).toBeNull();
 		expect(csp).not.toContain('https://challenges.cloudflare.com');
 		expect(csp).toContain('https://static.cloudflareinsights.com');
+	});
+
+	it('caches the CSP human verification lookup per forwarded tenant host', async () => {
+		const { resolveHumanVerificationProviderForRequest } = await import('../hooks.server');
+		const event = {
+			request: new Request('https://login.example.com/login', {
+				headers: {
+					'x-authrim-original-host': 'tenant.example.com'
+				}
+			}),
+			url: new URL('https://login.example.com/login'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const fetch = vi.fn(async () =>
+			Response.json(createAuthenticationMethodsResponse('turnstile'))
+		);
+		const platformEnv = {
+			PUBLIC_API_BASE_URL: 'https://api.example.com',
+			AR_ROUTER: { fetch }
+		};
+
+		const first = await resolveHumanVerificationProviderForRequest(event as never, platformEnv);
+		const second = await resolveHumanVerificationProviderForRequest(event as never, platformEnv);
+
+		expect(first).toBe('turnstile');
+		expect(second).toBe('turnstile');
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not share cached CSP human verification lookups across tenant hosts', async () => {
+		const { resolveHumanVerificationProviderForRequest } = await import('../hooks.server');
+		const platformEnv = {
+			PUBLIC_API_BASE_URL: 'https://api.example.com',
+			AR_ROUTER: {
+				fetch: vi
+					.fn()
+					.mockResolvedValueOnce(Response.json(createAuthenticationMethodsResponse('turnstile')))
+					.mockResolvedValueOnce(Response.json(createAuthenticationMethodsResponse('hcaptcha')))
+			}
+		};
+		const firstEvent = {
+			request: new Request('https://login.example.com/login', {
+				headers: { 'x-authrim-original-host': 'first.example.com' }
+			}),
+			url: new URL('https://login.example.com/login'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const secondEvent = {
+			request: new Request('https://login.example.com/login', {
+				headers: { 'x-authrim-original-host': 'second.example.com' }
+			}),
+			url: new URL('https://login.example.com/login'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const first = await resolveHumanVerificationProviderForRequest(
+			firstEvent as never,
+			platformEnv
+		);
+		const second = await resolveHumanVerificationProviderForRequest(
+			secondEvent as never,
+			platformEnv
+		);
+
+		expect(first).toBe('turnstile');
+		expect(second).toBe('hcaptcha');
+		expect(platformEnv.AR_ROUTER.fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('deduplicates concurrent CSP human verification lookups', async () => {
+		const { resolveHumanVerificationProviderForRequest } = await import('../hooks.server');
+		const event = {
+			request: new Request('https://login.example.com/login', {
+				headers: {
+					'x-authrim-original-host': 'tenant.example.com'
+				}
+			}),
+			url: new URL('https://login.example.com/login'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const fetch = vi.fn(
+			() =>
+				new Promise<Response>((resolve) => {
+					setTimeout(
+						() => resolve(Response.json(createAuthenticationMethodsResponse('recaptcha'))),
+						1
+					);
+				})
+		);
+		const platformEnv = {
+			PUBLIC_API_BASE_URL: 'https://api.example.com',
+			AR_ROUTER: { fetch }
+		};
+
+		const [first, second] = await Promise.all([
+			resolveHumanVerificationProviderForRequest(event as never, platformEnv),
+			resolveHumanVerificationProviderForRequest(event as never, platformEnv)
+		]);
+
+		expect(first).toBe('recaptcha');
+		expect(second).toBe('recaptcha');
+		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 });
