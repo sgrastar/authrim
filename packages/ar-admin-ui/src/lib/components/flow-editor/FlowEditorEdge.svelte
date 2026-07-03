@@ -1,6 +1,8 @@
 <script lang="ts" module>
 	export interface FlowEditorEdgeData extends Record<string, unknown> {
 		deletable?: boolean;
+		highlighted?: boolean;
+		dimmed?: boolean;
 	}
 </script>
 
@@ -18,6 +20,7 @@
 		markerEnd,
 		markerStart,
 		selected = false,
+		data,
 		sourcePosition,
 		sourceX,
 		sourceY,
@@ -85,7 +88,12 @@
 	{markerEnd}
 	{interactionWidth}
 	{style}
-	class={['flow-editor-edge', selected && 'flow-editor-edge--selected']}
+	class={[
+		'flow-editor-edge',
+		selected && 'flow-editor-edge--selected',
+		data?.highlighted && 'flow-editor-edge--highlighted',
+		data?.dimmed && 'flow-editor-edge--dimmed'
+	]}
 />
 
 {#if selected}
@@ -118,16 +126,22 @@
 	}
 
 	:global(.svelte-flow__edge:hover .flow-editor-edge),
-	:global(.flow-editor-edge--selected) {
+	:global(.flow-editor-edge--selected),
+	:global(.flow-editor-edge--highlighted) {
 		stroke: var(--color-accent);
 		stroke-width: 1.9;
 		opacity: 1;
 	}
 
-	:global(.flow-editor-edge--selected) {
+	:global(.flow-editor-edge--selected),
+	:global(.flow-editor-edge--highlighted) {
 		stroke-dasharray: 6 6;
 		filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent) 42%, transparent));
 		animation: flow-editor-edge-flow 620ms linear infinite;
+	}
+
+	:global(.flow-editor-edge--dimmed) {
+		opacity: 0.26;
 	}
 
 	:global(.svelte-flow__edge-interaction) {

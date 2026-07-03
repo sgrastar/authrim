@@ -12,7 +12,10 @@ export type ConsentPolicyItemBindingType =
 	| 'scope'
 	| 'claim'
 	| 'saml_attribute'
-	| 'destination_field_set';
+	| 'destination_field_set'
+	| 'identity_schema'
+	| 'destination_field_mapping_set'
+	| 'user_decision';
 
 export interface ConsentPolicy {
 	id: string;

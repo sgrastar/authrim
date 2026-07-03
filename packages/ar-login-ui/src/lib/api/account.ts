@@ -79,6 +79,45 @@ export type AccountOperation = {
 	metadata?: Record<string, unknown>;
 };
 
+export type AccountOAuthClientConsent = {
+	kind: 'oauth_client';
+	id: string;
+	clientId: string;
+	clientName?: string;
+	clientLogoUri?: string;
+	scopes: string[];
+	selectedScopes?: string[];
+	grantedAt: number;
+	expiresAt?: number;
+	policyVersions?: {
+		privacyPolicyVersion?: string;
+		tosVersion?: string;
+		consentVersion?: number;
+	};
+};
+
+export type AccountStatementConsent = {
+	kind: 'statement';
+	id: string;
+	statementId: string;
+	versionId: string;
+	version: string;
+	status: string;
+	title: string;
+	description?: string;
+	slug?: string;
+	category?: string;
+	grantedAt?: number;
+	withdrawnAt?: number;
+	expiresAt?: number;
+	clientId?: string;
+	receiptId?: string;
+	updatedAt: number;
+	selectedValue?: string;
+};
+
+export type AccountConsent = AccountOAuthClientConsent | AccountStatementConsent;
+
 export type AccountCapabilities = {
 	capabilities: Array<{
 		id: string;
@@ -276,5 +315,8 @@ export const accountAPI = {
 		}),
 
 	getOperations: () =>
-		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20')
+		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),
+
+	getConsents: () =>
+		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents')
 };

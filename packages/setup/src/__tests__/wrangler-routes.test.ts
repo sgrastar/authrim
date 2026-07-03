@@ -962,6 +962,8 @@ id = "kv-id"
       { pattern: 'conformance.authrim.com/*', zone_name: 'authrim.com' },
     ]);
     expect(authConfig.routes).toBeUndefined();
+    expect(authConfig.vars.ENABLE_LOGIN_RUNTIME_FLOW).toBe('true');
+    expect(authConfig.vars.FLOW_RUNTIME_HMAC_SECRET).toBe('');
     expect(managementConfig.routes).toBeUndefined();
   });
 

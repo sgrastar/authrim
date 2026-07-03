@@ -221,6 +221,11 @@ export function resolveUiDeploymentSettings(
     uiEnv.ADMIN_UI_API_MODE = adminUiApiMode;
   }
 
+  // Login UI always benefits from an internal router binding for its SSR and same-origin
+  // /api proxy calls. Keep Admin UI tied to cross-site BFF mode because AR_ROUTER changes
+  // its CSP and proxy behavior.
+  const serviceBindingName = component === 'ar-login-ui' || needsProxy ? 'AR_ROUTER' : undefined;
+
   return {
     apiBaseUrl,
     uiUrl,
@@ -232,6 +237,6 @@ export function resolveUiDeploymentSettings(
     adminUiApiMode,
     uiEnv,
     runtimeApiBackendUrl: needsProxy ? runtimeApiBackendUrl : DISABLED_API_BACKEND_URL,
-    serviceBindingName: needsProxy ? 'AR_ROUTER' : undefined,
+    serviceBindingName,
   };
 }

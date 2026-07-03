@@ -246,7 +246,7 @@ describe('resolveUiDeploymentSettings', () => {
     expect(login.needsProxy).toBe(false);
     expect(login.workersDev).toBe(false);
     expect(login.routes).toEqual([{ pattern: 'login.example.com', custom_domain: true }]);
-    expect(login.serviceBindingName).toBeUndefined();
+    expect(login.serviceBindingName).toBe('AR_ROUTER');
     expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('https://auth.example.com');
     expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
     expect(login.runtimeApiBackendUrl).toBe(DISABLED_API_BACKEND_URL);
@@ -525,6 +525,8 @@ describe('resolveUiDeploymentSettings', () => {
     expect(login.needsProxy).toBe(scenario.expectedLoginProxy);
     expect(admin.needsProxy).toBe(scenario.expectedAdminProxy);
     expect(admin.adminUiApiMode).toBe(scenario.expectedAdminMode);
+    expect(login.serviceBindingName).toBe('AR_ROUTER');
+    expect(admin.serviceBindingName).toBe(scenario.expectedAdminProxy ? 'AR_ROUTER' : undefined);
   });
 
   it('keeps relative same-origin API calls when the UI is served on the API domain', () => {
@@ -565,7 +567,7 @@ describe('resolveUiDeploymentSettings', () => {
 
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(false);
-    expect(login.serviceBindingName).toBeUndefined();
+    expect(login.serviceBindingName).toBe('AR_ROUTER');
     expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('');
     expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBeUndefined();
     expect(login.runtimeApiBackendUrl).toBe(DISABLED_API_BACKEND_URL);

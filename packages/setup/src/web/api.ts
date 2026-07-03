@@ -118,6 +118,7 @@ import { completeInitialSetup } from '../core/admin.js';
 import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
+import { getSecretNamesForWorker } from '../core/secrets.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
 import {
   buildWorkerHttpReadinessTargets,
@@ -448,6 +449,82 @@ async function ensureSupplementalKeysForWebDeploy(keysDir: string): Promise<void
   for (const filePath of result.createdFiles) {
     addProgress(`  - ${filePath.replace(`${keysDir}/`, '')}`);
   }
+}
+
+const SECRET_KEY_FILES: Record<string, string> = {
+  PRIVATE_KEY_PEM: 'private.pem',
+  PUBLIC_JWK_JSON: 'public.jwk.json',
+  RP_TOKEN_ENCRYPTION_KEY: 'rp_token_encryption_key.txt',
+  OBJECT_ENCRYPTION_ROOT_KEY: 'object_encryption_root_key.txt',
+  VERSION_MANAGER_SECRET: 'version_manager_secret.txt',
+  LOGGING_CURSOR_HMAC_SECRET: 'logging_cursor_hmac_secret.txt',
+  FLOW_RUNTIME_HMAC_SECRET: 'flow_runtime_hmac_secret.txt',
+  PLUGIN_ENCRYPTION_KEY: 'plugin_encryption_key.txt',
+  TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK: 'tenant_runtime_registry_signing_private.jwk.json',
+  TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'tenant_runtime_registry_signing_key_id.txt',
+  TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: 'tenant_runtime_registry_verify.jwks.json',
+  ADMIN_API_SECRET: 'admin_api_secret.txt',
+  KEY_MANAGER_SECRET: 'key_manager_secret.txt',
+  CLOUDFLARE_API_TOKEN: 'cloudflare_api_token.txt',
+  RESEND_API_KEY: 'resend_api_key.txt',
+};
+
+async function loadSecretsForWorkersFromKeys(
+  keysDir: string,
+  workers: WorkerComponent[]
+): Promise<Record<string, string>> {
+  const secretNames = new Set<string>();
+  for (const worker of workers) {
+    for (const secretName of getSecretNamesForWorker(worker)) {
+      secretNames.add(secretName);
+    }
+  }
+
+  const secrets: Record<string, string> = {};
+  for (const secretName of secretNames) {
+    const fileName = SECRET_KEY_FILES[secretName];
+    if (!fileName) {
+      continue;
+    }
+    const filePath = join(keysDir, fileName);
+    if (existsSync(filePath)) {
+      secrets[secretName] = await readFile(filePath, 'utf-8');
+    }
+  }
+
+  return secrets;
+}
+
+async function uploadSupplementalSecretsForWorkers(options: {
+  env: string;
+  rootDir: string;
+  keysDir: string;
+  workers: WorkerComponent[];
+  dryRun?: boolean;
+}): Promise<{ success: boolean; errors: string[] }> {
+  const { env, rootDir, keysDir, workers, dryRun } = options;
+  if (!existsSync(keysDir)) {
+    addProgress(`Warning: Keys directory not found at ${keysDir}`);
+    return { success: true, errors: [] };
+  }
+
+  await ensureSupplementalKeysForWebDeploy(keysDir);
+  const secrets = await loadSecretsForWorkersFromKeys(keysDir, workers);
+  if (Object.keys(secrets).length === 0) {
+    return { success: true, errors: [] };
+  }
+
+  addProgress('Uploading worker secrets...');
+  return uploadSecrets(
+    secrets,
+    {
+      env,
+      rootDir: resolve(rootDir),
+      dryRun,
+      onProgress: addProgress,
+    },
+    workers
+  );
 }
 
 async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
@@ -1451,26 +1528,7 @@ export function createApiRoutes(): Hono {
 
         addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
 
-        addProgress('Uploading email bootstrap secrets...');
-        const secretResult = await uploadSecrets(
-          {
-            EMAIL_FROM: fromAddress.trim(),
-            EMAIL_FROM_NAME: fromName?.trim() || '',
-          },
-          {
-            env,
-            rootDir: resolve(rootDir),
-            onProgress: addProgress,
-          },
-          ['ar-auth', 'ar-management']
-        );
-
-        if (!secretResult.success) {
-          state.status = 'error';
-          state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
-          await flushProgressLog();
-          return c.json({ success: false, error: state.error }, 500);
-        }
+        addProgress('Email sender values will be deployed as Worker vars.');
 
         addProgress('Building packages...');
         const buildResult = await buildApiPackages({
@@ -1979,8 +2037,6 @@ export function createApiRoutes(): Hono {
             { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
             // Email provider secrets (optional)
             { file: join(keysDir, 'resend_api_key.txt'), name: 'RESEND_API_KEY' },
-            { file: join(keysDir, 'email_from.txt'), name: 'EMAIL_FROM' },
-            { file: join(keysDir, 'email_from_name.txt'), name: 'EMAIL_FROM_NAME' },
           ];
 
           for (const { file, name } of secretFiles) {
@@ -3484,6 +3540,34 @@ export function createApiRoutes(): Hono {
 
         addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
 
+        const workerComponentsToUpdate = componentsToUpdate.filter(
+          (component): component is WorkerComponent =>
+            (WORKER_COMPONENTS as readonly string[]).includes(component)
+        );
+        if (workerComponentsToUpdate.length > 0) {
+          const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+          const secretResult = await uploadSupplementalSecretsForWorkers({
+            env,
+            rootDir,
+            keysDir,
+            workers: workerComponentsToUpdate,
+          });
+          if (!secretResult.success) {
+            state.status = 'error';
+            state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
+            await flushProgressLog();
+            return c.json(
+              {
+                success: false,
+                error: state.error,
+                progress: state.progress,
+                logPath: state.logPath,
+              },
+              500
+            );
+          }
+        }
+
         // Build packages
         addProgress('Building packages...');
         const buildResult = await buildApiPackages({
@@ -3511,20 +3595,25 @@ export function createApiRoutes(): Hono {
           (config.components.loginUi || config.components.adminUi) &&
           componentsToUpdate.includes('ar-router')
         ) {
-          const placeholderSummary = await deployUiWorkerBindingTargets(
-            {
-              env,
-              rootDir: resolve(rootDir),
-              apiBaseUrl: resolveIssuerUrl(config, { env }),
-              onProgress: addProgress,
-            },
-            {
-              loginUi: config.components.loginUi ?? true,
-              adminUi: config.components.adminUi ?? true,
-            }
-          );
+          const missingUiBindingTargets = {
+            loginUi: (config.components.loginUi ?? true) && !lock.workers?.['ar-login-ui'],
+            adminUi: (config.components.adminUi ?? true) && !lock.workers?.['ar-admin-ui'],
+          };
 
-          if (placeholderSummary.failedCount > 0) {
+          const placeholderSummary =
+            missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi
+              ? await deployUiWorkerBindingTargets(
+                  {
+                    env,
+                    rootDir: resolve(rootDir),
+                    apiBaseUrl: resolveIssuerUrl(config, { env }),
+                    onProgress: addProgress,
+                  },
+                  missingUiBindingTargets
+                )
+              : undefined;
+
+          if (placeholderSummary && placeholderSummary.failedCount > 0) {
             addProgress(
               `⚠️ UI Worker pre-deploy failed: ${placeholderSummary.successCount}/${placeholderSummary.results.length} succeeded`
             );
@@ -3534,6 +3623,10 @@ export function createApiRoutes(): Hono {
               }
             }
             addProgress('  ar-router may fail if it references missing UI Worker bindings.');
+          } else if (!placeholderSummary) {
+            addProgress(
+              'UI Worker binding targets already exist; skipping placeholder pre-deploy.'
+            );
           }
         }
 
@@ -3999,6 +4092,21 @@ export function createApiRoutes(): Hono {
           } catch (syncError) {
             addProgress(`Warning: Could not sync wrangler configs: ${sanitizeError(syncError)}`);
             // Continue anyway - the config might already exist
+          }
+
+          if (!dryRun) {
+            const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+            const secretResult = await uploadSupplementalSecretsForWorkers({
+              env,
+              rootDir,
+              keysDir,
+              workers: [componentName as WorkerComponent],
+            });
+            if (!secretResult.success) {
+              state.status = 'error';
+              state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
+              return c.json({ success: false, error: state.error }, 500);
+            }
           }
 
           // Build first (unless skipped)

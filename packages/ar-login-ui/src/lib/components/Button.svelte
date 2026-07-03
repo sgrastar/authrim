@@ -96,7 +96,7 @@
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: white;
+		background: var(--bg-card);
 		border-color: var(--primary);
 		color: var(--primary);
 		transform: translateY(-2px);

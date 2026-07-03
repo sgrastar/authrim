@@ -12,6 +12,12 @@ import { env as dynamicEnv } from '$env/dynamic/public';
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { REMEMBERED_TENANT_COOKIE, getRememberedTenantHost } from '$lib/discovery-session';
+import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
+import {
+	getCachedAuthenticationMethods,
+	resolveHumanVerificationProviderFromAuthenticationMethods,
+	type HumanVerificationProvider
+} from '$lib/server/authentication-methods-cache';
 
 interface ServiceBinding {
 	fetch(request: Request): Promise<Response>;
@@ -217,7 +223,7 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 
 export function buildContentSecurityPolicy(
 	platformEnv: Record<string, unknown> | undefined,
-	humanVerificationProvider: 'turnstile' | 'hcaptcha' | 'recaptcha' | null
+	humanVerificationProvider: HumanVerificationProvider | null
 ): string {
 	const turnstileOrigin = 'https://challenges.cloudflare.com';
 	const cloudflareInsightsOrigin = 'https://static.cloudflareinsights.com';
@@ -259,13 +265,28 @@ export function buildContentSecurityPolicy(
 	].join('; ');
 }
 
-export async function resolveHumanVerificationProviderForRequest(
-	event: RequestEvent,
-	platformEnv: Record<string, unknown> | undefined
-): Promise<'turnstile' | 'hcaptcha' | 'recaptcha' | null> {
+function getCacheKeyOrigin(apiBackendUrl: string): string {
 	try {
-		const apiBackendUrl = getApiBackendUrl(platformEnv);
-		const forwardedHost = getForwardedHost(event, platformEnv);
+		return new URL(apiBackendUrl).origin;
+	} catch {
+		return apiBackendUrl;
+	}
+}
+
+export function buildAuthenticationMethodsCacheKey(
+	apiBackendUrl: string,
+	forwardedHost: string
+): string {
+	return `${getCacheKeyOrigin(apiBackendUrl)}|${forwardedHost.toLowerCase()}`;
+}
+
+async function fetchAuthenticationMethodsForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined,
+	apiBackendUrl: string,
+	forwardedHost: string
+): Promise<AuthenticationMethodsResponse | null> {
+	try {
 		const upstreamUrl = new URL('/api/auth/authentication-methods', apiBackendUrl);
 		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
 		headers.set('Accept', 'application/json');
@@ -279,34 +300,31 @@ export async function resolveHumanVerificationProviderForRequest(
 			: await fetch(new Request(upstreamUrl.toString(), { headers }));
 		if (!response.ok) return null;
 
-		const data = (await response.json()) as {
-			methods?: {
-				humanVerification?: {
-					enabled?: unknown;
-					provider?: unknown;
-					siteKey?: unknown;
-				};
-			};
-		};
-		const humanVerification = data.methods?.humanVerification;
-		if (
-			humanVerification?.enabled !== true ||
-			typeof humanVerification.siteKey !== 'string' ||
-			!humanVerification.siteKey.trim()
-		) {
-			return null;
-		}
-		if (
-			humanVerification.provider === 'turnstile' ||
-			humanVerification.provider === 'hcaptcha' ||
-			humanVerification.provider === 'recaptcha'
-		) {
-			return humanVerification.provider;
-		}
-		return null;
+		return (await response.json()) as AuthenticationMethodsResponse;
 	} catch {
 		return null;
 	}
+}
+
+export async function getCachedAuthenticationMethodsForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): Promise<AuthenticationMethodsResponse | null> {
+	const apiBackendUrl = getApiBackendUrl(platformEnv);
+	const forwardedHost = getForwardedHost(event, platformEnv);
+	const cacheKey = buildAuthenticationMethodsCacheKey(apiBackendUrl, forwardedHost);
+
+	return getCachedAuthenticationMethods(cacheKey, () =>
+		fetchAuthenticationMethodsForRequest(event, platformEnv, apiBackendUrl, forwardedHost)
+	);
+}
+
+export async function resolveHumanVerificationProviderForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): Promise<HumanVerificationProvider | null> {
+	const data = await getCachedAuthenticationMethodsForRequest(event, platformEnv);
+	return resolveHumanVerificationProviderFromAuthenticationMethods(data);
 }
 
 export function shouldProxyPath(pathname: string): boolean {

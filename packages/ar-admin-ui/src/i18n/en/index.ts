@@ -53,6 +53,7 @@ import adminPlugins from './admin-plugins';
 import adminIdentityMapping from './admin-identity-mapping';
 import adminConsentPolicies from './admin-consent-policies';
 import adminFlows from './admin-flows';
+import adminForms from './admin-forms';
 import adminOther from './admin-other';
 
 const en: BaseTranslation = {
@@ -110,6 +111,7 @@ const en: BaseTranslation = {
 	...adminIdentityMapping,
 	...adminConsentPolicies,
 	...adminFlows,
+	...adminForms,
 	...adminOther
 } satisfies BaseTranslation;
 

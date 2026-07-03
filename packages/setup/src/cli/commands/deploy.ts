@@ -183,8 +183,6 @@ async function loadSecretsFromKeys(keysDir: string): Promise<Record<string, stri
     { file: 'plugin_encryption_key.txt', name: 'PLUGIN_ENCRYPTION_KEY' },
     { file: 'cloudflare_api_token.txt', name: 'CLOUDFLARE_API_TOKEN' },
     { file: 'resend_api_key.txt', name: 'RESEND_API_KEY' },
-    { file: 'email_from.txt', name: 'EMAIL_FROM' },
-    { file: 'email_from_name.txt', name: 'EMAIL_FROM_NAME' },
   ];
 
   for (const { file, name } of secretFiles) {

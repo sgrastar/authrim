@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingAttributeField,
@@ -14,6 +15,7 @@
 		type IdentityMappingSourceProfileSchema,
 		type IdentityMappingSourceProfileSummary
 	} from '$lib/api/admin-identity-mapping';
+	import { adminOidcScopesAPI, type OidcScope } from '$lib/api/admin-oidc-scopes';
 	import {
 		destinationTemplates,
 		type DestinationTemplate
@@ -161,6 +163,7 @@
 	let destinationProfiles = $state<IdentityMappingDestinationProfileSummary[]>([]);
 	let attributeGroups = $state<IdentityMappingAttributeGroup[]>([]);
 	let attributeFields = $state<IdentityMappingAttributeField[]>([]);
+	let oidcScopes = $state<OidcScope[]>([]);
 
 	let csvMode = $state<CsvCreateMode>('upload');
 	let csvDetailTab = $state<CsvDetailTab>('summary');
@@ -208,6 +211,10 @@
 	let selectedTemplateId = $state('');
 	let previewTemplate = $state<DestinationTemplate | null>(null);
 	let oidcClaimsParameterJson = $state('');
+	let creatingScopeForClaimIndex = $state<number | null>(null);
+	let newScopeName = $state('');
+	let newScopeDisplayName = $state('');
+	let creatingScope = $state(false);
 	let oidcClaims = $state<OidcClaimDraft[]>([
 		createOidcClaimDraft(
 			'sub',
@@ -318,17 +325,20 @@
 				loadedSourceProfiles,
 				loadedDestinationProfiles,
 				loadedAttributeGroups,
-				loadedAttributeFields
+				loadedAttributeFields,
+				loadedOidcScopes
 			] = await Promise.all([
 				adminIdentityMappingAPI.listSourceProfiles(),
 				adminIdentityMappingAPI.listDestinationProfiles(),
 				adminIdentityMappingAPI.listAttributeGroups(),
-				adminIdentityMappingAPI.listAttributeFields()
+				adminIdentityMappingAPI.listAttributeFields(),
+				adminOidcScopesAPI.list()
 			]);
 			sourceProfiles = loadedSourceProfiles.sourceProfiles;
 			destinationProfiles = loadedDestinationProfiles.destinationProfiles;
 			attributeGroups = loadedAttributeGroups.attributeGroups;
 			attributeFields = loadedAttributeFields.attributeFields;
+			oidcScopes = loadedOidcScopes.scopes;
 			applyRequestedProfile();
 		} catch (error) {
 			message =
@@ -797,6 +807,53 @@
 		oidcClaims = oidcClaims.map((claim, claimIndex) =>
 			claimIndex === index ? { ...claim, [field]: value } : claim
 		);
+	}
+
+	function getSelectedOidcScopes(claim: OidcClaimDraft): string[] {
+		return splitCsv(claim.requiredScopes);
+	}
+
+	function toggleOidcClaimScope(index: number, scopeName: string, checked: boolean) {
+		const current = new SvelteSet(getSelectedOidcScopes(oidcClaims[index]));
+		if (checked) current.add(scopeName);
+		else current.delete(scopeName);
+		updateOidcClaim(index, 'requiredScopes', Array.from(current).sort().join(','));
+	}
+
+	function openCreateScope(index: number) {
+		creatingScopeForClaimIndex = index;
+		newScopeName = '';
+		newScopeDisplayName = '';
+	}
+
+	function closeCreateScope() {
+		if (creatingScope) return;
+		creatingScopeForClaimIndex = null;
+		newScopeName = '';
+		newScopeDisplayName = '';
+	}
+
+	async function createScopeForClaim() {
+		if (creatingScopeForClaimIndex === null) return;
+		creatingScope = true;
+		message = null;
+		try {
+			const displayName = newScopeDisplayName.trim() || newScopeName.trim();
+			const response = await adminOidcScopesAPI.create({
+				name: newScopeName.trim(),
+				display_name: displayName,
+				scope_type: 'custom',
+				enabled: true
+			});
+			oidcScopes = [...oidcScopes, response.scope].sort((a, b) => a.name.localeCompare(b.name));
+			toggleOidcClaimScope(creatingScopeForClaimIndex, response.scope.name, true);
+			closeCreateScope();
+		} catch (error) {
+			message =
+				error instanceof Error ? error.message : $LL.admin_identity_mapping_scope_create_failed();
+		} finally {
+			creatingScope = false;
+		}
 	}
 
 	function toggleOidcClaimSurface(
@@ -2201,12 +2258,43 @@
 										</label>
 									{/each}
 								</div>
-								<input
-									value={claim.requiredScopes}
-									placeholder="openid,email"
-									oninput={(event) =>
-										updateOidcClaim(index, 'requiredScopes', getInputValue(event))}
-								/>
+								<details class="scope-picker">
+									<summary>
+										{#if getSelectedOidcScopes(claim).length > 0}
+											<span class="scope-chip-list">
+												{#each getSelectedOidcScopes(claim) as scopeName (scopeName)}
+													<span class="scope-chip">{scopeName}</span>
+												{/each}
+											</span>
+										{:else}
+											<span class="scope-placeholder"
+												>{$LL.admin_identity_mapping_scope_select_placeholder()}</span
+											>
+										{/if}
+									</summary>
+									<div class="scope-menu">
+										{#each oidcScopes as scope (scope.id)}
+											<label class="scope-option">
+												<input
+													type="checkbox"
+													checked={getSelectedOidcScopes(claim).includes(scope.name)}
+													disabled={!scope.enabled}
+													onchange={(event) =>
+														toggleOidcClaimScope(index, scope.name, getCheckboxValue(event))}
+												/>
+												<span>{scope.display_name || scope.name}</span>
+												<small>{scope.name}</small>
+											</label>
+										{/each}
+										<button
+											class="scope-create-link"
+											type="button"
+											onclick={() => openCreateScope(index)}
+										>
+											{$LL.admin_identity_mapping_scope_create_inline()}
+										</button>
+									</div>
+								</details>
 								{#if destinationAdvancedSettings}
 									<input
 										value={claim.legalBasis}
@@ -2222,6 +2310,33 @@
 							</div>
 						{/each}
 					</div>
+					{#if creatingScopeForClaimIndex !== null}
+						<div class="scope-create-panel">
+							<label>
+								<span>{$LL.admin_identity_mapping_scope_name()}</span>
+								<input bind:value={newScopeName} placeholder="library.read" />
+							</label>
+							<label>
+								<span>{$LL.admin_identity_mapping_scope_display_name()}</span>
+								<input bind:value={newScopeDisplayName} placeholder="Library read" />
+							</label>
+							<div class="scope-create-actions">
+								<button type="button" onclick={closeCreateScope}>
+									{$LL.admin_identity_mapping_profile_edit_cancel()}
+								</button>
+								<button
+									type="button"
+									class="primary-button"
+									onclick={createScopeForClaim}
+									disabled={creatingScope || !newScopeName.trim()}
+								>
+									{creatingScope
+										? $LL.admin_identity_mapping_profile_edit_saving()
+										: $LL.admin_identity_mapping_scope_create()}
+								</button>
+							</div>
+						</div>
+					{/if}
 					<div class="table-add-action">
 						<button type="button" onclick={addOidcClaim}
 							>{$LL.admin_identity_mapping_profile_edit_add_claim()}</button
@@ -3434,6 +3549,7 @@
 	.column-row select,
 	.claim-row input,
 	.claim-row select,
+	.scope-picker > summary,
 	.destination-column-row input,
 	.destination-column-row select,
 	.saml-attribute-row input,
@@ -3453,6 +3569,7 @@
 
 	.column-row select,
 	.claim-row select,
+	.scope-picker > summary,
 	.destination-column-row select,
 	.saml-attribute-row select {
 		appearance: none;
@@ -3488,6 +3605,7 @@
 	.column-row select:focus,
 	.claim-row input:focus,
 	.claim-row select:focus,
+	.scope-picker:focus-within > summary,
 	.destination-column-row input:focus,
 	.destination-column-row select:focus,
 	.saml-attribute-row input:focus,
@@ -3500,6 +3618,7 @@
 	}
 
 	.claim-row > input:first-child,
+	.claim-row > .scope-picker,
 	.destination-column-row > input:first-child,
 	.saml-attribute-row > input:first-child {
 		font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
@@ -3654,6 +3773,109 @@
 	.destination-column-row > .mini-check,
 	.saml-attribute-row > .mini-check {
 		justify-content: center;
+	}
+
+	.scope-picker {
+		position: relative;
+		min-width: 0;
+	}
+
+	.scope-picker > summary {
+		display: flex;
+		min-height: 36px;
+		align-items: center;
+		overflow: hidden;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.scope-picker > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.scope-chip-list {
+		display: flex;
+		min-width: 0;
+		gap: 4px;
+		overflow: hidden;
+	}
+
+	.scope-chip {
+		max-width: 96px;
+		overflow: hidden;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		padding: 2px 7px;
+		background: var(--color-surface-muted);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 11px;
+		font-weight: 700;
+	}
+
+	.scope-placeholder {
+		color: var(--color-text-muted);
+	}
+
+	.scope-menu {
+		position: absolute;
+		z-index: 20;
+		top: calc(100% + 4px);
+		left: 0;
+		display: grid;
+		width: min(280px, 80vw);
+		gap: 2px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		padding: 6px;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-lg, 0 16px 40px rgb(15 23 42 / 18%));
+	}
+
+	.scope-option {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		gap: 8px;
+		align-items: center;
+		border-radius: 6px;
+		padding: 6px;
+		font-size: 13px;
+	}
+
+	.scope-option:hover {
+		background: var(--color-surface-muted);
+	}
+
+	.scope-option small {
+		color: var(--color-text-muted);
+		font-size: 11px;
+	}
+
+	.scope-create-link {
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-link, var(--color-primary));
+		padding: 7px;
+		text-align: left;
+		font: inherit;
+		font-weight: 700;
+	}
+
+	.scope-create-panel {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+		gap: 10px;
+		align-items: end;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		padding: 12px;
+		background: var(--color-surface-muted);
+	}
+
+	.scope-create-actions {
+		display: flex;
+		gap: 8px;
 	}
 
 	.warning-list {

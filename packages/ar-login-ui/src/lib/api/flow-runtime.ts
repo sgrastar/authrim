@@ -36,9 +36,19 @@ export interface FlowRuntimeConsentPolicyItem {
 	version: string;
 	version_id: string;
 	is_required: boolean;
+	content_mode?: 'display_only' | 'checkbox' | 'radio';
+	options?: FlowRuntimeConsentPolicyOption[];
+	attribute_value_display?: 'names' | 'masked_values' | 'full_values' | null;
 	checkbox_mode: 'none' | 'required' | 'optional';
 	checkbox_default_checked: boolean;
 	display_order: number;
+}
+
+export interface FlowRuntimeConsentPolicyOption {
+	id: string;
+	value: string;
+	label: string;
+	description: string;
 }
 
 export interface FlowRuntimeConsentPolicyContent {

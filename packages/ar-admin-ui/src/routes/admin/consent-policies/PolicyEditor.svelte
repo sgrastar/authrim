@@ -254,7 +254,7 @@
 				version_mode: 'current',
 				version_id: '',
 				min_version: '',
-				checkbox_mode: 'none',
+				checkbox_mode: 'required',
 				checkbox_default_checked: false,
 				binding_type: null,
 				binding_value: '',
@@ -304,7 +304,12 @@
 			version_mode: 'current',
 			version_id: '',
 			min_version: '',
-			checkbox_mode: 'none',
+			checkbox_mode:
+				item.requirement === 'hidden'
+					? 'none'
+					: item.requirement === 'optional'
+						? 'optional'
+						: 'required',
 			checkbox_default_checked: false,
 			binding_type: null,
 			binding_value: '',

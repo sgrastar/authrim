@@ -4,6 +4,7 @@
 	import { Button, Spinner } from '$lib/components';
 	import {
 		accountAPI,
+		type AccountConsent,
 		type AccountDevice,
 		type AccountOperation,
 		type AccountPasskey,
@@ -12,6 +13,7 @@
 		type AccountSession
 	} from '$lib/api/account';
 	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
+	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
@@ -35,9 +37,11 @@
 	let sessions = $state<AccountSession[]>([]);
 	let passkeys = $state<AccountPasskey[]>([]);
 	let operations = $state<AccountOperation[]>([]);
+	let consents = $state<AccountConsent[]>([]);
 	let authenticationMethods = $state<AuthenticationMethods | null>(null);
 	let accountError = $state('');
 	let profileError = $state('');
+	let consentError = $state('');
 	let profileSaved = $state(false);
 	let profileSaving = $state(false);
 	let securityError = $state('');
@@ -117,6 +121,7 @@
 	async function loadAccountPage(): Promise<'ok' | 'unauthorized' | 'error'> {
 		accountError = '';
 		securityError = '';
+		consentError = '';
 		reauthNeeded = false;
 		const [
 			profileResult,
@@ -124,6 +129,7 @@
 			sessionsResult,
 			passkeysResult,
 			operationsResult,
+			consentsResult,
 			capabilitiesResult
 		] = await Promise.all([
 			accountAPI.getProfile(),
@@ -131,6 +137,7 @@
 			accountAPI.getSessions(),
 			accountAPI.getPasskeys(),
 			accountAPI.getOperations(),
+			accountAPI.getConsents(),
 			accountAPI.getCapabilities()
 		]);
 
@@ -149,10 +156,12 @@
 		sessions = sessionsResult.data?.sessions ?? [];
 		passkeys = passkeysResult.data?.passkeys ?? [];
 		operations = operationsResult.data?.operations ?? [];
+		consents = consentsResult.data?.consents ?? [];
 		await Promise.all([
 			signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal),
 			signalCurrentUserDetails(profile)
 		]);
+		consentError = consentsResult.error?.error_description || consentsResult.error?.error || '';
 		if (
 			devicesResult.error ||
 			sessionsResult.error ||
@@ -495,6 +504,7 @@
 					onDeletePasskey={deletePasskey}
 					onReauth={() => requestReauth()}
 				/>
+				<AccountConsentSection {consents} error={consentError} />
 				<AccountActivitySection {operations} />
 			</section>
 		</div>
@@ -574,10 +584,131 @@
 
 <style>
 	.account-shell {
+		--account-card-bg: #fefdfa;
+		--account-control-bg: #ffffff;
+		--account-control-hover: #f7f3ec;
+		--account-primary-bg: #2c2724;
+		--account-primary-hover: #1a1715;
+
 		min-height: 100vh;
-		background: var(--bg-primary);
+		background: var(--bg-page);
 		color: var(--text-primary);
+		isolation: isolate;
 		padding: 24px;
+	}
+
+	:global([data-theme='light'][data-variant='blue-gray'] .account-shell) {
+		--account-card-bg: #f8fafc;
+		--account-control-bg: #ffffff;
+		--account-control-hover: #eef4fb;
+		--account-primary-bg: #3b82f6;
+		--account-primary-hover: #2563eb;
+	}
+
+	:global([data-theme='light'][data-variant='green'] .account-shell) {
+		--account-card-bg: #f8fcf8;
+		--account-control-bg: #ffffff;
+		--account-control-hover: #edf8ef;
+		--account-primary-bg: #10b981;
+		--account-primary-hover: #059669;
+	}
+
+	:global([data-theme='dark'] .account-shell) {
+		--account-card-bg: #2d2824;
+		--account-control-bg: #3c3630;
+		--account-control-hover: #463f38;
+		--account-primary-bg: #c8b8a8;
+		--account-primary-hover: #d4c4b4;
+	}
+
+	:global([data-theme='dark'][data-variant='navy'] .account-shell) {
+		--account-card-bg: #232c38;
+		--account-control-bg: #2d3748;
+		--account-control-hover: #344257;
+		--account-primary-bg: #6495ed;
+		--account-primary-hover: #93c5fd;
+	}
+
+	:global([data-theme='dark'][data-variant='slate'] .account-shell) {
+		--account-card-bg: #2d343c;
+		--account-control-bg: #374151;
+		--account-control-hover: #414d5f;
+		--account-primary-bg: #94a3b8;
+		--account-primary-hover: #cbd5e1;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:global(:root:not([data-theme]) .account-shell) {
+			--account-card-bg: #2d2824;
+			--account-control-bg: #3c3630;
+			--account-control-hover: #463f38;
+			--account-primary-bg: #c8b8a8;
+			--account-primary-hover: #d4c4b4;
+		}
+	}
+
+	:global(.account-shell .card),
+	:global(.account-shell .form-input),
+	:global(.account-shell .theme-toggle),
+	:global(.account-shell .auth-lang-select),
+	:global(.account-shell .btn),
+	:global(.account-shell .btn::after),
+	:global(.account-shell .btn::before) {
+		transform: none !important;
+		filter: none !important;
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
+		transition: none !important;
+	}
+
+	:global(.account-shell .card) {
+		background: var(--account-card-bg) !important;
+		box-shadow: none !important;
+	}
+
+	:global(.account-shell .form-input),
+	:global(.account-shell .theme-toggle),
+	:global(.account-shell .auth-lang-select),
+	:global(.account-shell .btn-secondary) {
+		background: var(--account-control-bg) !important;
+	}
+
+	:global(.account-shell .theme-toggle:hover),
+	:global(.account-shell .auth-lang-select:hover),
+	:global(.account-shell .btn-secondary:hover:not(:disabled)),
+	:global(.account-shell .btn-ghost:hover:not(:disabled)) {
+		background: var(--account-control-hover) !important;
+	}
+
+	:global(.account-shell .btn-primary) {
+		background: var(--account-primary-bg) !important;
+		box-shadow: none !important;
+	}
+
+	:global(.account-shell .btn-primary:hover:not(:disabled)) {
+		background: var(--account-primary-hover) !important;
+		box-shadow: none !important;
+	}
+
+	:global(.account-shell .btn:hover:not(:disabled)),
+	:global(.account-shell .btn-primary:hover:not(:disabled)),
+	:global(.account-shell .btn-secondary:hover:not(:disabled)),
+	:global(.account-shell .btn-danger:hover:not(:disabled)),
+	:global(.account-shell .theme-toggle:hover) {
+		transform: none !important;
+		filter: none !important;
+	}
+
+	:global(.account-shell .btn-primary::after) {
+		display: none;
+	}
+
+	:global(.account-shell .btn-danger) {
+		box-shadow: none !important;
+	}
+
+	:global(.account-shell .btn-danger:hover:not(:disabled)) {
+		box-shadow: none !important;
 	}
 
 	.account-language {

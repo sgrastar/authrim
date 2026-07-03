@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		getFlowAuthProfileOptions,
@@ -8,6 +10,7 @@
 		getFlowProfileFormOptions,
 		getFlowTemplateText,
 		getLocalizedFlowNode,
+		getSavedFlowDescription,
 		type FlowEditorAuthProfileOption,
 		type FlowEditorOption
 	} from '$lib/admin/flow-i18n';
@@ -17,6 +20,7 @@
 		type AuthenticationMethodSettingsResponse
 	} from '$lib/api/admin-authentication-methods';
 	import { adminConsentPoliciesAPI, type ConsentPolicy } from '$lib/api/admin-consent-policies';
+	import { adminFormProfilesAPI, type FormProfile } from '$lib/api/admin-form-profiles';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
@@ -29,6 +33,9 @@
 	import FlowEditorEdge, {
 		type FlowEditorEdgeData
 	} from '$lib/components/flow-editor/FlowEditorEdge.svelte';
+	import FlowEditorGroupNode, {
+		type FlowEditorGroupData
+	} from '$lib/components/flow-editor/FlowEditorGroupNode.svelte';
 	import FlowEditorNode, {
 		type FlowEditorCompletionBlock,
 		type FlowEditorNodeData,
@@ -55,17 +62,9 @@
 	import '@xyflow/svelte/dist/style.css';
 
 	type EditorNode = Node<FlowEditorNodeData, 'editor'>;
+	type CompletionGroupNode = Node<FlowEditorGroupData, 'completionGroup'>;
+	type FlowNode = EditorNode | CompletionGroupNode;
 	type EditorEdge = Edge<FlowEditorEdgeData, 'editor'>;
-	interface CompletionBlockGroup {
-		id: string;
-		label: string;
-		protocol?: string;
-		purpose?: string;
-		left: number;
-		top: number;
-		width: number;
-		height: number;
-	}
 	type ConditionDraftType =
 		| 'always'
 		| 'authenticated'
@@ -106,7 +105,8 @@
 	}
 
 	const nodeTypes: NodeTypes = {
-		editor: FlowEditorNode
+		editor: FlowEditorNode,
+		completionGroup: FlowEditorGroupNode
 	};
 
 	const edgeTypes: EdgeTypes = {
@@ -118,7 +118,7 @@
 	const flowText = $derived(flow ? getFlowTemplateText($LL, flow) : null);
 	const localeMarker = $derived($LL.admin_flows_locale_marker());
 	const fallbackAuthProfileOptions = $derived(getFlowAuthProfileOptions($LL));
-	const profileFormOptions = $derived(getFlowProfileFormOptions($LL));
+	const fallbackProfileFormOptions = $derived(getFlowProfileFormOptions($LL));
 	const fallbackConsentPolicyOptions = $derived(getFlowConsentPolicyOptions($LL));
 	const nodePalette = $derived(getFlowNodePalette($LL));
 	const currentTenantId = $derived(settingsContext.tenantId);
@@ -127,26 +127,37 @@
 	let initializedOptionsTenantId = $state('');
 	let nextNodeIndex = $state(0);
 	let loadedAuthProfileOptions = $state<FlowEditorAuthProfileOption[]>([]);
+	let loadedFormProfiles = $state<FormProfile[]>([]);
+	let loadedProfileFormOptions = $state<FlowEditorOption[]>([]);
 	let loadedConsentPolicyOptions = $state<FlowEditorOption[]>([]);
+	let formProfilesLoaded = $state(false);
 	let consentPoliciesLoaded = $state(false);
 	let savedFlow = $state<AdminFlow | null>(null);
 	let flowLoading = $state(true);
 	let flowLoadError = $state('');
 	let saving = $state(false);
 	let saveStatus = $state('');
+	let flowSlug = $state('');
+	let flowDisplayName = $state('');
+	let flowDescription = $state('');
+	let deleteFlowModalOpen = $state(false);
+	let deletingFlow = $state(false);
 	let validating = $state(false);
 	let validationIssues = $state<FlowValidationIssue[]>([]);
 	let validationRan = $state(false);
 	let flowSettingsError = $state('');
 	let invalidConnectionMessage = $state('');
-	let editorNodes = $state<EditorNode[]>([]);
+	let editorNodes = $state<Node[]>([]);
 	let editorEdges = $state<EditorEdge[]>([]);
+	let hoveredEditorNodeId = $state<string | null>(null);
 	let editingNodeId = $state<string | null>(null);
 	let draft = $state<NodeDraft>(createEmptyDraft());
 	let flowCanvasElement = $state<HTMLDivElement | null>(null);
 	const pageTitle = $derived(savedFlow?.display_name || flowText?.title || flowId);
 	const pageDescription = $derived(
-		savedFlow?.description || $LL.admin_flows_editor_header_description()
+		savedFlow
+			? getSavedFlowDescription($LL, savedFlow)
+			: $LL.admin_flows_editor_header_description()
 	);
 	const pageEyebrow = $derived(
 		savedFlow ? getAdminFlowKindLabel(savedFlow.kind) : (flow?.protocol ?? '')
@@ -154,6 +165,11 @@
 	const authProfileOptions = $derived(
 		loadedAuthProfileOptions.length > 0 ? loadedAuthProfileOptions : fallbackAuthProfileOptions
 	);
+	const profileFormOptions = $derived.by(() => {
+		if (!formProfilesLoaded) return fallbackProfileFormOptions;
+		if (loadedProfileFormOptions.length > 0) return loadedProfileFormOptions;
+		return fallbackProfileFormOptions;
+	});
 	const consentPolicyOptions = $derived.by(() => {
 		if (!consentPoliciesLoaded) return fallbackConsentPolicyOptions;
 		if (loadedConsentPolicyOptions.length > 0) return loadedConsentPolicyOptions;
@@ -166,14 +182,18 @@
 		];
 	});
 	const editingNode = $derived(
-		editingNodeId ? (editorNodes.find((node) => node.id === editingNodeId) ?? null) : null
+		editingNodeId ? (getEditorNodes().find((node) => node.id === editingNodeId) ?? null) : null
 	);
 	const flowCanvasHeight = $derived.by(() => {
-		const maxNodeY = editorNodes.reduce((value, node) => Math.max(value, node.position.y), 0);
+		const maxNodeY = getEditorNodes().reduce((value, node) => Math.max(value, node.position.y), 0);
 		const desiredHeight = maxNodeY + DEFAULT_NODE_HEIGHT + FLOW_CANVAS_BOTTOM_PADDING;
 		return `${Math.max(720, snapToGrid(desiredHeight))}px`;
 	});
-	const completionBlockGroups = $derived.by(() => buildCompletionBlockGroups(editorNodes));
+	const flowRenderKey = $derived.by(() =>
+		getEditorNodes()
+			.map((node) => `${node.id}:${node.data.outputs.map((output) => output.id).join(',')}`)
+			.join('|')
+	);
 
 	onMount(async () => {
 		await settingsContext.initialize();
@@ -195,7 +215,7 @@
 		const graph = savedFlow?.editor
 			? buildGraphFromEditorState(savedFlow.editor)
 			: buildInitialGraph(flow!);
-		editorNodes = withNodeActions(graph.nodes);
+		editorNodes = withCompletionSubflows(withNodeActions(graph.nodes));
 		editorEdges = graph.edges;
 		initializedFlowId = activeFlowKey;
 		initializedLocaleMarker = activeLocaleMarker;
@@ -227,6 +247,11 @@
 		};
 	});
 
+	$effect(() => {
+		if (!editorEdges.some((edge) => edgeNeedsNormalization(edge))) return;
+		editorEdges = normalizeEditorEdges(editorEdges);
+	});
+
 	function createEmptyDraft(): NodeDraft {
 		return {
 			title: '',
@@ -252,21 +277,32 @@
 		const optionsTenantId = tenantId || 'default';
 		flowSettingsError = '';
 		try {
-			const [authenticationMethods, consentPolicies] = await Promise.all([
+			const [authenticationMethods, formProfiles, consentPolicies] = await Promise.all([
 				adminAuthenticationMethodsAPI.get(tenantId),
+				adminFormProfilesAPI.list(),
 				adminConsentPoliciesAPI.listPolicies()
 			]);
 			const nextAuthProfileOptions = [createDefaultAuthProfileOption(authenticationMethods)];
+			const nextProfileFormOptions = formProfiles.profiles.map(createProfileFormOption);
 			const nextConsentPolicyOptions = consentPolicies.policies.map(createConsentPolicyOption);
 			loadedAuthProfileOptions = nextAuthProfileOptions;
+			loadedFormProfiles = formProfiles.profiles;
+			loadedProfileFormOptions = nextProfileFormOptions;
 			loadedConsentPolicyOptions = nextConsentPolicyOptions;
+			formProfilesLoaded = true;
 			consentPoliciesLoaded = true;
 			initializedOptionsTenantId = optionsTenantId;
-			syncConfiguredNodeOptions(nextAuthProfileOptions, nextConsentPolicyOptions);
+			syncConfiguredNodeOptions(
+				nextAuthProfileOptions,
+				nextProfileFormOptions,
+				nextConsentPolicyOptions
+			);
 		} catch (error) {
 			flowSettingsError =
 				error instanceof Error ? error.message : $LL.admin_flows_runtime_options_error();
 			initializedOptionsTenantId = optionsTenantId;
+			loadedFormProfiles = [];
+			formProfilesLoaded = false;
 			consentPoliciesLoaded = false;
 		}
 	}
@@ -278,12 +314,19 @@
 		try {
 			const response = await adminFlowsAPI.get(flowId);
 			savedFlow = response.flow;
+			syncFlowMetadata(response.flow);
 		} catch (error) {
 			savedFlow = null;
 			flowLoadError = error instanceof Error ? error.message : $LL.admin_flows_load_error();
 		} finally {
 			flowLoading = false;
 		}
+	}
+
+	function syncFlowMetadata(flowValue: AdminFlow) {
+		flowSlug = flowValue.slug;
+		flowDisplayName = flowValue.display_name || flowValue.name || flowValue.slug;
+		flowDescription = flowValue.description ?? '';
 	}
 
 	function getAdminFlowKindLabel(kind: AdminFlowKind): string {
@@ -386,8 +429,33 @@
 		};
 	}
 
+	function createProfileFormOption(profile: FormProfile): FlowEditorOption {
+		const label = profile.display_name || profile.profile_key || profile.id;
+		return {
+			value: profile.id,
+			label: profile.is_active ? label : `${label} (${$LL.admin_flows_consent_policy_inactive()})`
+		};
+	}
+
 	function firstSelectableValue(options: FlowEditorOption[]): string {
 		return options.find((option) => !option.disabled && option.value)?.value ?? '';
+	}
+
+	function preferredFormProfileValue(
+		profileKeys: string[],
+		formKinds: string[],
+		fallback: string
+	): string {
+		const keyMatches = new Set(profileKeys.map((value) => value.toLowerCase()));
+		const kindMatches = new Set(formKinds.map((value) => value.toLowerCase()));
+		const profile =
+			loadedFormProfiles.find(
+				(item) => item.is_active && keyMatches.has((item.profile_key ?? '').toLowerCase())
+			) ??
+			loadedFormProfiles.find(
+				(item) => item.is_active && kindMatches.has((item.form_kind ?? '').toLowerCase())
+			);
+		return profile?.id ?? (firstSelectableValue(profileFormOptions) || fallback);
 	}
 
 	function normalizeOptionValue(
@@ -401,8 +469,11 @@
 
 	function syncConfiguredNodeOptions(
 		nextAuthProfileOptions: FlowEditorAuthProfileOption[],
+		nextProfileFormOptions: FlowEditorOption[],
 		nextConsentPolicyOptions: FlowEditorOption[]
 	) {
+		const effectiveProfileFormOptions =
+			nextProfileFormOptions.length > 0 ? nextProfileFormOptions : fallbackProfileFormOptions;
 		const effectiveConsentPolicyOptions =
 			nextConsentPolicyOptions.length > 0
 				? nextConsentPolicyOptions
@@ -413,7 +484,7 @@
 							disabled: true
 						}
 					];
-		const nextNodes = editorNodes.map<EditorNode>((node) => {
+		const nextNodes = getEditorNodes().map<EditorNode>((node) => {
 			if (node.data.kind === 'registration' || node.data.kind === 'authentication') {
 				const authProfile = normalizeOptionValue(
 					getConfigValue(node, 'authProfile', 'default'),
@@ -421,13 +492,38 @@
 					'default'
 				);
 				const outputs = getAuthProfileOutputsFromOptions(nextAuthProfileOptions, authProfile);
+				const profileForm = normalizeOptionValue(
+					getConfigValue(node, 'profileForm', 'basic_profile'),
+					effectiveProfileFormOptions,
+					firstSelectableValue(effectiveProfileFormOptions) || 'basic_profile'
+				);
+				const hasConsentWidget = selectedFormHasConsentWidget(profileForm);
+				const consentPolicy = hasConsentWidget
+					? normalizeOptionValue(
+							getConfigValue(node, 'consentPolicy', ''),
+							effectiveConsentPolicyOptions,
+							''
+						)
+					: getConfigValue(node, 'consentPolicy', '');
+				const settings =
+					node.data.kind === 'registration' || node.data.kind === 'authentication'
+						? [
+								getLabel(nextAuthProfileOptions, authProfile),
+								getLabel(effectiveProfileFormOptions, profileForm),
+								...(hasConsentWidget && consentPolicy
+									? [getLabel(effectiveConsentPolicyOptions, consentPolicy)]
+									: [])
+							]
+						: [getLabel(nextAuthProfileOptions, authProfile)];
 				return {
 					...node,
 					data: {
 						...node.data,
 						authProfile,
+						profileForm,
+						consentPolicy,
 						outputs,
-						settings: [getLabel(nextAuthProfileOptions, authProfile)]
+						settings
 					}
 				};
 			}
@@ -451,9 +547,41 @@
 				};
 			}
 
+			if (node.data.kind === 'profile') {
+				const profileForm = normalizeOptionValue(
+					getConfigValue(node, 'profileForm', 'basic_profile'),
+					effectiveProfileFormOptions,
+					firstSelectableValue(effectiveProfileFormOptions) || 'basic_profile'
+				);
+				const hasConsentWidget = selectedFormHasConsentWidget(profileForm);
+				const consentPolicy = hasConsentWidget
+					? normalizeOptionValue(
+							getConfigValue(node, 'consentPolicy', ''),
+							effectiveConsentPolicyOptions,
+							''
+						)
+					: getConfigValue(node, 'consentPolicy', '');
+				const retainedSettings = node.data.settings.slice(hasConsentWidget ? 2 : 1);
+				return {
+					...node,
+					data: {
+						...node.data,
+						profileForm,
+						settings: [
+							getLabel(effectiveProfileFormOptions, profileForm),
+							...(hasConsentWidget && consentPolicy
+								? [getLabel(effectiveConsentPolicyOptions, consentPolicy)]
+								: []),
+							...retainedSettings
+						],
+						consentPolicy
+					}
+				};
+			}
+
 			return node;
 		});
-		editorNodes = withNodeActions(nextNodes);
+		editorNodes = withCompletionSubflows(withNodeActions(nextNodes));
 		const outputIdsByNodeId = new Map(
 			nextNodes.map((node) => [node.id, new Set(node.data.outputs.map((output) => output.id))])
 		);
@@ -468,9 +596,121 @@
 			...node,
 			data: {
 				...node.data,
-				configure: openNodeConfig
+				configure: openNodeConfig,
+				hover: setHoveredEditorNode
 			}
 		}));
+	}
+
+	function setHoveredEditorNode(nodeId: string | null) {
+		if (hoveredEditorNodeId === nodeId) return;
+		hoveredEditorNodeId = nodeId;
+		editorEdges = editorEdges.map((edge) => {
+			const connected = !!nodeId && (edge.source === nodeId || edge.target === nodeId);
+			const data = {
+				...(edge.data ?? {}),
+				highlighted: connected,
+				dimmed: !!nodeId && !connected
+			};
+			return { ...edge, data };
+		});
+	}
+
+	function isEditorNode(node: FlowNode | Node): node is EditorNode {
+		return node.type === 'editor';
+	}
+
+	function isCompletionGroupNode(node: FlowNode | Node): node is CompletionGroupNode {
+		return node.type === 'completionGroup';
+	}
+
+	function getEditorNodes(nodes: Node[] = editorNodes): EditorNode[] {
+		const groups = new Map(nodes.filter(isCompletionGroupNode).map((node) => [node.id, node]));
+		return nodes.filter(isEditorNode).map((node) => {
+			const parent = node.parentId ? groups.get(node.parentId) : null;
+			const position = parent
+				? {
+						x: parent.position.x + node.position.x,
+						y: parent.position.y + node.position.y
+					}
+				: node.position;
+			return {
+				...node,
+				parentId: undefined,
+				extent: undefined,
+				position: snapPosition(position)
+			};
+		});
+	}
+
+	function withCompletionSubflows(nodes: EditorNode[]): FlowNode[] {
+		const absoluteNodes = getEditorNodes(nodes);
+		const groupItems: Array<{ id: string; nodes: EditorNode[]; block: FlowEditorCompletionBlock }> =
+			[];
+
+		for (const node of absoluteNodes) {
+			const block = node.data.completionBlock;
+			if (!block?.id) continue;
+			const existing = groupItems.find((group) => group.id === block.id);
+			if (existing) {
+				existing.nodes = [...existing.nodes, node];
+			} else {
+				groupItems.push({ id: block.id, nodes: [node], block });
+			}
+		}
+
+		const groupedNodeById = new SvelteMap<string, EditorNode>();
+		const groups = groupItems
+			.filter((group) => group.nodes.length > 1)
+			.map<CompletionGroupNode>((group) => {
+				const minX = Math.min(...group.nodes.map((node) => node.position.x));
+				const minY = Math.min(...group.nodes.map((node) => node.position.y));
+				const maxX = Math.max(...group.nodes.map((node) => node.position.x + DEFAULT_NODE_WIDTH));
+				const maxY = Math.max(...group.nodes.map((node) => node.position.y + DEFAULT_NODE_HEIGHT));
+				const padding = 34;
+				const groupPosition = snapPosition({
+					x: minX - padding,
+					y: minY - padding
+				});
+				const width = snapToGrid(maxX - minX + padding * 2);
+				const height = snapToGrid(maxY - minY + padding * 2);
+				const groupId = completionGroupId(group.id);
+
+				for (const node of group.nodes) {
+					groupedNodeById.set(node.id, {
+						...node,
+						parentId: groupId,
+						extent: 'parent',
+						position: snapPosition({
+							x: node.position.x - groupPosition.x,
+							y: node.position.y - groupPosition.y
+						})
+					});
+				}
+
+				return {
+					id: groupId,
+					type: 'completionGroup',
+					data: {
+						label: group.block.label,
+						protocol: group.block.protocol,
+						purpose: group.block.purpose
+					},
+					position: groupPosition,
+					style: `width: ${width}px; height: ${height}px;`,
+					draggable: true,
+					selectable: true,
+					deletable: true,
+					zIndex: 0
+				};
+			});
+
+		const children = absoluteNodes.map((node) => groupedNodeById.get(node.id) ?? node);
+		return [...groups, ...children];
+	}
+
+	function completionGroupId(blockId: string): string {
+		return `completion-group:${blockId}`;
 	}
 
 	function buildInitialGraph(template: NewFlowTemplate): {
@@ -480,21 +720,23 @@
 		if (template.id === 'oidc-registration') {
 			return buildRegistrationGraph();
 		}
+		if (template.id === 'oidc-login') {
+			return buildLoginGraph();
+		}
 
 		const nodes = template.nodes.map<EditorNode>((node, index) =>
 			(() => {
 				const localizedNode = getLocalizedFlowNode($LL, template.id, node);
+				const kind = inferNodeKind(node.id, node.label);
 				return createEditorNode({
 					id: node.id,
-					kind: inferNodeKind(node.id, node.label),
+					kind,
 					title: localizedNode.label,
 					description: localizedNode.description,
 					settings: localizedNode.settings,
 					position: { x: DEFAULT_NODE_X, y: index * COMPACT_NODE_Y_GAP },
-					outputs: [{ id: 'default', label: $LL.admin_flows_output_next() }],
-					data: {
-						completionBlock: completionBlockForTemplateNode(template, node.id)
-					}
+					outputs: getTemplateNodeOutputs(kind, node.id),
+					data: getTemplateNodeData(kind, template, node.id)
 				});
 			})()
 		);
@@ -510,8 +752,61 @@
 		return { nodes, edges };
 	}
 
+	function getTemplateNodeOutputs(
+		kind: FlowEditorNodeKind,
+		nodeId: string
+	): FlowEditorNodeOutput[] {
+		if (kind === 'authentication' || kind === 'registration') {
+			return getAuthProfileOutputs('default');
+		}
+		if (kind === 'session') {
+			return getDefaultOutputsForRuntimeType('session_check');
+		}
+		if (nodeId === 'output') {
+			return [];
+		}
+		return getDefaultOutputsForKind(kind);
+	}
+
+	function getTemplateNodeData(
+		kind: FlowEditorNodeKind,
+		template: NewFlowTemplate,
+		nodeId: string
+	): Partial<FlowEditorNodeData> {
+		const data: Partial<FlowEditorNodeData> = {
+			completionBlock: completionBlockForTemplateNode(template, nodeId)
+		};
+		if (kind === 'authentication' || kind === 'registration') {
+			data.authProfile = 'default';
+		}
+		if (kind === 'session') {
+			data.runtimeType = 'session_check';
+		}
+		if (kind === 'consent') {
+			data.consentPolicy = resolveConsentPolicyValue(
+				template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
+					? 'saml_attribute_release_policy'
+					: 'oidc_authorization_consent_policy'
+			);
+		}
+		return data;
+	}
+
+	function resolveConsentPolicyValue(preferredValue: string): string {
+		const preferred = consentPolicyOptions.find(
+			(option) => !option.disabled && option.value === preferredValue
+		);
+		if (preferred) return preferred.value;
+		return firstSelectableValue(consentPolicyOptions);
+	}
+
 	function buildRegistrationGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
 		const registrationOutputs = getAuthProfileOutputs('default');
+		const defaultProfileForm = preferredFormProfileValue(
+			['registration'],
+			['registration'],
+			'basic_profile'
+		);
 		const oidcRegistrationBlock = createCompletionBlock('oidc', 'registration', 'consent');
 		const nodes: EditorNode[] = [
 			createEditorNode({
@@ -532,11 +827,15 @@
 				kind: 'registration',
 				title: $LL.admin_flows_node_registration_method(),
 				description: $LL.admin_flows_editor_registration_method_description(),
-				settings: [$LL.admin_flows_editor_setting_default_profile()],
+				settings: [
+					getLabel(authProfileOptions, 'default'),
+					getLabel(profileFormOptions, defaultProfileForm)
+				],
 				position: { x: DEFAULT_NODE_X, y: 140 },
 				outputs: registrationOutputs,
 				data: {
-					authProfile: 'default'
+					authProfile: 'default',
+					profileForm: defaultProfileForm
 				}
 			}),
 			createEditorNode({
@@ -551,7 +850,7 @@
 				],
 				position: { x: DEFAULT_NODE_X, y: 380 },
 				outputs: [{ id: 'submitted', label: $LL.admin_flows_output_profile_completed() }],
-				data: { profileForm: 'basic_profile' }
+				data: { profileForm: defaultProfileForm }
 			}),
 			createEditorNode({
 				id: 'consent',
@@ -617,6 +916,132 @@
 		return { nodes, edges };
 	}
 
+	function buildLoginGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
+		const authenticationOutputs = getAuthProfileOutputs('default');
+		const defaultLoginForm = preferredFormProfileValue(['login'], ['login'], 'basic_profile');
+		const samlConsentPolicy = resolveConsentPolicyValue('saml_attribute_release_policy');
+		const oidcConsentPolicy = resolveConsentPolicyValue('oidc_authorization_consent_policy');
+		const samlAttributeReleaseBlock = createCompletionBlock('saml', 'attribute_release', 'consent');
+		const oidcAuthorizationBlock = createCompletionBlock('oidc', 'authorization', 'consent');
+		const nodes: EditorNode[] = [
+			createEditorNode({
+				id: 'request',
+				kind: 'start',
+				title: $LL.admin_flows_node_login_request(),
+				description: $LL.admin_flows_editor_login_request_description(),
+				settings: [
+					$LL.admin_flows_setting_application_context(),
+					$LL.admin_flows_setting_redirect_uri(),
+					$LL.admin_flows_setting_scope_prompt_max_age()
+				],
+				position: { x: DEFAULT_NODE_X, y: 0 },
+				outputs: [{ id: 'next', label: $LL.admin_flows_output_next() }]
+			}),
+			createEditorNode({
+				id: 'session-check',
+				kind: 'session',
+				title: $LL.admin_flows_node_session_check(),
+				description: $LL.admin_flows_node_oidc_login_session_description(),
+				settings: getDefaultNodeSettings('session', 'default', 'basic_profile', ''),
+				position: { x: DEFAULT_NODE_X, y: 140 },
+				outputs: getDefaultOutputsForRuntimeType('session_check'),
+				data: { runtimeType: 'session_check' }
+			}),
+			createEditorNode({
+				id: 'authentication',
+				kind: 'authentication',
+				title: $LL.admin_flows_node_authentication_method(),
+				description: $LL.admin_flows_node_oidc_login_authentication_description(),
+				settings: [
+					getLabel(authProfileOptions, 'default'),
+					getLabel(profileFormOptions, defaultLoginForm)
+				],
+				position: { x: 522, y: 280 },
+				outputs: authenticationOutputs,
+				data: { authProfile: 'default', profileForm: defaultLoginForm }
+			}),
+			createEditorNode({
+				id: 'saml-attribute-release-consent',
+				kind: 'consent',
+				title: $LL.admin_flows_node_consent(),
+				description: $LL.admin_flows_node_oidc_login_consent_description(),
+				settings: samlConsentPolicy ? [getLabel(consentPolicyOptions, samlConsentPolicy)] : [],
+				position: { x: 108, y: 468 },
+				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
+				data: {
+					consentPolicy: samlConsentPolicy,
+					completionBlock: samlAttributeReleaseBlock
+				}
+			}),
+			createEditorNode({
+				id: 'saml-attribute-release-complete',
+				kind: 'end',
+				title: $LL.admin_flows_palette_end_label(),
+				description: $LL.admin_flows_node_saml_output_description(),
+				settings: [$LL.admin_flows_setting_saml_assertion()],
+				position: { x: 108, y: 612 },
+				outputs: [],
+				data: {
+					completionBlock: {
+						...samlAttributeReleaseBlock,
+						role: 'output'
+					}
+				}
+			}),
+			createEditorNode({
+				id: 'oidc-authorization-consent',
+				kind: 'consent',
+				title: $LL.admin_flows_node_consent(),
+				description: $LL.admin_flows_node_oidc_login_consent_description(),
+				settings: oidcConsentPolicy ? [getLabel(consentPolicyOptions, oidcConsentPolicy)] : [],
+				position: { x: 594, y: 468 },
+				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
+				data: {
+					consentPolicy: oidcConsentPolicy,
+					completionBlock: oidcAuthorizationBlock
+				}
+			}),
+			createEditorNode({
+				id: 'oidc-authorization-complete',
+				kind: 'end',
+				title: $LL.admin_flows_palette_end_label(),
+				description: $LL.admin_flows_node_oidc_login_output_description(),
+				settings: [
+					$LL.admin_flows_setting_authorization_code(),
+					$LL.admin_flows_setting_id_token_claims(),
+					$LL.admin_flows_setting_userinfo_claims()
+				],
+				position: { x: 594, y: 612 },
+				outputs: [],
+				data: {
+					completionBlock: {
+						...oidcAuthorizationBlock,
+						role: 'output'
+					}
+				}
+			})
+		];
+
+		const edges: EditorEdge[] = [
+			createEditorEdge('request', 'session-check', 'next'),
+			createEditorEdge('session-check', 'saml-attribute-release-consent', 'continue'),
+			createEditorEdge('session-check', 'oidc-authorization-consent', 'continue'),
+			createEditorEdge('session-check', 'authentication', 'authenticate'),
+			...authenticationOutputs.flatMap((output) => [
+				createEditorEdge('authentication', 'saml-attribute-release-consent', output.id),
+				createEditorEdge('authentication', 'oidc-authorization-consent', output.id)
+			]),
+			createEditorEdge(
+				'saml-attribute-release-consent',
+				'saml-attribute-release-complete',
+				'accepted'
+			),
+			createEditorEdge('oidc-authorization-consent', 'oidc-authorization-complete', 'accepted')
+		];
+
+		return { nodes, edges };
+	}
+
 	function completionBlockLabel(protocol: string, purpose: string): string {
 		if (protocol === 'oidc' && purpose === 'registration') {
 			return $LL.admin_flows_completion_block_oidc_registration();
@@ -651,11 +1076,16 @@
 		template: NewFlowTemplate,
 		nodeId: string
 	): FlowEditorCompletionBlock | undefined {
-		const role = nodeId === 'consent' ? 'consent' : nodeId === 'output' ? 'output' : undefined;
+		const role =
+			nodeId === 'consent' || nodeId.endsWith('-consent')
+				? 'consent'
+				: nodeId === 'output' || nodeId.endsWith('-complete')
+					? 'output'
+					: undefined;
 		if (!role) return undefined;
 		const protocol = template.protocol.toLowerCase();
 		const purpose =
-			template.id === 'saml-attribute-release'
+			template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
 				? 'attribute_release'
 				: template.id === 'oidc-registration'
 					? 'registration'
@@ -663,46 +1093,12 @@
 		return createCompletionBlock(protocol, purpose, role);
 	}
 
-	function buildCompletionBlockGroups(nodes: EditorNode[]): CompletionBlockGroup[] {
-		const groups: Array<{ id: string; nodes: EditorNode[] }> = [];
-		for (const node of nodes) {
-			const block = node.data.completionBlock;
-			if (!block?.id) continue;
-			const group = groups.find((candidate) => candidate.id === block.id);
-			if (group) {
-				group.nodes = [...group.nodes, node];
-			} else {
-				groups.push({ id: block.id, nodes: [node] });
-			}
-		}
-
-		return groups
-			.map(({ id, nodes: groupNodes }) => {
-				const firstBlock = groupNodes[0]?.data.completionBlock;
-				const minX = Math.min(...groupNodes.map((node) => node.position.x));
-				const minY = Math.min(...groupNodes.map((node) => node.position.y));
-				const maxX = Math.max(...groupNodes.map((node) => node.position.x + DEFAULT_NODE_WIDTH));
-				const maxY = Math.max(...groupNodes.map((node) => node.position.y + DEFAULT_NODE_HEIGHT));
-				const padding = 24;
-				const viewportOffset = 36;
-				return {
-					id,
-					label: firstBlock?.label ?? id,
-					protocol: firstBlock?.protocol,
-					purpose: firstBlock?.purpose,
-					left: viewportOffset + minX - padding,
-					top: viewportOffset + minY - padding,
-					width: maxX - minX + padding * 2,
-					height: maxY - minY + padding * 2
-				};
-			})
-			.filter((group) => group.width > 0 && group.height > 0);
-	}
-
 	function getRuntimeNodeType(kind: FlowEditorNodeKind): string {
 		switch (kind) {
 			case 'start':
 				return 'entry';
+			case 'session':
+				return 'session_check';
 			case 'registration':
 				return 'registration';
 			case 'authentication':
@@ -716,6 +1112,9 @@
 			case 'account':
 				return 'account_action';
 			case 'end':
+				return 'complete';
+			case 'oidc_completion':
+			case 'saml_completion':
 				return 'complete';
 			case 'decision':
 			default:
@@ -731,6 +1130,8 @@
 		switch (type) {
 			case 'entry':
 				return 'start';
+			case 'session_check':
+				return 'session';
 			case 'registration':
 				return 'registration';
 			case 'authentication':
@@ -745,11 +1146,24 @@
 				return 'account';
 			case 'complete':
 				return 'end';
-			case 'session_check':
 			case 'condition':
 			default:
 				return 'decision';
 		}
+	}
+
+	function getPersistedEditorNodeKind(
+		node: FlowEditorState['nodes'][number],
+		config?: Record<string, unknown>
+	): FlowEditorNodeKind {
+		const kind = getEditorNodeKind(node.type, config);
+		if (kind !== 'decision') return kind;
+		const title = typeof node.title === 'string' ? node.title : '';
+		const value = `${node.id} ${title}`.toLowerCase();
+		if (value.includes('session-check') || value.includes('session check')) {
+			return 'session';
+		}
+		return kind;
 	}
 
 	function getRuntimeTypeForNode(node: EditorNode): string {
@@ -763,11 +1177,13 @@
 		switch (type) {
 			case 'entry':
 				return [{ id: 'next', label: $LL.admin_flows_output_next() }];
+			case 'registration':
+			case 'authentication':
+				return getAuthProfileOutputs('default');
 			case 'session_check':
 				return [
-					{ id: 'authenticated', label: $LL.admin_flows_setting_existing_session() },
-					{ id: 'login_required', label: $LL.admin_flows_setting_prompt_login() },
-					{ id: 'reauth_required', label: $LL.admin_flows_setting_max_age_acr() }
+					{ id: 'continue', label: $LL.admin_flows_session_output_continue() },
+					{ id: 'authenticate', label: $LL.admin_flows_session_output_authenticate() }
 				];
 			case 'email_verification':
 				return [
@@ -1012,7 +1428,7 @@
 	} {
 		const nodes = editor.nodes.map<EditorNode>((node, index) => {
 			const config = getConfigRecord(node.config);
-			const kind = getEditorNodeKind(node.type, config);
+			const kind = getPersistedEditorNodeKind(node, config);
 			const settings = getConfigStringArray(config, 'settings');
 			const authProfile = getConfigString(config, 'authentication_profile_ref', 'default');
 			const profileForm = getConfigString(config, 'profile_form_ref', 'basic_profile');
@@ -1028,13 +1444,18 @@
 				title: normalizePersistedNodeTitle(kind, node.title),
 				description: getConfigString(config, 'description', ''),
 				settings:
-					settings.length > 0
-						? settings
-						: getDefaultNodeSettings(kind, authProfile, profileForm, consentPolicy),
+					kind === 'session'
+						? getDefaultNodeSettings('session', authProfile, profileForm, consentPolicy)
+						: settings.length > 0
+							? settings
+							: getDefaultNodeSettings(kind, authProfile, profileForm, consentPolicy),
 				position: node.position ?? { x: DEFAULT_NODE_X, y: index * COMPACT_NODE_Y_GAP },
-				outputs: getConfigOutputs(config, node.type),
+				outputs:
+					kind === 'session'
+						? getDefaultOutputsForRuntimeType('session_check')
+						: getConfigOutputs(config, node.type),
 				data: {
-					runtimeType: node.type,
+					runtimeType: kind === 'session' ? 'session_check' : node.type,
 					authProfile,
 					profileForm,
 					consentPolicy,
@@ -1046,9 +1467,7 @@
 		const nodeById = new Map(nodes.map((node) => [node.id, node]));
 		const edges = editor.edges.map<EditorEdge>((edge) => {
 			const sourceNode = nodeById.get(edge.source);
-			const sourceHandle =
-				edge.source_handle ??
-				(sourceNode ? getDefaultSourceHandle(getRuntimeTypeForNode(sourceNode)) : 'default');
+			const sourceHandle = normalizeSourceHandleForNode(sourceNode, edge.source_handle);
 			return createEditorEdge(edge.source, edge.target, sourceHandle, edge.target_handle);
 		});
 		return { nodes, edges };
@@ -1078,14 +1497,41 @@
 		profileForm: string,
 		consentPolicy: string
 	): string[] {
-		if (kind === 'registration' || kind === 'authentication') {
-			return [getLabel(authProfileOptions, authProfile)];
+		if (kind === 'registration') {
+			return [
+				getLabel(authProfileOptions, authProfile),
+				getLabel(profileFormOptions, profileForm),
+				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
+					? [getLabel(consentPolicyOptions, consentPolicy)]
+					: [])
+			];
+		}
+		if (kind === 'authentication') {
+			return [
+				getLabel(authProfileOptions, authProfile),
+				getLabel(profileFormOptions, profileForm),
+				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
+					? [getLabel(consentPolicyOptions, consentPolicy)]
+					: [])
+			];
 		}
 		if (kind === 'profile') {
-			return [getLabel(profileFormOptions, profileForm)];
+			return [
+				getLabel(profileFormOptions, profileForm),
+				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
+					? [getLabel(consentPolicyOptions, consentPolicy)]
+					: [])
+			];
 		}
 		if (kind === 'consent') {
 			return [getLabel(consentPolicyOptions, consentPolicy)];
+		}
+		if (kind === 'session') {
+			return [
+				$LL.admin_flows_setting_existing_session(),
+				$LL.admin_flows_setting_prompt_login(),
+				$LL.admin_flows_setting_max_age_acr()
+			];
 		}
 		if (kind === 'decision') {
 			return [$LL.admin_flows_condition_type_always()];
@@ -1150,6 +1596,56 @@
 		};
 	}
 
+	function edgeNeedsNormalization(edge: Edge): boolean {
+		return (
+			edge.type !== 'editor' ||
+			!edge.markerEnd ||
+			(edge.data as FlowEditorEdgeData | undefined)?.deletable !== true
+		);
+	}
+
+	function normalizeEditorEdge(edge: Edge): EditorEdge {
+		const sourceHandle = edge.sourceHandle ?? 'default';
+		const targetHandle = edge.targetHandle ?? undefined;
+		return {
+			...createEditorEdge(edge.source, edge.target, sourceHandle, targetHandle),
+			selected: edge.selected
+		};
+	}
+
+	function normalizeEditorEdges(edges: Edge[]): EditorEdge[] {
+		const normalized: EditorEdge[] = [];
+		const signatures = new SvelteSet<string>();
+		for (const edge of edges) {
+			const nextEdge = normalizeEditorEdge(edge);
+			const signature = edgeSignature(nextEdge);
+			if (signatures.has(signature)) continue;
+			signatures.add(signature);
+			normalized.push(nextEdge);
+		}
+		return normalized;
+	}
+
+	function normalizeSourceHandleForNode(
+		node: EditorNode | undefined,
+		handle?: string | null
+	): string {
+		const value =
+			handle || getDefaultSourceHandle(node ? getRuntimeTypeForNode(node) : '') || 'default';
+		if (node?.data.kind !== 'session') return value;
+		if (value === 'authenticated') return 'continue';
+		if (value === 'login_required' || value === 'reauth_required') return 'authenticate';
+		return value;
+	}
+
+	function filterEdgesForExistingNodes(
+		edges: EditorEdge[],
+		nodes: EditorNode[] = getEditorNodes()
+	): EditorEdge[] {
+		const nodeIds = new Set(nodes.map((node) => node.id));
+		return edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+	}
+
 	function edgeSignature(
 		edge: Pick<EditorEdge, 'source' | 'target' | 'sourceHandle' | 'targetHandle'>
 	) {
@@ -1164,18 +1660,130 @@
 	function inferNodeKind(id: string, label: string): FlowEditorNodeKind {
 		const value = `${id} ${label}`.toLowerCase();
 		if (value.includes('request') || value.includes('start')) return 'start';
+		if (value.includes('session')) return 'session';
 		if (value.includes('registration')) return 'registration';
 		if (value.includes('auth')) return 'authentication';
 		if (value.includes('verification')) return 'verification';
 		if (value.includes('profile') || value.includes('schema')) return 'profile';
 		if (value.includes('consent')) return 'consent';
 		if (value.includes('account')) return 'account';
-		if (value.includes('output') || value.includes('end')) return 'end';
+		if (value.includes('output') || value.includes('complete') || value.includes('end'))
+			return 'end';
 		return 'decision';
 	}
 
 	function getLabel(options: Array<{ value: string; label: string }>, value: string): string {
 		return options.find((option) => option.value === value)?.label ?? value;
+	}
+
+	function ft(ja: string, en: string): string {
+		return localeMarker === 'ja' ? ja : en;
+	}
+
+	function getSelectedFormProfile(profileId: string): FormProfile | null {
+		return loadedFormProfiles.find((profile) => profile.id === profileId) ?? null;
+	}
+
+	function fieldBlockType(field: FormProfile['fields'][number]): string {
+		return field.block_type ?? 'identity_field';
+	}
+
+	function profileHasIdentityField(profile: FormProfile, fieldNames: string[]): boolean {
+		const normalizedNames = new Set(fieldNames.map((fieldName) => fieldName.toLowerCase()));
+		return profile.fields.some(
+			(field) =>
+				fieldBlockType(field) === 'identity_field' &&
+				normalizedNames.has((field.field ?? '').toLowerCase())
+		);
+	}
+
+	function profileHasAuthBlock(profile: FormProfile): boolean {
+		return profile.fields.some((field) => fieldBlockType(field) === 'auth_widget');
+	}
+
+	function profileHasMailAuthWidget(profile: FormProfile): boolean {
+		return profile.fields.some(
+			(field) => fieldBlockType(field) === 'auth_widget' && field.auth_method === 'mail_otp'
+		);
+	}
+
+	function profileHasConsentWidget(profile: FormProfile): boolean {
+		return profile.fields.some((field) => fieldBlockType(field) === 'consent_widget');
+	}
+
+	function selectedFormHasConsentWidget(profileId: string): boolean {
+		const profile = getSelectedFormProfile(profileId);
+		return profile ? profileHasConsentWidget(profile) : false;
+	}
+
+	function draftFormHasConsentWidget(): boolean {
+		return selectedFormHasConsentWidget(draft.profileForm);
+	}
+
+	function authProfileNeedsEmail(profileId: string): boolean {
+		return getAuthProfileOutputs(profileId).some((output) =>
+			['mail', 'email'].some((keyword) => output.id.toLowerCase().includes(keyword))
+		);
+	}
+
+	function getRegistrationFormValidationMessages(): Array<{
+		level: 'ok' | 'warning';
+		text: string;
+	}> {
+		if (!editingNode || editingNode.data.kind !== 'registration') return [];
+		const messages: Array<{ level: 'ok' | 'warning'; text: string }> = [];
+		const profile = getSelectedFormProfile(draft.profileForm);
+		if (!profile) {
+			messages.push({
+				level: 'warning',
+				text: ft(
+					'選択したフォームを読み込めません。保存済みフォームを選択してください。',
+					'The selected form profile could not be loaded. Select a saved form profile.'
+				)
+			});
+			return messages;
+		}
+		if (!profileHasAuthBlock(profile)) {
+			messages.push({
+				level: 'warning',
+				text: ft(
+					'選択した登録フォームに認証ウィジェットがありません。',
+					'Registration form has no authentication widget.'
+				)
+			});
+		}
+		if (
+			authProfileNeedsEmail(draft.authProfile) &&
+			!profileHasIdentityField(profile, ['email']) &&
+			!profileHasMailAuthWidget(profile)
+		) {
+			messages.push({
+				level: 'warning',
+				text: ft(
+					'メール系の認証経路を使う場合、登録フォームにメールアドレス項目が必要になることがあります。',
+					'Mail-based routes usually require an email field in the selected registration form.'
+				)
+			});
+		}
+		if (profileHasConsentWidget(profile) && !draft.consentPolicy) {
+			messages.push({
+				level: 'warning',
+				text: ft(
+					'選択した登録フォームに同意ウィジェットがあります。同じノードで同意ポリシーを選択してください。',
+					'The selected registration form contains a consent widget. Select a consent policy on this node.'
+				)
+			});
+		}
+		if (messages.length === 0) {
+			messages.push({
+				level: 'ok',
+				text: ft(
+					'認証方式プロフィールと登録フォームの基本的な組み合わせは問題なさそうです。',
+					'Registration method and form profile look compatible.'
+				)
+			});
+		}
+		return messages;
 	}
 
 	function getAuthProfileOutputs(profileId: string): FlowEditorNodeOutput[] {
@@ -1204,7 +1812,7 @@
 	}
 
 	function openNodeConfig(nodeId: string) {
-		const node = editorNodes.find((candidate) => candidate.id === nodeId);
+		const node = getEditorNodes().find((candidate) => candidate.id === nodeId);
 		if (!node) return;
 		const authProfile = normalizeOptionValue(
 			getConfigValue(node, 'authProfile', 'default'),
@@ -1216,12 +1824,17 @@
 			consentPolicyOptions,
 			''
 		);
+		const profileForm = normalizeOptionValue(
+			getConfigValue(node, 'profileForm', 'basic_profile'),
+			profileFormOptions,
+			firstSelectableValue(profileFormOptions) || 'basic_profile'
+		);
 		draft = {
 			title: node.data.title,
 			description: node.data.description,
 			settingsText: node.data.settings.join('\n'),
 			authProfile,
-			profileForm: getConfigValue(node, 'profileForm', 'basic_profile'),
+			profileForm,
 			consentPolicy,
 			conditionType: getConfigConditionType(node),
 			conditionValue: getConfigValue(node, 'conditionValue', ''),
@@ -1258,14 +1871,42 @@
 			.map((item) => item.trim())
 			.filter(Boolean);
 
-		if (kind === 'registration' || kind === 'authentication') {
-			return [getLabel(authProfileOptions, draft.authProfile)];
+		if (kind === 'registration') {
+			return [
+				getLabel(authProfileOptions, draft.authProfile),
+				getLabel(profileFormOptions, draft.profileForm),
+				...(draftFormHasConsentWidget() && draft.consentPolicy
+					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
+					: [])
+			];
+		}
+		if (kind === 'authentication') {
+			return [
+				getLabel(authProfileOptions, draft.authProfile),
+				getLabel(profileFormOptions, draft.profileForm),
+				...(draftFormHasConsentWidget() && draft.consentPolicy
+					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
+					: [])
+			];
 		}
 		if (kind === 'profile') {
-			return [getLabel(profileFormOptions, draft.profileForm), ...freeTextSettings];
+			return [
+				getLabel(profileFormOptions, draft.profileForm),
+				...(draftFormHasConsentWidget() && draft.consentPolicy
+					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
+					: []),
+				...freeTextSettings
+			];
 		}
 		if (kind === 'consent') {
 			return [getLabel(consentPolicyOptions, draft.consentPolicy), ...freeTextSettings];
+		}
+		if (kind === 'session') {
+			return [
+				$LL.admin_flows_setting_existing_session(),
+				$LL.admin_flows_setting_prompt_login(),
+				$LL.admin_flows_setting_max_age_acr()
+			];
 		}
 		if (kind === 'decision') {
 			const conditionLabel =
@@ -1314,8 +1955,12 @@
 			}
 		};
 		const allowedOutputIds = new Set(outputs.map((output) => output.id));
-		editorNodes = withNodeActions(
-			editorNodes.map((candidate) => (candidate.id === updatedNode.id ? updatedNode : candidate))
+		editorNodes = withCompletionSubflows(
+			withNodeActions(
+				getEditorNodes().map((candidate) =>
+					candidate.id === updatedNode.id ? updatedNode : candidate
+				)
+			)
 		);
 		editorEdges = editorEdges.filter(
 			(edge) =>
@@ -1381,8 +2026,38 @@
 		const remainingEdges = editorEdges.filter(
 			(edge) => !deletedNodeIds.has(edge.source) && !deletedNodeIds.has(edge.target)
 		);
-		editorNodes = editorNodes.filter((candidate) => !deletedNodeIds.has(candidate.id));
-		editorEdges = appendUniqueEdges(remainingEdges, reconnectEdges);
+		const remainingNodes = getEditorNodes().filter(
+			(candidate) => !deletedNodeIds.has(candidate.id)
+		);
+		editorNodes = withCompletionSubflows(withNodeActions(remainingNodes));
+		editorEdges = filterEdgesForExistingNodes(
+			appendUniqueEdges(remainingEdges, reconnectEdges),
+			remainingNodes
+		);
+	}
+
+	function getDeleteTargetNodeIds(nodes: Node[]): Set<string> {
+		const deletedNodeIds = new SvelteSet<string>();
+		const deletedGroupIds = new SvelteSet<string>();
+
+		for (const node of nodes) {
+			if (isEditorNode(node)) {
+				deletedNodeIds.add(node.id);
+			}
+			if (isCompletionGroupNode(node)) {
+				deletedGroupIds.add(node.id);
+			}
+		}
+
+		if (deletedGroupIds.size > 0) {
+			for (const node of editorNodes) {
+				if (isEditorNode(node) && node.parentId && deletedGroupIds.has(node.parentId)) {
+					deletedNodeIds.add(node.id);
+				}
+			}
+		}
+
+		return deletedNodeIds;
 	}
 
 	function isFlowEditorNodeKind(value: string): value is FlowEditorNodeKind {
@@ -1439,22 +2114,39 @@
 	}
 
 	function addNode(kind: FlowEditorNodeKind, position?: { x: number; y: number }) {
+		if (kind === 'oidc_completion' || kind === 'saml_completion') {
+			addCompletionBlock(kind, position);
+			return;
+		}
 		nextNodeIndex += 1;
 		const base = nodePalette.find((item) => item.kind === kind);
-		const maxY = editorNodes.reduce((value, node) => Math.max(value, node.position.y), 0);
+		const realNodes = getEditorNodes();
+		const maxY = realNodes.reduce((value, node) => Math.max(value, node.position.y), 0);
 		const id = `${kind}-${nextNodeIndex}`;
 		const defaultAuthProfile = firstSelectableValue(authProfileOptions) || 'default';
+		const defaultProfileForm = firstSelectableValue(profileFormOptions) || 'basic_profile';
 		const defaultConsentPolicy = firstSelectableValue(consentPolicyOptions);
 		const settings =
-			kind === 'registration' || kind === 'authentication'
-				? [getLabel(authProfileOptions, defaultAuthProfile)]
-				: kind === 'profile'
-					? [$LL.admin_flows_editor_setting_basic_profile()]
-					: kind === 'consent'
-						? [getLabel(consentPolicyOptions, defaultConsentPolicy)]
-						: kind === 'decision'
-							? [$LL.admin_flows_condition_type_always()]
-							: [];
+			kind === 'registration'
+				? [
+						getLabel(authProfileOptions, defaultAuthProfile),
+						getLabel(profileFormOptions, defaultProfileForm)
+					]
+				: kind === 'authentication'
+					? [getLabel(authProfileOptions, defaultAuthProfile)]
+					: kind === 'profile'
+						? [getLabel(profileFormOptions, defaultProfileForm)]
+						: kind === 'consent'
+							? [getLabel(consentPolicyOptions, defaultConsentPolicy)]
+							: kind === 'session'
+								? [
+										$LL.admin_flows_setting_existing_session(),
+										$LL.admin_flows_setting_prompt_login(),
+										$LL.admin_flows_setting_max_age_acr()
+									]
+								: kind === 'decision'
+									? [$LL.admin_flows_condition_type_always()]
+									: [];
 		const node = createEditorNode({
 			id,
 			kind,
@@ -1469,29 +2161,106 @@
 						? getDefaultOutputsForRuntimeType('condition')
 						: getDefaultOutputsForKind(kind),
 			data:
-				kind === 'registration' || kind === 'authentication'
+				kind === 'registration'
 					? {
-							authProfile: defaultAuthProfile
+							authProfile: defaultAuthProfile,
+							profileForm: defaultProfileForm
 						}
-					: kind === 'consent'
+					: kind === 'authentication'
 						? {
-								consentPolicy: defaultConsentPolicy
+								authProfile: defaultAuthProfile
 							}
-						: kind === 'decision'
+						: kind === 'profile'
 							? {
-									conditionType: 'always',
-									conditionValue: '',
-									conditionOutputHandle: 'matched',
-									conditionOutputLabel: $LL.admin_flows_output_matched(),
-									conditionOtherwiseMode: 'output',
-									conditionOtherwiseOutputHandle: 'otherwise',
-									conditionOtherwiseOutputLabel: $LL.admin_flows_output_otherwise(),
-									conditionTerminalError: 'condition_not_met',
-									conditionTerminalMessage: ''
+									profileForm: defaultProfileForm
 								}
-							: {}
+							: kind === 'consent'
+								? {
+										consentPolicy: defaultConsentPolicy
+									}
+								: kind === 'session'
+									? {
+											runtimeType: 'session_check'
+										}
+									: kind === 'decision'
+										? {
+												conditionType: 'always',
+												conditionValue: '',
+												conditionOutputHandle: 'matched',
+												conditionOutputLabel: $LL.admin_flows_output_matched(),
+												conditionOtherwiseMode: 'output',
+												conditionOtherwiseOutputHandle: 'otherwise',
+												conditionOtherwiseOutputLabel: $LL.admin_flows_output_otherwise(),
+												conditionTerminalError: 'condition_not_met',
+												conditionTerminalMessage: ''
+											}
+										: {}
 		});
-		editorNodes = withNodeActions([...editorNodes, node]);
+		editorNodes = withCompletionSubflows(withNodeActions([...realNodes, node]));
+	}
+
+	function addCompletionBlock(
+		kind: 'oidc_completion' | 'saml_completion',
+		position?: { x: number; y: number }
+	) {
+		nextNodeIndex += 1;
+		const realNodes = getEditorNodes();
+		const maxY = realNodes.reduce((value, node) => Math.max(value, node.position.y), 0);
+		const basePosition = position ?? { x: DEFAULT_NODE_X, y: maxY + COMPACT_NODE_Y_GAP };
+		const protocol = kind === 'saml_completion' ? 'saml' : 'oidc';
+		const purpose = kind === 'saml_completion' ? 'attribute_release' : 'authorization';
+		const block: FlowEditorCompletionBlock = {
+			...createCompletionBlock(protocol, purpose, 'consent'),
+			id: `${protocol}-${purpose}-completion-${nextNodeIndex}`
+		};
+		const consentPolicy = resolveConsentPolicyValue(
+			kind === 'saml_completion'
+				? 'saml_attribute_release_policy'
+				: 'oidc_authorization_consent_policy'
+		);
+		const consentNode = createEditorNode({
+			id: `${protocol}-${purpose}-consent-${nextNodeIndex}`,
+			kind: 'consent',
+			title: $LL.admin_flows_node_consent(),
+			description:
+				kind === 'saml_completion'
+					? $LL.admin_flows_node_saml_consent_description()
+					: $LL.admin_flows_node_oidc_authorization_consent_description(),
+			settings: consentPolicy ? [getLabel(consentPolicyOptions, consentPolicy)] : [],
+			position: basePosition,
+			outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
+			data: {
+				consentPolicy,
+				completionBlock: block
+			}
+		});
+		const outputNode = createEditorNode({
+			id: `${protocol}-${purpose}-complete-${nextNodeIndex}`,
+			kind: 'end',
+			title: $LL.admin_flows_palette_end_label(),
+			description:
+				kind === 'saml_completion'
+					? $LL.admin_flows_node_saml_output_description()
+					: $LL.admin_flows_node_oidc_authorization_output_description(),
+			settings:
+				kind === 'saml_completion'
+					? [$LL.admin_flows_setting_saml_assertion()]
+					: [
+							$LL.admin_flows_setting_authorization_code(),
+							$LL.admin_flows_setting_id_token_claims(),
+							$LL.admin_flows_setting_userinfo_claims()
+						],
+			position: { x: basePosition.x, y: basePosition.y + COMPACT_NODE_Y_GAP },
+			outputs: [],
+			data: {
+				completionBlock: {
+					...block,
+					role: 'output'
+				}
+			}
+		});
+		editorNodes = withCompletionSubflows(withNodeActions([...realNodes, consentNode, outputNode]));
+		editorEdges = [...editorEdges, createEditorEdge(consentNode.id, outputNode.id, 'accepted')];
 	}
 
 	function handleConnect(connection: Connection) {
@@ -1527,8 +2296,9 @@
 		if (!connection.source || !connection.target) {
 			return { valid: false, message: $LL.admin_flows_invalid_connection_missing_node() };
 		}
-		const source = editorNodes.find((node) => node.id === connection.source);
-		const target = editorNodes.find((node) => node.id === connection.target);
+		const realNodes = getEditorNodes();
+		const source = realNodes.find((node) => node.id === connection.source);
+		const target = realNodes.find((node) => node.id === connection.target);
 		if (!source || !target) {
 			return { valid: false, message: $LL.admin_flows_invalid_connection_missing_node() };
 		}
@@ -1569,11 +2339,15 @@
 		return { valid: true, message: '' };
 	}
 
-	function handleDelete({ nodes, edges }: { nodes: EditorNode[]; edges: EditorEdge[] }) {
-		if (!nodes.length) return;
-		const deletedNodeIds = new Set(nodes.map((node) => node.id));
+	function handleDelete({ nodes, edges }: { nodes: Node[]; edges: EditorEdge[] }) {
+		const deletedNodeIds = getDeleteTargetNodeIds(nodes);
+		if (!deletedNodeIds.size) return;
 		const reconnectEdges = createMiddleReconnectEdges(deletedNodeIds, edges);
-		editorEdges = appendUniqueEdges(editorEdges, reconnectEdges);
+		const remainingNodes = getEditorNodes().filter((node) => !deletedNodeIds.has(node.id));
+		editorEdges = filterEdgesForExistingNodes(
+			appendUniqueEdges(editorEdges, reconnectEdges),
+			remainingNodes
+		);
 	}
 
 	function resetGraph() {
@@ -1583,7 +2357,7 @@
 				? buildInitialGraph(flow)
 				: null;
 		if (!graph) return;
-		editorNodes = withNodeActions(graph.nodes);
+		editorNodes = withCompletionSubflows(withNodeActions(graph.nodes));
 		editorEdges = graph.edges;
 		nextNodeIndex = graph.nodes.length;
 		closeNodeConfig();
@@ -1599,14 +2373,24 @@
 		if (node.data.kind === 'registration' || node.data.kind === 'authentication') {
 			config.authentication_profile_ref = getConfigValue(node, 'authProfile', 'default');
 		}
-		if (node.data.kind === 'profile') {
+		if (
+			node.data.kind === 'registration' ||
+			node.data.kind === 'authentication' ||
+			node.data.kind === 'profile'
+		) {
 			config.profile_form_ref = getConfigValue(node, 'profileForm', 'basic_profile');
 		}
-		if (node.data.kind === 'consent') {
+		if (
+			node.data.kind === 'consent' ||
+			((node.data.kind === 'registration' ||
+				node.data.kind === 'authentication' ||
+				node.data.kind === 'profile') &&
+				selectedFormHasConsentWidget(getConfigValue(node, 'profileForm', 'basic_profile')))
+		) {
 			config.consent_policy_ref = getConfigValue(
 				node,
 				'consentPolicy',
-				'registration_consent_policy'
+				node.data.kind === 'consent' ? 'registration_consent_policy' : ''
 			);
 		}
 		if (node.data.kind === 'decision') {
@@ -1619,20 +2403,20 @@
 	}
 
 	function serializeEditorState(): FlowEditorState {
-		const nodeById = new Map(editorNodes.map((node) => [node.id, node]));
+		const realNodes = getEditorNodes();
+		const nodeById = new Map(realNodes.map((node) => [node.id, node]));
+		const realEdges = filterEdgesForExistingNodes(editorEdges, realNodes);
 		return {
-			nodes: editorNodes.map((node) => ({
+			nodes: realNodes.map((node) => ({
 				id: node.id,
 				type: getRuntimeTypeForNode(node),
 				title: node.data.title,
 				position: snapPosition(node.position),
 				config: createNodeConfig(node)
 			})),
-			edges: editorEdges.map((edge) => {
+			edges: realEdges.map((edge) => {
 				const sourceNode = nodeById.get(edge.source);
-				const sourceHandle =
-					edge.sourceHandle ??
-					(sourceNode ? getDefaultSourceHandle(getRuntimeTypeForNode(sourceNode)) : undefined);
+				const sourceHandle = normalizeSourceHandleForNode(sourceNode, edge.sourceHandle);
 				return {
 					id: edge.id,
 					source: edge.source,
@@ -1647,17 +2431,55 @@
 
 	async function saveFlow() {
 		if (!savedFlow) return;
+		const slug = flowSlug.trim();
+		const displayName = flowDisplayName.trim();
+		if (!slug || !displayName) {
+			saveStatus = $LL.admin_flows_metadata_required();
+			return;
+		}
 		saving = true;
 		saveStatus = '';
 		try {
 			const editor = serializeEditorState();
-			const response = await adminFlowsAPI.update(savedFlow.id, { editor });
+			const response = await adminFlowsAPI.update(savedFlow.id, {
+				slug,
+				display_name: displayName,
+				description: flowDescription.trim() || null,
+				editor
+			});
 			savedFlow = response.flow;
+			syncFlowMetadata(response.flow);
 			saveStatus = $LL.admin_flows_saved();
 		} catch (error) {
 			saveStatus = error instanceof Error ? error.message : $LL.admin_flows_save_failed();
 		} finally {
 			saving = false;
+		}
+	}
+
+	function openDeleteFlowModal() {
+		if (!savedFlow) return;
+		deleteFlowModalOpen = true;
+		saveStatus = '';
+	}
+
+	function closeDeleteFlowModal() {
+		if (deletingFlow) return;
+		deleteFlowModalOpen = false;
+	}
+
+	async function deleteCurrentFlow() {
+		if (!savedFlow) return;
+		deletingFlow = true;
+		saveStatus = '';
+		try {
+			await adminFlowsAPI.delete(savedFlow.id);
+			await goto('/admin/flows');
+		} catch (error) {
+			saveStatus = error instanceof Error ? error.message : $LL.admin_flows_delete_failed();
+			deleteFlowModalOpen = false;
+		} finally {
+			deletingFlow = false;
 		}
 	}
 
@@ -1728,6 +2550,10 @@
 					{$LL.admin_flows_reset_template()}
 				</button>
 				{#if savedFlow}
+					<button type="button" class="btn btn-danger" onclick={openDeleteFlowModal}>
+						<i class="i-ph-trash" aria-hidden="true"></i>
+						{$LL.admin_flows_delete_flow()}
+					</button>
 					<button
 						type="button"
 						class="btn btn-secondary"
@@ -1759,6 +2585,27 @@
 			{#if saveStatus}
 				<div class="settings-warning" role="status">{saveStatus}</div>
 			{/if}
+			{#if savedFlow}
+				<div class="flow-metadata">
+					<label class="field">
+						<span>{$LL.admin_flows_display_name_label()}</span>
+						<input class="admin-input" bind:value={flowDisplayName} />
+					</label>
+					<label class="field">
+						<span>{$LL.admin_flows_detail_slug()}</span>
+						<input
+							class="admin-input"
+							bind:value={flowSlug}
+							placeholder={$LL.admin_flows_slug_placeholder()}
+							spellcheck="false"
+						/>
+					</label>
+					<label class="field field-wide">
+						<span>{$LL.admin_flows_node_description_label()}</span>
+						<textarea class="admin-input" rows="2" bind:value={flowDescription}></textarea>
+					</label>
+				</div>
+			{/if}
 			{#if validationRan}
 				<div class="validation-panel" data-valid={validationIssues.length === 0}>
 					<strong>
@@ -1787,7 +2634,7 @@
 						<strong>{$LL.admin_flows_node_palette_title()}</strong>
 						<span
 							>{$LL.admin_flows_node_palette_count({
-								nodes: editorNodes.length,
+								nodes: getEditorNodes().length,
 								edges: editorEdges.length
 							})}</span
 						>
@@ -1817,54 +2664,76 @@
 					ondragover={handleCanvasDragOver}
 					ondrop={handleCanvasDrop}
 				>
-					<div class="completion-block-layer" aria-hidden="true">
-						{#each completionBlockGroups as group (group.id)}
-							<div
-								class="completion-block-frame"
-								style={`left: ${group.left}px; top: ${group.top}px; width: ${group.width}px; height: ${group.height}px;`}
-								data-protocol={group.protocol ?? ''}
-							>
-								<span>{group.label}</span>
-							</div>
-						{/each}
-					</div>
-					<SvelteFlow
-						bind:nodes={editorNodes}
-						bind:edges={editorEdges}
-						{nodeTypes}
-						{edgeTypes}
-						onconnect={handleConnect}
-						ondelete={handleDelete}
-						isValidConnection={(connection) => validateEditorConnection(connection).valid}
-						connectionMode={ConnectionMode.Strict}
-						connectionLineType={ConnectionLineType.Bezier}
-						clickConnect
-						initialViewport={{ x: 36, y: 36, zoom: 1 }}
-						minZoom={1}
-						maxZoom={1}
-						nodesDraggable
-						nodesConnectable
-						elementsSelectable
-						snapGrid={FLOW_SNAP_GRID}
-						zoomOnScroll={false}
-						zoomOnDoubleClick={false}
-						zoomOnPinch={false}
-						panOnScroll={false}
-						panOnDrag
-						preventScrolling={false}
-						autoPanOnNodeFocus={false}
-						autoPanOnNodeDrag
-						autoPanOnConnect
-						colorMode={themeStore.mode}
-						proOptions={{ hideAttribution: true }}
-					>
-						<Background variant={BackgroundVariant.Dots} gap={18} size={1} />
-					</SvelteFlow>
+					{#key flowRenderKey}
+						<SvelteFlow
+							bind:nodes={editorNodes}
+							bind:edges={editorEdges}
+							{nodeTypes}
+							{edgeTypes}
+							onconnect={handleConnect}
+							ondelete={handleDelete}
+							isValidConnection={(connection) => validateEditorConnection(connection).valid}
+							connectionMode={ConnectionMode.Strict}
+							connectionLineType={ConnectionLineType.Bezier}
+							clickConnect
+							initialViewport={{ x: 36, y: 36, zoom: 1 }}
+							minZoom={1}
+							maxZoom={1}
+							nodesDraggable
+							nodesConnectable
+							elementsSelectable
+							snapGrid={FLOW_SNAP_GRID}
+							zoomOnScroll={false}
+							zoomOnDoubleClick={false}
+							zoomOnPinch={false}
+							panOnScroll={false}
+							panOnDrag
+							preventScrolling={false}
+							autoPanOnNodeFocus={false}
+							autoPanOnNodeDrag
+							autoPanOnConnect
+							colorMode={themeStore.mode}
+							proOptions={{ hideAttribution: true }}
+						>
+							<Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+						</SvelteFlow>
+					{/key}
 				</div>
 			</div>
 		</AdminSection>
 	{/if}
 </AdminPageShell>
+
+<Modal
+	open={deleteFlowModalOpen}
+	onClose={closeDeleteFlowModal}
+	title={$LL.admin_flows_delete_flow_confirm_title()}
+>
+	<p class="confirm-text">
+		{$LL.admin_flows_delete_flow_confirm_description({
+			title: flowDisplayName || savedFlow?.slug || ''
+		})}
+	</p>
+
+	{#snippet footer()}
+		<button
+			type="button"
+			class="btn btn-secondary"
+			onclick={closeDeleteFlowModal}
+			disabled={deletingFlow}
+		>
+			{$LL.admin_flows_cancel()}
+		</button>
+		<button
+			type="button"
+			class="btn btn-danger"
+			onclick={deleteCurrentFlow}
+			disabled={deletingFlow}
+		>
+			{deletingFlow ? $LL.admin_flows_deleting() : $LL.admin_flows_delete_flow()}
+		</button>
+	{/snippet}
+</Modal>
 
 <Modal
 	open={!!editingNode}
@@ -1893,6 +2762,34 @@
 						{/each}
 					</select>
 				</label>
+				<label class="field field-wide">
+					<span>{$LL.admin_flows_profile_form_label()}</span>
+					<select class="admin-input" bind:value={draft.profileForm}>
+						{#each profileFormOptions as option (option.value)}
+							<option value={option.value} disabled={option.disabled}>{option.label}</option>
+						{/each}
+					</select>
+				</label>
+				{#if draftFormHasConsentWidget()}
+					<label class="field field-wide">
+						<span>{$LL.admin_flows_consent_policy_label()}</span>
+						<select class="admin-input" bind:value={draft.consentPolicy}>
+							{#each consentPolicyOptions as option (option.value)}
+								<option value={option.value} disabled={option.disabled}>{option.label}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
+				{#if editingNode.data.kind === 'registration'}
+					<div class="registration-form-check field-wide">
+						<strong>{ft('組み合わせチェック', 'Compatibility check')}</strong>
+						<ul>
+							{#each getRegistrationFormValidationMessages() as item (item.text)}
+								<li data-level={item.level}>{item.text}</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 			{:else if editingNode.data.kind === 'profile'}
 				<label class="field field-wide">
 					<span>{$LL.admin_flows_profile_form_label()}</span>
@@ -1902,6 +2799,16 @@
 						{/each}
 					</select>
 				</label>
+				{#if draftFormHasConsentWidget()}
+					<label class="field field-wide">
+						<span>{$LL.admin_flows_consent_policy_label()}</span>
+						<select class="admin-input" bind:value={draft.consentPolicy}>
+							{#each consentPolicyOptions as option (option.value)}
+								<option value={option.value} disabled={option.disabled}>{option.label}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
 			{:else if editingNode.data.kind === 'consent'}
 				<label class="field field-wide">
 					<span>{$LL.admin_flows_consent_policy_label()}</span>
@@ -1988,6 +2895,15 @@
 						{/if}
 					</div>
 				</div>
+			{:else if editingNode.data.kind === 'session'}
+				<div class="output-preview field-wide">
+					<span>{$LL.admin_flows_output_handles_label()}</span>
+					<div>
+						{#each getDefaultOutputsForRuntimeType('session_check') as output (output.id)}
+							<code>{output.id}: {output.label}</code>
+						{/each}
+					</div>
+				</div>
 			{:else if editingNode.data.kind === 'decision'}
 				<div class="output-preview field-wide">
 					<span>{$LL.admin_flows_output_handles_label()}</span>
@@ -2052,6 +2968,17 @@
 		border-color: var(--color-danger);
 		background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
 		color: var(--color-danger);
+	}
+
+	.flow-metadata {
+		display: grid;
+		grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+		gap: 12px;
+		margin-bottom: 14px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-surface-muted) 48%, transparent);
 	}
 
 	.editor-layout {
@@ -2204,51 +3131,6 @@
 		box-shadow: var(--card-shadow, none);
 	}
 
-	.completion-block-layer {
-		position: absolute;
-		inset: 0;
-		z-index: 5;
-		pointer-events: none;
-	}
-
-	.completion-block-frame {
-		position: absolute;
-		border: 1px dashed color-mix(in srgb, var(--color-warning) 62%, var(--color-border));
-		border-radius: 12px;
-		background: color-mix(in srgb, var(--color-warning) 6%, transparent);
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 10%, transparent);
-	}
-
-	.completion-block-frame[data-protocol='oidc'] {
-		border-color: color-mix(in srgb, var(--color-info) 62%, var(--color-border));
-		background: color-mix(in srgb, var(--color-info) 6%, transparent);
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-info) 10%, transparent);
-	}
-
-	.completion-block-frame[data-protocol='saml'] {
-		border-color: color-mix(in srgb, var(--color-warning) 62%, var(--color-border));
-		background: color-mix(in srgb, var(--color-warning) 7%, transparent);
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 10%, transparent);
-	}
-
-	.completion-block-frame span {
-		position: absolute;
-		top: -11px;
-		left: 14px;
-		max-width: calc(100% - 28px);
-		padding: 2px 7px;
-		overflow: hidden;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		background: var(--flow-canvas-bg);
-		color: var(--color-text-muted);
-		font-size: 0.68rem;
-		font-weight: 900;
-		line-height: 1.2;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
 	:global([data-theme='dark']) .flow-canvas {
 		--flow-canvas-bg: color-mix(
 			in srgb,
@@ -2340,6 +3222,38 @@
 		line-height: 1.5;
 	}
 
+	.registration-form-check {
+		display: grid;
+		gap: 8px;
+		padding: 10px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-surface-muted) 52%, transparent);
+	}
+
+	.registration-form-check strong {
+		color: var(--color-text);
+		font-size: 0.84rem;
+	}
+
+	.registration-form-check ul {
+		display: grid;
+		gap: 6px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.registration-form-check li {
+		color: var(--color-text-muted);
+		font-size: 0.8rem;
+		line-height: 1.45;
+	}
+
+	.registration-form-check li[data-level='warning'] {
+		color: var(--color-warning, #c58a00);
+	}
+
 	.output-preview {
 		display: grid;
 		gap: 8px;
@@ -2376,9 +3290,16 @@
 		flex: 1;
 	}
 
+	.confirm-text {
+		margin: 0;
+		color: var(--color-text);
+		line-height: 1.6;
+	}
+
 	@media (max-width: 980px) {
 		.editor-layout,
-		.config-grid {
+		.config-grid,
+		.flow-metadata {
 			grid-template-columns: 1fr;
 		}
 

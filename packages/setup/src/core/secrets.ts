@@ -16,8 +16,6 @@ export const SECRET_NAMES = [
   'KEY_MANAGER_SECRET',
   'CLOUDFLARE_API_TOKEN',
   'RESEND_API_KEY',
-  'EMAIL_FROM',
-  'EMAIL_FROM_NAME',
   'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID',
   'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET',
 ] as const;
@@ -37,8 +35,6 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'PLUGIN_ENCRYPTION_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'RESEND_API_KEY',
-    'EMAIL_FROM',
-    'EMAIL_FROM_NAME',
   ],
   'ar-token': [
     'PUBLIC_JWK_JSON',
@@ -64,8 +60,6 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'RESEND_API_KEY',
-    'EMAIL_FROM',
-    'EMAIL_FROM_NAME',
   ],
   'ar-router': [],
   'ar-async': ['OBJECT_ENCRYPTION_ROOT_KEY'],

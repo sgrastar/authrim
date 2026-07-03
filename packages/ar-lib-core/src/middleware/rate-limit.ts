@@ -32,6 +32,9 @@ export interface RateLimitConfig {
   endpoints?: string[];
   // Skip rate limiting for these IPs (e.g., trusted proxies, health checks)
   skipIPs?: string[];
+  // For low-risk read-only endpoints, allow low-volume GET requests without
+  // waiting for the RateLimiter DO. The DO is still incremented via waitUntil.
+  nonBlockingRead?: boolean;
 }
 
 /**
@@ -41,6 +44,14 @@ interface RateLimitRecord {
   count: number;
   resetAt: number; // Unix timestamp when the window resets
 }
+
+interface LocalFastPathRecord {
+  count: number;
+  resetAt: number;
+}
+
+const fastPathRecords = new Map<string, LocalFastPathRecord>();
+const FAST_PATH_MAX_RECORDS = 10000;
 
 // ============================================================
 // Cloud Provider IP Extraction
@@ -311,6 +322,120 @@ export function getClientIP(c: Context, provider: CloudProvider): string {
   }
 }
 
+function buildRateLimitKey(clientIP: string, tenantId?: string): string {
+  return tenantId?.trim() ? `tenant:${tenantId.trim()}:rate-limit:${clientIP}` : clientIP;
+}
+
+function cleanupFastPathRecords(now: number): void {
+  if (fastPathRecords.size <= FAST_PATH_MAX_RECORDS) {
+    return;
+  }
+
+  for (const [key, record] of fastPathRecords.entries()) {
+    if (now >= record.resetAt) {
+      fastPathRecords.delete(key);
+    }
+  }
+
+  for (const key of fastPathRecords.keys()) {
+    if (fastPathRecords.size <= FAST_PATH_MAX_RECORDS) {
+      break;
+    }
+    fastPathRecords.delete(key);
+  }
+}
+
+function consumeFastPathRecord(
+  rateLimitKey: string,
+  config: RateLimitConfig
+): { allowed: true; remaining: number; resetAt: number } | { allowed: false } {
+  const now = Math.floor(Date.now() / 1000);
+  let record = fastPathRecords.get(rateLimitKey);
+
+  if (!record || now >= record.resetAt) {
+    record = {
+      count: 0,
+      resetAt: now + config.windowSeconds,
+    };
+  }
+
+  if (record.count >= config.maxRequests) {
+    fastPathRecords.set(rateLimitKey, record);
+    return { allowed: false };
+  }
+
+  record.count++;
+  fastPathRecords.set(rateLimitKey, record);
+  cleanupFastPathRecords(now);
+
+  return {
+    allowed: true,
+    remaining: Math.max(0, config.maxRequests - record.count),
+    resetAt: record.resetAt,
+  };
+}
+
+function shouldUseNonBlockingReadRateLimit(
+  c: Context<{ Bindings: Env }>,
+  env: Env,
+  config: RateLimitConfig,
+  clientIP: string,
+  cloudProvider: CloudProvider
+): boolean {
+  if (!config.nonBlockingRead || c.req.method !== 'GET') {
+    return false;
+  }
+
+  if (!env.RATE_LIMITER || clientIP === 'unknown') {
+    return false;
+  }
+
+  // A "none" provider uses spoofable forwarding headers. Keep the precise
+  // synchronous limiter in that topology.
+  return cloudProvider !== 'none';
+}
+
+function getExecutionContext(c: Context<{ Bindings: Env }>): ExecutionContext | undefined {
+  try {
+    return c.executionCtx;
+  } catch {
+    return undefined;
+  }
+}
+
+function scheduleNonBlockingRateLimit(
+  c: Context<{ Bindings: Env }>,
+  clientIP: string,
+  config: RateLimitConfig,
+  tenantId?: string
+): void {
+  const promise = checkRateLimit(c.env, clientIP, config, tenantId)
+    .then((result) => {
+      if (!result.allowed) {
+        log.warn('Non-blocking read rate limit exceeded after response', {
+          path: c.req.path,
+          tenantId,
+          resetAt: result.resetAt,
+        });
+      }
+    })
+    .catch((error: unknown) => {
+      log.error('Non-blocking read rate limiting error', {}, error as Error);
+    });
+
+  const executionCtx = getExecutionContext(c);
+  if (executionCtx) {
+    executionCtx.waitUntil(promise);
+    return;
+  }
+
+  void promise;
+}
+
+export function clearRateLimitFastPathCache(): void {
+  fastPathRecords.clear();
+}
+
 /**
  * Check if rate limit is exceeded
  *
@@ -328,9 +453,7 @@ export async function checkRateLimit(
   config: RateLimitConfig,
   tenantId?: string
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-  const rateLimitKey = tenantId?.trim()
-    ? `tenant:${tenantId.trim()}:rate-limit:${clientIP}`
-    : clientIP;
+  const rateLimitKey = buildRateLimitKey(clientIP, tenantId);
 
   // Try DO-based rate limiting first
   try {
@@ -437,6 +560,20 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
 
     try {
       const tenantId = getTenantIdFromContext(c);
+      const rateLimitKey = buildRateLimitKey(clientIP, tenantId);
+
+      if (shouldUseNonBlockingReadRateLimit(c, c.env, config, clientIP, cloudProvider)) {
+        const fastPath = consumeFastPathRecord(rateLimitKey, config);
+        if (fastPath.allowed) {
+          c.header('X-RateLimit-Limit', config.maxRequests.toString());
+          c.header('X-RateLimit-Remaining', fastPath.remaining.toString());
+          c.header('X-RateLimit-Reset', fastPath.resetAt.toString());
+
+          scheduleNonBlockingRateLimit(c, clientIP, config, tenantId);
+          return await next();
+        }
+      }
+
       const { allowed, remaining, resetAt } = await checkRateLimit(
         c.env,
         clientIP,

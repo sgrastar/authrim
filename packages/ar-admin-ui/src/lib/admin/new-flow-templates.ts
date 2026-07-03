@@ -1,6 +1,7 @@
 export type NewFlowTemplateId =
 	| 'saml-attribute-release'
 	| 'oidc-registration'
+	| 'academic-saml-login'
 	| 'oidc-login'
 	| 'oidc-authorization-consent';
 
@@ -448,6 +449,125 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		}
 	},
 	{
+		id: 'academic-saml-login',
+		title: 'Academic SAML Login',
+		subtitle: '学術出版社・図書館系SP向けログイン',
+		protocol: 'SAML',
+		destinationType: 'SAML Service Provider',
+		flowKind: 'login',
+		status: 'planning',
+		description:
+			'SAML AuthnRequestからセッション確認、認証方式選択、属性送信確認、SAML Responseまでを確認します。',
+		primaryEntry: 'SAML AuthnRequest',
+		primaryOutput: 'SAML Response / Assertion',
+		mappingSet: 'GakuNin application standard Field Mapping Set',
+		consentPolicy: 'SAML attribute release policy',
+		consentStatement: 'saml_attribute_release_uapprove',
+		userAction: '既存アカウントでログインし、SPへ送信する属性を確認して許可',
+		recordedState: 'tenant + user + SAML SP + statement/version + User Decision',
+		nodes: [
+			{
+				id: 'request',
+				label: 'Entry',
+				description:
+					'Flowの開始点です。Academic SAML LoginではSAML AuthnRequestとSPコンテキストを受け取ります。',
+				icon: 'i-ph-arrows-left-right',
+				settings: ['SAML AuthnRequest', 'RelayState', 'SAML SP'],
+				links: [{ label: 'SAML SP設定', href: '/admin/saml' }]
+			},
+			{
+				id: 'session-check',
+				label: 'Session Check',
+				description: '既存セッション、ForceAuthn、AuthnContext要求を見て再認証が必要か判断します。',
+				icon: 'i-ph-clock',
+				settings: ['existing session', 'ForceAuthn', 'AuthnContext']
+			},
+			{
+				id: 'authentication',
+				label: 'Authentication Method',
+				description: '利用可能なログイン方式を提示し、選択された方式で認証します。',
+				icon: 'i-ph-sign-in',
+				settings: ['Passkey', 'Email OTP', 'Directory / external IdP'],
+				links: [{ label: '認証方法', href: '/admin/authentication-methods' }]
+			},
+			{
+				id: 'saml-attribute-release-consent',
+				label: 'Consent',
+				description:
+					'SAML SPへ送信する属性を表示し、今回のみ許可または今後も許可のユーザー選択を受け取ります。',
+				icon: 'i-ph-handshake',
+				settings: ['SAML attribute release policy', 'masked attribute values', 'User Decision'],
+				links: [
+					{ label: '同意ポリシー', href: '/admin/consent-policies' },
+					{ label: '同意文', href: '/admin/consent-statements' },
+					{
+						label: 'Field Mapping Set',
+						href: '/admin/field-mapping/field-mapping-sets'
+					}
+				]
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				label: 'Complete',
+				description: '許可された属性でSAML Responseを生成し、SPへ戻します。',
+				icon: 'i-ph-paper-plane-tilt',
+				settings: ['SAML Response', 'AttributeStatement', 'audit event']
+			}
+		],
+		contractSummary: [
+			{ label: 'Flow kind', value: 'login' },
+			{ label: 'Protocol', value: 'SAML' },
+			{ label: 'Destination', value: 'Academic SAML SP' },
+			{ label: 'Field Mapping Set', value: 'GakuNin application standard' },
+			{ label: 'Required user action', value: 'Authenticate + attribute release decision' },
+			{ label: 'Continuation', value: 'SAML Response generation' }
+		],
+		contract: {
+			contract_version: '2026-07-02',
+			interaction_id: 'preview_academic_saml_login',
+			flow_kind: 'login',
+			protocol: 'saml',
+			destination: {
+				type: 'saml_sp',
+				display_name: 'Example Academic Publisher'
+			},
+			capabilities: [
+				{
+					type: 'authentication',
+					required: true,
+					localized_content: {
+						ja: 'ログイン方法を選択してください。',
+						en: 'Choose a sign-in method.'
+					},
+					i18n_key: 'flow.academic_saml.login.authentication',
+					methods: ['passkey', 'email_otp', 'directory_password', 'external_idp']
+				},
+				{
+					type: 'release_confirmation',
+					required: true,
+					localized_content: {
+						ja: 'このSAML SPに送信する属性を確認してください。',
+						en: 'Review the attributes released to this SAML service provider.'
+					},
+					i18n_key: 'flow.academic_saml.login.attribute_release',
+					options: [
+						{ value: 'once', label: { ja: '今回のみ許可', en: 'Allow this time only' } },
+						{ value: 'always', label: { ja: '今後も許可', en: 'Always allow' } }
+					],
+					fields: ['displayName', 'mail', 'eduPersonScopedAffiliation']
+				}
+			],
+			submit: {
+				method: 'POST',
+				url: '/api/flow/interactions/preview_academic_saml_login/submit'
+			},
+			output: {
+				continuation: 'saml_response',
+				records: ['session_event', 'authentication_event', 'user_decision', 'audit_event']
+			}
+		}
+	},
+	{
 		id: 'oidc-login',
 		title: 'Login',
 		subtitle: 'アプリケーション向けログイン',
@@ -479,7 +599,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				label: 'Session Check',
 				description: '既存セッション、prompt、max_age、acr要求を見て再認証が必要か判断します。',
 				icon: 'i-ph-clock',
-				settings: ['existing session', 'prompt=login', 'max_age / acr']
+				settings: ['existing session', 'authentication required', 'fresh authentication']
 			},
 			{
 				id: 'authentication',
@@ -560,7 +680,10 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 ];
 
 export const newFlowTemplates: NewFlowTemplate[] = allNewFlowTemplates.filter(
-	(template) => template.id === 'oidc-registration' || template.id === 'oidc-login'
+	(template) =>
+		template.id === 'oidc-registration' ||
+		template.id === 'academic-saml-login' ||
+		template.id === 'oidc-login'
 );
 
 export function getNewFlowTemplate(id: string): NewFlowTemplate | undefined {
@@ -598,7 +721,7 @@ export function createLoginUiRuntimeContractPreview(
 					id: `${node.id}:step`,
 					source_node_id: node.id,
 					component: loginUiComponentForNode(node.id),
-					render: node.id !== 'request',
+					render: node.id !== 'request' && node.id !== 'account-create',
 					config: runtimeConfigForNode(template, node),
 					content: {
 						title: node.label,
@@ -651,6 +774,13 @@ function createRuntimeBindings(
 function createPreviewEditorState(
 	template: NewFlowTemplate
 ): LoginUiRuntimeContractPreview['editor'] {
+	if (template.id === 'academic-saml-login') {
+		return createAcademicSamlLoginPreviewEditorState();
+	}
+	if (template.id === 'oidc-login') {
+		return createLoginPreviewEditorState();
+	}
+
 	const nodes = template.nodes.map((node, index) => ({
 		id: node.id,
 		type: flowNodeTypeForNode(node.id, template.flowKind),
@@ -662,6 +792,277 @@ function createPreviewEditorState(
 	return {
 		nodes,
 		edges: createPreviewEditorEdges(template),
+		viewport: { x: 36, y: 36, zoom: 1 }
+	};
+}
+
+function createAcademicSamlLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'] {
+	return {
+		nodes: [
+			{
+				id: 'request',
+				type: 'entry',
+				title: 'Entry',
+				position: { x: 360, y: 0 },
+				config: { ui_kind: 'entry' }
+			},
+			{
+				id: 'session-check',
+				type: 'session_check',
+				title: 'Session Check',
+				position: { x: 360, y: 144 },
+				config: { ui_kind: 'session' }
+			},
+			{
+				id: 'authentication',
+				type: 'authentication',
+				title: 'Authentication Method',
+				position: { x: 520, y: 288 },
+				config: {
+					ui_kind: 'authentication',
+					authentication_profile_ref: 'default',
+					outputs: [
+						{ id: 'mail_otp', label: 'Email OTP' },
+						{ id: 'passkey', label: 'Passkey' }
+					]
+				}
+			},
+			{
+				id: 'saml-attribute-release-consent',
+				type: 'consent',
+				title: 'Consent',
+				position: { x: 360, y: 480 },
+				config: {
+					ui_kind: 'consent',
+					consent_policy_ref: 'saml_attribute_release_policy',
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
+						role: 'consent'
+					}
+				}
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				type: 'complete',
+				title: 'Complete',
+				position: { x: 360, y: 624 },
+				config: {
+					ui_kind: 'complete',
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
+						role: 'output'
+					}
+				}
+			}
+		],
+		edges: [
+			{
+				id: 'request:next->session-check',
+				source: 'request',
+				source_handle: 'next',
+				target: 'session-check'
+			},
+			{
+				id: 'session-check:continue->saml-attribute-release-consent',
+				source: 'session-check',
+				source_handle: 'continue',
+				target: 'saml-attribute-release-consent'
+			},
+			{
+				id: 'session-check:authenticate->authentication',
+				source: 'session-check',
+				source_handle: 'authenticate',
+				target: 'authentication'
+			},
+			{
+				id: 'authentication:mail_otp->saml-attribute-release-consent',
+				source: 'authentication',
+				source_handle: 'mail_otp',
+				target: 'saml-attribute-release-consent'
+			},
+			{
+				id: 'authentication:passkey->saml-attribute-release-consent',
+				source: 'authentication',
+				source_handle: 'passkey',
+				target: 'saml-attribute-release-consent'
+			},
+			{
+				id: 'saml-attribute-release-consent:accepted->saml-attribute-release-complete',
+				source: 'saml-attribute-release-consent',
+				source_handle: 'accepted',
+				target: 'saml-attribute-release-complete'
+			}
+		],
+		viewport: { x: 36, y: 36, zoom: 1 }
+	};
+}
+
+function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'] {
+	return {
+		nodes: [
+			{
+				id: 'request',
+				type: 'entry',
+				title: 'Login Request',
+				position: { x: 360, y: 0 },
+				config: { ui_kind: 'entry' }
+			},
+			{
+				id: 'session-check',
+				type: 'session_check',
+				title: 'Session Check',
+				position: { x: 360, y: 144 },
+				config: { ui_kind: 'session' }
+			},
+			{
+				id: 'authentication',
+				type: 'authentication',
+				title: 'Authentication Method',
+				position: { x: 520, y: 288 },
+				config: {
+					ui_kind: 'authentication',
+					authentication_profile_ref: 'default',
+					outputs: [
+						{ id: 'mail_otp', label: 'Email OTP' },
+						{ id: 'passkey', label: 'Passkey' }
+					]
+				}
+			},
+			{
+				id: 'saml-attribute-release-consent',
+				type: 'consent',
+				title: 'Consent',
+				position: { x: 120, y: 480 },
+				config: {
+					ui_kind: 'consent',
+					consent_policy_ref: 'saml_attribute_release_policy',
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
+						role: 'consent'
+					}
+				}
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				type: 'complete',
+				title: 'Complete',
+				position: { x: 120, y: 624 },
+				config: {
+					ui_kind: 'complete',
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
+						role: 'output'
+					}
+				}
+			},
+			{
+				id: 'oidc-authorization-consent',
+				type: 'consent',
+				title: 'Consent',
+				position: { x: 600, y: 480 },
+				config: {
+					ui_kind: 'consent',
+					consent_policy_ref: 'oidc_authorization_consent_policy',
+					completion_block: {
+						id: 'oidc-authorization-completion',
+						label: 'OIDC Authorization Completion',
+						protocol: 'oidc',
+						purpose: 'authorization',
+						role: 'consent'
+					}
+				}
+			},
+			{
+				id: 'oidc-authorization-complete',
+				type: 'complete',
+				title: 'Complete',
+				position: { x: 600, y: 624 },
+				config: {
+					ui_kind: 'complete',
+					completion_block: {
+						id: 'oidc-authorization-completion',
+						label: 'OIDC Authorization Completion',
+						protocol: 'oidc',
+						purpose: 'authorization',
+						role: 'output'
+					}
+				}
+			}
+		],
+		edges: [
+			{
+				id: 'request:next->session-check',
+				source: 'request',
+				source_handle: 'next',
+				target: 'session-check'
+			},
+			{
+				id: 'session-check:continue->saml-attribute-release-consent',
+				source: 'session-check',
+				source_handle: 'continue',
+				target: 'saml-attribute-release-consent'
+			},
+			{
+				id: 'session-check:continue->oidc-authorization-consent',
+				source: 'session-check',
+				source_handle: 'continue',
+				target: 'oidc-authorization-consent'
+			},
+			{
+				id: 'session-check:authenticate->authentication',
+				source: 'session-check',
+				source_handle: 'authenticate',
+				target: 'authentication'
+			},
+			{
+				id: 'authentication:mail_otp->saml-attribute-release-consent',
+				source: 'authentication',
+				source_handle: 'mail_otp',
+				target: 'saml-attribute-release-consent'
+			},
+			{
+				id: 'authentication:mail_otp->oidc-authorization-consent',
+				source: 'authentication',
+				source_handle: 'mail_otp',
+				target: 'oidc-authorization-consent'
+			},
+			{
+				id: 'authentication:passkey->saml-attribute-release-consent',
+				source: 'authentication',
+				source_handle: 'passkey',
+				target: 'saml-attribute-release-consent'
+			},
+			{
+				id: 'authentication:passkey->oidc-authorization-consent',
+				source: 'authentication',
+				source_handle: 'passkey',
+				target: 'oidc-authorization-consent'
+			},
+			{
+				id: 'saml-attribute-release-consent:accepted->saml-attribute-release-complete',
+				source: 'saml-attribute-release-consent',
+				source_handle: 'accepted',
+				target: 'saml-attribute-release-complete'
+			},
+			{
+				id: 'oidc-authorization-consent:accepted->oidc-authorization-complete',
+				source: 'oidc-authorization-consent',
+				source_handle: 'accepted',
+				target: 'oidc-authorization-complete'
+			}
+		],
 		viewport: { x: 36, y: 36, zoom: 1 }
 	};
 }
@@ -724,21 +1125,15 @@ function createPreviewEditorEdges(
 				target: 'session-check'
 			},
 			{
-				id: 'session-check:authenticated->output',
+				id: 'session-check:continue->consent',
 				source: 'session-check',
-				source_handle: 'authenticated',
-				target: 'output'
+				source_handle: 'continue',
+				target: 'consent'
 			},
 			{
-				id: 'session-check:login_required->authentication',
+				id: 'session-check:authenticate->authentication',
 				source: 'session-check',
-				source_handle: 'login_required',
-				target: 'authentication'
-			},
-			{
-				id: 'session-check:reauth_required->authentication',
-				source: 'session-check',
-				source_handle: 'reauth_required',
+				source_handle: 'authenticate',
 				target: 'authentication'
 			},
 			{
@@ -766,6 +1161,9 @@ function createPreviewEditorEdges(
 				target: 'output'
 			}
 		];
+	}
+	if (template.id === 'academic-saml-login') {
+		return createAcademicSamlLoginPreviewEditorState().edges;
 	}
 	return template.nodes.slice(0, -1).map((node, index) => {
 		const nextNode = template.nodes[index + 1];
@@ -796,14 +1194,19 @@ function runtimeConfigForNode(
 			{ id: 'facebook', label: 'Facebook' }
 		];
 	}
+	if (type === 'registration') {
+		config.profile_form_ref = 'basic_profile';
+	}
 	if (type === 'profile_form') {
 		config.profile_form_ref = 'basic_profile';
 	}
 	if (type === 'consent') {
 		config.consent_policy_ref =
-			template.id === 'oidc-registration'
-				? 'registration_consent_policy'
-				: 'oidc_authorization_consent_policy';
+			template.id === 'academic-saml-login' || template.id === 'saml-attribute-release'
+				? 'saml_attribute_release_policy'
+				: template.id === 'oidc-registration'
+					? 'registration_consent_policy'
+					: 'oidc_authorization_consent_policy';
 	}
 	return config;
 }
@@ -816,7 +1219,7 @@ function completionBlockForNode(
 	if (!role) return null;
 	const protocol = template.protocol.toLowerCase();
 	const purpose =
-		template.id === 'saml-attribute-release'
+		template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
 			? 'attribute_release'
 			: template.id === 'oidc-registration'
 				? 'registration'
@@ -856,7 +1259,7 @@ function defaultSourceHandleForNode(nodeId: string): string {
 	if (nodeId.includes('profile')) return 'submitted';
 	if (nodeId.includes('consent')) return 'accepted';
 	if (nodeId.includes('account')) return 'completed';
-	if (nodeId.includes('session')) return 'login_required';
+	if (nodeId.includes('session')) return 'authenticate';
 	return 'next';
 }
 
@@ -870,7 +1273,7 @@ function loginUiComponentForNode(nodeId: string): string {
 	if (nodeId.includes('consent')) return 'consent_policy';
 	if (nodeId.includes('mapping')) return 'field_mapping_preview';
 	if (nodeId.includes('account')) return 'account_action';
-	if (nodeId === 'output') return 'completion';
+	if (nodeId === 'output' || nodeId.endsWith('-complete')) return 'completion';
 	return 'display';
 }
 

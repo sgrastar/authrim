@@ -39,7 +39,8 @@ describe('Flow Admin UI smoke checks', () => {
 
 		expect(node).toContain('data.completionBlock');
 		expect(node).toContain('flow-editor-node__block-label');
-		expect(editorPage).toContain('completion-block-frame');
+		expect(editorPage).toContain('completionGroup: FlowEditorGroupNode');
+		expect(editorPage).toContain('withCompletionSubflows');
 		expect(editorPage).toContain('validateEditorConnection(connection)');
 		expect(editorPage).toContain('config.completion_block = node.data.completionBlock');
 		expect(editorPage).toContain('completionBlock: getCompletionBlockFromConfig(config)');

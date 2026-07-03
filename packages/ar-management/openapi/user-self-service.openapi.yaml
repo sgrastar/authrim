@@ -238,6 +238,23 @@ paths:
             minimum: 1
             maximum: 100
       security: *accountSession
+  /api/account/consents:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountConsents
+      summary: List current user's consent confirmations for the Account Page.
+      description:
+        Returns OAuth consent records granted by the authenticated Account Page user using the
+        `authrim_session` cookie.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountConsents'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
   /api/account/return:
     post:
       tags:
@@ -925,6 +942,33 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AccountOperationsResponse'
+    AccountConsents:
+      description: Account Page consent confirmation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountConsentsResponse'
+          example:
+            consents:
+              - kind: statement
+                id: record_123
+                statementId: privacy_policy
+                versionId: version_123
+                version: '20260623'
+                status: granted
+                title: Privacy Policy
+                category: privacy_policy
+                grantedAt: 1770000000000
+                updatedAt: 1770000000000
+              - kind: oauth_client
+                id: consent_123
+                clientId: client_123
+                clientName: Example App
+                scopes:
+                  - openid
+                  - profile
+                grantedAt: 1770000000000
+            total: 1
     AccountReturnCreate:
       description: Account Page return transaction creation response.
       content:
@@ -1359,6 +1403,77 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AccountOperation'
+    AccountStatementConsent:
+      type: object
+      required:
+        - kind
+        - id
+        - statementId
+        - versionId
+        - version
+        - status
+        - title
+        - updatedAt
+      properties:
+        kind:
+          type: string
+          enum:
+            - statement
+        id:
+          type: string
+        statementId:
+          type: string
+        versionId:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        slug:
+          type: string
+        category:
+          type: string
+        grantedAt:
+          type: integer
+        withdrawnAt:
+          type: integer
+        expiresAt:
+          type: integer
+        clientId:
+          type: string
+        receiptId:
+          type: string
+        updatedAt:
+          type: integer
+    AccountOAuthClientConsent:
+      allOf:
+        - $ref: '#/components/schemas/UserConsent'
+        - type: object
+          required:
+            - kind
+          properties:
+            kind:
+              type: string
+              enum:
+                - oauth_client
+    AccountConsentsResponse:
+      type: object
+      required:
+        - consents
+        - total
+      properties:
+        consents:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/AccountStatementConsent'
+              - $ref: '#/components/schemas/AccountOAuthClientConsent'
+        total:
+          type: integer
     AccountDevice:
       type: object
       required:

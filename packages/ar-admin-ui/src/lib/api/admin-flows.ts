@@ -83,6 +83,7 @@ export interface AdminFlow {
 	name: string;
 	display_name: string;
 	description: string | null;
+	template_id: string | null;
 	kind: AdminFlowKind;
 	status: AdminFlowStatus;
 	editor: FlowEditorState | null;
@@ -185,6 +186,7 @@ export const adminFlowsAPI = {
 		slug?: string;
 		display_name: string;
 		description?: string | null;
+		template_id?: string | null;
 		kind?: AdminFlowKind;
 		editor?: FlowEditorState;
 	}) {
@@ -202,7 +204,7 @@ export const adminFlowsAPI = {
 
 	async update(
 		id: string,
-		body: Partial<Pick<AdminFlow, 'display_name' | 'description' | 'status'>> & {
+		body: Partial<Pick<AdminFlow, 'display_name' | 'description' | 'template_id' | 'status'>> & {
 			slug?: string;
 			kind?: AdminFlowKind;
 			editor?: FlowEditorState;

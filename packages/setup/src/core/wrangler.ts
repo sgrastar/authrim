@@ -940,7 +940,7 @@ export function generateEnvVars(
   vars['ENABLE_HTTP_REDIRECT'] = 'false';
   vars['ENABLE_OPEN_REGISTRATION'] = 'false';
   if (component === 'ar-auth') {
-    vars['ENABLE_LOGIN_RUNTIME_FLOW'] = 'false';
+    vars['ENABLE_LOGIN_RUNTIME_FLOW'] = 'true';
   }
 
   // Sharding configuration

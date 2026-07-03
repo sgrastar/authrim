@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { Button, Input, Card, Alert, TurnstileWidget } from '$lib/components';
+	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import RuntimeFormProfile from '$lib/components/RuntimeFormProfile.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import {
 		passkeyAPI,
@@ -20,6 +21,7 @@
 	} from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
+		type AuthenticationMethodsResponse,
 		type ExternalProvider
 	} from '$lib/api/authentication-methods';
 	import {
@@ -32,6 +34,7 @@
 		consumeFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
+	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -45,6 +48,62 @@
 	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/stores';
+	import type { PageData } from './$types';
+
+	let { data: pageData }: { data: PageData } = $props();
+
+	interface AuthenticationMethodsViewState {
+		passkeyEnabled: boolean;
+		emailCodeEnabled: boolean;
+		directoryPasswordEnabled: boolean;
+		directoryPasswordLabel: string;
+		externalEnabled: boolean;
+		externalProviders: ExternalProvider[];
+		turnstileSiteKey: string | null;
+		humanVerificationProvider: 'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom';
+		humanVerificationMode: 'managed' | 'checkbox' | 'invisible' | 'score';
+		turnstileRequired: boolean;
+	}
+
+	function resolveAuthenticationMethodsViewState(
+		data: AuthenticationMethodsResponse
+	): AuthenticationMethodsViewState {
+		const humanVerificationProvider =
+			data.methods.humanVerification.provider === 'hcaptcha' ||
+			data.methods.humanVerification.provider === 'recaptcha' ||
+			data.methods.humanVerification.provider === 'custom'
+				? data.methods.humanVerification.provider
+				: 'turnstile';
+		const humanVerificationRequired =
+			data.methods.humanVerification.enabled && data.methods.humanVerification.loginEnabled;
+		const turnstileRequired =
+			humanVerificationRequired &&
+			humanVerificationProvider !== 'custom' &&
+			Boolean(data.methods.humanVerification.siteKey);
+		const externalProviders = data.methods.external.providers.filter(
+			(provider) => provider.loginEnabled ?? provider.enabled !== false
+		);
+
+		return {
+			passkeyEnabled: data.methods.passkey.loginEnabled ?? data.methods.passkey.enabled,
+			emailCodeEnabled: data.methods.emailCode.loginEnabled ?? data.methods.emailCode.enabled,
+			directoryPasswordEnabled: data.methods.directoryPassword.enabled,
+			directoryPasswordLabel: data.methods.directoryPassword.label || 'Organization ID',
+			externalEnabled: data.methods.external.enabled && externalProviders.length > 0,
+			externalProviders,
+			turnstileSiteKey: turnstileRequired ? data.methods.humanVerification.siteKey : null,
+			humanVerificationProvider,
+			humanVerificationMode: data.methods.humanVerification.widget.mode ?? 'managed',
+			turnstileRequired
+		};
+	}
+
+	const embeddedAuthenticationMethodsState = $derived(
+		pageData.authenticationMethods
+			? resolveAuthenticationMethodsViewState(pageData.authenticationMethods)
+			: null
+	);
+	const hasEmbeddedAuthenticationMethods = $derived(embeddedAuthenticationMethodsState !== null);
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -82,6 +141,7 @@
 	let runtimeFlowLoading = $state(false);
 	let runtimeFlowError = $state('');
 	let runtimeConsentDecisions = $state<Record<string, boolean>>({});
+	let runtimeConsentSelectedValues = $state<Record<string, string>>({});
 	let runtimeConsentDecisionKey = $state('');
 	let pendingPostAuthRedirect = $state<string | null>(null);
 	const authActionLoading = $derived(
@@ -95,20 +155,35 @@
 	);
 
 	// Authentication methods (from API)
-	let methodsLoading = $state(true);
-	let methodsError = $state('');
-	let passkeyEnabled = $state(false);
-	let emailCodeEnabled = $state(false);
-	let directoryPasswordEnabled = $state(false);
-	let directoryPasswordLabel = $state('Organization ID');
-	let externalEnabled = $state(false);
-	let externalProviders = $state<ExternalProvider[]>([]);
-	let turnstileSiteKey = $state<string | null>(null);
-	let humanVerificationProvider = $state<'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom'>(
-		'turnstile'
+	let fetchedAuthenticationMethodsState = $state<AuthenticationMethodsViewState | null>(null);
+	let clientMethodsLoading = $state(false);
+	let clientMethodsLoadAttempted = $state(false);
+	const authenticationMethodsState = $derived(
+		fetchedAuthenticationMethodsState ?? embeddedAuthenticationMethodsState
 	);
-	let humanVerificationMode = $state<'managed' | 'checkbox' | 'invisible' | 'score'>('managed');
-	let turnstileRequired = $state(false);
+	const methodsLoading = $derived(
+		!authenticationMethodsState &&
+			(clientMethodsLoading || (!hasEmbeddedAuthenticationMethods && !clientMethodsLoadAttempted))
+	);
+	let methodsError = $state('');
+	const passkeyEnabled = $derived(authenticationMethodsState?.passkeyEnabled ?? false);
+	const emailCodeEnabled = $derived(authenticationMethodsState?.emailCodeEnabled ?? false);
+	const directoryPasswordEnabled = $derived(
+		authenticationMethodsState?.directoryPasswordEnabled ?? false
+	);
+	const directoryPasswordLabel = $derived(
+		authenticationMethodsState?.directoryPasswordLabel ?? 'Organization ID'
+	);
+	const externalEnabled = $derived(authenticationMethodsState?.externalEnabled ?? false);
+	const externalProviders = $derived(authenticationMethodsState?.externalProviders ?? []);
+	const turnstileSiteKey = $derived(authenticationMethodsState?.turnstileSiteKey ?? null);
+	const humanVerificationProvider = $derived(
+		authenticationMethodsState?.humanVerificationProvider ?? 'turnstile'
+	);
+	const humanVerificationMode = $derived(
+		authenticationMethodsState?.humanVerificationMode ?? 'managed'
+	);
+	const turnstileRequired = $derived(authenticationMethodsState?.turnstileRequired ?? false);
 	let turnstileToken = $state('');
 	let activeTurnstileTarget = $state<string | null>(null);
 	let pendingTurnstileTarget = $state<string | null>(null);
@@ -130,6 +205,7 @@
 					])
 				)
 			: {};
+		runtimeConsentSelectedValues = {};
 	});
 
 	// OAuth login challenge client info
@@ -141,6 +217,7 @@
 		policy_uri?: string;
 		tos_uri?: string;
 	}
+	type RuntimeAuthMethod = 'passkey' | 'mail_otp' | 'external_idp' | 'directory_password';
 	let clientInfo = $state<ClientInfo | null>(null);
 	let clientInfoLoading = $state(false);
 	let authorizationChallengeId = $state('');
@@ -224,6 +301,42 @@
 			showRuntimeDirectoryPassword ||
 			showRuntimeExternal
 	);
+	const runtimeFormProfile = $derived(getRuntimeFormProfile(runtimeFlowStep));
+	const useRuntimeAuthFormLayout = $derived(
+		Boolean(runtimeFormProfile) && isRuntimeAuthStep(runtimeFlowStep)
+	);
+	const runtimeFormFieldValues = $derived<Record<string, string>>({
+		email,
+		directory_username: directoryUsername,
+		directory_password: directoryPassword
+	});
+	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
+		passkey: showRuntimePasskey,
+		mail_otp: showRuntimeEmailCode,
+		directory_password: showRuntimeDirectoryPassword,
+		external_idp: showRuntimeExternal
+	});
+	const runtimeMethodLoading = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
+		passkey: passkeyLoading,
+		mail_otp: emailCodeLoading,
+		directory_password: directoryPasswordLoading,
+		external_idp: externalIdpLoading !== null
+	});
+	const runtimeExternalProviders = $derived(
+		visibleExternalProviders.map((provider) => {
+			const safeColor =
+				isDarkMode && provider.buttonColorDark
+					? sanitizeColor(provider.buttonColorDark)
+					: sanitizeColor(provider.buttonColor);
+			return {
+				id: provider.id,
+				label: getProviderButtonText(provider),
+				iconUrl: provider.iconUrl && isValidImageUrl(provider.iconUrl) ? provider.iconUrl : null,
+				iconClass: getProviderIcon(provider),
+				style: safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''
+			};
+		})
+	);
 
 	function resolveTurnstileLanguage(): string {
 		return resolveConfiguredTurnstileLanguage(document.documentElement.lang, getLocale());
@@ -292,18 +405,28 @@
 		}
 
 		const tasks: Promise<void>[] = [loadAuthenticationMethods()];
+		let runtimeTargetReady: Promise<void> = Promise.resolve();
 		if (urlChallengeId) {
-			tasks.push(loadChallengeData(urlChallengeId));
+			const challengeTask = loadChallengeData(urlChallengeId);
+			tasks.push(challengeTask);
+			if (!runtimeInteractionId) {
+				runtimeTargetReady = challengeTask;
+			}
 		}
+		tasks.push(runtimeTargetReady.then(() => startRuntimeFlowIfAvailable()));
 		await Promise.all(tasks);
-		await startRuntimeFlowIfAvailable();
 	});
 
 	// ---------------------------------------------------------------------------
 	// Data fetchers
 	// ---------------------------------------------------------------------------
 	async function loadAuthenticationMethods() {
-		methodsLoading = true;
+		if (pageData.authenticationMethods) {
+			clientMethodsLoadAttempted = true;
+			return;
+		}
+
+		clientMethodsLoading = true;
 		methodsError = '';
 		try {
 			const { data, error: apiError } = await fetchAuthenticationMethods();
@@ -312,33 +435,13 @@
 				return;
 			}
 			if (data) {
-				passkeyEnabled = data.methods.passkey.loginEnabled ?? data.methods.passkey.enabled;
-				emailCodeEnabled = data.methods.emailCode.loginEnabled ?? data.methods.emailCode.enabled;
-				directoryPasswordEnabled = data.methods.directoryPassword.enabled;
-				directoryPasswordLabel = data.methods.directoryPassword.label || 'Organization ID';
-				const humanVerificationRequired =
-					data.methods.humanVerification.enabled && data.methods.humanVerification.loginEnabled;
-				humanVerificationProvider =
-					data.methods.humanVerification.provider === 'hcaptcha' ||
-					data.methods.humanVerification.provider === 'recaptcha' ||
-					data.methods.humanVerification.provider === 'custom'
-						? data.methods.humanVerification.provider
-						: 'turnstile';
-				humanVerificationMode = data.methods.humanVerification.widget.mode ?? 'managed';
-				turnstileRequired =
-					humanVerificationRequired &&
-					humanVerificationProvider !== 'custom' &&
-					Boolean(data.methods.humanVerification.siteKey);
-				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
-				externalProviders = data.methods.external.providers.filter(
-					(provider) => provider.loginEnabled ?? provider.enabled !== false
-				);
-				externalEnabled = data.methods.external.enabled && externalProviders.length > 0;
+				fetchedAuthenticationMethodsState = resolveAuthenticationMethodsViewState(data);
 			}
 		} catch {
 			methodsError = 'Failed to load authentication methods';
 		} finally {
-			methodsLoading = false;
+			clientMethodsLoading = false;
+			clientMethodsLoadAttempted = true;
 		}
 	}
 
@@ -512,11 +615,30 @@
 		return true;
 	}
 
+	function hasInteractiveAccountActionUi(step: FlowRuntimeStep): boolean {
+		return (
+			step.config?.interaction_ui === true ||
+			step.config?.render_ui === true ||
+			typeof step.config?.profile_form_ref === 'string'
+		);
+	}
+
+	function getRuntimeAutoSubmitHandle(step: FlowRuntimeStep): string | undefined | null {
+		if (step.component === 'completion') return 'completed';
+		if (step.component === 'account_action' && !hasInteractiveAccountActionUi(step)) {
+			return 'completed';
+		}
+		if (step.render === false) return undefined;
+		return null;
+	}
+
 	async function advanceRuntimePastNonRenderedSteps() {
 		let guard = 0;
-		while (runtimeFlow && runtimeFlowStep && runtimeFlowStep.render === false && guard < 10) {
+		while (runtimeFlow && runtimeFlowStep && guard < 10) {
+			const autoSubmitHandle = getRuntimeAutoSubmitHandle(runtimeFlowStep);
+			if (autoSubmitHandle === null) return;
 			guard += 1;
-			const ok = await submitRuntimeStep();
+			const ok = await submitRuntimeStep(autoSubmitHandle);
 			if (!ok) return;
 		}
 	}
@@ -531,10 +653,11 @@
 
 	async function continueAfterRuntimeStep(
 		selectedHandle: string,
-		redirectUrl?: string
+		redirectUrl?: string,
+		input?: unknown
 	): Promise<boolean> {
 		if (!runtimeFlow) return true;
-		const ok = await submitRuntimeStep(selectedHandle);
+		const ok = await submitRuntimeStep(selectedHandle, input);
 		if (!ok) return false;
 		if (runtimeFlow?.interaction.state !== 'completed') {
 			pendingPostAuthRedirect = await buildPostAuthRedirect(redirectUrl);
@@ -723,7 +846,11 @@
 
 			await auth.refreshFromSession();
 
-			const continueRedirect = await continueAfterRuntimeStep('passkey', verifyData?.redirect_url);
+			const continueRedirect = await continueAfterRuntimeStep(
+				'passkey',
+				verifyData?.redirect_url,
+				getRuntimeStepSubmitInputForAuthenticatedAction()
+			);
 			if (!continueRedirect) return;
 			window.location.href = await buildPostAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
@@ -872,7 +999,11 @@
 
 			await auth.refreshFromSession();
 			const redirectUrl = data && 'redirect_url' in data ? data.redirect_url : undefined;
-			const continueRedirect = await continueAfterRuntimeStep('directory_password', redirectUrl);
+			const continueRedirect = await continueAfterRuntimeStep(
+				'directory_password',
+				redirectUrl,
+				getRuntimeStepSubmitInputForAuthenticatedAction()
+			);
 			if (!continueRedirect) return;
 			window.location.href = await buildPostAuthRedirect(redirectUrl);
 		} catch (err) {
@@ -1070,6 +1201,13 @@
 		return typeof description === 'string' ? description : '';
 	}
 
+	function getRuntimeFormProfile(step: FlowRuntimeStep | null): Record<string, unknown> | null {
+		const profile = step?.config?.form_profile;
+		return profile && typeof profile === 'object' && !Array.isArray(profile)
+			? (profile as Record<string, unknown>)
+			: null;
+	}
+
 	function getRuntimeConsentPolicy(
 		step: FlowRuntimeStep | null
 	): FlowRuntimeConsentPolicyContent | null {
@@ -1086,12 +1224,67 @@
 			consent_item_decisions: Object.fromEntries(
 				policy.items.map((item) => [
 					item.statement_id,
-					item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
-						? 'granted'
-						: 'denied'
+					item.content_mode === 'radio'
+						? runtimeConsentSelectedValues[item.statement_id]
+							? 'selected'
+							: 'denied'
+						: item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
+							? 'granted'
+							: 'denied'
 				])
+			),
+			consent_item_selected_values: Object.fromEntries(
+				policy.items
+					.filter((item) => item.content_mode === 'radio')
+					.map((item) => [item.statement_id, runtimeConsentSelectedValues[item.statement_id] || ''])
 			)
 		};
+	}
+
+	function getRuntimeStepSubmitInputForAuthenticatedAction() {
+		return getRuntimeConsentPolicy(runtimeFlowStep)
+			? getRuntimeConsentItemDecisionPayload()
+			: undefined;
+	}
+
+	function getRuntimeConsentItemHtml(
+		item: FlowRuntimeConsentPolicyContent['items'][number]
+	): string {
+		if (item.inline_content) return sanitizeRuntimeConsentHtml(item.inline_content);
+		const fallback = item.description
+			? `<strong>${item.title}</strong><br>${item.description}`
+			: item.title;
+		return sanitizeRuntimeConsentHtml(fallback);
+	}
+
+	function getRuntimeConsentOptionHtml(
+		option: NonNullable<FlowRuntimeConsentPolicyContent['items'][number]['options']>[number]
+	): string {
+		const body = option.description || option.label || option.value;
+		return sanitizeRuntimeConsentHtml(body);
+	}
+
+	function canSubmitRuntimeConsent(): boolean {
+		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
+		if (!policy) return true;
+		return policy.items.every(
+			(item) =>
+				!item.is_required ||
+				(item.content_mode === 'radio' &&
+					Boolean(runtimeConsentSelectedValues[item.statement_id])) ||
+				item.checkbox_mode === 'none' ||
+				runtimeConsentDecisions[item.statement_id] === true
+		);
+	}
+
+	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
+		return !isRuntimeAuthStep(step) || Boolean(getRuntimeFormProfile(step));
+	}
+
+	function getRuntimeFormContinueHandle(step: FlowRuntimeStep | null): string {
+		if (step?.component === 'consent_policy') return 'accepted';
+		if (step?.component === 'profile_form') return 'submitted';
+		return 'completed';
 	}
 
 	function isRuntimeAuthStep(step: FlowRuntimeStep | null): boolean {
@@ -1136,6 +1329,57 @@
 		if (event.key === 'Enter') {
 			handleDirectoryPasswordLogin();
 		}
+	}
+
+	function handleRuntimeFormFieldValueChange(field: string, value: string | boolean) {
+		const stringValue = typeof value === 'string' ? value : value ? 'true' : 'false';
+		const normalized = field.toLowerCase();
+		if (normalized === 'email' || normalized.endsWith('.email')) {
+			email = stringValue;
+			return;
+		}
+		if (normalized === 'directory_username' || normalized === 'username') {
+			directoryUsername = stringValue;
+			return;
+		}
+		if (normalized === 'directory_password' || normalized === 'password') {
+			directoryPassword = stringValue;
+		}
+	}
+
+	function handleRuntimeFormAuthAction(method: RuntimeAuthMethod) {
+		if (method === 'passkey') {
+			void handlePasskeyLogin();
+			return;
+		}
+		if (method === 'mail_otp') {
+			void handleEmailCodeSend();
+			return;
+		}
+		if (method === 'directory_password') {
+			void handleDirectoryPasswordLogin();
+		}
+	}
+
+	function handleRuntimeExternalProviderAction(providerId: string) {
+		const provider = visibleExternalProviders.find((candidate) => candidate.id === providerId);
+		if (provider) {
+			void handleExternalLogin(provider);
+		}
+	}
+
+	function setRuntimeConsentDecision(statementId: string, checked: boolean) {
+		runtimeConsentDecisions = {
+			...runtimeConsentDecisions,
+			[statementId]: checked
+		};
+	}
+
+	function setRuntimeConsentSelectedValue(statementId: string, value: string) {
+		runtimeConsentSelectedValues = {
+			...runtimeConsentSelectedValues,
+			[statementId]: value
+		};
 	}
 </script>
 
@@ -1309,7 +1553,7 @@
 					</Alert>
 				{/if}
 
-				{#if runtimeFlowStep && runtimeFlowStep.render && !isRuntimeAuthStep(runtimeFlowStep)}
+				{#if runtimeFlowStep && runtimeFlowStep.render && shouldRenderRuntimeStep(runtimeFlowStep)}
 					<Alert variant="info" class="mb-4">
 						<div class="space-y-3">
 							<div>
@@ -1320,21 +1564,77 @@
 									</p>
 								{/if}
 							</div>
-							{#if runtimeFlowStep.component === 'consent_policy'}
+							{#if getRuntimeFormProfile(runtimeFlowStep)}
+								<RuntimeFormProfile
+									profile={getRuntimeFormProfile(runtimeFlowStep)}
+									disabled={authActionLoading}
+									fieldValues={runtimeFormFieldValues}
+									methodAvailability={runtimeMethodAvailability}
+									methodLoading={runtimeMethodLoading}
+									externalProviders={runtimeExternalProviders}
+									consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
+									consentDecisions={runtimeConsentDecisions}
+									consentSelectedValues={runtimeConsentSelectedValues}
+									consentReady={canSubmitRuntimeConsent()}
+									onFieldValueChange={handleRuntimeFormFieldValueChange}
+									onAuthAction={handleRuntimeFormAuthAction}
+									onExternalProviderAction={handleRuntimeExternalProviderAction}
+									onConsentDecisionChange={setRuntimeConsentDecision}
+									onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
+								/>
+								{#if !isRuntimeAuthStep(runtimeFlowStep)}
+									<Button
+										variant="primary"
+										class="w-full"
+										loading={runtimeFlowLoading}
+										disabled={authActionLoading || !canSubmitRuntimeConsent()}
+										onclick={() =>
+											completeRuntimeOnlyStep(
+												getRuntimeFormContinueHandle(runtimeFlowStep),
+												getRuntimeConsentItemDecisionPayload()
+											)}
+									>
+										{$LL.common_continue()}
+									</Button>
+								{/if}
+							{:else if runtimeFlowStep.component === 'consent_policy'}
 								{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
 								{#if consentPolicy?.items.length}
 									<div class="space-y-3">
 										{#each consentPolicy.items as item (item.statement_id)}
 											<div class="runtime-consent-item">
-												{#if item.checkbox_mode === 'none'}
-													<div>
-														<p class="font-semibold">{item.title}</p>
-														{#if item.description}
-															<p class="text-sm" style="color: var(--text-secondary);">
-																{item.description}
-															</p>
-														{/if}
-													</div>
+												{#if item.content_mode === 'radio' && item.options?.length}
+													<fieldset class="runtime-consent-options">
+														<legend class="sr-only">{item.title}</legend>
+														{#each item.options as option (option.id)}
+															<label class="runtime-consent-choice">
+																<input
+																	type="radio"
+																	name={`runtime-consent-${item.statement_id}`}
+																	value={option.value}
+																	checked={runtimeConsentSelectedValues[item.statement_id] ===
+																		option.value}
+																	required={item.is_required}
+																	onchange={() => {
+																		runtimeConsentSelectedValues = {
+																			...runtimeConsentSelectedValues,
+																			[item.statement_id]: option.value
+																		};
+																	}}
+																/>
+																<SanitizedHtml
+																	class="runtime-consent-content"
+																	sanitizedHtml={getRuntimeConsentOptionHtml(option)}
+																/>
+															</label>
+														{/each}
+													</fieldset>
+												{:else if item.checkbox_mode === 'none' || item.content_mode === 'display_only'}
+													<SanitizedHtml
+														tag="div"
+														class="runtime-consent-content"
+														sanitizedHtml={getRuntimeConsentItemHtml(item)}
+													/>
 												{:else}
 													<label class="runtime-consent-choice">
 														<input
@@ -1342,12 +1642,10 @@
 															bind:checked={runtimeConsentDecisions[item.statement_id]}
 															required={item.is_required || item.checkbox_mode === 'required'}
 														/>
-														<span>
-															<strong>{item.title}</strong>
-															{#if item.description}
-																<small>{item.description}</small>
-															{/if}
-														</span>
+														<SanitizedHtml
+															class="runtime-consent-content"
+															sanitizedHtml={getRuntimeConsentItemHtml(item)}
+														/>
 													</label>
 												{/if}
 												{#if item.document_url && isValidLinkUrl(item.document_url)}
@@ -1359,9 +1657,6 @@
 													>
 														{item.document_url}
 													</a>
-												{/if}
-												{#if item.inline_content}
-													<p class="runtime-consent-inline">{item.inline_content}</p>
 												{/if}
 											</div>
 										{/each}
@@ -1375,7 +1670,7 @@
 									variant="primary"
 									class="w-full"
 									loading={runtimeFlowLoading}
-									disabled={authActionLoading}
+									disabled={authActionLoading || !canSubmitRuntimeConsent()}
 									onclick={() =>
 										completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
 								>
@@ -1476,14 +1771,14 @@
 					</Alert>
 				{/if}
 
-				{#if !hasVisibleAuthenticationMethod}
+				{#if !useRuntimeAuthFormLayout && !hasVisibleAuthenticationMethod}
 					<Alert variant="error" class="mb-4">
 						{$LL.login_noMethodsAvailable()}
 					</Alert>
 				{/if}
 
 				<!-- Passkey Button -->
-				{#if showRuntimePasskey}
+				{#if !useRuntimeAuthFormLayout && showRuntimePasskey}
 					<Button
 						variant="primary"
 						class="w-full mb-4"
@@ -1519,7 +1814,7 @@
 				{/if}
 
 				<!-- Directory Password -->
-				{#if showRuntimeDirectoryPassword}
+				{#if !useRuntimeAuthFormLayout && showRuntimeDirectoryPassword}
 					<div class="mb-4">
 						<Input
 							label={directoryPasswordLabel}
@@ -1581,7 +1876,7 @@
 				{/if}
 
 				<!-- Email Input + Email Code -->
-				{#if showRuntimeEmailCode}
+				{#if !useRuntimeAuthFormLayout && showRuntimeEmailCode}
 					<div class="mb-4">
 						<Input
 							label={$LL.common_email()}
@@ -1622,7 +1917,7 @@
 				{/if}
 
 				<!-- External Login Section -->
-				{#if showRuntimeExternal}
+				{#if !useRuntimeAuthFormLayout && showRuntimeExternal}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -1710,22 +2005,44 @@
 		line-height: 1.45;
 	}
 
+	.runtime-consent-options {
+		display: grid;
+		gap: 10px;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
 	.runtime-consent-choice input {
 		margin-top: 3px;
 		flex: 0 0 auto;
 	}
 
-	.runtime-consent-choice span,
-	.runtime-consent-choice small {
+	.runtime-consent-content {
 		display: block;
+		color: var(--text-secondary, var(--text-muted));
+		font-size: 0.9rem;
+		line-height: 1.5;
+		min-width: 0;
 	}
 
-	.runtime-consent-choice small,
-	.runtime-consent-inline {
-		margin-top: 3px;
-		color: var(--text-secondary, var(--text-muted));
-		font-size: 0.82rem;
-		line-height: 1.5;
+	.runtime-consent-content :global(p) {
+		margin: 0;
+	}
+
+	.runtime-consent-content :global(p + p) {
+		margin-top: 6px;
+	}
+
+	.runtime-consent-content :global(strong) {
+		color: var(--text-primary);
+	}
+
+	.runtime-consent-content :global(a) {
+		color: var(--accent-color, var(--primary));
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		overflow-wrap: anywhere;
 	}
 
 	.runtime-consent-link {

@@ -6,7 +6,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -56,6 +56,118 @@ function invalidPublicLinkUrlResponse(c: Context, fieldName: string): Response {
     },
     400
   );
+}
+
+function isMissingLocalizationUserFacingColumnError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const referencesOptionalColumn =
+    message.includes('processing_purpose') || message.includes('withdrawal_impact');
+  return (
+    referencesOptionalColumn &&
+    (message.includes('no such column') ||
+      message.includes('no column named') ||
+      message.includes('does not exist'))
+  );
+}
+
+async function executeLocalizationUpsert(params: {
+  adapter: DatabaseAdapter;
+  existing: boolean;
+  id: string;
+  tenantId: string;
+  versionId: string;
+  language: string;
+  title: string;
+  description: string;
+  processingPurpose: string | null;
+  withdrawalImpact: string | null;
+  documentUrl: string | null;
+  inlineContent: string | null;
+  now: number;
+}) {
+  try {
+    if (params.existing) {
+      await params.adapter.execute(
+        `UPDATE consent_statement_localizations
+         SET title = ?, description = ?, processing_purpose = ?, withdrawal_impact = ?,
+             document_url = ?, inline_content = ?, updated_at = ?
+         WHERE version_id = ? AND language = ?`,
+        [
+          params.title,
+          params.description,
+          params.processingPurpose,
+          params.withdrawalImpact,
+          params.documentUrl,
+          params.inlineContent,
+          params.now,
+          params.versionId,
+          params.language,
+        ]
+      );
+      return;
+    }
+
+    await params.adapter.execute(
+      `INSERT INTO consent_statement_localizations
+       (id, tenant_id, version_id, language, title, description, processing_purpose,
+        withdrawal_impact, document_url, inline_content, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.id,
+        params.tenantId,
+        params.versionId,
+        params.language,
+        params.title,
+        params.description,
+        params.processingPurpose,
+        params.withdrawalImpact,
+        params.documentUrl,
+        params.inlineContent,
+        params.now,
+        params.now,
+      ]
+    );
+  } catch (error) {
+    if (!isMissingLocalizationUserFacingColumnError(error)) {
+      throw error;
+    }
+    if (params.existing) {
+      await params.adapter.execute(
+        `UPDATE consent_statement_localizations
+         SET title = ?, description = ?, document_url = ?, inline_content = ?, updated_at = ?
+         WHERE version_id = ? AND language = ?`,
+        [
+          params.title,
+          params.description,
+          params.documentUrl,
+          params.inlineContent,
+          params.now,
+          params.versionId,
+          params.language,
+        ]
+      );
+      return;
+    }
+    await params.adapter.execute(
+      `INSERT INTO consent_statement_localizations
+       (id, tenant_id, version_id, language, title, description,
+        document_url, inline_content, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.id,
+        params.tenantId,
+        params.versionId,
+        params.language,
+        params.title,
+        params.description,
+        params.documentUrl,
+        params.inlineContent,
+        params.now,
+        params.now,
+      ]
+    );
+  }
 }
 
 function optionalNonNegativeInteger(value: unknown): number | null | undefined {
@@ -751,47 +863,21 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
       [vid, lang]
     );
 
-    if (existing.length > 0) {
-      await authCtx.coreAdapter.execute(
-        `UPDATE consent_statement_localizations
-         SET title = ?, description = ?, processing_purpose = ?, withdrawal_impact = ?,
-             document_url = ?, inline_content = ?, updated_at = ?
-         WHERE version_id = ? AND language = ?`,
-        [
-          body.title,
-          body.description,
-          body.processing_purpose ?? null,
-          body.withdrawal_impact ?? null,
-          documentUrl.value,
-          body.inline_content ?? null,
-          now,
-          vid,
-          lang,
-        ]
-      );
-    } else {
-      const id = crypto.randomUUID();
-      await authCtx.coreAdapter.execute(
-        `INSERT INTO consent_statement_localizations
-         (id, tenant_id, version_id, language, title, description, processing_purpose,
-          withdrawal_impact, document_url, inline_content, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          vid,
-          lang,
-          body.title,
-          body.description,
-          body.processing_purpose ?? null,
-          body.withdrawal_impact ?? null,
-          documentUrl.value,
-          body.inline_content ?? null,
-          now,
-          now,
-        ]
-      );
-    }
+    await executeLocalizationUpsert({
+      adapter: authCtx.coreAdapter,
+      existing: existing.length > 0,
+      id: crypto.randomUUID(),
+      tenantId,
+      versionId: vid,
+      language: lang,
+      title: body.title,
+      description: body.description,
+      processingPurpose: body.processing_purpose ?? null,
+      withdrawalImpact: body.withdrawal_impact ?? null,
+      documentUrl: documentUrl.value,
+      inlineContent: body.inline_content ?? null,
+      now,
+    });
 
     const result = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND language = ?`,

@@ -742,6 +742,11 @@ app.all('/api/v1/auth/direct/*', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+app.all('/api/v1/login/interactions/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 app.get('/api/v1/registration-fields', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);

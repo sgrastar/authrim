@@ -670,6 +670,22 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     TENANT_ADMIN_ROLES
   ),
   ...byMethod(
+    '/api/admin/form-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'form profiles',
+    TENANT_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/form-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'form profiles',
+    TENANT_ADMIN_ROLES
+  ),
+  ...byMethod(
     '/api/admin/flow-assignments',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
