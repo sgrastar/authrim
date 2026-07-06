@@ -108,6 +108,13 @@ const adminUsers = {
 	admin_user_detail_passkey_created: '作成日時: {date}',
 	admin_user_detail_passkey_last_used: '最終使用: {date}',
 	admin_user_detail_no_passkeys: '登録済みPasskeyはありません',
+	admin_user_detail_totp: '認証アプリ',
+	admin_user_detail_totp_unnamed: '認証アプリ',
+	admin_user_detail_no_totp: '登録済み認証アプリはありません',
+	admin_user_detail_totp_reset: 'TOTPをリセット',
+	admin_user_detail_totp_resetting: 'リセット中...',
+	admin_user_detail_totp_reset_confirm:
+		'このユーザーの認証アプリとバックアップコードをすべてリセットしますか？',
 	admin_user_detail_auth_method_name: '名称',
 	admin_user_detail_auth_method_type: '種別',
 	admin_user_detail_other_auth_methods: 'その他の認証方式',

@@ -20,7 +20,11 @@
 		type AuthenticationMethodSettingsResponse
 	} from '$lib/api/admin-authentication-methods';
 	import { adminConsentPoliciesAPI, type ConsentPolicy } from '$lib/api/admin-consent-policies';
-	import { adminFormProfilesAPI, type FormProfile } from '$lib/api/admin-form-profiles';
+	import {
+		adminFormProfilesAPI,
+		type FormProfile,
+		type FormProfileKind
+	} from '$lib/api/admin-form-profiles';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
@@ -354,6 +358,9 @@
 		if (builtIn.emailOtpLoginEnabled || builtIn.emailOtpSignupEnabled) {
 			addAuthOutput(outputs, usedOutputIds, 'mail_otp', $LL.admin_flows_setting_email_otp());
 		}
+		if (builtIn.totpLoginEnabled || builtIn.totpSignupEnabled) {
+			addAuthOutput(outputs, usedOutputIds, 'totp', $LL.admin_flows_setting_totp());
+		}
 		if (builtIn.passkeyLoginEnabled || builtIn.passkeySignupEnabled) {
 			addAuthOutput(outputs, usedOutputIds, 'passkey', $LL.admin_flows_setting_passkey());
 		}
@@ -441,13 +448,61 @@
 		return options.find((option) => !option.disabled && option.value)?.value ?? '';
 	}
 
+	function noFormProfileOption(): FlowEditorOption {
+		return {
+			value: '',
+			label: ft('利用できるフォームがありません', 'No form profiles are available'),
+			disabled: true
+		};
+	}
+
+	function formKind(profile: FormProfile): FormProfileKind {
+		return profile.form_kind;
+	}
+
+	function profileMatchesFormKinds(profile: FormProfile, formKinds: FormProfileKind[]): boolean {
+		const active = profile.is_active === true || profile.is_active === 1;
+		const kind = formKind(profile);
+		if (formKinds.includes('code_input')) return active && kind === 'code_input';
+		return active && (formKinds.includes(kind) || kind === 'custom');
+	}
+
+	function profileFormOptionsForKinds(formKinds: FormProfileKind[]): FlowEditorOption[] {
+		if (!formProfilesLoaded) return profileFormOptions;
+		const options = loadedFormProfiles
+			.filter((profile) => profileMatchesFormKinds(profile, formKinds))
+			.map(createProfileFormOption);
+		return options.length > 0 ? options : [noFormProfileOption()];
+	}
+
+	function profileFormKindsForNode(kind: FlowEditorNodeKind): FormProfileKind[] {
+		if (kind === 'registration') return ['registration'];
+		if (kind === 'authentication') return ['login'];
+		if (kind === 'verification') return ['code_input'];
+		if (kind === 'profile') return ['profile_completion'];
+		if (kind === 'consent') return ['consent'];
+		return ['custom'];
+	}
+
+	function profileFormOptionsForNodeKind(kind: FlowEditorNodeKind): FlowEditorOption[] {
+		return profileFormOptionsForKinds(profileFormKindsForNode(kind));
+	}
+
+	function firstProfileFormForNodeKind(kind: FlowEditorNodeKind, fallback: string): string {
+		if (kind === 'verification') {
+			return preferredFormProfileValue(['code_input'], ['code_input'], fallback);
+		}
+		return firstSelectableValue(profileFormOptionsForNodeKind(kind)) || fallback;
+	}
+
 	function preferredFormProfileValue(
 		profileKeys: string[],
-		formKinds: string[],
+		formKinds: FormProfileKind[],
 		fallback: string
 	): string {
 		const keyMatches = new Set(profileKeys.map((value) => value.toLowerCase()));
-		const kindMatches = new Set(formKinds.map((value) => value.toLowerCase()));
+		const acceptedKinds = formKinds.includes('code_input') ? formKinds : [...formKinds, 'custom'];
+		const kindMatches = new Set(acceptedKinds.map((value) => value.toLowerCase()));
 		const profile =
 			loadedFormProfiles.find(
 				(item) => item.is_active && keyMatches.has((item.profile_key ?? '').toLowerCase())
@@ -455,7 +510,7 @@
 			loadedFormProfiles.find(
 				(item) => item.is_active && kindMatches.has((item.form_kind ?? '').toLowerCase())
 			);
-		return profile?.id ?? (firstSelectableValue(profileFormOptions) || fallback);
+		return profile?.id ?? (firstSelectableValue(profileFormOptionsForKinds(formKinds)) || fallback);
 	}
 
 	function normalizeOptionValue(
@@ -469,11 +524,9 @@
 
 	function syncConfiguredNodeOptions(
 		nextAuthProfileOptions: FlowEditorAuthProfileOption[],
-		nextProfileFormOptions: FlowEditorOption[],
+		_nextProfileFormOptions: FlowEditorOption[],
 		nextConsentPolicyOptions: FlowEditorOption[]
 	) {
-		const effectiveProfileFormOptions =
-			nextProfileFormOptions.length > 0 ? nextProfileFormOptions : fallbackProfileFormOptions;
 		const effectiveConsentPolicyOptions =
 			nextConsentPolicyOptions.length > 0
 				? nextConsentPolicyOptions
@@ -486,6 +539,7 @@
 					];
 		const nextNodes = getEditorNodes().map<EditorNode>((node) => {
 			if (node.data.kind === 'registration' || node.data.kind === 'authentication') {
+				const formOptions = profileFormOptionsForNodeKind(node.data.kind);
 				const authProfile = normalizeOptionValue(
 					getConfigValue(node, 'authProfile', 'default'),
 					nextAuthProfileOptions,
@@ -494,8 +548,8 @@
 				const outputs = getAuthProfileOutputsFromOptions(nextAuthProfileOptions, authProfile);
 				const profileForm = normalizeOptionValue(
 					getConfigValue(node, 'profileForm', 'basic_profile'),
-					effectiveProfileFormOptions,
-					firstSelectableValue(effectiveProfileFormOptions) || 'basic_profile'
+					formOptions,
+					firstSelectableValue(formOptions) || 'basic_profile'
 				);
 				const hasConsentWidget = selectedFormHasConsentWidget(profileForm);
 				const consentPolicy = hasConsentWidget
@@ -509,7 +563,7 @@
 					node.data.kind === 'registration' || node.data.kind === 'authentication'
 						? [
 								getLabel(nextAuthProfileOptions, authProfile),
-								getLabel(effectiveProfileFormOptions, profileForm),
+								getLabel(formOptions, profileForm),
 								...(hasConsentWidget && consentPolicy
 									? [getLabel(effectiveConsentPolicyOptions, consentPolicy)]
 									: [])
@@ -529,29 +583,41 @@
 			}
 
 			if (node.data.kind === 'consent') {
+				const formOptions = profileFormOptionsForNodeKind('consent');
+				const profileForm = normalizeOptionValue(
+					getConfigValue(node, 'profileForm', firstSelectableValue(formOptions)),
+					formOptions,
+					firstSelectableValue(formOptions)
+				);
 				const consentPolicy = normalizeOptionValue(
 					getConfigValue(node, 'consentPolicy', 'registration_consent_policy'),
 					effectiveConsentPolicyOptions,
 					''
 				);
+				const retainedSettings = node.data.profileForm
+					? node.data.settings.slice(2)
+					: node.data.settings.slice(1);
 				return {
 					...node,
 					data: {
 						...node.data,
+						profileForm,
 						consentPolicy,
 						settings: [
 							getLabel(effectiveConsentPolicyOptions, consentPolicy),
-							...node.data.settings.slice(1)
+							...(profileForm ? [getLabel(formOptions, profileForm)] : []),
+							...retainedSettings
 						]
 					}
 				};
 			}
 
 			if (node.data.kind === 'profile') {
+				const formOptions = profileFormOptionsForNodeKind('profile');
 				const profileForm = normalizeOptionValue(
 					getConfigValue(node, 'profileForm', 'basic_profile'),
-					effectiveProfileFormOptions,
-					firstSelectableValue(effectiveProfileFormOptions) || 'basic_profile'
+					formOptions,
+					firstSelectableValue(formOptions) || 'basic_profile'
 				);
 				const hasConsentWidget = selectedFormHasConsentWidget(profileForm);
 				const consentPolicy = hasConsentWidget
@@ -568,7 +634,7 @@
 						...node.data,
 						profileForm,
 						settings: [
-							getLabel(effectiveProfileFormOptions, profileForm),
+							getLabel(formOptions, profileForm),
 							...(hasConsentWidget && consentPolicy
 								? [getLabel(effectiveConsentPolicyOptions, consentPolicy)]
 								: []),
@@ -783,6 +849,7 @@
 			data.runtimeType = 'session_check';
 		}
 		if (kind === 'consent') {
+			data.profileForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
 			data.consentPolicy = resolveConsentPolicyValue(
 				template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
 					? 'saml_attribute_release_policy'
@@ -807,6 +874,7 @@
 			['registration'],
 			'basic_profile'
 		);
+		const defaultConsentForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
 		const oidcRegistrationBlock = createCompletionBlock('oidc', 'registration', 'consent');
 		const nodes: EditorNode[] = [
 			createEditorNode({
@@ -829,7 +897,7 @@
 				description: $LL.admin_flows_editor_registration_method_description(),
 				settings: [
 					getLabel(authProfileOptions, 'default'),
-					getLabel(profileFormOptions, defaultProfileForm)
+					getLabel(profileFormOptionsForNodeKind('registration'), defaultProfileForm)
 				],
 				position: { x: DEFAULT_NODE_X, y: 140 },
 				outputs: registrationOutputs,
@@ -859,12 +927,14 @@
 				description: $LL.admin_flows_editor_registration_consent_description(),
 				settings: [
 					$LL.admin_flows_consent_policy_registration(),
+					getLabel(profileFormOptionsForNodeKind('consent'), defaultConsentForm),
 					$LL.admin_flows_setting_terms_of_service(),
 					$LL.admin_flows_setting_privacy_policy()
 				],
 				position: { x: DEFAULT_NODE_X, y: 520 },
 				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 				data: {
+					profileForm: defaultConsentForm,
 					consentPolicy: 'registration_consent_policy',
 					completionBlock: oidcRegistrationBlock
 				}
@@ -906,6 +976,7 @@
 		const edges: EditorEdge[] = [
 			createEditorEdge('request', 'registration-method', 'next'),
 			createEditorEdge('registration-method', 'profile-input', 'mail_otp'),
+			createEditorEdge('registration-method', 'profile-input', 'totp'),
 			createEditorEdge('registration-method', 'profile-input', 'passkey'),
 			createEditorEdge('registration-method', 'profile-input', 'facebook'),
 			createEditorEdge('profile-input', 'consent', 'submitted'),
@@ -919,6 +990,7 @@
 	function buildLoginGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
 		const authenticationOutputs = getAuthProfileOutputs('default');
 		const defaultLoginForm = preferredFormProfileValue(['login'], ['login'], 'basic_profile');
+		const defaultConsentForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
 		const samlConsentPolicy = resolveConsentPolicyValue('saml_attribute_release_policy');
 		const oidcConsentPolicy = resolveConsentPolicyValue('oidc_authorization_consent_policy');
 		const samlAttributeReleaseBlock = createCompletionBlock('saml', 'attribute_release', 'consent');
@@ -954,7 +1026,7 @@
 				description: $LL.admin_flows_node_oidc_login_authentication_description(),
 				settings: [
 					getLabel(authProfileOptions, 'default'),
-					getLabel(profileFormOptions, defaultLoginForm)
+					getLabel(profileFormOptionsForNodeKind('authentication'), defaultLoginForm)
 				],
 				position: { x: 522, y: 280 },
 				outputs: authenticationOutputs,
@@ -965,10 +1037,14 @@
 				kind: 'consent',
 				title: $LL.admin_flows_node_consent(),
 				description: $LL.admin_flows_node_oidc_login_consent_description(),
-				settings: samlConsentPolicy ? [getLabel(consentPolicyOptions, samlConsentPolicy)] : [],
+				settings: [
+					...(samlConsentPolicy ? [getLabel(consentPolicyOptions, samlConsentPolicy)] : []),
+					getLabel(profileFormOptionsForNodeKind('consent'), defaultConsentForm)
+				],
 				position: { x: 108, y: 468 },
 				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 				data: {
+					profileForm: defaultConsentForm,
 					consentPolicy: samlConsentPolicy,
 					completionBlock: samlAttributeReleaseBlock
 				}
@@ -993,10 +1069,14 @@
 				kind: 'consent',
 				title: $LL.admin_flows_node_consent(),
 				description: $LL.admin_flows_node_oidc_login_consent_description(),
-				settings: oidcConsentPolicy ? [getLabel(consentPolicyOptions, oidcConsentPolicy)] : [],
+				settings: [
+					...(oidcConsentPolicy ? [getLabel(consentPolicyOptions, oidcConsentPolicy)] : []),
+					getLabel(profileFormOptionsForNodeKind('consent'), defaultConsentForm)
+				],
 				position: { x: 594, y: 468 },
 				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 				data: {
+					profileForm: defaultConsentForm,
 					consentPolicy: oidcConsentPolicy,
 					completionBlock: oidcAuthorizationBlock
 				}
@@ -1498,33 +1578,44 @@
 		consentPolicy: string
 	): string[] {
 		if (kind === 'registration') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, authProfile),
-				getLabel(profileFormOptions, profileForm),
+				getLabel(formOptions, profileForm),
 				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
 					? [getLabel(consentPolicyOptions, consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'authentication') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, authProfile),
-				getLabel(profileFormOptions, profileForm),
+				getLabel(formOptions, profileForm),
 				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
 					? [getLabel(consentPolicyOptions, consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'profile') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
 			return [
-				getLabel(profileFormOptions, profileForm),
+				getLabel(formOptions, profileForm),
 				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
 					? [getLabel(consentPolicyOptions, consentPolicy)]
 					: [])
 			];
 		}
+		if (kind === 'verification') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
+			return [getLabel(formOptions, profileForm)];
+		}
 		if (kind === 'consent') {
-			return [getLabel(consentPolicyOptions, consentPolicy)];
+			const formOptions = profileFormOptionsForNodeKind(kind);
+			return [
+				getLabel(consentPolicyOptions, consentPolicy),
+				...(profileForm ? [getLabel(formOptions, profileForm)] : [])
+			];
 		}
 		if (kind === 'session') {
 			return [
@@ -1824,10 +1915,15 @@
 			consentPolicyOptions,
 			''
 		);
+		const nodeProfileFormOptions = profileFormOptionsForNodeKind(node.data.kind);
 		const profileForm = normalizeOptionValue(
-			getConfigValue(node, 'profileForm', 'basic_profile'),
-			profileFormOptions,
-			firstSelectableValue(profileFormOptions) || 'basic_profile'
+			getConfigValue(
+				node,
+				'profileForm',
+				firstProfileFormForNodeKind(node.data.kind, 'basic_profile')
+			),
+			nodeProfileFormOptions,
+			firstSelectableValue(nodeProfileFormOptions) || 'basic_profile'
 		);
 		draft = {
 			title: node.data.title,
@@ -1872,34 +1968,46 @@
 			.filter(Boolean);
 
 		if (kind === 'registration') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, draft.authProfile),
-				getLabel(profileFormOptions, draft.profileForm),
+				getLabel(formOptions, draft.profileForm),
 				...(draftFormHasConsentWidget() && draft.consentPolicy
 					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'authentication') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, draft.authProfile),
-				getLabel(profileFormOptions, draft.profileForm),
+				getLabel(formOptions, draft.profileForm),
 				...(draftFormHasConsentWidget() && draft.consentPolicy
 					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'profile') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
 			return [
-				getLabel(profileFormOptions, draft.profileForm),
+				getLabel(formOptions, draft.profileForm),
 				...(draftFormHasConsentWidget() && draft.consentPolicy
 					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
 					: []),
 				...freeTextSettings
 			];
 		}
+		if (kind === 'verification') {
+			const formOptions = profileFormOptionsForNodeKind(kind);
+			return [getLabel(formOptions, draft.profileForm), ...freeTextSettings];
+		}
 		if (kind === 'consent') {
-			return [getLabel(consentPolicyOptions, draft.consentPolicy), ...freeTextSettings];
+			const formOptions = profileFormOptionsForNodeKind(kind);
+			return [
+				getLabel(consentPolicyOptions, draft.consentPolicy),
+				...(draft.profileForm ? [getLabel(formOptions, draft.profileForm)] : []),
+				...freeTextSettings
+			];
 		}
 		if (kind === 'session') {
 			return [
@@ -2124,20 +2232,32 @@
 		const maxY = realNodes.reduce((value, node) => Math.max(value, node.position.y), 0);
 		const id = `${kind}-${nextNodeIndex}`;
 		const defaultAuthProfile = firstSelectableValue(authProfileOptions) || 'default';
-		const defaultProfileForm = firstSelectableValue(profileFormOptions) || 'basic_profile';
+		const nodeProfileFormOptions = profileFormOptionsForNodeKind(kind);
+		const defaultProfileForm =
+			kind === 'verification'
+				? preferredFormProfileValue(['code_input'], ['code_input'], 'code_input')
+				: firstSelectableValue(nodeProfileFormOptions) || 'basic_profile';
 		const defaultConsentPolicy = firstSelectableValue(consentPolicyOptions);
 		const settings =
 			kind === 'registration'
 				? [
 						getLabel(authProfileOptions, defaultAuthProfile),
-						getLabel(profileFormOptions, defaultProfileForm)
+						getLabel(nodeProfileFormOptions, defaultProfileForm)
 					]
 				: kind === 'authentication'
-					? [getLabel(authProfileOptions, defaultAuthProfile)]
+					? [
+							getLabel(authProfileOptions, defaultAuthProfile),
+							getLabel(nodeProfileFormOptions, defaultProfileForm)
+						]
 					: kind === 'profile'
-						? [getLabel(profileFormOptions, defaultProfileForm)]
-						: kind === 'consent'
-							? [getLabel(consentPolicyOptions, defaultConsentPolicy)]
+						? [getLabel(nodeProfileFormOptions, defaultProfileForm)]
+						: kind === 'verification'
+							? [getLabel(nodeProfileFormOptions, defaultProfileForm)]
+							: kind === 'consent'
+							? [
+									getLabel(consentPolicyOptions, defaultConsentPolicy),
+									getLabel(nodeProfileFormOptions, defaultProfileForm)
+								]
 							: kind === 'session'
 								? [
 										$LL.admin_flows_setting_existing_session(),
@@ -2168,14 +2288,20 @@
 						}
 					: kind === 'authentication'
 						? {
-								authProfile: defaultAuthProfile
+								authProfile: defaultAuthProfile,
+								profileForm: defaultProfileForm
 							}
 						: kind === 'profile'
 							? {
 									profileForm: defaultProfileForm
 								}
-							: kind === 'consent'
+							: kind === 'verification'
 								? {
+										profileForm: defaultProfileForm
+									}
+								: kind === 'consent'
+								? {
+										profileForm: defaultProfileForm,
 										consentPolicy: defaultConsentPolicy
 									}
 								: kind === 'session'
@@ -2218,6 +2344,7 @@
 				? 'saml_attribute_release_policy'
 				: 'oidc_authorization_consent_policy'
 		);
+		const consentForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
 		const consentNode = createEditorNode({
 			id: `${protocol}-${purpose}-consent-${nextNodeIndex}`,
 			kind: 'consent',
@@ -2226,10 +2353,14 @@
 				kind === 'saml_completion'
 					? $LL.admin_flows_node_saml_consent_description()
 					: $LL.admin_flows_node_oidc_authorization_consent_description(),
-			settings: consentPolicy ? [getLabel(consentPolicyOptions, consentPolicy)] : [],
+			settings: [
+				...(consentPolicy ? [getLabel(consentPolicyOptions, consentPolicy)] : []),
+				getLabel(profileFormOptionsForNodeKind('consent'), consentForm)
+			],
 			position: basePosition,
 			outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 			data: {
+				profileForm: consentForm,
 				consentPolicy,
 				completionBlock: block
 			}
@@ -2376,7 +2507,9 @@
 		if (
 			node.data.kind === 'registration' ||
 			node.data.kind === 'authentication' ||
-			node.data.kind === 'profile'
+			node.data.kind === 'verification' ||
+			node.data.kind === 'profile' ||
+			node.data.kind === 'consent'
 		) {
 			config.profile_form_ref = getConfigValue(node, 'profileForm', 'basic_profile');
 		}
@@ -2765,7 +2898,7 @@
 				<label class="field field-wide">
 					<span>{$LL.admin_flows_profile_form_label()}</span>
 					<select class="admin-input" bind:value={draft.profileForm}>
-						{#each profileFormOptions as option (option.value)}
+						{#each profileFormOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
 							<option value={option.value} disabled={option.disabled}>{option.label}</option>
 						{/each}
 					</select>
@@ -2790,12 +2923,12 @@
 						</ul>
 					</div>
 				{/if}
-			{:else if editingNode.data.kind === 'profile'}
+			{:else if editingNode.data.kind === 'profile' || editingNode.data.kind === 'verification'}
 				<label class="field field-wide">
 					<span>{$LL.admin_flows_profile_form_label()}</span>
 					<select class="admin-input" bind:value={draft.profileForm}>
-						{#each profileFormOptions as option (option.value)}
-							<option value={option.value}>{option.label}</option>
+						{#each profileFormOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
+							<option value={option.value} disabled={option.disabled}>{option.label}</option>
 						{/each}
 					</select>
 				</label>
@@ -2810,6 +2943,14 @@
 					</label>
 				{/if}
 			{:else if editingNode.data.kind === 'consent'}
+				<label class="field field-wide">
+					<span>{$LL.admin_flows_profile_form_label()}</span>
+					<select class="admin-input" bind:value={draft.profileForm}>
+						{#each profileFormOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
+							<option value={option.value} disabled={option.disabled}>{option.label}</option>
+						{/each}
+					</select>
+				</label>
 				<label class="field field-wide">
 					<span>{$LL.admin_flows_consent_policy_label()}</span>
 					<select class="admin-input" bind:value={draft.consentPolicy}>

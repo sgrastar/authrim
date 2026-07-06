@@ -19,7 +19,13 @@
 		emailOtpLoginEnabled: true,
 		emailOtpSignupEnabled: true,
 		emailOtpReauthEnabled: true,
-		emailOtpAccountLinkEnabled: true
+		emailOtpAccountLinkEnabled: true,
+		totpLoginEnabled: false,
+		totpSignupEnabled: false,
+		totpReauthEnabled: false,
+		totpAccountLinkEnabled: false,
+		totpPreset: 'compatible',
+		totpDefaultAcr: 'urn:authrim:aal:2'
 	};
 	const DEFAULT_DIRECTORY_PASSWORD: AuthenticationMethodDirectoryPasswordSettings = {
 		loginEnabled: false,

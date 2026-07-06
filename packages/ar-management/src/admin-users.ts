@@ -599,7 +599,10 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const passkeys = await authCtx.repositories.passkey.findByUserId(userId);
+    const [passkeys, totpCredentials] = await Promise.all([
+      authCtx.repositories.passkey.findByUserId(userId),
+      authCtx.repositories.totp.findByUserId(userId),
+    ]);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const customFields = await ensureDatabaseAdapter(
       customClaimSources.nonPiiDb,
@@ -636,10 +639,23 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       created_at: toMilliseconds(p.created_at),
       last_used_at: toMilliseconds(p.last_used_at),
     }));
+    const formattedTotpCredentials = totpCredentials.map((credential) => ({
+      id: credential.id,
+      label: credential.label,
+      algorithm: credential.algorithm,
+      digits: credential.digits,
+      period: credential.period,
+      window: credential.window,
+      status: credential.status,
+      created_at: toMilliseconds(credential.created_at),
+      activated_at: toMilliseconds(credential.activated_at),
+      last_used_at: toMilliseconds(credential.last_used_at),
+    }));
 
     return c.json({
       user: formattedUser,
       passkeys: formattedPasskeys,
+      totp_credentials: formattedTotpCredentials,
       missing_required_fields: missingRequiredFields.map((field) => ({
         field_key: field.fieldKey,
         label: field.label,
@@ -656,6 +672,53 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       },
       500
     );
+  }
+}
+
+/**
+ * Reset user TOTP credentials.
+ * POST /admin/users/:id/totp/reset
+ */
+export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id')!;
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const projection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
+    if (!projection) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
+
+    const deleted = await authCtx.repositories.totp.deleteByUserId(userId);
+    await createAuditLogFromContext(
+      c,
+      'admin.user.totp.reset',
+      'user',
+      userId,
+      { deleted },
+      'warning'
+    );
+
+    return c.json({ ok: true, deleted });
+  } catch (error) {
+    logSanitizedError('Admin user TOTP reset error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
 

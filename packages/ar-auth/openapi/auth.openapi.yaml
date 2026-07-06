@@ -18,6 +18,7 @@ tags:
   - name: OAuth
   - name: Passkeys
   - name: Email Codes
+  - name: TOTP
   - name: Directory Password
   - name: DID
   - name: Anonymous Login
@@ -197,6 +198,58 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/EmailCodeVerify'
+  /api/auth/totp/login/start:
+    post:
+      tags:
+        - TOTP
+      summary: Start TOTP login.
+      description: Creates a short-lived TOTP login challenge for an email or username identifier.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpLoginStart'
+      responses:
+        '200':
+          $ref: '#/components/responses/TotpLoginStart'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/totp/login/verify:
+    post:
+      tags:
+        - TOTP
+      summary: Verify TOTP login.
+      description: Verifies a TOTP code, creates an Authrim browser session, and optionally continues an OIDC authorization challenge.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpLoginVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/TotpSession'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/totp/signup/options:
+    post:
+      tags:
+        - TOTP
+      summary: Start TOTP signup.
+      description: Creates a short-lived TOTP enrollment challenge, synthetic pending credential metadata, secret, and otpauth URI for first-code activation. The user and stored credential are created when activation succeeds.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpSignupOptions'
+      responses:
+        '201':
+          $ref: '#/components/responses/TotpSignupOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/totp/signup/activate:
+    post:
+      tags:
+        - TOTP
+      summary: Activate TOTP signup.
+      description: Verifies the first TOTP code, creates and activates the stored credential, generates backup codes, and creates a browser session.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpSignupActivate'
+      responses:
+        '200':
+          $ref: '#/components/responses/TotpSignupActivate'
+        '400':
+          $ref: '#/components/responses/Error'
   /api/auth/directory-password/login:
     post:
       tags:
@@ -1543,6 +1596,45 @@ components:
           example:
             email: user@example.com
             code: '123456'
+    TotpLoginStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpLoginStartRequest'
+          example:
+            identifier: user@example.com
+    TotpLoginVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpLoginVerifyRequest'
+          example:
+            challenge_id: 2c2f1c47-9f40-4bc1-a5e3-a19f1cb1a44e
+            code: '123456'
+            authorization_challenge_id: ach_123
+            defer_authorization_continuation: false
+    TotpSignupOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupOptionsRequest'
+          example:
+            email: user@example.com
+            name: Example User
+            label: Authenticator app
+            custom_fields: {}
+    TotpSignupActivate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupActivateRequest'
+          example:
+            challenge_id: 2c2f1c47-9f40-4bc1-a5e3-a19f1cb1a44e
+            code: '123456'
     DirectoryPasswordLogin:
       required: true
       content:
@@ -2062,6 +2154,30 @@ components:
               email: user@example.com
               name: Example User
               email_verified: 1
+    TotpLoginStart:
+      description: TOTP login challenge response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpLoginStartResponse'
+    TotpSession:
+      description: TOTP login session response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSessionResponse'
+    TotpSignupOptions:
+      description: TOTP signup enrollment options response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupOptionsResponse'
+    TotpSignupActivate:
+      description: TOTP signup activation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupActivateResponse'
     DirectoryPasswordLogin:
       description: Successful JSON response.
       content:
@@ -2911,6 +3027,245 @@ components:
         - sessionId
         - userId
         - user
+    TotpLoginStartRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - identifier
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          description: Email address or username/user identifier.
+    TotpLoginStartResponse:
+      type: object
+      required:
+        - challenge_id
+        - expires_in
+      properties:
+        challenge_id:
+          type: string
+        expires_in:
+          type: integer
+          minimum: 1
+    TotpLoginVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - challenge_id
+        - code
+      properties:
+        challenge_id:
+          type: string
+        code:
+          type: string
+          pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+        authorization_challenge_id:
+          type: string
+        defer_authorization_continuation:
+          type: boolean
+          default: false
+    TotpSignupOptionsRequest:
+      type: object
+      additionalProperties: true
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        label:
+          type: string
+          maxLength: 100
+        custom_fields:
+          type: object
+          additionalProperties: true
+        human_verification_response:
+          type: string
+        cf_turnstile_response:
+          type: string
+        authorization_challenge_id:
+          type: string
+    TotpSignupActivateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - challenge_id
+        - code
+      properties:
+        challenge_id:
+          type: string
+        code:
+          type: string
+          pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+        defer_authorization_continuation:
+          type: boolean
+          default: false
+    TotpCredential:
+      type: object
+      required:
+        - id
+        - label
+        - algorithm
+        - digits
+        - period
+        - window
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        algorithm:
+          type: string
+          enum:
+            - SHA1
+            - SHA256
+            - SHA512
+        digits:
+          type: integer
+          enum:
+            - 6
+            - 8
+        period:
+          type: integer
+        window:
+          type: integer
+        status:
+          type: string
+          enum:
+            - pending
+            - active
+            - disabled
+        created_at:
+          type: integer
+          format: int64
+        activated_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+    TotpProfile:
+      type: object
+      required:
+        - algorithm
+        - digits
+        - period
+        - window
+      properties:
+        algorithm:
+          type: string
+        digits:
+          type: integer
+        period:
+          type: integer
+        window:
+          type: integer
+    TotpSignupOptionsResponse:
+      type: object
+      required:
+        - challenge_id
+        - expires_in
+        - credential
+        - secret
+        - otpauth_uri
+        - profile
+      properties:
+        challenge_id:
+          type: string
+        expires_in:
+          type: integer
+        credential:
+          $ref: '#/components/schemas/TotpCredential'
+        secret:
+          type: string
+          description: Base32 TOTP secret shown once during enrollment.
+        otpauth_uri:
+          type: string
+          format: uri
+        profile:
+          $ref: '#/components/schemas/TotpProfile'
+    TotpSession:
+      type: object
+      required:
+        - userId
+        - createdAt
+        - expiresAt
+        - authTime
+        - acr
+        - amr
+      properties:
+        userId:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        expiresAt:
+          type: integer
+          format: int64
+        authTime:
+          type: integer
+          format: int64
+        acr:
+          type: string
+          example: urn:authrim:aal:2
+        amr:
+          type: array
+          items:
+            type: string
+          example:
+            - otp
+            - totp
+    TotpSessionResponse:
+      type: object
+      required:
+        - success
+        - sessionId
+        - expires_in
+        - session
+        - user
+        - redirect_url
+      properties:
+        success:
+          type: boolean
+        sessionId:
+          type: string
+        expires_in:
+          type: integer
+        session:
+          $ref: '#/components/schemas/TotpSession'
+        user:
+          $ref: '#/components/schemas/AuthUser'
+        authorization:
+          type: object
+          additionalProperties: true
+        redirect_url:
+          type: string
+    TotpSignupActivateResponse:
+      allOf:
+        - $ref: '#/components/schemas/TotpSessionResponse'
+        - type: object
+          required:
+            - ok
+            - credential
+            - backup_codes
+          properties:
+            ok:
+              type: boolean
+            credential:
+              $ref: '#/components/schemas/TotpCredential'
+            backup_codes:
+              type: array
+              items:
+                type: string
     DirectoryPasswordLoginRequest:
       type: object
       additionalProperties: false

@@ -18,6 +18,13 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.email_otp.signup_enabled': boolean;
   'authentication-methods.email_otp.reauth_enabled': boolean;
   'authentication-methods.email_otp.account_link_enabled': boolean;
+  'authentication-methods.totp.login_enabled': boolean;
+  'authentication-methods.totp.signup_enabled': boolean;
+  'authentication-methods.totp.reauth_enabled': boolean;
+  'authentication-methods.totp.account_link_enabled': boolean;
+  'authentication-methods.totp.preset': string;
+  'authentication-methods.totp.default_acr': string;
+  'authentication-methods.totp.requirement_policy': string;
   'authentication-methods.human_verification.provider': string;
   'authentication-methods.human_verification.login_enabled': boolean;
   'authentication-methods.human_verification.signup_enabled': boolean;
@@ -118,6 +125,62 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable email one-time-code use for account linking flows',
     visibility: 'page',
   },
+  'authentication-methods.totp.login_enabled': {
+    key: 'authentication-methods.totp.login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'TOTP Login',
+    description: 'Enable authenticator-app TOTP login in the public Login UI',
+    visibility: 'page',
+  },
+  'authentication-methods.totp.signup_enabled': {
+    key: 'authentication-methods.totp.signup_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'TOTP Signup',
+    description: 'Enable authenticator-app TOTP enrollment during signup',
+    visibility: 'page',
+  },
+  'authentication-methods.totp.reauth_enabled': {
+    key: 'authentication-methods.totp.reauth_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'TOTP Re-authentication',
+    description: 'Enable authenticator-app TOTP for recent-authentication checks',
+    visibility: 'page',
+  },
+  'authentication-methods.totp.account_link_enabled': {
+    key: 'authentication-methods.totp.account_link_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'TOTP Account Linking',
+    description: 'Enable authenticator-app TOTP use for account linking flows',
+    visibility: 'page',
+  },
+  'authentication-methods.totp.preset': {
+    key: 'authentication-methods.totp.preset',
+    type: 'string',
+    default: 'compatible',
+    label: 'TOTP Preset',
+    description: 'TOTP compatibility preset: compatible or strong',
+    visibility: 'admin',
+  },
+  'authentication-methods.totp.default_acr': {
+    key: 'authentication-methods.totp.default_acr',
+    type: 'string',
+    default: 'urn:authrim:aal:2',
+    label: 'TOTP Default ACR',
+    description: 'Authentication Context Class Reference emitted after TOTP authentication',
+    visibility: 'admin',
+  },
+  'authentication-methods.totp.requirement_policy': {
+    key: 'authentication-methods.totp.requirement_policy',
+    type: 'json',
+    default: '{"mode":"optional","user_ids":[],"group_ids":[]}',
+    label: 'TOTP Requirement Policy',
+    description: 'JSON policy for optional or required TOTP enrollment by tenant, user, or group',
+    visibility: 'admin',
+  },
   'authentication-methods.human_verification.provider': {
     key: 'authentication-methods.human_verification.provider',
     type: 'string',
@@ -210,6 +273,14 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.email_otp.signup_enabled': true,
   'authentication-methods.email_otp.reauth_enabled': true,
   'authentication-methods.email_otp.account_link_enabled': true,
+  'authentication-methods.totp.login_enabled': false,
+  'authentication-methods.totp.signup_enabled': false,
+  'authentication-methods.totp.reauth_enabled': false,
+  'authentication-methods.totp.account_link_enabled': false,
+  'authentication-methods.totp.preset': 'compatible',
+  'authentication-methods.totp.default_acr': 'urn:authrim:aal:2',
+  'authentication-methods.totp.requirement_policy':
+    '{"mode":"optional","user_ids":[],"group_ids":[]}',
   'authentication-methods.human_verification.provider': 'human-verification-cloudflare-turnstile',
   'authentication-methods.human_verification.login_enabled': false,
   'authentication-methods.human_verification.signup_enabled': false,

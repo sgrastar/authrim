@@ -146,7 +146,6 @@ function normalizeResourceAudience(value: unknown): string | string[] | undefine
 export class RefreshTokenRotator extends DurableObject<Env> {
   private families: Map<string, TokenFamilyV2> = new Map(); // userId → family
   private initialized: boolean = false;
-  private initializePromise: Promise<void> | null = null;
   private readonly log: Logger = createLogger().module('RefreshTokenRotator');
 
   // Sharding metadata (set on first createFamily call with V3 request)

@@ -968,13 +968,6 @@ export async function adminFlowDeleteHandler(c: AdminContext) {
         403
       );
     }
-    if (existing.published_version_id || existing.status === 'published') {
-      return c.json(
-        { error: 'conflict', error_description: 'Published Flows cannot be deleted' },
-        409
-      );
-    }
-
     const assignment = await db.queryOne<{ id: string }>(
       'SELECT id FROM flow_assignments WHERE tenant_id = ? AND flow_id = ? LIMIT 1',
       [tenantId, flowId]
@@ -1375,44 +1368,35 @@ export async function adminFlowAssignmentUpsertHandler(c: AdminContext) {
       return invalidRequest(c, 'Only published Flows can be enabled for runtime assignment');
     }
 
-    const existing = await db.queryOne<FlowAssignmentRow>(
+    const now = nowSeconds();
+    const enabled = body.enabled !== false ? 1 : 0;
+
+    await db.execute(
       body.target_type === 'tenant'
-        ? `SELECT * FROM flow_assignments
+        ? `DELETE FROM flow_assignments
            WHERE tenant_id = ? AND target_type = ? AND target_id IS NULL AND flow_kind = ?`
-        : `SELECT * FROM flow_assignments
+        : `DELETE FROM flow_assignments
            WHERE tenant_id = ? AND target_type = ? AND target_id = ? AND flow_kind = ?`,
       body.target_type === 'tenant'
         ? [tenantId, body.target_type, body.flow_kind]
         : [tenantId, body.target_type, targetId, body.flow_kind]
     );
-    const now = nowSeconds();
-    const enabled = body.enabled !== false ? 1 : 0;
-
-    if (existing) {
-      await db.execute(
-        `UPDATE flow_assignments
-         SET flow_id = ?, enabled = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-        [body.flow_id, enabled, now, tenantId, existing.id]
-      );
-    } else {
-      await db.execute(
-        `INSERT INTO flow_assignments (
-          id, tenant_id, target_type, target_id, flow_kind, flow_id, enabled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          generateId(),
-          tenantId,
-          body.target_type,
-          targetId,
-          body.flow_kind,
-          body.flow_id,
-          enabled,
-          now,
-          now,
-        ]
-      );
-    }
+    await db.execute(
+      `INSERT INTO flow_assignments (
+        id, tenant_id, target_type, target_id, flow_kind, flow_id, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        generateId(),
+        tenantId,
+        body.target_type,
+        targetId,
+        body.flow_kind,
+        body.flow_id,
+        enabled,
+        now,
+        now,
+      ]
+    );
 
     await createAuditLogFromContext(
       asBaseContext(c),

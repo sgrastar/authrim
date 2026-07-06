@@ -2,6 +2,7 @@ import type { Env } from '@authrim/ar-lib-core';
 
 export type SessionTtlContext =
   | 'email_code'
+  | 'totp'
   | 'directory_password'
   | 'direct_auth'
   | 'passkey'
@@ -27,6 +28,13 @@ export const SESSION_TTL_DEFINITIONS: Record<SessionTtlContext, SessionTtlDefini
   email_code: {
     key: 'session.ttl.email_code',
     envKey: 'SESSION_TTL_EMAIL_CODE_MS',
+    defaultMs: ONE_DAY_MS,
+    minMs: ONE_MINUTE_MS,
+    maxMs: THIRTY_DAYS_MS,
+  },
+  totp: {
+    key: 'session.ttl.totp',
+    envKey: 'SESSION_TTL_TOTP_MS',
     defaultMs: ONE_DAY_MS,
     minMs: ONE_MINUTE_MS,
     maxMs: THIRTY_DAYS_MS,

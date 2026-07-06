@@ -2552,7 +2552,7 @@ const flows = new Map<string, DevFlow>([
 						id: 'login',
 						type: 'login',
 						position: { x: 520, y: 120 },
-						data: { label: 'Login', config: { methods: ['passkey', 'otp_email'] } }
+						data: { label: 'Login', config: { methods: ['passkey', 'totp', 'otp_email'] } }
 					},
 					{
 						id: 'tokens',
@@ -2646,6 +2646,7 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 						profile_form_ref: 'basic_profile',
 						outputs: [
 							{ id: 'mail_otp', label: 'Email OTP' },
+							{ id: 'totp', label: 'Authenticator app' },
 							{ id: 'passkey', label: 'Passkey' },
 							{ id: 'facebook', label: 'Facebook' }
 						]
@@ -2691,6 +2692,12 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 					id: 'registration-method:mail_otp->profile-input',
 					source: 'registration-method',
 					source_handle: 'mail_otp',
+					target: 'profile-input'
+				},
+				{
+					id: 'registration-method:totp->profile-input',
+					source: 'registration-method',
+					source_handle: 'totp',
 					target: 'profile-input'
 				},
 				{
@@ -2759,6 +2766,7 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 					authentication_profile_ref: 'default',
 					outputs: [
 						{ id: 'mail_otp', label: 'Email OTP' },
+						{ id: 'totp', label: 'Authenticator app' },
 						{ id: 'passkey', label: 'Passkey' },
 						{ id: 'facebook', label: 'Facebook' }
 					]
@@ -2802,6 +2810,12 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 				id: 'authentication-method:mail_otp->consent',
 				source: 'authentication-method',
 				source_handle: 'mail_otp',
+				target: 'consent'
+			},
+			{
+				id: 'authentication-method:totp->consent',
+				source: 'authentication-method',
+				source_handle: 'totp',
 				target: 'consent'
 			},
 			{
@@ -6911,9 +6925,12 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 	}
 
 	if (segments.length === 2 && method === 'DELETE') {
-		if (normalizeDevFlow(flow).status === 'published') {
+		const assignment = [...flowAssignments.values()].find(
+			(candidate) => candidate.flow_id === flowId
+		);
+		if (assignment) {
 			return json(
-				{ error: 'conflict', error_description: 'Published Flows cannot be deleted' },
+				{ error: 'conflict', error_description: 'Flow is assigned and cannot be deleted' },
 				409
 			);
 		}

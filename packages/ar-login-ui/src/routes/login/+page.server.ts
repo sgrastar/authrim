@@ -7,10 +7,11 @@ import {
 	verifyDiscoveryGrant
 } from '../../lib/discovery-entry';
 import { fetchCachedLoginDiscoveryConfig } from '../../lib/login-discovery-config-cache';
-import type { AuthenticationMethodsResponse } from '../../lib/api/authentication-methods';
-import { getCachedAuthenticationMethodsForRequest } from '../../hooks.server';
+import { shouldUseFastPlainLoginShell } from '../../lib/server/login-entry-fast-path';
 
 const DISCOVERY_GRANT_VERIFIED_COOKIE = 'authrim_discovery_grant_verified';
+const INVALID_CHALLENGE_ERROR_URL =
+	'/error?error=invalid_request&error_description=Authorization%20challenge%20is%20invalid%20or%20expired';
 
 function buildPublicUrl(url: URL, request: Request): URL {
 	const nextUrl = new URL(url);
@@ -55,23 +56,11 @@ function consumeVerifiedGrantCookie(
 	return true;
 }
 
-function getDiscoveryConfigCacheKey(event: Parameters<PageServerLoad>[0]): string {
-	return event.request.headers.get('x-authrim-original-host')?.trim() || event.url.host;
-}
-
-function getPlatformEnv(event: Parameters<PageServerLoad>[0]): Record<string, unknown> | undefined {
-	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
-}
-
-async function getLoginPageData(event: Parameters<PageServerLoad>[0]): Promise<{
-	authenticationMethods?: AuthenticationMethodsResponse;
-}> {
-	const authenticationMethods = await getCachedAuthenticationMethodsForRequest(
-		event as never,
-		getPlatformEnv(event)
-	).catch(() => null);
-
-	return authenticationMethods ? { authenticationMethods } : {};
+function getDiscoveryConfigCacheKey(
+	discoveryHeaders: HeadersInit | undefined,
+	event: Parameters<PageServerLoad>[0]
+): string {
+	return new Headers(discoveryHeaders).get('x-authrim-original-host') || event.url.host;
 }
 
 export const load: PageServerLoad = async (event) => {
@@ -89,8 +78,9 @@ export const load: PageServerLoad = async (event) => {
 			discoveryHeaders
 		).catch(() => false);
 		if (challengeBelongsToCurrentTenant) {
-			return getLoginPageData(event);
+			return {};
 		}
+		throw redirect(303, INVALID_CHALLENGE_ERROR_URL);
 	}
 
 	if (!hasProtocolLoginContext && event.cookies.get('authrim_session')) {
@@ -102,13 +92,17 @@ export const load: PageServerLoad = async (event) => {
 		}
 	}
 
+	if (shouldUseFastPlainLoginShell(event)) {
+		return {};
+	}
+
 	const config = await fetchCachedLoginDiscoveryConfig(
 		event.fetch,
-		getDiscoveryConfigCacheKey(event),
+		getDiscoveryConfigCacheKey(discoveryHeaders, event),
 		discoveryHeaders
 	).catch(() => null);
 	if (!config) {
-		return getLoginPageData(event);
+		return {};
 	}
 
 	const currentUrlWithoutGrant = buildCurrentUrlWithoutGrant(event.url, event.request);
@@ -148,7 +142,7 @@ export const load: PageServerLoad = async (event) => {
 				});
 				throw redirect(303, currentUrlWithoutGrant);
 			}
-			return getLoginPageData(event);
+			return {};
 		}
 
 		if (config.common_discover_url) {
@@ -176,7 +170,7 @@ export const load: PageServerLoad = async (event) => {
 		config.common_discover_url
 	) {
 		if (consumeVerifiedGrantCookie(event, currentUrlWithoutGrant)) {
-			return getLoginPageData(event);
+			return {};
 		}
 
 		throw redirect(
@@ -190,7 +184,7 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	return getLoginPageData(event);
+	return {};
 };
 
 export const actions: Actions = {

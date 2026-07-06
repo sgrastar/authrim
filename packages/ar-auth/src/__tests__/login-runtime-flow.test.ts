@@ -22,11 +22,15 @@ const mocks = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
   };
+  const challengeStore = {
+    getChallengeRpc: vi.fn(),
+  };
   const idQueue = ['interaction_1', 'step_1', 'audit_1', 'audit_2', 'step_2', 'audit_3'];
 
   return {
     coreAdapter,
     sessionStore,
+    challengeStore,
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
     getFeatureFlag: vi.fn(),
@@ -44,6 +48,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       coreAdapter: mocks.coreAdapter,
     })),
     generateId: vi.fn(() => mocks.idQueue.shift() ?? `generated_${mocks.idQueue.length}`),
+    getChallengeStoreByChallengeId: vi.fn(() => mocks.challengeStore),
     getFeatureFlag: mocks.getFeatureFlag,
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mocks.sessionStore })),
     isShardedSessionId: vi.fn((id: string) => id.startsWith('sess_')),
@@ -428,6 +433,70 @@ const sessionCheckEditor = {
   ],
 };
 
+const mixedProtocolCompletionRuntime: FlowRuntimeContract = {
+  flow_kind: 'login',
+  ui: {
+    steps: [
+      {
+        id: 'session-check:step',
+        source_node_id: 'session-check',
+        component: 'session_check',
+        render: false,
+      },
+      {
+        id: 'saml-complete:step',
+        source_node_id: 'saml-complete',
+        component: 'completion',
+        render: true,
+        config: {
+          completion_block: {
+            id: 'saml-attribute-release-completion',
+            protocol: 'saml',
+            purpose: 'attribute_release',
+            role: 'output',
+          },
+        },
+      },
+      {
+        id: 'oidc-complete:step',
+        source_node_id: 'oidc-complete',
+        component: 'completion',
+        render: true,
+        config: {
+          completion_block: {
+            id: 'oidc-authorization-completion',
+            protocol: 'oidc',
+            purpose: 'authorization',
+            role: 'output',
+          },
+        },
+      },
+    ],
+  },
+};
+
+const mixedProtocolCompletionEditor = {
+  nodes: [
+    { id: 'session-check', type: 'session_check' },
+    { id: 'saml-complete', type: 'complete' },
+    { id: 'oidc-complete', type: 'complete' },
+  ],
+  edges: [
+    {
+      id: 'edge_session_saml_complete',
+      source: 'session-check',
+      target: 'saml-complete',
+      source_handle: 'continue',
+    },
+    {
+      id: 'edge_session_oidc_complete',
+      source: 'session-check',
+      target: 'oidc-complete',
+      source_handle: 'continue',
+    },
+  ],
+};
+
 const conditionRuntime: FlowRuntimeContract = {
   flow_kind: 'login',
   ui: {
@@ -549,6 +618,7 @@ function resetAdapter() {
   mocks.coreAdapter.getType.mockReset();
   mocks.coreAdapter.close.mockReset();
   mocks.sessionStore.getSessionRpc.mockReset();
+  mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
@@ -666,6 +736,21 @@ async function startInteraction(
   runtimeSnapshot: FlowRuntimeContract = runtime,
   editorSnapshot: Record<string, unknown> | null = null
 ) {
+  if (typeof body.authorization_challenge_id === 'string') {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+      id: body.authorization_challenge_id,
+      tenantId: 'tenant_test',
+      type: 'login',
+      userId: 'anonymous',
+      challenge: body.authorization_challenge_id,
+      metadata: {
+        client_id: body.client_id,
+      },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 600_000,
+      consumed: false,
+    });
+  }
   mockStartQueries(runtimeSnapshot, editorSnapshot);
   const response = await loginRuntimeInteractionStartHandler(createContext({ body }));
   const data = await readJson(response);
@@ -690,6 +775,116 @@ describe('LoginUI runtime Flow handlers', () => {
       current_step_id: 'auth:step',
     });
     expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects an authorization challenge bound to a different OIDC client', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+      id: 'login_challenge_1',
+      tenantId: 'tenant_test',
+      type: 'login',
+      userId: 'anonymous',
+      challenge: 'login_challenge_1',
+      metadata: {
+        client_id: 'client_2',
+      },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 600_000,
+      consumed: false,
+    });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(data.error).toBe('authorization_challenge_mismatch');
+    expect(data.error_code).toBe('AR_FLOW_AUTH_CHALLENGE_MISMATCH');
+    expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing authorization challenge before creating a runtime interaction', async () => {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce(null);
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_authorization_challenge');
+    expect(data.error_code).toBe('AR_FLOW_AUTH_CHALLENGE_INVALID');
+    expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+  });
+
+  it('includes bridge external IdP providers in authentication runtime handles', async () => {
+    const externalIdp = {
+      fetch: vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            providers: [
+              {
+                id: 'c86b7c28-7351-4587-a155-b578fa133702',
+                slug: 'samplesauth0',
+                name: 'samples.auth0',
+                enabled: true,
+              },
+              {
+                id: 'disabled-provider',
+                slug: 'disabled',
+                name: 'Disabled',
+                enabled: false,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }),
+    };
+    mockStartQueries();
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: { flow_kind: 'login' },
+        env: { EXTERNAL_IDP: externalIdp as unknown as Fetcher },
+        headers: { Host: 'first.test.authrim.com', 'X-Forwarded-Proto': 'https' },
+      })
+    );
+    const data = await readJson(response);
+    const runtimeData = data.contract as FlowRuntimeContract;
+    const authStep = runtimeData.ui.steps.find((step) => step.id === 'auth:step');
+    const outputHandles = (authStep?.config as Record<string, unknown> | undefined)?.output_handles;
+
+    expect(response.status).toBe(200);
+    expect(outputHandles).toContain('samplesauth0');
+    expect(outputHandles).not.toContain('disabled');
+    expect(externalIdp.fetch).toHaveBeenCalledWith(
+      'https://external-idp/api/external/providers',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Accept: 'application/json',
+          'X-Tenant-Id': 'tenant_test',
+          'X-Authrim-Forwarded-Host': 'first.test.authrim.com',
+          'X-Forwarded-Host': 'first.test.authrim.com',
+          'X-Forwarded-Proto': 'https',
+        }),
+      })
+    );
   });
 
   it('auto-advances hidden session check steps during interaction start', async () => {
@@ -773,6 +968,36 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
   });
 
+  it('caches the tenant runtime feature flag within the isolate', async () => {
+    const authrimConfig = {
+      get: vi.fn(async () =>
+        JSON.stringify({
+          'feature.enable_login_runtime_flow': true,
+        })
+      ),
+    } as unknown as KVNamespace;
+
+    mockStartQueries();
+    const firstResponse = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: { flow_kind: 'login' },
+        env: { AUTHRIM_CONFIG: authrimConfig },
+      })
+    );
+    mockStartQueries();
+    const secondResponse = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: { flow_kind: 'login' },
+        env: { AUTHRIM_CONFIG: authrimConfig },
+      })
+    );
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(authrimConfig.get).toHaveBeenCalledTimes(1);
+    expect(authrimConfig.get).toHaveBeenCalledWith('settings:tenant:tenant_test:feature-flags');
+  });
+
   it('rejects resume when only the interaction ID is supplied', async () => {
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({
       id: 'interaction_1',
@@ -826,17 +1051,29 @@ describe('LoginUI runtime Flow handlers', () => {
           {
             field: 'auth.mail_otp',
             label: 'Send verification code',
+            text: 'Send a code to your email address.',
             required: false,
             block_type: 'auth_widget',
             auth_method: 'mail_otp',
           },
         ]),
-        localizations_json: JSON.stringify({}),
+        localizations_json: JSON.stringify({
+          ja: {
+            display_name: '新規登録',
+            description: '標準の新規登録フォームです。',
+            fields: {
+              'auth.mail_otp-0': {
+                label: '認証コードを送信',
+                text: 'メールアドレスにコードを送信します。',
+              },
+            },
+          },
+        }),
         settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
       });
 
     const response = await loginRuntimeInteractionStartHandler(
-      createContext({ body: { flow_kind: 'registration' } })
+      createContext({ body: { flow_kind: 'registration', requested_locale: 'ja' } })
     );
     const data = await readJson(response);
     const runtimeData = data.contract as FlowRuntimeContract;
@@ -847,8 +1084,12 @@ describe('LoginUI runtime Flow handlers', () => {
       form_profile: {
         id: 'profile_1',
         profile_key: 'registration',
+        display_name: '新規登録',
+        description: '標準の新規登録フォームです。',
         fields: [
           {
+            label: '認証コードを送信',
+            text: 'メールアドレスにコードを送信します。',
             block_type: 'auth_widget',
             auth_method: 'mail_otp',
           },
@@ -1162,6 +1403,60 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(response.status).toBe(200);
     expect(data.completed).toBe(true);
     expect(data.step).toBeNull();
+  });
+
+  it('prefers the completion branch matching the active protocol when handles overlap', async () => {
+    const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'session-check',
+      currentStepId: 'session-check:step',
+      stepState: 'pending',
+      runtimeSnapshot: mixedProtocolCompletionRuntime,
+      editorSnapshot: mixedProtocolCompletionEditor,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+      },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'session-check:step',
+          node_id: 'session-check',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(data.completed).toBe(true);
+    expect(data.output).toMatchObject({
+      protocol_continuation: {
+        protocol: 'oidc',
+        completion_block: {
+          id: 'oidc-authorization-completion',
+          protocol: 'oidc',
+          purpose: 'authorization',
+        },
+      },
+    });
   });
 
   it('records a Flow ConsentRecord when a consent policy step is submitted', async () => {

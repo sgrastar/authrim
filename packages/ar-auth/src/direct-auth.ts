@@ -68,6 +68,7 @@ import {
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
   getBrowserStateCookieSameSite,
+  getRequiredPluginContext,
   resolvePostLoginRedirectUrl,
   // Tenant domain resolution
   resolveTenantFromEmailDomain,
@@ -103,8 +104,8 @@ import {
   hashEmail,
 } from './utils/email-code-utils';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
-import { getPluginContext } from '@authrim/ar-lib-core';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
@@ -387,6 +388,39 @@ function isAllowedPasskeyRequestOrigin(
   }
 
   return isSameOriginBrowserRequest(c, originHeader);
+}
+
+function normalizeOriginHeaderValue(originHeader: string | undefined | null): string | undefined {
+  if (!originHeader) {
+    return undefined;
+  }
+
+  try {
+    return new URL(originHeader).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function getDirectAuthWebAuthnOrigin(
+  c: Context<{ Bindings: Env }>,
+  originHeader: string | undefined
+): string | undefined {
+  const browserOriginHeader = c.req.header('x-authrim-browser-origin');
+  const isLoginUiProxy = c.req.header('x-authrim-ui-proxy') === 'login-ui';
+  if (
+    isLoginUiProxy &&
+    browserOriginHeader &&
+    originHeader &&
+    isSameOriginBrowserRequest(c, originHeader)
+  ) {
+    const browserOrigin = normalizeOriginHeaderValue(browserOriginHeader);
+    if (browserOrigin) {
+      return browserOrigin;
+    }
+  }
+
+  return normalizeOriginHeaderValue(originHeader);
 }
 
 /**
@@ -881,18 +915,19 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
-    const clientValidation = await validateDirectAuthClient(c, client_id, channel, originHeader);
+    const webAuthnOrigin = getDirectAuthWebAuthnOrigin(c, originHeader);
+    const clientValidation = await validateDirectAuthClient(c, client_id, channel, webAuthnOrigin);
     if (!clientValidation.valid) {
       return clientValidation.errorResponse as Response;
     }
 
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, tenantId);
 
-    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
+    if (!webAuthnOrigin || !isAllowedPasskeyRequestOrigin(c, webAuthnOrigin, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
-    const originUrl = new URL(originHeader);
+    const originUrl = new URL(webAuthnOrigin);
     const rpID = originUrl.hostname;
 
     // Generate authentication options
@@ -924,8 +959,9 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         channel,
         scope,
         transaction_id: challengeId,
-        origin: originHeader,
+        origin: webAuthnOrigin,
         rpID,
+        authorization_challenge_id,
       },
     });
 
@@ -993,6 +1029,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         email?: string;
         origin: string;
         rpID: string;
+        authorization_challenge_id?: string;
       };
     };
 
@@ -1119,6 +1156,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         scope: challengeData.metadata?.scope,
         transaction_id: challengeData.metadata?.transaction_id || challenge_id,
         passkey_id: passkey.id,
+        authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
       }
     );
 
@@ -1168,6 +1206,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       resident_key?: 'required' | 'preferred' | 'discouraged';
       user_verification?: 'required' | 'preferred' | 'discouraged';
       custom_fields?: Record<string, unknown>;
+      authorization_challenge_id?: string;
       human_verification_response?: string;
       cf_turnstile_response?: string;
     }>();
@@ -1184,6 +1223,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       resident_key = 'required',
       user_verification = 'required',
       custom_fields,
+      authorization_challenge_id,
       human_verification_response,
       cf_turnstile_response,
     } = body;
@@ -1199,34 +1239,39 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     const tenantId = getTenantIdFromContext(c);
+    const passkeySignupUsage = authorization_challenge_id
+      ? await resolveDirectStartTurnstileAction(c, tenantId, authorization_challenge_id)
+      : 'signup';
+    if (typeof passkeySignupUsage !== 'string') return passkeySignupUsage.error;
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
       'passkey',
-      'signup'
+      passkeySignupUsage
     );
     if (methodDisabledError) return methodDisabledError;
     const turnstileError = await verifyHumanVerificationForAction(
       c,
-      'signup',
+      passkeySignupUsage,
       human_verification_response ?? cf_turnstile_response
     );
     if (turnstileError) return turnstileError;
 
     // Validate Origin
     const originHeader = c.req.header('origin');
-    const clientValidation = await validateDirectAuthClient(c, client_id, channel, originHeader);
+    const webAuthnOrigin = getDirectAuthWebAuthnOrigin(c, originHeader);
+    const clientValidation = await validateDirectAuthClient(c, client_id, channel, webAuthnOrigin);
     if (!clientValidation.valid) {
       return clientValidation.errorResponse as Response;
     }
 
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
-    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
+    if (!webAuthnOrigin || !isAllowedPasskeyRequestOrigin(c, webAuthnOrigin, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
-    const originUrl = new URL(originHeader);
+    const originUrl = new URL(webAuthnOrigin);
     const rpID = originUrl.hostname;
 
     // Check if user exists or create new
@@ -1268,6 +1313,10 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           : undefined,
       });
     }
+    const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+      ...(custom_fields ?? {}),
+      ...customFieldValidation.values,
+    });
 
     if (!user) {
       // Create new user
@@ -1284,6 +1333,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           emailVerified: false,
           userType: 'end_user',
           sourceRef: 'direct_auth_passkey',
+          piiFields: canonicalProfileFields.piiFields,
+          sensitiveValues: canonicalProfileFields.sensitiveValues,
           customAttributesJson: JSON.stringify({
             preferred_username: preferredUsername,
           }),
@@ -1367,9 +1418,10 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         client_id,
         channel,
         scope,
-        origin: originHeader,
+        origin: webAuthnOrigin,
         rpID,
         challenge_id: challengeId,
+        authorization_challenge_id,
         ...(Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
           : {}),
@@ -1489,6 +1541,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         origin: string;
         rpID: string;
         custom_fields?: Record<string, unknown>;
+        authorization_challenge_id?: string;
       };
     };
 
@@ -1601,6 +1654,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         transaction_id: challenge_id,
         passkey_id: passkeyId,
         is_new_user: isNewUser,
+        authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
       }
     );
 
@@ -1836,6 +1890,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return acceptedEmailCodeSendResponse(c, normalizedEmail);
     }
 
+    const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+      ...(custom_fields ?? {}),
+      ...customFieldValues,
+    });
+
     if (!user) {
       const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const preferredUsername = normalizedEmail.split('@')[0];
@@ -1849,6 +1908,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
           emailVerified: false,
           userType: 'end_user',
           sourceRef: 'direct_auth_email',
+          piiFields: canonicalProfileFields.piiFields,
+          sensitiveValues: canonicalProfileFields.sensitiveValues,
           customAttributesJson: JSON.stringify({
             preferred_username: preferredUsername,
           }),
@@ -1894,6 +1955,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         transaction_id: attemptId,
         email_hash: emailHash,
         issued_at: issuedAt,
+        authorization_challenge_id,
         // Invite metadata (present only when signup is via invitation)
         ...(inviteData
           ? {
@@ -1910,7 +1972,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     });
 
     // Send email
-    const pluginCtx = getPluginContext(c);
+    const pluginCtx = getRequiredPluginContext(c, 'notification');
     const emailNotifier = pluginCtx.registry.getNotifier('email');
 
     if (!emailNotifier) {
@@ -2200,6 +2262,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
         scope: challengeData.metadata?.scope,
         transaction_id: challengeData.metadata?.transaction_id || attempt_id,
         is_new_user: isNewUser,
+        authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
       }
     );
 
@@ -2249,6 +2312,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       channel: DirectAuthChannel;
       provider_id?: string;
       authorization_challenge_id?: string;
+      defer_authorization_continuation?: boolean;
     }>();
 
     const {
@@ -2258,14 +2322,25 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       channel,
       provider_id,
       authorization_challenge_id,
+      defer_authorization_continuation,
     } = body;
 
-    if (!direct_auth_artifact || !client_id || !code_verifier || !channel) {
+    const missingFields = [
+      !direct_auth_artifact ? 'direct_auth_artifact' : null,
+      !client_id ? 'client_id' : null,
+      !code_verifier ? 'code_verifier' : null,
+      !channel ? 'channel' : null,
+    ].filter((field): field is string => field !== null);
+
+    if (missingFields.length > 0) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description:
-            'direct_auth_artifact, client_id, code_verifier, and channel are required',
+          error_description: `Missing required fields: ${missingFields.join(', ')}`,
+          error_details: {
+            code: 'DIRECT_SESSION_REQUIRED_FIELDS_MISSING',
+            missing_fields: missingFields,
+          },
         },
         400
       );
@@ -2276,6 +2351,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         {
           error: 'invalid_request',
           error_description: 'managed browser session finish requires channel=browser',
+          error_details: {
+            code: 'DIRECT_SESSION_INVALID_CHANNEL',
+            expected: 'browser',
+          },
         },
         400
       );
@@ -2374,12 +2453,20 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     const amr = [typeof metadata.method === 'string' ? metadata.method : 'direct_auth'];
     const acr = 'urn:mace:incommon:iap:bronze';
 
+    const artifactAuthorizationChallengeId =
+      typeof metadata.authorization_challenge_id === 'string'
+        ? metadata.authorization_challenge_id
+        : undefined;
+    const effectiveAuthorizationChallengeId = defer_authorization_continuation
+      ? undefined
+      : authorization_challenge_id || artifactAuthorizationChallengeId;
+
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
-    if (authorization_challenge_id) {
+    if (effectiveAuthorizationChallengeId) {
       const continuation = await consumeAuthorizationChallengeContinuation(
         c.env,
         tenantId,
-        authorization_challenge_id,
+        effectiveAuthorizationChallengeId,
         artifactData.userId,
         authTime,
         new URL(c.req.url).origin
@@ -2450,7 +2537,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       ...(authorizationContinuation
         ? {
             authorization: {
-              challenge_id: authorization_challenge_id,
+              challenge_id: effectiveAuthorizationChallengeId,
               type: authorizationContinuation.type,
             },
           }
@@ -2521,13 +2608,14 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
 
     // Validate Origin header
     const originHeader = c.req.header('origin');
+    const webAuthnOrigin = getDirectAuthWebAuthnOrigin(c, originHeader);
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
 
-    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
+    if (!webAuthnOrigin || !isAllowedPasskeyRequestOrigin(c, webAuthnOrigin, allowedOrigins)) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
-    const originUrl = new URL(originHeader);
+    const originUrl = new URL(webAuthnOrigin);
     const rpID = originUrl.hostname;
 
     // Get user info
@@ -2603,7 +2691,7 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
       challenge: options.challenge,
       ttl: CHALLENGE_TTL,
       metadata: {
-        origin: originHeader,
+        origin: webAuthnOrigin,
         rpID,
         challenge_id: challengeId,
         session_id: sessionId,

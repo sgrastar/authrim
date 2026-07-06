@@ -56,7 +56,7 @@ describe('generateRoutes', () => {
     );
   });
 
-  it('adds Cloudflare Email Service bindings only to ar-auth and ar-management', () => {
+  it('adds auth and management service bindings for email and external IdP flows', () => {
     const config = {
       version: '1.0.0',
       createdAt: '2026-03-10T00:00:00.000Z',
@@ -141,6 +141,7 @@ describe('generateRoutes', () => {
     };
 
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const libCoreConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
 
@@ -170,7 +171,14 @@ describe('generateRoutes', () => {
     );
     expect(authConfig.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(managementConfig.send_email).toEqual([{ name: 'EMAIL' }]);
+    expect(authConfig.services).toEqual([
+      { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
+    ]);
+    expect(managementConfig.services).toEqual([
+      { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
+    ]);
     expect(tokenConfig.send_email).toBeUndefined();
+    expect(libCoreConfig.vars.AUTH_CODE_EXPIRY).toBe('600');
     expect(authConfig.vars.EMAIL_FROM).toBe('noreply@example.com');
     expect(authConfig.vars.EMAIL_FROM_NAME).toBe('Authrim');
   });
@@ -964,6 +972,9 @@ id = "kv-id"
     expect(authConfig.routes).toBeUndefined();
     expect(authConfig.vars.ENABLE_LOGIN_RUNTIME_FLOW).toBe('true');
     expect(authConfig.vars.FLOW_RUNTIME_HMAC_SECRET).toBe('');
+    expect(authConfig.vars.AUTHRIM_TRUST_FORWARDED_HOST).toBe('true');
+    expect(managementConfig.vars.AUTHRIM_TRUST_FORWARDED_HOST).toBe('true');
+    expect(routerConfig.vars.AUTHRIM_TRUST_FORWARDED_HOST).toBeUndefined();
     expect(managementConfig.routes).toBeUndefined();
   });
 

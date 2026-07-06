@@ -184,6 +184,12 @@ export interface ClientConsentOverride {
   min_version?: string;
   enforcement?: ConsentEnforcement;
   conditional_rules?: ConditionalConsentRule[];
+  checkbox_mode?: 'none' | 'required' | 'optional';
+  checkbox_default_checked?: boolean;
+  binding_type?: 'subject' | 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
+  binding_value?: string;
+  evidence_profile?: string;
+  language_fallback?: string;
   display_order?: number;
   created_at: number;
   updated_at: number;

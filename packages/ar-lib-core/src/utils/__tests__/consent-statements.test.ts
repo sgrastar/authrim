@@ -681,12 +681,234 @@ describe('Consent Statements Utility', () => {
         min_version: '20260601',
         reconsent_interval_days: 180,
         checkbox_mode: 'required',
-        checkbox_default_checked: true,
+        checkbox_default_checked: false,
+        binding_type: 'scope',
+        binding_value: 'profile email',
       });
       const directPolicyAssignmentQuery = vi
         .mocked(adapter.query)
         .mock.calls.find(([sql]) => String(sql).includes('consent_policy_assignments'));
       expect(directPolicyAssignmentQuery).toBeUndefined();
+    });
+
+    it('should not include unbound tenant-wide or SAML statements in an OIDC consent context', async () => {
+      const now = Date.now();
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'active_statements',
+            [
+              {
+                id: 'stmt-terms',
+                tenant_id: 'default',
+                slug: 'terms_of_service',
+                category: 'terms_of_service',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 1,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: null,
+                created_at: now,
+                updated_at: now,
+              },
+              {
+                id: 'stmt-saml',
+                tenant_id: 'default',
+                slug: 'saml_attribute_release_confirmation',
+                category: 'saml_attribute_release_confirmation',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 2,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'tenant_requirements',
+            [
+              {
+                id: 'req-terms',
+                tenant_id: 'default',
+                statement_id: 'stmt-terms',
+                is_required: 1,
+                min_version: null,
+                enforcement: 'block',
+                show_deletion_link: 0,
+                deletion_url: null,
+                conditional_rules_json: null,
+                display_order: 1,
+                created_at: now,
+                updated_at: now,
+              },
+              {
+                id: 'req-saml',
+                tenant_id: 'default',
+                statement_id: 'stmt-saml',
+                is_required: 1,
+                min_version: null,
+                enforcement: 'block',
+                show_deletion_link: 0,
+                deletion_url: null,
+                conditional_rules_json: null,
+                display_order: 2,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'current_version',
+            [
+              {
+                id: 'ver-current',
+                tenant_id: 'default',
+                statement_id: 'stmt-terms',
+                version: '20260601',
+                content_type: 'url',
+                effective_at: now,
+                effective_until: null,
+                content_hash: null,
+                is_current: 1,
+                status: 'active',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const result = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          target_type: 'oidc_client',
+          target_id: 'client-1',
+          requested_scopes: ['openid'],
+        }
+      );
+
+      expect(result).toHaveLength(0);
+    });
+
+    it('should include scope-bound client overrides only when the scope is requested', async () => {
+      const now = Date.now();
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'active_statements',
+            [
+              {
+                id: 'stmt-email',
+                tenant_id: 'default',
+                slug: 'email_release',
+                category: 'data_sharing',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 1,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          ['tenant_requirements', []],
+          [
+            'client_overrides',
+            [
+              {
+                id: 'override-email',
+                tenant_id: 'default',
+                client_id: 'client-1',
+                statement_id: 'stmt-email',
+                requirement: 'required',
+                min_version: null,
+                enforcement: 'block',
+                conditional_rules_json: null,
+                checkbox_mode: 'required',
+                checkbox_default_checked: 0,
+                binding_type: 'scope',
+                binding_value: 'email profile',
+                evidence_profile: 'attribute_release',
+                language_fallback: 'tenant_default',
+                display_order: 1,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'current_version',
+            [
+              {
+                id: 'ver-email',
+                tenant_id: 'default',
+                statement_id: 'stmt-email',
+                version: '20260601',
+                content_type: 'url',
+                effective_at: now,
+                effective_until: null,
+                content_hash: null,
+                is_current: 1,
+                status: 'active',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const noMatch = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          target_type: 'oidc_client',
+          target_id: 'client-1',
+          requested_scopes: ['openid'],
+        }
+      );
+      expect(noMatch).toHaveLength(0);
+
+      const match = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          target_type: 'oidc_client',
+          target_id: 'client-1',
+          requested_scopes: ['openid', 'email'],
+        }
+      );
+      expect(match).toHaveLength(1);
+      expect(match[0]).toMatchObject({
+        statement_id: 'stmt-email',
+        is_required: true,
+        checkbox_default_checked: false,
+        binding_type: 'scope',
+        binding_value: 'email profile',
+      });
     });
   });
 

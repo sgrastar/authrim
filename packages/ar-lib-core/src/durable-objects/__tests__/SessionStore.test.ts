@@ -257,6 +257,50 @@ describe('SessionStore', () => {
       });
     });
 
+    it('does not share a never-settling session persistence initialization', async () => {
+      let markFirstStarted: (() => void) | undefined;
+      let resolveFirstInitialization: ((value: null) => void) | undefined;
+      const firstStarted = new Promise<void>((resolve) => {
+        markFirstStarted = resolve;
+      });
+      const resolvedPersistence = {};
+      const internals = sessionStore as unknown as {
+        initializeSessionPersistence: () => Promise<unknown>;
+        ensureSessionPersistence: () => Promise<unknown>;
+      };
+      const initializeSessionPersistence = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          markFirstStarted?.();
+          return new Promise<null>((resolve) => {
+            resolveFirstInitialization = resolve;
+          });
+        })
+        .mockResolvedValueOnce(resolvedPersistence);
+      internals.initializeSessionPersistence = initializeSessionPersistence;
+
+      const firstLoad = internals.ensureSessionPersistence();
+      await firstStarted;
+      const secondLoad = internals.ensureSessionPersistence();
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const secondResult = await Promise.race([
+        secondLoad,
+        new Promise<null>((resolveTimeout) => {
+          timeoutId = setTimeout(() => resolveTimeout(null), 1000);
+        }),
+      ]);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (!secondResult) {
+        resolveFirstInitialization?.(null);
+        await Promise.allSettled([firstLoad, secondLoad]);
+      }
+
+      expect(secondResult).toBe(resolvedPersistence);
+      expect(initializeSessionPersistence).toHaveBeenCalledTimes(2);
+      resolveFirstInitialization?.(null);
+      await firstLoad;
+    });
+
     it('disables cold session persistence when the storage profile detaches transient mirrors', async () => {
       const d1 = createMockD1();
       mockEnv = {

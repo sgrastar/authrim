@@ -325,7 +325,7 @@ describe('resolveLoggingPolicy', () => {
     });
   });
 
-  it('coalesces runtime policy snapshot cache misses', async () => {
+  it('caches resolved runtime policy snapshots', async () => {
     const cache = new RuntimeLoggingPolicySnapshotMemoryCache<{ assignments: unknown[] }>({
       ttlMs: 1000,
     });
@@ -345,10 +345,18 @@ describe('resolveLoggingPolicy', () => {
       return snapshot;
     };
 
-    const [first, second] = await Promise.all([
-      cache.getOrLoad({ scopeType: 'tenant', scopeId: 'tenant-a', now: 1000, loader }),
-      cache.getOrLoad({ scopeType: 'tenant', scopeId: 'tenant-a', now: 1000, loader }),
-    ]);
+    const first = await cache.getOrLoad({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      now: 1000,
+      loader,
+    });
+    const second = await cache.getOrLoad({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      now: 1500,
+      loader,
+    });
 
     expect(first).toBe(snapshot);
     expect(second).toBe(snapshot);
@@ -368,6 +376,61 @@ describe('resolveLoggingPolicy', () => {
         now: 2500,
       })
     ).toBeNull();
+  });
+
+  it('does not share a never-settling runtime policy snapshot load', async () => {
+    const cache = new RuntimeLoggingPolicySnapshotMemoryCache<{ assignments: unknown[] }>({
+      ttlMs: 1000,
+    });
+    const snapshot = await createRuntimeLoggingPolicySnapshot({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      version: 1,
+      synchronizedAt: 1714550400000,
+      sourceUpdatedAt: 1714550399000,
+      snapshotId: 'snap_cache',
+      policies: { assignments: [] },
+    });
+    let markFirstStarted: (() => void) | undefined;
+    let resolveFirstLoad: ((snapshot: null) => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const firstLoad = cache.getOrLoad({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      now: 1000,
+      loader: () => {
+        markFirstStarted?.();
+        return new Promise<null>((resolve) => {
+          resolveFirstLoad = resolve;
+        });
+      },
+    });
+    await firstStarted;
+
+    const secondLoad = cache.getOrLoad({
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      now: 1000,
+      loader: async () => snapshot,
+    });
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const secondSnapshot = await Promise.race([
+      secondLoad,
+      new Promise<null>((resolveTimeout) => {
+        timeoutId = setTimeout(() => resolveTimeout(null), 1000);
+      }),
+    ]);
+    if (timeoutId) clearTimeout(timeoutId);
+    if (!secondSnapshot) {
+      resolveFirstLoad?.(null);
+      await Promise.allSettled([firstLoad, secondLoad]);
+    }
+
+    expect(secondSnapshot).toBe(snapshot);
+    resolveFirstLoad?.(null);
+    await firstLoad;
   });
 
   it('loads published snapshots through KV pointer and object store', async () => {

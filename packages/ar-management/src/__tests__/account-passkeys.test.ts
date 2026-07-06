@@ -118,7 +118,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
-    getPluginContext: () => ({
+    getRequiredPluginContext: () => ({
       registry: {
         getNotifier: vi.fn((channel: string) => (channel === 'email' ? mockEmailNotifier : null)),
       },
@@ -184,6 +184,7 @@ function createMockContext(
   options: {
     cookie?: string;
     origin?: string;
+    headers?: Record<string, string>;
     params?: Record<string, string>;
     body?: unknown;
     settings?: Record<string, unknown>;
@@ -196,6 +197,9 @@ function createMockContext(
   }
   if (options.origin) {
     requestHeaders.Origin = options.origin;
+  }
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    requestHeaders[name] = value;
   }
   const request = new Request('https://op.example.com/api/account/passkeys', {
     headers: requestHeaders,
@@ -407,6 +411,36 @@ describe('Account Page passkey management API', () => {
     expect(body.options).toHaveProperty('challenge', 'reauth-challenge-value');
   });
 
+  it('uses the browser origin for passkey re-authentication through the Login UI proxy', async () => {
+    const response = await createAccountPasskeyReauthOptionsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        headers: {
+          'x-authrim-ui-proxy': 'login-ui',
+          'x-authrim-browser-origin': 'https://login.example.com',
+          'x-authrim-forwarded-host': 'op.example.com',
+        },
+        body: {},
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockGenerateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpID: 'login.example.com',
+      })
+    );
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          rpID: 'login.example.com',
+          origin: 'https://login.example.com',
+        }),
+      })
+    );
+  });
+
   it('completes passkey re-authentication and refreshes session authTime', async () => {
     mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
       userId: 'user-001',
@@ -453,6 +487,43 @@ describe('Account Page passkey management API', () => {
     );
     expect(body.ok).toBe(true);
     expect(body.reauth.expires_at).toBe(body.reauth.authenticated_at + 300);
+  });
+
+  it('uses the browser origin when completing passkey re-authentication through the Login UI proxy', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'reauth-challenge-value',
+      metadata: {
+        rpID: 'login.example.com',
+        origin: 'https://login.example.com',
+        sessionId: 'g1:apac:3:session_current',
+      },
+    });
+    mockPasskeyRepo.findByCredentialId.mockResolvedValueOnce(basePasskey);
+
+    const response = await completeAccountPasskeyReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        headers: {
+          'x-authrim-ui-proxy': 'login-ui',
+          'x-authrim-browser-origin': 'https://login.example.com',
+          'x-authrim-forwarded-host': 'op.example.com',
+        },
+        body: {
+          challenge_id: 'challenge-001',
+          credential: { id: 'credential-secret' },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockVerifyAuthenticationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedOrigin: 'https://login.example.com',
+        expectedRPID: 'login.example.com',
+      })
+    );
   });
 
   it('rejects passkey re-authentication when passkey reauth is disabled', async () => {
@@ -605,6 +676,36 @@ describe('Account Page passkey management API', () => {
     expect(body.options).toHaveProperty('challenge', 'challenge-value');
   });
 
+  it('uses the browser origin for registration options through the Login UI proxy', async () => {
+    const response = await createAccountPasskeyOptionsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        headers: {
+          'x-authrim-ui-proxy': 'login-ui',
+          'x-authrim-browser-origin': 'https://login.example.com',
+          'x-authrim-forwarded-host': 'op.example.com',
+        },
+        body: { device_name: 'Phone' },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockGenerateRegistrationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpID: 'login.example.com',
+      })
+    );
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          rpID: 'login.example.com',
+          origin: 'https://login.example.com',
+        }),
+      })
+    );
+  });
+
   it('rejects registration options without an Origin header', async () => {
     const response = await createAccountPasskeyOptionsHandler(
       createMockContext({
@@ -751,6 +852,56 @@ describe('Account Page passkey management API', () => {
       credential_ids: ['credential-secret', 'credential-new'],
     });
     expect(body.passkey).not.toHaveProperty('credential_id');
+  });
+
+  it('uses the browser origin when completing registration through the Login UI proxy', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'challenge-value',
+      metadata: {
+        rpID: 'login.example.com',
+        origin: 'https://login.example.com',
+        deviceName: 'Phone',
+      },
+    });
+
+    const response = await completeAccountPasskeyRegistrationHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        headers: {
+          'x-authrim-ui-proxy': 'login-ui',
+          'x-authrim-browser-origin': 'https://login.example.com',
+          'x-authrim-forwarded-host': 'op.example.com',
+        },
+        body: {
+          challenge_id: 'challenge-001',
+          passkey_response: {
+            id: 'credential-new',
+            rawId: 'credential-new',
+            response: { transports: ['internal'] },
+            type: 'public-key',
+            clientExtensionResults: {},
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as {
+      webauthn_signal?: Record<string, unknown>;
+    };
+
+    expect(response.status).toBe(201);
+    expect(mockVerifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedOrigin: 'https://login.example.com',
+        expectedRPID: 'login.example.com',
+      })
+    );
+    expect(body.webauthn_signal).toEqual({
+      rp_id: 'login.example.com',
+      user_id: 'dXNlci0wMDE',
+      credential_ids: ['credential-secret', 'credential-new'],
+    });
   });
 
   it('rejects passkey completion when the stored challenge belongs to another user', async () => {

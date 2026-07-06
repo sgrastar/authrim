@@ -6,6 +6,7 @@ import {
   createAuthContextFromHono,
   evaluateFlowConditionRows,
   generateId,
+  getChallengeStoreByChallengeId,
   getFeatureFlag,
   getLogger,
   getSessionStoreBySessionId,
@@ -14,6 +15,7 @@ import {
   isShardedSessionId,
   type DatabaseAdapter,
   type Env,
+  type Challenge,
   type FlowAssignmentTargetType,
   type FlowConditionConfig,
   type FlowConditionEvaluationContext,
@@ -186,6 +188,19 @@ interface RuntimeFormProfileRow {
   settings_json: string | null;
 }
 
+interface RuntimeFormFieldLocalization {
+  label?: string;
+  text?: string;
+  help_text?: string;
+  placeholder?: string;
+}
+
+interface RuntimeFormLocalization {
+  display_name?: string;
+  description?: string;
+  fields?: Record<string, RuntimeFormFieldLocalization>;
+}
+
 type RuntimeConsentRecordBindingType =
   | 'subject'
   | 'identity_schema'
@@ -235,6 +250,11 @@ interface RuntimeStartTiming {
   spans: RuntimeStartTimingSpan[];
 }
 
+interface CachedLoginRuntimeFeatureFlag {
+  value: boolean;
+  expiresAt: number;
+}
+
 const LOGIN_RUNTIME_FEATURE_KEYS = [
   'feature.enable_login_runtime_flow',
   'feature.login_runtime_flow.enabled',
@@ -244,12 +264,17 @@ const LOGIN_RUNTIME_FEATURE_KEYS = [
 const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve', 'account']);
 const FLOW_VERSION_CACHE_TTL_SECONDS = 180;
 const FLOW_VERSION_CACHE_MAX_ENTRIES = 256;
+const LOGIN_RUNTIME_FEATURE_FLAG_CACHE_DEFAULT_TTL_MS = 180_000;
+const LOGIN_RUNTIME_FEATURE_FLAG_CACHE_MIN_TTL_MS = 10_000;
+const LOGIN_RUNTIME_FEATURE_FLAG_CACHE_MAX_TTL_MS = 600_000;
 const flowVersionCache = new Map<string, CachedFlowVersion>();
 const preparedRuntimeContractCache = new Map<string, CachedPreparedRuntimeContract>();
+const loginRuntimeFeatureFlagCache = new Map<string, CachedLoginRuntimeFeatureFlag>();
 
 export function clearLoginRuntimeFlowVersionCacheForTests(): void {
   flowVersionCache.clear();
   preparedRuntimeContractCache.clear();
+  loginRuntimeFeatureFlagCache.clear();
 }
 
 function nowSeconds(): number {
@@ -317,6 +342,73 @@ function parseJsonObjectArray(value: string | null): FlowRuntimeJsonObject[] {
 
 function parseRuntimeJsonObject(value: string | null): FlowRuntimeJsonObject {
   return parseJsonObject(value) as FlowRuntimeJsonObject;
+}
+
+function formLocalizationKey(field: FlowRuntimeJsonObject, index: number): string {
+  const blockId = readString(field.block_id, 200);
+  const fieldName = readString(field.field, 200) ?? 'field';
+  return blockId ?? `${fieldName}-${index}`;
+}
+
+function selectRuntimeFormLocalization(
+  localizations: FlowRuntimeJsonObject,
+  language: string,
+  defaultLanguage = 'en'
+): RuntimeFormLocalization | null {
+  const candidates = [
+    localizations[language],
+    localizations[defaultLanguage],
+    localizations.en,
+    ...Object.values(localizations),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      return candidate as RuntimeFormLocalization;
+    }
+  }
+  return null;
+}
+
+function readRuntimeFormLocalizedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function applyRuntimeFormLocalization(
+  fields: FlowRuntimeJsonObject[],
+  localizations: FlowRuntimeJsonObject,
+  language: string,
+  defaultLanguage = 'en'
+): {
+  displayName?: string;
+  description?: string;
+  fields: FlowRuntimeJsonObject[];
+} {
+  const localization = selectRuntimeFormLocalization(localizations, language, defaultLanguage);
+  if (!localization) return { fields };
+  const fieldLocalizations =
+    localization.fields &&
+    typeof localization.fields === 'object' &&
+    !Array.isArray(localization.fields)
+      ? localization.fields
+      : {};
+  return {
+    displayName: readRuntimeFormLocalizedString(localization.display_name) ?? undefined,
+    description: readRuntimeFormLocalizedString(localization.description) ?? undefined,
+    fields: fields.map((field, index) => {
+      const fieldLocalization = fieldLocalizations[formLocalizationKey(field, index)];
+      if (!fieldLocalization || typeof fieldLocalization !== 'object') return field;
+      const next: FlowRuntimeJsonObject = { ...field };
+      const label = readRuntimeFormLocalizedString(fieldLocalization.label);
+      const text = readRuntimeFormLocalizedString(fieldLocalization.text);
+      const helpText = readRuntimeFormLocalizedString(fieldLocalization.help_text);
+      const placeholder = readRuntimeFormLocalizedString(fieldLocalization.placeholder);
+      if (label) next.label = label;
+      if (text) next.text = text;
+      if (helpText) next.help_text = helpText;
+      if (placeholder) next.placeholder = placeholder;
+      return next;
+    }),
+  };
 }
 
 function jsonError(
@@ -456,25 +548,68 @@ function writeRuntimeStartTiming(
     });
 }
 
+function getLoginRuntimeFeatureFlagCacheKey(env: Env, tenantId: string): string {
+  const envRecord = env as unknown as Record<string, string | undefined>;
+  const environment =
+    env.ENVIRONMENT ?? env.NODE_ENV ?? envRecord.BASE_DOMAIN ?? envRecord.ISSUER_URL ?? 'default';
+  return `${environment}:tenant:${tenantId}`;
+}
+
+function getLoginRuntimeFeatureFlagCacheTtlMs(env: Env): number {
+  const envRecord = env as unknown as Record<string, string | undefined>;
+  const ttlSeconds = Number.parseInt(
+    envRecord.FEATURE_FLAGS_CACHE_TTL ?? env.CONFIG_CACHE_TTL ?? '',
+    10
+  );
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    return LOGIN_RUNTIME_FEATURE_FLAG_CACHE_DEFAULT_TTL_MS;
+  }
+  return Math.min(
+    LOGIN_RUNTIME_FEATURE_FLAG_CACHE_MAX_TTL_MS,
+    Math.max(LOGIN_RUNTIME_FEATURE_FLAG_CACHE_MIN_TTL_MS, ttlSeconds * 1000)
+  );
+}
+
+function readLoginRuntimeFlagFromSettings(settings: Record<string, unknown> | null): true | null {
+  if (!settings || typeof settings !== 'object') return null;
+  for (const key of LOGIN_RUNTIME_FEATURE_KEYS) {
+    if (settings[key] === true || settings[key] === 'true' || settings[key] === '1') return true;
+  }
+  return null;
+}
+
 async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {
+  const cacheKey = getLoginRuntimeFeatureFlagCacheKey(env, tenantId);
+  const cached = loginRuntimeFeatureFlagCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const ttlMs = getLoginRuntimeFeatureFlagCacheTtlMs(env);
+  const cacheValue = (value: boolean): boolean => {
+    loginRuntimeFeatureFlagCache.set(cacheKey, {
+      value,
+      expiresAt: now + ttlMs,
+    });
+    return value;
+  };
+
   if (env.AUTHRIM_CONFIG) {
     try {
       const settingsJson = await env.AUTHRIM_CONFIG.get(
         `settings:tenant:${tenantId}:feature-flags`
       );
       const settings = settingsJson ? (JSON.parse(settingsJson) as Record<string, unknown>) : null;
-      if (settings && typeof settings === 'object') {
-        for (const key of LOGIN_RUNTIME_FEATURE_KEYS) {
-          if (settings[key] === true || settings[key] === 'true' || settings[key] === '1') {
-            return true;
-          }
-        }
+      const settingValue = readLoginRuntimeFlagFromSettings(settings);
+      if (settingValue !== null) {
+        return cacheValue(settingValue);
       }
     } catch {
       // Fall through to environment flags.
     }
   }
-  return getFeatureFlag('ENABLE_LOGIN_RUNTIME_FLOW', env, false);
+  return cacheValue(await getFeatureFlag('ENABLE_LOGIN_RUNTIME_FLOW', env, false));
 }
 
 function normalizeFlowKind(value: unknown): FlowKind {
@@ -894,12 +1029,137 @@ function parseAuthProviderUsage(value: unknown): Array<Record<string, unknown>> 
   }
 }
 
+function getRuntimeRequestHost(c: AuthContext): string | null {
+  const candidates = [
+    getRequestHeader(c, 'Host'),
+    getRequestHeader(c, 'X-Authrim-Forwarded-Host'),
+    getRequestHeader(c, 'X-Forwarded-Host'),
+  ];
+
+  for (const candidate of candidates) {
+    const value = candidate?.split(',')[0]?.trim();
+    if (value) return value;
+  }
+
+  try {
+    return new URL(c.req.url).host;
+  } catch {
+    return null;
+  }
+}
+
+function getRuntimeForwardedProto(c: AuthContext): string {
+  const headerValue = getRequestHeader(c, 'X-Forwarded-Proto')?.split(',')[0]?.trim();
+  if (headerValue === 'http' || headerValue === 'https') {
+    return headerValue;
+  }
+
+  try {
+    const protocol = new URL(c.req.url).protocol.replace(':', '');
+    return protocol === 'http' || protocol === 'https' ? protocol : 'https';
+  } catch {
+    return 'https';
+  }
+}
+
+function buildRuntimeExternalIdpHeaders(c: AuthContext, tenantId: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Tenant-Id': tenantId,
+  };
+  const forwardedHost = getRuntimeRequestHost(c);
+  if (forwardedHost) {
+    headers['X-Authrim-Forwarded-Host'] = forwardedHost;
+    headers['X-Forwarded-Host'] = forwardedHost;
+    headers['X-Forwarded-Proto'] = getRuntimeForwardedProto(c);
+  }
+  return headers;
+}
+
+function indexExternalProviderUsage(
+  providerUsage: Array<Record<string, unknown>>
+): Map<string, Record<string, unknown>> {
+  const indexed = new Map<string, Record<string, unknown>>();
+  for (const provider of providerUsage) {
+    const providerId = readString(provider.id, 200) ?? readString(provider.providerId, 200);
+    if (!providerId) continue;
+    indexed.set(providerId, provider);
+    indexed.set(normalizeOutputHandle(providerId), provider);
+  }
+  return indexed;
+}
+
+function externalProviderUsageEnabled(
+  provider: Record<string, unknown>,
+  usage: 'login' | 'signup'
+): boolean {
+  const providerEnabled = readBooleanSetting(provider, 'enabled', true);
+  const usageEnabled = readBooleanSetting(provider, `${usage}Enabled`, providerEnabled);
+  return providerEnabled && usageEnabled;
+}
+
+function getExternalProviderUsageOverride(
+  usageById: Map<string, Record<string, unknown>>,
+  providerId: string,
+  slug: string | null
+): Record<string, unknown> | undefined {
+  return (
+    usageById.get(providerId) ??
+    usageById.get(normalizeOutputHandle(providerId)) ??
+    (slug ? usageById.get(slug) : undefined) ??
+    (slug ? usageById.get(normalizeOutputHandle(slug)) : undefined)
+  );
+}
+
+async function fetchRuntimeExternalProviderHandles(
+  c: AuthContext,
+  tenantId: string,
+  usage: 'login' | 'signup',
+  usageById: Map<string, Record<string, unknown>>
+): Promise<string[]> {
+  if (!c.env.EXTERNAL_IDP) return [];
+
+  try {
+    const response = await c.env.EXTERNAL_IDP.fetch('https://external-idp/api/external/providers', {
+      method: 'GET',
+      headers: buildRuntimeExternalIdpHeaders(c, tenantId),
+    });
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as {
+      providers?: Array<Record<string, unknown>>;
+    };
+    if (!Array.isArray(data.providers)) return [];
+
+    const handles: string[] = [];
+    for (const provider of data.providers) {
+      if (provider.enabled === false) continue;
+      const providerId = readString(provider.id, 200);
+      const slug = readString(provider.slug, 200);
+      const outputId = slug ?? providerId;
+      if (!outputId) continue;
+
+      const usageOverride = getExternalProviderUsageOverride(
+        usageById,
+        providerId ?? outputId,
+        slug
+      );
+      if (usageOverride && !externalProviderUsageEnabled(usageOverride, usage)) continue;
+      handles.push(normalizeOutputHandle(outputId));
+    }
+    return handles;
+  } catch {
+    return [];
+  }
+}
+
 async function resolveRuntimeAuthenticationHandles(
-  env: Env,
+  c: AuthContext,
   tenantId: string,
   flowKind: FlowKind,
   component: string
 ): Promise<string[]> {
+  const env = c.env;
   const rawSettings = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
   const settings = parseJsonRecord(rawSettings);
   const usage =
@@ -916,6 +1176,11 @@ async function resolveRuntimeAuthenticationHandles(
     settings,
     'authentication-methods.email_otp.enabled',
     true
+  );
+  const legacyTotpEnabled = readBooleanSetting(
+    settings,
+    'authentication-methods.totp.enabled',
+    false
   );
 
   if (
@@ -937,6 +1202,11 @@ async function resolveRuntimeAuthenticationHandles(
     handles.push('passkey');
   }
   if (
+    readBooleanSetting(settings, `authentication-methods.totp.${usage}_enabled`, legacyTotpEnabled)
+  ) {
+    handles.push('totp');
+  }
+  if (
     usage === 'login' &&
     readBooleanSetting(settings, 'authentication-methods.directory_password.enabled', false)
   ) {
@@ -946,13 +1216,15 @@ async function resolveRuntimeAuthenticationHandles(
   const providerUsage = parseAuthProviderUsage(
     settings['authentication-methods.external_provider_usage']
   );
+  const usageById = indexExternalProviderUsage(providerUsage);
   for (const provider of providerUsage) {
     const providerId = readString(provider.id, 200);
     if (!providerId) continue;
-    const providerEnabled = readBooleanSetting(provider, 'enabled', true);
-    const usageEnabled = readBooleanSetting(provider, `${usage}Enabled`, providerEnabled);
-    if (providerEnabled && usageEnabled) handles.push(normalizeOutputHandle(providerId));
+    if (externalProviderUsageEnabled(provider, usage)) {
+      handles.push(normalizeOutputHandle(providerId));
+    }
   }
+  handles.push(...(await fetchRuntimeExternalProviderHandles(c, tenantId, usage, usageById)));
 
   return [...new Set(handles)];
 }
@@ -1161,30 +1433,55 @@ async function resolveRuntimeConsentPolicyContent(
 async function resolveRuntimeFormProfileContent(
   db: DatabaseAdapter,
   tenantId: string,
-  profileRef: string | null
+  profileRef: string | null,
+  component: string | undefined,
+  requestContext: FlowRequestContext
 ): Promise<FlowRuntimeJsonObject | null> {
   if (!profileRef) return null;
-  const row = await db.queryOne<RuntimeFormProfileRow>(
-    `SELECT id, profile_key, display_name, description, form_kind, fields_json,
+  const queryFormProfile = (ref: string) =>
+    db.queryOne<RuntimeFormProfileRow>(
+      `SELECT id, profile_key, display_name, description, form_kind, fields_json,
             localizations_json, settings_json
        FROM form_profiles
       WHERE tenant_id = ?
         AND is_active = 1
         AND (id = ? OR profile_key = ?)
       LIMIT 1`,
-    [tenantId, profileRef, profileRef]
-  );
+      [tenantId, ref, ref]
+    );
+  const row =
+    (await queryFormProfile(profileRef)) ??
+    (profileRef === 'basic_profile'
+      ? await queryFormProfile(defaultFormProfileKeyForRuntimeComponent(component))
+      : null);
   if (!row) return null;
+  const fields = parseJsonObjectArray(row.fields_json);
+  const localizations = parseRuntimeJsonObject(row.localizations_json);
+  const localized = applyRuntimeFormLocalization(
+    fields,
+    localizations,
+    requestedLanguage(requestContext),
+    'en'
+  );
   return {
     id: row.id,
     profile_key: row.profile_key,
-    display_name: row.display_name,
-    description: row.description,
+    display_name: localized.displayName ?? row.display_name,
+    description: localized.description ?? row.description,
     form_kind: row.form_kind,
-    fields: parseJsonObjectArray(row.fields_json),
-    localizations: parseRuntimeJsonObject(row.localizations_json),
+    fields: localized.fields,
+    localizations,
     settings: parseRuntimeJsonObject(row.settings_json),
   };
+}
+
+function defaultFormProfileKeyForRuntimeComponent(component?: string): string {
+  if (component === 'registration_method_selector') return 'registration';
+  if (component === 'authentication_method_selector') return 'login';
+  if (component === 'email_verification') return 'code_input';
+  if (component === 'profile_form') return 'profile_completion';
+  if (component === 'consent_policy') return 'consent';
+  return 'profile_completion';
 }
 
 async function hydrateRuntimeContract(
@@ -1206,7 +1503,7 @@ async function hydrateRuntimeContract(
         step.component === 'registration_method_selector'
       ) {
         const handles = await resolveRuntimeAuthenticationHandles(
-          c.env,
+          c,
           tenantId,
           runtime.flow_kind,
           step.component
@@ -1220,7 +1517,13 @@ async function hydrateRuntimeContract(
 
       const profileRef = readString(config.profile_form_ref, 200);
       if (profileRef) {
-        const formProfile = await resolveRuntimeFormProfileContent(db, tenantId, profileRef);
+        const formProfile = await resolveRuntimeFormProfileContent(
+          db,
+          tenantId,
+          profileRef,
+          step.component,
+          requestContext
+        );
         nextConfig.form_profile = formProfile;
       }
 
@@ -1279,6 +1582,62 @@ function createRequestContext(
     requested_scope: requestedScope,
     locale,
   };
+}
+
+async function validateRuntimeAuthorizationChallengeBinding(
+  c: AuthContext,
+  tenantId: string,
+  target: ResolvedTarget,
+  requestContext: FlowRequestContext
+): Promise<Response | null> {
+  const challengeId = requestContext.authorization_challenge_id;
+  if (!challengeId) return null;
+
+  if (requestContext.protocol !== 'oidc' || !target.clientId) {
+    return jsonError(
+      c,
+      400,
+      'invalid_authorization_challenge',
+      'Authorization challenge can only be used with an OIDC client Flow target',
+      'AR_FLOW_AUTH_CHALLENGE_INVALID'
+    );
+  }
+
+  let challenge: Challenge | null = null;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
+    challenge = (await challengeStore.getChallengeRpc(challengeId)) as Challenge | null;
+  } catch {
+    challenge = null;
+  }
+
+  if (
+    !challenge ||
+    challenge.tenantId !== tenantId ||
+    challenge.consumed ||
+    (challenge.type !== 'login' && challenge.type !== 'reauth')
+  ) {
+    return jsonError(
+      c,
+      400,
+      'invalid_authorization_challenge',
+      'Authorization challenge is invalid or expired',
+      'AR_FLOW_AUTH_CHALLENGE_INVALID'
+    );
+  }
+
+  const challengeClientId = readOptionalString(challenge.metadata?.client_id, 200);
+  if (!challengeClientId || challengeClientId !== target.clientId) {
+    return jsonError(
+      c,
+      403,
+      'authorization_challenge_mismatch',
+      'Authorization challenge does not match the requested client',
+      'AR_FLOW_AUTH_CHALLENGE_MISMATCH'
+    );
+  }
+
+  return null;
 }
 
 function getRequestContextFromInteraction(interaction: FlowInteractionRow): FlowRequestContext {
@@ -1424,34 +1783,69 @@ function findCurrentStep(
   };
 }
 
+function findRuntimeStepBySourceNode(
+  runtime: FlowRuntimeContract,
+  sourceNodeId: string
+): FlowRuntimeStep | null {
+  return runtime.ui.steps.find((step) => step.source_node_id === sourceNodeId) ?? null;
+}
+
+function stepMatchesRequestProtocol(
+  step: FlowRuntimeStep | null,
+  requestContext: FlowRequestContext | null
+): boolean {
+  if (!step || !requestContext) return true;
+  const completionBlock = readRuntimeCompletionBlock(step);
+  const protocol = typeof completionBlock?.protocol === 'string' ? completionBlock.protocol : null;
+  return !protocol || protocol === requestContext.protocol;
+}
+
+function selectProtocolCompatibleEdge<T extends { target: string }>(
+  runtime: FlowRuntimeContract,
+  edges: T[],
+  requestContext: FlowRequestContext | null
+): T | null {
+  if (edges.length === 0) return null;
+  if (edges.length === 1) return edges[0];
+
+  return (
+    edges.find((edge) =>
+      stepMatchesRequestProtocol(findRuntimeStepBySourceNode(runtime, edge.target), requestContext)
+    ) ?? edges[0]
+  );
+}
+
 function resolveNextStep(
   runtime: FlowRuntimeContract,
   currentIndex: number,
   editor: FlowEditorState | null,
-  selectedHandle: string | null
+  selectedHandle: string | null,
+  requestContext: FlowRequestContext | null = null
 ): { step: FlowRuntimeStep | null; errorCode?: string } {
   const currentStep = runtime.ui.steps[currentIndex];
   if (currentStep && editor) {
     const outgoingEdges = editor.edges.filter((edge) => edge.source === currentStep.source_node_id);
     if (outgoingEdges.length > 0) {
-      const selectedEdge = selectedHandle
-        ? outgoingEdges.find((edge) => edge.source_handle === selectedHandle)
-        : null;
+      const selectedEdges = selectedHandle
+        ? outgoingEdges.filter((edge) => edge.source_handle === selectedHandle)
+        : [];
+      const selectedEdge = selectProtocolCompatibleEdge(runtime, selectedEdges, requestContext);
       if (selectedHandle && !selectedEdge) {
         return { step: null, errorCode: 'AR_FLOW_INVALID_SELECTED_HANDLE' };
       }
 
+      const defaultEdges = outgoingEdges.filter(
+        (edge) => !edge.source_handle || edge.source_handle === 'next'
+      );
       const defaultEdge =
-        outgoingEdges.find((edge) => !edge.source_handle || edge.source_handle === 'next') ??
+        selectProtocolCompatibleEdge(runtime, defaultEdges, requestContext) ??
         (outgoingEdges.length === 1 ? outgoingEdges[0] : null);
       if (!selectedHandle && !defaultEdge) {
         return { step: null, errorCode: 'AR_FLOW_SELECTED_HANDLE_REQUIRED' };
       }
 
       const nextEdge = selectedEdge ?? defaultEdge;
-      const nextByEdge = nextEdge
-        ? runtime.ui.steps.find((step) => step.source_node_id === nextEdge.target)
-        : null;
+      const nextByEdge = nextEdge ? findRuntimeStepBySourceNode(runtime, nextEdge.target) : null;
       if (nextEdge && !nextByEdge) {
         return { step: null, errorCode: 'AR_FLOW_EDGE_TARGET_MISSING' };
       }
@@ -1891,19 +2285,22 @@ function eventTypeForCompletedStep(step: FlowRuntimeStep): string {
   return 'flow.node.completed';
 }
 
+interface RuntimeAuditEventInput {
+  id?: string;
+  eventType: string;
+  result: string;
+  nodeId?: string | null;
+  branchHandleId?: string | null;
+  errorCode?: string | null;
+  metadata?: Record<string, unknown>;
+  userId?: string | null;
+}
+
 async function insertAuditEvent(
   db: DatabaseAdapter,
   tenantId: string,
   interaction: FlowInteractionRow,
-  input: {
-    eventType: string;
-    result: string;
-    nodeId?: string | null;
-    branchHandleId?: string | null;
-    errorCode?: string | null;
-    metadata?: Record<string, unknown>;
-    userId?: string | null;
-  }
+  input: RuntimeAuditEventInput
 ) {
   await db.execute(
     `INSERT INTO flow_audit_events (
@@ -1912,7 +2309,7 @@ async function insertAuditEvent(
       created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      generateId(),
+      input.id ?? generateId(),
       tenantId,
       interaction.id,
       interaction.flow_id,
@@ -1930,6 +2327,44 @@ async function insertAuditEvent(
       nowSeconds(),
     ]
   );
+}
+
+function asRuntimeFlowError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function scheduleRuntimeAuditEvents(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  interaction: FlowInteractionRow,
+  events: RuntimeAuditEventInput[],
+  label: string
+): Promise<void> | undefined {
+  if (events.length === 0) return undefined;
+
+  const auditPromise = (async () => {
+    for (const event of events) {
+      await insertAuditEvent(db, tenantId, interaction, event);
+    }
+  })().catch((error: unknown) => {
+    getLogger(c).module('LOGIN-RUNTIME-FLOW').error(
+      'Failed to write LoginUI runtime Flow audit events',
+      {
+        action: 'flow_runtime_audit',
+        audit_batch: label,
+        interaction_id: interaction.id,
+      },
+      asRuntimeFlowError(error)
+    );
+  });
+
+  if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+    c.executionCtx.waitUntil(auditPromise);
+    return undefined;
+  }
+
+  return auditPromise;
 }
 
 function getRequestHeader(c: AuthContext, name: string): string | undefined {
@@ -2294,7 +2729,8 @@ async function resolveNextDisplayStep(input: {
         input.runtime,
         stepIndex,
         input.editor,
-        autoAdvance.selectedHandle
+        autoAdvance.selectedHandle,
+        input.requestContext
       );
       if (nextResolution.errorCode) {
         return {
@@ -2338,7 +2774,13 @@ async function resolveNextDisplayStep(input: {
           autoAdvancedSteps,
         };
       }
-      const nextResolution = resolveNextStep(input.runtime, stepIndex, input.editor, null);
+      const nextResolution = resolveNextStep(
+        input.runtime,
+        stepIndex,
+        input.editor,
+        null,
+        input.requestContext
+      );
       if (nextResolution.errorCode) {
         return {
           step: null,
@@ -2440,9 +2882,17 @@ async function persistInitialAutoAdvancedSteps(input: {
       ]
     );
   });
+}
+
+function createInitialAutoAdvanceAuditEvents(input: {
+  autoAdvancedSteps: RuntimeAutoAdvancedStep[];
+  nextStep: FlowRuntimeStep;
+  userId: string | null;
+}): RuntimeAuditEventInput[] {
+  const events: RuntimeAuditEventInput[] = [];
 
   for (const advanced of input.autoAdvancedSteps) {
-    await insertAuditEvent(input.db, input.tenantId, input.interaction, {
+    events.push({
       eventType: eventTypeForCompletedStep(advanced.step),
       result: 'success',
       nodeId: advanced.step.source_node_id,
@@ -2451,12 +2901,14 @@ async function persistInitialAutoAdvancedSteps(input: {
     });
   }
 
-  await insertAuditEvent(input.db, input.tenantId, input.interaction, {
+  events.push({
     eventType: 'flow.node.entered',
     result: 'success',
     nodeId: input.nextStep.source_node_id,
     userId: input.userId,
   });
+
+  return events;
 }
 
 async function insertFlowConsentRecords(input: {
@@ -2887,6 +3339,19 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
     createRequestContext(target, body)
   );
+  const challengeBindingError = await timeRuntimeStartSpan(timing, 'authorization_challenge', () =>
+    validateRuntimeAuthorizationChallengeBinding(c, tenantId, target, requestContext)
+  );
+  if (challengeBindingError) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind,
+      targetType: target.targetType,
+      error: 'invalid_authorization_challenge',
+    });
+    return challengeBindingError;
+  }
+
   const assignment = await timeRuntimeStartSpan(timing, 'resolve_assignment', () =>
     resolveAssignment(db, tenantId, flowKind, target)
   );
@@ -3025,31 +3490,6 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
           now,
         ]
       );
-      await tx.execute(
-        `INSERT INTO flow_audit_events (
-        id, tenant_id, interaction_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id,
-        node_id, branch_handle_id, event_type, result, error_code, contract_hash, metadata_json,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, 'flow.interaction.started', 'success', NULL, ?, ?, ?)`,
-        [
-          auditEventId,
-          tenantId,
-          interactionId,
-          assignment.flow_id,
-          version.id,
-          target.clientId,
-          target.samlSpId,
-          firstStep.source_node_id,
-          contractHash,
-          JSON.stringify({
-            target_type: assignment.target_type,
-            target_id: assignment.target_id,
-            flow_kind: assignment.flow_kind,
-            requested_scope: requestContext.requested_scope,
-          }),
-          now,
-        ]
-      );
     })
   );
 
@@ -3068,6 +3508,31 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     signature,
     expires_at: expiresAt,
   };
+  const startAuditFallback = scheduleRuntimeAuditEvents(
+    c,
+    db,
+    tenantId,
+    startedInteraction,
+    [
+      {
+        id: auditEventId,
+        eventType: 'flow.interaction.started',
+        result: 'success',
+        nodeId: firstStep.source_node_id,
+        metadata: {
+          target_type: assignment.target_type,
+          target_id: assignment.target_id,
+          flow_kind: assignment.flow_kind,
+          requested_scope: requestContext.requested_scope,
+        },
+      },
+    ],
+    'interaction_started'
+  );
+  if (startAuditFallback) {
+    await timeRuntimeStartSpan(timing, 'audit_start_fallback', () => startAuditFallback);
+  }
+
   const initialDisplayResolution = await timeRuntimeStartSpan(timing, 'resolve_initial_step', () =>
     resolveNextDisplayStep({
       c,
@@ -3158,6 +3623,25 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
         now,
       })
     );
+    const autoAdvanceAuditFallback = scheduleRuntimeAuditEvents(
+      c,
+      db,
+      tenantId,
+      startedInteraction,
+      createInitialAutoAdvanceAuditEvents({
+        autoAdvancedSteps: initialDisplayResolution.autoAdvancedSteps,
+        nextStep: initialCurrentStep,
+        userId: initialDisplayResolution.userId,
+      }),
+      'initial_auto_advance'
+    );
+    if (autoAdvanceAuditFallback) {
+      await timeRuntimeStartSpan(
+        timing,
+        'audit_auto_advance_fallback',
+        () => autoAdvanceAuditFallback
+      );
+    }
   }
 
   getLogger(c).module('LOGIN-RUNTIME-FLOW').info('Started LoginUI runtime Flow interaction', {
@@ -3515,7 +3999,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   const nextResolution =
     current.step.component === 'completion'
       ? { step: null as FlowRuntimeStep | null }
-      : resolveNextStep(runtime, current.index, editor, effectiveSelectedHandle);
+      : resolveNextStep(runtime, current.index, editor, effectiveSelectedHandle, requestContext);
   if (nextResolution.errorCode) {
     await insertAuditEvent(db, tenantId, interaction, {
       eventType: 'flow.interaction.failed',

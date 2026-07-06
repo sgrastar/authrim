@@ -348,6 +348,18 @@ export function normalizeWorkersDevUrl(url: string, workersSubdomain?: string): 
   }
 }
 
+function getUrlHost(url: string | undefined): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizeHostnameCandidate(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -675,6 +687,11 @@ export function generateWranglerConfig(
     wranglerConfig.send_email = [{ name: 'EMAIL' }];
   }
 
+  // Service Bindings for standard services used by auth/runtime and admin proxies.
+  if (component === 'ar-auth' || component === 'ar-management') {
+    wranglerConfig.services = [{ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` }];
+  }
+
   // Service Bindings for ar-router (required for routing to other workers)
   if (component === 'ar-router') {
     // Core services (always required)
@@ -768,7 +785,7 @@ export function generateEnvVars(
   const multiTenantBaseDomain =
     config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
   const multiTenantEnabled = !!multiTenantBaseDomain;
-  const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
+  const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true;
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
@@ -784,13 +801,21 @@ export function generateEnvVars(
       workersSubdomain
     );
   }
-  // UI_URL: when sameAsApi=true, UI is proxied through the API domain
+  // UI_URL: when sameAsApi=true, UI is proxied through the API/tenant domain.
+  // Multi-tenant deployments with a separate Login UI domain keep UI_URL on that
+  // Login UI origin and pass the tenant host at runtime.
   const apiUrlForUi = normalizeWorkersDevUrl(
     config.urls?.api?.custom || config.urls?.api?.auto || '',
     workersSubdomain
   );
+  const tenantIssuerUiUrl =
+    multiTenantEnabled && multiTenantBaseDomain
+      ? config.tenant?.nakedDomain
+        ? `https://${multiTenantBaseDomain}`
+        : `https://${config.tenant?.name || 'default'}.${multiTenantBaseDomain}`
+      : apiUrlForUi;
   const uiUrl = loginUiUsesApiDomain
-    ? apiUrlForUi
+    ? tenantIssuerUiUrl
     : normalizeWorkersDevUrl(
         config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl,
         workersSubdomain
@@ -846,6 +871,18 @@ export function generateEnvVars(
     'ar-bridge',
     'ar-vc',
   ];
+  const routerServiceBoundComponents: WorkerComponent[] = [
+    'ar-discovery',
+    'ar-auth',
+    'ar-token',
+    'ar-userinfo',
+    'ar-management',
+    'ar-async',
+    'ar-policy',
+    'ar-saml',
+    'ar-bridge',
+    'ar-vc',
+  ];
 
   if (tenantAwareComponents.includes(component)) {
     vars['DEFAULT_TENANT_ID'] = config.tenant?.name || 'default';
@@ -867,6 +904,10 @@ export function generateEnvVars(
       if (config.tenant.nakedDomain) {
         vars['NAKED_DOMAIN_AS_ISSUER'] = 'true';
       }
+    }
+
+    if (config.urls?.api?.custom && routerServiceBoundComponents.includes(component)) {
+      vars['AUTHRIM_TRUST_FORWARDED_HOST'] = 'true';
     }
   }
 
@@ -923,6 +964,12 @@ export function generateEnvVars(
   }
 
   // OIDC settings
+  if (component === 'ar-lib-core') {
+    // AuthorizationCodeStore lives in ar-lib-core, so the DO must receive the
+    // same auth-code TTL as ar-auth/ar-token.
+    vars['AUTH_CODE_EXPIRY'] = config.oidc.authCodeTtl.toString();
+  }
+
   if (component === 'ar-auth' || component === 'ar-token') {
     vars['ACCESS_TOKEN_EXPIRY'] = config.oidc.accessTokenTtl.toString();
     vars['AUTH_CODE_EXPIRY'] = config.oidc.authCodeTtl.toString();
@@ -956,6 +1003,12 @@ export function generateEnvVars(
   }
   if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
     vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('PII_ENCRYPTION_KEY')) {
+    vars['PII_ENCRYPTION_KEY'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('OTP_HMAC_SECRET')) {
+    vars['OTP_HMAC_SECRET'] = ''; // Set via secret
   }
   if (componentSecrets.includes('FLOW_RUNTIME_HMAC_SECRET')) {
     vars['FLOW_RUNTIME_HMAC_SECRET'] = ''; // Set via secret
@@ -991,9 +1044,14 @@ export function generateEnvVars(
     }
 
     const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
+    const loginUiHostMode =
+      config.urls?.loginUi?.sameAsApi === true || getUrlHost(uiUrl) === getUrlHost(apiUrlForUi)
+        ? 'shared'
+        : 'dedicated';
     vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
     if (uiUrl) {
       vars['LOGIN_UI_URL'] = uiUrl;
+      vars['LOGIN_UI_HOST_MODE'] = loginUiHostMode;
     }
     if (loginProxyEnabled) {
       const loginUiWorkerUrl = normalizeWorkersDevUrl(
@@ -1795,6 +1853,9 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
     `directory = ".svelte-kit/cloudflare"`,
     `binding = "ASSETS"`,
   ];
+  if (component === 'ar-login-ui') {
+    lines.push(`run_worker_first = ["/account", "/account/*"]`);
+  }
 
   const definedVars = Object.entries(vars).filter((entry): entry is [string, string] => {
     const [, value] = entry;

@@ -63,6 +63,10 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.get('/api/auth/authentication-methods', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({ tenantId });
+  });
   app.post('/api/auth/discovery/grant', (c) => {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
@@ -154,6 +158,37 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('sample');
+    });
+
+    it('caches positive tenant existence within the same isolate', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const kv = createMockKV({ cachedValue: null }); // isolate cache must handle request 2
+      const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
+      const app = buildApp(env);
+
+      const first = await app.request(
+        makeRequest(`sample.${BASE_DOMAIN}`, '/api/auth/discovery'),
+        undefined,
+        env as Env
+      );
+      const second = await app.request(
+        makeRequest(`sample.${BASE_DOMAIN}`, '/api/auth/discovery'),
+        undefined,
+        env as Env
+      );
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(
+        vi.mocked(kv.get).mock.calls.filter(([key]) => key === 'v1:tenant-exists:sample')
+      ).toHaveLength(1);
+      expect(
+        vi
+          .mocked(db.prepare)
+          .mock.calls.filter(
+            ([sql]) => sql === "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'"
+          )
+      ).toHaveLength(1);
     });
 
     it('returns 404 for a non-existent tenant', async () => {
@@ -390,6 +425,29 @@ describe('requestContextMiddleware – tenant existence check', () => {
       await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
     });
 
+    it('keeps the primary tenant issuer host tenant-scoped when it is also the configured UI host', async () => {
+      const db = createMockDB({ tenantRow: { id: 'first' } });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        UI_URL: `https://first.${BASE_DOMAIN}`,
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`first.${BASE_DOMAIN}`, '/api/auth/authentication-methods'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
+    });
+
     it('keeps tenant inventory admin requests on the control-plane database', async () => {
       const db = createMockDB({ tenantRow: { id: 'first' } });
       const kv = createMockKV({
@@ -419,6 +477,72 @@ describe('requestContextMiddleware – tenant existence check', () => {
         tenantId: 'first',
         hasRuntimeUserStoreSources: false,
       });
+    });
+
+    it('does not share a never-settling runtime user store source promise across requests', async () => {
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const tenantSettingsKey = 'settings:tenant:sample:tenant';
+      let tenantSettingsGetCount = 0;
+      let resolveFirstGetStarted: (() => void) | undefined;
+      let resolveFirstGet: ((value: string | null) => void) | undefined;
+      const firstGetStarted = new Promise<void>((resolve) => {
+        resolveFirstGetStarted = resolve;
+      });
+      const kv = {
+        get: vi.fn((key: string) => {
+          if (key === tenantSettingsKey) {
+            tenantSettingsGetCount += 1;
+            if (tenantSettingsGetCount === 1) {
+              resolveFirstGetStarted?.();
+              return new Promise<string | null>((resolve) => {
+                resolveFirstGet = resolve;
+              });
+            }
+          }
+          return Promise.resolve(null);
+        }),
+        put: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined),
+      } as unknown as KVNamespace;
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+      const request = () =>
+        app.request(
+          makeRequest('admin.pages.dev', '/api/admin/tenants/sample/settings/oauth', {
+            'X-Tenant-Id': 'sample',
+          }),
+          undefined,
+          env as Env
+        );
+
+      const firstRequest = request();
+      await firstGetStarted;
+
+      const secondRequest = request();
+      const secondResult = await Promise.race([
+        secondRequest,
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+      ]);
+
+      resolveFirstGet?.(null);
+      await firstRequest;
+
+      if (secondResult === 'timeout') {
+        await secondRequest;
+        throw new Error('second request waited on the first pending runtime source resolution');
+      }
+
+      expect(secondResult.status).toBe(200);
+      await expect(secondResult.json()).resolves.toEqual({
+        tenantId: 'sample',
+        pathTenantId: 'sample',
+      });
+      expect(tenantSettingsGetCount).toBe(2);
     });
 
     it('uses X-Tenant-Id for tenant-scoped admin requests from the Admin UI host', async () => {

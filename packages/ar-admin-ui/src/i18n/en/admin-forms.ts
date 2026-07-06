@@ -23,6 +23,8 @@ const adminForms = {
 	admin_forms_kind_registration: 'Registration',
 	admin_forms_kind_profile_completion: 'Profile completion',
 	admin_forms_kind_login: 'Login',
+	admin_forms_kind_consent: 'Consent',
+	admin_forms_kind_code_input: 'Code input',
 	admin_forms_kind_custom: 'Custom',
 	admin_forms_active: 'Active',
 	admin_forms_system: 'System',
@@ -37,6 +39,7 @@ const adminForms = {
 	admin_forms_preview_checkbox_text: 'I have reviewed the entered information',
 	admin_forms_preview_footer_text:
 		'In the actual flow, this form is shown according to the Flow configuration.',
+	admin_forms_external_idp_action_text_label: 'Add sign-in text',
 	admin_forms_save: 'Save',
 	admin_forms_saving: 'Saving...',
 	admin_forms_empty: 'No form profiles are available.',

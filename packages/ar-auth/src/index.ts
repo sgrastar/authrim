@@ -44,6 +44,12 @@ import {
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
 import {
+  totpLoginStartHandler,
+  totpLoginVerifyHandler,
+  totpSignupActivateHandler,
+  totpSignupOptionsHandler,
+} from './totp';
+import {
   directoryPasswordLoginHandler,
   directoryMigrationEmailCodeSendHandler,
   directoryMigrationEmailCodeVerifyHandler,
@@ -157,9 +163,9 @@ app.use(
   })
 );
 
-// Plugin Context - provides access to notifiers, idp handlers, authenticators.
+// Notification plugin context.
 // Bootstrap config comes from Worker env, but tenant/global KV overrides remain authoritative.
-const loadPlugins = createPluginLoader([
+const loadNotificationPlugins = createPluginLoader([
   {
     plugin: cloudflareEmailPlugin,
     skipIfConfigEmpty: true,
@@ -168,10 +174,23 @@ const loadPlugins = createPluginLoader([
   {
     plugin: resendEmailPlugin,
     skipIfConfigEmpty: true,
+    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
     envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
   },
 ]);
-app.use('*', pluginContextMiddleware({ loadPlugins }));
+
+const notificationPluginContextMiddleware = pluginContextMiddleware({
+  scope: 'notification',
+  failurePolicy: 'fail_open',
+  loadPlugins: loadNotificationPlugins,
+});
+
+app.use('/api/auth/email-codes/send', notificationPluginContextMiddleware);
+app.use(
+  '/api/auth/directory-password/migration/email-code/send',
+  notificationPluginContextMiddleware
+);
+app.use('/api/v1/auth/direct/email-code/send', notificationPluginContextMiddleware);
 
 // Enhanced security headers
 // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
@@ -408,6 +427,12 @@ app.post('/api/auth/passkeys/login/verify', passkeyLoginVerifyHandler);
 // Email Code (OTP) endpoints
 app.post('/api/auth/email-codes/send', emailCodeSendHandler);
 app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
+
+// TOTP endpoints
+app.post('/api/auth/totp/login/start', totpLoginStartHandler);
+app.post('/api/auth/totp/login/verify', totpLoginVerifyHandler);
+app.post('/api/auth/totp/signup/options', totpSignupOptionsHandler);
+app.post('/api/auth/totp/signup/activate', totpSignupActivateHandler);
 
 // Directory Password endpoint
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);

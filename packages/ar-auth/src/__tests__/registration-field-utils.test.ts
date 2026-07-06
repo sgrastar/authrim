@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValues,
   validateRegistrationFieldSubmission,
 } from '../registration-field-utils';
@@ -21,6 +22,42 @@ function createMockAdapter(): DatabaseAdapter {
 describe('registration-field-utils', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('extracts canonical profile fields from signup form submissions', () => {
+    expect(
+      buildCanonicalProfileRuntimeUserFields({
+        given_name: ' Yuta ',
+        family_name: ' Hoshina ',
+      })
+    ).toEqual({
+      piiFields: {
+        given_name: true,
+        family_name: true,
+      },
+      sensitiveValues: {
+        given_name: 'Yuta',
+        family_name: 'Hoshina',
+      },
+    });
+  });
+
+  it('extracts first and last name aliases as canonical profile fields', () => {
+    expect(
+      buildCanonicalProfileRuntimeUserFields({
+        first_name: 'Yuta',
+        last_name: 'Hoshina',
+      })
+    ).toEqual({
+      piiFields: {
+        given_name: true,
+        family_name: true,
+      },
+      sensitiveValues: {
+        given_name: 'Yuta',
+        family_name: 'Hoshina',
+      },
+    });
   });
 
   it('rejects missing required registration fields', async () => {

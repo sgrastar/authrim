@@ -455,7 +455,9 @@ const SECRET_KEY_FILES: Record<string, string> = {
   PRIVATE_KEY_PEM: 'private.pem',
   PUBLIC_JWK_JSON: 'public.jwk.json',
   RP_TOKEN_ENCRYPTION_KEY: 'rp_token_encryption_key.txt',
+  PII_ENCRYPTION_KEY: 'pii_encryption_key.txt',
   OBJECT_ENCRYPTION_ROOT_KEY: 'object_encryption_root_key.txt',
+  OTP_HMAC_SECRET: 'otp_hmac_secret.txt',
   VERSION_MANAGER_SECRET: 'version_manager_secret.txt',
   LOGGING_CURSOR_HMAC_SECRET: 'logging_cursor_hmac_secret.txt',
   FLOW_RUNTIME_HMAC_SECRET: 'flow_runtime_hmac_secret.txt',
@@ -2006,10 +2008,12 @@ export function createApiRoutes(): Hono {
             { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
             { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
             { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
+            { file: join(keysDir, 'pii_encryption_key.txt'), name: 'PII_ENCRYPTION_KEY' },
             {
               file: join(keysDir, 'object_encryption_root_key.txt'),
               name: 'OBJECT_ENCRYPTION_ROOT_KEY',
             },
+            { file: join(keysDir, 'otp_hmac_secret.txt'), name: 'OTP_HMAC_SECRET' },
             { file: join(keysDir, 'version_manager_secret.txt'), name: 'VERSION_MANAGER_SECRET' },
             {
               file: join(keysDir, 'logging_cursor_hmac_secret.txt'),

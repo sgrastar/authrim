@@ -175,11 +175,11 @@ describe('auth-core-persistence-context', () => {
       DEFAULT_RESIDENCY_PROFILE_ID,
     };
 
-    const first = getCachedAuthCorePersistenceContextFromEnv(env);
-    const second = getCachedAuthCorePersistenceContextFromEnv(env);
+    const first = await getCachedAuthCorePersistenceContextFromEnv(env);
+    const second = await getCachedAuthCorePersistenceContextFromEnv(env);
 
     expect(first).toBe(second);
-    await expect(first).resolves.toMatchObject({
+    expect(first).toMatchObject({
       storageProfileId: DEFAULT_STORAGE_PROFILE_ID,
       coreTarget: {
         driver: 'd1',
@@ -188,5 +188,74 @@ describe('auth-core-persistence-context', () => {
       },
       transientAuth: sharedD1TransientAuth,
     });
+  });
+
+  it('does not share a never-settling auth core context promise across calls', async () => {
+    const db = { prepare: vi.fn(), batch: vi.fn() } as unknown as D1Database;
+    const storageProfileKey = 'profile-registry:storage:custom-auth-core';
+    const storageProfile = JSON.stringify({
+      id: 'custom-auth-core',
+      kind: 'storage',
+      label: 'Custom Auth Core',
+      slices: {
+        identity_core: {
+          driver: 'd1',
+          bindingRef: 'DB',
+          role: 'core',
+        },
+      },
+    });
+    let profileGetCount = 0;
+    let resolveFirstGetStarted: (() => void) | undefined;
+    let resolveFirstGet: ((value: string | null) => void) | undefined;
+    const firstGetStarted = new Promise<void>((resolve) => {
+      resolveFirstGetStarted = resolve;
+    });
+    const kv = {
+      get: vi.fn((key: string) => {
+        if (key !== storageProfileKey) {
+          return Promise.resolve(null);
+        }
+        profileGetCount += 1;
+        if (profileGetCount === 1) {
+          resolveFirstGetStarted?.();
+          return new Promise<string | null>((resolve) => {
+            resolveFirstGet = resolve;
+          });
+        }
+        return Promise.resolve(storageProfile);
+      }),
+      put: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(async () => ({ keys: [], list_complete: true, cursor: '' })),
+    } as unknown as KVNamespace;
+    const env = {
+      DB: db,
+      AUTHRIM_CONFIG: kv,
+      PROFILE_REGISTRY_BACKEND: 'kv',
+      DEFAULT_STORAGE_PROFILE_ID: 'custom-auth-core',
+      DEFAULT_AUDIT_PROFILE_ID,
+      DEFAULT_RESIDENCY_PROFILE_ID,
+    };
+
+    const first = getCachedAuthCorePersistenceContextFromEnv(env);
+    await firstGetStarted;
+
+    const second = getCachedAuthCorePersistenceContextFromEnv(env);
+    const secondResult = await Promise.race([
+      second,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+    ]);
+
+    resolveFirstGet?.(storageProfile);
+    await first;
+
+    if (secondResult === 'timeout') {
+      await second;
+      throw new Error('second call waited on the first pending auth core context resolution');
+    }
+
+    expect(secondResult.storageProfileId).toBe('custom-auth-core');
+    expect(profileGetCount).toBe(2);
   });
 });

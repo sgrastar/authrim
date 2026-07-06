@@ -325,6 +325,7 @@ const adminFlows = {
 	admin_flows_setting_prompt_create_signup: 'prompt=create / screen=signup',
 	admin_flows_setting_passkey: 'Passkey',
 	admin_flows_setting_email_otp: 'Email OTP',
+	admin_flows_setting_totp: '認証アプリ',
 	admin_flows_setting_directory_password: 'Directory password',
 	admin_flows_setting_social_account: 'Social account',
 	admin_flows_setting_required_fields: 'required fields',

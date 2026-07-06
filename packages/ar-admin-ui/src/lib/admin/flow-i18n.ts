@@ -293,6 +293,7 @@ export function getFlowAuthProfileOptions(LL: TranslationFunctions): FlowEditorA
 			label: LL.admin_flows_auth_profile_default(),
 			outputs: [
 				{ id: 'mail_otp', label: LL.admin_flows_setting_email_otp() },
+				{ id: 'totp', label: LL.admin_flows_setting_totp() },
 				{ id: 'passkey', label: LL.admin_flows_setting_passkey() },
 				{ id: 'facebook', label: 'Facebook' }
 			]
@@ -495,6 +496,8 @@ function translateFlowSetting(LL: TranslationFunctions, setting: string): string
 			return LL.admin_flows_setting_passkey();
 		case 'Email OTP':
 			return LL.admin_flows_setting_email_otp();
+		case 'Authenticator app':
+			return LL.admin_flows_setting_totp();
 		case 'Social account':
 			return LL.admin_flows_setting_social_account();
 		case 'required fields':

@@ -193,19 +193,25 @@ describe('DirectoryConnectorRelay', () => {
         pending: Map<
           string,
           {
+            resolve: (response: unknown) => void;
+            reject: (error: Error) => void;
             tenantId: string;
             connectorId: string;
             requestId: string;
             timeout: ReturnType<typeof setTimeout>;
+            expiresAt: number;
           }
         >;
       }
     ).pending;
     pending.set('pending-1', {
+      resolve: vi.fn(),
+      reject: vi.fn(),
       tenantId: 'tenant-a',
       connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
       requestId: 'req_existing',
       timeout: setTimeout(() => undefined, 1000),
+      expiresAt: Date.now() + 1000,
     });
 
     const response = await relay.fetch(
@@ -245,6 +251,69 @@ describe('DirectoryConnectorRelay', () => {
       code: 'relay_overloaded',
       requestId: 'req_new',
     });
+  });
+
+  it('cleans expired pending relay requests before enforcing the pending limit', async () => {
+    const { relay } = createRelay({
+      connector: {
+        relay: {
+          max_pending_requests: 1,
+        },
+      },
+    });
+    const timeout = setTimeout(() => undefined, 1000);
+    const reject = vi.fn();
+    const pending = (
+      relay as unknown as {
+        pending: Map<
+          string,
+          {
+            resolve: (response: unknown) => void;
+            reject: (error: Error) => void;
+            tenantId: string;
+            connectorId: string;
+            requestId: string;
+            timeout: ReturnType<typeof setTimeout>;
+            expiresAt: number;
+          }
+        >;
+      }
+    ).pending;
+    pending.set('pending-expired', {
+      resolve: vi.fn(),
+      reject,
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+      requestId: 'req_expired',
+      timeout,
+      expiresAt: Date.now() - 1,
+    });
+
+    const response = await relay.fetch(
+      new Request('https://directory-relay.internal/verify-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: 'req_new',
+          tenant_id: 'tenant-a',
+          connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+          username: 'alice',
+          password: 'correct',
+          attribute_names: ['mail'],
+        }),
+      })
+    );
+    const body = (await response.json()) as { error?: { code?: string; retryable?: boolean } };
+
+    expect(response.status).toBe(503);
+    expect(body.error).toMatchObject({
+      code: 'relay_connector_offline',
+      retryable: true,
+    });
+    expect(pending.size).toBe(0);
+    expect(reject).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'relay_verify_timeout' })
+    );
   });
 
   it('rejects oversized verify request bodies even when content-length is absent', async () => {
@@ -358,6 +427,7 @@ describe('DirectoryConnectorRelay', () => {
           resolve: (response: unknown) => void;
           reject: (error: Error) => void;
           timeout: ReturnType<typeof setTimeout>;
+          expiresAt: number;
           requestId: string;
           tenantId: string;
           connectorId: string;
@@ -369,6 +439,7 @@ describe('DirectoryConnectorRelay', () => {
       resolve: vi.fn(),
       reject,
       timeout,
+      expiresAt: Date.now() + 1000,
       requestId: 'req_123',
       tenantId: 'tenant-a',
       connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',

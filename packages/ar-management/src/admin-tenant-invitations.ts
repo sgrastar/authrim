@@ -18,7 +18,7 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   getLogger,
-  getPluginContext,
+  getRequiredPluginContext,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
@@ -170,7 +170,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     // Conditionally send email if invited_email is specified and email plugin is available
     let emailSent = false;
     if (invited_email) {
-      const pluginCtx = getPluginContext(c);
+      const pluginCtx = getRequiredPluginContext(c, 'notification');
       const emailNotifier = pluginCtx.registry.getNotifier('email');
 
       if (emailNotifier) {

@@ -138,6 +138,7 @@ import {
   adminUserCreateHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
   adminClientsListHandler,
@@ -707,6 +708,15 @@ import {
   updateAccountPasskeyHandler,
   deleteAccountPasskeyHandler,
 } from './account-passkeys';
+import {
+  activateAccountTotpCredentialHandler,
+  completeAccountTotpReauthHandler,
+  createAccountTotpOptionsHandler,
+  deleteAccountTotpCredentialHandler,
+  listAccountTotpCredentialsHandler,
+  regenerateAccountTotpBackupCodesHandler,
+  updateAccountTotpCredentialHandler,
+} from './account-totp';
 import { createAccountReturnHandler, consumeAccountReturnHandler } from './account-return';
 import {
   createWebhook,
@@ -924,7 +934,9 @@ function requireClientManagementPermission() {
 // Create Hono app with Cloudflare Workers types
 export const app = new Hono<{ Bindings: Env }>();
 
-const loadPlugins = createPluginLoader([
+const loadAuthBootstrapPlugins = createPluginLoader([]);
+
+const loadNotificationPlugins = createPluginLoader([
   {
     plugin: cloudflareEmailPlugin,
     skipIfConfigEmpty: true,
@@ -933,15 +945,36 @@ const loadPlugins = createPluginLoader([
   {
     plugin: resendEmailPlugin,
     skipIfConfigEmpty: true,
+    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
     envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
   },
 ]);
+
+const authBootstrapPluginContextMiddleware = pluginContextMiddleware({
+  scope: 'auth-bootstrap',
+  failurePolicy: 'fail_open',
+  loadPlugins: loadAuthBootstrapPlugins,
+});
+
+const notificationPluginContextMiddleware = pluginContextMiddleware({
+  scope: 'notification',
+  failurePolicy: 'fail_open',
+  loadPlugins: loadNotificationPlugins,
+});
 
 // Middleware
 app.use('*', redirectExternalHttpToHttps);
 app.use('*', logger());
 app.use('*', requestContextMiddleware());
-app.use('*', pluginContextMiddleware({ loadPlugins }));
+app.use('/api/auth/authentication-methods', authBootstrapPluginContextMiddleware);
+app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
+app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
+app.use('/api/account/reauth/email-code/send', notificationPluginContextMiddleware);
+app.use('/api/admin/tenants/:id/invitations', notificationPluginContextMiddleware);
+app.use('/api/admin/tenants/:id/invitations/*', notificationPluginContextMiddleware);
+app.use('/api/admin/approvals', notificationPluginContextMiddleware);
+app.use('/api/admin/approvals/*', notificationPluginContextMiddleware);
+app.use('/api/approval-artifacts/*', notificationPluginContextMiddleware);
 
 // Enhanced security headers
 app.use(
@@ -1243,6 +1276,7 @@ app.post('/api/account/reauth/passkey/options', createAccountPasskeyReauthOption
 app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHandler);
 app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
+app.post('/api/account/reauth/totp/complete', completeAccountTotpReauthHandler);
 app.get('/api/account/consents', listAccountConsentsHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
@@ -1252,6 +1286,12 @@ app.post('/api/account/passkeys/options', createAccountPasskeyOptionsHandler);
 app.post('/api/account/passkeys/complete', completeAccountPasskeyRegistrationHandler);
 app.patch('/api/account/passkeys/:id', updateAccountPasskeyHandler);
 app.delete('/api/account/passkeys/:id', deleteAccountPasskeyHandler);
+app.get('/api/account/totp', listAccountTotpCredentialsHandler);
+app.post('/api/account/totp/options', createAccountTotpOptionsHandler);
+app.post('/api/account/totp/activate', activateAccountTotpCredentialHandler);
+app.post('/api/account/totp/backup-codes/regenerate', regenerateAccountTotpBackupCodesHandler);
+app.patch('/api/account/totp/:id', updateAccountTotpCredentialHandler);
+app.delete('/api/account/totp/:id', deleteAccountTotpCredentialHandler);
 app.get('/api/account/devices', listMyDevicesHandler);
 app.patch('/api/account/devices/:id', updateMyDeviceHandler);
 app.delete('/api/account/devices/:id', deleteMyDeviceHandler);
@@ -1302,6 +1342,7 @@ app.get('/api/admin/users/:id', adminUserGetHandler);
 app.post('/api/admin/users', adminUserCreateHandler);
 app.put('/api/admin/users/:id', adminUserUpdateHandler);
 app.delete('/api/admin/users/:id', adminUserDeleteHandler);
+app.post('/api/admin/users/:id/totp/reset', adminUserTotpResetHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/api/admin/avatars/:filename', serveAvatarHandler); // Avatar serving (protected by adminAuthMiddleware)

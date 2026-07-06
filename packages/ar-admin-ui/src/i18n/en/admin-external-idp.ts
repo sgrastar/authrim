@@ -44,7 +44,7 @@ const adminExternalIdp = {
 	admin_external_idp_redirect_url: 'Redirect URL (for external IdP configuration)',
 	admin_external_idp_copy_to_clipboard: 'Copy to clipboard',
 	admin_external_idp_redirect_url_hint:
-		'Enter a slug above to see the redirect URL, or it will be generated using the Provider ID after saving.',
+		'Enter a slug to generate the callback URL. Register the generated URL exactly in the external IdP callback settings.',
 	admin_external_idp_provider_status: 'Provider Status',
 	admin_external_idp_provider_status_desc:
 		'Enable or disable this identity provider. When disabled, users cannot sign in using this provider.',

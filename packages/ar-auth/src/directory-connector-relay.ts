@@ -68,6 +68,7 @@ interface DirectoryRelayPendingRequest {
   resolve: (response: DirectoryRelayVerifyResponseMessage) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  expiresAt: number;
   requestId: string;
   tenantId: string;
   connectorId: string;
@@ -578,12 +579,21 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       type: 'directory_relay.verify.forwarded',
       requestId,
     });
+    const expiresAt = Date.now() + runtime.verifyTimeoutMs;
     const responsePromise = new Promise<DirectoryRelayVerifyResponseMessage>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new DirectoryRelayVerifyFailure('relay_verify_timeout', true));
       }, runtime.verifyTimeoutMs);
-      this.pending.set(id, { resolve, reject, timeout, requestId, tenantId, connectorId });
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timeout,
+        expiresAt,
+        requestId,
+        tenantId,
+        connectorId,
+      });
     });
 
     try {
@@ -750,6 +760,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     for (const ws of websockets) {
       if (await this.isAuthenticated(ws, true)) authenticated += 1;
     }
+    this.cleanupExpiredPending();
     return jsonResponse({
       ok: true,
       connections: websockets.length,
@@ -842,11 +853,21 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
   }
 
   private pendingCount(tenantId: string, connectorId: string): number {
+    this.cleanupExpiredPending();
     let count = 0;
     for (const pending of this.pending.values()) {
       if (pending.tenantId === tenantId && pending.connectorId === connectorId) count += 1;
     }
     return count;
+  }
+
+  private cleanupExpiredPending(now = Date.now()): void {
+    for (const [id, pending] of this.pending.entries()) {
+      if (pending.expiresAt > now) continue;
+      this.pending.delete(id);
+      clearTimeout(pending.timeout);
+      pending.reject(new DirectoryRelayVerifyFailure('relay_verify_timeout', true));
+    }
   }
 
   private async updateStatus(

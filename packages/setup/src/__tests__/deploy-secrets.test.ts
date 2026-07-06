@@ -101,6 +101,17 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-router')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
   });
 
+  it('uploads TOTP and OTP secret material only to auth-capable workers', () => {
+    expect(getSecretNamesForWorker('ar-auth')).toContain('OTP_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-auth')).toContain('PII_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-management')).toContain('OTP_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-management')).toContain('PII_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-token')).not.toContain('OTP_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-token')).not.toContain('PII_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-router')).not.toContain('OTP_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-router')).not.toContain('PII_ENCRYPTION_KEY');
+  });
+
   it('uploads plugin encryption key only to plugin config/runtime workers', () => {
     expect(getSecretNamesForWorker('ar-management')).toContain('PLUGIN_ENCRYPTION_KEY');
     expect(getSecretNamesForWorker('ar-auth')).toContain('PLUGIN_ENCRYPTION_KEY');
@@ -120,8 +131,10 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-saml')).toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');
     expect(getSecretNamesForWorker('ar-bridge')).toEqual([
+      'RP_TOKEN_ENCRYPTION_KEY',
       'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     ]);
+    expect(getSecretNamesForWorker('ar-bridge')).not.toContain('ADMIN_API_SECRET');
   });
 
   it('keeps runtime registry private signing material limited to management', () => {

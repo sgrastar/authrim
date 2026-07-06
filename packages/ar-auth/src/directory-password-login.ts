@@ -20,7 +20,7 @@ import {
   getBrowserStateCookieSameSite,
   getChallengeStoreByChallengeId,
   getLogger,
-  getPluginContext,
+  getRequiredPluginContext,
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
   getTenantSettings,
@@ -91,6 +91,7 @@ interface DirectoryPasswordLoginRequest {
   password?: unknown;
   invite_token?: unknown;
   authorization_challenge_id?: unknown;
+  defer_authorization_continuation?: unknown;
   human_verification_response?: unknown;
   cf_turnstile_response?: unknown;
 }
@@ -238,6 +239,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       typeof request.authorization_challenge_id === 'string'
         ? request.authorization_challenge_id.trim()
         : '';
+    const deferAuthorizationContinuation = request.defer_authorization_continuation === true;
     const inviteToken = typeof request.invite_token === 'string' ? request.invite_token.trim() : '';
     if (!username || !password) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
@@ -520,7 +522,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     }
 
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
-    if (authorizationChallengeId) {
+    if (authorizationChallengeId && !deferAuthorizationContinuation) {
       const continuation = await consumeAuthorizationChallengeContinuation(
         c.env,
         tenantId,
@@ -1008,7 +1010,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
     }
 
-    const pluginCtx = getPluginContext(c);
+    const pluginCtx = getRequiredPluginContext(c, 'notification');
     const emailNotifier = pluginCtx.registry.getNotifier('email');
     if (!emailNotifier) {
       log.warn('No email notifier plugin configured for directory migration email fallback', {

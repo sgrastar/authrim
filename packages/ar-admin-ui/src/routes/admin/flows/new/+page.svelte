@@ -49,6 +49,7 @@
 							profile_form_ref: 'basic_profile',
 							outputs: [
 								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+								{ id: 'totp', label: $LL.admin_flows_setting_totp() },
 								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() },
 								{ id: 'facebook', label: 'Facebook' }
 							]
@@ -97,6 +98,12 @@
 						id: 'registration-method:mail_otp->profile-input',
 						source: 'registration-method',
 						source_handle: 'mail_otp',
+						target: 'profile-input'
+					},
+					{
+						id: 'registration-method:totp->profile-input',
+						source: 'registration-method',
+						source_handle: 'totp',
 						target: 'profile-input'
 					},
 					{
@@ -161,6 +168,7 @@
 							authentication_profile_ref: 'default',
 							outputs: [
 								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+								{ id: 'totp', label: $LL.admin_flows_setting_totp() },
 								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() }
 							]
 						}
@@ -225,6 +233,12 @@
 						target: 'saml-attribute-release-consent'
 					},
 					{
+						id: 'authentication:totp->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'totp',
+						target: 'saml-attribute-release-consent'
+					},
+					{
 						id: 'authentication:passkey->saml-attribute-release-consent',
 						source: 'authentication',
 						source_handle: 'passkey',
@@ -268,6 +282,7 @@
 							authentication_profile_ref: 'default',
 							outputs: [
 								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+								{ id: 'totp', label: $LL.admin_flows_setting_totp() },
 								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() },
 								{ id: 'facebook', label: 'Facebook' }
 							]
@@ -372,9 +387,21 @@
 						target: 'saml-attribute-release-consent'
 					},
 					{
+						id: 'authentication:totp->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'totp',
+						target: 'saml-attribute-release-consent'
+					},
+					{
 						id: 'authentication:mail_otp->oidc-authorization-consent',
 						source: 'authentication',
 						source_handle: 'mail_otp',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'authentication:totp->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'totp',
 						target: 'oidc-authorization-consent'
 					},
 					{

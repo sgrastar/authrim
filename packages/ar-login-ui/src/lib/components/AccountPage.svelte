@@ -10,7 +10,8 @@
 		type AccountPasskey,
 		type AccountProfile,
 		type AccountProfileSession,
-		type AccountSession
+		type AccountSession,
+		type AccountTotpCredential
 	} from '$lib/api/account';
 	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
 	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
@@ -28,6 +29,8 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
 	} from '$lib/webauthn/signal';
+	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
+	import { getAuthConfig } from '$lib/auth';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
@@ -36,6 +39,14 @@
 	let devices = $state<AccountDevice[]>([]);
 	let sessions = $state<AccountSession[]>([]);
 	let passkeys = $state<AccountPasskey[]>([]);
+	let totpCredentials = $state<AccountTotpCredential[]>([]);
+	let totpBackupCodes = $state({ total: 0, remaining: 0 });
+	let totpEnrollment = $state<{
+		credentialId: string;
+		secret: string;
+		otpauthUri: string;
+		backupCodes: string[];
+	} | null>(null);
 	let operations = $state<AccountOperation[]>([]);
 	let consents = $state<AccountConsent[]>([]);
 	let authenticationMethods = $state<AuthenticationMethods | null>(null);
@@ -56,8 +67,14 @@
 	let emailReauthCode = $state('');
 	let emailReauthMaskedEmail = $state('');
 	let emailReauthCodeSent = $state(false);
+	let totpReauthCode = $state('');
 	let pendingReauthAction = $state<
-		{ type: 'add-passkey'; deviceName: string } | { type: 'delete-passkey'; id: string } | null
+		| { type: 'add-passkey'; deviceName: string }
+		| { type: 'delete-passkey'; id: string }
+		| { type: 'add-totp'; label: string }
+		| { type: 'delete-totp'; id: string; code: string }
+		| { type: 'regenerate-totp-backup-codes'; code: string }
+		| null
 	>(null);
 	let passkeyReauthAvailable = $derived(
 		Boolean(
@@ -74,9 +91,53 @@
 			(authenticationMethods.emailCode.reauthEnabled ?? authenticationMethods.emailCode.enabled)
 		)
 	);
-	let hasReauthMethod = $derived(passkeyReauthAvailable || emailCodeReauthAvailable);
+	let totpReauthAvailable = $derived(
+		Boolean(
+			totpCredentials.some((credential) => credential.status === 'active') &&
+			authenticationMethods?.totp &&
+			(authenticationMethods.totp.reauthEnabled ?? authenticationMethods.totp.enabled)
+		)
+	);
+	let hasReauthMethod = $derived(
+		passkeyReauthAvailable || emailCodeReauthAvailable || totpReauthAvailable
+	);
+	let totpManagementEnabled = $derived(
+		Boolean(
+			authenticationMethods?.totp &&
+			((authenticationMethods.totp.loginEnabled ?? authenticationMethods.totp.enabled) ||
+				(authenticationMethods.totp.accountLinkEnabled ?? false))
+		)
+	);
+
+	function isDedicatedLoginUiHostname(hostname: string): boolean {
+		const firstLabel = hostname.split('.')[0]?.toLowerCase() ?? '';
+		return firstLabel === 'login' || hostname.toLowerCase().includes('ar-login-ui');
+	}
+
+	function getCanonicalAccountUrl(): string | null {
+		if (!isDedicatedLoginUiHostname(window.location.hostname)) {
+			return null;
+		}
+
+		try {
+			const canonicalOrigin = new URL(getAuthConfig().issuer).origin;
+			if (canonicalOrigin === window.location.origin) {
+				return null;
+			}
+
+			return `${canonicalOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
+		} catch {
+			return null;
+		}
+	}
 
 	onMount(async () => {
+		const canonicalAccountUrl = getCanonicalAccountUrl();
+		if (canonicalAccountUrl) {
+			window.location.replace(canonicalAccountUrl);
+			return;
+		}
+
 		const [methodsResult, accountLoadStatus] = await Promise.all([
 			fetchAuthenticationMethods(),
 			loadAccountPage()
@@ -128,6 +189,7 @@
 			devicesResult,
 			sessionsResult,
 			passkeysResult,
+			totpResult,
 			operationsResult,
 			consentsResult,
 			capabilitiesResult
@@ -136,6 +198,7 @@
 			accountAPI.getDevices(),
 			accountAPI.getSessions(),
 			accountAPI.getPasskeys(),
+			accountAPI.getTotpCredentials(),
 			accountAPI.getOperations(),
 			accountAPI.getConsents(),
 			accountAPI.getCapabilities()
@@ -155,6 +218,8 @@
 		devices = devicesResult.data?.devices ?? [];
 		sessions = sessionsResult.data?.sessions ?? [];
 		passkeys = passkeysResult.data?.passkeys ?? [];
+		totpCredentials = totpResult.data?.credentials ?? [];
+		totpBackupCodes = totpResult.data?.backup_codes ?? { total: 0, remaining: 0 };
 		operations = operationsResult.data?.operations ?? [];
 		consents = consentsResult.data?.consents ?? [];
 		await Promise.all([
@@ -166,6 +231,7 @@
 			devicesResult.error ||
 			sessionsResult.error ||
 			passkeysResult.error ||
+			totpResult.error ||
 			operationsResult.error ||
 			capabilitiesResult.error
 		) {
@@ -173,6 +239,7 @@
 				devicesResult.error?.error_description ||
 				sessionsResult.error?.error_description ||
 				passkeysResult.error?.error_description ||
+				totpResult.error?.error_description ||
 				operationsResult.error?.error_description ||
 				capabilitiesResult.error?.error_description ||
 				$LL.account_loadFailed();
@@ -184,21 +251,26 @@
 		securityLoading = true;
 		try {
 			reauthNeeded = false;
-			const [devicesResult, sessionsResult, passkeysResult, operationsResult] = await Promise.all([
-				accountAPI.getDevices(),
-				accountAPI.getSessions(),
-				accountAPI.getPasskeys(),
-				accountAPI.getOperations()
-			]);
+			const [devicesResult, sessionsResult, passkeysResult, totpResult, operationsResult] =
+				await Promise.all([
+					accountAPI.getDevices(),
+					accountAPI.getSessions(),
+					accountAPI.getPasskeys(),
+					accountAPI.getTotpCredentials(),
+					accountAPI.getOperations()
+				]);
 			devices = devicesResult.data?.devices ?? devices;
 			sessions = sessionsResult.data?.sessions ?? sessions;
 			passkeys = passkeysResult.data?.passkeys ?? passkeys;
+			totpCredentials = totpResult.data?.credentials ?? totpCredentials;
+			totpBackupCodes = totpResult.data?.backup_codes ?? totpBackupCodes;
 			operations = operationsResult.data?.operations ?? operations;
 			await signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
 			securityError =
 				devicesResult.error?.error_description ||
 				sessionsResult.error?.error_description ||
 				passkeysResult.error?.error_description ||
+				totpResult.error?.error_description ||
 				operationsResult.error?.error_description ||
 				'';
 		} finally {
@@ -213,6 +285,7 @@
 		emailReauthCode = '';
 		emailReauthMaskedEmail = '';
 		emailReauthCodeSent = false;
+		totpReauthCode = '';
 		reauthModalOpen = true;
 	}
 
@@ -225,6 +298,7 @@
 		emailReauthCode = '';
 		emailReauthMaskedEmail = '';
 		emailReauthCodeSent = false;
+		totpReauthCode = '';
 		await refreshSecurity();
 
 		const pending = pendingReauthAction;
@@ -233,6 +307,12 @@
 			await addPasskey(pending.deviceName);
 		} else if (pending?.type === 'delete-passkey') {
 			await deletePasskey(pending.id);
+		} else if (pending?.type === 'add-totp') {
+			await startTotpEnrollment(pending.label);
+		} else if (pending?.type === 'delete-totp') {
+			await deleteTotpCredential(pending.id, pending.code);
+		} else if (pending?.type === 'regenerate-totp-backup-codes') {
+			await regenerateTotpBackupCodes(pending.code);
 		}
 	}
 
@@ -303,6 +383,24 @@
 				emailReauthChallengeId,
 				emailReauthCode
 			);
+			if (result.error) {
+				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			await finishReauth();
+		} catch (error) {
+			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+		} finally {
+			reauthLoading = false;
+		}
+	}
+
+	async function completeTotpReauth() {
+		if (!totpReauthAvailable || reauthLoading) return;
+		reauthLoading = true;
+		reauthError = '';
+		try {
+			const result = await accountAPI.completeTotpReauth(totpReauthCode.trim());
 			if (result.error) {
 				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
 				return;
@@ -431,6 +529,109 @@
 		}
 	}
 
+	async function startTotpEnrollment(label: string) {
+		actionLoading = 'totp:add';
+		securityError = '';
+		try {
+			const result = await accountAPI.createTotpOptions(label.trim());
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					securityError = $LL.account_reauthRequired();
+					reauthNeeded = true;
+					requestReauth({ type: 'add-totp', label });
+					return;
+				}
+				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			if (!result.data) return;
+			totpEnrollment = {
+				credentialId: result.data.credential.id,
+				secret: result.data.secret,
+				otpauthUri: result.data.otpauth_uri,
+				backupCodes: []
+			};
+			await refreshSecurity();
+		} finally {
+			actionLoading = '';
+		}
+	}
+
+	async function activateTotpEnrollment(code: string) {
+		if (!totpEnrollment) return;
+		actionLoading = `totp:activate:${totpEnrollment.credentialId}`;
+		securityError = '';
+		try {
+			const result = await accountAPI.activateTotpCredential(
+				totpEnrollment.credentialId,
+				code.trim()
+			);
+			if (result.error) {
+				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			totpEnrollment = {
+				...totpEnrollment,
+				backupCodes: result.data?.backup_codes ?? []
+			};
+			await refreshSecurity();
+		} finally {
+			actionLoading = '';
+		}
+	}
+
+	async function deleteTotpCredential(id: string, code: string) {
+		actionLoading = `totp:${id}`;
+		securityError = '';
+		try {
+			const result = await accountAPI.deleteTotpCredential(id, buildTotpDeleteProof(code));
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					securityError = $LL.account_reauthRequired();
+					reauthNeeded = true;
+					requestReauth({ type: 'delete-totp', id, code });
+					return;
+				}
+				if (result.error.error === 'remaining_login_method_required') {
+					securityError = $LL.account_remainingLoginMethodRequired();
+					return;
+				}
+				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			await refreshSecurity();
+		} finally {
+			actionLoading = '';
+		}
+	}
+
+	async function regenerateTotpBackupCodes(code: string) {
+		actionLoading = 'totp:backup-codes';
+		securityError = '';
+		try {
+			const result = await accountAPI.regenerateTotpBackupCodes(code.trim() || undefined);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					securityError = $LL.account_reauthRequired();
+					reauthNeeded = true;
+					requestReauth({ type: 'regenerate-totp-backup-codes', code });
+					return;
+				}
+				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			totpEnrollment = {
+				credentialId: '',
+				secret: '',
+				otpauthUri: '',
+				backupCodes: result.data?.backup_codes ?? []
+			};
+			await refreshSecurity();
+		} finally {
+			actionLoading = '';
+		}
+	}
+
 	async function handleLogout() {
 		if (logoutLoading) return;
 		logoutLoading = true;
@@ -493,15 +694,24 @@
 					{devices}
 					{sessions}
 					{passkeys}
+					{totpCredentials}
+					{totpBackupCodes}
+					{totpEnrollment}
 					loading={securityLoading}
 					{actionLoading}
 					error={securityError}
 					{reauthNeeded}
 					{passkeySupported}
+					{totpManagementEnabled}
 					onRefresh={refreshSecurity}
 					onRevokeSession={revokeSession}
 					onAddPasskey={addPasskey}
 					onDeletePasskey={deletePasskey}
+					onStartTotpEnrollment={startTotpEnrollment}
+					onActivateTotpEnrollment={activateTotpEnrollment}
+					onDeleteTotpCredential={deleteTotpCredential}
+					onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+					onClearTotpEnrollment={() => (totpEnrollment = null)}
 					onReauth={() => requestReauth()}
 				/>
 				<AccountConsentSection {consents} error={consentError} />
@@ -555,7 +765,7 @@
 								class="reauth-code-input"
 								autocomplete="one-time-code"
 								inputmode="numeric"
-								maxlength="6"
+								maxlength={6}
 								placeholder={$LL.account_reauthEmailCodePlaceholder()}
 								bind:value={emailReauthCode}
 							/>
@@ -574,6 +784,26 @@
 						</Button>
 					{/if}
 				{/if}
+				{#if totpReauthAvailable}
+					<div class="reauth-email-code">
+						<input
+							class="reauth-code-input"
+							autocomplete="one-time-code"
+							inputmode="numeric"
+							maxlength={8}
+							placeholder={$LL.account_reauthTotpCodePlaceholder()}
+							bind:value={totpReauthCode}
+						/>
+						<Button
+							variant="secondary"
+							loading={reauthLoading}
+							disabled={!/^\d{6}$|^\d{8}$/.test(totpReauthCode.trim())}
+							onclick={completeTotpReauth}
+						>
+							{$LL.account_reauthWithTotp()}
+						</Button>
+					</div>
+				{/if}
 				<Button variant="secondary" onclick={() => (reauthModalOpen = false)}>
 					{$LL.dialog_cancel()}
 				</Button>
@@ -589,6 +819,8 @@
 		--account-control-hover: #f7f3ec;
 		--account-primary-bg: #2c2724;
 		--account-primary-hover: #1a1715;
+		--account-modal-bg: #fffaf3;
+		--account-modal-border: #ded4c5;
 
 		min-height: 100vh;
 		background: var(--bg-page);
@@ -603,6 +835,8 @@
 		--account-control-hover: #eef4fb;
 		--account-primary-bg: #3b82f6;
 		--account-primary-hover: #2563eb;
+		--account-modal-bg: #ffffff;
+		--account-modal-border: #d8e2ef;
 	}
 
 	:global([data-theme='light'][data-variant='green'] .account-shell) {
@@ -611,6 +845,8 @@
 		--account-control-hover: #edf8ef;
 		--account-primary-bg: #10b981;
 		--account-primary-hover: #059669;
+		--account-modal-bg: #ffffff;
+		--account-modal-border: #d8eadb;
 	}
 
 	:global([data-theme='dark'] .account-shell) {
@@ -619,6 +855,8 @@
 		--account-control-hover: #463f38;
 		--account-primary-bg: #c8b8a8;
 		--account-primary-hover: #d4c4b4;
+		--account-modal-bg: #211d19;
+		--account-modal-border: #4f463d;
 	}
 
 	:global([data-theme='dark'][data-variant='navy'] .account-shell) {
@@ -627,6 +865,8 @@
 		--account-control-hover: #344257;
 		--account-primary-bg: #6495ed;
 		--account-primary-hover: #93c5fd;
+		--account-modal-bg: #182231;
+		--account-modal-border: #3c4a5f;
 	}
 
 	:global([data-theme='dark'][data-variant='slate'] .account-shell) {
@@ -635,6 +875,8 @@
 		--account-control-hover: #414d5f;
 		--account-primary-bg: #94a3b8;
 		--account-primary-hover: #cbd5e1;
+		--account-modal-bg: #202832;
+		--account-modal-border: #4a5565;
 	}
 
 	@media (prefers-color-scheme: dark) {
@@ -644,6 +886,8 @@
 			--account-control-hover: #463f38;
 			--account-primary-bg: #c8b8a8;
 			--account-primary-hover: #d4c4b4;
+			--account-modal-bg: #211d19;
+			--account-modal-border: #4f463d;
 		}
 	}
 
@@ -765,8 +1009,9 @@
 		inset: 0;
 		z-index: 40;
 		border: 0;
-		background: rgb(0 0 0 / 0.42);
+		background: rgb(0 0 0 / 0.62);
 		backdrop-filter: blur(3px);
+		-webkit-backdrop-filter: blur(3px);
 		cursor: default;
 	}
 
@@ -781,8 +1026,10 @@
 		gap: 16px;
 		padding: 24px;
 		border-radius: 16px;
-		background: var(--surface);
+		border: 1px solid var(--account-modal-border);
+		background: var(--account-modal-bg);
 		box-shadow: 0 24px 70px rgb(0 0 0 / 0.28);
+		isolation: isolate;
 	}
 
 	.reauth-modal__header {

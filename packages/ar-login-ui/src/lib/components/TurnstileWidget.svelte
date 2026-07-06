@@ -13,6 +13,7 @@
 		theme = 'auto',
 		language = 'auto',
 		token = $bindable(''),
+		resetKey = 0,
 		disabled = false,
 		loadingLabel = 'Loading security check...',
 		errorLabel = 'Security check could not be loaded. Reload the page and try again.'
@@ -24,6 +25,7 @@
 		theme?: CaptchaTheme;
 		language?: string;
 		token?: string;
+		resetKey?: number;
 		disabled?: boolean;
 		loadingLabel?: string;
 		errorLabel?: string;
@@ -35,6 +37,7 @@
 	let scriptLoaded = $state(false);
 	let failed = $state(false);
 	let widgetRendered = $state(false);
+	let observedResetKey = $state<number | null>(null);
 
 	function providerScriptSelector(): string {
 		if (provider === 'hcaptcha') {
@@ -289,12 +292,22 @@
 		if (scriptLoaded) renderWidget();
 	});
 
+	$effect(() => {
+		if (observedResetKey === null) {
+			observedResetKey = resetKey;
+			return;
+		}
+		if (resetKey === observedResetKey) return;
+		observedResetKey = resetKey;
+		reset();
+	});
+
 	onDestroy(() => {
 		clearRenderedWidget();
 	});
 </script>
 
-<div class="turnstile-wrap" class:disabled class:failed>
+<div class="turnstile-wrap" class:disabled class:failed data-provider={provider}>
 	{#if failed}
 		<p class="turnstile-status error">{errorLabel}</p>
 	{:else if !widgetRendered}
@@ -310,8 +323,38 @@
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
+		width: 100%;
 		min-height: 70px;
 		margin: 12px 0;
+	}
+
+	.turnstile-wrap > div {
+		display: flex;
+		justify-content: center;
+		width: 100%;
+		max-width: 100%;
+	}
+
+	.turnstile-wrap :global(iframe) {
+		display: block;
+		max-width: 100%;
+	}
+
+	@media (max-width: 420px) {
+		.turnstile-wrap[data-provider='hcaptcha'],
+		.turnstile-wrap[data-provider='recaptcha'] {
+			--authrim-captcha-scale: min(0.92, calc((100vw - 72px) / 303));
+			min-height: calc(78px * var(--authrim-captcha-scale) + 4px);
+			margin: 10px 0;
+		}
+
+		.turnstile-wrap[data-provider='hcaptcha'] > div,
+		.turnstile-wrap[data-provider='recaptcha'] > div {
+			width: 303px;
+			max-width: none;
+			transform: scale(var(--authrim-captcha-scale));
+			transform-origin: top center;
+		}
 	}
 
 	.turnstile-wrap.disabled {

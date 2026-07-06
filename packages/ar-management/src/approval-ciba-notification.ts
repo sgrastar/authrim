@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { ApprovalRequest, ApprovalRequestApproval, Env } from '@authrim/ar-lib-core';
-import { getPluginContext } from '@authrim/ar-lib-core';
+import { getRequiredPluginContext } from '@authrim/ar-lib-core';
 import { getApprovalNotificationCooldownMs } from './approval-policy-presets';
 import {
   ApprovalTransportChannelResolutionError,
@@ -205,7 +205,7 @@ export async function dispatchApprovalCibaUserCode(
   messageId: string | null;
 }> {
   const { channel, target } = await resolveCibaTarget(c, input.request, input.approval);
-  const pluginCtx = getPluginContext(c);
+  const pluginCtx = getRequiredPluginContext(c, 'notification');
   const notifier = pluginCtx.registry.getNotifier(channel) as NotificationHandler | undefined;
   if (!notifier) {
     throw new ApprovalCibaNotificationError(

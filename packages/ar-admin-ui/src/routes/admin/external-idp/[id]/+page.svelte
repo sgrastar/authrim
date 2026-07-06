@@ -3,6 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { LL } from '$i18n/i18n-svelte';
+	import { buildExternalIdPCallbackUrl } from '$lib/admin/external-idp-callback-url';
+	import { getTenantInfo } from '$lib/api/admin-info';
 	import {
 		adminExternalProvidersAPI,
 		type ExternalIdPProvider,
@@ -11,6 +13,7 @@
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { ToggleSwitch } from '$lib/components';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let provider: ExternalIdPProvider | null = $state(null);
 	let loading = $state(true);
@@ -48,8 +51,11 @@
 	let discoveryUrl = $state('');
 	let discovering = $state(false);
 	let discoveryError = $state('');
+	let callbackIssuer = $state<string | null>(null);
+	let callbackIssuerRequest = 0;
 
 	const providerId = $derived($page.params.id);
+	const providerIdentifier = $derived(slug || providerId || null);
 
 	// Validate slug format
 	function validateSlug(value: string): string {
@@ -65,23 +71,39 @@
 		slugError = validateSlug(slug);
 	}
 
-	// Compute redirect URL (use current slug value for preview)
-	const redirectUrl = $derived(() => {
-		if (!provider) return null;
-		const baseUrl =
-			typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
-		// Show URL with current slug input (for preview), fallback to provider ID
-		const identifier = slug || provider.id;
-		if (slugError) return null; // Don't show if invalid
-		return `${baseUrl}/auth/external/${identifier}/callback`;
-	});
+	const redirectUrl = $derived(
+		!slugError ? buildExternalIdPCallbackUrl(callbackIssuer, providerIdentifier) : null
+	);
 
 	async function copyRedirectUrl() {
-		const url = redirectUrl();
+		const url = redirectUrl;
 		if (url && typeof navigator !== 'undefined') {
 			await navigator.clipboard.writeText(url);
 			copySuccess = true;
 			setTimeout(() => (copySuccess = false), 2000);
+		}
+	}
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId) {
+			callbackIssuer = null;
+			return;
+		}
+		void loadCallbackIssuer(tenantId);
+	});
+
+	async function loadCallbackIssuer(tenantId: string) {
+		const requestId = ++callbackIssuerRequest;
+		try {
+			const info = await getTenantInfo(tenantId);
+			if (requestId === callbackIssuerRequest) {
+				callbackIssuer = info.issuer;
+			}
+		} catch {
+			if (requestId === callbackIssuerRequest) {
+				callbackIssuer = null;
+			}
 		}
 	}
 
@@ -167,7 +189,10 @@
 	}
 
 	onMount(() => {
-		loadProvider();
+		void (async () => {
+			await settingsContext.initialize();
+			await loadProvider();
+		})();
 	});
 
 	async function handleSubmit() {
@@ -347,27 +372,36 @@
 				</div>
 
 				<!-- Redirect URL Display -->
-				{#if redirectUrl()}
-					<div class="redirect-url-section">
-						<!-- svelte-ignore a11y_label_has_associated_control -->
-						<label class="admin-field__label">{$LL.admin_external_idp_redirect_url()}</label>
-						<div class="redirect-url-box">
-							<code class="redirect-url-text">{redirectUrl()}</code>
+				<div class="redirect-url-section">
+					<!-- svelte-ignore a11y_label_has_associated_control -->
+					<label class="admin-field__label">{$LL.admin_external_idp_redirect_url()}</label>
+					<p class="field-hint field-hint--spaced">
+						{$LL.admin_external_idp_redirect_url_hint()}
+					</p>
+					{#if redirectUrl}
+						<div class="input-copy-group">
+							<input
+								type="url"
+								class="admin-input callback-url-input"
+								value={redirectUrl}
+								readonly
+							/>
 							<button
 								type="button"
 								class="copy-btn"
 								onclick={copyRedirectUrl}
 								title={$LL.admin_external_idp_copy_to_clipboard()}
+								aria-label={$LL.admin_external_idp_copy_to_clipboard()}
 							>
 								{#if copySuccess}
-									<span class="copy-success">✓</span>
+									<i class="i-ph-check copy-success"></i>
 								{:else}
 									<i class="i-ph-copy"></i>
 								{/if}
 							</button>
 						</div>
-					</div>
-				{/if}
+					{/if}
+				</div>
 			</AdminSection>
 
 			<!-- OAuth/OIDC Configuration -->
@@ -691,33 +725,31 @@
 
 	.redirect-url-section {
 		margin-top: 16px;
-		padding-top: 16px;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.redirect-url-box {
-		display: flex;
-		align-items: center;
+		display: grid;
 		gap: 8px;
-		margin-top: 8px;
-		padding: 10px 12px;
-		background: var(--color-surface-muted);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-card);
 	}
 
-	.redirect-url-text {
+	.input-copy-group {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.callback-url-input {
 		flex: 1;
-		font-size: 13px;
-		color: var(--color-text);
-		word-break: break-all;
+		font-family:
+			ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+		font-size: 0.82rem;
 	}
 
 	.copy-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 6px;
+		flex: 0 0 var(--control-height, 40px);
+		width: var(--control-height, 40px);
+		height: var(--control-height, 40px);
+		padding: 0;
 		background: var(--control-bg, var(--color-surface));
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-control);
@@ -734,7 +766,6 @@
 
 	.copy-success {
 		color: var(--color-success);
-		font-weight: 600;
 	}
 
 	.input-error {
@@ -841,9 +872,15 @@
 		}
 
 		.discovery-input-row,
+		.input-copy-group,
 		.form-actions {
 			align-items: stretch;
 			flex-direction: column;
+		}
+
+		.copy-btn {
+			width: 100%;
+			flex-basis: var(--control-height, 40px);
 		}
 	}
 </style>

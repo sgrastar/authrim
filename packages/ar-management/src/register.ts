@@ -39,6 +39,8 @@ import {
   hashClientSecret,
   // DCR Configuration
   getDCRSetting,
+  createSettingsManager,
+  CLIENT_CATEGORY_META,
   // Write-Through cache for client metadata
   putClient,
   CanonicalRuntimeUserStore,
@@ -47,6 +49,8 @@ import { getRequestAwareIssuerUrl } from './request-issuer';
 
 type ClientRegistrationRequestWithPkce = ClientRegistrationRequest & {
   require_pkce?: boolean;
+  default_audience?: string | null;
+  default_resource?: string | null;
 };
 
 type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
@@ -859,6 +863,56 @@ function generateClientSecret(): string {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+async function resolveDefaultAccessTokenTarget(
+  env: Env,
+  tenantId: string,
+  issuerUrl: string,
+  request: ClientRegistrationRequestWithPkce,
+  grantTypes: string[]
+): Promise<{ defaultAudience?: string; defaultResource?: string }> {
+  const requestedDefaultResource = normalizeOptionalString(request.default_resource);
+  const requestedDefaultAudience = normalizeOptionalString(request.default_audience);
+
+  if (requestedDefaultResource || requestedDefaultAudience) {
+    return {
+      defaultResource: requestedDefaultResource,
+      defaultAudience: requestedDefaultAudience,
+    };
+  }
+
+  const settingsManager = createSettingsManager({
+    env: env as unknown as Record<string, string | undefined>,
+    kv: env.SETTINGS ?? null,
+    cacheTTL: 30000,
+  });
+  settingsManager.registerCategory(CLIENT_CATEGORY_META);
+
+  const [configuredDefaultResource, configuredDefaultAudience] = await Promise.all([
+    settingsManager
+      .get('client.default_resource', { type: 'tenant', id: tenantId })
+      .catch(() => ''),
+    settingsManager
+      .get('client.default_audience', { type: 'tenant', id: tenantId })
+      .catch(() => ''),
+  ]);
+
+  const defaultResource = normalizeOptionalString(configuredDefaultResource);
+  const defaultAudience = normalizeOptionalString(configuredDefaultAudience);
+  if (defaultResource || defaultAudience) {
+    return { defaultResource, defaultAudience };
+  }
+
+  if (grantTypes.includes('authorization_code')) {
+    return { defaultResource: issuerUrl };
+  }
+
+  return {};
+}
+
 /**
  * Store client metadata in D1 (source of truth)
  * Cache will be populated via Read-Through pattern on first access
@@ -900,9 +954,10 @@ async function storeClient(
       logout_webhook_uri, logout_webhook_secret_encrypted,
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
+      default_audience, default_resource,
       require_pkce,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -967,6 +1022,8 @@ async function storeClient(
       metadata.software_id || null,
       metadata.software_version || null,
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
+      metadata.default_audience || null,
+      metadata.default_resource || null,
       metadata.require_pkce ? 1 : 0,
       // Tenant ID
       metadataTenantId,
@@ -1116,6 +1173,13 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const requirePkce =
       request.require_pkce ??
       (tokenEndpointAuthMethod === 'none' && grantTypes.includes('authorization_code'));
+    const defaultTarget = await resolveDefaultAccessTokenTarget(
+      c.env,
+      tenantId,
+      issuerUrl,
+      request,
+      grantTypes
+    );
 
     // Determine if client is trusted based on redirect_uri domain
     // Trusted clients can skip consent screens (First-Party clients)
@@ -1302,6 +1366,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       asc_allowed_transformed_claims: request.asc_allowed_transformed_claims,
       // Store hashed client secret, not plaintext
       client_secret_hash: clientSecretHash,
+      default_audience: defaultTarget.defaultAudience,
+      default_resource: defaultTarget.defaultResource,
     };
 
     // Remove plaintext client_secret from metadata (only hash is stored)

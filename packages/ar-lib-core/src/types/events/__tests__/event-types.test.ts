@@ -49,6 +49,11 @@ describe('Event Type Constants', () => {
       expect(AUTH_EVENTS.EMAIL_CODE_FAILED).toBe('auth.email_code.failed');
     });
 
+    it('should have correct TOTP event types', () => {
+      expect(AUTH_EVENTS.TOTP_SUCCEEDED).toBe('auth.totp.succeeded');
+      expect(AUTH_EVENTS.TOTP_FAILED).toBe('auth.totp.failed');
+    });
+
     it('should have correct magic link event types', () => {
       expect(AUTH_EVENTS.MAGIC_LINK_SUCCEEDED).toBe('auth.magic_link.succeeded');
       expect(AUTH_EVENTS.MAGIC_LINK_FAILED).toBe('auth.magic_link.failed');
@@ -217,6 +222,7 @@ describe('Event Data Types', () => {
         'password',
         'directory_password',
         'email_code',
+        'totp',
         'magic_link',
         'external_idp',
         'did',

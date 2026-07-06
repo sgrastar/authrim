@@ -268,6 +268,13 @@ const adminOther = {
 	admin_authentication_methods_email_otp: 'Email OTP',
 	admin_authentication_methods_email_otp_description:
 		'Use email codes for login, signup, and re-authentication.',
+	admin_authentication_methods_totp: 'Authenticator App',
+	admin_authentication_methods_totp_description:
+		'Use TOTP authenticator apps for login, signup, re-authentication, and account linking.',
+	admin_authentication_methods_totp_preset: 'TOTP preset',
+	admin_authentication_methods_totp_preset_compatible: 'Compatible',
+	admin_authentication_methods_totp_preset_strong: 'Strong',
+	admin_authentication_methods_totp_default_acr: 'Default ACR',
 	admin_authentication_methods_directory_password: 'Directory Password',
 	admin_authentication_methods_directory_password_description:
 		'Use Authrim Wordwarden to verify passwords against an organization directory.',

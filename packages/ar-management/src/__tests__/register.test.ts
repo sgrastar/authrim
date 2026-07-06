@@ -117,6 +117,12 @@ const createMockKV = (): KVNamespace => {
   } as unknown as KVNamespace;
 };
 
+function getLastBindArgs(env: Env): unknown[] {
+  const db = env.DB as unknown as ReturnType<typeof createMockDB>;
+  const calls = db._mockStatement.bind.mock.calls;
+  return calls[calls.length - 1] ?? [];
+}
+
 describe('Dynamic Client Registration Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
@@ -182,6 +188,61 @@ describe('Dynamic Client Registration Handler', () => {
       // Verify Cache-Control headers
       expect(res.headers.get('Cache-Control')).toBe('no-store');
       expect(res.headers.get('Pragma')).toBe('no-cache');
+    });
+
+    it('stores issuer URL as the default access-token resource for authorization-code clients', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const args = getLastBindArgs(mockEnv);
+      expect(args).toHaveLength(56);
+      expect(args).toContain('https://id.example.com');
+    });
+
+    it('uses tenant client.default_resource before the issuer URL default', async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:client',
+        JSON.stringify({ 'client.default_resource': 'https://api.example.com/' })
+      );
+
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const args = getLastBindArgs(mockEnv);
+      expect(args).toHaveLength(56);
+      expect(args).toContain('https://api.example.com/');
+      expect(args).not.toContain('https://id.example.com');
     });
 
     it('should register a client with all optional fields', async () => {

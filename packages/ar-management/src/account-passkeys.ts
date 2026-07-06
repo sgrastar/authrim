@@ -9,7 +9,7 @@ import {
   generateId,
   getChallengeStoreByChallengeId,
   getLogger,
-  getPluginContext,
+  getRequiredPluginContext,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
@@ -108,7 +108,7 @@ function sanitizePasskey(passkey: AccountPasskeyRecord) {
 }
 
 function getRequestRpId(c: Context<{ Bindings: Env }>): string {
-  const origin = normalizeOrigin(c.req.header('Origin'));
+  const origin = getAccountWebAuthnOrigin(c);
   if (origin) {
     return new URL(origin).hostname;
   }
@@ -176,6 +176,71 @@ function normalizeExpectedOrigin(value: string | undefined | null): string | nul
   } catch {
     return null;
   }
+}
+
+function originForHost(host: string): string[] {
+  const normalizedHost = host.trim().toLowerCase();
+  if (!normalizedHost) {
+    return [];
+  }
+
+  const hostname = normalizedHost.split(':')[0];
+  const origins = [`https://${normalizedHost}`];
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
+    origins.push(`http://${normalizedHost}`);
+  }
+  return origins;
+}
+
+function isSameOriginAccountRequest(
+  c: Context<{ Bindings: Env }>,
+  originHeader: string | undefined
+): boolean {
+  const normalizedOrigin = normalizeExpectedOrigin(originHeader);
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  const candidateOrigins = new Set<string>();
+  try {
+    const requestOrigin = normalizeExpectedOrigin(new URL(c.req.url).origin);
+    if (requestOrigin) {
+      candidateOrigins.add(requestOrigin);
+    }
+  } catch {
+    // Ignore malformed or unavailable request URLs and fall back to headers.
+  }
+
+  for (const headerName of ['x-authrim-forwarded-host', 'x-forwarded-host', 'host']) {
+    const headerValue = c.req.header(headerName)?.split(',')[0]?.trim();
+    if (!headerValue) {
+      continue;
+    }
+    for (const origin of originForHost(headerValue)) {
+      candidateOrigins.add(origin);
+    }
+  }
+
+  return candidateOrigins.has(normalizedOrigin);
+}
+
+function getAccountWebAuthnOrigin(c: Context<{ Bindings: Env }>): string | null {
+  const originHeader = c.req.header('Origin');
+  const origin = normalizeOrigin(originHeader);
+  if (!origin) {
+    return null;
+  }
+
+  const browserOriginHeader = c.req.header('x-authrim-browser-origin');
+  const isLoginUiProxy = c.req.header('x-authrim-ui-proxy') === 'login-ui';
+  if (isLoginUiProxy && browserOriginHeader && isSameOriginAccountRequest(c, originHeader)) {
+    const browserOrigin = normalizeOrigin(browserOriginHeader);
+    if (browserOrigin) {
+      return browserOrigin;
+    }
+  }
+
+  return origin;
 }
 
 function toBase64URLString(input: CredentialIDLike): string {
@@ -438,7 +503,7 @@ export async function createAccountPasskeyReauthOptionsHandler(
     return accountSession;
   }
 
-  const origin = normalizeOrigin(c.req.header('Origin'));
+  const origin = getAccountWebAuthnOrigin(c);
   if (!origin) {
     return c.json(
       { error: 'invalid_request', error_description: 'Origin header is required' },
@@ -567,7 +632,7 @@ export async function completeAccountPasskeyReauthHandler(
     expectedSessionId !== accountSession.sessionId ||
     !expectedOrigin ||
     !expectedRPID ||
-    normalizeExpectedOrigin(c.req.header('Origin')) !== expectedOrigin
+    getAccountWebAuthnOrigin(c) !== expectedOrigin
   ) {
     return c.json(
       { error: 'invalid_challenge', error_description: 'Challenge does not match this session' },
@@ -706,7 +771,7 @@ export async function sendAccountEmailCodeReauthHandler(
     },
   });
 
-  const emailNotifier = getPluginContext(c).registry.getNotifier('email');
+  const emailNotifier = getRequiredPluginContext(c, 'notification').registry.getNotifier('email');
   if (!emailNotifier) {
     log.error('No email notifier plugin configured for account email-code re-authentication', {
       action: 'account_email_reauth_send',
@@ -922,7 +987,7 @@ export async function createAccountPasskeyOptionsHandler(
     );
   }
 
-  const origin = normalizeOrigin(c.req.header('Origin'));
+  const origin = getAccountWebAuthnOrigin(c);
   if (!origin) {
     return c.json(
       { error: 'invalid_request', error_description: 'Origin header is required' },
@@ -1046,7 +1111,7 @@ export async function completeAccountPasskeyRegistrationHandler(
     challengeData.userId !== accountSession.userId ||
     !expectedOrigin ||
     !expectedRPID ||
-    normalizeExpectedOrigin(c.req.header('Origin')) !== expectedOrigin
+    getAccountWebAuthnOrigin(c) !== expectedOrigin
   ) {
     return c.json(
       { error: 'invalid_challenge', error_description: 'Challenge does not match this session' },

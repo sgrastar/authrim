@@ -36,6 +36,7 @@
 	let isEditing = $state(false);
 	let saving = $state(false);
 	let actionError = $state('');
+	let totpResetLoading = $state(false);
 
 	// Edit form state
 	let editForm = $state<UpdateUserInput>({});
@@ -362,6 +363,21 @@
 			actionError = err instanceof Error ? err.message : $LL.admin_user_detail_error_update();
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function resetTotpCredentials() {
+		if (!user || !canWriteUsers || totpResetLoading) return;
+		if (!window.confirm($LL.admin_user_detail_totp_reset_confirm())) return;
+		actionError = '';
+		totpResetLoading = true;
+		try {
+			await adminUsersAPI.resetTotp(user.id);
+			user = await adminUsersAPI.get(user.id);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : $LL.admin_user_detail_error_update();
+		} finally {
+			totpResetLoading = false;
 		}
 	}
 
@@ -1178,6 +1194,63 @@
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_passkeys()}</p>
+					</div>
+				{/if}
+			</AdminSection>
+
+			<AdminSection title={$LL.admin_user_detail_totp()}>
+				{#snippet actions()}
+					<button
+						class="btn btn-danger btn-sm"
+						disabled={!canWriteUsers || totpResetLoading || !(user?.totp_credentials?.length ?? 0)}
+						onclick={resetTotpCredentials}
+					>
+						{totpResetLoading
+							? $LL.admin_user_detail_totp_resetting()
+							: $LL.admin_user_detail_totp_reset()}
+					</button>
+				{/snippet}
+				{#if user.totp_credentials && user.totp_credentials.length > 0}
+					<AdminDataTable width="wide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_user_detail_auth_method_name()}</th>
+								<th>{$LL.admin_user_detail_auth_method_type()}</th>
+								<th>{$LL.admin_user_detail_created_at()}</th>
+								<th>{$LL.admin_user_detail_last_used()}</th>
+								<th>{$LL.admin_users_status()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each user.totp_credentials as credential (credential.id)}
+								<tr>
+									<td>
+										<div class="cell-primary">
+											{sanitizeText(credential.label || $LL.admin_user_detail_totp_unnamed())}
+										</div>
+										<div class="cell-secondary mono">{credential.id}</div>
+									</td>
+									<td class="muted">
+										TOTP / {credential.algorithm} / {credential.digits} / {credential.period}s
+									</td>
+									<td class="muted nowrap">{formatTimestamp(credential.created_at)}</td>
+									<td class="muted nowrap">{formatTimestamp(credential.last_used_at)}</td>
+									<td>
+										<span
+											class={credential.status === 'active'
+												? 'badge badge-success'
+												: 'badge badge-neutral'}
+										>
+											{credential.status}
+										</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</AdminDataTable>
+				{:else}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_user_detail_no_totp()}</p>
 					</div>
 				{/if}
 			</AdminSection>

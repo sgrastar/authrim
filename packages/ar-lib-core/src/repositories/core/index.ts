@@ -41,6 +41,15 @@ export {
 } from './passkey';
 
 export {
+  TotpCredentialRepository,
+  type TotpCredential,
+  type TotpCredentialStatus,
+  type CreateTotpCredentialInput,
+  type TotpBackupCode,
+  type CreateTotpBackupCodeInput,
+} from './totp-credential';
+
+export {
   RoleRepository,
   type Role,
   type UserRole,

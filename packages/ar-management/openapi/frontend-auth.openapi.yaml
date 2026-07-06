@@ -20,7 +20,7 @@ paths:
       operationId: getApiAuthAuthenticationMethods
       summary: List public login authentication methods.
       description: Returns the enabled login methods and Login UI configuration for the current tenant,
-        including passkey, email code, directory password, human verification, SAML, and external
+        including passkey, email code, TOTP, directory password, human verification, SAML, and external
         provider options when configured.
       responses:
         "200":
@@ -325,6 +325,12 @@ components:
                 steps:
                   - email
                   - code
+              totp:
+                enabled: false
+                loginEnabled: false
+                signupEnabled: false
+                reauthEnabled: false
+                accountLinkEnabled: false
               external:
                 enabled: false
                 providers: []
@@ -1025,6 +1031,9 @@ components:
               type: object
               additionalProperties: true
             emailCode:
+              type: object
+              additionalProperties: true
+            totp:
               type: object
               additionalProperties: true
             directoryPassword:

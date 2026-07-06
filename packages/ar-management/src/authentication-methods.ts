@@ -24,8 +24,10 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  getRequestHost,
   getLogger,
   getTenantIdFromContext,
+  profileForTotpPreset,
   resolveAuthCorePersistenceAdapterFromEnv,
   validateAccountPagePath,
 } from '@authrim/ar-lib-core';
@@ -54,6 +56,24 @@ interface EmailCodeMethod {
   signupEnabled: boolean;
   reauthEnabled: boolean;
   accountLinkEnabled: boolean;
+  steps: string[];
+}
+
+interface TotpMethod {
+  enabled: boolean;
+  loginEnabled: boolean;
+  signupEnabled: boolean;
+  reauthEnabled: boolean;
+  accountLinkEnabled: boolean;
+  preset: 'compatible' | 'strong';
+  algorithm: 'SHA1' | 'SHA256';
+  digits: number;
+  period: number;
+  window: number;
+  defaultAcr: string;
+  requirement: {
+    mode: 'optional' | 'required';
+  };
   steps: string[];
 }
 
@@ -113,6 +133,7 @@ interface ExternalAuthenticationMethod {
 interface AuthenticationMethods {
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
+  totp: TotpMethod;
   directoryPassword: DirectoryPasswordMethod;
   humanVerification: HumanVerificationMethod;
   external: ExternalAuthenticationMethod;
@@ -307,6 +328,14 @@ interface AuthenticationMethodKVSettings {
   'authentication-methods.email_otp.signup_enabled'?: boolean | string;
   'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
   'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+  'authentication-methods.totp.enabled'?: boolean | string;
+  'authentication-methods.totp.login_enabled'?: boolean | string;
+  'authentication-methods.totp.signup_enabled'?: boolean | string;
+  'authentication-methods.totp.reauth_enabled'?: boolean | string;
+  'authentication-methods.totp.account_link_enabled'?: boolean | string;
+  'authentication-methods.totp.preset'?: string;
+  'authentication-methods.totp.default_acr'?: string;
+  'authentication-methods.totp.requirement_policy'?: string | Record<string, unknown>;
   'authentication-methods.human_verification.provider'?: string;
   'authentication-methods.human_verification.login_enabled'?: boolean | string;
   'authentication-methods.human_verification.signup_enabled'?: boolean | string;
@@ -560,10 +589,45 @@ function buildSAMLSPLoginStartUrl(providerId: string): string {
   return `/saml/sp/login?${params.toString()}`;
 }
 
+function getForwardedProto(request: Request): string {
+  const headerValue = request.headers.get('X-Forwarded-Proto')?.split(',')[0]?.trim();
+  if (headerValue === 'http' || headerValue === 'https') {
+    return headerValue;
+  }
+
+  try {
+    const protocol = new URL(request.url).protocol.replace(':', '');
+    return protocol === 'http' || protocol === 'https' ? protocol : 'https';
+  } catch {
+    return 'https';
+  }
+}
+
+function buildExternalIdpProviderHeaders(
+  tenantId: string,
+  request: Request
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Tenant-Id': tenantId,
+  };
+  const forwardedHost = getRequestHost(request);
+  if (forwardedHost) {
+    headers['X-Authrim-Forwarded-Host'] = forwardedHost;
+    headers['X-Forwarded-Host'] = forwardedHost;
+    headers['X-Forwarded-Proto'] = getForwardedProto(request);
+  }
+  return headers;
+}
+
 /**
  * Fetch enabled external login providers from ar-bridge via service binding.
  */
-async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvider[]> {
+async function fetchExternalLoginProviders(
+  env: Env,
+  tenantId: string,
+  request: Request
+): Promise<ExternalLoginProvider[]> {
   if (!env.EXTERNAL_IDP) {
     return [];
   }
@@ -571,9 +635,7 @@ async function fetchExternalLoginProviders(env: Env): Promise<ExternalLoginProvi
   try {
     const response = await env.EXTERNAL_IDP.fetch('https://external-idp/api/external/providers', {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
+      headers: buildExternalIdpProviderHeaders(tenantId, request),
     });
 
     if (!response.ok) {
@@ -777,6 +839,13 @@ interface BuiltInMethodsResolved {
   emailCodeSignupEnabled: boolean;
   emailCodeReauthEnabled: boolean;
   emailCodeAccountLinkEnabled: boolean;
+  totpLoginEnabled: boolean;
+  totpSignupEnabled: boolean;
+  totpReauthEnabled: boolean;
+  totpAccountLinkEnabled: boolean;
+  totpPreset: 'compatible' | 'strong';
+  totpDefaultAcr: string;
+  totpRequirementMode: 'optional' | 'required';
 }
 
 async function resolveBuiltInAuthenticationMethods(
@@ -796,6 +865,13 @@ async function resolveBuiltInAuthenticationMethods(
     emailCodeSignupEnabled: legacyEmailCodeDefault,
     emailCodeReauthEnabled: legacyEmailCodeDefault,
     emailCodeAccountLinkEnabled: legacyEmailCodeDefault,
+    totpLoginEnabled: false,
+    totpSignupEnabled: false,
+    totpReauthEnabled: false,
+    totpAccountLinkEnabled: false,
+    totpPreset: 'compatible',
+    totpDefaultAcr: 'urn:authrim:aal:2',
+    totpRequirementMode: 'optional',
   };
 
   try {
@@ -805,6 +881,10 @@ async function resolveBuiltInAuthenticationMethods(
     const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
     const legacyPasskeyEnabled = kvSettings['authentication-methods.passkey.enabled'];
     const legacyEmailOtpEnabled = kvSettings['authentication-methods.email_otp.enabled'];
+    const legacyTotpEnabled = kvSettings['authentication-methods.totp.enabled'];
+    const totpRequirementPolicy = parseTotpRequirementPolicy(
+      kvSettings['authentication-methods.totp.requirement_policy']
+    );
     return {
       passkeyLoginEnabled: normalizeBoolean(
         kvSettings['authentication-methods.passkey.login_enabled'],
@@ -838,10 +918,49 @@ async function resolveBuiltInAuthenticationMethods(
         kvSettings['authentication-methods.email_otp.account_link_enabled'],
         normalizeBoolean(legacyEmailOtpEnabled, defaults.emailCodeAccountLinkEnabled)
       ),
+      totpLoginEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.totp.login_enabled'],
+        normalizeBoolean(legacyTotpEnabled, defaults.totpLoginEnabled)
+      ),
+      totpSignupEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.totp.signup_enabled'],
+        normalizeBoolean(legacyTotpEnabled, defaults.totpSignupEnabled)
+      ),
+      totpReauthEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.totp.reauth_enabled'],
+        normalizeBoolean(legacyTotpEnabled, defaults.totpReauthEnabled)
+      ),
+      totpAccountLinkEnabled: normalizeBoolean(
+        kvSettings['authentication-methods.totp.account_link_enabled'],
+        normalizeBoolean(legacyTotpEnabled, defaults.totpAccountLinkEnabled)
+      ),
+      totpPreset:
+        kvSettings['authentication-methods.totp.preset'] === 'strong' ? 'strong' : 'compatible',
+      totpDefaultAcr:
+        typeof kvSettings['authentication-methods.totp.default_acr'] === 'string' &&
+        kvSettings['authentication-methods.totp.default_acr'].trim().length > 0
+          ? kvSettings['authentication-methods.totp.default_acr'].trim()
+          : defaults.totpDefaultAcr,
+      totpRequirementMode: totpRequirementPolicy.mode,
     };
   } catch {
     return defaults;
   }
+}
+
+function parseTotpRequirementPolicy(value: unknown): { mode: 'optional' | 'required' } {
+  try {
+    const parsed =
+      typeof value === 'string' ? (JSON.parse(value) as Record<string, unknown>) : value;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        mode: (parsed as Record<string, unknown>).mode === 'required' ? 'required' : 'optional',
+      };
+    }
+  } catch {
+    // Invalid policy JSON is treated as optional.
+  }
+  return { mode: 'optional' };
 }
 
 async function resolveDirectoryPasswordMethod(
@@ -1255,7 +1374,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       externalProviderUsage,
     ] = await Promise.all([
       getSystemSettings(env),
-      fetchExternalLoginProviders(env),
+      fetchExternalLoginProviders(env, tenantId, c.req.raw),
       fetchSAMLLoginProviders(env, tenantId),
       fetchConfiguredExternalLoginProviders(env, tenantId),
       resolveDirectoryPasswordMethod(env, tenantId),
@@ -1286,11 +1405,24 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       emailCodeSignupEnabled ||
       emailCodeReauthEnabled ||
       emailCodeAccountLinkEnabled;
+    const totpLoginEnabled = builtInMethods.totpLoginEnabled;
+    const totpSignupEnabled = builtInMethods.totpSignupEnabled;
+    const totpReauthEnabled = builtInMethods.totpReauthEnabled;
+    const totpAccountLinkEnabled = builtInMethods.totpAccountLinkEnabled;
+    const totpEnabled =
+      totpLoginEnabled || totpSignupEnabled || totpReauthEnabled || totpAccountLinkEnabled;
+    const totpProfile = profileForTotpPreset(builtInMethods.totpPreset);
     const directoryPasswordEnabled = directoryPassword.enabled;
     const externalEnabled = externalProviders.length > 0;
 
     // Check if at least one method is available
-    if (!passkeyEnabled && !emailCodeEnabled && !directoryPasswordEnabled && !externalEnabled) {
+    if (
+      !passkeyEnabled &&
+      !emailCodeEnabled &&
+      !totpEnabled &&
+      !directoryPasswordEnabled &&
+      !externalEnabled
+    ) {
       log.warn('No authentication method available', {});
       const errorResponse: AuthenticationMethodsErrorResponse = {
         error: {
@@ -1318,6 +1450,23 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
         reauthEnabled: emailCodeReauthEnabled,
         accountLinkEnabled: emailCodeAccountLinkEnabled,
         steps: emailCodeEnabled ? ['email', 'code'] : [],
+      },
+      totp: {
+        enabled: totpEnabled,
+        loginEnabled: totpLoginEnabled,
+        signupEnabled: totpSignupEnabled,
+        reauthEnabled: totpReauthEnabled,
+        accountLinkEnabled: totpAccountLinkEnabled,
+        preset: builtInMethods.totpPreset,
+        algorithm: totpProfile.algorithm,
+        digits: totpProfile.digits,
+        period: totpProfile.period,
+        window: totpProfile.window,
+        defaultAcr: builtInMethods.totpDefaultAcr,
+        requirement: {
+          mode: builtInMethods.totpRequirementMode,
+        },
+        steps: totpEnabled ? ['identifier', 'code'] : [],
       },
       directoryPassword: {
         enabled: directoryPasswordEnabled,

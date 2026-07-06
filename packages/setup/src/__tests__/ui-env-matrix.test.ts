@@ -7,18 +7,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { generateUiEnvContent } from '../core/ui-env.js';
-import { generateEnvVars } from '../core/wrangler.js';
+import { resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import type { AuthrimConfig } from '../core/config.js';
 import {
   SCENARIOS,
   buildAuthrimConfig,
   scenarioLabel,
-  WORKERS_SUBDOMAIN,
 } from '../../../../test/fixtures/deployment-matrix.js';
-
-function isMultiTenantConfigured(config: AuthrimConfig): boolean {
-  return config.tenant?.multiTenant === true && !!config.tenant.baseDomain;
-}
 
 // =============================================================================
 // Serialization tests
@@ -119,36 +114,35 @@ describe('generateUiEnvContent - escapeEnvValue edge cases', () => {
 });
 
 // =============================================================================
-// Integration with generateEnvVars — verify UI env uses correct wrangler values
+// Integration with deployment settings — verify UI env uses API/backend URLs, not UI_URL
 // =============================================================================
 
-describe('generateUiEnvContent - integration with generateEnvVars', () => {
+describe('generateUiEnvContent - integration with deployment settings', () => {
   const scenariosWithLoginUi = SCENARIOS.filter((s) => s.config.hasLoginUi);
 
   it.each(scenariosWithLoginUi.map((s) => [scenarioLabel(s), s] as const))(
-    '%s - UI env content uses correct API base URL from wrangler',
+    '%s - UI env content uses correct API base URL from deployment settings',
     (_label, scenario) => {
       const config = buildAuthrimConfig(scenario) as AuthrimConfig;
-      const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
-      const effectiveApiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
-      const expectedUiUrl = isMultiTenantConfigured(config)
-        ? effectiveApiUrl
-        : scenario.expected.arAuthEnvVars.UI_URL;
-
-      // Build UI env content from wrangler-generated values (mimics real deployment flow)
-      const content = generateUiEnvContent({
-        PUBLIC_API_BASE_URL: vars['UI_URL'],
-        PUBLIC_AUTHRIM_ISSUER: vars['ISSUER_URL'],
+      const settings = resolveUiDeploymentSettings({
+        component: 'ar-login-ui',
+        config,
+        loginUiClientId: 'login-ui-client',
       });
 
-      // Verify UI_URL matches scenario expectation
-      expect(vars['UI_URL']).toBe(expectedUiUrl);
+      // Build UI env content from deployment-generated values (mimics real deployment flow)
+      const content = generateUiEnvContent(settings.uiEnv);
 
-      // Verify serialized content contains the expected values
-      expect(content).toContain(`PUBLIC_API_BASE_URL=${expectedUiUrl}`);
-      expect(content).toContain(
-        `PUBLIC_AUTHRIM_ISSUER=${scenario.expected.arAuthEnvVars.ISSUER_URL}`
-      );
+      if (settings.uiEnv.PUBLIC_API_BASE_URL) {
+        expect(content).toContain(`PUBLIC_API_BASE_URL=${settings.uiEnv.PUBLIC_API_BASE_URL}`);
+      } else {
+        expect(content).not.toContain('PUBLIC_API_BASE_URL=');
+      }
+      expect(content).toContain(`PUBLIC_AUTHRIM_ISSUER=${settings.apiBaseUrl}`);
+      expect(content).toContain('PUBLIC_LOGIN_UI_CLIENT_ID=login-ui-client');
+      if (settings.needsProxy) {
+        expect(content).toContain(`API_BACKEND_URL=${settings.apiBaseUrl}`);
+      }
     }
   );
 });

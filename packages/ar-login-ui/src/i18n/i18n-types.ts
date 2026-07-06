@@ -260,11 +260,90 @@ type RootTranslation = {
 	 */
 	account_passkeyUnsupported: string
 	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s
+	 */
+	account_totp: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​n​a​m​e
+	 */
+	account_totpName: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_totpDefaultName: string
+	/**
+	 * A​d​d​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_addTotp: string
+	/**
+	 * S​e​t​ ​u​p​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_totpSetupTitle: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​Q​R​ ​c​o​d​e
+	 */
+	account_totpQrAlt: string
+	/**
+	 * M​a​n​u​a​l​ ​k​e​y
+	 */
+	account_totpManualKey: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	account_totpActivationCode: string
+	/**
+	 * A​c​t​i​v​a​t​e
+	 */
+	account_totpActivate: string
+	/**
+	 * B​a​c​k​u​p​ ​c​o​d​e​s
+	 */
+	account_totpBackupCodes: string
+	/**
+	 * {​r​e​m​a​i​n​i​n​g​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​b​a​c​k​u​p​ ​c​o​d​e​s​ ​r​e​m​a​i​n​i​n​g
+	 * @param {number} remaining
+	 * @param {number} total
+	 */
+	account_totpBackupCodesRemaining: RequiredParams<'remaining' | 'total'>
+	/**
+	 * R​e​g​e​n​e​r​a​t​e​ ​b​a​c​k​u​p​ ​c​o​d​e​s
+	 */
+	account_totpRegenerateBackupCodes: string
+	/**
+	 * C​u​r​r​e​n​t​ ​c​o​d​e
+	 */
+	account_totpCurrentCode: string
+	/**
+	 * C​u​r​r​e​n​t​ ​c​o​d​e
+	 */
+	account_totpDeleteCode: string
+	/**
+	 * P​e​n​d​i​n​g​ ​s​e​t​u​p
+	 */
+	account_totpPending: string
+	/**
+	 * D​o​n​e
+	 */
+	account_totpDone: string
+	/**
+	 * L​a​s​t​ ​u​s​e​d​ ​{​t​i​m​e​}
+	 * @param {string} time
+	 */
+	account_totpLastUsed: RequiredParams<'time'>
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_reauthWithTotp: string
+	/**
+	 * 6​ ​o​r​ ​8​ ​d​i​g​i​t​ ​c​o​d​e
+	 */
+	account_reauthTotpCodePlaceholder: string
+	/**
 	 * T​h​e​ ​o​p​e​r​a​t​i​o​n​ ​f​a​i​l​e​d
 	 */
 	account_actionFailed: string
 	/**
-	 * A​d​d​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​b​e​f​o​r​e​ ​d​e​l​e​t​i​n​g​ ​t​h​i​s​ ​p​a​s​s​k​e​y​.
+	 * A​d​d​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​b​e​f​o​r​e​ ​d​e​l​e​t​i​n​g​ ​t​h​i​s​ ​m​e​t​h​o​d​.
 	 */
 	account_remainingLoginMethodRequired: string
 	/**
@@ -292,71 +371,71 @@ type RootTranslation = {
 	 */
 	account_operationSessionRevoked: string
 	/**
-	 * Consent confirmations
+	 * C​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n​s
 	 */
 	account_consentTitle: string
 	/**
-	 * Review applications and scopes you have confirmed access for on this account.
+	 * R​e​v​i​e​w​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​n​d​ ​s​c​o​p​e​s​ ​y​o​u​ ​h​a​v​e​ ​c​o​n​f​i​r​m​e​d​ ​a​c​c​e​s​s​ ​f​o​r​ ​o​n​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
 	 */
 	account_consentDescription: string
 	/**
-	 * No active consent confirmations
+	 * N​o​ ​a​c​t​i​v​e​ ​c​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n​s
 	 */
 	account_consentEmpty: string
 	/**
-	 * Scopes
+	 * S​c​o​p​e​s
 	 */
 	account_consentScopes: string
 	/**
-	 * Confirmed at
+	 * C​o​n​f​i​r​m​e​d​ ​a​t
 	 */
 	account_consentGrantedAt: string
 	/**
-	 * Expires
+	 * E​x​p​i​r​e​s
 	 */
 	account_consentExpiresAt: string
 	/**
-	 * No expiration
+	 * N​o​ ​e​x​p​i​r​a​t​i​o​n
 	 */
 	account_consentNoExpiry: string
 	/**
-	 * Policy versions
+	 * P​o​l​i​c​y​ ​v​e​r​s​i​o​n​s
 	 */
 	account_consentPolicyVersions: string
 	/**
-	 * Privacy policy
+	 * P​r​i​v​a​c​y​ ​p​o​l​i​c​y
 	 */
 	account_consentPrivacyPolicy: string
 	/**
-	 * Terms
+	 * T​e​r​m​s
 	 */
 	account_consentTerms: string
 	/**
-	 * Consent
+	 * C​o​n​s​e​n​t
 	 */
 	account_consentVersion: string
 	/**
-	 * Status
+	 * S​t​a​t​u​s
 	 */
 	account_consentStatus: string
 	/**
-	 * Granted
+	 * G​r​a​n​t​e​d
 	 */
 	account_consentStatusGranted: string
 	/**
-	 * Withdrawn
+	 * W​i​t​h​d​r​a​w​n
 	 */
 	account_consentStatusWithdrawn: string
 	/**
-	 * Denied
+	 * D​e​n​i​e​d
 	 */
 	account_consentStatusDenied: string
 	/**
-	 * Version
+	 * V​e​r​s​i​o​n
 	 */
 	account_consentVersionLabel: string
 	/**
-	 * Statement ID
+	 * S​t​a​t​e​m​e​n​t​ ​I​D
 	 */
 	account_consentStatementId: string
 	/**
@@ -375,6 +454,42 @@ type RootTranslation = {
 	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	login_sendCode: string
+	/**
+	 * E​m​a​i​l​ ​o​r​ ​u​s​e​r​n​a​m​e
+	 */
+	login_totpIdentifierLabel: string
+	/**
+	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m​ ​o​r​ ​u​s​e​r​n​a​m​e
+	 */
+	login_totpIdentifierPlaceholder: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	login_totpCodeLabel: string
+	/**
+	 * 6​ ​o​r​ ​8​ ​d​i​g​i​t​ ​c​o​d​e
+	 */
+	login_totpCodePlaceholder: string
+	/**
+	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	login_totpContinue: string
+	/**
+	 * V​e​r​i​f​y​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	login_totpVerify: string
+	/**
+	 * E​m​a​i​l​ ​o​r​ ​u​s​e​r​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	login_totpIdentifierRequired: string
+	/**
+	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	login_totpCodeInvalid: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​t​a​r​t​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​s​i​g​n​-​i​n
+	 */
+	login_totpStartFailed: string
 	/**
 	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​{​l​a​b​e​l​}
 	 * @param {string} label
@@ -593,6 +708,18 @@ type RootTranslation = {
 	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	register_sendCode: string
+	/**
+	 * C​r​e​a​t​e​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	register_createWithTotp: string
+	/**
+	 * S​e​t​ ​u​p​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	register_totpSetupTitle: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​t​a​r​t​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​s​e​t​u​p
+	 */
+	register_totpStartFailed: string
 	/**
 	 * A​l​r​e​a​d​y​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​S​i​g​n​ ​i​n
 	 */
@@ -1360,11 +1487,87 @@ export type TranslationFunctions = {
 	 */
 	account_passkeyUnsupported: () => LocalizedString
 	/**
+	 * Authenticator apps
+	 */
+	account_totp: () => LocalizedString
+	/**
+	 * Authenticator app name
+	 */
+	account_totpName: () => LocalizedString
+	/**
+	 * Authenticator app
+	 */
+	account_totpDefaultName: () => LocalizedString
+	/**
+	 * Add authenticator app
+	 */
+	account_addTotp: () => LocalizedString
+	/**
+	 * Set up authenticator app
+	 */
+	account_totpSetupTitle: () => LocalizedString
+	/**
+	 * Authenticator app QR code
+	 */
+	account_totpQrAlt: () => LocalizedString
+	/**
+	 * Manual key
+	 */
+	account_totpManualKey: () => LocalizedString
+	/**
+	 * Authenticator code
+	 */
+	account_totpActivationCode: () => LocalizedString
+	/**
+	 * Activate
+	 */
+	account_totpActivate: () => LocalizedString
+	/**
+	 * Backup codes
+	 */
+	account_totpBackupCodes: () => LocalizedString
+	/**
+	 * {remaining} of {total} backup codes remaining
+	 */
+	account_totpBackupCodesRemaining: (arg: { remaining: number, total: number }) => LocalizedString
+	/**
+	 * Regenerate backup codes
+	 */
+	account_totpRegenerateBackupCodes: () => LocalizedString
+	/**
+	 * Current code
+	 */
+	account_totpCurrentCode: () => LocalizedString
+	/**
+	 * Current code
+	 */
+	account_totpDeleteCode: () => LocalizedString
+	/**
+	 * Pending setup
+	 */
+	account_totpPending: () => LocalizedString
+	/**
+	 * Done
+	 */
+	account_totpDone: () => LocalizedString
+	/**
+	 * Last used {time}
+	 */
+	account_totpLastUsed: (arg: { time: string }) => LocalizedString
+	/**
+	 * Re-authenticate with authenticator app
+	 */
+	account_reauthWithTotp: () => LocalizedString
+	/**
+	 * 6 or 8 digit code
+	 */
+	account_reauthTotpCodePlaceholder: () => LocalizedString
+	/**
 	 * The operation failed
 	 */
 	account_actionFailed: () => LocalizedString
 	/**
-	 * Add another login method before deleting this passkey.
+	 * Add another login method before deleting this method.
 	 */
 	account_remainingLoginMethodRequired: () => LocalizedString
 	/**
@@ -1475,6 +1678,42 @@ export type TranslationFunctions = {
 	 * Send verification code
 	 */
 	login_sendCode: () => LocalizedString
+	/**
+	 * Email or username
+	 */
+	login_totpIdentifierLabel: () => LocalizedString
+	/**
+	 * you@example.com or username
+	 */
+	login_totpIdentifierPlaceholder: () => LocalizedString
+	/**
+	 * Authenticator code
+	 */
+	login_totpCodeLabel: () => LocalizedString
+	/**
+	 * 6 or 8 digit code
+	 */
+	login_totpCodePlaceholder: () => LocalizedString
+	/**
+	 * Continue with authenticator app
+	 */
+	login_totpContinue: () => LocalizedString
+	/**
+	 * Verify authenticator code
+	 */
+	login_totpVerify: () => LocalizedString
+	/**
+	 * Email or username is required
+	 */
+	login_totpIdentifierRequired: () => LocalizedString
+	/**
+	 * Invalid or expired authenticator code
+	 */
+	login_totpCodeInvalid: () => LocalizedString
+	/**
+	 * Could not start authenticator app sign-in
+	 */
+	login_totpStartFailed: () => LocalizedString
 	/**
 	 * Sign in with {label}
 	 */
@@ -1691,6 +1930,18 @@ export type TranslationFunctions = {
 	 * Sign up with verification code
 	 */
 	register_sendCode: () => LocalizedString
+	/**
+	 * Create account with authenticator app
+	 */
+	register_createWithTotp: () => LocalizedString
+	/**
+	 * Set up authenticator app
+	 */
+	register_totpSetupTitle: () => LocalizedString
+	/**
+	 * Could not start authenticator app setup
+	 */
+	register_totpStartFailed: () => LocalizedString
 	/**
 	 * Already have an account? Sign in
 	 */

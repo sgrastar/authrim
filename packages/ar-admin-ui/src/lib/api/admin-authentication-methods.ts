@@ -26,6 +26,13 @@ const EMAIL_OTP_SIGNUP_ENABLED_KEY = 'authentication-methods.email_otp.signup_en
 const EMAIL_OTP_REAUTH_ENABLED_KEY = 'authentication-methods.email_otp.reauth_enabled';
 const EMAIL_OTP_ACCOUNT_LINK_ENABLED_KEY = 'authentication-methods.email_otp.account_link_enabled';
 const LEGACY_EMAIL_OTP_ENABLED_KEY = 'authentication-methods.email_otp.enabled';
+const TOTP_LOGIN_ENABLED_KEY = 'authentication-methods.totp.login_enabled';
+const TOTP_SIGNUP_ENABLED_KEY = 'authentication-methods.totp.signup_enabled';
+const TOTP_REAUTH_ENABLED_KEY = 'authentication-methods.totp.reauth_enabled';
+const TOTP_ACCOUNT_LINK_ENABLED_KEY = 'authentication-methods.totp.account_link_enabled';
+const TOTP_PRESET_KEY = 'authentication-methods.totp.preset';
+const TOTP_DEFAULT_ACR_KEY = 'authentication-methods.totp.default_acr';
+const LEGACY_TOTP_ENABLED_KEY = 'authentication-methods.totp.enabled';
 const HUMAN_VERIFICATION_PROVIDER_KEY = 'authentication-methods.human_verification.provider';
 const HUMAN_VERIFICATION_LOGIN_ENABLED_KEY =
 	'authentication-methods.human_verification.login_enabled';
@@ -78,6 +85,12 @@ export interface AuthenticationMethodBuiltInSettings {
 	emailOtpSignupEnabled: boolean;
 	emailOtpReauthEnabled: boolean;
 	emailOtpAccountLinkEnabled: boolean;
+	totpLoginEnabled: boolean;
+	totpSignupEnabled: boolean;
+	totpReauthEnabled: boolean;
+	totpAccountLinkEnabled: boolean;
+	totpPreset: 'compatible' | 'strong';
+	totpDefaultAcr: string;
 }
 
 export interface AuthenticationMethodHumanVerificationSettings {
@@ -343,6 +356,7 @@ export const adminAuthenticationMethodsAPI = {
 		const directoryPassword = resolveDirectoryPassword(directoryConnectors);
 		const legacyPasskeyEnabled = parseBoolean(settings.values[LEGACY_PASSKEY_ENABLED_KEY], true);
 		const legacyEmailOtpEnabled = parseBoolean(settings.values[LEGACY_EMAIL_OTP_ENABLED_KEY], true);
+		const legacyTotpEnabled = parseBoolean(settings.values[LEGACY_TOTP_ENABLED_KEY], false);
 		const usageById = parseExternalProviderUsage(settings.values[EXTERNAL_PROVIDER_USAGE_KEY]);
 		return {
 			settings,
@@ -378,7 +392,26 @@ export const adminAuthenticationMethodsAPI = {
 				emailOtpAccountLinkEnabled: parseBoolean(
 					settings.values[EMAIL_OTP_ACCOUNT_LINK_ENABLED_KEY],
 					legacyEmailOtpEnabled
-				)
+				),
+				totpLoginEnabled: parseBoolean(settings.values[TOTP_LOGIN_ENABLED_KEY], legacyTotpEnabled),
+				totpSignupEnabled: parseBoolean(
+					settings.values[TOTP_SIGNUP_ENABLED_KEY],
+					legacyTotpEnabled
+				),
+				totpReauthEnabled: parseBoolean(
+					settings.values[TOTP_REAUTH_ENABLED_KEY],
+					legacyTotpEnabled
+				),
+				totpAccountLinkEnabled: parseBoolean(
+					settings.values[TOTP_ACCOUNT_LINK_ENABLED_KEY],
+					legacyTotpEnabled
+				),
+				totpPreset: settings.values[TOTP_PRESET_KEY] === 'strong' ? 'strong' : 'compatible',
+				totpDefaultAcr:
+					typeof settings.values[TOTP_DEFAULT_ACR_KEY] === 'string' &&
+					settings.values[TOTP_DEFAULT_ACR_KEY].trim()
+						? settings.values[TOTP_DEFAULT_ACR_KEY].trim()
+						: 'urn:authrim:aal:2'
 			},
 			directoryPassword,
 			humanVerification: {
@@ -421,6 +454,12 @@ export const adminAuthenticationMethodsAPI = {
 						[EMAIL_OTP_SIGNUP_ENABLED_KEY]: builtIn.emailOtpSignupEnabled,
 						[EMAIL_OTP_REAUTH_ENABLED_KEY]: builtIn.emailOtpReauthEnabled,
 						[EMAIL_OTP_ACCOUNT_LINK_ENABLED_KEY]: builtIn.emailOtpAccountLinkEnabled,
+						[TOTP_LOGIN_ENABLED_KEY]: builtIn.totpLoginEnabled,
+						[TOTP_SIGNUP_ENABLED_KEY]: builtIn.totpSignupEnabled,
+						[TOTP_REAUTH_ENABLED_KEY]: builtIn.totpReauthEnabled,
+						[TOTP_ACCOUNT_LINK_ENABLED_KEY]: builtIn.totpAccountLinkEnabled,
+						[TOTP_PRESET_KEY]: builtIn.totpPreset,
+						[TOTP_DEFAULT_ACR_KEY]: builtIn.totpDefaultAcr || 'urn:authrim:aal:2',
 						[HUMAN_VERIFICATION_PROVIDER_KEY]:
 							humanVerification.provider || DEFAULT_HUMAN_VERIFICATION_PROVIDER,
 						[HUMAN_VERIFICATION_LOGIN_ENABLED_KEY]: humanVerification.loginEnabled,
