@@ -398,7 +398,10 @@ export const adminAuthenticationMethodsAPI = {
 					settings.values[TOTP_SIGNUP_ENABLED_KEY],
 					legacyTotpEnabled
 				),
-				totpReauthEnabled: parseBoolean(settings.values[TOTP_REAUTH_ENABLED_KEY], legacyTotpEnabled),
+				totpReauthEnabled: parseBoolean(
+					settings.values[TOTP_REAUTH_ENABLED_KEY],
+					legacyTotpEnabled
+				),
 				totpAccountLinkEnabled: parseBoolean(
 					settings.values[TOTP_ACCOUNT_LINK_ENABLED_KEY],
 					legacyTotpEnabled

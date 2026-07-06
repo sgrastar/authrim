@@ -196,10 +196,10 @@ export class TotpCredentialRepository {
   }
 
   async deleteByUserId(userId: string): Promise<number> {
-    await this.adapter.execute('DELETE FROM totp_backup_codes WHERE tenant_id = ? AND user_id = ?', [
-      this.tenantId,
-      userId,
-    ]);
+    await this.adapter.execute(
+      'DELETE FROM totp_backup_codes WHERE tenant_id = ? AND user_id = ?',
+      [this.tenantId, userId]
+    );
     const result = await this.adapter.execute(
       'DELETE FROM totp_credentials WHERE tenant_id = ? AND user_id = ?',
       [this.tenantId, userId]
@@ -294,9 +294,13 @@ export class TotpCredentialRepository {
           : Number(row.last_used_time_step),
       created_at: Number(row.created_at),
       activated_at:
-        row.activated_at === null || row.activated_at === undefined ? null : Number(row.activated_at),
+        row.activated_at === null || row.activated_at === undefined
+          ? null
+          : Number(row.activated_at),
       last_used_at:
-        row.last_used_at === null || row.last_used_at === undefined ? null : Number(row.last_used_at),
+        row.last_used_at === null || row.last_used_at === undefined
+          ? null
+          : Number(row.last_used_at),
     };
   }
 

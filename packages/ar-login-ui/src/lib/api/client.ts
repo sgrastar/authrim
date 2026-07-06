@@ -1125,15 +1125,12 @@ export const emailCodeAPI = {
  */
 export const totpAPI = {
 	async startLogin(data: { identifier: string }) {
-		return apiFetch<{ challenge_id: string; expires_in: number }>(
-			'/api/auth/totp/login/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					identifier: data.identifier
-				})
-			}
-		);
+		return apiFetch<{ challenge_id: string; expires_in: number }>('/api/auth/totp/login/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				identifier: data.identifier
+			})
+		});
 	},
 
 	async verifyLogin(data: {

@@ -311,7 +311,9 @@ describe('DirectoryConnectorRelay', () => {
       retryable: true,
     });
     expect(pending.size).toBe(0);
-    expect(reject).toHaveBeenCalledWith(expect.objectContaining({ message: 'relay_verify_timeout' }));
+    expect(reject).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'relay_verify_timeout' })
+    );
   });
 
   it('rejects oversized verify request bodies even when content-length is absent', async () => {

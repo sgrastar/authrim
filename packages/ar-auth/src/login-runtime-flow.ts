@@ -1120,13 +1120,10 @@ async function fetchRuntimeExternalProviderHandles(
   if (!c.env.EXTERNAL_IDP) return [];
 
   try {
-    const response = await c.env.EXTERNAL_IDP.fetch(
-      'https://external-idp/api/external/providers',
-      {
-        method: 'GET',
-        headers: buildRuntimeExternalIdpHeaders(c, tenantId),
-      }
-    );
+    const response = await c.env.EXTERNAL_IDP.fetch('https://external-idp/api/external/providers', {
+      method: 'GET',
+      headers: buildRuntimeExternalIdpHeaders(c, tenantId),
+    });
     if (!response.ok) return [];
 
     const data = (await response.json()) as {

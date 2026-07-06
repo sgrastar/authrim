@@ -186,7 +186,10 @@ const notificationPluginContextMiddleware = pluginContextMiddleware({
 });
 
 app.use('/api/auth/email-codes/send', notificationPluginContextMiddleware);
-app.use('/api/auth/directory-password/migration/email-code/send', notificationPluginContextMiddleware);
+app.use(
+  '/api/auth/directory-password/migration/email-code/send',
+  notificationPluginContextMiddleware
+);
 app.use('/api/v1/auth/direct/email-code/send', notificationPluginContextMiddleware);
 
 // Enhanced security headers

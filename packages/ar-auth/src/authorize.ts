@@ -2729,12 +2729,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // 3. SSO Setting: Session sharing control (Authrim-specific feature)
   //    → Applied after prompt=login and max_age
-  if (
-    !ssoEnabled &&
-    sessionUserId &&
-    _confirmed !== 'true' &&
-    _consent_confirmed !== 'true'
-  ) {
+  if (!ssoEnabled && sessionUserId && _confirmed !== 'true' && _consent_confirmed !== 'true') {
     // Log if id_token_hint was provided but ignored due to SSO disabled
     if (id_token_hint) {
       log.warn('SSO disabled - ignoring id_token_hint', {

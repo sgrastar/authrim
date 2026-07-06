@@ -118,10 +118,7 @@ function getRequestContextCacheTtlMs(env: Env): number {
   );
 }
 
-function getEnvScopedCache<T>(
-  cache: WeakMap<object, Map<string, T>>,
-  env: Env
-): Map<string, T> {
+function getEnvScopedCache<T>(cache: WeakMap<object, Map<string, T>>, env: Env): Map<string, T> {
   const envKey = env as object;
   let scoped = cache.get(envKey);
   if (!scoped) {

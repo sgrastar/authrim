@@ -18,8 +18,9 @@ describe('TOTP backup codes', () => {
     expect(codes.every((code) => /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code.code))).toBe(
       true
     );
-    expect(codes.every((code) => code.prefix === normalizeTotpBackupCode(code.code).slice(0, 4)))
-      .toBe(true);
+    expect(
+      codes.every((code) => code.prefix === normalizeTotpBackupCode(code.code).slice(0, 4))
+    ).toBe(true);
   });
 
   it('hashes normalized code values without storing the plaintext', async () => {

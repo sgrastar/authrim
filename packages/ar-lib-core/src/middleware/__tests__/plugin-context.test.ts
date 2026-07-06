@@ -384,9 +384,7 @@ describe('createPluginLoader', () => {
 
   it('does not share a never-settling plugin initialization promise across requests', async () => {
     let callCount = 0;
-    let resolveFirst:
-      | ((registry: PluginCapabilityRegistry) => void)
-      | undefined;
+    let resolveFirst: ((registry: PluginCapabilityRegistry) => void) | undefined;
     const loadPlugins = vi.fn((_env: Env, tenantId: string) => {
       callCount += 1;
       if (callCount === 1) {

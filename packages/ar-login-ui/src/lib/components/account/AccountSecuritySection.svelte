@@ -277,7 +277,7 @@
 						{#if totpEnrollment.backupCodes.length > 0}
 							<h4>{$LL.account_totpBackupCodes()}</h4>
 							<ul class="backup-code-list">
-								{#each totpEnrollment.backupCodes as backupCode}
+								{#each totpEnrollment.backupCodes as backupCode (backupCode)}
 									<li><code>{backupCode}</code></li>
 								{/each}
 							</ul>

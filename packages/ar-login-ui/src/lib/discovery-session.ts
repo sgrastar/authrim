@@ -5,13 +5,23 @@ export const LOGIN_TENANT_HOST_COOKIE = 'authrim_login_tenant_host';
 
 const MAX_TENANT_HOST_LENGTH = 255;
 
+function containsAsciiControlCharacter(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code <= 0x1f || code === 0x7f) {
+			return true;
+		}
+	}
+	return false;
+}
+
 export function normalizeTenantHost(rawValue: string | null | undefined): string | undefined {
 	if (!rawValue) {
 		return undefined;
 	}
 
 	const value = rawValue.trim();
-	if (!value || value.length > MAX_TENANT_HOST_LENGTH || /[\u0000-\u001f\u007f]/.test(value)) {
+	if (!value || value.length > MAX_TENANT_HOST_LENGTH || containsAsciiControlCharacter(value)) {
 		return undefined;
 	}
 

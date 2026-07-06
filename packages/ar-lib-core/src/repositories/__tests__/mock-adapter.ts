@@ -490,13 +490,13 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse column names from INSERT INTO table (col1, col2, ...) VALUES (?, ?, ...)
-    const columnsMatch = sql.match(/\(([^)]+)\)\s*VALUES/i);
+    const columnsMatch = sql.match(/\(([^)]+)\)\s*\bVALUES\b/i);
     if (!columnsMatch || !params) {
       return { success: false, rowsAffected: 0, lastRowId: null };
     }
 
     const columns = columnsMatch[1].split(',').map((c) => c.trim());
-    const valuesMatch = sql.match(/VALUES\s*\(([^)]+)\)/i);
+    const valuesMatch = sql.match(/\bVALUES\b\s*\(([^)]+)\)/i);
     const valueTokens = valuesMatch
       ? valuesMatch[1].split(',').map((value) => value.trim())
       : columns.map(() => '?');

@@ -953,7 +953,9 @@ function parseTotpRequirementPolicy(value: unknown): { mode: 'optional' | 'requi
     const parsed =
       typeof value === 'string' ? (JSON.parse(value) as Record<string, unknown>) : value;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return { mode: (parsed as Record<string, unknown>).mode === 'required' ? 'required' : 'optional' };
+      return {
+        mode: (parsed as Record<string, unknown>).mode === 'required' ? 'required' : 'optional',
+      };
     }
   } catch {
     // Invalid policy JSON is treated as optional.

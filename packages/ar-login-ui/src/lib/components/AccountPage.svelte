@@ -125,11 +125,7 @@
 				return null;
 			}
 
-			const target = new URL(window.location.href);
-			const canonicalUrl = new URL(canonicalOrigin);
-			target.protocol = canonicalUrl.protocol;
-			target.host = canonicalUrl.host;
-			return target.toString();
+			return `${canonicalOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
 		} catch {
 			return null;
 		}

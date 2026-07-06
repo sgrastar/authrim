@@ -88,9 +88,7 @@ describe('TotpCredentialRepository', () => {
       last_used_time_step: 123,
     });
     expect(
-      adapter
-        .getQueryLog()
-        .some((entry) => entry.sql.includes('last_used_time_step < ?'))
+      adapter.getQueryLog().some((entry) => entry.sql.includes('last_used_time_step < ?'))
     ).toBe(true);
   });
 

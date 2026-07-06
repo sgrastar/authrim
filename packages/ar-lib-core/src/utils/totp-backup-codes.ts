@@ -18,7 +18,10 @@ function randomBackupCode(): string {
 }
 
 export function normalizeTotpBackupCode(code: string): string {
-  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return code
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 export async function hashTotpBackupCode(input: {

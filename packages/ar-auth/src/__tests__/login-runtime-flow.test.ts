@@ -867,8 +867,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const data = await readJson(response);
     const runtimeData = data.contract as FlowRuntimeContract;
     const authStep = runtimeData.ui.steps.find((step) => step.id === 'auth:step');
-    const outputHandles = (authStep?.config as Record<string, unknown> | undefined)
-      ?.output_handles;
+    const outputHandles = (authStep?.config as Record<string, unknown> | undefined)?.output_handles;
 
     expect(response.status).toBe(200);
     expect(outputHandles).toContain('samplesauth0');

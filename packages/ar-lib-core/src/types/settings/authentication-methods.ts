@@ -279,7 +279,8 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.totp.account_link_enabled': false,
   'authentication-methods.totp.preset': 'compatible',
   'authentication-methods.totp.default_acr': 'urn:authrim:aal:2',
-  'authentication-methods.totp.requirement_policy': '{"mode":"optional","user_ids":[],"group_ids":[]}',
+  'authentication-methods.totp.requirement_policy':
+    '{"mode":"optional","user_ids":[],"group_ids":[]}',
   'authentication-methods.human_verification.provider': 'human-verification-cloudflare-turnstile',
   'authentication-methods.human_verification.login_enabled': false,
   'authentication-methods.human_verification.signup_enabled': false,
