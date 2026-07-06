@@ -26,10 +26,8 @@ WHERE EXISTS (
     )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_assignments_tenant_default_unique
-  ON flow_assignments(tenant_id, flow_kind)
-  WHERE target_type = 'tenant' AND target_id IS NULL;
+DROP INDEX IF EXISTS idx_flow_assignments_tenant_default_unique;
+DROP INDEX IF EXISTS idx_flow_assignments_target_unique;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_assignments_target_unique
-  ON flow_assignments(tenant_id, target_type, target_id, flow_kind)
-  WHERE target_id IS NOT NULL;
+  ON flow_assignments(tenant_id, target_type, COALESCE(target_id, ''), flow_kind);

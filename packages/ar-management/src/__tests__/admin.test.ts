@@ -1445,22 +1445,12 @@ describe('Admin API Handlers', () => {
         },
         allResults: [],
       });
-      let allCallCount = 0;
       (mockDB as any)._mockStatement.all.mockImplementation(() => {
-        allCallCount++;
-        if (allCallCount === 1) {
-          return Promise.resolve({ results: [] });
-        }
-        if (allCallCount === 2) {
-          return Promise.resolve({ results: [] });
-        }
-        if (allCallCount === 3) {
+        const preparedSql = String((mockDB.prepare as any).mock.calls.at(-1)?.[0] ?? '');
+        if (preparedSql.includes('FROM custom_claim_schemas')) {
           return Promise.resolve({
             results: [createCustomClaimSchemaRow()],
           });
-        }
-        if (allCallCount === 4) {
-          return Promise.resolve({ results: [] });
         }
         return Promise.resolve({ results: [] });
       });
