@@ -125,6 +125,8 @@ export * from './utils/feature-flags';
 export * from './utils/device-fingerprint';
 export * from './utils/ssrf-protection';
 export * from './utils/post-login-routing';
+export * from './utils/totp';
+export * from './utils/totp-backup-codes';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';

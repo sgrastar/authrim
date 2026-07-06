@@ -36,6 +36,7 @@ function createHarness(permissions: string[], roles: string[] = []) {
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
   app.put('/api/admin/settings', (c) => c.json({ ok: true }));
   app.post('/api/admin/undocumented', (c) => c.json({ ok: true }));
@@ -85,6 +86,7 @@ describe('declared admin route access', () => {
   it('enforces declared read/write/delete permissions before the handler runs', async () => {
     const reader = createHarness([ADMIN_PERMISSIONS.USERS_READ, ADMIN_PERMISSIONS.SETTINGS_READ]);
     const userWriter = createHarness([ADMIN_PERMISSIONS.USERS_DELETE]);
+    const userUpdater = createHarness([ADMIN_PERMISSIONS.USERS_WRITE]);
     const settingsWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
 
     const readUsers = await reader.request('/api/admin/users');
@@ -93,6 +95,12 @@ describe('declared admin route access', () => {
     });
     const allowedDeleteUser = await userWriter.request('/api/admin/users/user-1', {
       method: 'DELETE',
+    });
+    const deniedTotpReset = await reader.request('/api/admin/users/user-1/totp/reset', {
+      method: 'POST',
+    });
+    const allowedTotpReset = await userUpdater.request('/api/admin/users/user-1/totp/reset', {
+      method: 'POST',
     });
     const deniedUpdateSettings = await reader.request('/api/admin/settings', {
       method: 'PUT',
@@ -104,6 +112,8 @@ describe('declared admin route access', () => {
     expect(readUsers.status).toBe(200);
     expect(deniedDeleteUser.status).toBe(403);
     expect(allowedDeleteUser.status).toBe(200);
+    expect(deniedTotpReset.status).toBe(403);
+    expect(allowedTotpReset.status).toBe(200);
     expect(deniedUpdateSettings.status).toBe(403);
     expect(allowedUpdateSettings.status).toBe(200);
   });

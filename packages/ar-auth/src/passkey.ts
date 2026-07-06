@@ -40,6 +40,7 @@ import {
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
@@ -272,6 +273,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
           : undefined,
       });
     }
+    const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+      ...(custom_fields ?? {}),
+      ...customFieldValidation.values,
+    });
 
     // Check if user exists in the canonical runtime user store.
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -299,6 +304,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
           emailVerified: false,
           userType: 'end_user',
           sourceRef: 'passkey',
+          piiFields: canonicalProfileFields.piiFields,
+          sensitiveValues: canonicalProfileFields.sensitiveValues,
           customAttributesJson: JSON.stringify({
             preferred_username: preferredUsername,
           }),

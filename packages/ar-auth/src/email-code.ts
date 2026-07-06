@@ -28,7 +28,7 @@ import {
   createPIIContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
-  getPluginContext,
+  getRequiredPluginContext,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
   // Event System
@@ -55,6 +55,7 @@ import {
   hashEmail,
 } from './utils/email-code-utils';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
@@ -214,6 +215,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           });
         }
         customFieldValues = customFieldValidation.values;
+        const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+          ...(custom_fields ?? {}),
+          ...customFieldValues,
+        });
 
         const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
         const defaultName = name || null;
@@ -228,6 +233,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             emailVerified: false,
             userType: 'end_user',
             sourceRef: 'email_code',
+            piiFields: canonicalProfileFields.piiFields,
+            sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: JSON.stringify({
               preferred_username: preferredUsername,
             }),
@@ -296,7 +303,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       });
 
       // Send email via Notifier Plugin
-      const pluginCtx = getPluginContext(c);
+      const pluginCtx = getRequiredPluginContext(c, 'notification');
       const emailNotifier = pluginCtx.registry.getNotifier('email');
 
       if (!emailNotifier) {

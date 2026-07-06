@@ -104,6 +104,33 @@ describe('managed Direct Auth browser session finish', () => {
     challengeStore.storeChallengeRpc.mockResolvedValue(undefined);
   });
 
+  it('reports the missing required fields without consuming an artifact', async () => {
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        client_id: 'login-ui',
+        channel: 'browser',
+      }) as never
+    );
+    const body = (await response.json()) as {
+      error: string;
+      error_description: string;
+      error_details?: { code?: string; missing_fields?: string[] };
+    };
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: 'invalid_request',
+      error_description: 'Missing required fields: direct_auth_artifact, code_verifier',
+      error_details: {
+        code: 'DIRECT_SESSION_REQUIRED_FIELDS_MISSING',
+        missing_fields: ['direct_auth_artifact', 'code_verifier'],
+      },
+    });
+    expect(challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
   it('redeems an artifact into a cookie session without returning token material', async () => {
     const codeVerifier = 'verifier-for-managed-browser-session';
     const codeChallenge = await s256Challenge(codeVerifier);
@@ -250,6 +277,100 @@ describe('managed Direct Auth browser session finish', () => {
     expect(redirect.searchParams.get('acr_values')).toBe('urn:authrim:acr:mfa');
     expect(redirect.searchParams.get('_confirmation_challenge')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
+  });
+
+  it('can resume an OAuth login challenge from artifact metadata when the request omits it', async () => {
+    const codeVerifier = 'verifier-for-oauth-login-continuation-metadata';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc
+      .mockResolvedValueOnce({
+        challenge: codeChallenge,
+        userId: 'user_123',
+        metadata: {
+          client_id: 'login-ui',
+          channel: 'browser',
+          method: 'passkey',
+          authorization_challenge_id: 'oauth_challenge_from_artifact',
+        },
+      })
+      .mockResolvedValueOnce({
+        userId: 'anonymous',
+        metadata: {
+          response_type: 'code',
+          client_id: 'rp_web',
+          redirect_uri: 'https://rp.example.com/callback',
+          scope: 'openid profile',
+          state: 'state-123',
+          code_challenge: 'pkce-challenge',
+          code_challenge_method: 'S256',
+          issuer: 'https://issuer.example.com',
+        },
+      });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_123',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      authorization: {
+        challenge_id: 'oauth_challenge_from_artifact',
+        type: 'login',
+      },
+    });
+    expect(body.redirect_url).toEqual(
+      expect.stringContaining('https://issuer.example.com/authorize?')
+    );
+    expect(challengeStore.consumeChallengeRpc).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: 'oauth_challenge_from_artifact',
+        type: 'login',
+      })
+    );
+  });
+
+  it('can defer OAuth continuation when a runtime flow still has later steps', async () => {
+    const codeVerifier = 'verifier-for-deferred-oauth-continuation';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey',
+        authorization_challenge_id: 'oauth_challenge_from_artifact',
+      },
+    });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_123',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+        defer_authorization_continuation: true,
+      }) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).not.toHaveProperty('authorization');
+    expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(challengeStore.consumeChallengeRpc).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'oauth_challenge_from_artifact',
+      })
     );
   });
 

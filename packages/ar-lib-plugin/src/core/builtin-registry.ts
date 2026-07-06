@@ -102,8 +102,12 @@ export function resolveBuiltinPluginBootstrapConfig(
         ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
       };
     case 'notifier-resend':
+      if (!env.RESEND_API_KEY) {
+        return {};
+      }
+
       return {
-        ...(env.RESEND_API_KEY ? { apiKey: env.RESEND_API_KEY } : {}),
+        apiKey: env.RESEND_API_KEY,
         ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
       };
     default:

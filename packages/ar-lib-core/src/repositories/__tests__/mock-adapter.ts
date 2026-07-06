@@ -496,10 +496,27 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     const columns = columnsMatch[1].split(',').map((c) => c.trim());
+    const valuesMatch = sql.match(/VALUES\s*\(([^)]+)\)/i);
+    const valueTokens = valuesMatch
+      ? valuesMatch[1].split(',').map((value) => value.trim())
+      : columns.map(() => '?');
     const row: Record<string, unknown> = {};
+    let paramIndex = 0;
 
     columns.forEach((col, idx) => {
-      row[col] = params[idx];
+      const token = valueTokens[idx] ?? '?';
+      if (token === '?') {
+        row[col] = params[paramIndex];
+        paramIndex++;
+      } else if (/^NULL$/i.test(token)) {
+        row[col] = null;
+      } else if (/^[0-9]+$/.test(token)) {
+        row[col] = Number.parseInt(token, 10);
+      } else if (token.startsWith("'") || token.startsWith('"')) {
+        row[col] = token.slice(1, -1);
+      } else {
+        row[col] = token;
+      }
     });
 
     const pk = row[table.primaryKey] as string;
@@ -515,8 +532,8 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse SET clause and WHERE clause
-    const setMatch = sql.match(/SET\s+(.+?)\s+WHERE/i);
-    const whereMatch = sql.match(/WHERE\s+(.+?)$/i);
+    const setMatch = sql.match(/SET\s+([\s\S]+?)\s+WHERE/i);
+    const whereMatch = sql.match(/WHERE\s+([\s\S]+?)$/i);
 
     if (!setMatch || !whereMatch) {
       return { success: true, rowsAffected: 0, lastRowId: null };
@@ -525,23 +542,31 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     const setClause = setMatch[1];
     const whereClause = whereMatch[1];
 
-    // Parse SET fields
-    const setFields = setClause.split(',').map((s) => s.trim().split('=')[0].trim());
-    const setParamCount = setFields.length;
-
-    // Split params
-    const setParams = params.slice(0, setParamCount);
-
     // Build update data
     const updateData: Record<string, unknown> = {};
-    setFields.forEach((field, idx) => {
-      updateData[field] = setParams[idx];
-    });
+    let paramIndex = 0;
+    for (const assignment of setClause.split(',')) {
+      const match = assignment.trim().match(/(\w+)\s*=\s*(.+)$/);
+      if (!match) continue;
+      const field = match[1];
+      const token = match[2].trim();
+      if (token === '?') {
+        updateData[field] = params[paramIndex];
+        paramIndex++;
+      } else if (/^NULL$/i.test(token)) {
+        updateData[field] = null;
+      } else if (/^[0-9]+$/.test(token)) {
+        updateData[field] = Number.parseInt(token, 10);
+      } else if (token.startsWith("'") || token.startsWith('"')) {
+        updateData[field] = token.slice(1, -1);
+      } else {
+        updateData[field] = token;
+      }
+    }
 
     // Parse WHERE conditions (both placeholders and literals)
     const conditions: Array<{ field: string; value: unknown }> = [];
     const whereParts = whereClause.split(/\s+AND\s+/i);
-    let paramIndex = setParamCount;
 
     whereParts.forEach((part) => {
       part = part.trim();

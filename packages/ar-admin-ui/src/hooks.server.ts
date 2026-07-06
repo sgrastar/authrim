@@ -57,7 +57,6 @@ interface BffAdminAccessToken {
 
 const BFF_TOKEN_CACHE_SKEW_SECONDS = 30;
 const bffAdminAccessTokenCache = new Map<string, BffAdminAccessToken>();
-const bffAdminAccessTokenInflight = new Map<string, Promise<BffAdminAccessToken>>();
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -414,25 +413,13 @@ async function getBffAdminAccessToken(
 		return cached.accessToken;
 	}
 
-	const inflight = bffAdminAccessTokenInflight.get(cacheKey);
-	if (inflight) {
-		return (await inflight).accessToken;
-	}
-
-	const tokenPromise = requestBffAdminAccessToken(apiBackendUrl, config, options);
-	bffAdminAccessTokenInflight.set(cacheKey, tokenPromise);
-	try {
-		const token = await tokenPromise;
-		bffAdminAccessTokenCache.set(cacheKey, token);
-		return token.accessToken;
-	} finally {
-		bffAdminAccessTokenInflight.delete(cacheKey);
-	}
+	const token = await requestBffAdminAccessToken(apiBackendUrl, config, options);
+	bffAdminAccessTokenCache.set(cacheKey, token);
+	return token.accessToken;
 }
 
 export function clearBffAdminAccessTokenCacheForTests(): void {
 	bffAdminAccessTokenCache.clear();
-	bffAdminAccessTokenInflight.clear();
 }
 
 /**

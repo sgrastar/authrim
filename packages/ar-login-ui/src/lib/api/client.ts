@@ -106,6 +106,7 @@ interface ScimToken {
 export interface APIError {
 	error: string;
 	error_description: string;
+	error_details?: Record<string, unknown>;
 	webauthn_signal?: {
 		unknown_credential?: boolean;
 	};
@@ -403,7 +404,8 @@ function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null
 async function finalizeManagedDirectAuthSession(
 	directAuthArtifact: string,
 	codeVerifier: string,
-	authorizationChallengeId?: string
+	authorizationChallengeId?: string,
+	deferAuthorizationContinuation = false
 ): Promise<{ data?: ManagedDirectSessionResponse; error?: APIError }> {
 	return apiFetch<ManagedDirectSessionResponse>('/api/v1/auth/direct/session', {
 		method: 'POST',
@@ -412,7 +414,8 @@ async function finalizeManagedDirectAuthSession(
 			client_id: getAuthConfig().clientId,
 			code_verifier: codeVerifier,
 			channel: 'browser',
-			authorization_challenge_id: authorizationChallengeId
+			authorization_challenge_id: authorizationChallengeId,
+			defer_authorization_continuation: deferAuthorizationContinuation
 		})
 	});
 }
@@ -760,6 +763,7 @@ export const passkeyAPI = {
 		name?: string;
 		userId?: string;
 		custom_fields?: Record<string, unknown>;
+		authorizationChallengeId?: string;
 		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
@@ -776,6 +780,7 @@ export const passkeyAPI = {
 				email: data.email || undefined,
 				display_name: data.name,
 				custom_fields: data.custom_fields,
+				authorization_challenge_id: data.authorizationChallengeId,
 				human_verification_response: data.human_verification_response
 			})
 		});
@@ -806,6 +811,7 @@ export const passkeyAPI = {
 		credential: unknown;
 		deviceName?: string;
 		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
 	}) {
 		const pkce = directPasskeySignupPkce.get(data.userId);
 		if (!pkce) {
@@ -846,7 +852,8 @@ export const passkeyAPI = {
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,
 			pkce.codeVerifier,
-			data.authorizationChallengeId
+			data.authorizationChallengeId,
+			data.deferAuthorizationContinuation === true
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -920,6 +927,7 @@ export const passkeyAPI = {
 		challengeId: string;
 		credential: unknown;
 		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
 	}) {
 		const pkce = directPasskeyLoginPkce.get(data.challengeId);
 		if (!pkce) {
@@ -959,7 +967,8 @@ export const passkeyAPI = {
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,
 			pkce.codeVerifier,
-			data.authorizationChallengeId
+			data.authorizationChallengeId,
+			data.deferAuthorizationContinuation === true
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -1043,7 +1052,12 @@ export const emailCodeAPI = {
 	/**
 	 * Verify email code
 	 */
-	async verify(data: { code: string; email: string; authorizationChallengeId?: string }) {
+	async verify(data: {
+		code: string;
+		email: string;
+		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
+	}) {
 		const state = consumeDirectEmailCodeState(data.email);
 		if (!state) {
 			return {
@@ -1081,7 +1095,8 @@ export const emailCodeAPI = {
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,
 			state.codeVerifier,
-			data.authorizationChallengeId
+			data.authorizationChallengeId,
+			data.deferAuthorizationContinuation === true
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -1106,6 +1121,143 @@ export const emailCodeAPI = {
 };
 
 /**
+ * Auth API - TOTP
+ */
+export const totpAPI = {
+	async startLogin(data: { identifier: string }) {
+		return apiFetch<{ challenge_id: string; expires_in: number }>(
+			'/api/auth/totp/login/start',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					identifier: data.identifier
+				})
+			}
+		);
+	},
+
+	async verifyLogin(data: {
+		challengeId: string;
+		code: string;
+		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
+	}) {
+		return apiFetch<{
+			success: boolean;
+			sessionId: string;
+			redirect_url?: string;
+			authorization?: {
+				challenge_id?: string;
+				type?: string;
+			};
+			session?: {
+				userId: string;
+				createdAt: number;
+				expiresAt: number;
+				authTime: number;
+				acr?: string;
+				amr?: string[];
+			};
+			user: {
+				id: string;
+				email: string;
+				name?: string | null;
+			};
+		}>('/api/auth/totp/login/verify', {
+			method: 'POST',
+			body: JSON.stringify({
+				challenge_id: data.challengeId,
+				code: data.code,
+				authorization_challenge_id: data.authorizationChallengeId,
+				defer_authorization_continuation: data.deferAuthorizationContinuation === true
+			})
+		});
+	},
+
+	async createSignupOptions(data: {
+		email: string;
+		name?: string;
+		label?: string;
+		custom_fields?: Record<string, unknown>;
+		authorizationChallengeId?: string;
+		human_verification_response?: string;
+	}) {
+		return apiFetch<{
+			challenge_id: string;
+			expires_in: number;
+			credential: {
+				id: string;
+				label: string | null;
+				algorithm: 'SHA1' | 'SHA256';
+				digits: number;
+				period: number;
+				window: number;
+				status: 'pending' | 'active' | 'disabled';
+				created_at: number;
+				activated_at: number | null;
+				last_used_at: number | null;
+			};
+			secret: string;
+			otpauth_uri: string;
+			profile: {
+				algorithm: 'SHA1' | 'SHA256';
+				digits: number;
+				period: number;
+				window: number;
+			};
+		}>('/api/auth/totp/signup/options', {
+			method: 'POST',
+			body: JSON.stringify({
+				email: data.email,
+				name: data.name,
+				label: data.label,
+				custom_fields: data.custom_fields,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
+	},
+
+	async activateSignup(data: {
+		challengeId: string;
+		code: string;
+		deferAuthorizationContinuation?: boolean;
+	}) {
+		return apiFetch<{
+			ok: boolean;
+			success: boolean;
+			backup_codes: string[];
+			sessionId: string;
+			redirect_url?: string;
+			authorization?: {
+				challenge_id?: string;
+				type?: string;
+			};
+			session: {
+				userId: string;
+				createdAt: number;
+				expiresAt: number;
+				authTime: number;
+				acr?: string;
+				amr?: string[];
+			};
+			user: {
+				id: string;
+				email: string;
+				name?: string | null;
+			};
+		}>('/api/auth/totp/signup/activate', {
+			method: 'POST',
+			body: JSON.stringify({
+				challenge_id: data.challengeId,
+				code: data.code,
+				defer_authorization_continuation: data.deferAuthorizationContinuation === true
+			})
+		});
+	}
+};
+
+/**
  * Auth API - Directory Password
  */
 export const directoryPasswordAPI = {
@@ -1114,6 +1266,7 @@ export const directoryPasswordAPI = {
 		password: string;
 		inviteToken?: string;
 		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
 		human_verification_response?: string;
 	}) {
 		const session = await apiFetch<
@@ -1127,6 +1280,7 @@ export const directoryPasswordAPI = {
 				password: data.password,
 				invite_token: data.inviteToken,
 				authorization_challenge_id: data.authorizationChallengeId,
+				defer_authorization_continuation: data.deferAuthorizationContinuation === true,
 				human_verification_response: data.human_verification_response
 			})
 		});

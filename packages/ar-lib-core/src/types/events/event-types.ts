@@ -33,6 +33,10 @@ export const AUTH_EVENTS = {
   EMAIL_CODE_SUCCEEDED: 'auth.email_code.succeeded',
   EMAIL_CODE_FAILED: 'auth.email_code.failed',
 
+  // TOTP authenticator app
+  TOTP_SUCCEEDED: 'auth.totp.succeeded',
+  TOTP_FAILED: 'auth.totp.failed',
+
   // Magic Link
   MAGIC_LINK_SUCCEEDED: 'auth.magic_link.succeeded',
   MAGIC_LINK_FAILED: 'auth.magic_link.failed',
@@ -339,6 +343,7 @@ export interface AuthEventData extends BaseEventData {
     | 'password'
     | 'directory_password'
     | 'email_code'
+    | 'totp'
     | 'magic_link'
     | 'external_idp'
     | 'did'

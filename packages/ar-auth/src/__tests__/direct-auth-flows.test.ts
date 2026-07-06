@@ -94,6 +94,7 @@ vi.mock('../utils/email-code-utils', () => ({
 }));
 
 vi.mock('../registration-field-utils', () => ({
+  buildCanonicalProfileRuntimeUserFields: () => ({ piiFields: {}, sensitiveValues: {} }),
   validateRegistrationFieldSubmissionFromEnv: mocks.validateRegistrationFieldSubmissionFromEnv,
   persistRegistrationFieldValuesFromEnv: mocks.persistRegistrationFieldValuesFromEnv,
 }));
@@ -191,7 +192,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     generateUserIdFromSettings: mocks.generateUserIdFromSettings,
     getChallengeStoreByChallengeId: vi.fn(async () => mocks.challengeStore),
     getChallengeStoreByUserId: vi.fn(async () => mocks.challengeStore),
-    getPluginContext: vi.fn(() => ({
+    getRequiredPluginContext: vi.fn(() => ({
       registry: {
         getNotifier: mocks.getNotifier,
       },
@@ -280,7 +281,9 @@ function tenantProxyHeaders() {
   return {
     origin: 'https://first.test.authrim.com',
     host: 'test.authrim.com',
+    'x-authrim-browser-origin': 'https://login.test.authrim.com',
     'x-authrim-forwarded-host': 'first.test.authrim.com',
+    'x-authrim-ui-proxy': 'login-ui',
   };
 }
 
@@ -699,7 +702,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.verifyAuthenticationResponse).not.toHaveBeenCalled();
   });
 
-  it('allows passkey login from a tenant Login UI proxy origin not present in registry', async () => {
+  it('uses the browser origin for passkey login through the Login UI proxy', async () => {
     mocks.getWebOriginRegistry.mockResolvedValue({
       origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
     });
@@ -715,25 +718,33 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       },
     ]);
     const { directPasskeyLoginStartHandler } = await import('../direct-auth');
-
-    const response = await directPasskeyLoginStartHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          code_challenge: 'pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-          email: 'user@example.com',
-        },
-        tenantProxyHeaders(),
-        'https://test.authrim.com/api/v1/auth/direct/passkey/login/start'
-      ) as never
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+        email: 'user@example.com',
+      },
+      tenantProxyHeaders(),
+      'https://test.authrim.com/api/v1/auth/direct/passkey/login/start'
     );
+    context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+
+    const response = await directPasskeyLoginStartHandler(context as never);
 
     expect(response.status).toBe(200);
     expect(mocks.generateAuthenticationOptions).toHaveBeenCalledWith(
       expect.objectContaining({
-        rpID: 'first.test.authrim.com',
+        rpID: 'login.test.authrim.com',
+      })
+    );
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          origin: 'https://login.test.authrim.com',
+          rpID: 'login.test.authrim.com',
+        }),
       })
     );
   });
@@ -861,32 +872,40 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
-  it('allows passkey signup from a tenant Login UI proxy origin not present in registry', async () => {
+  it('uses the browser origin for passkey signup through the Login UI proxy', async () => {
     mocks.getWebOriginRegistry.mockResolvedValue({
       origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
     });
     const { directPasskeySignupStartHandler } = await import('../direct-auth');
-
-    const response = await directPasskeySignupStartHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          email: 'new@example.com',
-          display_name: 'New User',
-          code_challenge: 'signup-pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-          authenticator_type: 'platform',
-        },
-        tenantProxyHeaders(),
-        'https://test.authrim.com/api/v1/auth/direct/passkey/signup/start'
-      ) as never
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        email: 'new@example.com',
+        display_name: 'New User',
+        code_challenge: 'signup-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+        authenticator_type: 'platform',
+      },
+      tenantProxyHeaders(),
+      'https://test.authrim.com/api/v1/auth/direct/passkey/signup/start'
     );
+    context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+
+    const response = await directPasskeySignupStartHandler(context as never);
 
     expect(response.status).toBe(200);
     expect(mocks.generateRegistrationOptions).toHaveBeenCalledWith(
       expect.objectContaining({
-        rpID: 'first.test.authrim.com',
+        rpID: 'login.test.authrim.com',
+      })
+    );
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          origin: 'https://login.test.authrim.com',
+          rpID: 'login.test.authrim.com',
+        }),
       })
     );
   });
@@ -1025,6 +1044,39 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           display_name: 'Work laptop',
           origin: 'https://app.example.com',
           rpID: 'app.example.com',
+        }),
+      })
+    );
+  });
+
+  it('uses the browser origin for authenticated passkey registration through the Login UI proxy', async () => {
+    const { directPasskeyRegisterStartHandler } = await import('../direct-auth');
+    const context = createContext(
+      {
+        display_name: 'Work laptop',
+        authenticator_type: 'platform',
+      },
+      {
+        ...tenantProxyHeaders(),
+        authorization: 'Bearer 0_session_existing',
+      },
+      'https://test.authrim.com/api/v1/auth/direct/passkey/register/start'
+    );
+    context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+
+    const response = await directPasskeyRegisterStartHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.generateRegistrationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpID: 'login.test.authrim.com',
+      })
+    );
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          origin: 'https://login.test.authrim.com',
+          rpID: 'login.test.authrim.com',
         }),
       })
     );

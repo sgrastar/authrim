@@ -33,6 +33,7 @@ import {
   ClientRepository,
   SessionRepository,
   PasskeyRepository,
+  TotpCredentialRepository,
   RoleRepository,
   SessionClientRepository,
 } from '../repositories/core';
@@ -118,6 +119,7 @@ export function createAuthContextFromHono(
       client: new ClientRepository(coreAdapter, resolvedTenantId),
       session: new SessionRepository(coreAdapter, resolvedTenantId),
       passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
+      totp: new TotpCredentialRepository(coreAdapter, resolvedTenantId),
       role: new RoleRepository(coreAdapter, resolvedTenantId),
       sessionClient: new SessionClientRepository(coreAdapter, resolvedTenantId),
     },
@@ -167,6 +169,7 @@ export function createPIIContextFromHono(
       client: new ClientRepository(coreAdapter, resolvedTenantId),
       session: new SessionRepository(coreAdapter, resolvedTenantId),
       passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
+      totp: new TotpCredentialRepository(coreAdapter, resolvedTenantId),
       role: new RoleRepository(coreAdapter, resolvedTenantId),
       sessionClient: new SessionClientRepository(coreAdapter, resolvedTenantId),
     },

@@ -50,8 +50,86 @@ interface LocalFastPathRecord {
   resetAt: number;
 }
 
+interface DiagnosticTimingSpan {
+  name: string;
+  durationMs: number;
+}
+
 const fastPathRecords = new Map<string, LocalFastPathRecord>();
 const FAST_PATH_MAX_RECORDS = 10000;
+
+function isRateLimitTimingEnabled(env: Env, path: string): boolean {
+  if (path !== '/api/v1/login/interactions/start') {
+    return false;
+  }
+  const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function roundDiagnosticDurationMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+async function timeDiagnosticSpan<T>(
+  spans: DiagnosticTimingSpan[] | null,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!spans) {
+    return operation();
+  }
+
+  const startedAtMs = Date.now();
+  try {
+    return await operation();
+  } finally {
+    spans.push({
+      name,
+      durationMs: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+    });
+  }
+}
+
+function appendServerTiming(c: Context<{ Bindings: Env }>, spans: DiagnosticTimingSpan[]): void {
+  if (spans.length === 0) {
+    return;
+  }
+
+  const value = spans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ');
+  const existing = c.res.headers.get('Server-Timing');
+  c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+function finishRateLimitTiming(
+  c: Context<{ Bindings: Env }>,
+  spans: DiagnosticTimingSpan[] | null,
+  startedAtMs: number,
+  metadata: {
+    mode: 'skipped_endpoint' | 'skipped_ip' | 'fast_path' | 'sync' | 'denied' | 'error';
+    tenantId?: string;
+    cloudProvider?: CloudProvider;
+    allowed?: boolean;
+  }
+): void {
+  if (!spans) {
+    return;
+  }
+
+  spans.push({
+    name: 'rl_total',
+    durationMs: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+  });
+  appendServerTiming(c, spans);
+  log.info('Rate limit timing', {
+    path: c.req.path,
+    mode: metadata.mode,
+    tenantId: metadata.tenantId,
+    cloud_provider: metadata.cloudProvider,
+    allowed: metadata.allowed,
+    duration_ms: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+    spans_ms: Object.fromEntries(spans.map((span) => [span.name, span.durationMs])),
+  });
+}
 
 // ============================================================
 // Cloud Provider IP Extraction
@@ -539,23 +617,36 @@ async function checkRateLimitKV(
  */
 export function rateLimitMiddleware(config: RateLimitConfig) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const path = new URL(c.req.url).pathname;
+    const timingEnabled = isRateLimitTimingEnabled(c.env, path);
+    const timingSpans: DiagnosticTimingSpan[] | null = timingEnabled ? [] : null;
+    const timingStartedAtMs = Date.now();
+
     // If endpoints filter is specified, only apply to those endpoints
     if (config.endpoints && config.endpoints.length > 0) {
-      const path = new URL(c.req.url).pathname;
       const shouldApply = config.endpoints.some((endpoint) => path.startsWith(endpoint));
 
       if (!shouldApply) {
-        return await next();
+        await next();
+        finishRateLimitTiming(c, timingSpans, timingStartedAtMs, { mode: 'skipped_endpoint' });
+        return;
       }
     }
 
     // Get cloud provider setting for IP extraction
-    const cloudProvider = await getCloudProvider(c.env);
+    const cloudProvider = await timeDiagnosticSpan(timingSpans, 'rl_cloud_provider', () =>
+      getCloudProvider(c.env)
+    );
     const clientIP = getClientIP(c, cloudProvider);
 
     // Skip rate limiting for whitelisted IPs
     if (config.skipIPs && config.skipIPs.includes(clientIP)) {
-      return await next();
+      await next();
+      finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
+        mode: 'skipped_ip',
+        cloudProvider,
+      });
+      return;
     }
 
     try {
@@ -570,15 +661,21 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
           c.header('X-RateLimit-Reset', fastPath.resetAt.toString());
 
           scheduleNonBlockingRateLimit(c, clientIP, config, tenantId);
-          return await next();
+          await next();
+          finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
+            mode: 'fast_path',
+            tenantId,
+            cloudProvider,
+            allowed: true,
+          });
+          return;
         }
       }
 
-      const { allowed, remaining, resetAt } = await checkRateLimit(
-        c.env,
-        clientIP,
-        config,
-        tenantId
+      const { allowed, remaining, resetAt } = await timeDiagnosticSpan(
+        timingSpans,
+        'rl_check',
+        () => checkRateLimit(c.env, clientIP, config, tenantId)
       );
 
       // Add rate limit headers to response
@@ -590,6 +687,12 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
         const retryAfter = resetAt - Math.floor(Date.now() / 1000);
 
         c.header('Retry-After', retryAfter.toString());
+        finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
+          mode: 'denied',
+          tenantId,
+          cloudProvider,
+          allowed: false,
+        });
 
         // Publish rate limit exceeded event (non-blocking)
         // Hash client IP for privacy (simple hash, not cryptographically secure)
@@ -628,9 +731,17 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
         );
       }
 
-      return await next();
+      await next();
+      finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
+        mode: 'sync',
+        tenantId,
+        cloudProvider,
+        allowed: true,
+      });
+      return;
     } catch (error) {
       log.error('Rate limiting error', {}, error as Error);
+      finishRateLimitTiming(c, timingSpans, timingStartedAtMs, { mode: 'error' });
       // Security: Fail-close - deny request on error to prevent bypass attacks
       // RFC 6749 5.2: Use 'temporarily_unavailable' for 503 responses
       // RFC 6749: All error responses MUST include Cache-Control: no-store

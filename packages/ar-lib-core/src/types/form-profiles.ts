@@ -3,10 +3,12 @@ export type FormProfileKind =
   | 'profile_completion'
   | 'login'
   | 'consent'
+  | 'code_input'
   | 'custom';
 export type FormProfileBlockType =
   | 'identity_field'
   | 'auth_widget'
+  | 'code_input_widget'
   | 'consent_widget'
   | 'heading'
   | 'text'
@@ -16,6 +18,7 @@ export type FormProfileBlockType =
 
 export type FormProfileValueType = 'text' | 'boolean';
 export type FormProfileCanvasLayout = 'narrow' | 'wide';
+export type FormProfileHumanVerificationTiming = 'initial' | 'submit';
 
 export interface FormProfileSettings {
   canvas_layout?: FormProfileCanvasLayout;
@@ -29,9 +32,12 @@ export interface FormProfileField {
   block_id?: string;
   value_type?: FormProfileValueType | null;
   auth_method?: string | null;
+  code_input_mode?: 'auto' | 'mail_otp' | 'totp' | null;
+  external_idp_show_action_text?: boolean | null;
   text?: string | null;
   help_text?: string | null;
   placeholder?: string | null;
+  human_verification_timing?: FormProfileHumanVerificationTiming | null;
   layout_columns?: number | null;
   layout_column?: number | null;
   order?: number;
@@ -40,7 +46,10 @@ export interface FormProfileField {
 export interface FormProfileLocalization {
   display_name?: string;
   description?: string;
-  fields?: Record<string, Partial<Pick<FormProfileField, 'label' | 'help_text' | 'placeholder'>>>;
+  fields?: Record<
+    string,
+    Partial<Pick<FormProfileField, 'label' | 'text' | 'help_text' | 'placeholder'>>
+  >;
 }
 
 export interface FormProfile {

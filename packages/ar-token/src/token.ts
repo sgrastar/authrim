@@ -1521,13 +1521,16 @@ async function handleAuthorizationCodeGrant(
   // Parse shard index from code to route to the correct DO instance
   const shardInfo = parseShardedAuthCode(validCode);
   let authCodeStoreId: DurableObjectId;
+  let authCodeStoreInstanceName: string;
+  let currentShardCount: number | undefined;
+  let actualShardIndex: number | undefined;
 
   if (shardInfo) {
     // Get current shard count (KV priority, with caching)
-    const currentShardCount = await getShardCount(c.env);
+    currentShardCount = await getShardCount(c.env);
 
     // Remap shard index for scale-down compatibility
-    const actualShardIndex = remapShardIndex(shardInfo.shardIndex, currentShardCount);
+    actualShardIndex = remapShardIndex(shardInfo.shardIndex, currentShardCount);
 
     // Log remapping for monitoring (only when remapped)
     if (actualShardIndex !== shardInfo.shardIndex) {
@@ -1539,18 +1542,27 @@ async function handleAuthorizationCodeGrant(
       });
     }
 
-    const instanceName = buildAuthCodeShardInstanceName(
+    authCodeStoreInstanceName = buildAuthCodeShardInstanceName(
       actualShardIndex,
       getTenantIdFromContext(c)
     );
-    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
+    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(authCodeStoreInstanceName);
   } else {
     // Legacy format (no shard prefix) - use tenant-scoped legacy instance
-    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(
-      buildDOInstanceName('auth-code', getTenantIdFromContext(c))
-    );
+    authCodeStoreInstanceName = buildDOInstanceName('auth-code', getTenantIdFromContext(c));
+    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(authCodeStoreInstanceName);
   }
   const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+  log.info('Consuming authorization code', {
+    action: 'AuthCode',
+    tenantId: getTenantIdFromContext(c),
+    clientId: client_id,
+    requestedShard: shardInfo?.shardIndex,
+    actualShard: actualShardIndex,
+    currentShardCount,
+    instanceName: authCodeStoreInstanceName,
+    codePrefix: shardInfo ? String(shardInfo.shardIndex) : 'legacy',
+  });
 
   let authCodeData;
   try {
@@ -1638,7 +1650,19 @@ async function handleAuthorizationCodeGrant(
     };
   } catch (error) {
     // RPC throws error for invalid codes (not found, already consumed, PKCE mismatch, client mismatch)
-    log.error('AuthCodeStore consume error', { action: 'AuthCode' }, error as Error);
+    log.error(
+      'AuthCodeStore consume error',
+      {
+        action: 'AuthCode',
+        tenantId: getTenantIdFromContext(c),
+        clientId: client_id,
+        requestedShard: shardInfo?.shardIndex,
+        actualShard: actualShardIndex,
+        currentShardCount,
+        instanceName: authCodeStoreInstanceName,
+      },
+      error as Error
+    );
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
     // Determine appropriate error type based on error message

@@ -215,6 +215,35 @@ paths:
                   type: string
                   pattern: '^[0-9]{6}$'
       security: *accountSession
+  /api/account/reauth/totp/complete:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountReauthTotpComplete
+      summary: Complete TOTP reauthentication.
+      description: Verifies a TOTP code for the current Account Page session and refreshes the reauthentication window.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountReauthComplete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+                  pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+      security: *accountSession
   /api/account/operations:
     get:
       tags:
@@ -482,6 +511,173 @@ paths:
           $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/Id'
+      security: *accountSession
+  /api/account/totp:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountTotp
+      summary: List current user's TOTP credentials.
+      description: Returns pending and active TOTP credentials plus backup-code count metadata.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountTotpCredentials'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  /api/account/totp/options:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountTotpOptions
+      summary: Create TOTP enrollment options.
+      description: Creates a pending TOTP credential, Base32 secret, and otpauth URI for the current user when TOTP login or TOTP account linking is enabled. Recent authentication is required.
+      responses:
+        '201':
+          $ref: '#/components/responses/AccountTotpOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  maxLength: 100
+      security: *accountSession
+  /api/account/totp/activate:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountTotpActivate
+      summary: Activate a pending TOTP credential.
+      description: Verifies the first TOTP code, activates the credential, and returns newly generated backup codes when TOTP login or TOTP account linking is enabled.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountTotpActivate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - credential_id
+                - code
+              properties:
+                credential_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+      security: *accountSession
+  /api/account/totp/backup-codes/regenerate:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountTotpBackupCodesRegenerate
+      summary: Regenerate TOTP backup codes.
+      description: Invalidates existing backup codes and returns a new one-time set. Recent TOTP or passkey reauthentication is required.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountTotpBackupCodes'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+      security: *accountSession
+  /api/account/totp/{id}:
+    patch:
+      tags:
+        - Account Page
+      operationId: patchApiAccountTotpById
+      summary: Rename one current user's TOTP credential.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountTotpCredential'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - label
+              properties:
+                label:
+                  type: string
+                  maxLength: 100
+      security: *accountSession
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountTotpById
+      summary: Delete one current user's TOTP credential.
+      description: Deletes a TOTP credential. A current TOTP code or backup code is required for active credentials unless the session was recently reauthenticated with TOTP.
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountTotpDelete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+                backup_code:
+                  type: string
       security: *accountSession
   /api/account/devices:
     get:
@@ -1029,6 +1225,42 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AccountPasskeyDeleteResponse'
+    AccountTotpCredentials:
+      description: Account Page TOTP credential list response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountTotpCredentialsResponse'
+    AccountTotpOptions:
+      description: Account Page TOTP enrollment options response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountTotpOptionsResponse'
+    AccountTotpActivate:
+      description: Account Page TOTP activation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountTotpActivateResponse'
+    AccountTotpCredential:
+      description: Account Page TOTP credential response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountTotpCredentialResponse'
+    AccountTotpDelete:
+      description: Account Page TOTP credential delete response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountTotpDeleteResponse'
+    AccountTotpBackupCodes:
+      description: Account Page TOTP backup-code regeneration response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountTotpBackupCodesResponse'
     AccountDevice:
       description: Account Page device mutation response.
       content:
@@ -1687,6 +1919,166 @@ components:
               type: boolean
         webauthn_signal:
           $ref: '#/components/schemas/WebAuthnCredentialSignal'
+    AccountTotpCredential:
+      type: object
+      required:
+        - id
+        - label
+        - algorithm
+        - digits
+        - period
+        - window
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        algorithm:
+          type: string
+          enum:
+            - SHA1
+            - SHA256
+            - SHA512
+        digits:
+          type: integer
+          enum:
+            - 6
+            - 8
+        period:
+          type: integer
+        window:
+          type: integer
+        status:
+          type: string
+          enum:
+            - pending
+            - active
+            - disabled
+        created_at:
+          type: integer
+          format: int64
+        activated_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+    AccountTotpProfile:
+      type: object
+      required:
+        - algorithm
+        - digits
+        - period
+        - window
+      properties:
+        algorithm:
+          type: string
+        digits:
+          type: integer
+        period:
+          type: integer
+        window:
+          type: integer
+    AccountTotpCredentialsResponse:
+      type: object
+      required:
+        - credentials
+        - total
+        - backup_codes
+      properties:
+        credentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountTotpCredential'
+        total:
+          type: integer
+        backup_codes:
+          type: object
+          required:
+            - total
+            - remaining
+          properties:
+            total:
+              type: integer
+            remaining:
+              type: integer
+    AccountTotpOptionsResponse:
+      type: object
+      required:
+        - credential
+        - secret
+        - otpauth_uri
+        - profile
+      properties:
+        credential:
+          $ref: '#/components/schemas/AccountTotpCredential'
+        secret:
+          type: string
+          description: Base32 TOTP secret shown once during enrollment.
+        otpauth_uri:
+          type: string
+          format: uri
+        profile:
+          $ref: '#/components/schemas/AccountTotpProfile'
+    AccountTotpActivateResponse:
+      type: object
+      required:
+        - ok
+        - credential
+        - backup_codes
+      properties:
+        ok:
+          type: boolean
+        credential:
+          $ref: '#/components/schemas/AccountTotpCredential'
+        backup_codes:
+          type: array
+          items:
+            type: string
+          description: One-time backup codes returned only immediately after generation.
+    AccountTotpCredentialResponse:
+      type: object
+      required:
+        - credential
+      properties:
+        credential:
+          $ref: '#/components/schemas/AccountTotpCredential'
+    AccountTotpDeleteResponse:
+      type: object
+      required:
+        - ok
+        - credential
+      properties:
+        ok:
+          type: boolean
+        credential:
+          type: object
+          required:
+            - id
+            - deleted
+          properties:
+            id:
+              type: string
+            deleted:
+              type: boolean
+    AccountTotpBackupCodesResponse:
+      type: object
+      required:
+        - ok
+        - backup_codes
+      properties:
+        ok:
+          type: boolean
+        backup_codes:
+          type: array
+          items:
+            type: string
     WebAuthnCredentialSignal:
       type: object
       description:

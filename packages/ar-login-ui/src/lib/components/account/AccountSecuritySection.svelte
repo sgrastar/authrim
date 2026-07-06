@@ -1,45 +1,127 @@
 <script lang="ts">
+	import QRCode from 'qrcode';
 	import { Button, Card, Input } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { AccountDevice, AccountPasskey, AccountSession } from '$lib/api/account';
+	import { isTotpDeleteProofReady } from '$lib/account/totp-proof';
+	import type {
+		AccountDevice,
+		AccountPasskey,
+		AccountSession,
+		AccountTotpCredential
+	} from '$lib/api/account';
 	import { formatTimestamp } from '$lib/utils/date';
 
 	let {
 		devices = [],
 		sessions = [],
 		passkeys = [],
+		totpCredentials = [],
+		totpBackupCodes = { total: 0, remaining: 0 },
+		totpEnrollment = null,
 		loading = false,
 		actionLoading = '',
 		error = '',
 		reauthNeeded = false,
 		passkeySupported = false,
+		totpManagementEnabled = false,
 		onRefresh,
 		onRevokeSession,
 		onAddPasskey,
 		onDeletePasskey,
+		onStartTotpEnrollment,
+		onActivateTotpEnrollment,
+		onDeleteTotpCredential,
+		onRegenerateTotpBackupCodes,
+		onClearTotpEnrollment,
 		onReauth
 	} = $props<{
 		devices?: AccountDevice[];
 		sessions?: AccountSession[];
 		passkeys?: AccountPasskey[];
+		totpCredentials?: AccountTotpCredential[];
+		totpBackupCodes?: { total: number; remaining: number };
+		totpEnrollment?: {
+			credentialId: string;
+			secret: string;
+			otpauthUri: string;
+			backupCodes: string[];
+		} | null;
 		loading?: boolean;
 		actionLoading?: string;
 		error?: string;
 		reauthNeeded?: boolean;
 		passkeySupported?: boolean;
+		totpManagementEnabled?: boolean;
 		onRefresh: () => void;
 		onRevokeSession: (id: string) => void;
 		onAddPasskey: (deviceName: string) => void;
 		onDeletePasskey: (id: string) => void;
+		onStartTotpEnrollment: (label: string) => void;
+		onActivateTotpEnrollment: (code: string) => void;
+		onDeleteTotpCredential: (id: string, code: string) => void;
+		onRegenerateTotpBackupCodes: (code: string) => void;
+		onClearTotpEnrollment: () => void;
 		onReauth: () => void;
 	}>();
 
 	let newPasskeyName = $state('');
+	let newTotpLabel = $state('');
+	let totpActivationCode = $state('');
+	let totpRegenerateCode = $state('');
+	let totpDeleteCodes = $state<Record<string, string>>({});
+	let totpQrDataUrl = $state('');
+	const activeTotpCredentials = $derived(
+		totpCredentials.filter((credential: AccountTotpCredential) => credential.status === 'active')
+	);
 
 	function addPasskey() {
 		onAddPasskey(newPasskeyName);
 		newPasskeyName = '';
 	}
+
+	function startTotpEnrollment() {
+		onStartTotpEnrollment(newTotpLabel);
+		newTotpLabel = '';
+	}
+
+	function activateTotpEnrollment() {
+		onActivateTotpEnrollment(totpActivationCode);
+		totpActivationCode = '';
+	}
+
+	function deleteTotpCredential(id: string) {
+		onDeleteTotpCredential(id, totpDeleteCodes[id] ?? '');
+		totpDeleteCodes = { ...totpDeleteCodes, [id]: '' };
+	}
+
+	function updateTotpDeleteCode(id: string, event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		totpDeleteCodes = { ...totpDeleteCodes, [id]: input.value };
+	}
+
+	function regenerateTotpBackupCodes() {
+		onRegenerateTotpBackupCodes(totpRegenerateCode);
+		totpRegenerateCode = '';
+	}
+
+	$effect(() => {
+		const uri = totpEnrollment?.otpauthUri;
+		if (!uri) {
+			totpQrDataUrl = '';
+			return;
+		}
+		QRCode.toDataURL(uri, { margin: 1, width: 192 })
+			.then((value) => {
+				if (totpEnrollment?.otpauthUri === uri) {
+					totpQrDataUrl = value;
+				}
+			})
+			.catch(() => {
+				if (totpEnrollment?.otpauthUri === uri) {
+					totpQrDataUrl = '';
+				}
+			});
+	});
 </script>
 
 <Card>
@@ -167,6 +249,153 @@
 			{/if}
 		</section>
 
+		{#if totpManagementEnabled || totpCredentials.length > 0 || totpEnrollment}
+			<section class="security-block">
+				<h3>{$LL.account_totp()}</h3>
+				{#if totpManagementEnabled}
+					<form
+						class="add-passkey"
+						onsubmit={(event) => {
+							event.preventDefault();
+							startTotpEnrollment();
+						}}
+					>
+						<Input
+							label={$LL.account_totpName()}
+							bind:value={newTotpLabel}
+							disabled={actionLoading === 'totp:add'}
+							maxlength={100}
+						/>
+						<Button variant="primary" type="submit" loading={actionLoading === 'totp:add'}>
+							{$LL.account_addTotp()}
+						</Button>
+					</form>
+				{/if}
+
+				{#if totpEnrollment}
+					<div class="totp-enrollment">
+						{#if totpEnrollment.backupCodes.length > 0}
+							<h4>{$LL.account_totpBackupCodes()}</h4>
+							<ul class="backup-code-list">
+								{#each totpEnrollment.backupCodes as backupCode}
+									<li><code>{backupCode}</code></li>
+								{/each}
+							</ul>
+							<Button variant="secondary" size="sm" onclick={onClearTotpEnrollment}>
+								{$LL.account_totpDone()}
+							</Button>
+						{:else}
+							<h4>{$LL.account_totpSetupTitle()}</h4>
+							{#if totpQrDataUrl}
+								<img class="totp-qr" src={totpQrDataUrl} alt={$LL.account_totpQrAlt()} />
+							{/if}
+							<div class="manual-key">
+								<span>{$LL.account_totpManualKey()}</span>
+								<code>{totpEnrollment.secret}</code>
+							</div>
+							<div class="totp-inline-action">
+								<input
+									class="totp-code-input"
+									autocomplete="one-time-code"
+									inputmode="numeric"
+									maxlength={8}
+									placeholder={$LL.account_totpActivationCode()}
+									bind:value={totpActivationCode}
+								/>
+								<Button
+									variant="primary"
+									size="sm"
+									loading={actionLoading === `totp:activate:${totpEnrollment.credentialId}`}
+									disabled={!/^\d{6}$|^\d{8}$/.test(totpActivationCode.trim())}
+									onclick={activateTotpEnrollment}
+								>
+									{$LL.account_totpActivate()}
+								</Button>
+								<Button variant="secondary" size="sm" onclick={onClearTotpEnrollment}>
+									{$LL.dialog_cancel()}
+								</Button>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				{#if activeTotpCredentials.length > 0}
+					<p class="muted">
+						{$LL.account_totpBackupCodesRemaining({
+							remaining: totpBackupCodes.remaining,
+							total: totpBackupCodes.total
+						})}
+					</p>
+					<div class="totp-inline-action">
+						<input
+							class="totp-code-input"
+							autocomplete="one-time-code"
+							inputmode="numeric"
+							maxlength={8}
+							placeholder={$LL.account_totpCurrentCode()}
+							bind:value={totpRegenerateCode}
+						/>
+						<Button
+							variant="secondary"
+							size="sm"
+							loading={actionLoading === 'totp:backup-codes'}
+							disabled={!/^\d{6}$|^\d{8}$/.test(totpRegenerateCode.trim())}
+							onclick={regenerateTotpBackupCodes}
+						>
+							{$LL.account_totpRegenerateBackupCodes()}
+						</Button>
+					</div>
+				{/if}
+
+				{#if totpCredentials.length === 0}
+					<p class="empty-text">{$LL.account_empty()}</p>
+				{:else}
+					<ul class="item-list">
+						{#each totpCredentials as credential (credential.id)}
+							<li class="totp-list-item">
+								<div>
+									<strong>{credential.label || $LL.account_totpDefaultName()}</strong>
+									<span>
+										{credential.algorithm} / {credential.digits} / {credential.period}s
+										{#if credential.status !== 'active'}
+											<span class="inline-tag">{$LL.account_totpPending()}</span>
+										{/if}
+									</span>
+									<span>
+										{credential.last_used_at
+											? $LL.account_totpLastUsed({
+													time: formatTimestamp(credential.last_used_at)
+												})
+											: formatTimestamp(credential.created_at)}
+									</span>
+								</div>
+								<div class="totp-delete">
+									<input
+										class="totp-code-input"
+										autocomplete="one-time-code"
+										inputmode="text"
+										maxlength={32}
+										placeholder={$LL.account_totpDeleteCode()}
+										value={totpDeleteCodes[credential.id] ?? ''}
+										oninput={(event) => updateTotpDeleteCode(credential.id, event)}
+									/>
+									<Button
+										variant="danger"
+										size="sm"
+										loading={actionLoading === `totp:${credential.id}`}
+										disabled={!isTotpDeleteProofReady(totpDeleteCodes[credential.id] ?? '')}
+										onclick={() => deleteTotpCredential(credential.id)}
+									>
+										{$LL.account_delete()}
+									</Button>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		{/if}
+
 		<section class="security-block planned">
 			<h3>{$LL.account_socialAccounts()}</h3>
 			<p class="muted">{$LL.account_planned()}</p>
@@ -206,6 +435,85 @@
 	.add-passkey {
 		display: grid;
 		gap: 8px;
+	}
+
+	.totp-enrollment {
+		display: grid;
+		gap: 10px;
+		padding: 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
+	}
+
+	.totp-enrollment h4 {
+		margin: 0;
+		font-size: 0.875rem;
+	}
+
+	.totp-qr {
+		width: 192px;
+		max-width: 100%;
+		height: auto;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: #ffffff;
+		padding: 8px;
+	}
+
+	.manual-key,
+	.totp-inline-action,
+	.totp-delete {
+		display: grid;
+		gap: 8px;
+	}
+
+	.manual-key span {
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.manual-key code,
+	.backup-code-list code {
+		font-size: 0.8125rem;
+		overflow-wrap: anywhere;
+	}
+
+	.backup-code-list {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+		gap: 8px;
+		padding: 0;
+		margin: 0;
+		list-style: none;
+	}
+
+	.backup-code-list li {
+		padding: 8px 10px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface);
+	}
+
+	.totp-code-input {
+		width: 100%;
+		min-height: 38px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface);
+		color: var(--text-primary);
+		font: inherit;
+		letter-spacing: 0.08em;
+		padding: 0 10px;
+	}
+
+	.totp-code-input:focus {
+		outline: none;
+		border-color: var(--primary);
+	}
+
+	.totp-list-item {
+		align-items: flex-start !important;
 	}
 
 	.item-list {
@@ -271,5 +579,18 @@
 
 	.planned {
 		opacity: 0.75;
+	}
+
+	@media (min-width: 640px) {
+		.totp-inline-action {
+			grid-template-columns: minmax(0, 1fr) auto auto;
+			align-items: center;
+		}
+
+		.totp-delete {
+			width: min(240px, 40vw);
+			grid-template-columns: minmax(0, 1fr) auto;
+			align-items: center;
+		}
 	}
 </style>

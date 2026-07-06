@@ -131,7 +131,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         error: vi.fn(),
       }),
     })),
-    getPluginContext: vi.fn(() => ({
+    getRequiredPluginContext: vi.fn(() => ({
       registry: {
         getNotifier: vi.fn((channel: string) =>
           channel === 'email' && mocks.emailNotifierEnabled ? mocks.emailNotifier : undefined

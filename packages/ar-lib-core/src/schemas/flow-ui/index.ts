@@ -498,6 +498,7 @@ export interface FeatureFlags {
   };
   authMethods: {
     passkey: boolean;
+    totp: boolean;
     email_code: boolean;
     password: boolean;
     external_idp: boolean;

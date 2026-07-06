@@ -420,6 +420,114 @@ describe('apiProxy', () => {
 		);
 	});
 
+	it('does not share a pending BFF machine token request across proxy requests', async () => {
+		const bffEnv = await createBffEnv();
+		let tokenRequestCount = 0;
+		let markFirstTokenStarted: (() => void) | undefined;
+		let markSecondTokenStarted: (() => void) | undefined;
+		let resolveFirstToken: ((response: Response) => void) | undefined;
+		const firstTokenStarted = new Promise<void>((resolve) => {
+			markFirstTokenStarted = resolve;
+		});
+		const secondTokenStarted = new Promise<void>((resolve) => {
+			markSecondTokenStarted = resolve;
+		});
+		const fetch = vi.fn((request: Request) => {
+			if (request.url === 'https://api.authrim.example/token') {
+				tokenRequestCount += 1;
+				if (tokenRequestCount === 1) {
+					markFirstTokenStarted?.();
+					return new Promise<Response>((resolve) => {
+						resolveFirstToken = resolve;
+					});
+				}
+
+				markSecondTokenStarted?.();
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							access_token: 'second-bff-token',
+							token_type: 'Bearer',
+							expires_in: 600
+						}),
+						{ headers: { 'content-type': 'application/json' } }
+					)
+				);
+			}
+
+			return Promise.resolve(new Response(request.headers.get('Authorization') ?? 'missing token'));
+		});
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const env = {
+			AR_ROUTER: { fetch },
+			PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example',
+			...bffEnv
+		};
+		const createEvent = (path: string) =>
+			({
+				url: new URL(`https://mt-ar-admin-ui.pages.dev${path}`),
+				request: new Request(`https://mt-ar-admin-ui.pages.dev${path}`, {
+					method: 'GET',
+					headers: {
+						Cookie: 'authrim_admin_session=session-123',
+						'X-Tenant-Id': 'first'
+					}
+				}),
+				platform: { env },
+				getClientAddress: () => '203.0.113.10'
+			}) as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const firstResponsePromise = apiProxy({
+			event: createEvent('/api/admin/stats'),
+			resolve
+		});
+		await firstTokenStarted;
+
+		const secondResponsePromise = apiProxy({
+			event: createEvent('/api/admin/me/session'),
+			resolve
+		});
+		let secondTokenTimeout: ReturnType<typeof setTimeout> | undefined;
+		const observedSecondTokenRequest = await Promise.race([
+			secondTokenStarted.then(() => true),
+			new Promise<false>((resolveTimeout) => {
+				secondTokenTimeout = setTimeout(() => resolveTimeout(false), 1000);
+			})
+		]);
+		if (secondTokenTimeout) clearTimeout(secondTokenTimeout);
+		if (!observedSecondTokenRequest) {
+			resolveFirstToken?.(
+				new Response(
+					JSON.stringify({
+						access_token: 'first-bff-token',
+						token_type: 'Bearer',
+						expires_in: 600
+					}),
+					{ headers: { 'content-type': 'application/json' } }
+				)
+			);
+			await Promise.allSettled([firstResponsePromise, secondResponsePromise]);
+		}
+
+		expect(observedSecondTokenRequest).toBe(true);
+		const secondResponse = await secondResponsePromise;
+		resolveFirstToken?.(
+			new Response(
+				JSON.stringify({
+					access_token: 'first-bff-token',
+					token_type: 'Bearer',
+					expires_in: 600
+				}),
+				{ headers: { 'content-type': 'application/json' } }
+			)
+		);
+		await firstResponsePromise;
+
+		expect(tokenRequestCount).toBe(2);
+		expect(await secondResponse.text()).toBe('Bearer second-bff-token');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('rejects state-changing Admin API proxy requests with a foreign Origin', async () => {
 		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const fetch = vi.fn();

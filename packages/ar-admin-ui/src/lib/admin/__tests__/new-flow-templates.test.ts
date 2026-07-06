@@ -73,6 +73,15 @@ describe('new flow templates', () => {
 			'consent_policy',
 			'completion'
 		]);
+		expect(
+			contract.runtime.ui.steps.find((step) => step.source_node_id === 'authentication')?.config
+				.outputs
+		).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'totp' })]));
+		expect(
+			contract.editor.edges.some(
+				(edge) => edge.source === 'authentication' && edge.source_handle === 'totp'
+			)
+		).toBe(true);
 		expect(contract.runtime.capabilities).toHaveLength(2);
 		expect(contract.editor.nodes.map((node) => node.id)).toContain('authentication');
 		expect(
@@ -119,6 +128,7 @@ describe('new flow templates', () => {
 		expect(parsed.runtime.ui.steps.map((step) => step.component)).toContain('profile_form');
 		expect(parsed.runtime.ui.steps.map((step) => step.component)).toContain('account_action');
 		expect(parsed.editor.edges.some((edge) => edge.source_handle === 'passkey')).toBe(true);
+		expect(parsed.editor.edges.some((edge) => edge.source_handle === 'totp')).toBe(true);
 		expect(parsed.editor.nodes.find((node) => node.id === 'consent')?.config).toMatchObject({
 			completion_block: {
 				id: 'oidc-registration-completion',

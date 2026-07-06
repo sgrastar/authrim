@@ -88,14 +88,12 @@ export class CIBARequestStore {
 
   // V2: Initialization state
   private initialized: boolean = false;
-  private initializePromise: Promise<void> | null = null;
 
   // V2: Async audit log buffering
   private pendingAuditLogs: AuditLogEntry[] = [];
   private flushScheduled: boolean = false;
   private readonly AUDIT_FLUSH_DELAY = 100; // ms
   private requestPersistence: CIBARequestPersistenceAdapter | null = null;
-  private requestPersistenceInit: Promise<CIBARequestPersistenceAdapter | null> | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
@@ -977,13 +975,8 @@ export class CIBARequestStore {
     if (this.requestPersistence) {
       return this.requestPersistence;
     }
-    if (!this.requestPersistenceInit) {
-      this.requestPersistenceInit = this.initializeRequestPersistence().finally(() => {
-        this.requestPersistenceInit = null;
-      });
-    }
 
-    this.requestPersistence = await this.requestPersistenceInit;
+    this.requestPersistence = await this.initializeRequestPersistence();
     return this.requestPersistence;
   }
 
@@ -1009,6 +1002,5 @@ export class CIBARequestStore {
 
     this.tenantId = tenantId;
     this.requestPersistence = null;
-    this.requestPersistenceInit = null;
   }
 }

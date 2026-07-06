@@ -2,8 +2,8 @@
  * Plugin Context Middleware
  *
  * This middleware provides access to the Authrim Plugin System.
- * It initializes the PluginContext once per Worker lifecycle (singleton pattern)
- * and makes it available to all handlers via c.get('pluginContext').
+ * It initializes the PluginContext for each request and makes it available to
+ * all handlers via c.get('pluginContext').
  *
  * The PluginContext provides:
  * - Storage infrastructure (IStorageInfra)
@@ -64,6 +64,11 @@ export interface WorkerPluginContext {
    * Tenant ID for this request
    */
   tenantId: string;
+
+  /**
+   * Capability scope loaded for this request.
+   */
+  scope: string;
 
   /**
    * Get plugin configuration
@@ -193,6 +198,22 @@ export interface PluginContextMiddlewareOptions {
   required?: boolean;
 
   /**
+   * Capability scope for this plugin context.
+   *
+   * Scope is part of the registry cache key so lightweight bootstrap contexts
+   * cannot shadow notification or other capability-specific plugin registries.
+   */
+  scope?: string;
+
+  /**
+   * Failure policy for this capability scope.
+   *
+   * fail_open keeps request handling alive with an empty registry. fail_closed
+   * returns 500 when the scoped plugin loader fails.
+   */
+  failurePolicy?: 'fail_open' | 'fail_closed';
+
+  /**
    * Custom plugin loader function
    * If provided, called during initialization to load custom plugins
    */
@@ -212,7 +233,6 @@ const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_TTL_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
 let registryCacheByEnv = new WeakMap<Env, Map<string, CachedValue<PluginCapabilityRegistry>>>();
-let registryInitPromisesByEnv = new WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>();
 let runtimeValueCacheByEnv = new WeakMap<Env, Map<string, CachedValue<unknown>>>();
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | undefined {
@@ -239,6 +259,14 @@ function getCacheTTLMs(env: Env): number {
   return Math.min(ttlSeconds, MAX_CACHE_TTL_SECONDS) * 1000;
 }
 
+function getRegistryCacheKey(scope: string, tenantId: string): string {
+  return `${scope}\u0000${tenantId}`;
+}
+
+function cacheKeyMatchesTenant(key: string, tenantId: string): boolean {
+  return key.endsWith(`\u0000${tenantId}`);
+}
+
 function getScopedMap<T>(
   store: WeakMap<Env, Map<string, CachedValue<T>>>,
   env: Env
@@ -246,18 +274,6 @@ function getScopedMap<T>(
   let map = store.get(env);
   if (!map) {
     map = new Map<string, CachedValue<T>>();
-    store.set(env, map);
-  }
-  return map;
-}
-
-function getScopedPromiseMap(
-  store: WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>,
-  env: Env
-): Map<string, Promise<PluginCapabilityRegistry>> {
-  let map = store.get(env);
-  if (!map) {
-    map = new Map<string, Promise<PluginCapabilityRegistry>>();
     store.set(env, map);
   }
   return map;
@@ -287,15 +303,20 @@ function setCachedValue<T>(env: Env, key: string, value: T): T {
   return value;
 }
 
-function getCachedRegistry(env: Env, tenantId: string): PluginCapabilityRegistry | undefined {
+function getCachedRegistry(
+  env: Env,
+  scope: string,
+  tenantId: string
+): PluginCapabilityRegistry | undefined {
   const cache = getScopedMap(registryCacheByEnv, env);
-  const entry = cache.get(tenantId);
+  const cacheKey = getRegistryCacheKey(scope, tenantId);
+  const entry = cache.get(cacheKey);
   if (!entry) {
     return undefined;
   }
 
   if (entry.expiresAt <= Date.now()) {
-    cache.delete(tenantId);
+    cache.delete(cacheKey);
     return undefined;
   }
 
@@ -304,11 +325,12 @@ function getCachedRegistry(env: Env, tenantId: string): PluginCapabilityRegistry
 
 function setCachedRegistry(
   env: Env,
+  scope: string,
   tenantId: string,
   registry: PluginCapabilityRegistry
 ): PluginCapabilityRegistry {
   const cache = getScopedMap(registryCacheByEnv, env);
-  cache.set(tenantId, {
+  cache.set(getRegistryCacheKey(scope, tenantId), {
     value: registry,
     expiresAt: Date.now() + getCacheTTLMs(env),
   });
@@ -332,18 +354,13 @@ function clearRegistryCache(env: Env, tenantId?: string): void {
   const cache = registryCacheByEnv.get(env);
   if (cache) {
     if (tenantId) {
-      cache.delete(tenantId);
+      for (const key of cache.keys()) {
+        if (cacheKeyMatchesTenant(key, tenantId)) {
+          cache.delete(key);
+        }
+      }
     } else {
       cache.clear();
-    }
-  }
-
-  const promises = registryInitPromisesByEnv.get(env);
-  if (promises) {
-    if (tenantId) {
-      promises.delete(tenantId);
-    } else {
-      promises.clear();
     }
   }
 }
@@ -389,7 +406,12 @@ const emptyRegistry: PluginCapabilityRegistry = {
  * leaking one tenant's plugin state into another tenant.
  */
 export function pluginContextMiddleware(options: PluginContextMiddlewareOptions = {}) {
-  const { required = false, loadPlugins } = options;
+  const {
+    required = false,
+    scope = 'default',
+    failurePolicy = required ? 'fail_closed' : 'fail_open',
+    loadPlugins,
+  } = options;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const tenantId = getContextTenantId(c);
@@ -416,23 +438,13 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
 
     try {
       if (loadPlugins) {
-        registry = getCachedRegistry(c.env, tenantId) ?? emptyRegistry;
+        registry = getCachedRegistry(c.env, scope, tenantId) ?? emptyRegistry;
         if (registry !== emptyRegistry) {
           initialized = true;
           cacheStatus = 'hit';
         } else {
           cacheStatus = 'miss';
-          const initPromises = getScopedPromiseMap(registryInitPromisesByEnv, c.env);
-          let initPromise = initPromises.get(tenantId);
-          if (!initPromise) {
-            initPromise = loadPlugins(c.env, tenantId)
-              .then((loadedRegistry) => setCachedRegistry(c.env, tenantId, loadedRegistry))
-              .finally(() => {
-                initPromises.delete(tenantId);
-              });
-            initPromises.set(tenantId, initPromise);
-          }
-          registry = await initPromise;
+          registry = setCachedRegistry(c.env, scope, tenantId, await loadPlugins(c.env, tenantId));
           initialized = true;
           if (registry === emptyRegistry) {
             cacheStatus = 'empty';
@@ -447,7 +459,7 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
       log.error('Failed to initialize plugins', {}, error as Error);
       clearRegistryCache(c.env, tenantId);
 
-      if (required) {
+      if (failurePolicy === 'fail_closed') {
         return c.json(
           {
             error: 'server_error',
@@ -474,6 +486,7 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
       registry,
       initialized,
       tenantId,
+      scope,
 
       async getPluginConfig<T>(pluginId: string, defaultValue: T): Promise<T> {
         return getPluginConfigFromKV(c.env, pluginId, tenantId, defaultValue);
@@ -514,9 +527,27 @@ export function getPluginContext(c: Context<{ Bindings: Env }>): WorkerPluginCon
       registry: emptyRegistry,
       initialized: false,
       tenantId,
+      scope: 'default',
       getPluginConfig: async <T>(_pluginId: string, defaultValue: T) => defaultValue,
       isPluginEnabled: async () => true,
     };
+  }
+
+  return ctx;
+}
+
+export function getRequiredPluginContext(
+  c: Context<{ Bindings: Env }>,
+  expectedScope?: string
+): WorkerPluginContext {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ctx = (c as any).get('pluginContext') as WorkerPluginContext | undefined;
+  if (!ctx) {
+    throw new Error('Plugin context middleware is required for this route');
+  }
+
+  if (expectedScope && ctx.scope !== expectedScope) {
+    throw new Error(`Plugin context scope mismatch: expected ${expectedScope}, got ${ctx.scope}`);
   }
 
   return ctx;
@@ -826,7 +857,6 @@ export function invalidatePluginRuntimeCaches(
  */
 export function resetPluginRegistryCache(): void {
   registryCacheByEnv = new WeakMap<Env, Map<string, CachedValue<PluginCapabilityRegistry>>>();
-  registryInitPromisesByEnv = new WeakMap<Env, Map<string, Promise<PluginCapabilityRegistry>>>();
   runtimeValueCacheByEnv = new WeakMap<Env, Map<string, CachedValue<unknown>>>();
 }
 
@@ -892,6 +922,11 @@ export interface PluginLoaderConfig {
    * Skip loading when no bootstrap/KV/override config is available.
    */
   skipIfConfigEmpty?: boolean;
+
+  /**
+   * Skip loading when the resolved config is intentionally incomplete for this plugin.
+   */
+  skipIfConfig?: (config: Record<string, unknown>) => boolean;
 }
 
 /**
@@ -1126,6 +1161,7 @@ export function createPluginLoader(
       envConfigResolver,
       required,
       skipIfConfigEmpty,
+      skipIfConfig,
     } of plugins) {
       try {
         // Check if plugin is enabled
@@ -1144,6 +1180,11 @@ export function createPluginLoader(
 
         if (skipIfConfigEmpty && Object.keys(config).length === 0) {
           log.info('Plugin has no resolved configuration, skipping', { pluginId: plugin.id });
+          continue;
+        }
+
+        if (skipIfConfig?.(config)) {
+          log.info('Plugin resolved configuration requested skip', { pluginId: plugin.id });
           continue;
         }
 

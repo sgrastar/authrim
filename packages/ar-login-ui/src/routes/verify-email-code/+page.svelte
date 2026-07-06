@@ -163,7 +163,8 @@
 			const { data: verifyData, error: apiError } = await emailCodeAPI.verify({
 				code: verifyCode,
 				email,
-				authorizationChallengeId: authorizationChallengeId || undefined
+				authorizationChallengeId: authorizationChallengeId || undefined,
+				deferAuthorizationContinuation: Boolean(runtimeInteractionId)
 			});
 
 			if (apiError) {
@@ -309,6 +310,9 @@
 			};
 			if (submittedFlow.completed || flow.interaction.state === 'completed') {
 				consumeFlowRuntimeState(flow.interaction.id);
+				if (submittedFlow.output?.redirect_url && isValidRedirectUrl(submittedFlow.output.redirect_url)) {
+					return submittedFlow.output.redirect_url;
+				}
 				return postAuthRedirect;
 			}
 		}

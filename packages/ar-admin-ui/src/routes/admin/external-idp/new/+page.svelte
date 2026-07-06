@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { LL } from '$i18n/i18n-svelte';
+	import { buildExternalIdPCallbackUrl } from '$lib/admin/external-idp-callback-url';
+	import { getTenantInfo } from '$lib/api/admin-info';
 	import {
 		adminExternalProvidersAPI,
 		type CreateProviderRequest,
@@ -10,6 +13,7 @@
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
 	import { ToggleSwitch } from '$lib/components';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	let saving = $state(false);
 	let error = $state('');
@@ -46,6 +50,8 @@
 	let discoveryUrl = $state('');
 	let discovering = $state(false);
 	let discoveryError = $state('');
+	let callbackIssuer = $state<string | null>(null);
+	let callbackIssuerRequest = 0;
 
 	// Generate URL-safe slug from name
 	function generateSlug(input: string): string {
@@ -91,22 +97,43 @@
 		slugError = validateSlug(slug);
 	}
 
-	// Compute redirect URL based on slug
-	const redirectUrl = $derived(() => {
-		const baseUrl =
-			typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
-		if (slug && !slugError) {
-			return `${baseUrl}/auth/external/${slug}/callback`;
-		}
-		return null;
-	});
+	const redirectUrl = $derived(
+		slug && !slugError ? buildExternalIdPCallbackUrl(callbackIssuer, slug) : null
+	);
 
 	async function copyRedirectUrl() {
-		const url = redirectUrl();
+		const url = redirectUrl;
 		if (url && typeof navigator !== 'undefined') {
 			await navigator.clipboard.writeText(url);
 			copySuccess = true;
 			setTimeout(() => (copySuccess = false), 2000);
+		}
+	}
+
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId) {
+			callbackIssuer = null;
+			return;
+		}
+		void loadCallbackIssuer(tenantId);
+	});
+
+	async function loadCallbackIssuer(tenantId: string) {
+		const requestId = ++callbackIssuerRequest;
+		try {
+			const info = await getTenantInfo(tenantId);
+			if (requestId === callbackIssuerRequest) {
+				callbackIssuer = info.issuer;
+			}
+		} catch {
+			if (requestId === callbackIssuerRequest) {
+				callbackIssuer = null;
+			}
 		}
 	}
 
@@ -385,39 +412,26 @@
 			<div class="redirect-url-section">
 				<!-- svelte-ignore a11y_label_has_associated_control -->
 				<label class="admin-field__label">{$LL.admin_external_idp_redirect_url()}</label>
-				{#if redirectUrl()}
-					<div class="redirect-url-box">
-						<code class="redirect-url-text">{redirectUrl()}</code>
+				<p class="field-hint field-hint--spaced">
+					{$LL.admin_external_idp_redirect_url_hint()}
+				</p>
+				{#if redirectUrl}
+					<div class="input-copy-group">
+						<input type="url" class="admin-input callback-url-input" value={redirectUrl} readonly />
 						<button
 							type="button"
 							class="copy-btn"
 							onclick={copyRedirectUrl}
 							title={$LL.admin_external_idp_copy_to_clipboard()}
+							aria-label={$LL.admin_external_idp_copy_to_clipboard()}
 						>
 							{#if copySuccess}
-								<span class="copy-success">✓</span>
+								<i class="i-ph-check copy-success"></i>
 							{:else}
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									width="16"
-									height="16"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="2"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-								>
-									<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-								</svg>
+								<i class="i-ph-copy"></i>
 							{/if}
 						</button>
 					</div>
-				{:else}
-					<p class="field-hint">
-						{$LL.admin_external_idp_redirect_url_hint()}
-					</p>
 				{/if}
 			</div>
 		</AdminSection>
@@ -837,33 +851,31 @@
 
 	.redirect-url-section {
 		margin-top: 16px;
-		padding-top: 16px;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.redirect-url-box {
-		display: flex;
-		align-items: center;
+		display: grid;
 		gap: 8px;
-		margin-top: 8px;
-		padding: 10px 12px;
-		background: var(--color-surface-muted);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-card);
 	}
 
-	.redirect-url-text {
+	.input-copy-group {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.callback-url-input {
 		flex: 1;
-		font-size: 13px;
-		color: var(--color-text);
-		word-break: break-all;
+		font-family:
+			ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+		font-size: 0.82rem;
 	}
 
 	.copy-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 6px;
+		flex: 0 0 var(--control-height, 40px);
+		width: var(--control-height, 40px);
+		height: var(--control-height, 40px);
+		padding: 0;
 		background: var(--control-bg, var(--color-surface));
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-control);
@@ -880,7 +892,6 @@
 
 	.copy-success {
 		color: var(--color-success);
-		font-weight: 600;
 	}
 
 	.input-error {
@@ -971,9 +982,15 @@
 		}
 
 		.discovery-input-row,
+		.input-copy-group,
 		.form-actions {
 			align-items: stretch;
 			flex-direction: column;
+		}
+
+		.copy-btn {
+			width: 100%;
+			flex-basis: var(--control-height, 40px);
 		}
 	}
 </style>

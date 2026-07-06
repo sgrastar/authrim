@@ -6487,6 +6487,11 @@ tr.expired {
 		padding: 24px 16px;
 	}
 
+	.auth-container > .card > .card-body {
+		padding-left: 6px;
+		padding-right: 6px;
+	}
+
 	.auth-page > .auth-topbar {
 		align-self: flex-end;
 		max-width: calc(100vw - 24px);

@@ -2073,6 +2073,30 @@ type RootTranslation = {
 	 */
 	admin_user_detail_no_passkeys: string;
 	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​A​p​p​s
+	 */
+	admin_user_detail_totp: string;
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	admin_user_detail_totp_unnamed: string;
+	/**
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s​ ​r​e​g​i​s​t​e​r​e​d
+	 */
+	admin_user_detail_no_totp: string;
+	/**
+	 * R​e​s​e​t​ ​T​O​T​P
+	 */
+	admin_user_detail_totp_reset: string;
+	/**
+	 * R​e​s​e​t​t​i​n​g​.​.​.
+	 */
+	admin_user_detail_totp_resetting: string;
+	/**
+	 * R​e​s​e​t​ ​a​l​l​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s​ ​a​n​d​ ​b​a​c​k​u​p​ ​c​o​d​e​s​ ​f​o​r​ ​t​h​i​s​ ​u​s​e​r​?
+	 */
+	admin_user_detail_totp_reset_confirm: string;
+	/**
 	 * N​a​m​e
 	 */
 	admin_user_detail_auth_method_name: string;
@@ -4151,7 +4175,7 @@ type RootTranslation = {
 	 */
 	admin_external_idp_copy_to_clipboard: string;
 	/**
-	 * E​n​t​e​r​ ​a​ ​s​l​u​g​ ​a​b​o​v​e​ ​t​o​ ​s​e​e​ ​t​h​e​ ​r​e​d​i​r​e​c​t​ ​U​R​L​,​ ​o​r​ ​i​t​ ​w​i​l​l​ ​b​e​ ​g​e​n​e​r​a​t​e​d​ ​u​s​i​n​g​ ​t​h​e​ ​P​r​o​v​i​d​e​r​ ​I​D​ ​a​f​t​e​r​ ​s​a​v​i​n​g​.
+	 * E​n​t​e​r​ ​a​ ​s​l​u​g​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​t​h​e​ ​c​a​l​l​b​a​c​k​ ​U​R​L​.​ ​R​e​g​i​s​t​e​r​ ​t​h​e​ ​g​e​n​e​r​a​t​e​d​ ​U​R​L​ ​e​x​a​c​t​l​y​ ​i​n​ ​t​h​e​ ​e​x​t​e​r​n​a​l​ ​I​d​P​ ​c​a​l​l​b​a​c​k​ ​s​e​t​t​i​n​g​s​.
 	 */
 	admin_external_idp_redirect_url_hint: string;
 	/**
@@ -27917,6 +27941,10 @@ type RootTranslation = {
 	 */
 	admin_flows_setting_email_otp: string;
 	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	admin_flows_setting_totp: string;
+	/**
 	 * D​i​r​e​c​t​o​r​y​ ​p​a​s​s​w​o​r​d
 	 */
 	admin_flows_setting_directory_password: string;
@@ -28437,6 +28465,14 @@ type RootTranslation = {
 	 */
 	admin_forms_kind_login: string;
 	/**
+	 * C​o​n​s​e​n​t
+	 */
+	admin_forms_kind_consent: string;
+	/**
+	 * C​o​d​e​ ​i​n​p​u​t
+	 */
+	admin_forms_kind_code_input: string;
+	/**
 	 * C​u​s​t​o​m
 	 */
 	admin_forms_kind_custom: string;
@@ -28488,6 +28524,10 @@ type RootTranslation = {
 	 * I​n​ ​t​h​e​ ​a​c​t​u​a​l​ ​f​l​o​w​,​ ​t​h​i​s​ ​f​o​r​m​ ​i​s​ ​s​h​o​w​n​ ​a​c​c​o​r​d​i​n​g​ ​t​o​ ​t​h​e​ ​F​l​o​w​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
 	 */
 	admin_forms_preview_footer_text: string;
+	/**
+	 * A​d​d​ ​s​i​g​n​-​i​n​ ​t​e​x​t
+	 */
+	admin_forms_external_idp_action_text_label: string;
 	/**
 	 * S​a​v​e
 	 */
@@ -29510,6 +29550,30 @@ type RootTranslation = {
 	 * U​s​e​ ​e​m​a​i​l​ ​c​o​d​e​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​a​n​d​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
 	 */
 	admin_authentication_methods_email_otp_description: string;
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​A​p​p
+	 */
+	admin_authentication_methods_totp: string;
+	/**
+	 * U​s​e​ ​T​O​T​P​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s​ ​f​o​r​ ​l​o​g​i​n​,​ ​s​i​g​n​u​p​,​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​,​ ​a​n​d​ ​a​c​c​o​u​n​t​ ​l​i​n​k​i​n​g​.
+	 */
+	admin_authentication_methods_totp_description: string;
+	/**
+	 * T​O​T​P​ ​p​r​e​s​e​t
+	 */
+	admin_authentication_methods_totp_preset: string;
+	/**
+	 * C​o​m​p​a​t​i​b​l​e
+	 */
+	admin_authentication_methods_totp_preset_compatible: string;
+	/**
+	 * S​t​r​o​n​g
+	 */
+	admin_authentication_methods_totp_preset_strong: string;
+	/**
+	 * D​e​f​a​u​l​t​ ​A​C​R
+	 */
+	admin_authentication_methods_totp_default_acr: string;
 	/**
 	 * D​i​r​e​c​t​o​r​y​ ​P​a​s​s​w​o​r​d
 	 */
@@ -33393,6 +33457,30 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_no_passkeys: () => LocalizedString;
 	/**
+	 * Authenticator Apps
+	 */
+	admin_user_detail_totp: () => LocalizedString;
+	/**
+	 * Authenticator app
+	 */
+	admin_user_detail_totp_unnamed: () => LocalizedString;
+	/**
+	 * No authenticator apps registered
+	 */
+	admin_user_detail_no_totp: () => LocalizedString;
+	/**
+	 * Reset TOTP
+	 */
+	admin_user_detail_totp_reset: () => LocalizedString;
+	/**
+	 * Resetting...
+	 */
+	admin_user_detail_totp_resetting: () => LocalizedString;
+	/**
+	 * Reset all authenticator apps and backup codes for this user?
+	 */
+	admin_user_detail_totp_reset_confirm: () => LocalizedString;
+	/**
 	 * Name
 	 */
 	admin_user_detail_auth_method_name: () => LocalizedString;
@@ -35447,7 +35535,7 @@ export type TranslationFunctions = {
 	 */
 	admin_external_idp_copy_to_clipboard: () => LocalizedString;
 	/**
-	 * Enter a slug above to see the redirect URL, or it will be generated using the Provider ID after saving.
+	 * Enter a slug to generate the callback URL. Register the generated URL exactly in the external IdP callback settings.
 	 */
 	admin_external_idp_redirect_url_hint: () => LocalizedString;
 	/**
@@ -58979,6 +59067,10 @@ Remove this role from {email}?
 	 */
 	admin_flows_setting_email_otp: () => LocalizedString;
 	/**
+	 * Authenticator app
+	 */
+	admin_flows_setting_totp: () => LocalizedString;
+	/**
 	 * Directory password
 	 */
 	admin_flows_setting_directory_password: () => LocalizedString;
@@ -59499,6 +59591,14 @@ Remove this role from {email}?
 	 */
 	admin_forms_kind_login: () => LocalizedString;
 	/**
+	 * Consent
+	 */
+	admin_forms_kind_consent: () => LocalizedString;
+	/**
+	 * Code input
+	 */
+	admin_forms_kind_code_input: () => LocalizedString;
+	/**
 	 * Custom
 	 */
 	admin_forms_kind_custom: () => LocalizedString;
@@ -59550,6 +59650,10 @@ Remove this role from {email}?
 	 * In the actual flow, this form is shown according to the Flow configuration.
 	 */
 	admin_forms_preview_footer_text: () => LocalizedString;
+	/**
+	 * Add sign-in text
+	 */
+	admin_forms_external_idp_action_text_label: () => LocalizedString;
 	/**
 	 * Save
 	 */
@@ -60562,6 +60666,30 @@ Remove this role from {email}?
 	 * Use email codes for login, signup, and re-authentication.
 	 */
 	admin_authentication_methods_email_otp_description: () => LocalizedString;
+	/**
+	 * Authenticator App
+	 */
+	admin_authentication_methods_totp: () => LocalizedString;
+	/**
+	 * Use TOTP authenticator apps for login, signup, re-authentication, and account linking.
+	 */
+	admin_authentication_methods_totp_description: () => LocalizedString;
+	/**
+	 * TOTP preset
+	 */
+	admin_authentication_methods_totp_preset: () => LocalizedString;
+	/**
+	 * Compatible
+	 */
+	admin_authentication_methods_totp_preset_compatible: () => LocalizedString;
+	/**
+	 * Strong
+	 */
+	admin_authentication_methods_totp_preset_strong: () => LocalizedString;
+	/**
+	 * Default ACR
+	 */
+	admin_authentication_methods_totp_default_acr: () => LocalizedString;
 	/**
 	 * Directory Password
 	 */

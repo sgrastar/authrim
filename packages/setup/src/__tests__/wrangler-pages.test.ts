@@ -19,6 +19,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('[assets]');
       expect(result).toContain('directory = ".svelte-kit/cloudflare"');
       expect(result).toContain('binding = "ASSETS"');
+      expect(result).toContain('run_worker_first = ["/account", "/account/*"]');
       expect(result).not.toContain('[[services]]');
       expect(result).not.toContain('AR_ROUTER');
     });
@@ -33,6 +34,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('name = "prod-ar-admin-ui"');
       expect(result).toContain('workers_dev = true');
       expect(result).toContain('main = ".svelte-kit/cloudflare/_worker.js"');
+      expect(result).not.toContain('run_worker_first');
       expect(result).not.toContain('[[services]]');
     });
   });

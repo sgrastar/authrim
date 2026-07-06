@@ -53,6 +53,8 @@ interface Env {
   ADMIN_UI_URL?: string;
   /** Public Login UI URL (e.g., https://login.example.com) */
   LOGIN_UI_URL?: string;
+  /** Whether LOGIN_UI_URL is a dedicated UI host or shared with API/tenant protocol routes */
+  LOGIN_UI_HOST_MODE?: 'dedicated' | 'shared';
   /** Login UI Worker service binding */
   LOGIN_UI_WORKER?: Fetcher;
   /** Admin UI Worker service binding */
@@ -123,6 +125,27 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/scim/v2',
 ];
 
+function isLoginUiBackendProxyRequest(request: Request): boolean {
+  return request.headers.get('X-Authrim-Ui-Proxy') === 'login-ui';
+}
+
+function isDedicatedLoginUiHostMode(env: Env): boolean {
+  return env.LOGIN_UI_HOST_MODE !== 'shared';
+}
+
+function normalizeForwardedHostHeader(value: string | null): string | null {
+  const candidate = value?.split(',')[0]?.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    return new URL(`https://${candidate}`).host;
+  } catch {
+    return null;
+  }
+}
+
 function isBearerTokenCanonicalPath(path: string): boolean {
   return BEARER_TOKEN_CANONICAL_PATHS.some(
     (canonicalPath) => path === canonicalPath || path.startsWith(`${canonicalPath}/`)
@@ -163,14 +186,25 @@ function bearerTokenTransportError(): Response {
 }
 
 function createServiceBindingRequest(request: Request): Request {
+  const targetUrl = new URL(request.url);
   const forwarded = new Request(request.url, request);
   const headers = new Headers(forwarded.headers);
   const originalHost = new URL(request.url).host;
+  const forwardedHost = isLoginUiBackendProxyRequest(request)
+    ? normalizeForwardedHostHeader(headers.get('X-Authrim-Forwarded-Host')) ||
+      normalizeForwardedHostHeader(headers.get('X-Authrim-Original-Host')) ||
+      originalHost
+    : originalHost;
 
-  headers.set('X-Authrim-Forwarded-Host', originalHost);
-  headers.set('X-Forwarded-Host', originalHost);
+  if (forwardedHost !== originalHost) {
+    targetUrl.host = forwardedHost;
+    targetUrl.protocol = 'https:';
+  }
+  headers.set('X-Authrim-Forwarded-Host', forwardedHost);
+  headers.set('X-Forwarded-Host', forwardedHost);
+  headers.set('Host', forwardedHost);
 
-  return new Request(forwarded, { headers });
+  return new Request(new Request(targetUrl.toString(), forwarded), { headers });
 }
 
 async function requestHasFormBearerToken(request: Request): Promise<boolean> {
@@ -205,6 +239,24 @@ function getConfiguredUrlHostname(value: string | undefined): string | null {
 function getRequestTenantId(c: Context<{ Bindings: Env }>): string {
   const hostResult = validateHostHeader(c.req.header('Host'), c.env);
   return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
+}
+
+function hasCookie(request: Request, cookieName: string): boolean {
+  const cookie = request.headers.get('Cookie');
+  if (!cookie) {
+    return false;
+  }
+  return cookie
+    .split(';')
+    .some((part) => part.trim().toLowerCase().startsWith(`${cookieName.toLowerCase()}=`));
+}
+
+function isBaseDomainTenantHost(env: Env, requestHost: string): boolean {
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (!baseDomain) {
+    return false;
+  }
+  return requestHost.endsWith(`.${baseDomain}`) && requestHost !== baseDomain;
 }
 
 function getServiceSiteBinding(env: Env): Fetcher | undefined {
@@ -368,6 +420,23 @@ function notFoundResponse(): Response {
 // Middleware
 app.use('*', redirectExternalHttpToHttps);
 app.use('*', logger());
+
+app.use('*', async (c, next) => {
+  const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
+  const requestHost = new URL(c.req.url).hostname.toLowerCase();
+  if (
+    c.env.ENABLE_LOGIN_UI_PROXY === 'true' &&
+    c.env.AR_LOGIN_UI_URL &&
+    isDedicatedLoginUiHostMode(c.env) &&
+    loginUiHost &&
+    requestHost === loginUiHost &&
+    !isLoginUiBackendProxyRequest(c.req.raw)
+  ) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+  }
+
+  return next();
+});
 
 // Enhanced security headers
 // Skip for /authorize endpoint to allow form_post response mode with nonce-based CSP
@@ -1270,10 +1339,12 @@ app.all(`${ADMIN_UI_ASSET_PREFIX}/*`, async (c) => {
 
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
 app.get('/', async (c) => {
-  const serviceSiteFallback = await resolveServiceSiteFallbackSettings(c);
   const serviceSite = getServiceSiteBinding(c.env);
-  if (serviceSiteFallback.enabled && serviceSite) {
-    return serviceSite.fetch(c.req.raw);
+  if (serviceSite) {
+    const serviceSiteFallback = await resolveServiceSiteFallbackSettings(c);
+    if (serviceSiteFallback.enabled) {
+      return serviceSite.fetch(c.req.raw);
+    }
   }
 
   const requestHost = new URL(c.req.url).hostname.toLowerCase();
@@ -1294,6 +1365,14 @@ app.get('/', async (c) => {
   }
 
   if (loginEnabled) {
+    const requestUrl = new URL(c.req.url);
+    if (
+      requestUrl.search === '' &&
+      isBaseDomainTenantHost(c.env, requestHost) &&
+      !hasCookie(c.req.raw, 'authrim_session')
+    ) {
+      return c.redirect('/login', 303);
+    }
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL!, '/', c.env.LOGIN_UI_WORKER);
   }
 
@@ -1331,9 +1410,12 @@ app.all('*', async (c, next) => {
 // Optional service-site fallback. Authrim-owned routes are registered above, so only unknown
 // non-reserved paths reach this point.
 app.all('*', async (c, next) => {
-  const settings = await resolveServiceSiteFallbackSettings(c);
   const serviceSite = getServiceSiteBinding(c.env);
-  if (!settings.enabled || !serviceSite) {
+  if (!serviceSite) {
+    return next();
+  }
+  const settings = await resolveServiceSiteFallbackSettings(c);
+  if (!settings.enabled) {
     return next();
   }
   return serviceSite.fetch(c.req.raw);

@@ -40,6 +40,32 @@ export interface TenantResolutionResult {
   statusCode?: 400 | 404;
 }
 
+function shouldTrustAuthrimForwardedHost(env: Partial<Env>): boolean {
+  const value = env.AUTHRIM_TRUST_FORWARDED_HOST?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function getAuthrimForwardedHosts(request: Request): string[] {
+  const forwardedHost = request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim();
+  return [forwardedHost].filter(
+    (value, index, array): value is string => !!value && array.indexOf(value) === index
+  );
+}
+
+function resolveTenantFromAuthrimForwardedHost(
+  request: Request,
+  env: Partial<Env>
+): TenantResolutionResult | null {
+  for (const forwardedHost of getAuthrimForwardedHosts(request)) {
+    const forwardedHostResult = getTenantIdFromHost(forwardedHost, env);
+    if (forwardedHostResult.success) {
+      return forwardedHostResult;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Resolve tenant ID from Host header.
  *
@@ -106,6 +132,13 @@ export function resolveTenantFromRequest(
   request: Request,
   env: Partial<Env>
 ): TenantResolutionResult {
+  if (shouldTrustAuthrimForwardedHost(env)) {
+    const forwardedHostResult = resolveTenantFromAuthrimForwardedHost(request, env);
+    if (forwardedHostResult) {
+      return forwardedHostResult;
+    }
+  }
+
   const host = request.headers.get('Host') ?? undefined;
   const hostResult = getTenantIdFromHost(host, env);
   if (hostResult.success) {
@@ -119,15 +152,9 @@ export function resolveTenantFromRequest(
     return hostResult;
   }
 
-  const forwardedHosts = [
-    request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim(),
-  ].filter((value, index, array): value is string => !!value && array.indexOf(value) === index);
-
-  for (const forwardedHost of forwardedHosts) {
-    const forwardedHostResult = getTenantIdFromHost(forwardedHost, env);
-    if (forwardedHostResult.success) {
-      return forwardedHostResult;
-    }
+  const forwardedHostResult = resolveTenantFromAuthrimForwardedHost(request, env);
+  if (forwardedHostResult) {
+    return forwardedHostResult;
   }
 
   return hostResult;

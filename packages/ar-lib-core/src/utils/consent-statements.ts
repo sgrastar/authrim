@@ -449,6 +449,12 @@ async function getClientOverrides(
     min_version: string | null;
     enforcement: string | null;
     conditional_rules_json: string | null;
+    checkbox_mode?: string | null;
+    checkbox_default_checked?: number | null;
+    binding_type?: string | null;
+    binding_value?: string | null;
+    evidence_profile?: string | null;
+    language_fallback?: string | null;
     display_order: number | null;
     created_at: number;
     updated_at: number;
@@ -468,10 +474,108 @@ async function getClientOverrides(
     conditional_rules: r.conditional_rules_json
       ? (JSON.parse(r.conditional_rules_json) as ConditionalConsentRule[])
       : undefined,
+    checkbox_mode:
+      r.checkbox_mode === 'none' || r.checkbox_mode === 'required' || r.checkbox_mode === 'optional'
+        ? r.checkbox_mode
+        : undefined,
+    checkbox_default_checked:
+      r.checkbox_default_checked === null || r.checkbox_default_checked === undefined
+        ? undefined
+        : r.checkbox_default_checked === 1,
+    binding_type:
+      r.binding_type === 'subject' ||
+      r.binding_type === 'scope' ||
+      r.binding_type === 'claim' ||
+      r.binding_type === 'saml_attribute' ||
+      r.binding_type === 'destination_field_set'
+        ? r.binding_type
+        : undefined,
+    binding_value: r.binding_value ?? undefined,
+    evidence_profile: r.evidence_profile ?? undefined,
+    language_fallback: r.language_fallback ?? undefined,
     display_order: r.display_order ?? undefined,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }));
+}
+
+type ConsentBindingType = NonNullable<ResolvedConsentRequirement['binding_type']>;
+
+interface RequirementContextBinding {
+  binding_type?: ConsentBindingType;
+  binding_value?: string;
+  evidence_profile?: string;
+}
+
+function splitBindingValues(value?: string | null): string[] {
+  return (value ?? '')
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function intersectsRequiredValues(requiredValues: string[], requestedValues?: string[]): boolean {
+  if (requiredValues.length === 0) return true;
+  const requested = new Set((requestedValues ?? []).map((item) => item.trim()).filter(Boolean));
+  if (requested.size === 0) return false;
+  return requiredValues.some((value) => requested.has(value));
+}
+
+function isSamlSpecificStatement(
+  statement: ConsentStatement,
+  binding?: RequirementContextBinding
+): boolean {
+  const category = statement.category.toLowerCase();
+  const slug = statement.slug.toLowerCase();
+  const evidenceProfile = binding?.evidence_profile?.toLowerCase() ?? '';
+  return (
+    binding?.binding_type === 'saml_attribute' ||
+    category === 'saml_attribute_release_confirmation' ||
+    category.startsWith('saml_') ||
+    slug.startsWith('saml_') ||
+    evidenceProfile.includes('saml')
+  );
+}
+
+function requirementAppliesToContext(
+  statement: ConsentStatement,
+  binding: RequirementContextBinding,
+  context: ConsentRequirementResolutionContext
+): boolean {
+  const values = splitBindingValues(binding.binding_value);
+
+  switch (binding.binding_type) {
+    case 'scope':
+      if (context.target_type && context.target_type !== 'oidc_client') return false;
+      if (!context.target_type && context.requested_scopes === undefined) return true;
+      return intersectsRequiredValues(values, context.requested_scopes);
+    case 'claim':
+      if (context.target_type && context.target_type !== 'oidc_client') return false;
+      if (!context.target_type && context.requested_claims === undefined) return true;
+      return intersectsRequiredValues(values, context.requested_claims);
+    case 'saml_attribute':
+      if (context.target_type && context.target_type !== 'saml_sp') return false;
+      if (!context.target_type && context.requested_saml_attributes === undefined) return true;
+      return intersectsRequiredValues(values, context.requested_saml_attributes);
+    case 'destination_field_set':
+      if (context.target_type && context.requested_destination_field_sets === undefined) {
+        return false;
+      }
+      if (!context.target_type && context.requested_destination_field_sets === undefined) {
+        return true;
+      }
+      return intersectsRequiredValues(values, context.requested_destination_field_sets);
+    case 'subject':
+      return !context.target_type;
+    default:
+      if (context.target_type === 'oidc_client' && isSamlSpecificStatement(statement, binding)) {
+        return false;
+      }
+      if (context.target_type === 'oidc_client') {
+        return false;
+      }
+      return true;
+  }
 }
 
 export async function resolveClientTrustPolicy(
@@ -579,6 +683,12 @@ export async function resolveConsentRequirements(
     let showDeletionLink = tenantReq?.show_deletion_link ?? false;
     let deletionUrl = tenantReq?.deletion_url;
     let displayOrder = tenantReq?.display_order ?? stmt.display_order;
+    let checkboxMode: ResolvedConsentRequirement['checkbox_mode'];
+    let checkboxDefaultChecked: boolean | undefined;
+    let bindingType = clientOverride?.binding_type;
+    let bindingValue = clientOverride?.binding_value;
+    let evidenceProfile = clientOverride?.evidence_profile;
+    let languageFallback = clientOverride?.language_fallback;
     if (!minVersion && stmt.reconsent_on_version_change !== false) {
       minVersion = currentVersion.version;
     }
@@ -600,6 +710,18 @@ export async function resolveConsentRequirements(
       if (clientOverride.min_version) minVersion = clientOverride.min_version;
       if (clientOverride.enforcement) enforcement = clientOverride.enforcement;
       if (clientOverride.display_order !== undefined) displayOrder = clientOverride.display_order;
+      if (clientOverride.checkbox_mode !== undefined) checkboxMode = clientOverride.checkbox_mode;
+      if (clientOverride.checkbox_default_checked !== undefined) {
+        checkboxDefaultChecked = clientOverride.checkbox_default_checked;
+      }
+      if (clientOverride.binding_type !== undefined) bindingType = clientOverride.binding_type;
+      if (clientOverride.binding_value !== undefined) bindingValue = clientOverride.binding_value;
+      if (clientOverride.evidence_profile !== undefined) {
+        evidenceProfile = clientOverride.evidence_profile;
+      }
+      if (clientOverride.language_fallback !== undefined) {
+        languageFallback = clientOverride.language_fallback;
+      }
 
       // Apply client-level conditional rules if present
       if (clientOverride.conditional_rules && clientOverride.conditional_rules.length > 0) {
@@ -608,6 +730,20 @@ export async function resolveConsentRequirements(
         else if (ruleResult === 'optional') isRequired = false;
         else if (ruleResult === 'hidden') continue;
       }
+    }
+
+    if (
+      !requirementAppliesToContext(
+        stmt,
+        {
+          binding_type: bindingType,
+          binding_value: bindingValue,
+          evidence_profile: evidenceProfile,
+        },
+        context
+      )
+    ) {
+      continue;
     }
 
     results.push({
@@ -620,8 +756,12 @@ export async function resolveConsentRequirements(
       enforcement,
       show_deletion_link: showDeletionLink,
       deletion_url: deletionUrl,
-      checkbox_mode: isRequired ? 'required' : 'optional',
-      checkbox_default_checked: isRequired,
+      checkbox_mode: checkboxMode ?? (isRequired ? 'required' : 'optional'),
+      checkbox_default_checked: checkboxDefaultChecked ?? isRequired,
+      binding_type: bindingType,
+      binding_value: bindingValue,
+      evidence_profile: evidenceProfile,
+      language_fallback: languageFallback,
       display_order: displayOrder,
     });
   }

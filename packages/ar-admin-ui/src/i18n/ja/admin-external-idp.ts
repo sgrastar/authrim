@@ -44,7 +44,7 @@ const adminExternalIdp = {
 	admin_external_idp_redirect_url: 'Redirect URL（外部IdP設定用）',
 	admin_external_idp_copy_to_clipboard: 'クリップボードにコピー',
 	admin_external_idp_redirect_url_hint:
-		'上のSlugを入力するとredirect URLが表示されます。未入力の場合は保存後にProvider IDから生成されます。',
+		'Slugを入力するとcallback URLが生成されます。生成されたURLを外部IdP側のcallback設定に完全一致で登録してください。',
 	admin_external_idp_provider_status: 'Provider状態',
 	admin_external_idp_provider_status_desc:
 		'このidentity providerを有効化または無効化します。無効な場合、ユーザーはこのproviderでサインインできません。',

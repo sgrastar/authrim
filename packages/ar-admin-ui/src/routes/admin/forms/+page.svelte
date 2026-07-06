@@ -8,6 +8,13 @@
 		type FieldType
 	} from '$lib/api/admin-custom-claims';
 	import {
+		FORM_LOCALIZATION_LANGUAGES,
+		isDefaultFormText,
+		localizeDefaultFormText,
+		mergeLocalizedDefaultFormText,
+		type FormLocalizationLanguage
+	} from '$lib/admin/form-localizations';
+	import {
 		adminFormProfilesAPI,
 		type FormProfile,
 		type FormProfileBlockType,
@@ -73,6 +80,7 @@
 		'profile_completion',
 		'login',
 		'consent',
+		'code_input',
 		'custom'
 	];
 	const formParts: FormPart[] = [
@@ -91,6 +99,14 @@
 			descriptionJa: '認証方式ごとに必要な入力欄と送信ボタンをまとめて配置します。',
 			descriptionEn: 'Place one authentication method with its required inputs and action.',
 			icon: 'i-ph-squares-four'
+		},
+		{
+			type: 'code_input_widget',
+			labelJa: 'コード入力',
+			labelEn: 'Code input',
+			descriptionJa: 'Mail OTPまたは認証アプリのコード入力フォームを配置します。',
+			descriptionEn: 'Place a code entry form for Mail OTP or authenticator app verification.',
+			icon: 'i-ph-password'
 		},
 		{
 			type: 'consent_widget',
@@ -144,13 +160,40 @@
 	const authMethodOptions: AuthMethodOption[] = [
 		{ value: 'passkey', label: 'Passkey' },
 		{ value: 'mail_otp', label: 'Mail OTP' },
+		{ value: 'mail_otp_totp', label: 'Mail OTP＋認証アプリ' },
+		{ value: 'totp', label: 'Authenticator app' },
 		{ value: 'external_idp', label: 'Ext. IdP' },
 		{ value: 'directory_password', label: 'Directory Password' }
 	];
-	const localizationLanguages = [
-		{ code: 'en', labelJa: '英語', labelEn: 'English' },
-		{ code: 'ja', labelJa: '日本語', labelEn: 'Japanese' }
-	];
+	const codeInputModeOptions = [
+		{ value: 'auto', labelJa: '自動', labelEn: 'Auto' },
+		{ value: 'mail_otp', labelJa: 'Mail OTP', labelEn: 'Mail OTP' },
+		{ value: 'totp', labelJa: '認証アプリ', labelEn: 'Authenticator app' }
+	] as const;
+	const humanVerificationTimingOptions = [
+		{ value: 'initial', labelJa: '最初から表示', labelEn: 'Show initially' },
+		{ value: 'submit', labelJa: '送信時に表示', labelEn: 'Show on submit' }
+	] as const;
+	const localizationLanguageLabels: Record<
+		FormLocalizationLanguage,
+		{ labelJa: string; labelEn: string }
+	> = {
+		en: { labelJa: '英語 (en)', labelEn: 'English (en)' },
+		ja: { labelJa: '日本語 (ja)', labelEn: 'Japanese (ja)' },
+		zh_CN: { labelJa: '中国語 簡体字 (zh_CN)', labelEn: 'Chinese PRC (zh_CN)' },
+		zh_TW: { labelJa: '中国語 繁体字 (zh_TW)', labelEn: 'Chinese Taiwan (zh_TW)' },
+		es: { labelJa: 'スペイン語 (es)', labelEn: 'Spanish (es)' },
+		pt: { labelJa: 'ポルトガル語 (pt)', labelEn: 'Portuguese (pt)' },
+		fr: { labelJa: 'フランス語 (fr)', labelEn: 'French (fr)' },
+		de: { labelJa: 'ドイツ語 (de)', labelEn: 'German (de)' },
+		ko: { labelJa: '韓国語 (ko)', labelEn: 'Korean (ko)' },
+		ru: { labelJa: 'ロシア語 (ru)', labelEn: 'Russian (ru)' },
+		id: { labelJa: 'インドネシア語 (id)', labelEn: 'Indonesian (id)' }
+	};
+	const localizationLanguages = FORM_LOCALIZATION_LANGUAGES.map((code) => ({
+		code,
+		...localizationLanguageLabels[code]
+	}));
 	const fallbackIdentitySchemaOptions: IdentitySchemaOption[] = [
 		{ field: 'email', label: 'Email', valueType: 'text', source: 'system' },
 		{ field: 'name', label: 'Name', valueType: 'text', source: 'system' },
@@ -291,6 +334,16 @@
 		return 'passkey';
 	}
 
+	function normalizeHumanVerificationTiming(value: unknown): 'initial' | 'submit' {
+		return value === 'submit' ? 'submit' : 'initial';
+	}
+
+	function humanVerificationTimingLabel(value: unknown): string {
+		const timing = normalizeHumanVerificationTiming(value);
+		const option = humanVerificationTimingOptions.find((item) => item.value === timing);
+		return option ? t(option.labelJa, option.labelEn) : t('最初から表示', 'Show initially');
+	}
+
 	function authMethodOption(value: string): AuthMethodOption | null {
 		return authMethodOptions.find((option) => option.value === value) ?? null;
 	}
@@ -300,27 +353,82 @@
 		return normalizeAuthMethod(block.auth_method);
 	}
 
+	function normalizeCodeInputMode(value: unknown): 'auto' | 'mail_otp' | 'totp' {
+		return value === 'mail_otp' || value === 'totp' ? value : 'auto';
+	}
+
+	function selectedCodeInputMode(block: FormProfileField | null): 'auto' | 'mail_otp' | 'totp' {
+		if (!block) return 'auto';
+		return normalizeCodeInputMode(block.code_input_mode ?? block.auth_method);
+	}
+
 	function updateAuthWidgetMethod(method: string) {
 		if (!method || !authMethodOption(method)) return;
 		updateField(selectedBlockIndex, {
 			auth_method: method,
 			field: `auth.${method}`,
-			label: authWidgetDefaultLabel(method)
+			label: authWidgetDefaultLabel(method),
+			external_idp_show_action_text:
+				method === 'external_idp' ? false : selectedBlock?.external_idp_show_action_text
 		});
 	}
 
 	function authWidgetDefaultLabel(method: string): string {
 		switch (method) {
 			case 'mail_otp':
-				return t('認証コードを送信', 'Send verification code');
+				return t('認証コードをメール送信', 'Send code by email');
+			case 'mail_otp_totp':
+				return t('Mail OTP＋認証アプリ', 'Mail OTP + authenticator app');
+			case 'totp':
+				return t('認証アプリでログイン', 'Sign in with authenticator app');
 			case 'external_idp':
-				return t('Ext. IdPでログイン', 'Sign in with Ext. IdP');
+				return 'Ext. IdP';
 			case 'directory_password':
 				return t('ログイン', 'Sign in');
 			case 'passkey':
 			default:
 				return t('Passkeyでサインイン', 'Sign in with Passkey');
 		}
+	}
+
+	function authWidgetDisplayLabel(field: FormProfileField, method: string): string {
+		const label = field.label;
+		const defaultLabels = new Set([
+			'Send verification code',
+			'認証コードを送信',
+			'Continue with authenticator app',
+			'認証アプリで続行',
+			'Sign up with verification code',
+			'認証コードで登録',
+			'Create account with authenticator app',
+			'認証アプリでアカウント作成'
+		]);
+		if (!label || defaultLabels.has(label)) return authWidgetDefaultLabel(method);
+		return label;
+	}
+
+	function externalIdpBaseLabel(label: string): string {
+		const trimmed = label.trim();
+		for (const suffix of ['でログイン', 'で続行']) {
+			if (trimmed.endsWith(suffix)) return trimmed.slice(0, -suffix.length).trim();
+		}
+		for (const prefix of ['Continue with ', 'Sign in with ', 'Login with ']) {
+			if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length).trim();
+		}
+		return trimmed || 'Ext. IdP';
+	}
+
+	function externalIdpPreviewLabel(field: FormProfileField): string {
+		const baseLabel = externalIdpBaseLabel(authWidgetDisplayLabel(field, 'external_idp'));
+		return field.external_idp_show_action_text === true
+			? $LL.login_continueWith({ provider: baseLabel })
+			: baseLabel;
+	}
+
+	function codeInputDefaultLabel(mode: string): string {
+		if (mode === 'totp') return t('認証アプリのコード', 'Authenticator app code');
+		if (mode === 'mail_otp') return t('メール認証コード', 'Email verification code');
+		return t('認証コード', 'Authentication code');
 	}
 
 	function valueTypeFromSchemaFieldType(fieldType: FieldType): FormProfileValueType {
@@ -481,7 +589,29 @@
 				block_id: blockId,
 				order,
 				...patch,
-				auth_method: method
+				auth_method: method,
+				external_idp_show_action_text:
+					method === 'external_idp' ? (patch.external_idp_show_action_text ?? false) : undefined
+			};
+		}
+		if (type === 'code_input_widget') {
+			const mode = normalizeCodeInputMode(patch.code_input_mode ?? patch.auth_method);
+			return {
+				field: patch.field ?? `auth.code_input.${mode}`,
+				label: patch.label ?? codeInputDefaultLabel(mode),
+				required: patch.required ?? true,
+				block_type: type,
+				block_id: blockId,
+				auth_method: mode === 'auto' ? 'mail_otp' : mode,
+				code_input_mode: mode,
+				text:
+					patch.text ??
+					t(
+						'メールまたは認証アプリのコードを入力してください。',
+						'Enter the code from your email or authenticator app.'
+					),
+				order,
+				...patch
 			};
 		}
 		if (type === 'consent_widget') {
@@ -534,7 +664,8 @@
 				block_id: blockId,
 				text: patch.text ?? t('私は人間です', 'I am human'),
 				order,
-				...patch
+				...patch,
+				human_verification_timing: normalizeHumanVerificationTiming(patch.human_verification_timing)
 			};
 		}
 		if (type === 'divider') {
@@ -591,6 +722,8 @@
 		if (type === 'identity_field') return block.label || block.field;
 		if (type === 'auth_widget')
 			return block.label || authWidgetDefaultLabel(selectedAuthWidgetMethod(block));
+		if (type === 'code_input_widget')
+			return block.label || codeInputDefaultLabel(selectedCodeInputMode(block));
 		if (type === 'consent_widget') return block.label || t('同意確認', 'Consent confirmation');
 		if (type === 'heading') return block.label || t('見出し', 'Heading');
 		if (type === 'text') return block.label || 'Text';
@@ -605,10 +738,20 @@
 		if (type === 'identity_field')
 			return `${block.field} / ${normalizeValueType(block.value_type)}`;
 		if (type === 'auth_widget') return authMethodLabel(selectedAuthWidgetMethod(block));
+		if (type === 'code_input_widget') {
+			const mode = selectedCodeInputMode(block);
+			return codeInputModeOptions.find((option) => option.value === mode)
+				? t(
+						codeInputModeOptions.find((option) => option.value === mode)?.labelJa ?? '自動',
+						codeInputModeOptions.find((option) => option.value === mode)?.labelEn ?? 'Auto'
+					)
+				: t('自動', 'Auto');
+		}
 		if (type === 'consent_widget') return block.text ?? t('同意ポリシー', 'Consent policy');
 		if (type === 'heading') return block.text ?? '';
 		if (type === 'text') return block.text ?? '';
-		if (type === 'security_verification') return block.text ?? '';
+		if (type === 'security_verification')
+			return humanVerificationTimingLabel(block.human_verification_timing);
 		if (type === 'layout_row') {
 			const columns = readLayoutColumns(block.layout_columns);
 			return columns === 1 ? t('1カラム', '1 column') : t('2カラム', '2 columns');
@@ -617,7 +760,6 @@
 	}
 
 	function dividerLabel(field: FormProfileField): string {
-		if (field.label && field.label !== 'Divider') return field.label;
 		return field.text ?? '';
 	}
 
@@ -629,14 +771,111 @@
 		return block.block_id ?? blockKey(block, index);
 	}
 
-	function localizedFieldLabel(block: FormProfileField, language: string, index = 0): string {
-		const key = localizationKey(block, index);
-		return draft.localizations[language]?.fields?.[key]?.label ?? '';
+	function legacyLocalizationKey(block: FormProfileField, index = 0): string {
+		return `${block.field}-${index}`;
+	}
+
+	function localizationLookupKeys(block: FormProfileField, index = 0): string[] {
+		return Array.from(
+			new Set([localizationKey(block, index), legacyLocalizationKey(block, index)])
+		);
+	}
+
+	function authWidgetDefaultLocalizationSource(block: FormProfileField): string {
+		const label = block.label;
+		if (isDefaultFormText(label)) return label;
+		const method = selectedAuthWidgetMethod(block);
+		if (method === 'mail_otp') return 'Send code by email';
+		if (method === 'mail_otp_totp') return 'Mail OTP + authenticator app';
+		if (method === 'totp') {
+			return draft.form_kind === 'registration'
+				? 'Create account with authenticator app'
+				: 'Sign in with authenticator app';
+		}
+		if (method === 'external_idp') return 'Ext. IdP';
+		if (method === 'directory_password') return 'Sign in';
+		return draft.form_kind === 'registration'
+			? 'Create Account with Passkey'
+			: 'Sign in with Passkey';
+	}
+
+	function identityFieldLocalizationSource(block: FormProfileField): string {
+		if (block.field === 'email') return 'Email';
+		if (block.field === 'name') return 'Name';
+		if (block.field === 'given_name') return 'First Name';
+		if (block.field === 'family_name') return 'Last Name';
+		if (block.field === 'preferred_username') return 'Preferred username';
+		return block.label || block.field;
+	}
+
+	function codeInputLocalizationSource(block: FormProfileField): string {
+		const label = block.label;
+		if (isDefaultFormText(label)) return label;
+		const mode = selectedCodeInputMode(block);
+		if (mode === 'mail_otp') return 'Email verification code';
+		if (mode === 'totp') return 'Authenticator app code';
+		return 'Authentication code';
+	}
+
+	function blockLocalizationSource(block: FormProfileField): string {
+		const type = getBlockType(block);
+		if (type === 'identity_field') return identityFieldLocalizationSource(block);
+		if (type === 'auth_widget') return authWidgetDefaultLocalizationSource(block);
+		if (type === 'code_input_widget') return codeInputLocalizationSource(block);
+		if (type === 'consent_widget')
+			return isDefaultFormText(block.label) ? block.label : 'Consent confirmation';
+		if (type === 'heading') return isDefaultFormText(block.label) ? block.label : 'Heading';
+		if (type === 'text') return isDefaultFormText(block.label) ? block.label : 'Text';
+		if (type === 'security_verification')
+			return isDefaultFormText(block.label) ? block.label : 'Security check';
+		if (type === 'divider') {
+			const source = dividerLabel(block) || block.label;
+			return isDefaultFormText(source) ? source : source || 'Divider';
+		}
+		return block.label || block.field;
+	}
+
+	function existingLocalizedFieldLabel(
+		block: FormProfileField,
+		language: FormLocalizationLanguage,
+		index = 0
+	): string | undefined {
+		const fields = draft.localizations[language]?.fields ?? {};
+		for (const key of localizationLookupKeys(block, index)) {
+			const label = fields[key]?.label;
+			if (typeof label === 'string') return label;
+		}
+		return undefined;
+	}
+
+	function localizedFieldLabel(
+		block: FormProfileField,
+		language: FormLocalizationLanguage,
+		index = 0
+	): string {
+		return mergeLocalizedDefaultFormText(
+			existingLocalizedFieldLabel(block, language, index),
+			blockLocalizationSource(block),
+			language
+		);
+	}
+
+	function localizedFieldPlaceholder(
+		block: FormProfileField,
+		language: FormLocalizationLanguage,
+		index = 0
+	): string {
+		return (
+			localizeDefaultFormText(blockLocalizationSource(block), language) ||
+			existingLocalizedFieldLabel(block, language, index) ||
+			block.label ||
+			block.field
+		);
 	}
 
 	function updateLocalizationLabel(
 		block: FormProfileField,
-		language: string,
+		language: FormLocalizationLanguage,
 		value: string,
 		index = 0
 	) {
@@ -664,11 +903,13 @@
 			for (const [fieldKey, fieldLocalization] of Object.entries(localization.fields ?? {})) {
 				if (!allowedKeys.has(fieldKey)) continue;
 				const label = fieldLocalization.label?.trim();
+				const text = fieldLocalization.text?.trim();
 				const helpText = fieldLocalization.help_text?.trim();
 				const placeholder = fieldLocalization.placeholder?.trim();
-				if (!label && !helpText && !placeholder) continue;
+				if (!label && !text && !helpText && !placeholder) continue;
 				localizedFields[fieldKey] = {
 					...(label ? { label } : {}),
+					...(text ? { text } : {}),
 					...(helpText ? { help_text: helpText } : {}),
 					...(placeholder ? { placeholder } : {})
 				};
@@ -679,6 +920,34 @@
 					fields: localizedFields
 				};
 			}
+		}
+		return next;
+	}
+
+	function localizationsWithDefaultLabels(
+		localizations: Record<string, FormProfileLocalization>,
+		fields: FormProfileField[]
+	): Record<string, FormProfileLocalization> {
+		const next: Record<string, FormProfileLocalization> = { ...localizations };
+		for (const language of FORM_LOCALIZATION_LANGUAGES) {
+			const languageDraft = next[language] ?? {};
+			const localizedFields: NonNullable<FormProfileLocalization['fields']> = {
+				...(languageDraft.fields ?? {})
+			};
+			for (const [index, field] of fields.entries()) {
+				if (getBlockType(field) === 'layout_row') continue;
+				const key = localizationKey(field, index);
+				const label = localizedFieldLabel(field, language, index).trim();
+				if (!label) continue;
+				localizedFields[key] = {
+					...(localizedFields[key] ?? {}),
+					label
+				};
+			}
+			next[language] = {
+				...languageDraft,
+				fields: localizedFields
+			};
 		}
 		return next;
 	}
@@ -700,7 +969,9 @@
 			case 'login':
 				return $LL.admin_forms_kind_login();
 			case 'consent':
-				return t('同意', 'Consent');
+				return $LL.admin_forms_kind_consent();
+			case 'code_input':
+				return $LL.admin_forms_kind_code_input();
 			case 'custom':
 			default:
 				return $LL.admin_forms_kind_custom();
@@ -871,7 +1142,10 @@
 					block_id: localizationKey(field, index),
 					order: (index + 1) * 10
 				})),
-				localizations: sanitizeLocalizationsForSave(draft.localizations, orderedDraftBlocks),
+				localizations: sanitizeLocalizationsForSave(
+					localizationsWithDefaultLabels(draft.localizations, orderedDraftBlocks),
+					orderedDraftBlocks
+				),
 				settings: normalizeSettings(draft.settings),
 				is_active: draft.is_active
 			};
@@ -1079,7 +1353,20 @@
 																	</div>
 																	<button class="preview-auth-button secondary" type="button">
 																		<span class="i-ph-envelope-simple"></span>
-																		{field.label || authWidgetDefaultLabel(method)}
+																		{authWidgetDisplayLabel(field, method)}
+																	</button>
+																{:else if method === 'mail_otp_totp'}
+																	<div class="preview-field">
+																		<span>{t('メールまたはユーザー名', 'Email or username')}</span>
+																		<input readonly placeholder="you@example.com" />
+																	</div>
+																	<button class="preview-auth-button secondary" type="button">
+																		<span class="i-ph-envelope-simple"></span>
+																		{t('認証コードをメール送信', 'Send code by email')}
+																	</button>
+																	<button class="preview-auth-button secondary" type="button">
+																		<span class="i-ph-device-mobile"></span>
+																		{t('認証アプリでログイン', 'Sign in with authenticator app')}
 																	</button>
 																{:else if method === 'directory_password'}
 																	<div class="preview-field">
@@ -1092,19 +1379,63 @@
 																	</div>
 																	<button class="preview-auth-button secondary" type="button">
 																		<span class="i-ph-identification-card"></span>
-																		{field.label || authWidgetDefaultLabel(method)}
+																		{authWidgetDisplayLabel(field, method)}
+																	</button>
+																{:else if method === 'totp'}
+																	<div class="preview-field">
+																		<span>{t('メールまたはユーザー名', 'Email or username')}</span>
+																		<input readonly placeholder="you@example.com" />
+																	</div>
+																	<button class="preview-auth-button secondary" type="button">
+																		<span class="i-ph-device-mobile"></span>
+																		{authWidgetDisplayLabel(field, method)}
 																	</button>
 																{:else if method === 'external_idp'}
 																	<button class="preview-auth-button secondary" type="button">
 																		<span class="i-ph-globe"></span>
-																		{field.label || authWidgetDefaultLabel(method)}
+																		{externalIdpPreviewLabel(field)}
 																	</button>
 																{:else}
 																	<button class="preview-auth-button" type="button">
 																		<span class="i-ph-key"></span>
-																		{field.label || authWidgetDefaultLabel(method)}
+																		{authWidgetDisplayLabel(field, method)}
 																	</button>
 																{/if}
+															</div>
+														{:else if blockType === 'code_input_widget'}
+															{@const mode = selectedCodeInputMode(field)}
+															<div class="preview-code-input-widget">
+																<div class="preview-field">
+																	<span>{field.label || codeInputDefaultLabel(mode)}</span>
+																	<input readonly placeholder="123456" />
+																	{#if field.text}
+																		<small>{field.text}</small>
+																	{/if}
+																</div>
+																{#if mode !== 'totp'}
+																	<div class="preview-code-progress" aria-hidden="true">
+																		<span></span>
+																	</div>
+																	<div class="preview-code-actions">
+																		<button class="preview-auth-button secondary" type="button">
+																			<span class="i-ph-arrow-left"></span>
+																			{t('戻る', 'Back')}
+																		</button>
+																		<button class="preview-auth-button secondary" type="button">
+																			<span class="i-ph-arrow-clockwise"></span>
+																			{t('再送信', 'Resend')}
+																		</button>
+																	</div>
+																{:else}
+																	<button class="preview-auth-button secondary" type="button">
+																		<span class="i-ph-arrow-left"></span>
+																		{t('戻る', 'Back')}
+																	</button>
+																{/if}
+																<button class="preview-auth-button" type="button">
+																	<span class="i-ph-check-circle"></span>
+																	{t('確認', 'Verify')}
+																</button>
 															</div>
 														{:else if blockType === 'consent_widget'}
 															<div class="preview-consent-widget">
@@ -1143,7 +1474,14 @@
 														{:else if blockType === 'security_verification'}
 															<div class="preview-security-box">
 																<span class="i-ph-shield-check"></span>
-																<span>{field.text || field.label}</span>
+																<span>
+																	{field.text || field.label}
+																	<small
+																		>{humanVerificationTimingLabel(
+																			field.human_verification_timing
+																		)}</small
+																	>
+																</span>
 															</div>
 														{:else if blockType === 'divider'}
 															<div
@@ -1470,6 +1808,50 @@
 														{/each}
 													</select>
 												</label>
+												{#if selectedAuthWidgetMethod(selectedBlock) === 'external_idp'}
+													<label class="check">
+														<input
+															type="checkbox"
+															checked={selectedBlock.external_idp_show_action_text === true}
+															onchange={(event) =>
+																updateField(selectedBlockIndex, {
+																	external_idp_show_action_text: event.currentTarget.checked
+																})}
+														/>
+														<span>{$LL.admin_forms_external_idp_action_text_label()}</span>
+													</label>
+												{/if}
+											{:else if blockType === 'code_input_widget'}
+												<label>
+													<span>{t('コード種別', 'Code type')}</span>
+													<select
+														value={selectedCodeInputMode(selectedBlock)}
+														onchange={(event) =>
+															updateField(selectedBlockIndex, {
+																code_input_mode: normalizeCodeInputMode(event.currentTarget.value),
+																auth_method:
+																	event.currentTarget.value === 'auto'
+																		? 'mail_otp'
+																		: event.currentTarget.value,
+																field: `auth.code_input.${event.currentTarget.value}`
+															})}
+													>
+														{#each codeInputModeOptions as option (option.value)}
+															<option value={option.value}
+																>{t(option.labelJa, option.labelEn)}</option
+															>
+														{/each}
+													</select>
+												</label>
+												<label>
+													<span>{t('説明テキスト', 'Description text')}</span>
+													<textarea
+														rows="3"
+														value={selectedBlock.text ?? ''}
+														oninput={(event) =>
+															updateField(selectedBlockIndex, { text: event.currentTarget.value })}
+													></textarea>
+												</label>
 											{:else if blockType === 'consent_widget'}
 												<label>
 													<span>{t('説明テキスト', 'Description text')}</span>
@@ -1520,6 +1902,26 @@
 															updateField(selectedBlockIndex, { text: event.currentTarget.value })}
 													/>
 												</label>
+												<label>
+													<span>{t('CAPTCHA表示', 'CAPTCHA display')}</span>
+													<select
+														value={normalizeHumanVerificationTiming(
+															selectedBlock.human_verification_timing
+														)}
+														onchange={(event) =>
+															updateField(selectedBlockIndex, {
+																human_verification_timing: normalizeHumanVerificationTiming(
+																	event.currentTarget.value
+																)
+															})}
+													>
+														{#each humanVerificationTimingOptions as option (option.value)}
+															<option value={option.value}>
+																{t(option.labelJa, option.labelEn)}
+															</option>
+														{/each}
+													</select>
+												</label>
 											{:else if blockType === 'divider'}
 												<label>
 													<span>{t('ラベル（任意）', 'Label (optional)')}</span>
@@ -1528,8 +1930,7 @@
 														placeholder={t('または', 'or')}
 														oninput={(event) =>
 															updateField(selectedBlockIndex, {
-																label: event.currentTarget.value || 'Divider',
-																text: null
+																text: event.currentTarget.value || null
 															})}
 													/>
 												</label>
@@ -1602,7 +2003,21 @@
 																		</div>
 																		<button class="preview-auth-button secondary" type="button">
 																			<span class="i-ph-envelope-simple"></span>
-																			{field.label || authWidgetDefaultLabel(method)}
+																			{authWidgetDisplayLabel(field, method)}
+																		</button>
+																	{:else if method === 'mail_otp_totp'}
+																		<div class="preview-field">
+																			<span>{t('メールまたはユーザー名', 'Email or username')}</span
+																			>
+																			<input readonly placeholder="you@example.com" />
+																		</div>
+																		<button class="preview-auth-button secondary" type="button">
+																			<span class="i-ph-envelope-simple"></span>
+																			{t('認証コードをメール送信', 'Send code by email')}
+																		</button>
+																		<button class="preview-auth-button secondary" type="button">
+																			<span class="i-ph-device-mobile"></span>
+																			{t('認証アプリでログイン', 'Sign in with authenticator app')}
 																		</button>
 																	{:else if method === 'directory_password'}
 																		<div class="preview-field">
@@ -1615,19 +2030,64 @@
 																		</div>
 																		<button class="preview-auth-button secondary" type="button">
 																			<span class="i-ph-identification-card"></span>
-																			{field.label || authWidgetDefaultLabel(method)}
+																			{authWidgetDisplayLabel(field, method)}
+																		</button>
+																	{:else if method === 'totp'}
+																		<div class="preview-field">
+																			<span>{t('メールまたはユーザー名', 'Email or username')}</span
+																			>
+																			<input readonly placeholder="you@example.com" />
+																		</div>
+																		<button class="preview-auth-button secondary" type="button">
+																			<span class="i-ph-device-mobile"></span>
+																			{authWidgetDisplayLabel(field, method)}
 																		</button>
 																	{:else if method === 'external_idp'}
 																		<button class="preview-auth-button secondary" type="button">
 																			<span class="i-ph-globe"></span>
-																			{field.label || authWidgetDefaultLabel(method)}
+																			{externalIdpPreviewLabel(field)}
 																		</button>
 																	{:else}
 																		<button class="preview-auth-button" type="button">
 																			<span class="i-ph-key"></span>
-																			{field.label || authWidgetDefaultLabel(method)}
+																			{authWidgetDisplayLabel(field, method)}
 																		</button>
 																	{/if}
+																</div>
+															{:else if blockType === 'code_input_widget'}
+																{@const mode = selectedCodeInputMode(field)}
+																<div class="preview-code-input-widget">
+																	<div class="preview-field">
+																		<span>{field.label || codeInputDefaultLabel(mode)}</span>
+																		<input readonly placeholder="123456" />
+																		{#if field.text}
+																			<small>{field.text}</small>
+																		{/if}
+																	</div>
+																	{#if mode !== 'totp'}
+																		<div class="preview-code-progress" aria-hidden="true">
+																			<span></span>
+																		</div>
+																		<div class="preview-code-actions">
+																			<button class="preview-auth-button secondary" type="button">
+																				<span class="i-ph-arrow-left"></span>
+																				{t('戻る', 'Back')}
+																			</button>
+																			<button class="preview-auth-button secondary" type="button">
+																				<span class="i-ph-arrow-clockwise"></span>
+																				{t('再送信', 'Resend')}
+																			</button>
+																		</div>
+																	{:else}
+																		<button class="preview-auth-button secondary" type="button">
+																			<span class="i-ph-arrow-left"></span>
+																			{t('戻る', 'Back')}
+																		</button>
+																	{/if}
+																	<button class="preview-auth-button" type="button">
+																		<span class="i-ph-check-circle"></span>
+																		{t('確認', 'Verify')}
+																	</button>
 																</div>
 															{:else if blockType === 'consent_widget'}
 																<div class="preview-consent-widget">
@@ -1667,7 +2127,14 @@
 															{:else if blockType === 'security_verification'}
 																<div class="preview-security-box">
 																	<span class="i-ph-shield-check"></span>
-																	<span>{field.text || field.label}</span>
+																	<span>
+																		{field.text || field.label}
+																		<small
+																			>{humanVerificationTimingLabel(
+																				field.human_verification_timing
+																			)}</small
+																		>
+																	</span>
 																</div>
 															{:else if blockType === 'divider'}
 																<div
@@ -1714,7 +2181,7 @@
 														<td>
 															<input
 																value={localizedFieldLabel(field, language.code, index)}
-																placeholder={field.label || field.field}
+																placeholder={localizedFieldPlaceholder(field, language.code, index)}
 																oninput={(event) =>
 																	updateLocalizationLabel(
 																		field,
@@ -1927,6 +2394,29 @@
 		display: grid;
 		gap: 0.75rem;
 	}
+	.preview-code-input-widget {
+		display: grid;
+		gap: 0.75rem;
+	}
+	.preview-code-progress {
+		height: 0.45rem;
+		overflow: hidden;
+		border-radius: 999px;
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+	}
+	.preview-code-progress span {
+		display: block;
+		width: 62%;
+		height: 100%;
+		border-radius: inherit;
+		background: var(--color-primary);
+	}
+	.preview-code-actions {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.6rem;
+	}
 	.preview-consent-widget {
 		display: grid;
 		gap: 0.75rem;
@@ -1984,6 +2474,13 @@
 	}
 	.preview-security-box > span:first-child {
 		color: var(--color-primary);
+	}
+	.preview-security-box small {
+		display: block;
+		margin-top: 0.2rem;
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		font-weight: 500;
 	}
 	.preview-divider {
 		display: grid;

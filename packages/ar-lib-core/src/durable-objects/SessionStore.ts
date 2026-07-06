@@ -144,7 +144,6 @@ export class SessionStore extends DurableObject<Env> {
   private cleanupInterval: number | null = null;
   private actorCtx: ActorContext;
   private sessionPersistence: SessionPersistenceAdapter | null = null;
-  private sessionPersistenceInit: Promise<SessionPersistenceAdapter | null> | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
@@ -992,13 +991,8 @@ export class SessionStore extends DurableObject<Env> {
     if (this.sessionPersistence) {
       return this.sessionPersistence;
     }
-    if (!this.sessionPersistenceInit) {
-      this.sessionPersistenceInit = this.initializeSessionPersistence().finally(() => {
-        this.sessionPersistenceInit = null;
-      });
-    }
 
-    this.sessionPersistence = await this.sessionPersistenceInit;
+    this.sessionPersistence = await this.initializeSessionPersistence();
     return this.sessionPersistence;
   }
 

@@ -1,3 +1,9 @@
+import {
+	LOGIN_TENANT_HOST_COOKIE,
+	getLoginTenantHost,
+	normalizeTenantHost
+} from './discovery-session';
+
 export interface DiscoveryCandidate {
 	tenant_id: string;
 	tenant_code: string;
@@ -65,15 +71,36 @@ export interface SessionStatusResponse {
 interface DiscoveryRequestEventLike {
 	request: Request;
 	url: URL;
+	cookies?: {
+		get(name: string): string | undefined;
+	};
 }
 
 export function getDiscoveryRequestHeaders(
 	event: DiscoveryRequestEventLike
 ): HeadersInit | undefined {
 	const originalHost = event.request.headers.get('x-authrim-original-host')?.trim();
-	const forwardedHost = originalHost || event.url.host;
+	const urlTenantHost = normalizeTenantHost(event.url.searchParams.get('tenant_host'));
+	const cookieTenantHost =
+		shouldUseLoginTenantCookieForEntry(event.url) && event.cookies
+			? getLoginTenantHost(event.cookies.get(LOGIN_TENANT_HOST_COOKIE))
+			: undefined;
+	const forwardedHost = urlTenantHost || cookieTenantHost || originalHost || event.url.host;
 
 	return forwardedHost ? { 'x-authrim-original-host': forwardedHost } : undefined;
+}
+
+function shouldUseLoginTenantCookieForEntry(url: URL): boolean {
+	if (url.pathname === '/discover') {
+		return false;
+	}
+
+	return (
+		url.searchParams.has('challenge_id') ||
+		url.pathname === '/login' ||
+		url.pathname === '/reauth' ||
+		url.pathname === '/consent'
+	);
 }
 
 export async function fetchDiscoveryConfig(
@@ -91,7 +118,10 @@ export async function isCurrentSessionActive(
 	fetchFn: typeof fetch,
 	headers?: HeadersInit
 ): Promise<boolean> {
-	const response = await fetchFn('/api/sessions/status', headers ? { headers } : undefined);
+	const response = await fetchFn(
+		'/api/sessions/status?include=basic',
+		headers ? { headers } : undefined
+	);
 	if (!response.ok) {
 		return false;
 	}

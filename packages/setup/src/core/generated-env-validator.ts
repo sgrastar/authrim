@@ -744,13 +744,13 @@ async function validateLoggingSecretMaterial(
 ): Promise<ValidationCheck> {
   const check = makeCheck(
     'logging-secret-material',
-    'generated keys include logging and object encryption secrets'
+    'generated keys include logging, OTP, and encryption secrets'
   );
   const keysDir = resolveKeysDirectory(baseDir, env, envPaths, config, keysBaseDir);
 
   if (!existsSync(keysDir)) {
     pushDetail(check, 'fail', `keys directory is missing: ${keysDir}`);
-    return finishCheck(check, 'generated keys include logging and object encryption secrets');
+    return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
   }
 
   await inspectSecretFile(
@@ -767,12 +767,24 @@ async function validateLoggingSecretMaterial(
   );
   await inspectSecretFile(
     check,
+    join(keysDir, 'pii_encryption_key.txt'),
+    'PII_ENCRYPTION_KEY',
+    isHexRootKey
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'otp_hmac_secret.txt'),
+    'OTP_HMAC_SECRET',
+    isBase64UrlSecret
+  );
+  await inspectSecretFile(
+    check,
     join(keysDir, 'version_manager_secret.txt'),
     'VERSION_MANAGER_SECRET',
     isBase64UrlSecret
   );
 
-  return finishCheck(check, 'generated keys include logging and object encryption secrets');
+  return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
 }
 
 async function validateDeployWranglers(

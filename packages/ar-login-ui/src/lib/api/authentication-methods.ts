@@ -27,6 +27,25 @@ export interface EmailCodeMethod {
 	signupEnabled?: boolean;
 	reauthEnabled?: boolean;
 	accountLinkEnabled?: boolean;
+	digits?: number;
+	steps: string[];
+}
+
+export interface TotpMethod {
+	enabled: boolean;
+	loginEnabled?: boolean;
+	signupEnabled?: boolean;
+	reauthEnabled?: boolean;
+	accountLinkEnabled?: boolean;
+	preset: 'compatible' | 'strong';
+	algorithm: 'SHA1' | 'SHA256';
+	digits: number;
+	period: number;
+	window: number;
+	defaultAcr: string;
+	requirement: {
+		mode: 'optional' | 'required';
+	};
 	steps: string[];
 }
 
@@ -84,6 +103,7 @@ export interface HumanVerificationMethod {
 export interface AuthenticationMethods {
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
+	totp: TotpMethod;
 	directoryPassword: DirectoryPasswordMethod;
 	humanVerification: HumanVerificationMethod;
 	external: ExternalMethod;

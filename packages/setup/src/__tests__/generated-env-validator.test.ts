@@ -72,7 +72,9 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
       createdAt: '2026-01-01T00:00:00.000Z',
     },
     rpTokenEncryptionKey: 'a'.repeat(64),
+    piiEncryptionKey: 'd'.repeat(64),
     objectEncryptionRootKey: 'b'.repeat(64),
+    otpHmacSecret: 'fixture_otp_hmac_secret_1234567890',
     versionManagerSecret: 'fixture_version_manager_secret_123',
     loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
     flowRuntimeHmacSecret: 'fixture_flow_runtime_secret_123',
@@ -347,6 +349,20 @@ describe('validateGeneratedEnvironment', () => {
     expect(secretCheck?.status).toBe('fail');
     expect(secretCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('LOGGING_CURSOR_HMAC_SECRET')])
+    );
+  });
+
+  it('fails when generated OTP key material is missing', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    await unlink(join(root, '.authrim', env, 'keys', 'otp_hmac_secret.txt'));
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const secretCheck = result.checks.find((check) => check.id === 'logging-secret-material');
+
+    expect(result.ok).toBe(false);
+    expect(secretCheck?.status).toBe('fail');
+    expect(secretCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('OTP_HMAC_SECRET')])
     );
   });
 

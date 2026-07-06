@@ -12,7 +12,6 @@ interface CacheEntry {
 const DEFAULT_CACHE_TTL_SECONDS = 180;
 
 const cache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<AuthenticationMethodsResponse | null>>();
 
 function getCacheTtlMs(data: AuthenticationMethodsResponse): number {
 	const ttlSeconds = Number(data.meta?.cacheTTL);
@@ -33,28 +32,14 @@ export async function getCachedAuthenticationMethods(
 		return cached.data;
 	}
 
-	const pending = inFlight.get(cacheKey);
-	if (pending) {
-		return pending;
+	const data = await loader();
+	if (data) {
+		cache.set(cacheKey, {
+			data,
+			expiresAt: Date.now() + getCacheTtlMs(data)
+		});
 	}
-
-	const request = (async () => {
-		const data = await loader();
-		if (data) {
-			cache.set(cacheKey, {
-				data,
-				expiresAt: Date.now() + getCacheTtlMs(data)
-			});
-		}
-		return data;
-	})();
-
-	inFlight.set(cacheKey, request);
-	try {
-		return await request;
-	} finally {
-		inFlight.delete(cacheKey);
-	}
+	return data;
 }
 
 export function resolveHumanVerificationProviderFromAuthenticationMethods(
@@ -82,5 +67,4 @@ export function resolveHumanVerificationProviderFromAuthenticationMethods(
 
 export function clearAuthenticationMethodsServerCache(): void {
 	cache.clear();
-	inFlight.clear();
 }

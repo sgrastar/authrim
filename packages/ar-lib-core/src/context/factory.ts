@@ -34,6 +34,7 @@ import {
   ClientRepository,
   SessionRepository,
   PasskeyRepository,
+  TotpCredentialRepository,
   RoleRepository,
   SessionClientRepository,
 } from '../repositories/core';
@@ -208,6 +209,7 @@ export class ContextFactory implements IContextFactory {
       client: new ClientRepository(this.coreAdapter, this.tenantId),
       session: new SessionRepository(this.coreAdapter, this.tenantId),
       passkey: new PasskeyRepository(this.coreAdapter, this.tenantId),
+      totp: new TotpCredentialRepository(this.coreAdapter, this.tenantId),
       role: new RoleRepository(this.coreAdapter, this.tenantId),
       sessionClient: new SessionClientRepository(this.coreAdapter, this.tenantId),
       // Future: organization: new OrganizationRepository(this.coreAdapter),

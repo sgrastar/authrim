@@ -64,6 +64,26 @@ export type AccountPasskey = {
 	last_used_at: number | null;
 };
 
+export type AccountTotpCredential = {
+	id: string;
+	label: string | null;
+	algorithm: 'SHA1' | 'SHA256';
+	digits: number;
+	period: number;
+	window: number;
+	status: 'pending' | 'active' | 'disabled';
+	created_at: number;
+	activated_at: number | null;
+	last_used_at: number | null;
+};
+
+export type AccountTotpProfile = {
+	algorithm: 'SHA1' | 'SHA256';
+	digits: number;
+	period: number;
+	window: number;
+};
+
 export type WebAuthnCredentialSignal = {
 	rp_id: string;
 	user_id: string;
@@ -259,6 +279,19 @@ export const accountAPI = {
 			})
 		}),
 
+	completeTotpReauth: (code: string) =>
+		accountFetch<{
+			ok: boolean;
+			reauth: {
+				authenticated_at: number;
+				expires_at: number;
+				methods: string[];
+			};
+		}>('/api/account/reauth/totp/complete', {
+			method: 'POST',
+			body: JSON.stringify({ code })
+		}),
+
 	getSessions: () => accountFetch<{ sessions: AccountSession[] }>('/api/account/sessions'),
 
 	getDevices: () => accountFetch<{ devices: AccountDevice[] }>('/api/account/devices'),
@@ -313,6 +346,64 @@ export const accountAPI = {
 		}>(`/api/account/passkeys/${encodeURIComponent(id)}`, {
 			method: 'DELETE'
 		}),
+
+	getTotpCredentials: () =>
+		accountFetch<{
+			credentials: AccountTotpCredential[];
+			total: number;
+			backup_codes: {
+				total: number;
+				remaining: number;
+			};
+		}>('/api/account/totp'),
+
+	createTotpOptions: (label?: string) =>
+		accountFetch<{
+			credential: AccountTotpCredential;
+			secret: string;
+			otpauth_uri: string;
+			profile: AccountTotpProfile;
+		}>('/api/account/totp/options', {
+			method: 'POST',
+			body: JSON.stringify({ ...(label ? { label } : {}) })
+		}),
+
+	activateTotpCredential: (credentialId: string, code: string) =>
+		accountFetch<{
+			ok: boolean;
+			credential: AccountTotpCredential;
+			backup_codes: string[];
+		}>('/api/account/totp/activate', {
+			method: 'POST',
+			body: JSON.stringify({ credential_id: credentialId, code })
+		}),
+
+	renameTotpCredential: (id: string, label: string) =>
+		accountFetch<{ credential: AccountTotpCredential }>(
+			`/api/account/totp/${encodeURIComponent(id)}`,
+			{
+				method: 'PATCH',
+				body: JSON.stringify({ label })
+			}
+		),
+
+	deleteTotpCredential: (id: string, proof: { code?: string; backup_code?: string } = {}) =>
+		accountFetch<{
+			ok: boolean;
+			credential: { id: string; deleted: boolean };
+		}>(`/api/account/totp/${encodeURIComponent(id)}`, {
+			method: 'DELETE',
+			body: JSON.stringify(proof)
+		}),
+
+	regenerateTotpBackupCodes: (code?: string) =>
+		accountFetch<{ ok: boolean; backup_codes: string[] }>(
+			'/api/account/totp/backup-codes/regenerate',
+			{
+				method: 'POST',
+				body: JSON.stringify({ ...(code ? { code } : {}) })
+			}
+		),
 
 	getOperations: () =>
 		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),

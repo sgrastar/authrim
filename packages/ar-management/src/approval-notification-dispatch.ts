@@ -6,7 +6,7 @@ import type {
   ApprovalTransportMethod,
   Env,
 } from '@authrim/ar-lib-core';
-import { getPluginContext } from '@authrim/ar-lib-core';
+import { getRequiredPluginContext } from '@authrim/ar-lib-core';
 import { issueApprovalCompletionArtifact } from './approval-completion-artifact';
 import { issueApprovalOtpChallenge } from './approval-otp';
 import { resolveApprovalNotificationTransport } from './approval-notification-resolution';
@@ -213,7 +213,7 @@ async function sendViaNotifier(
   completionArtifact?: ApprovalCompletionDispatchArtifact | null,
   completionPath?: string | null
 ): Promise<ApprovalNotificationDispatchResult> {
-  const pluginCtx = getPluginContext(c);
+  const pluginCtx = getRequiredPluginContext(c, 'notification');
   const notifier = pluginCtx.registry.getNotifier(channel) as NotificationHandler | undefined;
 
   if (!notifier) {

@@ -264,6 +264,13 @@ const adminOther = {
 	admin_authentication_methods_email_otp: 'Email OTP',
 	admin_authentication_methods_email_otp_description:
 		'メールコードをログイン・登録・再認証で使います。',
+	admin_authentication_methods_totp: '認証アプリ',
+	admin_authentication_methods_totp_description:
+		'TOTP認証アプリをログイン・登録・再認証・アカウント連携で使います。',
+	admin_authentication_methods_totp_preset: 'TOTP preset',
+	admin_authentication_methods_totp_preset_compatible: 'Compatible',
+	admin_authentication_methods_totp_preset_strong: 'Strong',
+	admin_authentication_methods_totp_default_acr: 'Default ACR',
 	admin_authentication_methods_directory_password: 'Directory Password',
 	admin_authentication_methods_directory_password_description:
 		'Authrim Wordwarden経由で組織ディレクトリのパスワード検証を行います。',

@@ -23,7 +23,13 @@
 		emailOtpLoginEnabled: true,
 		emailOtpSignupEnabled: true,
 		emailOtpReauthEnabled: true,
-		emailOtpAccountLinkEnabled: true
+		emailOtpAccountLinkEnabled: true,
+		totpLoginEnabled: false,
+		totpSignupEnabled: false,
+		totpReauthEnabled: false,
+		totpAccountLinkEnabled: false,
+		totpPreset: 'compatible',
+		totpDefaultAcr: 'urn:authrim:aal:2'
 	};
 	const DEFAULT_HUMAN_VERIFICATION: AuthenticationMethodHumanVerificationSettings = {
 		provider: 'human-verification-cloudflare-turnstile',
@@ -331,6 +337,27 @@
 				</div>
 
 				<div class="method-title">
+					<strong>{$LL.admin_authentication_methods_totp()}</strong>
+					<span>{$LL.admin_authentication_methods_totp_description()}</span>
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.totpSignupEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.totpLoginEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.totpReauthEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch
+						bind:checked={builtIn.totpAccountLinkEnabled}
+						disabled={!canEdit}
+						size="sm"
+					/>
+				</div>
+
+				<div class="method-title">
 					<div class="provider-title">
 						<strong>{$LL.admin_authentication_methods_directory_password()}</strong>
 						{#if !directoryPassword.configured}
@@ -358,6 +385,24 @@
 				<div class="method-cell unavailable">
 					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
 				</div>
+			</div>
+			<div class="method-options">
+				<label class="field">
+					<span>{$LL.admin_authentication_methods_totp_preset()}</span>
+					<select bind:value={builtIn.totpPreset} disabled={!canEdit}>
+						<option value="compatible">{$LL.admin_authentication_methods_totp_preset_compatible()}</option>
+						<option value="strong">{$LL.admin_authentication_methods_totp_preset_strong()}</option>
+					</select>
+				</label>
+				<label class="field">
+					<span>{$LL.admin_authentication_methods_totp_default_acr()}</span>
+					<input
+						type="text"
+						bind:value={builtIn.totpDefaultAcr}
+						disabled={!canEdit}
+						placeholder="urn:authrim:aal:2"
+					/>
+				</label>
 			</div>
 		</AdminSection>
 
@@ -569,6 +614,36 @@
 	.method-cell {
 		display: flex;
 		align-items: center;
+	}
+
+	.method-options {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 12px;
+		margin-top: 12px;
+	}
+
+	.field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.field span {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+		font-weight: 750;
+	}
+
+	.field select,
+	.field input {
+		width: 100%;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-text);
+		font: inherit;
+		font-size: 0.84rem;
+		padding: 8px 10px;
 	}
 
 	.cache-notice {

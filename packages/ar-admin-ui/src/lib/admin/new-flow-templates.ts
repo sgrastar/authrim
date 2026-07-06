@@ -411,7 +411,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 						en: 'Choose how to create your account.'
 					},
 					i18n_key: 'flow.oidc.registration.method',
-					methods: ['passkey', 'email_otp', 'social']
+					methods: ['passkey', 'totp', 'email_otp', 'social']
 				},
 				{
 					type: 'profile_input',
@@ -540,7 +540,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 						en: 'Choose a sign-in method.'
 					},
 					i18n_key: 'flow.academic_saml.login.authentication',
-					methods: ['passkey', 'email_otp', 'directory_password', 'external_idp']
+					methods: ['passkey', 'totp', 'email_otp', 'directory_password', 'external_idp']
 				},
 				{
 					type: 'release_confirmation',
@@ -654,7 +654,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 						en: 'Choose a sign-in method.'
 					},
 					i18n_key: 'flow.oidc.login.authentication',
-					methods: ['passkey', 'password', 'email_otp', 'social']
+					methods: ['passkey', 'totp', 'password', 'email_otp', 'social']
 				},
 				{
 					type: 'release_confirmation',
@@ -823,6 +823,7 @@ function createAcademicSamlLoginPreviewEditorState(): LoginUiRuntimeContractPrev
 					authentication_profile_ref: 'default',
 					outputs: [
 						{ id: 'mail_otp', label: 'Email OTP' },
+						{ id: 'totp', label: 'Authenticator app' },
 						{ id: 'passkey', label: 'Passkey' }
 					]
 				}
@@ -887,6 +888,12 @@ function createAcademicSamlLoginPreviewEditorState(): LoginUiRuntimeContractPrev
 				target: 'saml-attribute-release-consent'
 			},
 			{
+				id: 'authentication:totp->saml-attribute-release-consent',
+				source: 'authentication',
+				source_handle: 'totp',
+				target: 'saml-attribute-release-consent'
+			},
+			{
 				id: 'authentication:passkey->saml-attribute-release-consent',
 				source: 'authentication',
 				source_handle: 'passkey',
@@ -930,6 +937,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 					authentication_profile_ref: 'default',
 					outputs: [
 						{ id: 'mail_otp', label: 'Email OTP' },
+						{ id: 'totp', label: 'Authenticator app' },
 						{ id: 'passkey', label: 'Passkey' }
 					]
 				}
@@ -1033,9 +1041,21 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				target: 'saml-attribute-release-consent'
 			},
 			{
+				id: 'authentication:totp->saml-attribute-release-consent',
+				source: 'authentication',
+				source_handle: 'totp',
+				target: 'saml-attribute-release-consent'
+			},
+			{
 				id: 'authentication:mail_otp->oidc-authorization-consent',
 				source: 'authentication',
 				source_handle: 'mail_otp',
+				target: 'oidc-authorization-consent'
+			},
+			{
+				id: 'authentication:totp->oidc-authorization-consent',
+				source: 'authentication',
+				source_handle: 'totp',
 				target: 'oidc-authorization-consent'
 			},
 			{
@@ -1082,6 +1102,12 @@ function createPreviewEditorEdges(
 				id: 'registration-method:mail_otp->profile-input',
 				source: 'registration-method',
 				source_handle: 'mail_otp',
+				target: 'profile-input'
+			},
+			{
+				id: 'registration-method:totp->profile-input',
+				source: 'registration-method',
+				source_handle: 'totp',
 				target: 'profile-input'
 			},
 			{
@@ -1143,6 +1169,12 @@ function createPreviewEditorEdges(
 				target: 'consent'
 			},
 			{
+				id: 'authentication:totp->consent',
+				source: 'authentication',
+				source_handle: 'totp',
+				target: 'consent'
+			},
+			{
 				id: 'authentication:passkey->consent',
 				source: 'authentication',
 				source_handle: 'passkey',
@@ -1190,6 +1222,7 @@ function runtimeConfigForNode(
 		config.authentication_profile_ref = 'default';
 		config.outputs = [
 			{ id: 'mail_otp', label: 'Email OTP' },
+			{ id: 'totp', label: 'Authenticator app' },
 			{ id: 'passkey', label: 'Passkey' },
 			{ id: 'facebook', label: 'Facebook' }
 		];

@@ -45,7 +45,7 @@ export interface AuthCorePersistenceResolveOptions {
   runtimeSnapshotMode?: 'optional' | 'required';
 }
 
-const authCorePersistenceContextCache = new WeakMap<object, Promise<AuthCorePersistenceContext>>();
+const authCorePersistenceContextCache = new WeakMap<object, AuthCorePersistenceContext>();
 
 function defaultTransientAuthStoragePolicy(
   deploymentProfile: StorageDeploymentProfile | undefined
@@ -104,7 +104,7 @@ export async function resolveAuthCorePersistenceContextFromEnv(
   };
 }
 
-export function getCachedAuthCorePersistenceContextFromEnv(
+export async function getCachedAuthCorePersistenceContextFromEnv(
   env: AuthCorePersistenceEnv
 ): Promise<AuthCorePersistenceContext> {
   const cacheKey = env as object;
@@ -113,9 +113,9 @@ export function getCachedAuthCorePersistenceContextFromEnv(
     return cached;
   }
 
-  const pending = resolveAuthCorePersistenceContextFromEnv(env);
-  authCorePersistenceContextCache.set(cacheKey, pending);
-  return pending;
+  const context = await resolveAuthCorePersistenceContextFromEnv(env);
+  authCorePersistenceContextCache.set(cacheKey, context);
+  return context;
 }
 
 export function resolveAuthCorePersistenceSourceFromContext(

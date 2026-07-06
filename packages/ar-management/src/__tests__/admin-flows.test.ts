@@ -167,6 +167,13 @@ function installDbMock() {
     }
 
     if (sql.includes('FROM flow_assignments')) {
+      if (sql.includes('flow_id = ?')) {
+        return (
+          assignments.find(
+            (assignment) => assignment.tenant_id === params[0] && assignment.flow_id === params[1]
+          ) ?? null
+        );
+      }
       if (sql.includes('target_id IS NULL')) {
         return (
           assignments.find(
@@ -264,6 +271,14 @@ function installDbMock() {
         const assignments = setClause.split(',').map((assignment) => assignment.trim());
         let paramIndex = 0;
         assignments.forEach((assignment) => {
+          if (assignment === 'is_active = 0') {
+            flow.is_active = 0;
+            return;
+          }
+          if (assignment === 'is_active = 1') {
+            flow.is_active = 1;
+            return;
+          }
           if (!assignment.includes('?')) {
             return;
           }
@@ -296,6 +311,12 @@ function installDbMock() {
               break;
             case 'published_version_id':
               flow.published_version_id = String(value);
+              break;
+            case 'deleted_at':
+              flow.deleted_at = Number(value);
+              break;
+            case 'is_active':
+              flow.is_active = Number(value);
               break;
             case 'template_id':
               flow.template_id = value as string | null;
@@ -813,6 +834,7 @@ describe('admin Flow management handlers', () => {
     expect(validResponse.status).toBe(200);
     expect(assignments).toHaveLength(1);
     expect(assignments[0]).toMatchObject({
+      id: 'generated-id',
       target_type: 'oidc_client',
       target_id: 'client-1',
       flow_kind: 'login',
@@ -838,6 +860,64 @@ describe('admin Flow management handlers', () => {
 
     expect(response.status).toBe(400);
     expect(assignments).toHaveLength(0);
+  });
+
+  it('replaces duplicate assignments for the same target and Flow kind', async () => {
+    seedFlow({ status: 'published', published_version_id: 'version-1' });
+    seedFlow({
+      id: 'flow-2',
+      slug: 'login-flow-2',
+      display_name: 'Login Flow 2',
+      status: 'published',
+      published_version_id: 'version-2',
+    });
+    assignments.push(
+      {
+        id: 'assignment-old',
+        tenant_id: 'tenant-1',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'login',
+        flow_id: 'flow-1',
+        enabled: 1,
+        created_at: 100,
+        updated_at: 100,
+      },
+      {
+        id: 'assignment-duplicate',
+        tenant_id: 'tenant-1',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'login',
+        flow_id: 'flow-1',
+        enabled: 1,
+        created_at: 101,
+        updated_at: 101,
+      }
+    );
+
+    const response = await adminFlowAssignmentUpsertHandler(
+      createContext({
+        body: {
+          target_type: 'tenant',
+          target_id: null,
+          flow_kind: 'login',
+          flow_id: 'flow-2',
+          enabled: true,
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]).toMatchObject({
+      id: 'generated-id',
+      target_type: 'tenant',
+      target_id: null,
+      flow_kind: 'login',
+      flow_id: 'flow-2',
+      enabled: 1,
+    });
   });
 
   it('deletes an existing Flow assignment for the selected target and kind', async () => {
@@ -868,15 +948,39 @@ describe('admin Flow management handlers', () => {
     expect(assignments).toHaveLength(0);
   });
 
-  it('does not delete a Flow after a published version exists', async () => {
+  it('deletes a published Flow when it has no assignments', async () => {
     seedFlow({ status: 'published', published_version_id: 'version-1' });
+
+    const response = await adminFlowDeleteHandler(createContext({ params: { id: 'flow-1' } }));
+
+    expect(response.status).toBe(200);
+    expect(flows[0]).toMatchObject({
+      status: 'disabled',
+      is_active: 0,
+      deleted_at: expect.any(Number),
+    });
+  });
+
+  it('does not delete an assigned published Flow', async () => {
+    seedFlow({ status: 'published', published_version_id: 'version-1' });
+    assignments.push({
+      id: 'assignment-1',
+      tenant_id: 'tenant-1',
+      target_type: 'tenant',
+      target_id: null,
+      flow_kind: 'login',
+      flow_id: 'flow-1',
+      enabled: 1,
+      created_at: 100,
+      updated_at: 100,
+    });
 
     const response = await adminFlowDeleteHandler(createContext({ params: { id: 'flow-1' } }));
 
     expect(response.status).toBe(409);
     expect(await readJson(response)).toMatchObject({
       error: 'conflict',
-      error_description: 'Published Flows cannot be deleted',
+      error_description: 'Flow is assigned and cannot be deleted',
     });
   });
 });

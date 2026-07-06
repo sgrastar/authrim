@@ -1,6 +1,49 @@
 import type { DiscoveryCandidate } from './discovery-entry';
 
 export const REMEMBERED_TENANT_COOKIE = 'authrim_last_tenant';
+export const LOGIN_TENANT_HOST_COOKIE = 'authrim_login_tenant_host';
+
+const MAX_TENANT_HOST_LENGTH = 255;
+
+export function normalizeTenantHost(rawValue: string | null | undefined): string | undefined {
+	if (!rawValue) {
+		return undefined;
+	}
+
+	const value = rawValue.trim();
+	if (!value || value.length > MAX_TENANT_HOST_LENGTH || /[\u0000-\u001f\u007f]/.test(value)) {
+		return undefined;
+	}
+
+	let parsed: URL;
+	try {
+		parsed = new URL(value.includes('://') ? value : `https://${value}`);
+	} catch {
+		return undefined;
+	}
+
+	if (
+		(parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+		parsed.username ||
+		parsed.password ||
+		parsed.pathname !== '/' ||
+		parsed.search ||
+		parsed.hash
+	) {
+		return undefined;
+	}
+
+	const host = parsed.host.toLowerCase();
+	if (!host || host.length > MAX_TENANT_HOST_LENGTH || /[\s,]/.test(host)) {
+		return undefined;
+	}
+
+	return host;
+}
+
+export function getLoginTenantHost(rawValue: string | undefined): string | undefined {
+	return normalizeTenantHost(rawValue);
+}
 
 export function readRememberedTenant(rawValue: string | undefined): DiscoveryCandidate | null {
 	if (!rawValue) {

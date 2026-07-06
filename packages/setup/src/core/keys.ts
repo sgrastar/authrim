@@ -74,7 +74,9 @@ export interface KeyMetadata {
     privateKey: string;
     publicKey: string;
     rpTokenEncryptionKey?: string;
+    piiEncryptionKey?: string;
     objectEncryptionRootKey?: string;
+    otpHmacSecret?: string;
     versionManagerSecret?: string;
     loggingCursorHmacSecret?: string;
     flowRuntimeHmacSecret?: string;
@@ -104,8 +106,12 @@ export interface GeneratedSecrets {
   tenantRuntimeRegistryKeyPair: JwkKeyPair;
   /** RP Token encryption key (hex encoded) */
   rpTokenEncryptionKey: string;
+  /** PII field encryption key (hex encoded) */
+  piiEncryptionKey: string;
   /** Root key for object plane encryption (hex encoded) */
   objectEncryptionRootKey: string;
+  /** HMAC secret for OTP and TOTP backup-code hashing */
+  otpHmacSecret: string;
   /** Scoped VersionManager Durable Object secret */
   versionManagerSecret: string;
   /** HMAC secret for opaque logging Admin API cursors */
@@ -296,7 +302,9 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
     adminUiBffMachineKeyPair,
     tenantRuntimeRegistryKeyPair,
     rpTokenEncryptionKey: generateHexSecret(32), // 256-bit key
+    piiEncryptionKey: generateHexSecret(32), // 256-bit key
     objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
+    otpHmacSecret: generateBase64Secret(32), // 256-bit secret
     versionManagerSecret: generateBase64Secret(32), // 256-bit secret
     loggingCursorHmacSecret: generateBase64Secret(32), // 256-bit secret
     flowRuntimeHmacSecret: generateBase64Secret(32), // 256-bit secret
@@ -517,7 +525,9 @@ export async function saveKeysToDirectory(
     privateKey: join(targetDir, 'private.pem'),
     publicKey: join(targetDir, 'public.jwk.json'),
     rpTokenEncryptionKey: join(targetDir, 'rp_token_encryption_key.txt'),
+    piiEncryptionKey: join(targetDir, 'pii_encryption_key.txt'),
     objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
+    otpHmacSecret: join(targetDir, 'otp_hmac_secret.txt'),
     versionManagerSecret: join(targetDir, 'version_manager_secret.txt'),
     loggingCursorHmacSecret: join(targetDir, 'logging_cursor_hmac_secret.txt'),
     flowRuntimeHmacSecret: join(targetDir, 'flow_runtime_hmac_secret.txt'),
@@ -558,8 +568,12 @@ export async function saveKeysToDirectory(
   // Write other secrets
   await writeFile(paths.rpTokenEncryptionKey, secrets.rpTokenEncryptionKey, 'utf-8');
   await chmod(paths.rpTokenEncryptionKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.piiEncryptionKey, secrets.piiEncryptionKey, 'utf-8');
+  await chmod(paths.piiEncryptionKey, SENSITIVE_FILE_MODE);
   await writeFile(paths.objectEncryptionRootKey, secrets.objectEncryptionRootKey, 'utf-8');
   await chmod(paths.objectEncryptionRootKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.otpHmacSecret, secrets.otpHmacSecret, 'utf-8');
+  await chmod(paths.otpHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.versionManagerSecret, secrets.versionManagerSecret, 'utf-8');
   await chmod(paths.versionManagerSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.loggingCursorHmacSecret, secrets.loggingCursorHmacSecret, 'utf-8');
@@ -628,7 +642,9 @@ export async function saveKeysToDirectory(
       privateKey: paths.privateKey,
       publicKey: paths.publicKey,
       rpTokenEncryptionKey: paths.rpTokenEncryptionKey,
+      piiEncryptionKey: paths.piiEncryptionKey,
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
+      otpHmacSecret: paths.otpHmacSecret,
       versionManagerSecret: paths.versionManagerSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
       flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
@@ -745,6 +761,8 @@ export async function ensureSupplementalKeyFiles(
   const baseKeyId = await readBaseKeyId(keysDir);
   const paths = {
     objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
+    piiEncryptionKey: join(keysDir, 'pii_encryption_key.txt'),
+    otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
@@ -767,6 +785,16 @@ export async function ensureSupplementalKeyFiles(
   if (!existsSync(paths.objectEncryptionRootKey)) {
     await writeSensitiveFile(paths.objectEncryptionRootKey, generateHexSecret(32));
     createdFiles.push(paths.objectEncryptionRootKey);
+  }
+
+  if (!existsSync(paths.piiEncryptionKey)) {
+    await writeSensitiveFile(paths.piiEncryptionKey, generateHexSecret(32));
+    createdFiles.push(paths.piiEncryptionKey);
+  }
+
+  if (!existsSync(paths.otpHmacSecret)) {
+    await writeSensitiveFile(paths.otpHmacSecret, generateBase64Secret(32));
+    createdFiles.push(paths.otpHmacSecret);
   }
 
   if (!existsSync(paths.versionManagerSecret)) {
@@ -835,6 +863,8 @@ export async function ensureSupplementalKeyFiles(
   if (createdFiles.length > 0) {
     await updateMetadataWithSupplementalFiles(keysDir, {
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
+      piiEncryptionKey: paths.piiEncryptionKey,
+      otpHmacSecret: paths.otpHmacSecret,
       versionManagerSecret: paths.versionManagerSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
       flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
@@ -1002,6 +1032,14 @@ export function generateWranglerSecretCommands(
   // RP Token encryption key
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'rp_token_encryption_key.txt')})" | wrangler secret put RP_TOKEN_ENCRYPTION_KEY${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'pii_encryption_key.txt')})" | wrangler secret put PII_ENCRYPTION_KEY${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'otp_hmac_secret.txt')})" | wrangler secret put OTP_HMAC_SECRET${envFlag}`
   );
 
   commands.push(

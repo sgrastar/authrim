@@ -108,6 +108,13 @@ const adminUsers = {
 	admin_user_detail_passkey_created: 'Created: {date:string}',
 	admin_user_detail_passkey_last_used: 'Last used: {date:string}',
 	admin_user_detail_no_passkeys: 'No passkeys registered',
+	admin_user_detail_totp: 'Authenticator Apps',
+	admin_user_detail_totp_unnamed: 'Authenticator app',
+	admin_user_detail_no_totp: 'No authenticator apps registered',
+	admin_user_detail_totp_reset: 'Reset TOTP',
+	admin_user_detail_totp_resetting: 'Resetting...',
+	admin_user_detail_totp_reset_confirm:
+		'Reset all authenticator apps and backup codes for this user?',
 	admin_user_detail_auth_method_name: 'Name',
 	admin_user_detail_auth_method_type: 'Type',
 	admin_user_detail_other_auth_methods: 'Other Authentication Methods',

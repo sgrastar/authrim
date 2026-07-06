@@ -328,6 +328,23 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/users/{id}/totp/reset':
+    post:
+      tags:
+        - Users
+      summary: Reset an end user's TOTP credentials.
+      description: Deletes all TOTP credentials and backup codes for the target end user and records an admin audit event.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminUserTotpReset'
+        '404':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/users/{id}/suspend':
     post:
       tags:
@@ -8574,7 +8591,8 @@ paths:
       summary: List form profiles.
       description: >-
         Lists reusable form profiles for Flow form nodes. Built-in registration, profile
-        completion, and login profiles are created lazily for the tenant when missing.
+        completion, login, code input, and consent profiles are created lazily for the
+        tenant when missing.
       responses:
         '200':
           description: Form profiles for the current tenant.
@@ -8633,6 +8651,7 @@ paths:
                     - profile_completion
                     - login
                     - consent
+                    - code_input
                     - custom
                 fields:
                   type: array
@@ -8654,6 +8673,7 @@ paths:
                         enum:
                           - identity_field
                           - auth_widget
+                          - code_input_widget
                           - consent_widget
                           - heading
                           - text
@@ -8686,6 +8706,14 @@ paths:
                         type:
                           - string
                           - 'null'
+                      human_verification_timing:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - initial
+                          - submit
+                          - null
                       layout_columns:
                         type:
                           - integer
@@ -8795,6 +8823,7 @@ paths:
                     - profile_completion
                     - login
                     - consent
+                    - code_input
                     - custom
                 fields:
                   type: array
@@ -8816,6 +8845,7 @@ paths:
                         enum:
                           - identity_field
                           - auth_widget
+                          - code_input_widget
                           - consent_widget
                           - heading
                           - text
@@ -8848,6 +8878,14 @@ paths:
                         type:
                           - string
                           - 'null'
+                      human_verification_timing:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - initial
+                          - submit
+                          - null
                       layout_columns:
                         type:
                           - integer
@@ -8940,8 +8978,8 @@ paths:
       operationId: deleteApiAdminFlowsById
       summary: Delete a Flow.
       description: >-
-        Soft-deletes a custom Flow after verifying tenant ownership. Built-in or assigned Flows
-        cannot be deleted.
+        Soft-deletes a custom Flow after verifying tenant ownership. Published Flows may be deleted
+        when they are not assigned. Built-in or assigned Flows cannot be deleted.
       responses:
         '200':
           $ref: '#/components/responses/AdminFlowMutation'
@@ -8952,6 +8990,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -9318,7 +9358,8 @@ paths:
       summary: Upsert a Flow assignment.
       description: >-
         Assigns a published Flow to a tenant default, OIDC client, or SAML SP for the selected Flow
-        kind.
+        kind. A target can have at most one Flow assignment per Flow kind; saving a new assignment
+        replaces any previous assignment for the same target and kind.
       responses:
         '200':
           $ref: '#/components/responses/AdminFlowAssignmentMutation'
@@ -30289,6 +30330,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminUserDetailResponse'
+    AdminUserTotpReset:
+      description: Admin end-user TOTP reset response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminUserTotpResetResponse'
     AdminUserList:
       description: Admin end-user list response.
       content:
@@ -40025,6 +40072,10 @@ components:
                       - type: integer
                       - type: string
                       - type: 'null'
+            totp_credentials:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminUserTotpCredential'
             missing_required_fields:
               type: array
               items:
@@ -40035,6 +40086,73 @@ components:
               items:
                 type: object
                 additionalProperties: true
+    AdminUserTotpCredential:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - label
+        - algorithm
+        - digits
+        - period
+        - window
+        - status
+        - created_at
+        - activated_at
+        - last_used_at
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        algorithm:
+          type: string
+          enum:
+            - SHA1
+            - SHA256
+            - SHA512
+        digits:
+          type: integer
+          enum:
+            - 6
+            - 8
+        period:
+          type: integer
+        window:
+          type: integer
+        status:
+          type: string
+          enum:
+            - pending
+            - active
+            - disabled
+        created_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        activated_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+    AdminUserTotpResetResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - deleted
+      properties:
+        ok:
+          type: boolean
+        deleted:
+          type: integer
+          minimum: 0
     AdminUserListResponse:
       type: object
       required:

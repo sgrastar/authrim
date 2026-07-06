@@ -1,4 +1,5 @@
 <script lang="ts">
+	import QRCode from 'qrcode';
 	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import RuntimeFormProfile from '$lib/components/RuntimeFormProfile.svelte';
@@ -6,6 +7,7 @@
 	import {
 		passkeyAPI,
 		emailCodeAPI,
+		totpAPI,
 		externalIdpAPI,
 		loginChallengeAPI,
 		type APIError
@@ -34,6 +36,12 @@
 		consumeFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
+	import {
+		isRuntimeAuthStep,
+		runtimeAllowsAuthenticationHandle as runtimeStepAllowsAuthenticationHandle,
+		runtimeAllowsExternalProvider as runtimeStepAllowsExternalProvider,
+		type RuntimeAuthMethod
+	} from '$lib/authrim/runtime-auth-handles';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startRegistration } from '@simplewebauthn/browser';
@@ -50,6 +58,8 @@
 	} from '$lib/authrim/storage-keys';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onMount } from 'svelte';
+
+	type PasskeyProgressPhase = 'idle' | 'preparing' | 'waiting' | 'finishing';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -68,26 +78,46 @@
 	let error = $state('');
 	let methodsError = $state('');
 	let passkeyLoading = $state(false);
+	let passkeyProgress = $state<PasskeyProgressPhase>('idle');
 	let emailCodeLoading = $state(false);
+	let totpLoading = $state(false);
+	let totpCode = $state('');
+	let totpQrDataUrl = $state('');
+	let totpSignup = $state<{
+		challengeId: string;
+		secret: string;
+		otpauthUri: string;
+		backupCodes: string[];
+		redirectUrl: string;
+	} | null>(null);
 	let emailError = $state('');
 	let nameError = $state('');
 	let externalIdpLoading = $state<string | null>(null);
 	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
 	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
-	let runtimeFlowLoading = $state(false);
+	let runtimeFlowLoading = $state(true);
 	let runtimeFlowError = $state('');
+	let runtimeFlowBlocked = $state(false);
 	let runtimeConsentDecisions = $state<Record<string, boolean>>({});
 	let runtimeConsentSelectedValues = $state<Record<string, string>>({});
 	let runtimeConsentDecisionKey = $state('');
 	let pendingPostAuthRedirect = $state<string | null>(null);
 	const authActionLoading = $derived(
-		passkeyLoading || emailCodeLoading || externalIdpLoading !== null || runtimeFlowLoading
+		passkeyLoading ||
+			emailCodeLoading ||
+			totpLoading ||
+			externalIdpLoading !== null ||
+			runtimeFlowLoading
 	);
+	const passkeyProgressMessage = $derived(getPasskeyProgressMessage(passkeyProgress));
 
 	// Authentication methods (from API)
 	let methodsLoading = $state(true);
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
+	let emailCodeDigits = $state(6);
+	let totpEnabled = $state(false);
+	let totpDigits = $state(6);
 	let externalEnabled = $state(false);
 	let externalProviders = $state<ExternalProvider[]>([]);
 	let turnstileSiteKey = $state<string | null>(null);
@@ -97,9 +127,14 @@
 	let humanVerificationMode = $state<'managed' | 'checkbox' | 'invisible' | 'score'>('managed');
 	let turnstileRequired = $state(false);
 	let turnstileToken = $state('');
+	let turnstileResetKey = $state(0);
 	let activeTurnstileTarget = $state<string | null>(null);
 	let pendingTurnstileTarget = $state<string | null>(null);
 	const turnstileAction = 'authrim-signup';
+
+	function normalizeSixOrEightDigits(value: unknown): number {
+		return value === 8 ? 8 : 6;
+	}
 
 	$effect(() => {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
@@ -120,6 +155,26 @@
 		runtimeConsentSelectedValues = {};
 	});
 
+	$effect(() => {
+		const signup = totpSignup;
+		const uri = signup?.otpauthUri;
+		if (!uri || signup.backupCodes.length > 0) {
+			totpQrDataUrl = '';
+			return;
+		}
+		QRCode.toDataURL(uri, { margin: 1, width: 192 })
+			.then((value) => {
+				if (totpSignup?.otpauthUri === uri) {
+					totpQrDataUrl = value;
+				}
+			})
+			.catch(() => {
+				if (totpSignup?.otpauthUri === uri) {
+					totpQrDataUrl = '';
+				}
+			});
+	});
+
 	// Dark mode detection for external provider button colors
 	let isDarkMode = $state(false);
 	let turnstileLanguage = $state('en');
@@ -137,34 +192,74 @@
 	const showRuntimeEmailCode = $derived(
 		emailCodeEnabled && runtimeAllowsAuthenticationHandle('mail_otp', ['email_code'])
 	);
+	const showRuntimeTotp = $derived(
+		totpEnabled && runtimeAllowsAuthenticationHandle('totp', ['otp'])
+	);
 	const visibleExternalProviders = $derived(
-		externalProviders.filter((provider) =>
-			runtimeAllowsAuthenticationHandle(provider.id, [`external:${provider.id}`])
-		)
+		externalProviders.filter((provider) => runtimeAllowsExternalProvider(provider))
 	);
 	const showRuntimeExternal = $derived(externalEnabled && visibleExternalProviders.length > 0);
 	const hasVisibleSignupMethod = $derived(
-		showRuntimePasskey || showRuntimeEmailCode || showRuntimeExternal
+		showRuntimePasskey || showRuntimeEmailCode || showRuntimeTotp || showRuntimeExternal
 	);
-	type RuntimeAuthMethod = 'passkey' | 'mail_otp' | 'external_idp' | 'directory_password';
 	const runtimeFormProfile = $derived(getRuntimeFormProfile(runtimeFlowStep));
+	const useRuntimeFormLayout = $derived(
+		Boolean(runtimeFormProfile) &&
+			runtimeFlowStep !== null &&
+			runtimeFlowStep.render &&
+			shouldRenderRuntimeStep(runtimeFlowStep)
+	);
 	const useRuntimeAuthFormLayout = $derived(
-		Boolean(runtimeFormProfile) && isRuntimeAuthStep(runtimeFlowStep)
+		useRuntimeFormLayout && isRuntimeAuthStep(runtimeFlowStep)
+	);
+	const runtimeInitialLoading = $derived(
+		runtimeFlowLoading && !runtimeFlow && !runtimeFlowStep && !runtimeFlowError
+	);
+	const runtimeAuthFormMissing = $derived(
+		Boolean(
+			runtimeFlowStep &&
+			runtimeFlowStep.render &&
+			isRuntimeAuthStep(runtimeFlowStep) &&
+			!runtimeFormProfile &&
+			!runtimeFlowError
+		)
+	);
+	const runtimeFormHasHumanVerificationField = $derived(
+		hasRuntimeFormHumanVerificationField(runtimeFormProfile)
+	);
+	const showRuntimeFallbackHumanVerification = $derived(
+		useRuntimeAuthFormLayout &&
+			turnstileRequired &&
+			Boolean(turnstileSiteKey) &&
+			Boolean(activeTurnstileTarget) &&
+			!runtimeFormHasHumanVerificationField
+	);
+	const blockLegacyFormLayout = $derived(
+		useRuntimeFormLayout || runtimeFlowBlocked || runtimeAuthFormMissing
+	);
+	const blockLegacyAuthLayout = $derived(
+		useRuntimeAuthFormLayout || runtimeFlowBlocked || runtimeAuthFormMissing
 	);
 	const runtimeFormFieldValues = $derived<Record<string, string>>({
 		...customFieldValues,
 		email,
-		name
+		name,
+		mail_otp_code_length: String(emailCodeDigits),
+		totp_code_length: String(totpDigits)
 	});
 	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
 		passkey: showRuntimePasskey,
 		mail_otp: showRuntimeEmailCode,
+		mail_otp_totp: showRuntimeEmailCode && showRuntimeTotp,
+		totp: showRuntimeTotp,
 		external_idp: showRuntimeExternal,
 		directory_password: false
 	});
 	const runtimeMethodLoading = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
 		passkey: passkeyLoading,
 		mail_otp: emailCodeLoading,
+		mail_otp_totp: emailCodeLoading || totpLoading,
+		totp: totpLoading,
 		external_idp: externalIdpLoading !== null,
 		directory_password: false
 	});
@@ -176,7 +271,7 @@
 					: sanitizeColor(provider.buttonColor);
 			return {
 				id: provider.id,
-				label: getProviderButtonText(provider),
+				label: provider.name,
 				iconUrl: provider.iconUrl && isValidImageUrl(provider.iconUrl) ? provider.iconUrl : null,
 				iconClass: getProviderIcon(provider),
 				style: safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''
@@ -185,6 +280,18 @@
 	);
 	const NAME_REGISTRATION_FIELD_KEYS = new Set(['name', 'field.canonical.name']);
 	const EMAIL_REGISTRATION_FIELD_KEYS = new Set(['email', 'field.canonical.email']);
+	const GIVEN_NAME_REGISTRATION_FIELD_KEYS = new Set([
+		'given_name',
+		'first_name',
+		'field.canonical.given_name',
+		'field.canonical.first_name'
+	]);
+	const FAMILY_NAME_REGISTRATION_FIELD_KEYS = new Set([
+		'family_name',
+		'last_name',
+		'field.canonical.family_name',
+		'field.canonical.last_name'
+	]);
 	const FIXED_REGISTRATION_FIELD_KEYS = new Set([
 		...NAME_REGISTRATION_FIELD_KEYS,
 		...EMAIL_REGISTRATION_FIELD_KEYS,
@@ -289,6 +396,9 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.signupEnabled ?? data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.signupEnabled ?? data.methods.emailCode.enabled;
+				emailCodeDigits = normalizeSixOrEightDigits(data.methods.emailCode.digits);
+				totpEnabled = data.methods.totp.signupEnabled ?? data.methods.totp.enabled;
+				totpDigits = normalizeSixOrEightDigits(data.methods.totp.digits);
 				const humanVerificationRequired =
 					data.methods.humanVerification.enabled && data.methods.humanVerification.signupEnabled;
 				humanVerificationProvider =
@@ -310,6 +420,9 @@
 			} else {
 				passkeyEnabled = false;
 				emailCodeEnabled = false;
+				emailCodeDigits = 6;
+				totpEnabled = false;
+				totpDigits = 6;
 				externalEnabled = false;
 				externalProviders = [];
 				methodsError = apiError?.error.message || $LL.register_noMethodsAvailable();
@@ -317,6 +430,9 @@
 		} catch {
 			passkeyEnabled = false;
 			emailCodeEnabled = false;
+			emailCodeDigits = 6;
+			totpEnabled = false;
+			totpDigits = 6;
 			externalEnabled = false;
 			externalProviders = [];
 			methodsError = $LL.register_noMethodsAvailable();
@@ -371,20 +487,22 @@
 		);
 	}
 
-	function shouldFallbackToLegacyRuntime(errorCode: string): boolean {
-		return errorCode === 'flow_runtime_disabled';
+	function failRuntimeStart(message: string) {
+		runtimeFlow = null;
+		runtimeFlowStep = null;
+		runtimeFlowError = message;
+		runtimeFlowBlocked = true;
 	}
 
 	async function startRuntimeFlowIfAvailable() {
 		runtimeFlowLoading = true;
 		runtimeFlowError = '';
+		runtimeFlowBlocked = false;
 		try {
 			if (runtimeInteractionId) {
 				const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
 				if (!storedRuntime) {
-					runtimeFlow = null;
-					runtimeFlowStep = null;
-					runtimeFlowError = $LL.error_invalid_request();
+					failRuntimeStart($LL.error_invalid_request());
 					return;
 				}
 				pendingPostAuthRedirect = storedRuntime.post_auth_redirect ?? null;
@@ -394,9 +512,7 @@
 					signature: storedRuntime.signature
 				});
 				if (apiError) {
-					runtimeFlow = null;
-					runtimeFlowStep = null;
-					runtimeFlowError = apiError.error_description || apiError.error;
+					failRuntimeStart(apiError.error_description || apiError.error);
 					return;
 				}
 				if (!data) return;
@@ -407,11 +523,11 @@
 					data.interaction.current_step_id &&
 					!runtimeFlowStep
 				) {
-					runtimeFlowError = $LL.error_invalid_request();
+					failRuntimeStart($LL.error_invalid_request());
 					return;
 				}
 				if (!persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect })) {
-					runtimeFlowError = $LL.error_invalid_request();
+					failRuntimeStart($LL.error_invalid_request());
 					return;
 				}
 				await advanceRuntimePastNonRenderedSteps();
@@ -426,11 +542,7 @@
 				...getRuntimeTarget()
 			});
 			if (apiError) {
-				runtimeFlow = null;
-				runtimeFlowStep = null;
-				if (!shouldFallbackToLegacyRuntime(apiError.error)) {
-					runtimeFlowError = apiError.error_description || apiError.error;
-				}
+				failRuntimeStart(apiError.error_description || apiError.error);
 				return;
 			}
 			if (!data) return;
@@ -441,10 +553,12 @@
 				data.interaction.current_step_id &&
 				!runtimeFlowStep
 			) {
-				runtimeFlowError = $LL.error_invalid_request();
+				failRuntimeStart($LL.error_invalid_request());
 				return;
 			}
 			await advanceRuntimePastNonRenderedSteps();
+		} catch {
+			failRuntimeStart($LL.error_server_error());
 		} finally {
 			runtimeFlowLoading = false;
 		}
@@ -559,7 +673,7 @@
 	}
 
 	function getRuntimeFormProfile(step: FlowRuntimeStep | null): Record<string, unknown> | null {
-		const profile = step?.config?.form_profile;
+		const profile = step?.config?.form_profile ?? step?.content?.form_profile;
 		return profile && typeof profile === 'object' && !Array.isArray(profile)
 			? (profile as Record<string, unknown>)
 			: null;
@@ -614,6 +728,21 @@
 		return sanitizeRuntimeConsentHtml(fallback);
 	}
 
+	function hasRuntimeFormHumanVerificationField(profile: Record<string, unknown> | null): boolean {
+		const fields = Array.isArray(profile?.fields) ? profile.fields : [];
+		return fields.some((field) => {
+			if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
+			const record = field as Record<string, unknown>;
+			const blockType = typeof record.block_type === 'string' ? record.block_type : '';
+			const fieldName = typeof record.field === 'string' ? record.field.toLowerCase() : '';
+			return (
+				blockType === 'security_verification' ||
+				fieldName === 'security_verification' ||
+				fieldName.startsWith('security.')
+			);
+		});
+	}
+
 	function canSubmitRuntimeConsent(): boolean {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
 		if (!policy) return true;
@@ -637,36 +766,12 @@
 		return 'completed';
 	}
 
-	function isRuntimeAuthStep(step: FlowRuntimeStep | null): boolean {
-		return (
-			!step ||
-			step.component === 'authentication_method_selector' ||
-			step.component === 'registration_method_selector'
-		);
+	function runtimeAllowsAuthenticationHandle(handle: string, aliases: string[] = []): boolean {
+		return runtimeStepAllowsAuthenticationHandle(runtimeFlowStep, handle, aliases);
 	}
 
-	function runtimeAllowsAuthenticationHandle(handle: string, aliases: string[] = []): boolean {
-		const step = runtimeFlowStep;
-		if (!isRuntimeAuthStep(step)) {
-			return true;
-		}
-		const configured = step?.config?.output_handles;
-		if (!Array.isArray(configured) || configured.length === 0) {
-			return true;
-		}
-		const allowed = new Set(
-			configured
-				.map((value) => {
-					if (typeof value === 'string') return value;
-					if (value && typeof value === 'object' && 'id' in value) {
-						const id = (value as { id?: unknown }).id;
-						return typeof id === 'string' ? id : null;
-					}
-					return null;
-				})
-				.filter((value): value is string => Boolean(value))
-		);
-		return [handle, ...aliases].some((candidate) => allowed.has(candidate));
+	function runtimeAllowsExternalProvider(provider: ExternalProvider): boolean {
+		return runtimeStepAllowsExternalProvider(runtimeFlowStep, provider);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -696,6 +801,25 @@
 		if (isNameRegistrationField(field)) return name;
 		if (isEmailRegistrationField(field)) return email;
 		return customFieldValues[field.field_key] ?? '';
+	}
+
+	function getCustomFieldValueByKeys(keys: Set<string>): string {
+		for (const [fieldKey, value] of Object.entries(customFieldValues)) {
+			if (keys.has(normalizeRegistrationFieldKey(fieldKey)) && value.trim()) {
+				return value.trim();
+			}
+		}
+		return '';
+	}
+
+	function getSubmittedDisplayName(): string {
+		const explicitName = name.trim();
+		if (explicitName) return explicitName;
+		const givenName = getCustomFieldValueByKeys(GIVEN_NAME_REGISTRATION_FIELD_KEYS);
+		const familyName = getCustomFieldValueByKeys(FAMILY_NAME_REGISTRATION_FIELD_KEYS);
+		const compositeName = [givenName, familyName].filter(Boolean).join(' ').trim();
+		if (compositeName) return compositeName;
+		return email.trim() ? email.trim().split('@')[0] : '';
 	}
 
 	function getFieldLabel(field: RegistrationField): string {
@@ -830,7 +954,22 @@
 			pendingTurnstileTarget = target;
 			return undefined;
 		}
+		activeTurnstileTarget = null;
+		pendingTurnstileTarget = null;
 		return turnstileToken;
+	}
+
+	function resetHumanVerificationToken() {
+		if (!turnstileRequired) return;
+		turnstileToken = '';
+		pendingTurnstileTarget = null;
+		activeTurnstileTarget = null;
+		turnstileResetKey += 1;
+	}
+
+	function markHumanVerificationTokenSubmitted(token: string | undefined) {
+		if (!token) return;
+		resetHumanVerificationToken();
 	}
 
 	function showTurnstileFor(target: string): boolean {
@@ -844,6 +983,10 @@
 		}
 		if (target === 'email-code') {
 			void handleEmailCodeSignup();
+			return;
+		}
+		if (target === 'totp') {
+			void handleTotpSignupStart();
 			return;
 		}
 		if (target.startsWith('external:')) {
@@ -862,20 +1005,39 @@
 		queueMicrotask(() => resumeTurnstileTarget(target));
 	});
 
+	function getPasskeyProgressMessage(phase: PasskeyProgressPhase): string {
+		const isJapanese = getLocale() === 'ja';
+		switch (phase) {
+			case 'preparing':
+				return isJapanese ? 'Passkey登録を準備しています。' : 'Preparing passkey registration.';
+			case 'waiting':
+				return isJapanese
+					? 'ブラウザまたは端末のPasskey登録を完了してください。'
+					: 'Complete the passkey prompt in your browser or on your device.';
+			case 'finishing':
+				return isJapanese ? '登録結果を確認しています。' : 'Verifying the registration result.';
+			default:
+				return '';
+		}
+	}
+
 	async function handlePasskeyRegister() {
-		if (passkeyLoading) return;
+		if (authActionLoading) return;
 		error = '';
 		if (!validateForm()) return;
 
 		passkeyLoading = true;
+		passkeyProgress = 'preparing';
 
 		try {
 			const cfTurnstileResponse = getTurnstileToken('passkey');
 			if (turnstileRequired && !cfTurnstileResponse) return;
+			const submittedCustomFields = getSubmittedCustomFields();
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
 				email,
-				name,
-				custom_fields: getSubmittedCustomFields(),
+				name: getSubmittedDisplayName(),
+				custom_fields: submittedCustomFields,
+				authorizationChallengeId: authorizationChallengeId || undefined,
 				human_verification_response: cfTurnstileResponse
 			});
 
@@ -885,10 +1047,13 @@
 			if (!optionsData?.options) {
 				throw new Error('Invalid response from server: missing options');
 			}
+			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
+			passkeyProgress = 'waiting';
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
 			const credential = await startRegistration({ optionsJSON: optionsData.options as any });
 
+			passkeyProgress = 'finishing';
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration({
 				userId: optionsData.userId,
 				credential,
@@ -947,11 +1112,12 @@
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
 		} finally {
 			passkeyLoading = false;
+			passkeyProgress = 'idle';
 		}
 	}
 
 	async function handleEmailCodeSignup() {
-		if (emailCodeLoading) return;
+		if (authActionLoading) return;
 		error = '';
 		if (!validateForm()) return;
 
@@ -963,7 +1129,7 @@
 			const submittedCustomFields = getSubmittedCustomFields();
 			const { error: apiError } = await emailCodeAPI.send({
 				email,
-				name,
+				name: getSubmittedDisplayName(),
 				invite_token: inviteToken || undefined,
 				custom_fields: submittedCustomFields,
 				human_verification_response: cfTurnstileResponse
@@ -971,6 +1137,7 @@
 			if (apiError) {
 				throw new Error(getApiErrorMessage(apiError));
 			}
+			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 			// Persist custom field values for post-verification saving
 			if (Object.keys(submittedCustomFields).length > 0) {
 				try {
@@ -1012,8 +1179,107 @@
 		}
 	}
 
+	function getCompletedSignupRedirect(redirectUrl?: string): string {
+		if (pendingPostAuthRedirect) return pendingPostAuthRedirect;
+		if (redirectUrl && isValidRedirectUrl(redirectUrl)) return redirectUrl;
+		return '/';
+	}
+
+	async function handleTotpSignupStart() {
+		if (authActionLoading) return;
+		error = '';
+		if (!validateForm()) return;
+		if (!email.trim()) {
+			emailError = $LL.login_errorEmailRequired();
+			return;
+		}
+
+		totpLoading = true;
+		try {
+			const cfTurnstileResponse = getTurnstileToken('totp');
+			if (turnstileRequired && !cfTurnstileResponse) return;
+			const submittedCustomFields = getSubmittedCustomFields();
+			const { data, error: apiError } = await totpAPI.createSignupOptions({
+				email,
+				name: getSubmittedDisplayName(),
+				custom_fields: submittedCustomFields,
+				authorizationChallengeId: authorizationChallengeId || undefined,
+				human_verification_response: cfTurnstileResponse
+			});
+			if (apiError || !data) {
+				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+			}
+			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
+			totpSignup = {
+				challengeId: data.challenge_id,
+				secret: data.secret,
+				otpauthUri: data.otpauth_uri,
+				backupCodes: [],
+				redirectUrl: ''
+			};
+			totpCode = '';
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.register_totpStartFailed();
+		} finally {
+			totpLoading = false;
+		}
+	}
+
+	async function handleTotpSignupActivate() {
+		if (authActionLoading || !totpSignup) return;
+		error = '';
+		const code = totpCode.trim().replace(/\s+/g, '');
+		if (!/^\d{6}$|^\d{8}$/.test(code)) {
+			error = $LL.login_totpCodeInvalid();
+			return;
+		}
+
+		totpLoading = true;
+		try {
+			const { data, error: apiError } = await totpAPI.activateSignup({
+				challengeId: totpSignup.challengeId,
+				code,
+				deferAuthorizationContinuation: Boolean(
+					runtimeFlow && runtimeFlow.interaction.state !== 'completed'
+				)
+			});
+			if (apiError || !data?.success) {
+				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.login_totpCodeInvalid());
+			}
+
+			await auth.refreshFromSession();
+			const redirectUrl = getCompletedSignupRedirect(data.redirect_url);
+			if (runtimeFlow) {
+				const ok = await submitRuntimeStep(
+					'totp',
+					getRuntimeStepSubmitInputForAuthenticatedAction()
+				);
+				if (!ok) return;
+				if (runtimeFlow?.interaction.state !== 'completed') {
+					pendingPostAuthRedirect = redirectUrl;
+					return;
+				}
+			}
+			totpSignup = {
+				...totpSignup,
+				backupCodes: data.backup_codes ?? [],
+				redirectUrl
+			};
+			totpCode = '';
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.login_totpCodeInvalid();
+		} finally {
+			totpLoading = false;
+		}
+	}
+
+	function continueAfterTotpBackupCodes() {
+		window.location.href = getCompletedSignupRedirect(totpSignup?.redirectUrl);
+	}
+
 	async function handleExternalLogin(provider: ExternalProvider) {
 		const providerId = provider.id;
+		if (authActionLoading) return;
 		const cfTurnstileResponse = getTurnstileToken(`external:${providerId}`);
 		if (turnstileRequired && !cfTurnstileResponse) return;
 		externalIdpLoading = providerId;
@@ -1061,6 +1327,7 @@
 			if (!isValidRedirectUrl(url)) {
 				throw new Error('Invalid redirect URL from identity provider');
 			}
+			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
 			// Provider ID is diagnostic-only; the managed LoginUI flow does not store PKCE secrets.
 			try {
@@ -1106,13 +1373,17 @@
 		setCustomFieldValue(field, stringValue);
 	}
 
-	function handleRuntimeFormAuthAction(method: RuntimeAuthMethod) {
+	function handleRuntimeFormAuthAction(method: RuntimeAuthMethod, _action?: string) {
 		if (method === 'passkey') {
 			void handlePasskeyRegister();
 			return;
 		}
 		if (method === 'mail_otp') {
 			void handleEmailCodeSignup();
+			return;
+		}
+		if (method === 'totp') {
+			void handleTotpSignupStart();
 		}
 	}
 
@@ -1169,7 +1440,7 @@
 		</div>
 
 		<!-- Loading State -->
-		{#if methodsLoading}
+		{#if methodsLoading || runtimeInitialLoading}
 			<Card class="mb-6">
 				<div class="flex flex-col items-center justify-center py-8 gap-3">
 					<div
@@ -1182,21 +1453,23 @@
 		{:else}
 			<!-- Registration Card -->
 			<Card class="mb-6">
-				<div class="mb-6">
-					<h2 class="auth-section-title">
-						{$LL.register_title()}
-					</h2>
-					{#if inviteTenantName}
-						<p class="auth-section-subtitle">
-							You've been invited to <strong>{inviteTenantName}</strong>. Create your account to
-							continue.
-						</p>
-					{:else}
-						<p class="auth-section-subtitle">
-							{$LL.register_subtitle()}
-						</p>
-					{/if}
-				</div>
+				{#if !blockLegacyFormLayout}
+					<div class="mb-6">
+						<h2 class="auth-section-title">
+							{$LL.register_title()}
+						</h2>
+						{#if inviteTenantName}
+							<p class="auth-section-subtitle">
+								You've been invited to <strong>{inviteTenantName}</strong>. Create your account to
+								continue.
+							</p>
+						{:else}
+							<p class="auth-section-subtitle">
+								{$LL.register_subtitle()}
+							</p>
+						{/if}
+					</div>
+				{/if}
 
 				<!-- Error Alert -->
 				{#if error}
@@ -1216,141 +1489,190 @@
 					</Alert>
 				{/if}
 
+				{#if runtimeAuthFormMissing}
+					<Alert variant="error" class="mb-4">
+						{getLocale() === 'ja'
+							? 'このFlowノードにフォームが設定されていません。管理者に問い合わせてください。'
+							: 'This Flow node does not have a form profile. Contact your administrator.'}
+					</Alert>
+				{/if}
+
+				{#if passkeyProgressMessage}
+					<div class="auth-progress mb-4" role="status" aria-live="polite">
+						<span class="auth-progress__spinner" aria-hidden="true"></span>
+						<span>{passkeyProgressMessage}</span>
+					</div>
+				{/if}
+
 				{#if runtimeFlowStep && runtimeFlowStep.render && shouldRenderRuntimeStep(runtimeFlowStep)}
-					<Alert variant="info" class="mb-4">
-						<div class="space-y-3">
-							<div>
-								<p class="font-semibold">{getRuntimeStepTitle(runtimeFlowStep)}</p>
-								{#if getRuntimeStepDescription(runtimeFlowStep)}
-									<p class="text-sm mt-1" style="color: var(--text-secondary);">
-										{getRuntimeStepDescription(runtimeFlowStep)}
-									</p>
-								{/if}
-							</div>
-							{#if getRuntimeFormProfile(runtimeFlowStep)}
-								<RuntimeFormProfile
-									profile={getRuntimeFormProfile(runtimeFlowStep)}
-									disabled={authActionLoading}
-									fieldValues={runtimeFormFieldValues}
-									fieldErrors={{
-										email: emailError,
-										name: nameError,
-										...customFieldErrors
-									}}
-									methodAvailability={runtimeMethodAvailability}
-									methodLoading={runtimeMethodLoading}
-									externalProviders={runtimeExternalProviders}
-									consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
-									consentDecisions={runtimeConsentDecisions}
-									consentSelectedValues={runtimeConsentSelectedValues}
-									consentReady={canSubmitRuntimeConsent()}
-									onFieldValueChange={handleRuntimeFormFieldValueChange}
-									onAuthAction={handleRuntimeFormAuthAction}
-									onExternalProviderAction={handleRuntimeExternalProviderAction}
-									onConsentDecisionChange={setRuntimeConsentDecision}
-									onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
-								/>
-								{#if !isRuntimeAuthStep(runtimeFlowStep)}
-									<Button
-										variant="primary"
-										class="w-full"
-										loading={runtimeFlowLoading}
-										disabled={authActionLoading || !canSubmitRuntimeConsent()}
-										onclick={() =>
-											completeRuntimeOnlyStep(
-												getRuntimeFormContinueHandle(runtimeFlowStep),
-												getRuntimeConsentItemDecisionPayload()
-											)}
-									>
-										{$LL.common_continue()}
-									</Button>
-								{/if}
-							{:else if runtimeFlowStep.component === 'consent_policy'}
-								{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
-								{#if consentPolicy?.items.length}
-									<div class="space-y-3">
-										{#each consentPolicy.items as item (item.statement_id)}
-											<div class="runtime-consent-item">
-												{#if item.checkbox_mode === 'none'}
-													<SanitizedHtml
-														tag="div"
-														class="runtime-consent-content"
-														sanitizedHtml={getRuntimeConsentItemHtml(item)}
-													/>
-												{:else}
-													<label class="runtime-consent-choice">
-														<input
-															type="checkbox"
-															bind:checked={runtimeConsentDecisions[item.statement_id]}
-															required={item.is_required || item.checkbox_mode === 'required'}
-														/>
-														<SanitizedHtml
-															class="runtime-consent-content"
-															sanitizedHtml={getRuntimeConsentItemHtml(item)}
-														/>
-													</label>
-												{/if}
-												{#if item.document_url && isValidLinkUrl(item.document_url)}
-													<a
-														class="runtime-consent-link"
-														href={item.document_url}
-														target="_blank"
-														rel="noopener noreferrer"
-													>
-														{item.document_url}
-													</a>
-												{/if}
-											</div>
-										{/each}
-									</div>
-								{:else}
-									<p class="text-sm" style="color: var(--text-secondary);">
-										{getRuntimeStepDescription(runtimeFlowStep)}
-									</p>
-								{/if}
+					{#if runtimeFormProfile}
+						<div class="runtime-form-step mb-4">
+							<RuntimeFormProfile
+								profile={runtimeFormProfile}
+								disabled={authActionLoading}
+								authMethodMode="signup"
+								fieldValues={runtimeFormFieldValues}
+								fieldErrors={{
+									email: emailError,
+									name: nameError,
+									...customFieldErrors
+								}}
+								methodAvailability={runtimeMethodAvailability}
+								methodLoading={runtimeMethodLoading}
+								externalProviders={runtimeExternalProviders}
+								consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
+								consentDecisions={runtimeConsentDecisions}
+								consentSelectedValues={runtimeConsentSelectedValues}
+								consentReady={canSubmitRuntimeConsent()}
+								humanVerificationRequired={useRuntimeAuthFormLayout && turnstileRequired}
+								humanVerificationSiteKey={turnstileSiteKey}
+								{humanVerificationProvider}
+								{humanVerificationMode}
+								humanVerificationAction={turnstileAction}
+								humanVerificationTheme={turnstileTheme}
+								humanVerificationLanguage={turnstileLanguage}
+								bind:humanVerificationToken={turnstileToken}
+								humanVerificationResetKey={turnstileResetKey}
+								humanVerificationVisible={Boolean(activeTurnstileTarget)}
+								humanVerificationLoadingLabel={$LL.login_humanVerificationLoading()}
+								humanVerificationErrorLabel={$LL.login_humanVerificationLoadFailed()}
+								onFieldValueChange={handleRuntimeFormFieldValueChange}
+								onAuthAction={handleRuntimeFormAuthAction}
+								onExternalProviderAction={handleRuntimeExternalProviderAction}
+								onConsentDecisionChange={setRuntimeConsentDecision}
+								onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
+							/>
+							{#if showRuntimeFallbackHumanVerification && turnstileSiteKey}
+								<div class="runtime-form-human-verification">
+									<TurnstileWidget
+										siteKey={turnstileSiteKey}
+										provider={humanVerificationProvider}
+										mode={humanVerificationMode}
+										action={turnstileAction}
+										theme={turnstileTheme}
+										language={turnstileLanguage}
+										bind:token={turnstileToken}
+										resetKey={turnstileResetKey}
+										disabled={authActionLoading}
+										loadingLabel={$LL.login_humanVerificationLoading()}
+										errorLabel={$LL.login_humanVerificationLoadFailed()}
+									/>
+								</div>
+							{/if}
+							{#if !isRuntimeAuthStep(runtimeFlowStep)}
 								<Button
 									variant="primary"
 									class="w-full"
 									loading={runtimeFlowLoading}
 									disabled={authActionLoading || !canSubmitRuntimeConsent()}
 									onclick={() =>
-										completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
-								>
-									{$LL.common_continue()}
-								</Button>
-							{:else if runtimeFlowStep.component === 'completion'}
-								<Button
-									variant="primary"
-									class="w-full"
-									loading={runtimeFlowLoading}
-									disabled={authActionLoading}
-									onclick={() => completeRuntimeOnlyStep('completed')}
-								>
-									{$LL.common_continue()}
-								</Button>
-							{:else}
-								<Button
-									variant="secondary"
-									class="w-full"
-									loading={runtimeFlowLoading}
-									disabled={authActionLoading}
-									onclick={() => completeRuntimeOnlyStep('completed')}
+										completeRuntimeOnlyStep(
+											getRuntimeFormContinueHandle(runtimeFlowStep),
+											getRuntimeConsentItemDecisionPayload()
+										)}
 								>
 									{$LL.common_continue()}
 								</Button>
 							{/if}
 						</div>
-					</Alert>
+					{:else}
+						<Alert variant="info" class="mb-4">
+							<div class="space-y-3">
+								<div>
+									<p class="font-semibold">{getRuntimeStepTitle(runtimeFlowStep)}</p>
+									{#if getRuntimeStepDescription(runtimeFlowStep)}
+										<p class="text-sm mt-1" style="color: var(--text-secondary);">
+											{getRuntimeStepDescription(runtimeFlowStep)}
+										</p>
+									{/if}
+								</div>
+								{#if runtimeFlowStep.component === 'consent_policy'}
+									{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
+									{#if consentPolicy?.items.length}
+										<div class="space-y-3">
+											{#each consentPolicy.items as item (item.statement_id)}
+												<div class="runtime-consent-item">
+													{#if item.checkbox_mode === 'none'}
+														<SanitizedHtml
+															tag="div"
+															class="runtime-consent-content"
+															sanitizedHtml={getRuntimeConsentItemHtml(item)}
+														/>
+													{:else}
+														<label class="runtime-consent-choice">
+															<input
+																type="checkbox"
+																bind:checked={runtimeConsentDecisions[item.statement_id]}
+																required={item.is_required || item.checkbox_mode === 'required'}
+															/>
+															<SanitizedHtml
+																class="runtime-consent-content"
+																sanitizedHtml={getRuntimeConsentItemHtml(item)}
+															/>
+														</label>
+													{/if}
+													{#if item.document_url && isValidLinkUrl(item.document_url)}
+														<a
+															class="runtime-consent-link"
+															href={item.document_url}
+															target="_blank"
+															rel="noopener noreferrer"
+														>
+															{item.document_url}
+														</a>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{:else}
+										<p class="text-sm" style="color: var(--text-secondary);">
+											{getRuntimeStepDescription(runtimeFlowStep)}
+										</p>
+									{/if}
+									<Button
+										variant="primary"
+										class="w-full"
+										loading={runtimeFlowLoading}
+										disabled={authActionLoading || !canSubmitRuntimeConsent()}
+										onclick={() =>
+											completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
+									>
+										{$LL.common_continue()}
+									</Button>
+								{:else if runtimeFlowStep.component === 'completion'}
+									<Button
+										variant="primary"
+										class="w-full"
+										loading={runtimeFlowLoading}
+										disabled={authActionLoading}
+										onclick={() => completeRuntimeOnlyStep('completed')}
+									>
+										{$LL.common_continue()}
+									</Button>
+								{:else}
+									<Button
+										variant="secondary"
+										class="w-full"
+										loading={runtimeFlowLoading}
+										disabled={authActionLoading}
+										onclick={() => completeRuntimeOnlyStep('completed')}
+									>
+										{$LL.common_continue()}
+									</Button>
+								{/if}
+							</div>
+						</Alert>
+					{/if}
 				{/if}
 
-				{#if !useRuntimeAuthFormLayout && !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
+				{#if !blockLegacyAuthLayout && !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
 					<Alert variant="error" class="mb-4">
 						{methodsError || $LL.register_noMethodsAvailable()}
 					</Alert>
 				{/if}
 
 				<!-- Registration Fields -->
-				{#if !useRuntimeAuthFormLayout && registrationFields.length > 0}
+				{#if !blockLegacyAuthLayout && registrationFields.length > 0}
 					{#each registrationFields as field (field.field_key)}
 						<div class="mb-4">
 							{#if isNameRegistrationField(field)}
@@ -1457,12 +1779,12 @@
 				{/if}
 
 				<!-- Passkey Button -->
-				{#if !useRuntimeAuthFormLayout && showRuntimePasskey}
+				{#if !blockLegacyAuthLayout && showRuntimePasskey}
 					<Button
 						variant="primary"
 						class="w-full mb-3"
 						loading={passkeyLoading}
-						disabled={emailCodeLoading}
+						disabled={authActionLoading}
 						onclick={handlePasskeyRegister}
 					>
 						<div class="i-heroicons-key h-5 w-5"></div>
@@ -1477,6 +1799,7 @@
 							theme={turnstileTheme}
 							language={turnstileLanguage}
 							bind:token={turnstileToken}
+							resetKey={turnstileResetKey}
 							disabled={authActionLoading}
 							loadingLabel={$LL.login_humanVerificationLoading()}
 							errorLabel={$LL.login_humanVerificationLoadFailed()}
@@ -1493,12 +1816,12 @@
 				{/if}
 
 				<!-- Email Code Button -->
-				{#if !useRuntimeAuthFormLayout && showRuntimeEmailCode}
+				{#if !blockLegacyAuthLayout && showRuntimeEmailCode}
 					<Button
 						variant="secondary"
 						class="w-full"
 						loading={emailCodeLoading}
-						disabled={passkeyLoading || externalIdpLoading !== null}
+						disabled={authActionLoading}
 						onclick={handleEmailCodeSignup}
 					>
 						<div class="i-heroicons-envelope h-5 w-5"></div>
@@ -1513,6 +1836,104 @@
 							theme={turnstileTheme}
 							language={turnstileLanguage}
 							bind:token={turnstileToken}
+							resetKey={turnstileResetKey}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
+				{/if}
+
+				<!-- TOTP Button and Setup -->
+				{#if showRuntimeTotp && (!blockLegacyAuthLayout || totpSignup)}
+					{#if showRuntimePasskey || showRuntimeEmailCode}
+						<div class="auth-divider">
+							<div class="auth-divider__line"></div>
+							<span class="auth-divider__text">{$LL.common_or()}</span>
+							<div class="auth-divider__line"></div>
+						</div>
+					{/if}
+
+					{#if totpSignup}
+						<div class="totp-signup-panel">
+							{#if totpSignup.backupCodes.length > 0}
+								<h3>{$LL.account_totpBackupCodes()}</h3>
+								<ul class="totp-backup-codes">
+									{#each totpSignup.backupCodes as backupCode}
+										<li><code>{backupCode}</code></li>
+									{/each}
+								</ul>
+								<Button
+									variant="primary"
+									class="w-full"
+									disabled={authActionLoading}
+									onclick={continueAfterTotpBackupCodes}
+								>
+									{$LL.common_continue()}
+								</Button>
+							{:else}
+								<h3>{$LL.register_totpSetupTitle()}</h3>
+								{#if totpQrDataUrl}
+									<img class="totp-signup-qr" src={totpQrDataUrl} alt={$LL.account_totpQrAlt()} />
+								{/if}
+								<div class="totp-manual-key">
+									<span>{$LL.account_totpManualKey()}</span>
+									<code>{totpSignup.secret}</code>
+								</div>
+								<Input
+									label={$LL.login_totpCodeLabel()}
+									placeholder={$LL.login_totpCodePlaceholder()}
+									bind:value={totpCode}
+									autocomplete="one-time-code"
+									inputmode="numeric"
+									maxlength={8}
+								/>
+								<div class="totp-signup-actions">
+									<Button
+										variant="primary"
+										class="w-full"
+										loading={totpLoading}
+										disabled={!/^\d{6}$|^\d{8}$/.test(totpCode.trim())}
+										onclick={handleTotpSignupActivate}
+									>
+										{$LL.account_totpActivate()}
+									</Button>
+									<Button
+										variant="secondary"
+										class="w-full"
+										disabled={authActionLoading}
+										onclick={() => {
+											totpSignup = null;
+											totpCode = '';
+										}}
+									>
+										{$LL.dialog_cancel()}
+									</Button>
+								</div>
+							{/if}
+						</div>
+					{:else if !blockLegacyAuthLayout}
+						<Button
+							variant="secondary"
+							class="w-full"
+							loading={totpLoading}
+							disabled={authActionLoading}
+							onclick={handleTotpSignupStart}
+						>
+							<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
+							{$LL.register_createWithTotp()}
+						</Button>
+					{/if}
+					{#if showTurnstileFor('totp') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							resetKey={turnstileResetKey}
 							disabled={authActionLoading}
 							loadingLabel={$LL.login_humanVerificationLoading()}
 							errorLabel={$LL.login_humanVerificationLoadFailed()}
@@ -1521,7 +1942,7 @@
 				{/if}
 
 				<!-- External Login Section -->
-				{#if !useRuntimeAuthFormLayout && showRuntimeExternal}
+				{#if !blockLegacyAuthLayout && showRuntimeExternal}
 					<div class="auth-divider" style="margin: 24px 0;">
 						<div class="auth-divider__line"></div>
 						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -1538,9 +1959,7 @@
 								variant="secondary"
 								class="w-full justify-center"
 								loading={externalIdpLoading === provider.id}
-								disabled={passkeyLoading ||
-									emailCodeLoading ||
-									(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
+								disabled={authActionLoading}
 								onclick={() => handleExternalLogin(provider)}
 								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
 							>
@@ -1565,6 +1984,7 @@
 									theme={turnstileTheme}
 									language={turnstileLanguage}
 									bind:token={turnstileToken}
+									resetKey={turnstileResetKey}
 									disabled={authActionLoading}
 									loadingLabel={$LL.login_humanVerificationLoading()}
 									errorLabel={$LL.login_humanVerificationLoadFailed()}
@@ -1575,7 +1995,7 @@
 				{/if}
 
 				<!-- Terms Agreement -->
-				{#if !useRuntimeAuthFormLayout}
+				{#if !blockLegacyAuthLayout}
 					<p class="mt-4 text-xs text-center" style="color: var(--text-muted);">
 						{$LL.register_termsAgreement()}
 					</p>
@@ -1598,6 +2018,35 @@
 </div>
 
 <style>
+	.auth-progress {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 12px 14px;
+		border: 1px solid var(--border-color, var(--border));
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 88%, transparent);
+		color: var(--text-secondary);
+		font-size: 0.9rem;
+		line-height: 1.45;
+	}
+
+	.auth-progress__spinner {
+		width: 16px;
+		height: 16px;
+		flex: 0 0 16px;
+		border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+		border-top-color: currentColor;
+		border-radius: 999px;
+		animation: auth-progress-spin 0.8s linear infinite;
+	}
+
+	@keyframes auth-progress-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
 	.form-group {
 		width: 100%;
 	}
@@ -1639,6 +2088,75 @@
 		font-size: 0.8125rem;
 		color: var(--danger);
 		margin-top: 6px;
+	}
+
+	.runtime-form-human-verification {
+		display: grid;
+		justify-items: center;
+		width: 100%;
+		margin-top: 1rem;
+	}
+
+	.totp-signup-panel {
+		display: grid;
+		gap: 12px;
+		margin-top: 12px;
+		padding: 14px;
+		border: 1px solid var(--border-color, var(--border));
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--surface-color, var(--bg-glass)) 90%, transparent);
+	}
+
+	.totp-signup-panel h3 {
+		margin: 0;
+		font-size: 0.9375rem;
+	}
+
+	.totp-signup-qr {
+		width: 192px;
+		max-width: 100%;
+		height: auto;
+		border: 1px solid var(--border-color, var(--border));
+		border-radius: 8px;
+		background: #ffffff;
+		padding: 8px;
+	}
+
+	.totp-manual-key {
+		display: grid;
+		gap: 4px;
+	}
+
+	.totp-manual-key span {
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.totp-manual-key code,
+	.totp-backup-codes code {
+		font-size: 0.8125rem;
+		overflow-wrap: anywhere;
+	}
+
+	.totp-signup-actions {
+		display: grid;
+		gap: 8px;
+	}
+
+	.totp-backup-codes {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+		gap: 8px;
+		padding: 0;
+		margin: 0;
+		list-style: none;
+	}
+
+	.totp-backup-codes li {
+		padding: 8px 10px;
+		border: 1px solid var(--border-color, var(--border));
+		border-radius: 8px;
+		background: var(--surface-color, var(--surface));
 	}
 
 	.runtime-consent-item {

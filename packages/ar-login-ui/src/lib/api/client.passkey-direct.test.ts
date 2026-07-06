@@ -73,11 +73,14 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		});
 		const { passkeyAPI } = await loadClient();
 
-		const options = await passkeyAPI.getLoginOptions({});
+		const options = await passkeyAPI.getLoginOptions({
+			authorizationChallengeId: 'oauth_login_challenge'
+		});
 		const verified = await passkeyAPI.verifyLogin({
 			challengeId: options.data!.challengeId,
 			credential: { id: 'credential' },
-			authorizationChallengeId: 'oauth_login_challenge'
+			authorizationChallengeId: 'oauth_login_challenge',
+			deferAuthorizationContinuation: true
 		});
 
 		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
@@ -87,6 +90,9 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			'/api/v1/auth/direct/passkey/login/finish'
 		);
 		expect(fetchMock.mock.calls[2]?.[0].toString()).toContain('/api/v1/auth/direct/session');
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			authorization_challenge_id: 'oauth_login_challenge'
+		});
 		for (const [url] of fetchMock.mock.calls) {
 			expect(url.toString()).not.toContain('/api/auth/passkeys');
 			expect(url.toString()).not.toContain('/api/auth/email-codes');
@@ -104,7 +110,8 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			}
 		});
 		expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
-			authorization_challenge_id: 'oauth_login_challenge'
+			authorization_challenge_id: 'oauth_login_challenge',
+			defer_authorization_continuation: true
 		});
 	});
 
@@ -164,6 +171,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		const send = await emailCodeAPI.send({
 			email: 'User@Example.com',
 			invite_token: 'invite_123',
+			authorizationChallengeId: 'oauth_email_challenge',
 			custom_fields: { team: 'platform' }
 		});
 		const verified = await emailCodeAPI.verify({
@@ -191,6 +199,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			client_id: 'login-ui',
 			channel: 'browser',
 			invite_token: 'invite_123',
+			authorization_challenge_id: 'oauth_email_challenge',
 			custom_fields: { team: 'platform' }
 		});
 		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({

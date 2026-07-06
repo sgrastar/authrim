@@ -1123,7 +1123,104 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
     });
 
-    it('should proxy tenant root requests to Login UI when configured', async () => {
+    it('should proxy browser requests on the configured Login UI host to Login UI before API routing', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithSeparateLoginUiHost = {
+        ...mockEnv,
+        LOGIN_UI_URL: 'https://login.example.com',
+        LOGIN_UI_HOST_MODE: 'dedicated',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://login.example.com/api/auth/authentication-methods');
+      const res = await app.fetch(req, envWithSeparateLoginUiHost);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+      const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/api/auth/authentication-methods');
+      expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('login.example.com');
+    });
+
+    it('should keep API routes on a shared Login UI host routed to API workers', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithSharedLoginUiHost = {
+        ...mockEnv,
+        LOGIN_UI_URL: 'https://example.com',
+        LOGIN_UI_HOST_MODE: 'shared',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://example.com/api/auth/authentication-methods');
+      const res = await app.fetch(req, envWithSharedLoginUiHost);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      const proxiedRequest = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/api/auth/authentication-methods');
+      expect(proxiedRequest.headers.get('Host')).toBe('example.com');
+    });
+
+    it('should keep protocol routes on a shared Login UI host routed to auth workers', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithSharedLoginUiHost = {
+        ...mockEnv,
+        LOGIN_UI_URL: 'https://example.com',
+        LOGIN_UI_HOST_MODE: 'shared',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request(
+        'https://example.com/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Frp.example%2Fcb'
+      );
+      const res = await app.fetch(req, envWithSharedLoginUiHost);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      const proxiedRequest = mockEnv.OP_AUTH.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).pathname).toBe('/authorize');
+      expect(proxiedRequest.headers.get('Host')).toBe('example.com');
+    });
+
+    it('should route Login UI backend proxy requests to API workers and preserve forwarded tenant host', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithSeparateLoginUiHost = {
+        ...mockEnv,
+        LOGIN_UI_URL: 'https://login.example.com',
+        LOGIN_UI_HOST_MODE: 'dedicated',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://login.example.com/auth/login-challenge?challenge_id=test', {
+        headers: {
+          'X-Authrim-Ui-Proxy': 'login-ui',
+          'X-Authrim-Forwarded-Host': 'first.example.com',
+        },
+      });
+      const res = await app.fetch(req, envWithSeparateLoginUiHost);
+
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      const proxiedRequest = mockEnv.OP_AUTH.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).host).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('Host')).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('X-Forwarded-Host')).toBe('first.example.com');
+    });
+
+    it('should fast-redirect anonymous tenant root requests to /login when configured', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
       const envWithLoginUi = {
         ...mockEnv,
@@ -1136,15 +1233,54 @@ describe('Router Worker', () => {
       const req = new Request('https://first.example.com/');
       const res = await app.fetch(req, envWithLoginUi);
 
+      expect(res.status).toBe(303);
+      expect(res.headers.get('Location')).toBe('/login');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('should proxy tenant root requests with a session cookie to Login UI', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithLoginUi = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/', {
+        headers: { Cookie: 'authrim_session=session_123' },
+      });
+      const res = await app.fetch(req, envWithLoginUi);
+
       expect(res.status).toBe(200);
       expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
-
       const proxiedRequest = loginUiWorker.fetch.mock.calls[0][0];
       expect(new URL(proxiedRequest.url).origin).toBe(
         'https://phase9-ar-login-ui.example.workers.dev'
       );
       expect(new URL(proxiedRequest.url).pathname).toBe('/');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+    });
+
+    it('should not read service-site settings before root Login UI proxy when no SERVICE_SITE binding exists', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const settings = createMockKV();
+      const envWithLoginUi = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: settings,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://first.example.com/');
+      const res = await app.fetch(req, envWithLoginUi);
+
+      expect(res.status).toBe(303);
+      expect(settings.get).not.toHaveBeenCalledWith('settings:tenant:first:service-site');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
     });
 
     it('should proxy naked-domain root requests to Login UI when Login UI shares the API host', async () => {

@@ -318,6 +318,14 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('SESSION-MGMT');
 
   try {
+    const includeParam = new URL(c.req.raw.url).searchParams.get('include');
+    const includeProfile = includeParam
+      ? includeParam
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .includes('profile')
+      : true;
+
     // Get session from cookie
     const sessionId = getCookie(c, 'authrim_session');
 
@@ -374,23 +382,27 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
     let userEmail: string | undefined;
     let userName: string | undefined;
 
-    try {
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const runtimeUsers = new CanonicalRuntimeUserStore({
-        coreAdapter: authCtx.coreAdapter,
-        piiAdapter: piiCtx.defaultPiiAdapter,
-        tenantId,
-      });
-      const user = await runtimeUsers.findById(session.userId);
+    if (includeProfile) {
+      try {
+        const tenantId = getTenantIdFromContext(c);
+        const authCtx = createAuthContextFromHono(c, tenantId);
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        const runtimeUsers = new CanonicalRuntimeUserStore({
+          coreAdapter: authCtx.coreAdapter,
+          piiAdapter: piiCtx.defaultPiiAdapter,
+          tenantId,
+        });
+        const user = await runtimeUsers.findById(session.userId);
 
-      if (user) {
-        userEmail = user.email ?? undefined;
-        userName = user.name ?? undefined;
+        if (user) {
+          userEmail = user.email ?? undefined;
+          userName = user.name ?? undefined;
+        }
+      } catch (error) {
+        log.warn('Failed to fetch user profile for session status', {
+          action: 'fetch_user_profile',
+        });
       }
-    } catch (error) {
-      log.warn('Failed to fetch user profile for session status', { action: 'fetch_user_profile' });
     }
 
     return c.json({

@@ -154,6 +154,31 @@ export class CanonicalRuntimeUserStore {
     return this.findById(row.owner_id, options);
   }
 
+  async findByPreferredUsername(
+    preferredUsername: string,
+    options?: { includeInactive?: boolean }
+  ): Promise<CanonicalRuntimeUserProjection | null> {
+    const normalized = preferredUsername.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    const row = await this.options.piiAdapter.queryOne<{ owner_id: string }>(
+      `SELECT owner_id
+         FROM identity_sensitive_values
+        WHERE tenant_id = ?
+          AND owner_type = 'runtime_user'
+          AND value_key = 'preferred_username'
+          AND LOWER(value_json) = ?
+          AND lifecycle_state = 'active'
+        LIMIT 1`,
+      [this.options.tenantId, JSON.stringify(normalized)]
+    );
+    if (!row) {
+      return null;
+    }
+    return this.findById(row.owner_id, options);
+  }
+
   async syncUser(
     input: CanonicalRuntimeUserCreateInput
   ): Promise<CanonicalRuntimeUserWriteResult | null> {

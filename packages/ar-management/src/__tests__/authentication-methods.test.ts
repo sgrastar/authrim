@@ -151,6 +151,21 @@ describe('Authentication Methods API', () => {
       expect(body.methods.passkey.capabilities).toEqual(['conditional', 'discoverable']);
       expect(body.methods.emailCode.enabled).toBe(true);
       expect(body.methods.emailCode.steps).toEqual(['email', 'code']);
+      expect(body.methods.totp).toMatchObject({
+        enabled: false,
+        loginEnabled: false,
+        signupEnabled: false,
+        reauthEnabled: false,
+        accountLinkEnabled: false,
+        preset: 'compatible',
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        window: 1,
+        defaultAcr: 'urn:authrim:aal:2',
+        requirement: { mode: 'optional' },
+        steps: [],
+      });
       expect(body.methods.directoryPassword.enabled).toBe(false);
       expect(body.methods.directoryPassword.label).toBe('Organization ID');
       expect(body.methods.directoryPassword.steps).toEqual([]);
@@ -278,6 +293,13 @@ describe('Authentication Methods API', () => {
           'authentication-methods.email_otp.signup_enabled': false,
           'authentication-methods.email_otp.reauth_enabled': true,
           'authentication-methods.email_otp.account_link_enabled': true,
+          'authentication-methods.totp.login_enabled': true,
+          'authentication-methods.totp.signup_enabled': false,
+          'authentication-methods.totp.reauth_enabled': true,
+          'authentication-methods.totp.account_link_enabled': true,
+          'authentication-methods.totp.preset': 'strong',
+          'authentication-methods.totp.default_acr': 'urn:authrim:aal:3',
+          'authentication-methods.totp.requirement_policy': JSON.stringify({ mode: 'required' }),
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -292,6 +314,21 @@ describe('Authentication Methods API', () => {
         signupEnabled: false,
         reauthEnabled: true,
         accountLinkEnabled: true,
+      });
+      expect(body.methods.totp).toMatchObject({
+        enabled: true,
+        loginEnabled: true,
+        signupEnabled: false,
+        reauthEnabled: true,
+        accountLinkEnabled: true,
+        preset: 'strong',
+        algorithm: 'SHA256',
+        digits: 8,
+        period: 30,
+        window: 1,
+        defaultAcr: 'urn:authrim:aal:3',
+        requirement: { mode: 'required' },
+        steps: ['identifier', 'code'],
       });
     });
 
@@ -732,17 +769,30 @@ describe('Authentication Methods API', () => {
       expect(body.methods.external.providers).toEqual([]);
     });
 
-    it('should call EXTERNAL_IDP with correct URL path', async () => {
+    it('should call EXTERNAL_IDP with tenant and forwarded request host', async () => {
       const externalIdp = createMockExternalIdp({
         providers: [{ id: 'ggl-123', name: 'Google', slug: 'google', enabled: true }],
       });
       const { app, mockEnv } = createTestApp({ externalIdp });
 
-      await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        { method: 'GET' },
+        mockEnv
+      );
 
       expect(externalIdp.fetch).toHaveBeenCalledWith(
         'https://external-idp/api/external/providers',
-        expect.objectContaining({ method: 'GET' })
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Accept: 'application/json',
+            'X-Tenant-Id': 'default',
+            'X-Authrim-Forwarded-Host': 'first.test.authrim.com',
+            'X-Forwarded-Host': 'first.test.authrim.com',
+            'X-Forwarded-Proto': 'https',
+          }),
+        })
       );
     });
 

@@ -87,14 +87,12 @@ export class DeviceCodeStore {
 
   // V2: Initialization state
   private initialized: boolean = false;
-  private initializePromise: Promise<void> | null = null;
 
   // V2: Async audit log buffering
   private pendingAuditLogs: AuditLogEntry[] = [];
   private flushScheduled: boolean = false;
   private readonly AUDIT_FLUSH_DELAY = 100; // ms
   private deviceCodePersistence: DeviceCodePersistenceAdapter | null = null;
-  private deviceCodePersistenceInit: Promise<DeviceCodePersistenceAdapter | null> | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
@@ -886,13 +884,8 @@ export class DeviceCodeStore {
     if (this.deviceCodePersistence) {
       return this.deviceCodePersistence;
     }
-    if (!this.deviceCodePersistenceInit) {
-      this.deviceCodePersistenceInit = this.initializeDeviceCodePersistence().finally(() => {
-        this.deviceCodePersistenceInit = null;
-      });
-    }
 
-    this.deviceCodePersistence = await this.deviceCodePersistenceInit;
+    this.deviceCodePersistence = await this.initializeDeviceCodePersistence();
     return this.deviceCodePersistence;
   }
 
@@ -918,6 +911,5 @@ export class DeviceCodeStore {
 
     this.tenantId = tenantId;
     this.deviceCodePersistence = null;
-    this.deviceCodePersistenceInit = null;
   }
 }

@@ -129,6 +129,43 @@ describe('resolveTenantFromRequest', () => {
       expect(result.error).toBe('tenant_not_found');
     });
 
+    it('should trust Authrim forwarded host when the worker is router-service-bound', () => {
+      const request = new Request(
+        'https://test-ar-auth.internal.cloudflare/authorize?client_id=test',
+        {
+          headers: {
+            Host: 'test-ar-auth.internal.cloudflare',
+            'X-Authrim-Forwarded-Host': 'first.test.authrim.com',
+          },
+        }
+      );
+
+      const result = resolveTenantFromRequest(request, {
+        ...multiTenantEnv,
+        AUTHRIM_TRUST_FORWARDED_HOST: 'true',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('first');
+    });
+
+    it('should prefer trusted Authrim forwarded host over a service-binding host', () => {
+      const request = new Request('https://test-ar-auth.sgrastar.workers.dev/authorize', {
+        headers: {
+          Host: 'test-ar-auth.sgrastar.workers.dev',
+          'X-Authrim-Forwarded-Host': 'first.test.authrim.com',
+        },
+      });
+
+      const result = resolveTenantFromRequest(request, {
+        ...multiTenantEnv,
+        AUTHRIM_TRUST_FORWARDED_HOST: 'yes',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('first');
+    });
+
     it('should not let forwarded naked domain override an unrecognized Host', () => {
       const request = new Request(
         'https://test-ar-router.sgrastar.workers.dev/api/auth/authentication-methods',
