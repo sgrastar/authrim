@@ -1746,6 +1746,103 @@ function findJsonArrayCandidates(value: string): string[] {
   return candidates;
 }
 
+function parseValidatedJsonArrayOutput<T>(
+  stdout: string,
+  normalizeRows: (rows: unknown) => T[],
+  invalidOutputMessage: string
+): T[] {
+  const candidates = findJsonArrayCandidates(stdout);
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    try {
+      return normalizeRows(JSON.parse(candidates[index]));
+    } catch {
+      // Wrangler can print notices containing brackets before the JSON payload.
+    }
+  }
+
+  throw new SyntaxError(invalidOutputMessage);
+}
+
+function describeInventoryError(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return fallback;
+}
+
+async function resolveCloudflareInventoryCredentials(): Promise<{
+  accountId: string;
+  token: string;
+} | null> {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+  ) {
+    return null;
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  const tokenInfo = envToken
+    ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
+    : await getCloudflareApiToken();
+  if (!accountId || !tokenInfo?.token) {
+    return null;
+  }
+
+  return { accountId, token: tokenInfo.token };
+}
+
+async function listCloudflarePaginatedResourcesViaApi<T>(input: {
+  path: string;
+  label: string;
+  normalizeRows: (rows: unknown) => T[];
+}): Promise<T[] | null> {
+  const credentials = await resolveCloudflareInventoryCredentials();
+  if (!credentials) return null;
+
+  const resources: T[] = [];
+  const perPage = 1000;
+  let page = 1;
+
+  while (true) {
+    const url = new URL(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/${input.path}`
+    );
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('per_page', String(perPage));
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Cloudflare ${input.label} failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as {
+      success?: boolean;
+      result?: unknown;
+      result_info?: { total_count?: unknown };
+    };
+    if (payload.success === false) {
+      throw new Error(`Cloudflare ${input.label} returned an unsuccessful response`);
+    }
+
+    const rows = input.normalizeRows(payload.result);
+    resources.push(...rows);
+
+    const totalCount = payload.result_info?.total_count;
+    if (
+      rows.length < perPage ||
+      (typeof totalCount === 'number' && resources.length >= totalCount)
+    ) {
+      return resources;
+    }
+    page++;
+  }
+}
+
 function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
   if (!Array.isArray(rows)) {
     throw new TypeError('D1 database list was not an array');
@@ -1771,74 +1868,19 @@ function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
 }
 
 export function parseD1DatabaseListOutput(stdout: string): D1DatabaseListRow[] {
-  const candidates = findJsonArrayCandidates(stdout);
-  for (let index = candidates.length - 1; index >= 0; index--) {
-    try {
-      return normalizeD1DatabaseRows(JSON.parse(candidates[index]));
-    } catch {
-      // Wrangler can print notices containing brackets before the JSON payload.
-    }
-  }
-
-  throw new SyntaxError('Wrangler output did not contain a valid D1 database list');
+  return parseValidatedJsonArrayOutput(
+    stdout,
+    normalizeD1DatabaseRows,
+    'Wrangler output did not contain a valid D1 database list'
+  );
 }
 
 async function listD1DatabasesViaApi(): Promise<D1DatabaseListRow[] | null> {
-  if (
-    process.env.NODE_ENV === 'test' &&
-    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
-  ) {
-    return null;
-  }
-
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
-  const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-  const tokenInfo = envToken
-    ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
-    : await getCloudflareApiToken();
-  if (!accountId || !tokenInfo?.token) {
-    return null;
-  }
-
-  const databases: D1DatabaseListRow[] = [];
-  const perPage = 1000;
-  let page = 1;
-
-  while (true) {
-    const url = new URL(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`);
-    url.searchParams.set('page', String(page));
-    url.searchParams.set('per_page', String(perPage));
-
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${tokenInfo.token}`,
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Cloudflare D1 database list failed (${response.status})`);
-    }
-
-    const payload = (await response.json()) as {
-      success?: boolean;
-      result?: unknown;
-      result_info?: { total_count?: unknown };
-    };
-    if (payload.success === false) {
-      throw new Error('Cloudflare D1 database list returned an unsuccessful response');
-    }
-
-    const rows = normalizeD1DatabaseRows(payload.result);
-    databases.push(...rows);
-
-    const totalCount = payload.result_info?.total_count;
-    if (
-      rows.length < perPage ||
-      (typeof totalCount === 'number' && databases.length >= totalCount)
-    ) {
-      return databases;
-    }
-    page++;
-  }
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'd1/database',
+    label: 'D1 database list',
+    normalizeRows: normalizeD1DatabaseRows,
+  });
 }
 
 /**
@@ -1867,18 +1909,8 @@ export async function listD1Databases(): Promise<Array<{ name: string; uuid: str
     return parseD1DatabaseListOutput(stdout);
   } catch (error) {
     if (apiError) {
-      const apiMessage =
-        apiError instanceof Error
-          ? apiError.message
-          : typeof apiError === 'string'
-            ? apiError
-            : 'unknown API error';
-      const wranglerMessage =
-        error instanceof Error
-          ? error.message
-          : typeof error === 'string'
-            ? error
-            : 'unknown Wrangler error';
+      const apiMessage = describeInventoryError(apiError, 'unknown API error');
+      const wranglerMessage = describeInventoryError(error, 'unknown Wrangler error');
       throw new Error(
         `Failed to list D1 databases via the Cloudflare API (${apiMessage}) and Wrangler (${wranglerMessage})`
       );
@@ -3897,11 +3929,63 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
 // KV Namespace Operations
 // =============================================================================
 
+type KVNamespaceListRow = { title: string; id: string };
+
+function normalizeKVNamespaceRows(rows: unknown): KVNamespaceListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('KV namespace list was not an array');
+  }
+
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`KV namespace list row ${index} was not an object`);
+    }
+
+    const { title, id } = row as { title?: unknown; id?: unknown };
+    if (
+      typeof title !== 'string' ||
+      title.trim().length === 0 ||
+      typeof id !== 'string' ||
+      id.trim().length === 0
+    ) {
+      throw new TypeError(`KV namespace list row ${index} did not contain a title and ID`);
+    }
+
+    return { title: title.trim(), id: id.trim() };
+  });
+}
+
+export function parseKVNamespaceListOutput(stdout: string): KVNamespaceListRow[] {
+  return parseValidatedJsonArrayOutput(
+    stdout,
+    normalizeKVNamespaceRows,
+    'Wrangler output did not contain a valid KV namespace list'
+  );
+}
+
+async function listKVNamespacesViaApi(): Promise<KVNamespaceListRow[] | null> {
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'storage/kv/namespaces',
+    label: 'KV namespace list',
+    normalizeRows: normalizeKVNamespaceRows,
+  });
+}
+
 /**
  * List all KV namespaces
  * @throws Error if wrangler command fails (caller should handle)
  */
 export async function listKVNamespaces(): Promise<Array<{ title: string; id: string }>> {
+  let apiError: unknown;
+  try {
+    const apiNamespaces = await listKVNamespacesViaApi();
+    if (apiNamespaces) {
+      return apiNamespaces;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout, stderr } = await wrangler(['kv', 'namespace', 'list']);
 
@@ -3910,14 +3994,15 @@ export async function listKVNamespaces(): Promise<Array<{ title: string; id: str
       throw new Error('Not logged in to Cloudflare. Run: wrangler login');
     }
 
-    // wrangler kv namespace list outputs JSON
-    const namespaces = JSON.parse(stdout);
-    return namespaces.map((ns: { title: string; id: string }) => ({
-      title: ns.title,
-      id: ns.id,
-    }));
+    return parseKVNamespaceListOutput(stdout);
   } catch (error) {
-    // Re-throw with context
+    if (apiError) {
+      const apiMessage = describeInventoryError(apiError, 'unknown API error');
+      const wranglerMessage = describeInventoryError(error, 'unknown Wrangler error');
+      throw new Error(
+        `Failed to list KV namespaces via the Cloudflare API (${apiMessage}) and Wrangler (${wranglerMessage})`
+      );
+    }
     if (error instanceof SyntaxError) {
       throw new Error('Failed to parse KV namespace list - wrangler output was not valid JSON');
     }

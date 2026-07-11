@@ -16,6 +16,7 @@ import {
   saveLockFile,
   loadLockFileAuto,
   reconcileSharedD1ResourcesInLock,
+  reconcileSharedKVResourcesInLock,
 } from '../../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -55,6 +56,7 @@ import {
   getWorkersSubdomain,
   ensureWildcardDnsForMultiTenant,
   listD1Databases,
+  listKVNamespaces,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
 import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../../core/wrangler.js';
@@ -685,33 +687,43 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   }
 
   if (!options.dryRun) {
-    const d1ReconciliationSpinner = ora('Refreshing shared D1 resource IDs...').start();
+    const resourceReconciliationSpinner = ora('Refreshing Cloudflare resource IDs...').start();
     try {
-      const reconciliation = reconcileSharedD1ResourcesInLock(
-        currentLock,
+      const [databases, namespaces] = await Promise.all([listD1Databases(), listKVNamespaces()]);
+      const d1Reconciliation = reconcileSharedD1ResourcesInLock(currentLock, env, databases);
+      const kvReconciliation = reconcileSharedKVResourcesInLock(
+        d1Reconciliation.lock,
         env,
-        await listD1Databases()
+        namespaces
       );
+      const missingResources = [
+        ...d1Reconciliation.missingBindings.map((missing) => ({ type: 'D1', ...missing })),
+        ...kvReconciliation.missingBindings.map((missing) => ({ type: 'KV', ...missing })),
+      ];
 
-      if (reconciliation.missingBindings.length > 0) {
-        d1ReconciliationSpinner.fail('Required shared D1 databases are missing');
-        for (const missing of reconciliation.missingBindings) {
-          console.log(chalk.red(`  • ${missing.binding}: ${missing.name}`));
+      if (missingResources.length > 0) {
+        resourceReconciliationSpinner.fail('Required Cloudflare resources are missing');
+        for (const missing of missingResources) {
+          console.log(chalk.red(`  • ${missing.type} ${missing.binding}: ${missing.name}`));
         }
         process.exit(1);
       }
 
-      currentLock = reconciliation.lock;
-      if (reconciliation.updatedBindings.length > 0) {
+      currentLock = kvReconciliation.lock;
+      const updatedResources = [
+        ...d1Reconciliation.updatedBindings.map((binding) => `D1 ${binding}`),
+        ...kvReconciliation.updatedBindings.map((binding) => `KV ${binding}`),
+      ];
+      if (updatedResources.length > 0) {
         await saveLockFile(currentLock, lockPath);
-        d1ReconciliationSpinner.succeed(
-          `Refreshed shared D1 bindings: ${reconciliation.updatedBindings.join(', ')}`
+        resourceReconciliationSpinner.succeed(
+          `Refreshed Cloudflare bindings: ${updatedResources.join(', ')}`
         );
       } else {
-        d1ReconciliationSpinner.succeed('Shared D1 resource IDs are current');
+        resourceReconciliationSpinner.succeed('D1 and KV resource IDs are current');
       }
     } catch (error) {
-      d1ReconciliationSpinner.fail('Failed to refresh shared D1 resource IDs');
+      resourceReconciliationSpinner.fail('Failed to refresh Cloudflare resource IDs');
       console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
       process.exit(1);
     }
