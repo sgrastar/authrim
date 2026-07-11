@@ -5,11 +5,12 @@ import { createDefaultConfig } from '../core/config.js';
 import { saveKeysToDirectory, type GeneratedSecrets, type KeyPair } from '../core/keys.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
-import { WORKER_COMPONENTS } from '../core/naming.js';
+import { KV_NAMESPACES, WORKER_COMPONENTS, getKVNamespaceName } from '../core/naming.js';
 import { buildResourceIdsFromLock, generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { validateGeneratedEnvironment } from '../core/generated-env-validator.js';
 
 const listD1DatabasesMock = vi.hoisted(() => vi.fn());
+const listKVNamespacesMock = vi.hoisted(() => vi.fn());
 const listR2BucketsMock = vi.hoisted(() => vi.fn());
 const queryD1RowsMock = vi.hoisted(() => vi.fn());
 
@@ -18,12 +19,24 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
   return {
     ...actual,
     listD1Databases: listD1DatabasesMock,
+    listKVNamespaces: listKVNamespacesMock,
     listR2Buckets: listR2BucketsMock,
     queryD1Rows: queryD1RowsMock,
   };
 });
 
 const tempDirs: string[] = [];
+const PORTABLE_KV_IDS: Record<(typeof KV_NAMESPACES)[number], string> = {
+  CLIENTS_CACHE: 'kv-clients',
+  INITIAL_ACCESS_TOKENS: 'kv-iat',
+  SETTINGS: 'kv-settings',
+  REBAC_CACHE: 'kv-rebac',
+  USER_CACHE: 'kv-user',
+  AUTHRIM_CONFIG: 'kv-config',
+  TENANT_RUNTIME_REGISTRY: 'kv-tenant-runtime-registry',
+  STATE_STORE: 'kv-state',
+  CONSENT_CACHE: 'kv-consent',
+};
 
 async function createFixtureRoot() {
   const root = await mkdtemp(join(process.cwd(), '.test-generated-env-'));
@@ -286,6 +299,13 @@ function mockLiveRuntimeSchema(
 describe('validateGeneratedEnvironment', () => {
   beforeEach(() => {
     listD1DatabasesMock.mockReset();
+    listKVNamespacesMock.mockReset();
+    listKVNamespacesMock.mockResolvedValue(
+      KV_NAMESPACES.map((binding) => ({
+        title: getKVNamespaceName('portable', binding),
+        id: PORTABLE_KV_IDS[binding],
+      }))
+    );
     listR2BucketsMock.mockReset();
     queryD1RowsMock.mockReset();
   });
@@ -464,6 +484,7 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(result.ok).toBe(true);
     expect(result.checks.find((check) => check.id === 'live-cloudflare-d1')?.status).toBe('pass');
+    expect(result.checks.find((check) => check.id === 'live-cloudflare-kv')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-cloudflare-r2')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-runtime-d1-schema')?.status).toBe(
       'pass'
@@ -487,6 +508,43 @@ describe('validateGeneratedEnvironment', () => {
     expect(r2Check?.status).toBe('fail');
     expect(r2Check?.details).toEqual(
       expect.arrayContaining([expect.stringContaining(`${env}-export-artifacts is missing`)])
+    );
+  });
+
+  it('fails live Cloudflare validation when a recorded KV namespace ID is stale', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    mockLiveRuntimeSchema(env);
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+    ]);
+    listKVNamespacesMock.mockResolvedValueOnce(
+      KV_NAMESPACES.map((binding) => ({
+        title: getKVNamespaceName(env, binding),
+        id: binding === 'AUTHRIM_CONFIG' ? 'replacement-config-id' : PORTABLE_KV_IDS[binding],
+      }))
+    );
+    listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
+      { name: `${env}-authrim-avatars` },
+      { name: `${env}-diagnostic-logs` },
+      { name: `${env}-audit-archive` },
+      { name: `${env}-import-artifacts` },
+      { name: `${env}-export-artifacts` },
+      { name: `${env}-sensitive-details` },
+    ]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+    const kvCheck = result.checks.find((check) => check.id === 'live-cloudflare-kv');
+
+    expect(result.ok).toBe(false);
+    expect(kvCheck?.status).toBe('fail');
+    expect(kvCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('AUTHRIM_CONFIG')])
+    );
+    expect(kvCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('id mismatch')])
     );
   });
 
