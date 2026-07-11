@@ -2189,39 +2189,108 @@ export async function executeD1Command(
   );
 }
 
+function normalizeD1QueryRows<T extends Record<string, unknown>>(payload: unknown): T[] {
+  let queryResults = payload;
+  if (!Array.isArray(payload) && payload && typeof payload === 'object' && 'result' in payload) {
+    const envelope = payload as { success?: unknown; result?: unknown };
+    if (envelope.success !== true) {
+      throw new TypeError('Cloudflare D1 query response was not successful');
+    }
+    queryResults = envelope.result;
+  }
+
+  const entries = Array.isArray(queryResults) ? queryResults : [queryResults];
+  return entries.flatMap((entry, entryIndex) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new TypeError(`D1 result entry ${entryIndex} was not an object`);
+    }
+    if ((entry as { success?: unknown }).success === false) {
+      throw new TypeError(`D1 result entry ${entryIndex} was not successful`);
+    }
+    const results = (entry as { results?: unknown }).results;
+    if (!Array.isArray(results)) {
+      throw new TypeError(`D1 result entry ${entryIndex} did not contain a results array`);
+    }
+    return results.map((row, rowIndex) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new TypeError(`D1 result row ${rowIndex} was not an object`);
+      }
+      return row as T;
+    });
+  });
+}
+
 export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
-  stdout: string
+  output: string
 ): T[] {
   return parseValidatedJsonOutput(
-    stdout,
-    (payload) => {
-      const entries = Array.isArray(payload) ? payload : [payload];
-      return entries.flatMap((entry, entryIndex) => {
-        if (!entry || typeof entry !== 'object') {
-          throw new TypeError(`D1 result entry ${entryIndex} was not an object`);
-        }
-        const results = (entry as { results?: unknown }).results;
-        if (!Array.isArray(results)) {
-          throw new TypeError(`D1 result entry ${entryIndex} did not contain a results array`);
-        }
-        return results.map((row, rowIndex) => {
-          if (!row || typeof row !== 'object' || Array.isArray(row)) {
-            throw new TypeError(`D1 result row ${rowIndex} was not an object`);
-          }
-          return row as T;
-        });
-      });
-    },
+    output,
+    normalizeD1QueryRows<T>,
     'Wrangler output did not contain a valid D1 query result'
   );
+}
+
+function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
+  result: D1ExecuteCommandResult
+): T[] {
+  const candidates = Array.from(
+    new Set(
+      [result.stdout, result.stderr, [result.stdout, result.stderr].filter(Boolean).join('\n')]
+        .map((output) => output.trim())
+        .filter(Boolean)
+    )
+  );
+
+  for (const candidate of candidates) {
+    try {
+      return parseD1RowsFromWranglerJson<T>(candidate);
+    } catch {
+      // Wrangler has emitted JSON on both stdout and stderr across released versions.
+    }
+  }
+
+  throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
 }
 
 export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
   sql: string
 ): Promise<T[]> {
-  const { stdout } = await executeD1Command(dbName, sql, { json: true });
-  return parseD1RowsFromWranglerJson<T>(stdout);
+  const result = await executeD1Command(dbName, sql, { json: true });
+  return parseD1RowsFromWranglerResult<T>(result);
+}
+
+async function queryD1RowsViaApi<T extends Record<string, unknown>>(
+  dbName: string,
+  sql: string
+): Promise<T[] | null> {
+  const credentials = await resolveCloudflareInventoryCredentials();
+  if (!credentials) return null;
+
+  const databases = await listD1DatabasesViaApi();
+  const database = databases?.find((candidate) => candidate.name === dbName);
+  if (!database) {
+    throw new Error(`Cloudflare D1 database ${dbName} was not found`);
+  }
+
+  const response = await fetch(
+    new URL(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${database.uuid}/query`
+    ),
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sql }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Cloudflare D1 query failed (${response.status})`);
+  }
+
+  return normalizeD1QueryRows<T>(await response.json());
 }
 
 /** SQL to create the migration tracking table (idempotent) */
@@ -2293,22 +2362,49 @@ interface AppliedMigrationRow extends Record<string, unknown> {
   execution_time_ms?: number | null;
 }
 
+const APPLIED_MIGRATIONS_SQL =
+  'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;';
+
+function validateAppliedMigrationRows(rows: AppliedMigrationRow[]): AppliedMigrationRow[] {
+  return rows.map((row, index) => {
+    if (typeof row.filename !== 'string' || row.filename.trim().length === 0) {
+      throw new TypeError(`Migration history row ${index} did not contain a filename`);
+    }
+    if (row.checksum !== undefined && row.checksum !== null && typeof row.checksum !== 'string') {
+      throw new TypeError(`Migration history row ${index} contained an invalid checksum`);
+    }
+    return { ...row, filename: row.filename.trim() };
+  });
+}
+
 async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
   if (!(await ensureMigrationsTable(dbName))) {
     throw new Error(`Could not prepare migration tracking table for ${dbName}`);
   }
 
-  const { stdout } = await wrangler([
-    'd1',
-    'execute',
-    dbName,
-    '--remote',
-    '--yes',
-    '--command',
-    'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;',
-    '--json',
-  ]);
-  return parseD1RowsFromWranglerJson<AppliedMigrationRow>(stdout);
+  let apiError: unknown;
+  try {
+    const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(dbName, APPLIED_MIGRATIONS_SQL);
+    if (apiRows) {
+      return validateAppliedMigrationRows(apiRows);
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
+  try {
+    const result = await executeD1Command(dbName, APPLIED_MIGRATIONS_SQL, { json: true });
+    return validateAppliedMigrationRows(parseD1RowsFromWranglerResult<AppliedMigrationRow>(result));
+  } catch (error) {
+    if (apiError) {
+      const apiMessage = describeInventoryError(apiError, 'unknown API error');
+      const wranglerMessage = describeInventoryError(error, 'unknown Wrangler error');
+      throw new Error(
+        `Could not query migration history via the Cloudflare API (${apiMessage}) or Wrangler (${wranglerMessage})`
+      );
+    }
+    throw error;
+  }
 }
 
 function extractMigrationVersion(filename: string): number {
