@@ -1698,11 +1698,164 @@ export async function verifyWildcardDnsPublicResolution(baseDomain: string): Pro
 // D1 Database Operations
 // =============================================================================
 
+type D1DatabaseListRow = { name: string; uuid: string };
+
+function stripAnsiSequences(value: string): string {
+  const escape = String.fromCharCode(27);
+  return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, 'g'), '');
+}
+
+function findJsonArrayCandidates(value: string): string[] {
+  const candidates: string[] = [];
+  const normalized = stripAnsiSequences(value);
+
+  for (let start = 0; start < normalized.length; start++) {
+    if (normalized[start] !== '[') continue;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < normalized.length; index++) {
+      const character = normalized[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === '\\') {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (character === '"') {
+        inString = true;
+      } else if (character === '[') {
+        depth++;
+      } else if (character === ']') {
+        depth--;
+        if (depth === 0) {
+          candidates.push(normalized.slice(start, index + 1));
+          break;
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('D1 database list was not an array');
+  }
+
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`D1 database list row ${index} was not an object`);
+    }
+
+    const { name, uuid } = row as { name?: unknown; uuid?: unknown };
+    if (
+      typeof name !== 'string' ||
+      name.trim().length === 0 ||
+      typeof uuid !== 'string' ||
+      uuid.trim().length === 0
+    ) {
+      throw new TypeError(`D1 database list row ${index} did not contain a name and UUID`);
+    }
+
+    return { name: name.trim(), uuid: uuid.trim() };
+  });
+}
+
+export function parseD1DatabaseListOutput(stdout: string): D1DatabaseListRow[] {
+  const candidates = findJsonArrayCandidates(stdout);
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    try {
+      return normalizeD1DatabaseRows(JSON.parse(candidates[index]));
+    } catch {
+      // Wrangler can print notices containing brackets before the JSON payload.
+    }
+  }
+
+  throw new SyntaxError('Wrangler output did not contain a valid D1 database list');
+}
+
+async function listD1DatabasesViaApi(): Promise<D1DatabaseListRow[] | null> {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+  ) {
+    return null;
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  const tokenInfo = envToken
+    ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
+    : await getCloudflareApiToken();
+  if (!accountId || !tokenInfo?.token) {
+    return null;
+  }
+
+  const databases: D1DatabaseListRow[] = [];
+  const perPage = 1000;
+  let page = 1;
+
+  while (true) {
+    const url = new URL(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`);
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('per_page', String(perPage));
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Cloudflare D1 database list failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as {
+      success?: boolean;
+      result?: unknown;
+      result_info?: { total_count?: unknown };
+    };
+    if (payload.success === false) {
+      throw new Error('Cloudflare D1 database list returned an unsuccessful response');
+    }
+
+    const rows = normalizeD1DatabaseRows(payload.result);
+    databases.push(...rows);
+
+    const totalCount = payload.result_info?.total_count;
+    if (
+      rows.length < perPage ||
+      (typeof totalCount === 'number' && databases.length >= totalCount)
+    ) {
+      return databases;
+    }
+    page++;
+  }
+}
+
 /**
  * List all D1 databases
  * @throws Error if wrangler command fails (caller should handle)
  */
 export async function listD1Databases(): Promise<Array<{ name: string; uuid: string }>> {
+  let apiError: unknown;
+  try {
+    const apiDatabases = await listD1DatabasesViaApi();
+    if (apiDatabases) {
+      return apiDatabases;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout, stderr } = await wrangler(['d1', 'list', '--json']);
 
@@ -1711,13 +1864,25 @@ export async function listD1Databases(): Promise<Array<{ name: string; uuid: str
       throw new Error('Not logged in to Cloudflare. Run: wrangler login');
     }
 
-    const databases = JSON.parse(stdout);
-    return databases.map((db: { name: string; uuid: string }) => ({
-      name: db.name,
-      uuid: db.uuid,
-    }));
+    return parseD1DatabaseListOutput(stdout);
   } catch (error) {
-    // Re-throw with context
+    if (apiError) {
+      const apiMessage =
+        apiError instanceof Error
+          ? apiError.message
+          : typeof apiError === 'string'
+            ? apiError
+            : 'unknown API error';
+      const wranglerMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'unknown Wrangler error';
+      throw new Error(
+        `Failed to list D1 databases via the Cloudflare API (${apiMessage}) and Wrangler (${wranglerMessage})`
+      );
+    }
     if (error instanceof SyntaxError) {
       throw new Error('Failed to parse D1 database list - wrangler output was not valid JSON');
     }
