@@ -1705,12 +1705,16 @@ function stripAnsiSequences(value: string): string {
   return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, 'g'), '');
 }
 
-function findJsonArrayCandidates(value: string): string[] {
+function findJsonContainerCandidates(
+  value: string,
+  openingCharacter: '[' | '{',
+  closingCharacter: ']' | '}'
+): string[] {
   const candidates: string[] = [];
   const normalized = stripAnsiSequences(value);
 
   for (let start = 0; start < normalized.length; start++) {
-    if (normalized[start] !== '[') continue;
+    if (normalized[start] !== openingCharacter) continue;
 
     let depth = 0;
     let inString = false;
@@ -1731,9 +1735,9 @@ function findJsonArrayCandidates(value: string): string[] {
 
       if (character === '"') {
         inString = true;
-      } else if (character === '[') {
+      } else if (character === openingCharacter) {
         depth++;
-      } else if (character === ']') {
+      } else if (character === closingCharacter) {
         depth--;
         if (depth === 0) {
           candidates.push(normalized.slice(start, index + 1));
@@ -1746,17 +1750,25 @@ function findJsonArrayCandidates(value: string): string[] {
   return candidates;
 }
 
-function parseValidatedJsonArrayOutput<T>(
+function parseValidatedJsonOutput<T>(
   stdout: string,
   normalizeRows: (rows: unknown) => T[],
   invalidOutputMessage: string
 ): T[] {
-  const candidates = findJsonArrayCandidates(stdout);
-  for (let index = candidates.length - 1; index >= 0; index--) {
+  const normalized = stripAnsiSequences(stdout).trim();
+  const candidates = Array.from(
+    new Set([
+      normalized,
+      ...findJsonContainerCandidates(normalized, '[', ']'),
+      ...findJsonContainerCandidates(normalized, '{', '}'),
+    ])
+  ).sort((left, right) => right.length - left.length);
+
+  for (const candidate of candidates) {
     try {
-      return normalizeRows(JSON.parse(candidates[index]));
+      return normalizeRows(JSON.parse(candidate));
     } catch {
-      // Wrangler can print notices containing brackets before the JSON payload.
+      // Try the next complete JSON container found in noisy Wrangler output.
     }
   }
 
@@ -1868,7 +1880,7 @@ function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
 }
 
 export function parseD1DatabaseListOutput(stdout: string): D1DatabaseListRow[] {
-  return parseValidatedJsonArrayOutput(
+  return parseValidatedJsonOutput(
     stdout,
     normalizeD1DatabaseRows,
     'Wrangler output did not contain a valid D1 database list'
@@ -2180,11 +2192,28 @@ export async function executeD1Command(
 export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
   stdout: string
 ): T[] {
-  const payload = JSON.parse(stdout) as Array<{ results?: T[] }> | { results?: T[] };
-  if (Array.isArray(payload)) {
-    return payload.flatMap((entry) => entry.results ?? []);
-  }
-  return payload.results ?? [];
+  return parseValidatedJsonOutput(
+    stdout,
+    (payload) => {
+      const entries = Array.isArray(payload) ? payload : [payload];
+      return entries.flatMap((entry, entryIndex) => {
+        if (!entry || typeof entry !== 'object') {
+          throw new TypeError(`D1 result entry ${entryIndex} was not an object`);
+        }
+        const results = (entry as { results?: unknown }).results;
+        if (!Array.isArray(results)) {
+          throw new TypeError(`D1 result entry ${entryIndex} did not contain a results array`);
+        }
+        return results.map((row, rowIndex) => {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) {
+            throw new TypeError(`D1 result row ${rowIndex} was not an object`);
+          }
+          return row as T;
+        });
+      });
+    },
+    'Wrangler output did not contain a valid D1 query result'
+  );
 }
 
 export async function queryD1Rows<T extends Record<string, unknown>>(
@@ -2250,7 +2279,7 @@ async function ensureMigrationsTable(
 
 /**
  * Return the set of migration filenames already recorded in authrim_migrations.
- * Falls back to an empty set on error so we never skip migrations when unsure.
+ * Errors propagate so callers never mistake an unreadable history for a new database.
  */
 async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
   const rows = await getAppliedMigrationRows(dbName);
@@ -2265,22 +2294,21 @@ interface AppliedMigrationRow extends Record<string, unknown> {
 }
 
 async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
-  try {
-    await ensureMigrationsTable(dbName);
-    const { stdout } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;',
-      '--json',
-    ]);
-    return parseD1RowsFromWranglerJson<AppliedMigrationRow>(stdout);
-  } catch {
-    return [];
+  if (!(await ensureMigrationsTable(dbName))) {
+    throw new Error(`Could not prepare migration tracking table for ${dbName}`);
   }
+
+  const { stdout } = await wrangler([
+    'd1',
+    'execute',
+    dbName,
+    '--remote',
+    '--yes',
+    '--command',
+    'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;',
+    '--json',
+  ]);
+  return parseD1RowsFromWranglerJson<AppliedMigrationRow>(stdout);
 }
 
 function extractMigrationVersion(filename: string): number {
@@ -2465,53 +2493,66 @@ export async function getD1MigrationStatus(
     };
   }
 
-  await ensureMigrationsTable(dbName);
-  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
-  const appliedRows = await getAppliedMigrationRows(dbName);
-  const appliedByFilename = new Map(appliedRows.map((row) => [row.filename, row]));
-  const localFilenames = new Set(sqlFiles);
-  const migrations: D1MigrationFileState[] = [];
+  try {
+    const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+    const appliedRows = await getAppliedMigrationRows(dbName);
+    const appliedByFilename = new Map(appliedRows.map((row) => [row.filename, row]));
+    const localFilenames = new Set(sqlFiles);
+    const migrations: D1MigrationFileState[] = [];
 
-  for (const filename of sqlFiles) {
-    const checksum = calculateD1MigrationChecksum(join(migrationsDir, filename));
-    const applied = appliedByFilename.get(filename);
-    const appliedChecksum = applied?.checksum ?? null;
-    const status: D1MigrationFileStatus = !applied
-      ? 'pending'
-      : appliedChecksum === checksum
-        ? 'applied'
-        : 'changed';
-    migrations.push({
-      filename,
-      status,
-      checksum,
-      appliedChecksum,
-      appliedAt: applied?.applied_at ?? null,
-      executionTimeMs: applied?.execution_time_ms ?? null,
-    });
-  }
-
-  for (const applied of appliedRows) {
-    if (!localFilenames.has(applied.filename)) {
+    for (const filename of sqlFiles) {
+      const checksum = calculateD1MigrationChecksum(join(migrationsDir, filename));
+      const applied = appliedByFilename.get(filename);
+      const appliedChecksum = applied?.checksum ?? null;
+      const status: D1MigrationFileStatus = !applied
+        ? 'pending'
+        : appliedChecksum === checksum
+          ? 'applied'
+          : 'changed';
       migrations.push({
-        filename: applied.filename,
-        status: 'orphaned',
-        appliedChecksum: applied.checksum ?? null,
-        appliedAt: applied.applied_at ?? null,
-        executionTimeMs: applied.execution_time_ms ?? null,
+        filename,
+        status,
+        checksum,
+        appliedChecksum,
+        appliedAt: applied?.applied_at ?? null,
+        executionTimeMs: applied?.execution_time_ms ?? null,
       });
     }
+
+    for (const applied of appliedRows) {
+      if (!localFilenames.has(applied.filename)) {
+        migrations.push({
+          filename: applied.filename,
+          status: 'orphaned',
+          appliedChecksum: applied.checksum ?? null,
+          appliedAt: applied.applied_at ?? null,
+          executionTimeMs: applied.execution_time_ms ?? null,
+        });
+      }
+    }
+
+    migrations.sort((a, b) => a.filename.localeCompare(b.filename));
+
+    return {
+      role,
+      dbName,
+      success: true,
+      counts: countMigrationStates(migrations),
+      migrations,
+    };
+  } catch (error) {
+    return {
+      role,
+      dbName,
+      success: false,
+      error: `Could not read migration history for ${dbName}: ${describeInventoryError(
+        error,
+        'unknown error'
+      )}`,
+      counts: { total: 0, applied: 0, pending: 0, changed: 0, orphaned: 0 },
+      migrations: [],
+    };
   }
-
-  migrations.sort((a, b) => a.filename.localeCompare(b.filename));
-
-  return {
-    role,
-    dbName,
-    success: true,
-    counts: countMigrationStates(migrations),
-    migrations,
-  };
 }
 
 /**
@@ -2550,9 +2591,17 @@ export async function runD1Migrations(
 
   onProgress?.(`  Found ${allSqlFiles.length} migration files`);
 
-  // Ensure tracking table exists; if it fails we continue without tracking
-  await ensureMigrationsTable(dbName, onProgress);
   const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', options);
+  if (!status.success) {
+    return {
+      success: false,
+      appliedCount: 0,
+      skippedCount: 0,
+      error:
+        `${status.error ?? `Could not read migration history for ${dbName}`}. ` +
+        'Refusing to run migrations without a trustworthy applied-migration history.',
+    };
+  }
   const changedFiles = getBlockingChangedMigrationFiles(status.migrations, options.onlyFiles);
   if (changedFiles.length > 0) {
     return {
@@ -3956,7 +4005,7 @@ function normalizeKVNamespaceRows(rows: unknown): KVNamespaceListRow[] {
 }
 
 export function parseKVNamespaceListOutput(stdout: string): KVNamespaceListRow[] {
-  return parseValidatedJsonArrayOutput(
+  return parseValidatedJsonOutput(
     stdout,
     normalizeKVNamespaceRows,
     'Wrangler output did not contain a valid KV namespace list'
