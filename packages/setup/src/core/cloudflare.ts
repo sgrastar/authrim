@@ -2820,6 +2820,18 @@ WHERE tenant_id = 'default'
   AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
 
+DELETE FROM screens
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND EXISTS (
+    SELECT 1
+    FROM screens target
+    WHERE target.tenant_id = ${tenantIdSql}
+      AND target.screen_key = screens.screen_key
+  );
+
 UPDATE screens
 SET tenant_id = ${tenantIdSql},
     updated_at = ${sqlExpr.nowEpochSeconds}

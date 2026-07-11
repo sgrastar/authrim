@@ -824,6 +824,111 @@ INSERT INTO oauth_clients (
   );
 
   it(
+    'reconciles stale default screens without overwriting initial-tenant customizations',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-screen-bootstrap-rerun-'));
+      const dbPath = join(tempDir, 'test.db');
+      const config = createDefaultConfig('mt');
+      config.tenant.name = 'first';
+      config.tenant.displayName = 'First Tenant';
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(config));
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
+UPDATE screens
+SET display_name = 'Customized Login',
+    fields_json = '[{"field":"custom"}]',
+    updated_at = 123
+WHERE tenant_id = 'first' AND screen_key = 'login';
+
+INSERT INTO screens (
+  id, tenant_id, screen_key, display_name, description, screen_kind, fields_json,
+  localizations_json, settings_json, is_active, is_system, created_at, updated_at
+)
+SELECT
+  'stale-default-' || screen_key,
+  'default',
+  screen_key,
+  'Stale default ' || screen_key,
+  description,
+  screen_kind,
+  '[]',
+  NULL,
+  settings_json,
+  is_active,
+  is_system,
+  0,
+  0
+FROM screens
+WHERE tenant_id = 'first'
+  AND screen_key IN ('login', 'registration', 'profile_completion', 'code_input');
+
+INSERT INTO screens (
+  id, tenant_id, screen_key, display_name, description, screen_kind, fields_json,
+  localizations_json, settings_json, is_active, is_system, created_at, updated_at
+) VALUES (
+  'stale-default-legacy-custom',
+  'default',
+  'legacy_custom',
+  'Legacy custom',
+  NULL,
+  'custom',
+  '[]',
+  NULL,
+  '{"canvas_layout":"narrow"}',
+  1,
+  0,
+  0,
+  0
+);
+`
+        );
+
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(config));
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(config));
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT display_name || ':' || fields_json || ':' || updated_at
+             FROM screens
+             WHERE tenant_id = 'first' AND screen_key = 'login';`
+          )
+        ).toBe('Customized Login:[{"field":"custom"}]:123');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT display_name
+             FROM screens
+             WHERE tenant_id = 'first' AND screen_key = 'legacy_custom';`
+          )
+        ).toBe('Legacy custom');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT COUNT(*) FROM screens WHERE tenant_id = 'default';"
+          )
+        ).toBe('0');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
     'applies the consolidated PII baseline in SQLite',
     () => {
       const sqlite3Path = findSqlite3();
