@@ -368,10 +368,9 @@ function persistDirectEmailCodeState(email: string, state: DirectEmailCodeState)
 	}
 }
 
-function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null {
+function readDirectEmailCodeState(email: string): DirectEmailCodeState | null {
 	const normalizedEmail = normalizeDirectEmail(email);
 	const memoryState = directEmailCodePkce.get(normalizedEmail);
-	directEmailCodePkce.delete(normalizedEmail);
 
 	if (!browser) {
 		return memoryState ?? null;
@@ -381,8 +380,6 @@ function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null
 		const key = getDirectEmailCodeStateKey(normalizedEmail);
 		const legacyKey = getLegacyDirectEmailCodeStateKey(normalizedEmail);
 		const raw = sessionStorage.getItem(key) ?? sessionStorage.getItem(legacyKey);
-		sessionStorage.removeItem(key);
-		sessionStorage.removeItem(legacyKey);
 		if (!raw) {
 			return memoryState ?? null;
 		}
@@ -399,6 +396,19 @@ function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null
 	}
 
 	return memoryState ?? null;
+}
+
+function clearDirectEmailCodeState(email: string): void {
+	const normalizedEmail = normalizeDirectEmail(email);
+	directEmailCodePkce.delete(normalizedEmail);
+	if (!browser) return;
+
+	try {
+		sessionStorage.removeItem(getDirectEmailCodeStateKey(normalizedEmail));
+		sessionStorage.removeItem(getLegacyDirectEmailCodeStateKey(normalizedEmail));
+	} catch {
+		// State also lives in memory for the current page lifecycle.
+	}
 }
 
 async function finalizeManagedDirectAuthSession(
@@ -1003,13 +1013,22 @@ export const emailCodeAPI = {
 		authorizationChallengeId?: string;
 		custom_fields?: Record<string, unknown>;
 		human_verification_response?: string;
+		deferAuthorizationContinuation?: boolean;
+		runtimeInteractionId?: string;
+		emailVerification?: {
+			token: string;
+			challengeId: string;
+			interactionId: string;
+		};
 	}) {
 		const pkce = await createDirectAuthPkce();
 		const response = await apiFetch<{
-			attempt_id: string;
+			attempt_id?: string;
 			expires_in: number;
-			masked_email: string;
+			masked_email?: string;
 			_dev_code?: string;
+			direct_auth_artifact?: string;
+			is_new_user?: boolean;
 		}>('/api/v1/auth/direct/email-code/send', {
 			method: 'POST',
 			body: JSON.stringify({
@@ -1022,7 +1041,10 @@ export const emailCodeAPI = {
 				invite_token: data.invite_token,
 				authorization_challenge_id: data.authorizationChallengeId,
 				custom_fields: data.custom_fields,
-				human_verification_response: data.human_verification_response
+				human_verification_response: data.human_verification_response,
+				email_verification_token: data.emailVerification?.token,
+				email_verification_challenge_id: data.emailVerification?.challengeId,
+				runtime_interaction_id: data.runtimeInteractionId ?? data.emailVerification?.interactionId
 			})
 		});
 
@@ -1030,6 +1052,42 @@ export const emailCodeAPI = {
 			return response as {
 				data?: { success: boolean; message: string; messageId?: string; code?: string };
 				error?: APIError;
+			};
+		}
+		if (response.data.direct_auth_artifact) {
+			const session = await finalizeManagedDirectAuthSession(
+				response.data.direct_auth_artifact,
+				pkce.codeVerifier,
+				data.authorizationChallengeId,
+				data.deferAuthorizationContinuation === true
+			);
+			if (session.error || !session.data) {
+				return session as {
+					data?: {
+						success: boolean;
+						verified: boolean;
+						userId: string;
+						user: User;
+						redirect_url?: string;
+					};
+					error?: APIError;
+				};
+			}
+			return {
+				data: {
+					success: true,
+					message: 'Email verified by provider',
+					...directSessionToLegacyAuthResponse(session.data)
+				},
+				error: undefined
+			};
+		}
+		if (!response.data.attempt_id) {
+			return {
+				error: {
+					error: 'invalid_response',
+					error_description: 'Email verification response is missing an attempt identifier'
+				}
 			};
 		}
 
@@ -1041,6 +1099,7 @@ export const emailCodeAPI = {
 		return {
 			data: {
 				success: true,
+				verified: false,
 				message: 'Verification code sent',
 				messageId: response.data.attempt_id,
 				code: response.data._dev_code
@@ -1058,7 +1117,7 @@ export const emailCodeAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 	}) {
-		const state = consumeDirectEmailCodeState(data.email);
+		const state = readDirectEmailCodeState(data.email);
 		if (!state) {
 			return {
 				error: {
@@ -1091,6 +1150,7 @@ export const emailCodeAPI = {
 				error?: APIError;
 			};
 		}
+		clearDirectEmailCodeState(data.email);
 
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,

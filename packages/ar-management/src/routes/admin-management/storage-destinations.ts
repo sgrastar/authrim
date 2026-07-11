@@ -63,6 +63,13 @@ const SETUP_R2_DESTINATIONS: Array<{
   description: string;
 }> = [
   {
+    id: 'setup-r2-public-assets',
+    bindingRef: 'PUBLIC_ASSETS',
+    name: 'setup-r2-public-assets',
+    displayName: 'Public Assets R2',
+    description: 'Setup-managed R2 bucket for public Login UI images and theme assets.',
+  },
+  {
     id: 'setup-r2-avatars',
     bindingRef: 'AVATARS',
     name: 'setup-r2-avatars',

@@ -138,7 +138,7 @@ describe('Authentication Methods API', () => {
   // ===========================================================================
 
   describe('GET /api/auth/authentication-methods (defaults)', () => {
-    it('should return passkey + emailCode enabled by default', async () => {
+    it('should return passkey-only built-in methods by default', async () => {
       const { app, mockEnv } = createTestApp();
 
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
@@ -146,11 +146,10 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      // Default: passkeyEnabled !== false → true, magicLinkEnabled !== false → true
       expect(body.methods.passkey.enabled).toBe(true);
       expect(body.methods.passkey.capabilities).toEqual(['conditional', 'discoverable']);
-      expect(body.methods.emailCode.enabled).toBe(true);
-      expect(body.methods.emailCode.steps).toEqual(['email', 'code']);
+      expect(body.methods.emailCode.enabled).toBe(false);
+      expect(body.methods.emailCode.steps).toEqual([]);
       expect(body.methods.totp).toMatchObject({
         enabled: false,
         loginEnabled: false,
@@ -185,9 +184,29 @@ describe('Authentication Methods API', () => {
       expect(body.ui.branding.brandName).toBe('Authrim');
       expect(body.ui.branding.logoUrl).toBeNull();
       expect(body.ui.branding.faviconUrl).toBeNull();
+      expect(body.ui.themeTemplate).toBe('meridian');
+      expect(body.ui.pageTemplate).toMatchObject({
+        layout: 'centered_card',
+        logoLayout: 'stack',
+        topbarPosition: 'below_card',
+        themeToggleEnabled: true,
+        languageSelectEnabled: true,
+        headerStyle: 'center',
+        footerStyle: 'simple',
+        splitFrame: 'full',
+        splitPanelSide: 'left',
+        splitPanelWidth: 'narrow',
+        splitBackgroundMode: 'shared',
+        loginPanelBackgroundColor: '',
+        loginPanelBackgroundGradientColor: '',
+        loginPanelBackgroundOpacity: 70,
+        brandContentMode: 'logo_copy',
+        brandPosition: 'center',
+        brandAlign: 'left',
+      });
       expect(body.ui.supportedLocales).toEqual(['en', 'ja']);
       expect(body.ui.selfService).toEqual({
-        accountPageEnabled: false,
+        accountPageEnabled: true,
         accountPagePath: '/account',
       });
     });
@@ -217,6 +236,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.appearance.backgroundImageUrl).toBeNull();
+      expect(body.ui.appearance.loginPanelBackgroundImageUrl).toBeNull();
+      expect(body.ui.appearance.thumbnailUrl).toBeNull();
       expect(body.ui.appearance.customCss).toBeNull();
       expect(body.ui.appearance.headerText).toBeNull();
       expect(body.ui.appearance.footerText).toBeNull();
@@ -230,7 +251,7 @@ describe('Authentication Methods API', () => {
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.meta.cacheTTL).toBe(180);
+      expect(body.meta.cacheTTL).toBe(60);
       expect(body.meta.revision).toBeDefined();
       // revision should be a valid ISO date string
       expect(new Date(body.meta.revision).toISOString()).toBe(body.meta.revision);
@@ -241,7 +262,7 @@ describe('Authentication Methods API', () => {
 
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
-      expect(res.headers.get('Cache-Control')).toBe('public, max-age=180');
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=60');
     });
   });
 
@@ -857,12 +878,47 @@ describe('Authentication Methods API', () => {
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.theme': 'dark',
           'login-ui.variant': 'navy',
+          'login-ui.theme_template': 'fullbleed-glass',
+          'login-ui.page_layout': 'fullbleed_card',
+          'login-ui.font_family': 'mono',
+          'login-ui.font_scale': 'spacious',
+          'login-ui.background_color': '#0b1220',
+          'login-ui.title_color': '#111827',
+          'login-ui.text_color': '#1f2937',
+          'login-ui.copy_color': '#4b5563',
+          'login-ui.logo_layout': 'row',
+          'login-ui.logo_display': 'image',
+          'login-ui.brand_panel_title': 'Secure access',
+          'login-ui.brand_panel_text': 'Use your organization account.',
+          'login-ui.header_enabled': false,
+          'login-ui.subtitle_enabled': false,
+          'login-ui.footer_enabled': false,
+          'login-ui.powered_by_enabled': false,
+          'login-ui.auth_switch_link_enabled': false,
+          'login-ui.topbar_position': 'bottom_right',
+          'login-ui.theme_toggle_enabled': false,
+          'login-ui.language_select_enabled': true,
+          'login-ui.language_switcher_position': 'top_right',
+          'login-ui.header_style': 'bar',
+          'login-ui.footer_style': 'bar',
+          'login-ui.split_frame': 'card',
+          'login-ui.split_panel_side': 'right',
+          'login-ui.split_panel_width': 'narrow',
+          'login-ui.split_background_mode': 'panel',
+          'login-ui.login_panel_background_color': '#223344',
+          'login-ui.login_panel_background_gradient_color': '#445566',
+          'login-ui.login_panel_background_opacity': 42,
+          'login-ui.brand_content_mode': 'logo',
+          'login-ui.brand_position': 'bottom',
+          'login-ui.brand_align': 'center',
           'login-ui.brand_name': 'My App',
           'login-ui.logo_url': 'https://example.com/logo.png',
           'login-ui.favicon_url': 'https://example.com/favicon.ico',
+          'login-ui.thumbnail_url': 'https://example.com/thumb.webp',
           'login-ui.supported_locales': 'en,ja,fr',
           'login-ui.background_image_url': 'https://example.com/bg.jpg',
-          'login-ui.custom_css': 'body { background: #fff; }',
+          'login-ui.login_panel_background_image_url': 'https://example.com/panel.jpg',
+          'login-ui.custom_css': '.auth-page { background: #fff; }',
           'login-ui.header_text': 'Welcome',
           'login-ui.footer_text': '© 2025 My App',
           'login-ui.footer_links': JSON.stringify([
@@ -883,9 +939,46 @@ describe('Authentication Methods API', () => {
       expect(body.ui.branding.brandName).toBe('My App');
       expect(body.ui.branding.logoUrl).toBe('https://example.com/logo.png');
       expect(body.ui.branding.faviconUrl).toBe('https://example.com/favicon.ico');
+      expect(body.ui.themeTemplate).toBe('fullbleed-glass');
+      expect(body.ui.pageTemplate).toMatchObject({
+        layout: 'fullbleed_card',
+        fontFamily: 'mono',
+        fontScale: 'spacious',
+        backgroundColor: '#0b1220',
+        titleColor: '#111827',
+        textColor: '#1f2937',
+        copyColor: '#4b5563',
+        logoLayout: 'row',
+        logoDisplay: 'image',
+        brandPanelTitle: 'Secure access',
+        brandPanelText: 'Use your organization account.',
+        headerEnabled: false,
+        subtitleEnabled: false,
+        footerEnabled: false,
+        poweredByEnabled: false,
+        authSwitchLinkEnabled: false,
+        topbarPosition: 'bottom_right',
+        themeToggleEnabled: false,
+        languageSelectEnabled: true,
+        languageSwitcherPosition: 'top_right',
+        headerStyle: 'bar',
+        footerStyle: 'bar',
+        splitFrame: 'card',
+        splitPanelSide: 'right',
+        splitPanelWidth: 'narrow',
+        splitBackgroundMode: 'panel',
+        loginPanelBackgroundColor: '#223344',
+        loginPanelBackgroundGradientColor: '#445566',
+        loginPanelBackgroundOpacity: 42,
+        brandContentMode: 'logo',
+        brandPosition: 'bottom',
+        brandAlign: 'center',
+      });
       expect(body.ui.supportedLocales).toEqual(['en', 'ja', 'fr']);
       expect(body.ui.appearance.backgroundImageUrl).toBe('https://example.com/bg.jpg');
-      expect(body.ui.appearance.customCss).toBe('body { background: #fff; }');
+      expect(body.ui.appearance.loginPanelBackgroundImageUrl).toBe('https://example.com/panel.jpg');
+      expect(body.ui.appearance.thumbnailUrl).toBe('https://example.com/thumb.webp');
+      expect(body.ui.appearance.customCss).toBe('.auth-page { background: #fff; }');
       expect(body.ui.appearance.headerText).toBe('Welcome');
       expect(body.ui.appearance.footerText).toBe('© 2025 My App');
       expect(body.ui.appearance.footerLinks).toEqual([
@@ -954,7 +1047,7 @@ describe('Authentication Methods API', () => {
   describe('error handling', () => {
     it('should gracefully handle KV read failure and return defaults', async () => {
       // getSystemSettings catches KV errors internally and returns {}
-      // This results in default settings (passkey + emailCode enabled)
+      // This results in default settings (passkey-only built-in methods)
       const settingsKV = {
         get: vi.fn(async () => {
           throw new Error('KV read failed');
@@ -969,7 +1062,7 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.methods.passkey.enabled).toBe(true);
-      expect(body.methods.emailCode.enabled).toBe(true);
+      expect(body.methods.emailCode.enabled).toBe(false);
     });
 
     it('should handle invalid JSON in system_settings gracefully', async () => {
@@ -985,7 +1078,7 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.methods.passkey.enabled).toBe(true);
-      expect(body.methods.emailCode.enabled).toBe(true);
+      expect(body.methods.emailCode.enabled).toBe(false);
     });
 
     it('should handle invalid JSON in settings-v2 gracefully', async () => {

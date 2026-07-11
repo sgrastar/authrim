@@ -220,7 +220,7 @@ main() {
     "idTokenTtl": 3600,
     "refreshTokenTtl": 2592000,
     "passkeyEnabled": true,
-    "magicLinkEnabled": true
+    "magicLinkEnabled": false
   },
   "ciba": {
     "enabled": true,

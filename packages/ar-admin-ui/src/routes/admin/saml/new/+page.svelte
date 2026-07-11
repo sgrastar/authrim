@@ -32,6 +32,7 @@
 		AdminSection
 	} from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import { selectMetadataNameIdFormat } from '$lib/saml/metadata-nameid';
 	import { onMount } from 'svelte';
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';
@@ -87,6 +88,7 @@
 	let sloUrl = $state('');
 	let certificate = $state('');
 	let nameIdFormat = $state(nameIdFormats[0].value);
+	let metadataNameIdFormats = $state<string[]>([]);
 	let allowPost = $state(true);
 	let allowRedirect = $state(true);
 	let signAssertions = $state(true);
@@ -369,6 +371,8 @@
 			entityId: entityId.trim(),
 			sloUrl: sloUrl.trim() || undefined,
 			nameIdFormat,
+			metadataNameIdFormats:
+				metadataNameIdFormats.length > 0 ? [...metadataNameIdFormats] : undefined,
 			attributeMapping: {},
 			allowedBindings: selectedBindings()
 		};
@@ -454,12 +458,21 @@
 		acsUrl = config.acsUrl || '';
 		sloUrl = config.sloUrl || '';
 		certificate = config.certificate || '';
-		nameIdFormat = config.nameIdFormat || nameIdFormats[0].value;
+		metadataNameIdFormats = config.metadataNameIdFormats ?? [];
+		const importedProfile = config.samlProfile || samlProfile;
+		nameIdFormat =
+			providerType === 'saml_sp'
+				? selectMetadataNameIdFormat({
+						advertisedFormats: metadataNameIdFormats,
+						profile: importedProfile,
+						currentFormat: config.nameIdFormat
+					})
+				: config.nameIdFormat || nameIdFormats[0].value;
 		allowPost = config.allowedBindings?.includes('post') ?? true;
 		allowRedirect = config.allowedBindings?.includes('redirect') ?? true;
 		signAssertions = config.signAssertions ?? true;
 		signResponses = config.signResponses ?? true;
-		samlProfile = config.samlProfile || samlProfile;
+		samlProfile = importedProfile;
 		authnRequestSignaturePolicy = config.authnRequestSignaturePolicy || 'optional';
 		logoutRequestSignaturePolicy = config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = config.authnContextPolicy?.mode || 'observe';
@@ -511,6 +524,33 @@
 			default:
 				return $LL.admin_saml_detail_profile_hint_baseline();
 		}
+	}
+
+	function handleSamlProfileChange(event: Event) {
+		samlProfile = (event.currentTarget as HTMLSelectElement).value;
+		if (metadataImported && providerType === 'saml_sp') {
+			nameIdFormat = selectMetadataNameIdFormat({
+				advertisedFormats: metadataNameIdFormats,
+				profile: samlProfile,
+				currentFormat: nameIdFormat
+			});
+		}
+	}
+
+	function metadataNameIdSelectionHint(): string {
+		const selected =
+			nameIdFormats.find((format) => format.value === nameIdFormat)?.label ?? nameIdFormat;
+		if (metadataNameIdFormats.length > 0) {
+			const advertised = metadataNameIdFormats
+				.map((value) => nameIdFormats.find((format) => format.value === value)?.label ?? value)
+				.join(', ');
+			return getLocale() === 'ja'
+				? `Metadata宣言: ${advertised} / 自動選択: ${selected}`
+				: `Metadata: ${advertised} / Selected automatically: ${selected}`;
+		}
+		return getLocale() === 'ja'
+			? `MetadataにNameIDFormat宣言がないため、${samlProfile}プロファイルの既定値「${selected}」を使用します。`
+			: `Metadata does not declare NameIDFormat. Using the ${samlProfile} profile default: ${selected}.`;
 	}
 
 	function isValidLoginLogoUrl(value: string): boolean {
@@ -682,6 +722,7 @@
 	function resetMetadataImportState() {
 		metadataImported = false;
 		metadataImportedProviderType = '';
+		metadataNameIdFormats = [];
 		aggregatePreview = null;
 		aggregateEntities = [];
 		aggregateEntityTotal = 0;
@@ -1723,6 +1764,9 @@
 									<option value={format.value}>{format.label}</option>
 								{/each}
 							</select>
+							{#if metadataImported && providerType === 'saml_sp'}
+								<p class="field-hint">{metadataNameIdSelectionHint()}</p>
+							{/if}
 						</div>
 
 						<div class="admin-field admin-field--full">
@@ -2087,7 +2131,12 @@
 								<label for="samlProfile" class="admin-field__label"
 									>{$LL.admin_saml_detail_profile()}</label
 								>
-								<select id="samlProfile" bind:value={samlProfile} class="admin-select">
+								<select
+									id="samlProfile"
+									value={samlProfile}
+									onchange={handleSamlProfileChange}
+									class="admin-select"
+								>
 									<option value="baseline">Baseline</option>
 									<option value="strict">Strict</option>
 									<option value="academic_publisher">Academic Publisher</option>

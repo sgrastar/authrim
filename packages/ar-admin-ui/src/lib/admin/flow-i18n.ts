@@ -83,6 +83,21 @@ function getAcademicSamlLoginText(LL: TranslationFunctions): LocalizedFlowTempla
 	};
 }
 
+function getTemplateDefaultText(flow: NewFlowTemplate): LocalizedFlowTemplateText {
+	return {
+		title: flow.title,
+		subtitle: flow.subtitle,
+		description: flow.description,
+		primaryEntry: flow.primaryEntry,
+		primaryOutput: flow.primaryOutput,
+		mappingSet: flow.mappingSet,
+		consentPolicy: flow.consentPolicy,
+		consentStatement: flow.consentStatement,
+		userAction: flow.userAction,
+		recordedState: flow.recordedState
+	};
+}
+
 export function getFlowTemplateText(
 	LL: TranslationFunctions,
 	flow: NewFlowTemplate
@@ -114,7 +129,7 @@ export function getFlowTemplateText(
 				userAction: LL.admin_flows_template_oidc_authorization_consent_user_action(),
 				recordedState: LL.admin_flows_template_oidc_authorization_consent_recorded_state()
 			};
-		case 'oidc-registration':
+		case 'default-registration':
 			return {
 				title: LL.admin_flows_template_oidc_registration_title(),
 				subtitle: LL.admin_flows_template_oidc_registration_subtitle(),
@@ -127,9 +142,11 @@ export function getFlowTemplateText(
 				userAction: LL.admin_flows_template_oidc_registration_user_action(),
 				recordedState: LL.admin_flows_template_oidc_registration_recorded_state()
 			};
+		case 'default-registration-no-consent':
+			return getTemplateDefaultText(flow);
 		case 'academic-saml-login':
 			return getAcademicSamlLoginText(LL);
-		case 'oidc-login':
+		case 'default-login':
 			return {
 				title: LL.admin_flows_template_oidc_login_title(),
 				subtitle: LL.admin_flows_template_oidc_login_subtitle(),
@@ -142,6 +159,8 @@ export function getFlowTemplateText(
 				userAction: LL.admin_flows_template_oidc_login_user_action(),
 				recordedState: LL.admin_flows_template_oidc_login_recorded_state()
 			};
+		case 'default-login-no-consent':
+			return getTemplateDefaultText(flow);
 	}
 }
 
@@ -301,11 +320,11 @@ export function getFlowAuthProfileOptions(LL: TranslationFunctions): FlowEditorA
 	];
 }
 
-export function getFlowProfileFormOptions(LL: TranslationFunctions): FlowEditorOption[] {
+export function getFlowScreenOptions(LL: TranslationFunctions): FlowEditorOption[] {
 	return [
-		{ value: 'basic_profile', label: LL.admin_flows_profile_form_basic() },
-		{ value: 'email_name', label: LL.admin_flows_profile_form_email_name() },
-		{ value: 'academic_profile', label: LL.admin_flows_profile_form_academic() }
+		{ value: 'basic_profile', label: LL.admin_flows_screen_basic() },
+		{ value: 'email_name', label: LL.admin_flows_screen_email_name() },
+		{ value: 'academic_profile', label: LL.admin_flows_screen_academic() }
 	];
 }
 
@@ -380,60 +399,73 @@ function getNodeText(
 				label: LL.admin_flows_node_output(),
 				description: LL.admin_flows_node_oidc_authorization_output_description()
 			};
-		case 'oidc-registration:request':
+		case 'default-registration:request':
+		case 'default-registration-no-consent:request':
 			return {
 				label: LL.admin_flows_node_registration_request(),
 				description: LL.admin_flows_node_oidc_registration_request_description()
 			};
-		case 'oidc-registration:registration-method':
+		case 'default-registration:registration-method':
+		case 'default-registration-no-consent:registration-method':
 			return {
 				label: LL.admin_flows_node_registration_method(),
 				description: LL.admin_flows_node_oidc_registration_method_description()
 			};
-		case 'oidc-registration:profile-input':
+		case 'default-registration:profile-input':
 			return {
 				label: LL.admin_flows_node_profile_input(),
 				description: LL.admin_flows_node_oidc_registration_profile_description()
 			};
-		case 'oidc-registration:consent':
+		case 'default-registration:consent':
 			return {
 				label: LL.admin_flows_node_consent(),
 				description: LL.admin_flows_node_oidc_registration_consent_description()
 			};
-		case 'oidc-registration:account-create':
+		case 'default-registration:account-create':
+		case 'default-registration-no-consent:account-create':
 			return {
 				label: LL.admin_flows_node_account_creation(),
 				description: LL.admin_flows_node_oidc_registration_account_description()
 			};
-		case 'oidc-registration:output':
+		case 'default-registration:output':
+		case 'default-registration-no-consent:output':
 			return {
 				label: LL.admin_flows_node_output(),
 				description: LL.admin_flows_node_oidc_registration_output_description()
 			};
-		case 'oidc-login:request':
+		case 'default-login:request':
+		case 'default-login-no-consent:request':
 			return {
 				label: LL.admin_flows_node_login_request(),
 				description: LL.admin_flows_node_oidc_login_request_description()
 			};
-		case 'oidc-login:session-check':
+		case 'default-login:session-check':
+		case 'default-login-no-consent:session-check':
 			return {
 				label: LL.admin_flows_node_session_check(),
 				description: LL.admin_flows_node_oidc_login_session_description()
 			};
-		case 'oidc-login:authentication':
+		case 'default-login:authentication':
+		case 'default-login-no-consent:authentication':
 			return {
 				label: LL.admin_flows_node_authentication_method(),
 				description: LL.admin_flows_node_oidc_login_authentication_description()
 			};
-		case 'oidc-login:consent':
+		case 'default-login:consent':
 			return {
 				label: LL.admin_flows_node_consent(),
 				description: LL.admin_flows_node_oidc_login_consent_description()
 			};
-		case 'oidc-login:output':
+		case 'default-login:output':
+		case 'default-login-no-consent:oidc-authorization-complete':
 			return {
 				label: LL.admin_flows_node_output(),
 				description: LL.admin_flows_node_oidc_login_output_description()
+			};
+		case 'default-login-no-consent:saml-attribute-release-complete':
+			return {
+				label: LL.admin_flows_node_output(),
+				description: LL.admin_flows_node_saml_output_description()
 			};
 		default:
 			return {

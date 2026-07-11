@@ -51,7 +51,7 @@ import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
-import { isTenantScopedDirectoryAdminPath } from './admin-tenant-access';
+import { isTenantScopedAdminPath } from './admin-tenant-access';
 
 const VERSION_MANAGER_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -221,6 +221,7 @@ import {
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
 import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
 import { registerDeclaredAdminRouteAccessMiddleware } from './admin-route-access';
+import { adminPublicAssetUploadHandler, servePublicAssetHandler } from './admin-public-assets';
 import {
   adminRelationDefinitionsListHandler,
   adminRelationDefinitionGetHandler,
@@ -289,12 +290,12 @@ import {
   adminFlowAssignmentDeleteHandler,
 } from './admin-flows';
 import {
-  adminFormProfileCreateHandler,
-  adminFormProfileDeleteHandler,
-  adminFormProfileGetHandler,
-  adminFormProfilesListHandler,
-  adminFormProfileUpdateHandler,
-} from './admin-form-profiles';
+  adminScreenCreateHandler,
+  adminScreenDeleteHandler,
+  adminScreenGetHandler,
+  adminScreensListHandler,
+  adminScreenUpdateHandler,
+} from './admin-screens';
 import {
   adminOidcScopeCreateHandler,
   adminOidcScopeDeleteHandler,
@@ -1188,6 +1189,7 @@ app.use('/api/auth/authentication-methods', async (c, next) => {
   })(c, next);
 });
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
+app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
 app.use('/api/auth/discovery', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
@@ -1315,8 +1317,13 @@ app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
 app.use('/api/admin/*', async (c, next) => {
   const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
-  const maxSize = isImportUpload ? USER_IMPORT_MAX_UPLOAD_BYTES : 100 * 1024;
-  const maxSizeLabel = isImportUpload ? '50MB' : '100KB';
+  const isPublicAssetUpload = c.req.path === '/api/admin/assets/login-ui';
+  const maxSize = isImportUpload
+    ? USER_IMPORT_MAX_UPLOAD_BYTES
+    : isPublicAssetUpload
+      ? 5 * 1024 * 1024
+      : 100 * 1024;
+  const maxSizeLabel = isImportUpload ? '50MB' : isPublicAssetUpload ? '5MB' : '100KB';
 
   return bodyLimit({
     maxSize,
@@ -1337,6 +1344,7 @@ registerDeclaredAdminRouteAccessMiddleware(app);
 registerAdminResourcePermissionMiddleware(app);
 
 app.get('/api/admin/stats', adminStatsHandler);
+app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
 app.post('/api/admin/users', adminUserCreateHandler);
@@ -1498,7 +1506,7 @@ const tenantManagementSystemAdminGuard = requireSystemAdmin();
 app.use('/api/admin/tenants', tenantManagementSystemAdminGuard);
 app.use('/api/admin/tenants/*', async (c, next) => {
   const pathname = new URL(c.req.url).pathname;
-  if (isTenantScopedDirectoryAdminPath(pathname)) {
+  if (isTenantScopedAdminPath(pathname)) {
     await next();
     return;
   }
@@ -2242,31 +2250,31 @@ app.get('/api/admin/flow-assignments', adminFlowAssignmentsListHandler);
 app.put('/api/admin/flow-assignments', adminFlowAssignmentUpsertHandler);
 app.delete('/api/admin/flow-assignments', adminFlowAssignmentDeleteHandler);
 
-// Form profiles used by Flow form nodes.
+// Screen profiles used by Flow form nodes.
 app.get(
-  '/api/admin/form-profiles',
+  '/api/admin/screens',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminFormProfilesListHandler
+  adminScreensListHandler
 );
 app.post(
-  '/api/admin/form-profiles',
+  '/api/admin/screens',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminFormProfileCreateHandler
+  adminScreenCreateHandler
 );
 app.get(
-  '/api/admin/form-profiles/:id',
+  '/api/admin/screens/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminFormProfileGetHandler
+  adminScreenGetHandler
 );
 app.put(
-  '/api/admin/form-profiles/:id',
+  '/api/admin/screens/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminFormProfileUpdateHandler
+  adminScreenUpdateHandler
 );
 app.delete(
-  '/api/admin/form-profiles/:id',
+  '/api/admin/screens/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminFormProfileDeleteHandler
+  adminScreenDeleteHandler
 );
 
 // =============================================================================

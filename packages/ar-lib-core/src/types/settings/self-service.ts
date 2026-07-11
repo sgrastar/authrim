@@ -16,7 +16,7 @@ export const SELF_SERVICE_SETTINGS_META: Record<keyof SelfServiceSettings, Setti
   'self-service.account_page_enabled': {
     key: 'self-service.account_page_enabled',
     type: 'boolean',
-    default: false,
+    default: true,
     label: 'Account Page Enabled',
     description: 'Enable the Authrim-managed account page for end users.',
     visibility: 'admin',
@@ -40,6 +40,6 @@ export const SELF_SERVICE_CATEGORY_META: CategoryMeta = {
 };
 
 export const SELF_SERVICE_DEFAULTS: SelfServiceSettings = {
-  'self-service.account_page_enabled': false,
+  'self-service.account_page_enabled': true,
   'self-service.account_page_path': '/account',
 };

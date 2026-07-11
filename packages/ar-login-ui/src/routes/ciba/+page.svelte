@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { Card, Button } from '$lib/components';
 	import { cibaAPI } from '$lib/api/client';
 	import { onMount } from 'svelte';
+
+	const { brandingStore } = useLoginUIStores();
 
 	let loading = true;
 	let error = '';

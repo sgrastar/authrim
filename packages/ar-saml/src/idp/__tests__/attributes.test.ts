@@ -377,6 +377,42 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
+  it('omits optional mail attributes for users without an email address', () => {
+    const result = buildSAMLAttributesForSPWithDiagnostics(
+      {
+        id: 'user-without-email',
+      },
+      {
+        attributeMapping: {},
+        identityMapping: {
+          catalog: identityMappingSamlCatalog({ mailRequired: false }),
+          edges: [
+            {
+              id: 'edge.email.saml-mail',
+              sourceRef: {
+                side: 'source',
+                namespace: 'authrim.profile',
+                path: 'email',
+                catalogEntryId: 'field.profile.email',
+              },
+              targetRef: {
+                side: 'destination',
+                namespace: 'saml.attribute',
+                path: 'urn:oid:0.9.2342.19200300.100.1.3',
+                catalogEntryId: 'field.saml.mail',
+              },
+            },
+          ],
+        },
+      }
+    );
+
+    expect(result).toEqual({
+      attributes: [],
+      optionalMissingAttributes: [],
+    });
+  });
+
   it('selects the SAML field mapping set binding by IdP role and SP entityID', () => {
     const catalog = identityMappingSamlCatalog({ mailRequired: false });
     const spSpecificConfig = {

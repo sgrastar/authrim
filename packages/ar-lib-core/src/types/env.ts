@@ -58,6 +58,7 @@ export interface Env {
 
   // R2 Buckets
   AVATARS: R2Bucket;
+  PUBLIC_ASSETS?: R2Bucket; // Public Login UI assets such as logos, backgrounds, and favicons
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
   AUDIT_ARCHIVE?: R2Bucket; // Canonical R2 archive for audit/admin audit/runtime log chunks and DLQ backup
   IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts

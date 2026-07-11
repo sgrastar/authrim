@@ -63,7 +63,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
   'login-entry.discovery_methods': {
     key: 'login-entry.discovery_methods',
     type: 'string',
-    default: '["email_domain","tenant_code","tenant_slug"]',
+    default: '["email_domain","tenant_code","tenant_slug","wayf"]',
     label: 'Discovery Methods',
     description:
       'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug","wayf"]',
@@ -125,7 +125,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
   'login-entry.skip_discovery_if_only_one_tenant': {
     key: 'login-entry.skip_discovery_if_only_one_tenant',
     type: 'boolean',
-    default: false,
+    default: true,
     label: 'Skip Discovery If Only One Tenant',
     description:
       'When enabled on the shared entry host, automatically continue to the tenant login page when exactly one active tenant exists.',
@@ -143,7 +143,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
   'login-entry.post_login_behavior': {
     key: 'login-entry.post_login_behavior',
     type: 'enum',
-    default: 'home',
+    default: 'account',
     label: 'Post Login Behavior',
     description:
       'Controls where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
@@ -211,16 +211,16 @@ export const LOGIN_ENTRY_CATEGORY_META: CategoryMeta = {
 export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.override_enabled': false,
   'login-entry.mode': 'discovery_optional',
-  'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+  'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","wayf"]',
   'login-entry.email_resolution_policy': 'exact_email_then_domain',
   'login-entry.selection_policy': 'select_if_multiple',
   'login-entry.allow_manual_tenant_entry': true,
   'login-entry.remember_last_tenant': true,
   'login-entry.redirect_default_login_to_discovery': true,
   'login-entry.require_common_discovery_before_login': true,
-  'login-entry.skip_discovery_if_only_one_tenant': false,
+  'login-entry.skip_discovery_if_only_one_tenant': true,
   'login-entry.redirect_tenant_discover_to_common_entry': true,
-  'login-entry.post_login_behavior': 'home',
+  'login-entry.post_login_behavior': 'account',
   'login-entry.post_login_redirect_url': '/',
   'login-entry.app_login_client_id': '',
   'login-entry.app_login_redirect_uri': '',

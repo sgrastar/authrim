@@ -47,6 +47,16 @@ export interface UiEnvConfig {
    */
   PUBLIC_LOGIN_UI_CLIENT_ID?: string;
   /**
+   * Chrome Email Verification Protocol Origin Trial token for a single Login UI origin.
+   * Public, origin-bound deployment metadata; not a secret.
+   */
+  EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN?: string;
+  /**
+   * JSON object mapping exact Login UI browser origins to their Origin Trial tokens.
+   * Public, origin-bound deployment metadata; not a secret.
+   */
+  EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS?: string;
+  /**
    * Enable Diagnostic Logging in the Login UI.
    * When 'true', DiagnosticLogger is initialized and logs are sent to the ingest endpoint.
    * Defaults to 'false' to avoid affecting OIDC conformance test results.

@@ -200,6 +200,7 @@ async function writeGeneratedEnvironment(
     ],
     queues,
     r2: [
+      { binding: 'PUBLIC_ASSETS', name: `${env}-public-assets` },
       { binding: 'AVATARS', name: `${env}-authrim-avatars` },
       { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
       { binding: 'AUDIT_ARCHIVE', name: `${env}-audit-archive` },
@@ -235,7 +236,11 @@ async function writeGeneratedEnvironment(
 
 function mockLiveRuntimeSchema(
   env: string,
-  options?: { missingPiiTables?: string[]; legacyUserCustomFieldsFk?: boolean }
+  options?: {
+    missingCoreTables?: string[];
+    missingPiiTables?: string[];
+    legacyUserCustomFieldsFk?: boolean;
+  }
 ) {
   const schemaTablesByDatabase = new Map<string, string[]>([
     [
@@ -248,7 +253,8 @@ function mockLiveRuntimeSchema(
         'contact_points',
         'custom_claim_schemas',
         'user_custom_fields',
-      ],
+        'event_log',
+      ].filter((table) => !(options?.missingCoreTables ?? []).includes(table)),
     ],
     [
       `${env}-authrim-pii-db`,
@@ -445,6 +451,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
@@ -485,13 +492,17 @@ describe('validateGeneratedEnvironment', () => {
 
   it('fails live Cloudflare validation when runtime schema tables are missing', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
-    mockLiveRuntimeSchema(env, { missingPiiTables: ['identity_sensitive_values'] });
+    mockLiveRuntimeSchema(env, {
+      missingCoreTables: ['event_log'],
+      missingPiiTables: ['identity_sensitive_values'],
+    });
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
@@ -508,6 +519,9 @@ describe('validateGeneratedEnvironment', () => {
     expect(schemaCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('missing PII runtime schema table(s)')])
     );
+    expect(schemaCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('missing core runtime schema table(s)')])
+    );
   });
 
   it('fails live Cloudflare validation when custom fields still reference users_core', async () => {
@@ -519,6 +533,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
@@ -555,6 +570,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `authrim-${env}-tdb-slot-0003-pii`, uuid: 'slot-0003-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },

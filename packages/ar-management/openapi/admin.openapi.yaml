@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Admin API
-  version: 0.3.2
+  version: 0.3.3
   summary: Authenticated tenant and platform administration API.
   description: >
     Initial OpenAPI contract for the Authrim Admin API implemented by the `@authrim/ar-management`
@@ -134,6 +134,71 @@ paths:
       description: >-
         Return the active Admin UI session represented by the `authrim_admin_session` cookie,
         including resolved roles and inherited permissions.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/assets/login-ui:
+    post:
+      tags:
+        - Settings - UI
+      operationId: postApiAdminAssetsLoginUi
+      summary: Upload a Login UI public image asset.
+      description: >-
+        Uploads a tenant-scoped public image asset for Login UI logo, page or panel background,
+        favicon, or theme thumbnail use. The response URL can be stored in Login UI settings.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - kind
+                - file
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - logo
+                    - background
+                    - panel-background
+                    - favicon
+                    - thumbnail
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Uploaded asset metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - kind
+                  - url
+                properties:
+                  success:
+                    type: boolean
+                  kind:
+                    type: string
+                  url:
+                    type: string
+                  contentType:
+                    type: string
+                  size:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -8583,27 +8648,27 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/form-profiles:
+  /api/admin/screens:
     get:
       tags:
         - Flows
-      operationId: getApiAdminFormProfiles
-      summary: List form profiles.
+      operationId: getApiAdminScreens
+      summary: List screens.
       description: >-
-        Lists reusable form profiles for Flow form nodes. Built-in registration, profile
-        completion, login, code input, and consent profiles are created lazily for the
+        Lists reusable screens for Flow screen nodes. Built-in registration, profile
+        completion, login, code input, and consent screens are created lazily for the
         tenant when missing.
       responses:
         '200':
-          description: Form profiles for the current tenant.
+          description: Screens for the current tenant.
           content:
             application/json:
               schema:
                 type: object
                 required:
-                  - profiles
+                  - screens
                 properties:
-                  profiles:
+                  screens:
                     type: array
                     items:
                       type: object
@@ -8622,9 +8687,9 @@ paths:
     post:
       tags:
         - Flows
-      operationId: postApiAdminFormProfiles
-      summary: Create a form profile.
-      description: Creates a custom reusable form profile for Flow form nodes.
+      operationId: postApiAdminScreens
+      summary: Create a screen.
+      description: Creates a custom reusable screen for Flow screen nodes.
       requestBody:
         required: true
         content:
@@ -8633,10 +8698,10 @@ paths:
               type: object
               required:
                 - display_name
-                - form_kind
+                - screen_kind
                 - fields
               properties:
-                profile_key:
+                screen_key:
                   type: string
                 display_name:
                   type: string
@@ -8644,7 +8709,7 @@ paths:
                   type:
                     - string
                     - 'null'
-                form_kind:
+                screen_kind:
                   type: string
                   enum:
                     - registration
@@ -8714,6 +8779,32 @@ paths:
                           - initial
                           - submit
                           - null
+                      display_condition:
+                        type:
+                          - object
+                          - 'null'
+                        additionalProperties: false
+                        required:
+                          - mode
+                        properties:
+                          mode:
+                            type: string
+                            enum:
+                              - always
+                              - feature_enabled
+                              - hidden
+                          feature:
+                            type:
+                              - string
+                              - 'null'
+                            enum:
+                              - passkey
+                              - mail_otp
+                              - mail_otp_totp
+                              - totp
+                              - external_idp
+                              - directory_password
+                              - null
                       layout_columns:
                         type:
                           - integer
@@ -8744,13 +8835,13 @@ paths:
                   type: boolean
       responses:
         '201':
-          description: Created form profile.
+          description: Created screen.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  profile:
+                  screen:
                     type: object
                     additionalProperties: true
         '400':
@@ -8764,24 +8855,24 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/form-profiles/{id}':
+  '/api/admin/screens/{id}':
     get:
       tags:
         - Flows
-      operationId: getApiAdminFormProfilesById
-      summary: Get a form profile.
-      description: Returns one tenant form profile by id.
+      operationId: getApiAdminScreensById
+      summary: Get a screen.
+      description: Returns one tenant screen by id.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
-          description: Form profile.
+          description: Screen.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  profile:
+                  screen:
                     type: object
                     additionalProperties: true
         '401':
@@ -8798,9 +8889,9 @@ paths:
     put:
       tags:
         - Flows
-      operationId: putApiAdminFormProfilesById
-      summary: Update a form profile.
-      description: Updates mutable fields for a tenant form profile.
+      operationId: putApiAdminScreensById
+      summary: Update a screen.
+      description: Updates mutable fields for a tenant screen.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -8816,7 +8907,7 @@ paths:
                   type:
                     - string
                     - 'null'
-                form_kind:
+                screen_kind:
                   type: string
                   enum:
                     - registration
@@ -8886,6 +8977,32 @@ paths:
                           - initial
                           - submit
                           - null
+                      display_condition:
+                        type:
+                          - object
+                          - 'null'
+                        additionalProperties: false
+                        required:
+                          - mode
+                        properties:
+                          mode:
+                            type: string
+                            enum:
+                              - always
+                              - feature_enabled
+                              - hidden
+                          feature:
+                            type:
+                              - string
+                              - 'null'
+                            enum:
+                              - passkey
+                              - mail_otp
+                              - mail_otp_totp
+                              - totp
+                              - external_idp
+                              - directory_password
+                              - null
                       layout_columns:
                         type:
                           - integer
@@ -8916,13 +9033,13 @@ paths:
                   type: boolean
       responses:
         '200':
-          description: Updated form profile.
+          description: Updated screen.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  profile:
+                  screen:
                     type: object
                     additionalProperties: true
         '400':
@@ -8941,14 +9058,14 @@ paths:
     delete:
       tags:
         - Flows
-      operationId: deleteApiAdminFormProfilesById
-      summary: Delete a form profile.
-      description: Deletes a custom form profile. Built-in system form profiles cannot be deleted.
+      operationId: deleteApiAdminScreensById
+      summary: Delete a screen.
+      description: Deletes a custom screen. Built-in system screens cannot be deleted.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
-          description: Form profile deletion result.
+          description: Screen deletion result.
           content:
             application/json:
               schema:

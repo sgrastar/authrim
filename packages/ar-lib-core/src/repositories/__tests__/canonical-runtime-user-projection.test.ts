@@ -101,6 +101,23 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     });
   });
 
+  it('normalizes millisecond timestamps and retains the last login timestamp', async () => {
+    const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+    const lastLoginAt = createdAt + 90_000;
+    seedActiveCanonicalUser({
+      accountTimestamp: createdAt,
+      accountMetadata: { last_login_at: lastLoginAt },
+    });
+
+    const projection = await repository.findByLegacyUserId('user-1');
+
+    expect(projection).toMatchObject({
+      created_at: new Date(createdAt).toISOString(),
+      updated_at: new Date(createdAt + 20).toISOString(),
+      last_login_at: lastLoginAt,
+    });
+  });
+
   it('encodes and resolves canonical sensitive value storage refs through an explicit resolver', async () => {
     const piiAdapter = new MockDatabaseAdapter();
     piiAdapter.initTable('identity_sensitive_values', 'id');
@@ -144,8 +161,14 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
   });
 
   function seedActiveCanonicalUser(
-    options: { accountLifecycleState?: string; subjectLifecycleState?: string } = {}
+    options: {
+      accountLifecycleState?: string;
+      subjectLifecycleState?: string;
+      accountTimestamp?: number;
+      accountMetadata?: Record<string, unknown>;
+    } = {}
   ): void {
+    const accountTimestamp = options.accountTimestamp ?? 1_700_000_000;
     adapter.seed('identity_subjects', [
       {
         id: 'subject-1',
@@ -171,9 +194,9 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
         legacy_user_id: 'user-1',
         primary_subject_id: 'subject-1',
         display_label: null,
-        metadata_json: null,
-        created_at: 1_700_000_000,
-        updated_at: 1_700_000_020,
+        metadata_json: options.accountMetadata ? JSON.stringify(options.accountMetadata) : null,
+        created_at: accountTimestamp,
+        updated_at: accountTimestamp + 20,
         deleted_at: null,
       },
     ]);

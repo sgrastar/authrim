@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Async Authorization API
-  version: 0.3.2
+  version: 0.3.3
   summary: Device Authorization and CIBA endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-async`.
 servers:

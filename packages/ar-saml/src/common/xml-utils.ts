@@ -262,7 +262,24 @@ export function findDirectChildElements(
  * Get attribute value
  */
 export function getAttribute(element: XMLElement, name: string): string | null {
-  return element.getAttribute(name);
+  return element.hasAttribute(name) ? element.getAttribute(name) : null;
+}
+
+/**
+ * Parse the XML Schema boolean lexical forms used by SAML attributes.
+ */
+export function parseXmlBoolean(value: string | null | undefined): boolean | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (normalized === 'true' || normalized === '1') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0') {
+    return false;
+  }
+  throw new Error(`Invalid XML boolean value: ${value}`);
 }
 
 /**

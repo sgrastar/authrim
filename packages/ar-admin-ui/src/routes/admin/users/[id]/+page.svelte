@@ -29,6 +29,7 @@
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
+	import { normalizeTimestampMs } from '$lib/utils/timestamp';
 
 	let user: User | null = $state(null);
 	let loading = $state(true);
@@ -158,7 +159,6 @@
 	function resetEditForm() {
 		if (user) {
 			editForm = {
-				email: user.email || '',
 				name: user.name || '',
 				given_name: user.given_name || '',
 				family_name: user.family_name || '',
@@ -443,16 +443,8 @@
 		}
 	}
 
-	function normalizeTimestampMs(timestamp: number): number {
-		const absolute = Math.abs(timestamp);
-		if (absolute < 100_000_000_000) return timestamp * 1000;
-		if (absolute < 100_000_000_000_000) return timestamp;
-		if (absolute < 100_000_000_000_000_000) return timestamp / 1000;
-		return timestamp / 1_000_000;
-	}
-
 	function formatTimestamp(timestamp: number | null): string {
-		if (!timestamp) return '-';
+		if (timestamp === null) return '-';
 		const date = new Date(normalizeTimestampMs(timestamp));
 		if (Number.isNaN(date.getTime())) return '-';
 		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
@@ -574,6 +566,23 @@
 		editForm = {
 			...editForm,
 			[field.key]: value
+		};
+	}
+
+	function updateProfileField(
+		field:
+			| 'name'
+			| 'given_name'
+			| 'family_name'
+			| 'nickname'
+			| 'preferred_username'
+			| 'phone_number'
+			| 'phone_number_verified',
+		value: string | boolean
+	) {
+		editForm = {
+			...editForm,
+			[field]: value
 		};
 	}
 
@@ -1057,58 +1066,146 @@
 			<AdminSection title={$LL.admin_user_detail_user_information()} actions={userInfoActions}>
 				{@const schemaFields = userSchemaFieldsFor(user)}
 				{#if isEditing}
-					<!-- Edit Form -->
 					<form
 						onsubmit={(e) => {
 							e.preventDefault();
 							saveChanges();
 						}}
 					>
-						{#if schemaFields.length > 0}
-							<div class="schema-form-grid">
-								{#each schemaFields as field (field.key)}
-									<div class="form-group">
-										<label for={`schema-${field.key}`} class="form-label">
-											{sanitizeText(field.label)}
-											{#if field.missingRequired}
-												<span class="required-marker">*</span>
+						<div class="profile-form-grid">
+							<div class="form-group">
+								<label for="profile-name" class="form-label">{$LL.admin_users_name()}</label>
+								<input
+									id="profile-name"
+									type="text"
+									class="form-input"
+									value={editForm.name ?? ''}
+									oninput={(event) => updateProfileField('name', event.currentTarget.value)}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="profile-given-name" class="form-label"
+									>{$LL.admin_users_given_name()}</label
+								>
+								<input
+									id="profile-given-name"
+									type="text"
+									class="form-input"
+									value={editForm.given_name ?? ''}
+									oninput={(event) => updateProfileField('given_name', event.currentTarget.value)}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="profile-family-name" class="form-label"
+									>{$LL.admin_users_family_name()}</label
+								>
+								<input
+									id="profile-family-name"
+									type="text"
+									class="form-input"
+									value={editForm.family_name ?? ''}
+									oninput={(event) => updateProfileField('family_name', event.currentTarget.value)}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="profile-nickname" class="form-label"
+									>{$LL.admin_user_detail_nickname()}</label
+								>
+								<input
+									id="profile-nickname"
+									type="text"
+									class="form-input"
+									value={editForm.nickname ?? ''}
+									oninput={(event) => updateProfileField('nickname', event.currentTarget.value)}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="profile-preferred-username" class="form-label"
+									>{$LL.admin_user_detail_preferred_username()}</label
+								>
+								<input
+									id="profile-preferred-username"
+									type="text"
+									class="form-input"
+									value={editForm.preferred_username ?? ''}
+									oninput={(event) =>
+										updateProfileField('preferred_username', event.currentTarget.value)}
+								/>
+							</div>
+							<div class="form-group">
+								<label for="profile-phone-number" class="form-label"
+									>{$LL.admin_user_detail_phone_number()}</label
+								>
+								<input
+									id="profile-phone-number"
+									type="tel"
+									class="form-input"
+									value={editForm.phone_number ?? ''}
+									oninput={(event) => updateProfileField('phone_number', event.currentTarget.value)}
+								/>
+							</div>
+							<div class="profile-verification-field">
+								<ToggleSwitch
+									checked={Boolean(editForm.phone_number_verified)}
+									label={$LL.admin_user_detail_phone_verified()}
+									description={$LL.admin_user_detail_phone_verified_desc()}
+									onchange={(checked) => updateProfileField('phone_number_verified', checked)}
+								/>
+							</div>
+						</div>
+
+						<div class="user-custom-fields">
+							<h3 class="user-detail-subheading">{$LL.admin_user_detail_customFields()}</h3>
+							{#if schemaFields.length > 0}
+								<div class="schema-form-grid">
+									{#each schemaFields as field (field.key)}
+										<div class="form-group">
+											<label for={`schema-${field.key}`} class="form-label">
+												{sanitizeText(field.label)}
+												{#if field.missingRequired}
+													<span class="required-marker">*</span>
+												{/if}
+											</label>
+											{#if field.type === 'boolean'}
+												<ToggleSwitch
+													checked={Boolean(editForm[field.key])}
+													label={sanitizeText(field.label)}
+													description={field.key}
+													onchange={(checked) => updateSchemaField(field, checked)}
+												/>
+											{:else}
+												<input
+													id={`schema-${field.key}`}
+													type={inputTypeForSchemaField(field)}
+													class="form-input"
+													value={field.type === 'date'
+														? formatDateInput(editForm[field.key])
+														: (editForm[field.key] ?? '')}
+													oninput={(event) => {
+														const value = event.currentTarget.value;
+														updateSchemaField(
+															field,
+															field.type === 'number'
+																? value === ''
+																	? null
+																	: Number(value)
+																: value
+														);
+													}}
+												/>
 											{/if}
-										</label>
-										{#if field.type === 'boolean'}
-											<ToggleSwitch
-												checked={Boolean(editForm[field.key])}
-												label={sanitizeText(field.label)}
-												description={field.key}
-												onchange={(checked) => updateSchemaField(field, checked)}
-											/>
-										{:else}
-											<input
-												id={`schema-${field.key}`}
-												type={inputTypeForSchemaField(field)}
-												class="form-input"
-												value={field.type === 'date'
-													? formatDateInput(editForm[field.key])
-													: (editForm[field.key] ?? '')}
-												oninput={(event) => {
-													const value = event.currentTarget.value;
-													updateSchemaField(
-														field,
-														field.type === 'number' ? (value === '' ? null : Number(value)) : value
-													);
-												}}
-											/>
-										{/if}
-										<p class="field-key-hint">{field.key}</p>
-									</div>
-								{/each}
-							</div>
-						{:else}
-							<div class="empty-state">
-								<p class="empty-state-description">
-									{$LL.admin_user_detail_no_user_information_fields()}
-								</p>
-							</div>
-						{/if}
+											<p class="field-key-hint">{field.key}</p>
+										</div>
+									{/each}
+								</div>
+							{:else}
+								<div class="empty-state">
+									<p class="empty-state-description">
+										{$LL.admin_user_detail_no_user_information_fields()}
+									</p>
+								</div>
+							{/if}
+						</div>
 						<div class="action-buttons user-detail-form-actions">
 							<button type="submit" class="btn btn-primary" disabled={saving}>
 								{saving ? $LL.admin_client_detail_saving() : $LL.admin_user_detail_save()}
@@ -1124,30 +1221,59 @@
 						</div>
 					</form>
 				{:else}
-					<!-- Display Mode -->
-					{#if schemaFields.length > 0}
-						<dl class="schema-info-grid">
-							{#each schemaFields as field (field.key)}
-								<div class="info-item">
-									<dt>
-										{sanitizeText(field.label)}
-										{#if field.missingRequired}
-											<span class="required-marker">*</span>
-										{/if}
-									</dt>
-									<dd class="info-value" class:mono={field.type !== 'boolean'}>
-										{formatSchemaFieldValue(field)}
-									</dd>
-								</div>
-							{/each}
-						</dl>
-					{:else}
-						<div class="empty-state">
-							<p class="empty-state-description">
-								{$LL.admin_user_detail_no_user_information_fields()}
-							</p>
+					<dl class="profile-info-grid">
+						<div class="info-item">
+							<dt>{$LL.admin_users_name()}</dt>
+							<dd class="info-value">{sanitizeText(user.name || '-')}</dd>
 						</div>
-					{/if}
+						<div class="info-item">
+							<dt>{$LL.admin_users_given_name()}</dt>
+							<dd class="info-value">{sanitizeText(user.given_name || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>{$LL.admin_users_family_name()}</dt>
+							<dd class="info-value">{sanitizeText(user.family_name || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>{$LL.admin_user_detail_nickname()}</dt>
+							<dd class="info-value">{sanitizeText(user.nickname || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>{$LL.admin_user_detail_preferred_username()}</dt>
+							<dd class="info-value">{sanitizeText(user.preferred_username || '-')}</dd>
+						</div>
+						<div class="info-item">
+							<dt>{$LL.admin_user_detail_phone_number()}</dt>
+							<dd class="info-value mono">{sanitizeText(user.phone_number || '-')}</dd>
+						</div>
+					</dl>
+
+					<div class="user-custom-fields">
+						<h3 class="user-detail-subheading">{$LL.admin_user_detail_customFields()}</h3>
+						{#if schemaFields.length > 0}
+							<dl class="schema-info-grid">
+								{#each schemaFields as field (field.key)}
+									<div class="info-item">
+										<dt>
+											{sanitizeText(field.label)}
+											{#if field.missingRequired}
+												<span class="required-marker">*</span>
+											{/if}
+										</dt>
+										<dd class="info-value" class:mono={field.type !== 'boolean'}>
+											{formatSchemaFieldValue(field)}
+										</dd>
+									</div>
+								{/each}
+							</dl>
+						{:else}
+							<div class="empty-state">
+								<p class="empty-state-description">
+									{$LL.admin_user_detail_no_user_information_fields()}
+								</p>
+							</div>
+						{/if}
+					</div>
 				{/if}
 			</AdminSection>
 		{/if}
@@ -1889,6 +2015,7 @@
 	}
 
 	.account-info-row dd,
+	.profile-info-grid dd,
 	.schema-info-grid dd {
 		margin: 0;
 	}
@@ -1953,6 +2080,8 @@
 		word-break: break-word;
 	}
 
+	.profile-info-grid,
+	.profile-form-grid,
 	.schema-info-grid,
 	.schema-form-grid {
 		display: grid;
@@ -1960,13 +2089,47 @@
 		gap: 24px 44px;
 	}
 
+	.profile-info-grid {
+		margin: 0;
+	}
+
+	.profile-info-grid .info-item,
 	.schema-info-grid .info-item {
 		min-width: 0;
 	}
 
+	.profile-info-grid dt,
+	.schema-info-grid dt {
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.12em);
+		text-transform: uppercase;
+	}
+
+	.profile-info-grid .info-value,
 	.schema-info-grid .info-value {
 		margin-top: 8px;
 		word-break: break-word;
+	}
+
+	.user-custom-fields {
+		margin-top: 28px;
+		padding-top: 22px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.user-detail-subheading {
+		margin: 0 0 16px;
+		color: var(--color-text);
+		font-size: 0.9rem;
+		font-weight: 650;
+	}
+
+	.profile-verification-field {
+		display: flex;
+		align-items: flex-end;
 	}
 
 	.required-marker {
@@ -2009,6 +2172,8 @@
 	@media (max-width: 760px) {
 		.account-info-row,
 		.user-audit-row,
+		.profile-info-grid,
+		.profile-form-grid,
 		.schema-info-grid,
 		.schema-form-grid {
 			grid-template-columns: 1fr;

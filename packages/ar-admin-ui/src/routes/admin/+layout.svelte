@@ -57,8 +57,8 @@
 	const navEndUser = $derived({
 		identity: [
 			{ path: '/admin/users', label: $LL.admin_nav_end_users(), icon: 'i-ph-users' },
-			{ path: '/admin/sessions', label: $LL.admin_nav_user_sessions(), icon: 'i-ph-clock' },
-			{ path: '/admin/organizations', label: $LL.admin_nav_organizations(), icon: 'i-ph-buildings' }
+			{ path: '/admin/organizations', label: $LL.admin_nav_organizations(), icon: 'i-ph-buildings' },
+			{ path: '/admin/sessions', label: $LL.admin_nav_user_sessions(), icon: 'i-ph-clock' }
 		],
 		accessControl: {
 			parent: {
@@ -96,22 +96,21 @@
 
 	// TENANT section - tenant-level configuration
 	const navTenant = $derived({
-		authentication: [
-			{ path: '/admin/external-idp', label: $LL.admin_nav_external_idp(), icon: 'i-ph-globe' },
+		loginExperience: [
 			{
-				path: '/admin/external-token-refresh',
-				label: $LL.admin_nav_token_refresh(),
-				icon: 'i-ph-arrows-clockwise'
+				path: '/admin/authentication-methods',
+				label: $LL.admin_nav_login_methods(),
+				icon: 'i-ph-sign-in'
 			},
-			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
+			{ path: '/admin/themes', label: $LL.admin_header_theme(), icon: 'i-ph-palette' },
+			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
 			{
-				path: '/admin/directory-authentication',
-				label: $LL.admin_nav_directory_authentication(),
-				icon: 'i-ph-tree-structure'
+				path: '/admin/tenant-discovery',
+				label: $LL.admin_nav_tenant_discovery(),
+				icon: 'i-ph-signpost'
 			},
 			{ path: '/admin/flows', label: $LL.admin_nav_flows(), icon: 'i-ph-flow-arrow' },
-			{ path: '/admin/forms', label: $LL.admin_nav_forms(), icon: 'i-ph-textbox' },
-			{ path: '/admin/consents', label: $LL.admin_nav_consents(), icon: 'i-ph-handshake' },
+			{ path: '/admin/screens', label: $LL.admin_nav_screens(), icon: 'i-ph-textbox' },
 			{
 				path: '/admin/consent-policies',
 				label: $LL.admin_consent_policies_nav(),
@@ -123,8 +122,22 @@
 				icon: 'i-ph-list-checks'
 			}
 		],
+		federationDirectory: [
+			{ path: '/admin/external-idp', label: $LL.admin_nav_external_idp(), icon: 'i-ph-globe' },
+			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
+			{
+				path: '/admin/directory-authentication',
+				label: $LL.admin_nav_directory_authentication(),
+				icon: 'i-ph-tree-structure'
+			},
+			{
+				path: '/admin/external-token-refresh',
+				label: $LL.admin_nav_token_refresh(),
+				icon: 'i-ph-arrows-clockwise'
+			}
+		],
 		identitySchema: [
-			{ path: '/admin/custom-claims', label: $LL.admin_nav_schema_settings(), icon: 'i-ph-tag' },
+			{ path: '/admin/custom-claims', label: $LL.admin_nav_custom_claims(), icon: 'i-ph-tag' },
 			{
 				path: '/admin/scim-tokens',
 				label: $LL.admin_nav_scim_tokens(),
@@ -150,20 +163,7 @@
 				}
 			]
 		},
-		branding: [
-			{
-				path: '/admin/authentication-methods',
-				label: $LL.admin_nav_login_methods(),
-				icon: 'i-ph-sign-in'
-			},
-			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
-			{
-				path: '/admin/tenant-discovery',
-				label: $LL.admin_nav_tenant_discovery(),
-				icon: 'i-ph-signpost'
-			}
-		],
-		configuration: [
+		settings: [
 			{ path: '/admin/info', label: $LL.admin_nav_info(), icon: 'i-ph-info' },
 			{ path: '/admin/settings', label: $LL.admin_nav_settings(), icon: 'i-ph-gear' },
 			{
@@ -284,7 +284,8 @@
 			icon: 'i-ph-git-branch'
 		},
 		// Tenant
-		...navTenant.authentication,
+		...navTenant.loginExperience,
+		...navTenant.federationDirectory,
 		...navTenant.identitySchema,
 		{
 			path: navTenant.identityMapping.parent.href,
@@ -301,8 +302,7 @@
 			label: $LL.admin_nav_mapping_policies(),
 			icon: 'i-ph-arrow-right'
 		},
-		...navTenant.branding,
-		...navTenant.configuration,
+		...navTenant.settings,
 		// Platform
 		...navPlatform.tenantManagement,
 		...navPlatform.security,
@@ -623,8 +623,18 @@
 
 			<!-- TENANT Section -->
 			<NavSection level="tenant">
-				<NavGroupLabel label={$LL.admin_nav_group_authentication()} />
-				{#each navTenant.authentication as item (item.path)}
+				<NavGroupLabel label={$LL.admin_nav_group_login_experience()} />
+				{#each navTenant.loginExperience as item (item.path)}
+					<NavItem
+						href={item.path}
+						icon={item.icon}
+						label={item.label}
+						active={isActive(item.path)}
+					/>
+				{/each}
+
+				<NavGroupLabel label={$LL.admin_nav_group_federation_directory()} />
+				{#each navTenant.federationDirectory as item (item.path)}
 					<NavItem
 						href={item.path}
 						icon={item.icon}
@@ -647,18 +657,8 @@
 					children={navTenant.identityMapping.children}
 				/>
 
-				<NavGroupLabel label={$LL.admin_nav_group_branding()} />
-				{#each navTenant.branding as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
-
-				<NavGroupLabel label={$LL.admin_nav_group_configuration()} />
-				{#each navTenant.configuration as item (item.path)}
+				<NavGroupLabel label={$LL.admin_nav_group_tenant_settings()} />
+				{#each navTenant.settings as item (item.path)}
 					<NavItem
 						href={item.path}
 						icon={item.icon}

@@ -126,6 +126,7 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
       'contact_points',
       'custom_claim_schemas',
       'user_custom_fields',
+      'event_log',
     ],
   },
   {

@@ -4,6 +4,7 @@ import {
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
   createAuthContextFromHono,
+  createPIIContextFromHono,
   evaluateFlowConditionRows,
   generateId,
   getChallengeStoreByChallengeId,
@@ -13,6 +14,7 @@ import {
   getTenantIdFromContext,
   hashIpAddress,
   isShardedSessionId,
+  CanonicalRuntimeUserStore,
   type DatabaseAdapter,
   type Env,
   type Challenge,
@@ -61,6 +63,12 @@ interface SubmitRequest {
   contract_hash?: string;
   signature?: string;
   input?: unknown;
+}
+
+interface EmailVerificationChallengeRequest {
+  step_id?: string;
+  contract_hash?: string;
+  signature?: string;
 }
 
 interface FlowAssignmentRow {
@@ -177,29 +185,37 @@ interface RuntimeConsentPolicyContent extends FlowRuntimeJsonObject {
   items: RuntimeConsentPolicyItem[];
 }
 
-interface RuntimeFormProfileRow {
+interface RuntimeScreenRow {
   id: string;
-  profile_key: string;
+  screen_key: string;
   display_name: string;
   description: string | null;
-  form_kind: string;
+  screen_kind: string;
   fields_json: string | null;
   localizations_json: string | null;
   settings_json: string | null;
 }
 
-interface RuntimeFormFieldLocalization {
+interface RuntimeScreenFieldLocalization {
   label?: string;
   text?: string;
   help_text?: string;
   placeholder?: string;
 }
 
-interface RuntimeFormLocalization {
+interface RuntimeScreenLocalization {
   display_name?: string;
   description?: string;
-  fields?: Record<string, RuntimeFormFieldLocalization>;
+  fields?: Record<string, RuntimeScreenFieldLocalization>;
 }
+
+const DEFAULT_RUNTIME_SCREEN_KEYS = new Set([
+  'login',
+  'registration',
+  'profile_completion',
+  'code_input',
+  'consent',
+]);
 
 type RuntimeConsentRecordBindingType =
   | 'subject'
@@ -264,6 +280,7 @@ const LOGIN_RUNTIME_FEATURE_KEYS = [
 const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve', 'account']);
 const FLOW_VERSION_CACHE_TTL_SECONDS = 180;
 const FLOW_VERSION_CACHE_MAX_ENTRIES = 256;
+const EMAIL_VERIFICATION_PROTOCOL_CHALLENGE_TTL_SECONDS = 300;
 const LOGIN_RUNTIME_FEATURE_FLAG_CACHE_DEFAULT_TTL_MS = 180_000;
 const LOGIN_RUNTIME_FEATURE_FLAG_CACHE_MIN_TTL_MS = 10_000;
 const LOGIN_RUNTIME_FEATURE_FLAG_CACHE_MAX_TTL_MS = 600_000;
@@ -344,17 +361,17 @@ function parseRuntimeJsonObject(value: string | null): FlowRuntimeJsonObject {
   return parseJsonObject(value) as FlowRuntimeJsonObject;
 }
 
-function formLocalizationKey(field: FlowRuntimeJsonObject, index: number): string {
+function screenLocalizationKey(field: FlowRuntimeJsonObject, index: number): string {
   const blockId = readString(field.block_id, 200);
   const fieldName = readString(field.field, 200) ?? 'field';
   return blockId ?? `${fieldName}-${index}`;
 }
 
-function selectRuntimeFormLocalization(
+function selectRuntimeScreenLocalization(
   localizations: FlowRuntimeJsonObject,
   language: string,
   defaultLanguage = 'en'
-): RuntimeFormLocalization | null {
+): RuntimeScreenLocalization | null {
   const candidates = [
     localizations[language],
     localizations[defaultLanguage],
@@ -363,17 +380,17 @@ function selectRuntimeFormLocalization(
   ];
   for (const candidate of candidates) {
     if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-      return candidate as RuntimeFormLocalization;
+      return candidate as RuntimeScreenLocalization;
     }
   }
   return null;
 }
 
-function readRuntimeFormLocalizedString(value: unknown): string | null {
+function readRuntimeScreenLocalizedString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function applyRuntimeFormLocalization(
+function applyRuntimeScreenLocalization(
   fields: FlowRuntimeJsonObject[],
   localizations: FlowRuntimeJsonObject,
   language: string,
@@ -383,7 +400,7 @@ function applyRuntimeFormLocalization(
   description?: string;
   fields: FlowRuntimeJsonObject[];
 } {
-  const localization = selectRuntimeFormLocalization(localizations, language, defaultLanguage);
+  const localization = selectRuntimeScreenLocalization(localizations, language, defaultLanguage);
   if (!localization) return { fields };
   const fieldLocalizations =
     localization.fields &&
@@ -392,16 +409,16 @@ function applyRuntimeFormLocalization(
       ? localization.fields
       : {};
   return {
-    displayName: readRuntimeFormLocalizedString(localization.display_name) ?? undefined,
-    description: readRuntimeFormLocalizedString(localization.description) ?? undefined,
+    displayName: readRuntimeScreenLocalizedString(localization.display_name) ?? undefined,
+    description: readRuntimeScreenLocalizedString(localization.description) ?? undefined,
     fields: fields.map((field, index) => {
-      const fieldLocalization = fieldLocalizations[formLocalizationKey(field, index)];
+      const fieldLocalization = fieldLocalizations[screenLocalizationKey(field, index)];
       if (!fieldLocalization || typeof fieldLocalization !== 'object') return field;
       const next: FlowRuntimeJsonObject = { ...field };
-      const label = readRuntimeFormLocalizedString(fieldLocalization.label);
-      const text = readRuntimeFormLocalizedString(fieldLocalization.text);
-      const helpText = readRuntimeFormLocalizedString(fieldLocalization.help_text);
-      const placeholder = readRuntimeFormLocalizedString(fieldLocalization.placeholder);
+      const label = readRuntimeScreenLocalizedString(fieldLocalization.label);
+      const text = readRuntimeScreenLocalizedString(fieldLocalization.text);
+      const helpText = readRuntimeScreenLocalizedString(fieldLocalization.help_text);
+      const placeholder = readRuntimeScreenLocalizedString(fieldLocalization.placeholder);
       if (label) next.label = label;
       if (text) next.text = text;
       if (helpText) next.help_text = helpText;
@@ -409,6 +426,37 @@ function applyRuntimeFormLocalization(
       return next;
     }),
   };
+}
+
+function applyRuntimeScreenDefaultMetadata(
+  screenKey: string,
+  fields: FlowRuntimeJsonObject[]
+): FlowRuntimeJsonObject[] {
+  if (screenKey !== 'login') return fields;
+  return fields.map((field) => {
+    const fieldName = readString(field.field, 200);
+    const blockType = readString(field.block_type, 80);
+    if (blockType !== 'divider' || field.display_condition) return field;
+    if (fieldName === 'divider.or') {
+      return {
+        ...field,
+        display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
+      };
+    }
+    if (fieldName === 'divider.other_accounts') {
+      return {
+        ...field,
+        display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
+      };
+    }
+    if (fieldName === 'divider.directory_password') {
+      return {
+        ...field,
+        display_condition: { mode: 'feature_enabled', feature: 'directory_password' },
+      };
+    }
+    return field;
+  });
 }
 
 function jsonError(
@@ -1430,34 +1478,41 @@ async function resolveRuntimeConsentPolicyContent(
   };
 }
 
-async function resolveRuntimeFormProfileContent(
+async function resolveRuntimeScreenContent(
   db: DatabaseAdapter,
   tenantId: string,
-  profileRef: string | null,
+  screenRef: string | null,
   component: string | undefined,
   requestContext: FlowRequestContext
 ): Promise<FlowRuntimeJsonObject | null> {
-  if (!profileRef) return null;
-  const queryFormProfile = (ref: string) =>
-    db.queryOne<RuntimeFormProfileRow>(
-      `SELECT id, profile_key, display_name, description, form_kind, fields_json,
+  if (!screenRef) return null;
+  const queryScreen = (scopeTenantId: string, ref: string, systemOnly = false) =>
+    db.queryOne<RuntimeScreenRow>(
+      `SELECT id, screen_key, display_name, description, screen_kind, fields_json,
             localizations_json, settings_json
-       FROM form_profiles
+       FROM screens
       WHERE tenant_id = ?
         AND is_active = 1
-        AND (id = ? OR profile_key = ?)
+        ${systemOnly ? 'AND is_system = 1' : ''}
+        AND (id = ? OR screen_key = ?)
       LIMIT 1`,
-      [tenantId, ref, ref]
+      [scopeTenantId, ref, ref]
     );
+  const fallbackScreenRef =
+    screenRef === 'basic_profile' ? defaultScreenKeyForRuntimeComponent(component) : screenRef;
   const row =
-    (await queryFormProfile(profileRef)) ??
-    (profileRef === 'basic_profile'
-      ? await queryFormProfile(defaultFormProfileKeyForRuntimeComponent(component))
+    (await queryScreen(tenantId, screenRef)) ??
+    (screenRef === 'basic_profile' ? await queryScreen(tenantId, fallbackScreenRef) : null) ??
+    (DEFAULT_RUNTIME_SCREEN_KEYS.has(fallbackScreenRef)
+      ? await queryScreen('default', fallbackScreenRef, true)
       : null);
   if (!row) return null;
-  const fields = parseJsonObjectArray(row.fields_json);
+  const fields = applyRuntimeScreenDefaultMetadata(
+    row.screen_key,
+    parseJsonObjectArray(row.fields_json)
+  );
   const localizations = parseRuntimeJsonObject(row.localizations_json);
-  const localized = applyRuntimeFormLocalization(
+  const localized = applyRuntimeScreenLocalization(
     fields,
     localizations,
     requestedLanguage(requestContext),
@@ -1465,21 +1520,21 @@ async function resolveRuntimeFormProfileContent(
   );
   return {
     id: row.id,
-    profile_key: row.profile_key,
+    screen_key: row.screen_key,
     display_name: localized.displayName ?? row.display_name,
     description: localized.description ?? row.description,
-    form_kind: row.form_kind,
+    screen_kind: row.screen_kind,
     fields: localized.fields,
     localizations,
     settings: parseRuntimeJsonObject(row.settings_json),
   };
 }
 
-function defaultFormProfileKeyForRuntimeComponent(component?: string): string {
+function defaultScreenKeyForRuntimeComponent(component?: string): string {
   if (component === 'registration_method_selector') return 'registration';
   if (component === 'authentication_method_selector') return 'login';
   if (component === 'email_verification') return 'code_input';
-  if (component === 'profile_form') return 'profile_completion';
+  if (component === 'screen') return 'profile_completion';
   if (component === 'consent_policy') return 'consent';
   return 'profile_completion';
 }
@@ -1515,16 +1570,16 @@ async function hydrateRuntimeContract(
         };
       }
 
-      const profileRef = readString(config.profile_form_ref, 200);
-      if (profileRef) {
-        const formProfile = await resolveRuntimeFormProfileContent(
+      const screenRef = readString(config.screen_ref, 200);
+      if (screenRef) {
+        const screen = await resolveRuntimeScreenContent(
           db,
           tenantId,
-          profileRef,
+          screenRef,
           step.component,
           requestContext
         );
-        nextConfig.form_profile = formProfile;
+        nextConfig.screen = screen;
       }
 
       const policyId = readString(config.consent_policy_ref, 200);
@@ -2135,7 +2190,7 @@ function isImplicitAccountActionStep(step: FlowRuntimeStep): boolean {
   return (
     config.interaction_ui !== true &&
     config.render_ui !== true &&
-    typeof config.profile_form_ref !== 'string'
+    typeof config.screen_ref !== 'string'
   );
 }
 
@@ -2222,12 +2277,47 @@ function buildCompletedRuntimeOutput(input: {
 
 function getRequestOrigin(c: AuthContext): string {
   const url = (c.req as { url?: string }).url;
-  if (!url) return 'https://authrim.local';
-  try {
-    return new URL(url).origin;
-  } catch {
-    return 'https://authrim.local';
+  const requestOrigin = (() => {
+    if (!url) return 'https://authrim.local';
+    try {
+      return new URL(url).origin;
+    } catch {
+      return 'https://authrim.local';
+    }
+  })();
+
+  if (getRequestHeader(c, 'x-authrim-ui-proxy') === 'login-ui') {
+    const browserOrigin = getRequestHeader(c, 'x-authrim-browser-origin');
+    const forwardedOrigin = getRequestHeader(c, 'origin');
+    if (browserOrigin && forwardedOrigin) {
+      try {
+        const normalizedForwardedOrigin = new URL(forwardedOrigin).origin;
+        const forwardedHost =
+          getRequestHeader(c, 'x-authrim-forwarded-host')?.split(',')[0]?.trim() ?? '';
+        const trustedOrigins = new Set([requestOrigin]);
+        if (forwardedHost) {
+          trustedOrigins.add(`https://${forwardedHost}`);
+          trustedOrigins.add(`http://${forwardedHost}`);
+        }
+        if (trustedOrigins.has(normalizedForwardedOrigin)) {
+          return new URL(browserOrigin).origin;
+        }
+      } catch {
+        // Fall through to the upstream request origin.
+      }
+    }
   }
+
+  const browserOrigin = getRequestHeader(c, 'origin');
+  if (browserOrigin) {
+    try {
+      return new URL(browserOrigin).origin;
+    } catch {
+      // Fall through to the request URL origin.
+    }
+  }
+
+  return requestOrigin;
 }
 
 function getSessionAuthTime(session: Session): number {
@@ -2397,6 +2487,47 @@ async function getCurrentSession(c: AuthContext, tenantId: string): Promise<Sess
   return session;
 }
 
+async function getRecentVerifiedEmailSessionUserId(
+  c: AuthContext,
+  tenantId: string,
+  notBefore: number,
+  interactionId: string
+): Promise<string | null> {
+  const session = await getCurrentSession(c, tenantId);
+  if (!session) return null;
+
+  const rawAmr = session.data?.amr;
+  const amr = Array.isArray(rawAmr)
+    ? rawAmr.filter((value): value is string => typeof value === 'string')
+    : [];
+  if (!amr.includes('email_code') && !amr.includes('email_verification_protocol')) {
+    return null;
+  }
+  if (session.data?.runtime_interaction_id !== interactionId) {
+    return null;
+  }
+
+  const authTime = getSessionAuthTime(session);
+  const now = nowSeconds();
+  if (authTime < notBefore || authTime > now + 60) {
+    return null;
+  }
+
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+  const user = await runtimeUsers.findById(session.userId, { includeInactive: true });
+  if (!user || user.active !== 1 || user.email_verified !== 1 || !user.email) {
+    return null;
+  }
+
+  return user.id;
+}
+
 function readConsentDecisionMap(input: unknown): Record<string, 'granted' | 'denied' | 'selected'> {
   const inputRecord = parseJsonRecord(input);
   const raw = parseJsonRecord(inputRecord.consent_item_decisions ?? inputRecord.decisions);
@@ -2495,7 +2626,7 @@ function normalizeConsentRecordKind(category: string): RuntimeConsentRecordKind 
   ) {
     return 'scope_claim_release';
   }
-  if (normalized === 'form_confirmation' || normalized === 'profile_form') {
+  if (normalized === 'form_confirmation' || normalized === 'screen') {
     return 'form_confirmation';
   }
   return 'custom';
@@ -3684,6 +3815,256 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   });
 }
 
+function emailVerificationTargetForCurrentStep(
+  runtime: FlowRuntimeContract,
+  current: { index: number; step: FlowRuntimeStep },
+  editor: FlowEditorState | null,
+  requestContext: FlowRequestContext
+): FlowRuntimeStep | null {
+  if (current.step.component === 'email_verification') {
+    return current.step;
+  }
+  if (
+    current.step.component !== 'authentication_method_selector' &&
+    current.step.component !== 'registration_method_selector'
+  ) {
+    return null;
+  }
+
+  const resolution = resolveNextStep(runtime, current.index, editor, 'mail_otp', requestContext);
+  return resolution.errorCode || resolution.step?.component !== 'email_verification'
+    ? null
+    : resolution.step;
+}
+
+function generateEmailVerificationNonce(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+export async function loginRuntimeEmailVerificationChallengeHandler(c: AuthContext) {
+  const tenantId = getTenantIdFromContext(c);
+  if (!(await isLoginRuntimeFlowEnabled(c.env, tenantId))) {
+    return runtimeError(
+      c,
+      403,
+      'flow_runtime_disabled',
+      'LoginUI runtime Flow is disabled',
+      'AR_FLOW_DISABLED',
+      'configuration_error',
+      'contact_administrator'
+    );
+  }
+
+  const interactionId = readString(c.req.param('interaction_id'), 128);
+  if (!interactionId) {
+    return runtimeError(
+      c,
+      400,
+      'invalid_request',
+      'Interaction ID is required',
+      'AR_FLOW_INVALID_REQUEST',
+      'recoverable',
+      'retry_step'
+    );
+  }
+
+  const body = await c.req
+    .json<EmailVerificationChallengeRequest>()
+    .catch((): EmailVerificationChallengeRequest => ({}));
+  const submittedStepId = readString(body.step_id, 200);
+  const submittedContractHash = readString(body.contract_hash, 256);
+  const submittedSignature = readString(body.signature, 512);
+  if (!submittedStepId) {
+    return runtimeError(
+      c,
+      400,
+      'invalid_request',
+      'step_id is required',
+      'AR_FLOW_INVALID_STEP',
+      'recoverable',
+      'retry_step',
+      interactionId
+    );
+  }
+
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const db = authCtx.coreAdapter;
+  const now = nowSeconds();
+  const interaction = await db.queryOne<FlowInteractionRow>(
+    `SELECT id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state, current_node_id,
+            current_step_id, context_json, contract_hash, signature, expires_at
+       FROM flow_interactions
+      WHERE tenant_id = ? AND id = ?`,
+    [tenantId, interactionId]
+  );
+  if (
+    !interaction ||
+    (interaction.state !== 'created' && interaction.state !== 'active') ||
+    interaction.expires_at <= now
+  ) {
+    return runtimeError(
+      c,
+      404,
+      'interaction_not_found',
+      'Flow interaction was not found or expired',
+      'AR_FLOW_NOT_FOUND',
+      'restart_required',
+      'restart_interaction',
+      interactionId
+    );
+  }
+  if (submittedStepId !== interaction.current_step_id) {
+    return runtimeError(
+      c,
+      409,
+      'step_mismatch',
+      'Submitted step does not match the active Flow step',
+      'AR_FLOW_STEP_MISMATCH',
+      'security_error',
+      'restart_interaction',
+      interactionId
+    );
+  }
+
+  const secret = getRuntimeHmacSecret(c.env);
+  if (!secret) {
+    return runtimeError(
+      c,
+      500,
+      'flow_runtime_secret_missing',
+      'Flow runtime signing secret is not configured',
+      'AR_FLOW_SECRET_MISSING',
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+  if (
+    !(await verifyContractSignature({
+      interactionId,
+      contractHash: interaction.contract_hash,
+      expiresAt: interaction.expires_at,
+      storedSignature: interaction.signature,
+      submittedContractHash,
+      submittedSignature,
+      secret,
+    }))
+  ) {
+    return runtimeError(
+      c,
+      403,
+      'invalid_runtime_signature',
+      'Flow runtime contract verification failed',
+      'AR_FLOW_SIGNATURE_MISMATCH',
+      'security_error',
+      'restart_interaction',
+      interactionId
+    );
+  }
+
+  const version = await getFlowVersion(
+    db,
+    tenantId,
+    interaction.flow_id,
+    interaction.flow_version_id
+  );
+  const runtimeSnapshot = version ? parseRuntimeSnapshot(version.runtime_snapshot_json) : null;
+  const editor = version ? parseEditorSnapshot(version.editor_snapshot_json) : null;
+  const requestContext = getRequestContextFromInteraction(interaction);
+  const runtime =
+    version && runtimeSnapshot
+      ? await hydrateRuntimeContract(
+          c,
+          db,
+          tenantId,
+          normalizeRuntime(
+            runtimeSnapshot,
+            {
+              flow_id: interaction.flow_id,
+              flow_kind: runtimeSnapshot.flow_kind,
+              target_type: interaction.saml_sp_id
+                ? 'saml_sp'
+                : interaction.client_id
+                  ? 'oidc_client'
+                  : 'tenant',
+              target_id: interaction.saml_sp_id ?? interaction.client_id,
+              published_version_id: interaction.flow_version_id,
+            },
+            version,
+            requestContext
+          ),
+          requestContext
+        )
+      : null;
+  const current = runtime ? findCurrentStep(runtime, interaction) : null;
+  if (!runtime || !current) {
+    return runtimeError(
+      c,
+      409,
+      'flow_runtime_invalid',
+      'Active Flow step is not present in the published runtime',
+      'AR_FLOW_RUNTIME_INVALID',
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+
+  const availableHandles = await resolveRuntimeAuthenticationHandles(
+    c,
+    tenantId,
+    runtime.flow_kind,
+    current.step.component
+  );
+  const verificationStep = emailVerificationTargetForCurrentStep(
+    runtime,
+    current,
+    editor,
+    requestContext
+  );
+  if (!availableHandles.includes('mail_otp') || !verificationStep) {
+    return c.json({ available: false });
+  }
+
+  const challengeId = crypto.randomUUID();
+  const nonce = generateEmailVerificationNonce();
+  const expiresIn = Math.min(
+    EMAIL_VERIFICATION_PROTOCOL_CHALLENGE_TTL_SECONDS,
+    interaction.expires_at - now
+  );
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
+  await challengeStore.storeChallengeRpc({
+    id: `email_verification_protocol:${challengeId}`,
+    tenantId,
+    type: 'email_verification_protocol',
+    userId: interaction.user_id ?? interaction.id,
+    challenge: nonce,
+    ttl: expiresIn,
+    metadata: {
+      interaction_id: interaction.id,
+      source_step_id: current.step.id,
+      verification_step_id: verificationStep.id,
+      expected_origin: getRequestOrigin(c),
+      contract_hash: interaction.contract_hash,
+    },
+  });
+
+  c.header('Cache-Control', 'no-store');
+  return c.json({
+    available: true,
+    challenge_id: challengeId,
+    nonce,
+    expires_in: expiresIn,
+    interaction_id: interaction.id,
+    step_id: current.step.id,
+  });
+}
+
 export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   const tenantId = getTenantIdFromContext(c);
   const enabled = await isLoginRuntimeFlowEnabled(c.env, tenantId);
@@ -3996,6 +4377,34 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   const effectiveSelectedHandle = branchResolution.selectedHandle ?? selectedHandle;
+  if (current.step.component === 'email_verification' && effectiveSelectedHandle === 'verified') {
+    const verifiedUserId = await getRecentVerifiedEmailSessionUserId(
+      c,
+      tenantId,
+      interaction.expires_at - FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
+      interaction.id
+    );
+    if (!verifiedUserId) {
+      await insertAuditEvent(db, tenantId, interaction, {
+        eventType: 'flow.interaction.failed',
+        result: 'security_error',
+        errorCode: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+        nodeId: interaction.current_node_id,
+        branchHandleId: effectiveSelectedHandle,
+      });
+      return runtimeError(
+        c,
+        403,
+        'email_verification_required',
+        'A recent verified email authentication is required',
+        'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+        'security_error',
+        'retry_step',
+        interactionId
+      );
+    }
+    branchResolution.userId = verifiedUserId;
+  }
   const nextResolution =
     current.step.component === 'completion'
       ? { step: null as FlowRuntimeStep | null }

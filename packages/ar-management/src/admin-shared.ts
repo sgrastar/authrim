@@ -41,6 +41,7 @@ export const ADMIN_USER_CREATE_RESERVED_FIELDS = new Set([
 ]);
 
 export const ADMIN_USER_UPDATE_RESERVED_FIELDS = new Set([
+  'email',
   'name',
   'given_name',
   'family_name',
@@ -585,10 +586,11 @@ export function getErrorDetailsForResponse(error: unknown, env: Env): { details?
 
 export function toMilliseconds(timestamp: number | null | undefined): number | null {
   if (!timestamp) return null;
-  if (timestamp < 1e12) {
-    return timestamp * 1000;
-  }
-  return timestamp;
+  const absolute = Math.abs(timestamp);
+  if (absolute < 100_000_000_000) return timestamp * 1000;
+  if (absolute < 100_000_000_000_000) return timestamp;
+  if (absolute < 100_000_000_000_000_000) return timestamp / 1000;
+  return timestamp / 1_000_000;
 }
 
 export function toSeconds(timestamp: number | null | undefined): number | null {

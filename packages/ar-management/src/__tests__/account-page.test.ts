@@ -8,6 +8,7 @@ const {
   mockCreateAuthContextFromHono,
   mockCreatePIIContextFromHono,
   mockCoreAdapter,
+  mockCreateAuditLog,
   mockFindById,
   mockSyncUser,
 } = vi.hoisted(() => {
@@ -24,6 +25,7 @@ const {
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
     mockCoreAdapter: coreAdapter,
+    mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
     mockFindById: vi.fn(),
     mockSyncUser: vi.fn(),
   };
@@ -37,6 +39,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    createAuditLog: mockCreateAuditLog,
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getLogger: () => ({
       module: () => ({
@@ -122,6 +125,7 @@ describe('Account Page API', () => {
     });
     mockSyncUser.mockResolvedValue({ created: false });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockCreateAuditLog.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -248,24 +252,23 @@ describe('Account Page API', () => {
       active: true,
       userType: 'end_user',
     });
-    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO audit_log'),
-      expect.arrayContaining([
-        'default',
-        'user-001',
-        'account.profile.name_updated',
-        'account_profile',
-        'user-001',
-        null,
-        null,
-        JSON.stringify({ fields: ['name'] }),
-      ])
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'default',
+        userId: 'user-001',
+        action: 'account.profile.name_updated',
+        resource: 'account_profile',
+        resourceId: 'user-001',
+        metadata: JSON.stringify({ fields: ['name'] }),
+        severity: 'info',
+      })
     );
     expect(body.profile.name).toBe('New Name');
   });
 
   it('does not fail profile updates when account operation logging fails', async () => {
-    mockCoreAdapter.execute.mockRejectedValueOnce(new Error('audit unavailable'));
+    mockCreateAuditLog.mockRejectedValueOnce(new Error('audit unavailable'));
 
     const response = await updateAccountProfileHandler(
       createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123', {

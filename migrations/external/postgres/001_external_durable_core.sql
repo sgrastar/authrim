@@ -11,6 +11,39 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   rollback_sql TEXT
 );
 
+CREATE TABLE IF NOT EXISTS event_log (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  event_type TEXT NOT NULL,
+  event_category TEXT NOT NULL,
+  result TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'info',
+  error_code TEXT,
+  error_message TEXT,
+  anonymized_user_id TEXT,
+  client_id TEXT,
+  session_id TEXT,
+  request_id TEXT,
+  duration_ms BIGINT,
+  details_r2_key TEXT,
+  details_json TEXT,
+  retention_until BIGINT,
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_created
+  ON event_log(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_type_created
+  ON event_log(tenant_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_category_created
+  ON event_log(tenant_id, event_category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_anon_created
+  ON event_log(tenant_id, anonymized_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_client_created
+  ON event_log(tenant_id, client_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_tenant_retention
+  ON event_log(tenant_id, retention_until, created_at, id);
+
 CREATE TABLE IF NOT EXISTS identity_subjects (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',

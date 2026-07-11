@@ -17,9 +17,11 @@
 	);
 
 	function getTemplateKind(flow: NewFlowTemplate): AdminFlowKind {
-		if (flow.id === 'oidc-registration') return 'registration';
+		if (flow.id === 'default-registration') return 'registration';
+		if (flow.id === 'default-registration-no-consent') return 'registration';
 		if (flow.id === 'academic-saml-login') return 'login';
-		if (flow.id === 'oidc-login') return 'login';
+		if (flow.id === 'default-login') return 'login';
+		if (flow.id === 'default-login-no-consent') return 'login';
 		return 'approve';
 	}
 
@@ -28,7 +30,7 @@
 	}
 
 	function createTemplateEditorState(flow: NewFlowTemplate): FlowEditorState {
-		if (flow.id === 'oidc-registration') {
+		if (flow.id === 'default-registration') {
 			return {
 				nodes: [
 					{
@@ -46,7 +48,7 @@
 						config: {
 							ui_kind: 'registration',
 							authentication_profile_ref: 'default',
-							profile_form_ref: 'basic_profile',
+							screen_ref: 'basic_profile',
 							outputs: [
 								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
 								{ id: 'totp', label: $LL.admin_flows_setting_totp() },
@@ -57,10 +59,10 @@
 					},
 					{
 						id: 'profile-input',
-						type: 'profile_form',
+						type: 'screen',
 						title: $LL.admin_flows_node_profile_input(),
 						position: createPosition(3),
-						config: { ui_kind: 'profile', profile_form_ref: 'basic_profile' }
+						config: { ui_kind: 'profile', screen_ref: 'basic_profile' }
 					},
 					{
 						id: 'consent',
@@ -128,6 +130,89 @@
 						id: 'consent:accepted->account-create',
 						source: 'consent',
 						source_handle: 'accepted',
+						target: 'account-create'
+					},
+					{
+						id: 'account-create:completed->complete',
+						source: 'account-create',
+						source_handle: 'completed',
+						target: 'complete'
+					}
+				],
+				viewport: { x: 36, y: 36, zoom: 1 }
+			};
+		}
+
+		if (flow.id === 'default-registration-no-consent') {
+			return {
+				nodes: [
+					{
+						id: 'request',
+						type: 'entry',
+						title: $LL.admin_flows_node_registration_request(),
+						position: createPosition(0),
+						config: { ui_kind: 'start' }
+					},
+					{
+						id: 'registration-method',
+						type: 'registration',
+						title: $LL.admin_flows_node_registration_method(),
+						position: createPosition(1),
+						config: {
+							ui_kind: 'registration',
+							authentication_profile_ref: 'default',
+							outputs: [
+								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+								{ id: 'totp', label: $LL.admin_flows_setting_totp() },
+								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() },
+								{ id: 'facebook', label: 'Facebook' }
+							]
+						}
+					},
+					{
+						id: 'account-create',
+						type: 'account_action',
+						title: $LL.admin_flows_node_account_creation(),
+						position: createPosition(2),
+						config: { ui_kind: 'account' }
+					},
+					{
+						id: 'complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: createPosition(3),
+						config: { ui_kind: 'end' }
+					}
+				],
+				edges: [
+					{
+						id: 'request:next->registration-method',
+						source: 'request',
+						source_handle: 'next',
+						target: 'registration-method'
+					},
+					{
+						id: 'registration-method:mail_otp->account-create',
+						source: 'registration-method',
+						source_handle: 'mail_otp',
+						target: 'account-create'
+					},
+					{
+						id: 'registration-method:totp->account-create',
+						source: 'registration-method',
+						source_handle: 'totp',
+						target: 'account-create'
+					},
+					{
+						id: 'registration-method:passkey->account-create',
+						source: 'registration-method',
+						source_handle: 'passkey',
+						target: 'account-create'
+					},
+					{
+						id: 'registration-method:facebook->account-create',
+						source: 'registration-method',
+						source_handle: 'facebook',
 						target: 'account-create'
 					},
 					{
@@ -255,7 +340,7 @@
 			};
 		}
 
-		if (flow.id === 'oidc-login') {
+		if (flow.id === 'default-login') {
 			return {
 				nodes: [
 					{
@@ -440,6 +525,117 @@
 						source_handle: 'accepted',
 						target: 'oidc-authorization-complete'
 					}
+				],
+				viewport: { x: 36, y: 36, zoom: 1 }
+			};
+		}
+
+		if (flow.id === 'default-login-no-consent') {
+			const authenticationOutputs = [
+				{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+				{ id: 'totp', label: $LL.admin_flows_setting_totp() },
+				{ id: 'passkey', label: $LL.admin_flows_setting_passkey() },
+				{ id: 'facebook', label: 'Facebook' }
+			];
+			return {
+				nodes: [
+					{
+						id: 'request',
+						type: 'entry',
+						title: $LL.admin_flows_node_login_request(),
+						position: { x: 360, y: 0 },
+						config: { ui_kind: 'start' }
+					},
+					{
+						id: 'session-check',
+						type: 'session_check',
+						title: $LL.admin_flows_node_session_check(),
+						position: { x: 360, y: 144 },
+						config: { ui_kind: 'session' }
+					},
+					{
+						id: 'authentication',
+						type: 'authentication',
+						title: $LL.admin_flows_node_authentication_method(),
+						position: { x: 522, y: 288 },
+						config: {
+							ui_kind: 'authentication',
+							authentication_profile_ref: 'default',
+							outputs: authenticationOutputs
+						}
+					},
+					{
+						id: 'saml-attribute-release-complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: { x: 108, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'saml-attribute-release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'output'
+							}
+						}
+					},
+					{
+						id: 'oidc-authorization-complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: { x: 594, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'oidc-authorization-completion',
+								label: $LL.admin_flows_completion_block_oidc_authorization(),
+								protocol: 'oidc',
+								purpose: 'authorization',
+								role: 'output'
+							}
+						}
+					}
+				],
+				edges: [
+					{
+						id: 'request:next->session-check',
+						source: 'request',
+						source_handle: 'next',
+						target: 'session-check'
+					},
+					{
+						id: 'session-check:continue->saml-attribute-release-complete',
+						source: 'session-check',
+						source_handle: 'continue',
+						target: 'saml-attribute-release-complete'
+					},
+					{
+						id: 'session-check:continue->oidc-authorization-complete',
+						source: 'session-check',
+						source_handle: 'continue',
+						target: 'oidc-authorization-complete'
+					},
+					{
+						id: 'session-check:authenticate->authentication',
+						source: 'session-check',
+						source_handle: 'authenticate',
+						target: 'authentication'
+					},
+					...authenticationOutputs.flatMap((output) => [
+						{
+							id: `authentication:${output.id}->saml-attribute-release-complete`,
+							source: 'authentication',
+							source_handle: output.id,
+							target: 'saml-attribute-release-complete'
+						},
+						{
+							id: `authentication:${output.id}->oidc-authorization-complete`,
+							source: 'authentication',
+							source_handle: output.id,
+							target: 'oidc-authorization-complete'
+						}
+					])
 				],
 				viewport: { x: 36, y: 36, zoom: 1 }
 			};

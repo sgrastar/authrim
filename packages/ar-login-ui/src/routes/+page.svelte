@@ -5,7 +5,9 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { auth, isAuthenticated } from '$lib/stores/auth';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+
+	const { brandingStore } = useLoginUIStores();
 
 	let mounted = $state(false);
 	let accountPageEnabled = $state(false);
@@ -69,12 +71,12 @@
 					{/if}
 				{:else}
 					<div class="landing__auth-buttons">
-						<a href="/signup">
+						<a href="/signup" data-sveltekit-reload>
 							<Button variant="ghost">
 								{$LL.header_signUp()}
 							</Button>
 						</a>
-						<a href="/discover">
+						<a href="/discover" data-sveltekit-reload>
 							<Button variant="primary">
 								{$LL.header_login()}
 							</Button>
@@ -115,11 +117,11 @@
 				{:else}
 					<!-- Unauthenticated state -->
 					<div class="landing__cta">
-						<a href="/discover" class="landing__cta-primary">
+						<a href="/discover" class="landing__cta-primary" data-sveltekit-reload>
 							<span>{$LL.header_login()}</span>
 							<div class="i-heroicons-arrow-right h-4 w-4"></div>
 						</a>
-						<a href="/signup" class="landing__cta-secondary">
+						<a href="/signup" class="landing__cta-secondary" data-sveltekit-reload>
 							{$LL.header_signUp()}
 						</a>
 					</div>

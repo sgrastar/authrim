@@ -1140,7 +1140,10 @@ export function createApiRoutes(): Hono {
             updatedAt: new Date().toISOString(),
             features: {
               ...currentConfig.features,
-              email: emailConfig,
+              email: {
+                ...currentConfig.features.email,
+                ...emailConfig,
+              },
             },
           });
           await saveEnvironmentConfig(envPaths, updatedConfig);
@@ -1163,7 +1166,10 @@ export function createApiRoutes(): Hono {
             features: {
               queue: stateConfig.features?.queue ?? defaultFeatures.queue,
               r2: stateConfig.features?.r2 ?? defaultFeatures.r2,
-              email: emailConfig,
+              email: {
+                ...stateConfig.features?.email,
+                ...emailConfig,
+              },
             },
           };
         }
@@ -1477,6 +1483,7 @@ export function createApiRoutes(): Hono {
           features: {
             ...config.features,
             email: {
+              ...config.features.email,
               provider: 'cloudflare',
               fromAddress: fromAddress.trim(),
               fromName: fromName?.trim() || undefined,

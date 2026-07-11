@@ -17,7 +17,7 @@ export const DEFAULT_SAML_TRANSIENT_NAMEID_TTL_SECONDS = 300;
 
 export interface SAMLSubjectInfo {
   id: string;
-  email: string;
+  email?: string;
 }
 
 export interface SAMLTransientNameIDStore {
@@ -102,14 +102,26 @@ export async function resolveSAMLNameIDValue(
 ): Promise<string> {
   switch (nameIdFormat) {
     case NAMEID_FORMATS.EMAIL:
-      return subject.email;
+      return requireSAMLSubjectEmail(subject, nameIdFormat);
     case NAMEID_FORMATS.PERSISTENT:
       return resolvePersistentNameID(subject, context);
     case NAMEID_FORMATS.TRANSIENT:
       return resolveTransientNameID(subject, context);
     default:
-      return subject.email;
+      return requireSAMLSubjectEmail(subject, nameIdFormat);
   }
+}
+
+function requireSAMLSubjectEmail(subject: SAMLSubjectInfo, nameIdFormat: NameIDFormat): string {
+  const email = subject.email?.trim();
+  if (!email) {
+    throw new SAMLNameIDPolicyError('Email is required for the requested SAML NameID format', {
+      requested_format: nameIdFormat,
+      required_subject_attribute: 'email',
+      attribute_present: false,
+    });
+  }
+  return email;
 }
 
 export async function resolveSAMLEduPersonTargetedIDOpaque(

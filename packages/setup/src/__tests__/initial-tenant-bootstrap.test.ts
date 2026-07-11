@@ -18,6 +18,10 @@ describe('buildInitialTenantBootstrapSql', () => {
     expect(sql).toContain("SET id = 'first'");
     expect(sql).toContain("tenant_code = 'first'");
     expect(sql).toContain("name = 'First Tenant'");
+    expect(sql).toContain('UPDATE flows');
+    expect(sql).toContain('UPDATE flow_versions');
+    expect(sql).toContain('UPDATE flow_assignments');
+    expect(sql).toContain('UPDATE screens');
     expect(sql).toContain('(SELECT COUNT(*) FROM tenants) = 1');
     expect(sql).toContain('INSERT INTO tenants');
   });

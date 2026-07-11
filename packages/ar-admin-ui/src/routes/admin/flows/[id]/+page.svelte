@@ -58,6 +58,7 @@
 	let assignmentEnabled = $state(true);
 	let deleteModalOpen = $state(false);
 	let actionError = $state('');
+	let copiedContractJson = $state<'saved' | 'template' | ''>('');
 	const assignmentTargetIdMissing = $derived(
 		assignmentTargetType !== 'tenant' && assignmentTargetId.trim().length === 0
 	);
@@ -203,6 +204,31 @@
 		anchor.click();
 		URL.revokeObjectURL(url);
 	}
+
+	async function copyContractJson(text: string, target: 'saved' | 'template') {
+		if (!text) return;
+		try {
+			if (navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(text);
+			} else {
+				const textarea = document.createElement('textarea');
+				textarea.value = text;
+				textarea.setAttribute('readonly', 'true');
+				textarea.style.position = 'fixed';
+				textarea.style.left = '-9999px';
+				document.body.appendChild(textarea);
+				textarea.select();
+				document.execCommand('copy');
+				document.body.removeChild(textarea);
+			}
+			copiedContractJson = target;
+			setTimeout(() => {
+				if (copiedContractJson === target) copiedContractJson = '';
+			}, 1800);
+		} catch {
+			copiedContractJson = '';
+		}
+	}
 </script>
 
 <svelte:head>
@@ -299,7 +325,18 @@
 				<div class="contract-preview">
 					<div class="contract-preview__header">
 						<span>{$LL.admin_flows_runtime_contract_preview_label()}</span>
-						<code>JSON</code>
+						<button
+							type="button"
+							class="contract-copy-button"
+							onclick={() => copyContractJson(savedContractJson, 'saved')}
+							disabled={!savedContractJson}
+						>
+							<i
+								class={copiedContractJson === 'saved' ? 'i-ph-check' : 'i-ph-copy'}
+								aria-hidden="true"
+							></i>
+							{copiedContractJson === 'saved' ? 'Copied' : 'Copy JSON'}
+						</button>
 					</div>
 					<pre class="contract-block">{savedContractJson}</pre>
 				</div>
@@ -504,7 +541,18 @@
 					<div class="contract-preview">
 						<div class="contract-preview__header">
 							<span>{$LL.admin_flows_runtime_contract_preview_label()}</span>
-							<code>JSON</code>
+							<button
+								type="button"
+								class="contract-copy-button"
+								onclick={() => copyContractJson(contractJson, 'template')}
+								disabled={!contractJson}
+							>
+								<i
+									class={copiedContractJson === 'template' ? 'i-ph-check' : 'i-ph-copy'}
+									aria-hidden="true"
+								></i>
+								{copiedContractJson === 'template' ? 'Copied' : 'Copy JSON'}
+							</button>
 						</div>
 						<pre class="contract-block">{contractJson}</pre>
 					</div>
@@ -827,14 +875,31 @@
 		text-transform: uppercase;
 	}
 
-	.contract-preview__header code {
-		padding: 3px 7px;
+	.contract-copy-button {
+		min-height: 30px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 0 10px;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-control, 8px);
 		background: var(--color-surface);
-		color: var(--color-text-muted);
-		font-size: 0.68rem;
+		color: var(--color-text);
+		font: inherit;
+		font-size: 0.72rem;
+		font-weight: 800;
 		text-transform: none;
+	}
+
+	.contract-copy-button:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.contract-copy-button:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
 	}
 
 	.decision-list {

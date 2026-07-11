@@ -670,6 +670,41 @@ describe('apiProxy', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
+	it('proxies public asset paths without Admin API BFF mode headers', async () => {
+		const fetch = vi.fn(async (_request: Request) => new Response('asset'));
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL(
+				'https://mt-ar-admin-ui.pages.dev/api/assets/first/login-ui/background/image.webp'
+			),
+			request: new Request(
+				'https://mt-ar-admin-ui.pages.dev/api/assets/first/login-ui/background/image.webp',
+				{
+					method: 'GET'
+				}
+			),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example'
+				}
+			},
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		const proxiedRequest = fetch.mock.calls[0][0] as Request;
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe('asset');
+		expect(proxiedRequest.url).toBe(
+			'https://api.authrim.example/api/assets/first/login-ui/background/image.webp'
+		);
+		expect(proxiedRequest.headers.get('X-Authrim-Admin-UI-Api-Mode')).toBeNull();
+		expect(proxiedRequest.headers.get('Authorization')).toBeNull();
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('rejects unsupported Admin API proxy methods', async () => {
 		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const fetch = vi.fn();

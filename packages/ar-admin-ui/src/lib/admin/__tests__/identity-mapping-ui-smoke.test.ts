@@ -209,6 +209,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(pageShell).toContain('compileEditorDraft');
 		expect(pageShell).toContain('createFieldMappingVersion');
 		expect(pageShell).toContain('compileFieldMappingVersion');
+		expect(pageShell).toContain('snapshot.result.id');
 		expect(pageShell).toContain('policyOptionAdapter');
 		expect(pageShell).toContain('`[${adapter}] ${policy.displayName || policy.fieldMappingKey}`');
 		expect(pageShell).toContain('getSchemaReadiness');

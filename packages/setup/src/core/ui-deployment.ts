@@ -217,6 +217,12 @@ export function resolveUiDeploymentSettings(
   uiEnv.PUBLIC_AUTHRIM_ISSUER = apiBaseUrl;
   if (component === 'ar-login-ui') {
     uiEnv.PUBLIC_LOGIN_UI_CLIENT_ID = loginUiClientId;
+    const originTrial = config.features.email?.verificationProtocolOriginTrial;
+    if (originTrial?.token) {
+      uiEnv.EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN = originTrial.token;
+    } else if (originTrial?.tokens) {
+      uiEnv.EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS = JSON.stringify(originTrial.tokens);
+    }
   } else {
     uiEnv.ADMIN_UI_API_MODE = adminUiApiMode;
   }

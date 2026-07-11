@@ -87,7 +87,8 @@ const adminUsers = {
 	admin_user_detail_user_id: 'User ID',
 	admin_user_detail_tenant: 'Tenant',
 	admin_user_detail_mfa: 'MFA',
-	admin_user_detail_no_user_information_fields: 'No user information fields are configured',
+	admin_user_detail_no_user_information_fields:
+		'This user has no additional attributes (custom claims)',
 	admin_user_detail_phone_number: 'Phone Number',
 	admin_user_detail_phone_verified: 'Phone Verified',
 	admin_user_detail_phone_verified_desc: "Mark the user's phone number as verified",

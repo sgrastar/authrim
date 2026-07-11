@@ -473,7 +473,8 @@ function isAllowedProxyPath(pathname: string): boolean {
 		pathname === '/api/admin' ||
 		pathname.startsWith('/api/admin/') ||
 		pathname === '/api/admin-setup' ||
-		pathname.startsWith('/api/admin-setup/')
+		pathname.startsWith('/api/admin-setup/') ||
+		pathname.startsWith('/api/assets/')
 	);
 }
 
@@ -971,14 +972,14 @@ export const securityHeaders: Handle = async ({ event, resolve }) => {
 	// Content Security Policy
 	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
 	// - connect-src includes API origin for cross-origin API calls
-	// - img-src allows HTTPS and data: URIs (charts, dynamic images)
+	// - img-src allows HTTPS, data: URIs, and blob: URLs for local image previews
 	response.headers.set(
 		'Content-Security-Policy',
 		[
 			"default-src 'self'",
 			"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
 			"style-src 'self' 'unsafe-inline'",
-			"img-src 'self' https: data:",
+			"img-src 'self' https: data: blob:",
 			buildConnectSrc(platformEnv),
 			"font-src 'self'",
 			"frame-ancestors 'none'",

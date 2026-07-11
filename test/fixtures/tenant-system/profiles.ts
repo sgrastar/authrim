@@ -21,16 +21,16 @@ export type TenantSystemProfile = LoginEntrySettings & {
 export const tenantSystemProfiles: Record<TenantSystemProfileId, TenantSystemProfile> = {
   P00: {
     id: 'P00',
-    purpose: 'Default current behavior.',
+    purpose: 'Default ready-to-use behavior.',
     'login-entry.mode': 'discovery_optional',
     'login-entry.email_resolution_policy': 'exact_email_then_domain',
     'login-entry.selection_policy': 'select_if_multiple',
-    'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+    'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","wayf"]',
     'login-entry.allow_manual_tenant_entry': true,
     'login-entry.remember_last_tenant': true,
     'login-entry.redirect_default_login_to_discovery': true,
     'login-entry.require_common_discovery_before_login': true,
-    'login-entry.skip_discovery_if_only_one_tenant': false,
+    'login-entry.skip_discovery_if_only_one_tenant': true,
     'login-entry.redirect_tenant_discover_to_common_entry': true,
   },
   P01: {

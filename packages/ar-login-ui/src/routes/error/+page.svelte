@@ -3,7 +3,9 @@
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+
+	const { brandingStore } = useLoginUIStores();
 
 	let errorCode = $state('');
 	let errorDescription = $state('');

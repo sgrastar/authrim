@@ -33,6 +33,7 @@ import type {
   SAMLMetadataVerificationSummary,
   SAMLCertificateValidationSummary,
   SAMLJitEmailLinkingPolicy,
+  NameIDFormat,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
@@ -3232,11 +3233,8 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
   const deduplicatedEncryptionCertificates = Array.from(new Set(encryptionCertificates));
 
   // Get NameID formats
-  const nameIdFormats = findElements(spDescriptor, SAML_NAMESPACES.MD, 'NameIDFormat');
-  const nameIdFormat =
-    nameIdFormats.length > 0
-      ? (getTextContent(nameIdFormats[0]) as SAMLSPConfig['nameIdFormat']) || NAMEID_FORMATS.EMAIL
-      : NAMEID_FORMATS.EMAIL;
+  const metadataNameIdFormats = parseMetadataNameIDFormats(spDescriptor);
+  const nameIdFormat = metadataNameIdFormats[0] ?? NAMEID_FORMATS.EMAIL;
   const metadataRequestedAttributes = parseSPMetadataRequestedAttributes(spDescriptor);
   const metadataAttributeReleasePolicySuggestion = buildAttributeReleasePolicySuggestion(
     metadataRequestedAttributes
@@ -3263,6 +3261,7 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
         : undefined,
     authnRequestSignaturePolicy: authnRequestsSigned ? 'required' : 'optional',
     nameIdFormat,
+    metadataNameIdFormats: metadataNameIdFormats.length > 0 ? metadataNameIdFormats : undefined,
     attributeMapping: {},
     metadataRequestedAttributes:
       metadataRequestedAttributes.length > 0 ? metadataRequestedAttributes : undefined,
@@ -3271,6 +3270,16 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
     signResponses: true,
     allowedBindings: Array.from(allowedBindings),
   };
+}
+
+function parseMetadataNameIDFormats(descriptor: Element): NameIDFormat[] {
+  return Array.from(
+    new Set(
+      findElements(descriptor, SAML_NAMESPACES.MD, 'NameIDFormat')
+        .map((element) => getTextContent(element)?.trim())
+        .filter((value): value is NameIDFormat => Boolean(value))
+    )
+  );
 }
 
 function parseSPMetadataRequestedAttributes(

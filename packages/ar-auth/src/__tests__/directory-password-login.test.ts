@@ -405,7 +405,7 @@ describe('directory password login handler', () => {
       })
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_directory');
-    expect(body.redirect_url).toBe('/');
+    expect(body.redirect_url).toBe('/account');
   });
 
   it('creates a migration transaction instead of a session when passkey enrollment is required', async () => {

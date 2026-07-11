@@ -280,7 +280,7 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('If every administrator is locked out');
     expect(html).not.toContain('管理者が全員ロックアウト');
     expect(html).toContain('class="setup-recap"');
-    expect(html).toContain('data-i18n="web.common.setupTool">Setup Tool</span> v0.3.2');
+    expect(html).toContain('data-i18n="web.common.setupTool">Setup Tool</span> v0.3.3');
     expect(html).not.toContain('Mock list');
     expect(html).not.toContain('v0.9.4');
     expect(html).not.toContain('4分12秒で完了');

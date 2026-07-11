@@ -559,10 +559,7 @@
 			}
 		);
 		if (activateAfterSave) {
-			const snapshotId = typeof snapshot.id === 'string' ? snapshot.id : null;
-			if (!snapshotId) {
-				throw new Error($LL.admin_identity_mapping_editor_policy_operation_failed());
-			}
+			const snapshotId = snapshot.result.id;
 			await adminIdentityMappingAPI.activateFieldMappingVersion(policy.id, version.result.id, {
 				snapshotId,
 				activationScope: { kind: 'tenant' }

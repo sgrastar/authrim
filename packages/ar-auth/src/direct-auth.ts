@@ -114,6 +114,7 @@ import {
   type HumanVerificationAction,
 } from './human-verification';
 import { resolveSessionTtl } from './session-ttl';
+import { verifyEmailVerificationProtocol } from './email-verification-protocol';
 
 // ===== Constants =====
 
@@ -228,7 +229,8 @@ function methodUsageEnabled(
   usage: AuthenticationMethodUsage
 ): boolean {
   const legacyEnabled = settings[`authentication-methods.${method}.enabled`];
-  const legacyFallback = normalizeBooleanSetting(legacyEnabled, true);
+  const defaultEnabled = method === 'passkey';
+  const legacyFallback = normalizeBooleanSetting(legacyEnabled, defaultEnabled);
   const key =
     usage === 'account_link'
       ? `authentication-methods.${method}.account_link_enabled`
@@ -1674,6 +1676,369 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
 // ===== Email Code Handlers =====
 
+type DirectEmailVerificationMethod = 'email_code' | 'email_verification_protocol';
+
+interface DirectEmailVerificationCompletionInput {
+  tenantId: string;
+  userId: string;
+  channel: DirectAuthChannel;
+  transactionId: string;
+  method: DirectEmailVerificationMethod;
+  metadata: Record<string, unknown>;
+}
+
+interface EmailVerificationProtocolChallengeData {
+  challenge?: string;
+  tenantId?: string;
+  type?: string;
+  metadata?: Record<string, unknown>;
+}
+
+function emailVerificationProtocolMetadataMatches(
+  metadata: Record<string, unknown> | undefined,
+  runtimeInteractionId: string,
+  externalOrigin: string
+): boolean {
+  if (!metadata) return false;
+
+  return (
+    metadataString(metadata, 'interaction_id') === runtimeInteractionId &&
+    metadataString(metadata, 'expected_origin') === externalOrigin
+  );
+}
+
+async function emailVerificationProtocolChallengeIsCurrent(
+  c: Context<{ Bindings: Env }>,
+  challengeTenantId: string,
+  metadata: Record<string, unknown> | undefined
+): Promise<boolean> {
+  if (!metadata) return false;
+  const interactionId = metadataString(metadata, 'interaction_id');
+  const sourceStepId = metadataString(metadata, 'source_step_id');
+  const verificationStepId = metadataString(metadata, 'verification_step_id');
+  const contractHash = metadataString(metadata, 'contract_hash');
+  if (!interactionId || !sourceStepId || !verificationStepId || !contractHash) {
+    return false;
+  }
+
+  try {
+    const authCtx = createAuthContextFromHono(c, challengeTenantId);
+    const interaction = await authCtx.coreAdapter.queryOne<{
+      state: string;
+      current_step_id: string | null;
+      contract_hash: string;
+      expires_at: number;
+    }>(
+      `SELECT state, current_step_id, contract_hash, expires_at
+         FROM flow_interactions
+        WHERE tenant_id = ? AND id = ?`,
+      [challengeTenantId, interactionId]
+    );
+    return Boolean(
+      interaction &&
+      (interaction.state === 'created' || interaction.state === 'active') &&
+      interaction.expires_at > Math.floor(Date.now() / 1000) &&
+      interaction.contract_hash === contractHash &&
+      (interaction.current_step_id === sourceStepId ||
+        interaction.current_step_id === verificationStepId)
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function completeDirectEmailVerification(
+  c: Context<{ Bindings: Env }>,
+  input: DirectEmailVerificationCompletionInput
+): Promise<Response> {
+  const { tenantId, userId, channel, transactionId, method, metadata } = input;
+  const log = getLogger(c).module('DIRECT-AUTH');
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+  const runtimeUser = await runtimeUsers.findById(userId, {
+    includeInactive: true,
+  });
+
+  if (!runtimeUser || runtimeUser.active !== 1) {
+    return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+  }
+
+  const now = Date.now();
+  await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+
+  const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
+
+  // Apply invitation role/org assignment if present.
+  const inviteId = metadataString(metadata, 'invite_id');
+  const inviteToken = metadataString(metadata, 'invite_token');
+
+  if (inviteId && inviteToken) {
+    const inviteNow = Math.floor(now / 1000);
+    try {
+      const invitation = await findActiveInvitationByToken(
+        authCtx.coreAdapter,
+        inviteToken,
+        inviteNow
+      );
+      if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
+        log.warn('Invitation metadata no longer matches an active tenant invitation', {
+          invite_id: inviteId,
+          tenant_id: tenantId,
+        });
+      } else if (
+        !(await consumeInvitationUse(
+          authCtx.coreAdapter,
+          invitation.id,
+          invitation.tenant_id,
+          inviteNow
+        ))
+      ) {
+        log.warn('Invitation use_count increment was skipped during email verification', {
+          invite_id: inviteId,
+          tenant_id: tenantId,
+        });
+      } else {
+        const assignmentResults = await applyInvitationAssignments(authCtx.coreAdapter, {
+          userId,
+          tenantId,
+          roleId: invitation.role_id,
+          orgId: invitation.org_id,
+        });
+
+        if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
+          log.warn('Failed to assign role from invitation', {
+            invite_id: inviteId,
+            tenant_id: tenantId,
+            error: assignmentResults.roleAssignment?.error,
+          });
+        }
+
+        if (invitation.org_id && !assignmentResults.orgMembership?.success) {
+          log.warn('Failed to assign organization from invitation', {
+            invite_id: inviteId,
+            tenant_id: tenantId,
+            error: assignmentResults.orgMembership?.error,
+          });
+        }
+      }
+    } catch (inviteErr) {
+      log.warn('Failed to apply invitation assignments', {
+        error: String(inviteErr),
+        invite_id: inviteId,
+      });
+    }
+  }
+
+  // Save custom registration fields if present.
+  const customFieldsValue = metadata.custom_fields;
+  const customFields =
+    customFieldsValue && typeof customFieldsValue === 'object' && !Array.isArray(customFieldsValue)
+      ? (customFieldsValue as Record<string, unknown>)
+      : undefined;
+  if (customFields) {
+    try {
+      await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
+    } catch (persistError) {
+      log.warn(
+        'Failed to persist registration field values',
+        { action: 'registration_fields_persist' },
+        persistError as Error
+      );
+    }
+  }
+
+  const authCode = await generateAuthCode(
+    c.env,
+    tenantId,
+    userId,
+    metadataString(metadata, 'code_challenge') || '',
+    {
+      method,
+      client_id: metadataString(metadata, 'client_id'),
+      channel,
+      scope: metadataString(metadata, 'scope'),
+      transaction_id: metadataString(metadata, 'transaction_id') || transactionId,
+      is_new_user: isNewUser,
+      authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
+      runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
+    }
+  );
+
+  if (method === 'email_code') {
+    publishEvent(c, {
+      type: AUTH_EVENTS.EMAIL_CODE_SUCCEEDED,
+      tenantId,
+      data: {
+        userId,
+        method: 'email_code',
+        clientId: metadataString(metadata, 'client_id') || 'direct-auth',
+      } satisfies AuthEventData,
+    }).catch(() => {});
+  } else {
+    publishEvent(c, {
+      type: 'auth.email_verification_protocol.succeeded',
+      tenantId,
+      data: {
+        userId,
+        method: 'email_verification_protocol',
+        clientId: metadataString(metadata, 'client_id') || 'direct-auth',
+      },
+    }).catch(() => {});
+  }
+
+  return c.json({
+    direct_auth_artifact: authCode,
+    expires_in: AUTH_CODE_TTL,
+    is_new_user: isNewUser,
+  });
+}
+
+async function tryEmailVerificationProtocol(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    challengeTenantId: string;
+    userId: string;
+    normalizedEmail: string;
+    channel: DirectAuthChannel;
+    presentationToken: string | undefined;
+    challengeId: string | undefined;
+    runtimeInteractionId: string | undefined;
+    completionMetadata: Record<string, unknown>;
+  }
+): Promise<Response | null> {
+  const {
+    tenantId,
+    challengeTenantId,
+    userId,
+    normalizedEmail,
+    channel,
+    presentationToken,
+    challengeId,
+    runtimeInteractionId,
+    completionMetadata,
+  } = input;
+
+  // The runtime interaction, browser challenge, user, and resulting managed session must all
+  // remain within one tenant. Email-domain routing can change the Direct Auth tenant after the
+  // Flow challenge was issued, so never complete EVP across that boundary.
+  if (tenantId !== challengeTenantId) {
+    return null;
+  }
+
+  if (
+    channel !== 'browser' ||
+    typeof presentationToken !== 'string' ||
+    presentationToken.length === 0 ||
+    typeof challengeId !== 'string' ||
+    challengeId.length === 0 ||
+    typeof runtimeInteractionId !== 'string' ||
+    runtimeInteractionId.length === 0
+  ) {
+    return null;
+  }
+
+  const externalOrigin = getDirectAuthWebAuthnOrigin(c, c.req.header('origin'));
+  if (!externalOrigin) return null;
+
+  const challengeKey = `email_verification_protocol:${challengeId}`;
+  const challengeStore = await getChallengeStoreByChallengeId(
+    c.env,
+    challengeId,
+    challengeTenantId
+  ).catch(() => null);
+  if (!challengeStore) return null;
+
+  let challengeData: EmailVerificationProtocolChallengeData | null;
+
+  try {
+    challengeData = (await challengeStore.getChallengeRpc(
+      challengeKey
+    )) as EmailVerificationProtocolChallengeData | null;
+  } catch {
+    return null;
+  }
+
+  if (
+    !challengeData ||
+    challengeData.type !== 'email_verification_protocol' ||
+    challengeData.tenantId !== challengeTenantId ||
+    typeof challengeData.challenge !== 'string' ||
+    challengeData.challenge.length === 0 ||
+    !emailVerificationProtocolMetadataMatches(
+      challengeData.metadata,
+      runtimeInteractionId,
+      externalOrigin
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    !(await emailVerificationProtocolChallengeIsCurrent(
+      c,
+      challengeTenantId,
+      challengeData.metadata
+    ))
+  ) {
+    return null;
+  }
+
+  const expectedNonce = challengeData.challenge;
+  const verificationResult = await verifyEmailVerificationProtocol({
+    presentationToken,
+    expectedEmail: normalizedEmail,
+    expectedNonce,
+    expectedAudience: externalOrigin,
+  }).catch(() => ({ verified: false as const, reason: 'invalid_presentation' as const }));
+
+  if (!verificationResult.verified) return null;
+
+  let consumedChallenge: EmailVerificationProtocolChallengeData;
+  try {
+    consumedChallenge = (await challengeStore.consumeChallengeRpc({
+      id: challengeKey,
+      tenantId: challengeTenantId,
+      type: 'email_verification_protocol',
+      challenge: expectedNonce,
+    })) as EmailVerificationProtocolChallengeData;
+  } catch {
+    return null;
+  }
+
+  if (
+    consumedChallenge.challenge !== expectedNonce ||
+    !emailVerificationProtocolMetadataMatches(
+      consumedChallenge.metadata,
+      runtimeInteractionId,
+      externalOrigin
+    )
+  ) {
+    return null;
+  }
+  if (
+    !(await emailVerificationProtocolChallengeIsCurrent(
+      c,
+      challengeTenantId,
+      consumedChallenge.metadata
+    ))
+  ) {
+    return null;
+  }
+
+  return completeDirectEmailVerification(c, {
+    tenantId,
+    userId,
+    channel,
+    transactionId: challengeId,
+    method: 'email_verification_protocol',
+    metadata: {
+      ...completionMetadata,
+      runtime_interaction_id: runtimeInteractionId,
+    },
+  });
+}
+
 /**
  * Email Code Send
  * POST /api/v1/auth/direct/email-code/send
@@ -1697,6 +2062,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       custom_fields?: Record<string, unknown>;
       human_verification_response?: string;
       cf_turnstile_response?: string;
+      email_verification_token?: string;
+      email_verification_challenge_id?: string;
+      runtime_interaction_id?: string;
     }>();
 
     const {
@@ -1714,6 +2082,9 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       custom_fields,
       human_verification_response,
       cf_turnstile_response,
+      email_verification_token,
+      email_verification_challenge_id,
+      runtime_interaction_id,
     } = body;
 
     if (!client_id || !email || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -1742,12 +2113,19 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     const normalizedEmail = email.toLowerCase();
+    const boundRuntimeInteractionId =
+      typeof runtime_interaction_id === 'string' &&
+      runtime_interaction_id.length > 0 &&
+      runtime_interaction_id.length <= 128
+        ? runtime_interaction_id
+        : undefined;
     const rawDisplayName =
       typeof display_name === 'string' ? display_name : typeof name === 'string' ? name : undefined;
     const displayName = rawDisplayName?.trim() || null;
 
     // Check/create user
-    let tenantId = getTenantIdFromContext(c);
+    const challengeTenantId = getTenantIdFromContext(c);
+    let tenantId = challengeTenantId;
     const routingCoreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
     // Invitation token routing: overrides all other tenant resolution
@@ -1782,12 +2160,19 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         invite_org_id: invitation.org_id,
         invited_email: invitation.invited_email,
       };
-    } else if (tenantId === getDefaultTenantId(c.env)) {
+    } else if (!boundRuntimeInteractionId && tenantId === getDefaultTenantId(c.env)) {
       // If Host header did not resolve a specific tenant, try email domain routing
       const resolvedTenantId = await resolveTenantFromEmailDomain(routingCoreAdapter, email, c.env);
       if (resolvedTenantId) {
         tenantId = resolvedTenantId;
       }
+    }
+
+    // A Flow interaction is tenant-bound before Direct Auth begins. Invitations must not move a
+    // runtime-bound request into another tenant, otherwise the user, OTP/EVP challenge, artifact,
+    // managed session, and Flow interaction would be split across tenant stores.
+    if (boundRuntimeInteractionId && tenantId !== challengeTenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Rate limiting
@@ -1921,6 +2306,38 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       user = { id: userId, email: normalizedEmail, name: displayName };
     }
 
+    const emailVerificationMetadata: Record<string, unknown> = {
+      code_challenge,
+      client_id,
+      channel,
+      scope,
+      authorization_challenge_id,
+      ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
+      ...(inviteData
+        ? {
+            invite_id: inviteData.invite_id,
+            invite_token: inviteData.invite_token,
+            invite_role_id: inviteData.invite_role_id,
+            invite_org_id: inviteData.invite_org_id,
+            invite_tenant_id: tenantId,
+          }
+        : {}),
+      ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
+    };
+
+    const emailVerificationResponse = await tryEmailVerificationProtocol(c, {
+      tenantId,
+      challengeTenantId,
+      userId: user.id,
+      normalizedEmail,
+      channel,
+      presentationToken: email_verification_token,
+      challengeId: email_verification_challenge_id,
+      runtimeInteractionId: boundRuntimeInteractionId,
+      completionMetadata: emailVerificationMetadata,
+    });
+    if (emailVerificationResponse) return emailVerificationResponse;
+
     // Generate attempt ID and code
     const attemptId = crypto.randomUUID();
     const code = generateEmailCode();
@@ -1948,26 +2365,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       ttl: EMAIL_CODE_TTL,
       email: normalizedEmail,
       metadata: {
-        code_challenge,
-        client_id,
-        channel,
-        scope,
+        ...emailVerificationMetadata,
         transaction_id: attemptId,
         email_hash: emailHash,
         issued_at: issuedAt,
-        authorization_challenge_id,
-        // Invite metadata (present only when signup is via invitation)
-        ...(inviteData
-          ? {
-              invite_id: inviteData.invite_id,
-              invite_token: inviteData.invite_token,
-              invite_role_id: inviteData.invite_role_id,
-              invite_org_id: inviteData.invite_org_id,
-              invite_tenant_id: tenantId,
-            }
-          : {}),
-        // Custom registration fields (validated and saved after email verification)
-        ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
       },
     });
 
@@ -2096,7 +2497,8 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       });
     }
 
-    // Consume challenge
+    // Read first so an invalid code does not consume the attempt. The challenge is
+    // atomically consumed below only after all submitted values have been verified.
     const challengeStore = await getChallengeStoreByChallengeId(c.env, attempt_id, tenantId);
 
     let challengeData: {
@@ -2108,11 +2510,12 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     };
 
     try {
-      challengeData = (await challengeStore.consumeChallengeRpc({
-        id: `direct_email_code:${attempt_id}`,
-        tenantId,
-        type: 'direct_email_code',
-      })) as typeof challengeData;
+      challengeData = (await challengeStore.getChallengeRpc(
+        `direct_email_code:${attempt_id}`
+      )) as typeof challengeData;
+      if (!challengeData) {
+        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      }
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
@@ -2150,137 +2553,23 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
-    // Get user
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    const runtimeUser = await runtimeUsers.findById(challengeData.userId, {
-      includeInactive: true,
-    });
-
-    if (!runtimeUser || runtimeUser.active !== 1) {
-      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    try {
+      challengeData = (await challengeStore.consumeChallengeRpc({
+        id: `direct_email_code:${attempt_id}`,
+        tenantId,
+        type: 'direct_email_code',
+      })) as typeof challengeData;
+    } catch {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
-    // Update email_verified
-    const now = Date.now();
-    await runtimeUsers.markEmailVerifiedAndTouchLastLogin(challengeData.userId, now);
-
-    const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
-
-    // Apply invitation role/org assignment if present
-    const inviteId = challengeData.metadata?.invite_id as string | undefined;
-    const inviteToken = challengeData.metadata?.invite_token as string | undefined;
-
-    if (inviteId && inviteToken) {
-      const inviteNow = Math.floor(now / 1000);
-      try {
-        const invitation = await findActiveInvitationByToken(
-          authCtx.coreAdapter,
-          inviteToken,
-          inviteNow
-        );
-        if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
-          log.warn('Invitation metadata no longer matches an active tenant invitation', {
-            invite_id: inviteId,
-            tenant_id: tenantId,
-          });
-        } else if (
-          !(await consumeInvitationUse(
-            authCtx.coreAdapter,
-            invitation.id,
-            invitation.tenant_id,
-            inviteNow
-          ))
-        ) {
-          log.warn('Invitation use_count increment was skipped during email verification', {
-            invite_id: inviteId,
-            tenant_id: tenantId,
-          });
-        } else {
-          const assignmentResults = await applyInvitationAssignments(authCtx.coreAdapter, {
-            userId: challengeData.userId,
-            tenantId,
-            roleId: invitation.role_id,
-            orgId: invitation.org_id,
-          });
-
-          if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
-            log.warn('Failed to assign role from invitation', {
-              invite_id: inviteId,
-              tenant_id: tenantId,
-              error: assignmentResults.roleAssignment?.error,
-            });
-          }
-
-          if (invitation.org_id && !assignmentResults.orgMembership?.success) {
-            log.warn('Failed to assign organization from invitation', {
-              invite_id: inviteId,
-              tenant_id: tenantId,
-              error: assignmentResults.orgMembership?.error,
-            });
-          }
-        }
-      } catch (inviteErr) {
-        log.warn('Failed to apply invitation assignments', {
-          error: String(inviteErr),
-          invite_id: inviteId,
-        });
-      }
-    }
-
-    // Save custom registration fields if present
-    const customFields = challengeData.metadata?.custom_fields as
-      | Record<string, unknown>
-      | undefined;
-    if (customFields) {
-      try {
-        await persistRegistrationFieldValuesFromEnv(
-          c.env,
-          tenantId,
-          challengeData.userId,
-          customFields
-        );
-      } catch (persistError) {
-        log.warn(
-          'Failed to persist registration field values',
-          { action: 'registration_fields_persist' },
-          persistError as Error
-        );
-      }
-    }
-
-    // Generate auth_code
-    const authCode = await generateAuthCode(
-      c.env,
+    return completeDirectEmailVerification(c, {
       tenantId,
-      challengeData.userId,
-      challengeData.metadata?.code_challenge || '',
-      {
-        method: 'email_code',
-        client_id: challengeData.metadata?.client_id,
-        channel,
-        scope: challengeData.metadata?.scope,
-        transaction_id: challengeData.metadata?.transaction_id || attempt_id,
-        is_new_user: isNewUser,
-        authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
-      }
-    );
-
-    // Publish success event
-    publishEvent(c, {
-      type: AUTH_EVENTS.EMAIL_CODE_SUCCEEDED,
-      tenantId,
-      data: {
-        userId: challengeData.userId,
-        method: 'email_code',
-        clientId: challengeData.metadata?.client_id || 'direct-auth',
-      } satisfies AuthEventData,
-    }).catch(() => {});
-
-    return c.json({
-      direct_auth_artifact: authCode,
-      expires_in: AUTH_CODE_TTL,
-      is_new_user: isNewUser,
+      userId: challengeData.userId,
+      channel,
+      transactionId: attempt_id,
+      method: 'email_code',
+      metadata: challengeData.metadata ?? {},
     });
   } catch (error) {
     log.error('Direct email code verify error', {
@@ -2491,6 +2780,9 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         authTime,
         client_id,
         direct_auth_channel: channel,
+        ...(typeof metadata.runtime_interaction_id === 'string'
+          ? { runtime_interaction_id: metadata.runtime_interaction_id }
+          : {}),
       },
       tenantId
     );

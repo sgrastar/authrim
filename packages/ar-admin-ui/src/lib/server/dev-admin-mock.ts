@@ -2624,8 +2624,94 @@ const flows = new Map<string, DevFlow>([
 const flowVersions = new Map<string, DevFlowVersion[]>([]);
 const flowAssignments = new Map<string, DevFlowAssignment>();
 
-function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> {
+function devFlowEditor(
+	kind: 'login' | 'registration',
+	options: { noConsent?: boolean } = {}
+): Record<string, unknown> {
 	if (kind === 'registration') {
+		if (options.noConsent) {
+			return {
+				nodes: [
+					{
+						id: 'request',
+						type: 'entry',
+						title: 'Registration Request',
+						position: { x: 360, y: 0 },
+						config: { ui_kind: 'start' }
+					},
+					{
+						id: 'registration-method',
+						type: 'registration',
+						title: 'Registration Method',
+						position: { x: 360, y: 144 },
+						config: {
+							ui_kind: 'registration',
+							authentication_profile_ref: 'default',
+							screen_ref: 'registration',
+							outputs: [
+								{ id: 'mail_otp', label: 'Email OTP' },
+								{ id: 'totp', label: 'Authenticator app' },
+								{ id: 'passkey', label: 'Passkey' },
+								{ id: 'facebook', label: 'Facebook' }
+							]
+						}
+					},
+					{
+						id: 'account-create',
+						type: 'account_action',
+						title: 'Account Creation',
+						position: { x: 360, y: 288 },
+						config: { ui_kind: 'account' }
+					},
+					{
+						id: 'output',
+						type: 'complete',
+						title: 'Complete',
+						position: { x: 360, y: 432 },
+						config: { ui_kind: 'end' }
+					}
+				],
+				edges: [
+					{
+						id: 'request:next->registration-method',
+						source: 'request',
+						source_handle: 'next',
+						target: 'registration-method'
+					},
+					{
+						id: 'registration-method:mail_otp->account-create',
+						source: 'registration-method',
+						source_handle: 'mail_otp',
+						target: 'account-create'
+					},
+					{
+						id: 'registration-method:totp->account-create',
+						source: 'registration-method',
+						source_handle: 'totp',
+						target: 'account-create'
+					},
+					{
+						id: 'registration-method:passkey->account-create',
+						source: 'registration-method',
+						source_handle: 'passkey',
+						target: 'account-create'
+					},
+					{
+						id: 'registration-method:facebook->account-create',
+						source: 'registration-method',
+						source_handle: 'facebook',
+						target: 'account-create'
+					},
+					{
+						id: 'account-create:completed->output',
+						source: 'account-create',
+						source_handle: 'completed',
+						target: 'output'
+					}
+				],
+				viewport: { x: 36, y: 36, zoom: 1 }
+			};
+		}
 		return {
 			nodes: [
 				{
@@ -2643,7 +2729,7 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 					config: {
 						ui_kind: 'registration',
 						authentication_profile_ref: 'default',
-						profile_form_ref: 'basic_profile',
+						screen_ref: 'registration',
 						outputs: [
 							{ id: 'mail_otp', label: 'Email OTP' },
 							{ id: 'totp', label: 'Authenticator app' },
@@ -2654,10 +2740,10 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 				},
 				{
 					id: 'profile-input',
-					type: 'profile_form',
+					type: 'screen',
 					title: 'Profile input',
 					position: { x: 360, y: 288 },
-					config: { ui_kind: 'profile', profile_form_ref: 'basic_profile' }
+					config: { ui_kind: 'profile', screen_ref: 'profile_completion' }
 				},
 				{
 					id: 'consent',
@@ -2734,6 +2820,122 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 			viewport: { x: 36, y: 36, zoom: 1 }
 		};
 	}
+	if (options.noConsent) {
+		return {
+			nodes: [
+				{
+					id: 'request',
+					type: 'entry',
+					title: 'Login Request',
+					position: { x: 360, y: 0 },
+					config: { ui_kind: 'start' }
+				},
+				{
+					id: 'session-check',
+					type: 'session_check',
+					title: 'Session Check',
+					position: { x: 360, y: 144 },
+					config: {
+						ui_kind: 'session',
+						outputs: [
+							{ id: 'continue', label: 'Existing session' },
+							{ id: 'authenticate', label: 'Authenticate' }
+						]
+					}
+				},
+				{
+					id: 'authentication',
+					type: 'authentication',
+					title: 'Authentication Method',
+					position: { x: 522, y: 288 },
+					config: {
+						ui_kind: 'authentication',
+						authentication_profile_ref: 'default',
+						screen_ref: 'login',
+						outputs: [
+							{ id: 'mail_otp', label: 'Email OTP' },
+							{ id: 'totp', label: 'Authenticator app' },
+							{ id: 'passkey', label: 'Passkey' },
+							{ id: 'facebook', label: 'Facebook' }
+						]
+					}
+				},
+				{
+					id: 'saml-attribute-release-complete',
+					type: 'complete',
+					title: 'Complete',
+					position: { x: 108, y: 612 },
+					config: {
+						ui_kind: 'end',
+						completion_block: {
+							id: 'saml-attribute-release-completion',
+							label: 'SAML Attribute Release Completion',
+							protocol: 'saml',
+							purpose: 'attribute_release',
+							role: 'output'
+						}
+					}
+				},
+				{
+					id: 'oidc-authorization-complete',
+					type: 'complete',
+					title: 'Complete',
+					position: { x: 594, y: 612 },
+					config: {
+						ui_kind: 'end',
+						completion_block: {
+							id: 'oidc-authorization-completion',
+							label: 'OIDC Authorization Completion',
+							protocol: 'oidc',
+							purpose: 'authorization',
+							role: 'output'
+						}
+					}
+				}
+			],
+			edges: [
+				{
+					id: 'request:next->session-check',
+					source: 'request',
+					source_handle: 'next',
+					target: 'session-check'
+				},
+				{
+					id: 'session-check:continue->saml-attribute-release-complete',
+					source: 'session-check',
+					source_handle: 'continue',
+					target: 'saml-attribute-release-complete'
+				},
+				{
+					id: 'session-check:continue->oidc-authorization-complete',
+					source: 'session-check',
+					source_handle: 'continue',
+					target: 'oidc-authorization-complete'
+				},
+				{
+					id: 'session-check:authenticate->authentication',
+					source: 'session-check',
+					source_handle: 'authenticate',
+					target: 'authentication'
+				},
+				...['mail_otp', 'totp', 'passkey', 'facebook'].flatMap((method) => [
+					{
+						id: `authentication:${method}->saml-attribute-release-complete`,
+						source: 'authentication',
+						source_handle: method,
+						target: 'saml-attribute-release-complete'
+					},
+					{
+						id: `authentication:${method}->oidc-authorization-complete`,
+						source: 'authentication',
+						source_handle: method,
+						target: 'oidc-authorization-complete'
+					}
+				])
+			],
+			viewport: { x: 36, y: 36, zoom: 1 }
+		};
+	}
 	return {
 		nodes: [
 			{
@@ -2764,6 +2966,7 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 				config: {
 					ui_kind: 'authentication',
 					authentication_profile_ref: 'default',
+					screen_ref: 'login',
 					outputs: [
 						{ id: 'mail_otp', label: 'Email OTP' },
 						{ id: 'totp', label: 'Authenticator app' },
@@ -2841,6 +3044,10 @@ function devFlowEditor(kind: 'login' | 'registration'): Record<string, unknown> 
 	};
 }
 
+function devRuntimeNodeShouldRender(type: unknown): boolean {
+	return type !== 'entry' && type !== 'session_check' && type !== 'account_action';
+}
+
 function devFlowRuntime(
 	flowId: string,
 	kind: 'login' | 'registration',
@@ -2859,7 +3066,7 @@ function devFlowRuntime(
 					id: `${String(node.id)}:step`,
 					source_node_id: String(node.id),
 					component: devRuntimeComponentForNode(String(node.type || 'entry')),
-					render: node.type !== 'entry',
+					render: devRuntimeNodeShouldRender(node.type),
 					config:
 						node.config && typeof node.config === 'object' && !Array.isArray(node.config)
 							? node.config
@@ -2877,8 +3084,8 @@ function devRuntimeComponentForNode(type: string): string {
 			return 'registration_method_selector';
 		case 'authentication':
 			return 'authentication_method_selector';
-		case 'profile_form':
-			return 'profile_form';
+		case 'screen':
+			return 'screen';
 		case 'consent':
 			return 'consent_policy';
 		case 'account_action':
@@ -2890,8 +3097,13 @@ function devRuntimeComponentForNode(type: string): string {
 	}
 }
 
-function installDevFlow(id: string, kind: 'login' | 'registration', displayName: string) {
-	const editor = devFlowEditor(kind);
+function installDevFlow(
+	id: string,
+	kind: 'login' | 'registration',
+	displayName: string,
+	options: { noConsent?: boolean; templateId?: string } = {}
+) {
+	const editor = devFlowEditor(kind, { noConsent: options.noConsent });
 	const runtime = devFlowRuntime(id, kind, editor);
 	const publishedVersionId = `${id}-version-1`;
 	flows.set(id, {
@@ -2917,7 +3129,8 @@ function installDevFlow(id: string, kind: 'login' | 'registration', displayName:
 		draft_editor_json: editor,
 		draft_runtime_base_json: runtime,
 		published_version_id: publishedVersionId,
-		deleted_at: null
+		deleted_at: null,
+		template_id: options.templateId ?? null
 	});
 	flowVersions.set(id, [
 		{
@@ -2936,26 +3149,43 @@ function installDevFlow(id: string, kind: 'login' | 'registration', displayName:
 	]);
 }
 
-installDevFlow('flow-default-login', 'login', 'Default Login Flow');
-installDevFlow('flow-default-registration', 'registration', 'Default Registration Flow');
+installDevFlow('flow-default-login', 'login', 'Default Login Flow', {
+	templateId: 'default-login'
+});
+installDevFlow('flow-default-registration', 'registration', 'Default Registration Flow', {
+	templateId: 'default-registration'
+});
+installDevFlow('flow-default-login-no-consent', 'login', 'Login (No consent)', {
+	noConsent: true,
+	templateId: 'default-login-no-consent'
+});
+installDevFlow(
+	'flow-default-registration-no-consent',
+	'registration',
+	'Registration (No consent)',
+	{
+		noConsent: true,
+		templateId: 'default-registration-no-consent'
+	}
+);
 flowAssignments.set(flowAssignmentKey('tenant', null, 'login'), {
-	id: 'flow-assignment-tenant-login',
+	id: 'flow-assignment-default-login',
 	tenant_id: TENANT_ID,
 	target_type: 'tenant',
 	target_id: null,
 	flow_kind: 'login',
-	flow_id: 'flow-default-login',
+	flow_id: 'flow-default-login-no-consent',
 	enabled: true,
 	created_at: NOW_SECONDS - 3600,
 	updated_at: NOW_SECONDS - 3600
 });
 flowAssignments.set(flowAssignmentKey('tenant', null, 'registration'), {
-	id: 'flow-assignment-tenant-registration',
+	id: 'flow-assignment-default-registration',
 	tenant_id: TENANT_ID,
 	target_type: 'tenant',
 	target_id: null,
 	flow_kind: 'registration',
-	flow_id: 'flow-default-registration',
+	flow_id: 'flow-default-registration-no-consent',
 	enabled: true,
 	created_at: NOW_SECONDS - 3600,
 	updated_at: NOW_SECONDS - 3600
@@ -3176,59 +3406,6 @@ const settings = new Map<string, DevSettings>([
 				'client.consent_required': 'kv',
 				'client.first_party': 'default',
 				'client.app_login_enabled': 'default'
-			}
-		}
-	],
-	[
-		`${TENANT_ID}:consent`,
-		{
-			category: 'consent',
-			version: 'dev-1',
-			values: {
-				'consent.show_scopes': true,
-				'consent.show_client_info': true,
-				'consent.remember_decision': true,
-				'consent.remember_duration': 2592000,
-				'consent.require_explicit': true,
-				'consent.granular_scopes': true,
-				'consent.require_on_scope_change': true,
-				'consent.cache_ttl': 300,
-				'consent.skip_for_first_party': false,
-				'consent.versioning_enabled': true,
-				'consent.expiration_enabled': false,
-				'consent.default_expiration_days': 365,
-				'consent.data_export_enabled': true,
-				'consent.data_export_retention_days': 30,
-				'consent.data_export_sync_threshold_kb': 256,
-				'consent.record_retention': 2555,
-				'consent.supported_display_types': 'page,modal',
-				'consent.ui_locales': 'en,ja',
-				'consent.rbac_org_selector': true,
-				'consent.rbac_acting_as': true,
-				'consent.rbac_show_roles': true
-			},
-			sources: {
-				'consent.show_scopes': 'kv',
-				'consent.show_client_info': 'kv',
-				'consent.remember_decision': 'kv',
-				'consent.remember_duration': 'default',
-				'consent.require_explicit': 'kv',
-				'consent.granular_scopes': 'kv',
-				'consent.require_on_scope_change': 'default',
-				'consent.cache_ttl': 'default',
-				'consent.skip_for_first_party': 'default',
-				'consent.versioning_enabled': 'kv',
-				'consent.expiration_enabled': 'default',
-				'consent.default_expiration_days': 'default',
-				'consent.data_export_enabled': 'kv',
-				'consent.data_export_retention_days': 'default',
-				'consent.data_export_sync_threshold_kb': 'default',
-				'consent.record_retention': 'default',
-				'consent.supported_display_types': 'default',
-				'consent.ui_locales': 'default',
-				'consent.rbac_org_selector': 'kv',
-				'consent.rbac_acting_as': 'kv',
-				'consent.rbac_show_roles': 'default'
 			}
 		}
 	],
@@ -4146,169 +4323,6 @@ function settingsMetaResponse(category: string) {
 			description: 'Login UI customization settings',
 			writable: true,
 			settings: {}
-		};
-	}
-	if (category === 'consent') {
-		return {
-			category: 'consent',
-			label: 'Consent',
-			description: 'Consent settings',
-			writable: true,
-			settings: {
-				'consent.show_scopes': settingMeta(
-					'consent.show_scopes',
-					'boolean',
-					true,
-					'Show requested scopes',
-					'Display requested scopes on the consent prompt.'
-				),
-				'consent.show_client_info': settingMeta(
-					'consent.show_client_info',
-					'boolean',
-					true,
-					'Show client information',
-					'Display client metadata on the consent prompt.'
-				),
-				'consent.remember_decision': settingMeta(
-					'consent.remember_decision',
-					'boolean',
-					true,
-					'Remember decisions',
-					'Allow consent decisions to be remembered.'
-				),
-				'consent.remember_duration': settingMeta(
-					'consent.remember_duration',
-					'duration',
-					2592000,
-					'Remember duration',
-					'How long remembered consent decisions remain valid.',
-					{ min: 3600, max: 31536000, unit: 'seconds' }
-				),
-				'consent.require_explicit': settingMeta(
-					'consent.require_explicit',
-					'boolean',
-					true,
-					'Require explicit consent',
-					'Require an explicit user action before granting consent.'
-				),
-				'consent.granular_scopes': settingMeta(
-					'consent.granular_scopes',
-					'boolean',
-					true,
-					'Granular scopes',
-					'Allow users to review individual requested scopes.'
-				),
-				'consent.require_on_scope_change': settingMeta(
-					'consent.require_on_scope_change',
-					'boolean',
-					true,
-					'Require on scope change',
-					'Ask for consent again when requested scopes change.'
-				),
-				'consent.cache_ttl': settingMeta(
-					'consent.cache_ttl',
-					'duration',
-					300,
-					'Cache TTL',
-					'Cache duration for consent policy lookups.',
-					{ min: 0, max: 3600, unit: 'seconds' }
-				),
-				'consent.skip_for_first_party': settingMeta(
-					'consent.skip_for_first_party',
-					'boolean',
-					false,
-					'Skip for first-party clients',
-					'Skip consent prompts for trusted first-party clients.'
-				),
-				'consent.versioning_enabled': settingMeta(
-					'consent.versioning_enabled',
-					'boolean',
-					true,
-					'Enable versioning',
-					'Track consent policy versions.'
-				),
-				'consent.expiration_enabled': settingMeta(
-					'consent.expiration_enabled',
-					'boolean',
-					false,
-					'Enable expiration',
-					'Expire consent records after a configured period.'
-				),
-				'consent.default_expiration_days': settingMeta(
-					'consent.default_expiration_days',
-					'number',
-					365,
-					'Default expiration',
-					'Default consent expiration window.',
-					{ min: 1, max: 3650, unit: 'days' }
-				),
-				'consent.data_export_enabled': settingMeta(
-					'consent.data_export_enabled',
-					'boolean',
-					true,
-					'Enable data export',
-					'Allow consent data exports for privacy operations.'
-				),
-				'consent.data_export_retention_days': settingMeta(
-					'consent.data_export_retention_days',
-					'number',
-					30,
-					'Export retention',
-					'How long generated consent exports are retained.',
-					{ min: 1, max: 365, unit: 'days' }
-				),
-				'consent.data_export_sync_threshold_kb': settingMeta(
-					'consent.data_export_sync_threshold_kb',
-					'number',
-					256,
-					'Sync export threshold',
-					'Maximum synchronous consent export size.',
-					{ min: 64, max: 10240, unit: 'KB' }
-				),
-				'consent.record_retention': settingMeta(
-					'consent.record_retention',
-					'number',
-					2555,
-					'Record retention',
-					'How long consent records are retained.',
-					{ min: 30, max: 3650, unit: 'days' }
-				),
-				'consent.supported_display_types': settingMeta(
-					'consent.supported_display_types',
-					'string',
-					'page,modal',
-					'Supported display types',
-					'Comma-separated display types available to consent UI.'
-				),
-				'consent.ui_locales': settingMeta(
-					'consent.ui_locales',
-					'string',
-					'en,ja',
-					'UI locales',
-					'Comma-separated locale codes available to consent UI.'
-				),
-				'consent.rbac_org_selector': settingMeta(
-					'consent.rbac_org_selector',
-					'boolean',
-					true,
-					'Organization selector',
-					'Show organization context selection during consent.'
-				),
-				'consent.rbac_acting_as': settingMeta(
-					'consent.rbac_acting_as',
-					'boolean',
-					true,
-					'Acting-as context',
-					'Show acting-as context in RBAC-aware consent.'
-				),
-				'consent.rbac_show_roles': settingMeta(
-					'consent.rbac_show_roles',
-					'boolean',
-					true,
-					'Show roles',
-					'Display role information in RBAC-aware consent.'
-				)
-			}
 		};
 	}
 	if (category === 'client') {
@@ -6868,7 +6882,7 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 					label: 'Authentication',
 					runtime_component: 'authentication_method_selector'
 				},
-				{ type: 'profile_form', label: 'Profile Form', runtime_component: 'profile_form' },
+				{ type: 'screen', label: 'Profile Form', runtime_component: 'screen' },
 				{ type: 'consent', label: 'Consent', runtime_component: 'consent_policy' },
 				{ type: 'account_action', label: 'Account Action', runtime_component: 'account_action' },
 				{ type: 'complete', label: 'Complete', runtime_component: 'completion' },

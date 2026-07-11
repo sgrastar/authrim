@@ -309,6 +309,64 @@ These are configured in `.authrim/{env}/ui.env` and applied to the Login UI / Ad
 | `PUBLIC_API_PROXY_BACKEND_URL` | string | Public fallback backend URL for the UI Worker proxy |
 | `API_BACKEND_URL` | string | Backend URL for server-side proxy |
 | `AR_ROUTER` | service binding | Optional Workers service binding from UI Worker to router |
+| `EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN` | string | Public Chrome Email Verification Protocol Origin Trial token for one Login UI origin |
+| `EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS` | JSON object | Exact Login UI HTTPS origin to public Origin Trial token mapping |
+
+### Email Verification Protocol Origin Trial
+
+Configure Chrome's Email Verification Protocol Origin Trial in `authrim-config.json`. Origin
+Trial tokens are public, origin-bound deployment metadata, so setup writes them to Login UI Worker
+`vars` rather than to secret storage. A token map is recommended for custom domains, router-proxied
+tenant domains, and any deployment with more than one browser origin:
+
+```json
+{
+  "features": {
+    "email": {
+      "provider": "cloudflare",
+      "configured": true,
+      "verificationProtocolOriginTrial": {
+        "tokens": {
+          "https://login.example.com": "<origin-trial-token>",
+          "https://tenant.example.com": "<origin-trial-token>"
+        }
+      }
+    }
+  }
+}
+```
+
+Each `tokens` key must be the complete HTTPS browser origin, without a path, query, or fragment.
+Setup serializes this map into `EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS` on the Login UI Worker. For
+a deployment that has exactly one Login UI origin, the single-token form is also available:
+
+```json
+{
+  "features": {
+    "email": {
+      "verificationProtocolOriginTrial": {
+        "token": "<origin-trial-token>"
+      }
+    }
+  }
+}
+```
+
+Setup writes the single-token form as `EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN`. Configure either
+`token` or `tokens`, not both. The map form is fail-closed: when a map is configured but the request
+origin is absent, Authrim does not use a single-token fallback.
+
+The protocol is attempted only when all of the following are true:
+
+- Mail OTP is enabled for the current login or signup usage.
+- The active Flow contains an explicit `email_verification` node reached from the Mail OTP step.
+- The request origin has a configured, valid Origin Trial token and the browser supports the trial.
+
+Missing browser support, a missing or invalid presentation, a token/origin mismatch, or protocol
+verification failure does not bypass email verification. Authrim falls back to the existing Mail OTP
+send-and-confirm flow. The protocol proves control of the asserted mailbox account; it does not prove
+that a new message is currently deliverable. Keep Mail OTP as the required fallback when actual
+message delivery is part of the assurance requirement.
 
 ### Configuration Modes
 
@@ -359,7 +417,6 @@ authrim-setup deploy --env {env}
 # Disable proxy mode by setting PUBLIC_API_BASE_URL to the API origin and clearing API_BACKEND_URL
 authrim-setup deploy --env {env}
 ```
-
 Or edit `.authrim/{env}/ui.env` and redeploy:
 
 ```bash

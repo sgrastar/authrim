@@ -4,6 +4,7 @@ import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discove
 export const load: LayoutServerLoad = async (event) => {
 	// Get language preference from cookie
 	const preferredLanguage = event.cookies.get('preferredLanguage') || 'en';
+	const emailVerificationProtocolEnabled = event.locals.emailVerificationProtocolEnabled === true;
 	if (
 		event.route.id === '/login' ||
 		event.route.id === '/account' ||
@@ -11,7 +12,9 @@ export const load: LayoutServerLoad = async (event) => {
 	) {
 		return {
 			preferredLanguage,
-			shouldLoadTenantBranding: true
+			shouldLoadTenantBranding: true,
+			emailVerificationProtocolEnabled,
+			authenticationMethods: event.locals.authenticationMethods ?? null
 		};
 	}
 
@@ -25,6 +28,10 @@ export const load: LayoutServerLoad = async (event) => {
 
 	return {
 		preferredLanguage,
-		shouldLoadTenantBranding
+		shouldLoadTenantBranding,
+		emailVerificationProtocolEnabled,
+		authenticationMethods: shouldLoadTenantBranding
+			? (event.locals.authenticationMethods ?? null)
+			: null
 	};
 };

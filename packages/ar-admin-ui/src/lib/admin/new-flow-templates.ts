@@ -1,8 +1,10 @@
 export type NewFlowTemplateId =
 	| 'saml-attribute-release'
-	| 'oidc-registration'
+	| 'default-registration'
+	| 'default-registration-no-consent'
 	| 'academic-saml-login'
-	| 'oidc-login'
+	| 'default-login'
+	| 'default-login-no-consent'
 	| 'oidc-authorization-consent';
 
 export interface FlowLink {
@@ -316,7 +318,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		}
 	},
 	{
-		id: 'oidc-registration',
+		id: 'default-registration',
 		title: 'Registration',
 		subtitle: 'アプリケーション向け新規登録',
 		protocol: 'OIDC',
@@ -331,7 +333,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		consentPolicy: 'Registration consent policy',
 		consentStatement: 'terms_of_service / privacy_policy',
 		userAction: '登録方法を選び、プロフィールを入力し、利用規約とプライバシーポリシーに同意',
-		recordedState: 'tenant + user + OIDC Client + registration form + consent statements',
+		recordedState: 'tenant + user + OIDC Client + registration screen + consent statements',
 		nodes: [
 			{
 				id: 'request',
@@ -445,6 +447,95 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 			output: {
 				continuation: 'authorization_response',
 				records: ['user_profile', 'credential_binding', 'consent_records', 'audit_event']
+			}
+		}
+	},
+	{
+		id: 'default-registration-no-consent',
+		title: 'Registration (No consent)',
+		subtitle: 'プロフィール入力と登録同意なしの新規登録',
+		protocol: 'OIDC',
+		destinationType: 'OIDC Client',
+		flowKind: 'registration',
+		status: 'planning',
+		description:
+			'OIDC authorization requestから登録方式選択、アカウント作成、authorization responseまでを確認します。',
+		primaryEntry: 'OIDC Authorization Request / Sign-up entry',
+		primaryOutput: 'Authorization Response / New Account Session',
+		mappingSet: 'OIDC registration profile fields',
+		consentPolicy: '',
+		consentStatement: '',
+		userAction: '登録方法を選び、プロフィール入力と登録同意なしでアカウントを作成',
+		recordedState: 'tenant + user + OIDC Client + credential binding + audit event',
+		nodes: [
+			{
+				id: 'request',
+				label: 'Registration Request',
+				description:
+					'OIDC authorization requestを受け取り、clientと登録開始コンテキストを解決します。',
+				icon: 'i-ph-monitor',
+				settings: ['Application context', 'redirect_uri', 'prompt=create / screen=signup'],
+				links: [{ label: 'OIDC Client設定', href: '/admin/clients' }]
+			},
+			{
+				id: 'registration-method',
+				label: 'Registration Method',
+				description: 'Passkey、メール、ソーシャルなど、登録時に使える認証方式を提示します。',
+				icon: 'i-ph-sign-in',
+				settings: ['Passkey', 'Email OTP', 'Social account'],
+				links: [{ label: '認証方法', href: '/admin/authentication-methods' }]
+			},
+			{
+				id: 'account-create',
+				label: 'Account Creation',
+				description: 'ユーザー、認証手段、監査イベントを作成します。',
+				icon: 'i-ph-user-plus',
+				settings: ['user record', 'credential binding', 'audit event']
+			},
+			{
+				id: 'output',
+				label: 'Complete',
+				description: '登録後セッションを作成し、OIDC authorization responseへ接続します。',
+				icon: 'i-ph-key',
+				settings: ['authorization code', 'ID Token claims', 'post-registration redirect']
+			}
+		],
+		contractSummary: [
+			{ label: 'Flow kind', value: 'registration' },
+			{ label: 'Protocol', value: 'OIDC' },
+			{ label: 'Destination', value: 'OIDC Client' },
+			{ label: 'Profile input', value: 'Skipped' },
+			{ label: 'Required user action', value: 'Create account' },
+			{ label: 'Continuation', value: 'Authorization response' }
+		],
+		contract: {
+			contract_version: '2026-06-29',
+			interaction_id: 'preview_oidc_registration_no_consent',
+			flow_kind: 'registration',
+			protocol: 'oidc',
+			destination: {
+				type: 'oidc_client',
+				display_name: 'Example Web App'
+			},
+			capabilities: [
+				{
+					type: 'authentication_method_selection',
+					required: true,
+					localized_content: {
+						ja: 'アカウント作成に使用する方法を選択してください。',
+						en: 'Choose how to create your account.'
+					},
+					i18n_key: 'flow.oidc.registration.method',
+					methods: ['passkey', 'totp', 'email_otp', 'social']
+				}
+			],
+			submit: {
+				method: 'POST',
+				url: '/api/flow/interactions/preview_oidc_registration_no_consent/submit'
+			},
+			output: {
+				continuation: 'authorization_response',
+				records: ['credential_binding', 'audit_event']
 			}
 		}
 	},
@@ -568,7 +659,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		}
 	},
 	{
-		id: 'oidc-login',
+		id: 'default-login',
 		title: 'Login',
 		subtitle: 'アプリケーション向けログイン',
 		protocol: 'OIDC',
@@ -676,18 +767,122 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				records: ['session_event', 'authentication_event', 'user_decision', 'audit_event']
 			}
 		}
+	},
+	{
+		id: 'default-login-no-consent',
+		title: 'Login (No consent)',
+		subtitle: '同意確認なしのログイン',
+		protocol: 'OIDC',
+		destinationType: 'OIDC Client',
+		flowKind: 'login',
+		status: 'planning',
+		description:
+			'OIDC authorization requestからセッション確認、認証方式選択、ログイン、completion responseまでを確認します。',
+		primaryEntry: 'OIDC Authorization Request / Login entry',
+		primaryOutput: 'Authorization Response / Existing Account Session',
+		mappingSet: 'OIDC login/session claims',
+		consentPolicy: '',
+		consentStatement: '',
+		userAction: '既存アカウントでログイン',
+		recordedState: 'tenant + user + OIDC Client + session/authentication event + audit event',
+		nodes: [
+			{
+				id: 'request',
+				label: 'Login Request',
+				description:
+					'OIDC authorization requestを受け取り、client、redirect_uri、要求scopeを解決します。',
+				icon: 'i-ph-monitor',
+				settings: ['Application context', 'redirect_uri', 'scope / prompt / max_age'],
+				links: [{ label: 'OIDC Client設定', href: '/admin/clients' }]
+			},
+			{
+				id: 'session-check',
+				label: 'Session Check',
+				description: '既存セッション、prompt、max_age、acr要求を見て再認証が必要か判断します。',
+				icon: 'i-ph-clock',
+				settings: ['existing session', 'authentication required', 'fresh authentication']
+			},
+			{
+				id: 'authentication',
+				label: 'Authentication Method',
+				description: '利用可能なログイン方式を提示し、選択された方式で認証します。',
+				icon: 'i-ph-sign-in',
+				settings: ['Passkey', 'Password / OTP', 'Social login'],
+				links: [{ label: '認証方法', href: '/admin/authentication-methods' }]
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				label: 'Complete',
+				description: 'ログイン済みセッションを使ってSAML Responseを生成します。',
+				icon: 'i-ph-paper-plane-tilt',
+				settings: ['SAML Response', 'AttributeStatement', 'audit event']
+			},
+			{
+				id: 'oidc-authorization-complete',
+				label: 'Complete',
+				description: 'ログイン済みセッションを使ってOIDC responseを生成します。',
+				icon: 'i-ph-key',
+				settings: ['authorization code', 'ID Token claims', 'UserInfo claims']
+			}
+		],
+		contractSummary: [
+			{ label: 'Flow kind', value: 'login' },
+			{ label: 'Protocol', value: 'OIDC' },
+			{ label: 'Destination', value: 'OIDC Client' },
+			{ label: 'Authentication', value: 'Configured login methods' },
+			{ label: 'Required user action', value: 'Authenticate' },
+			{ label: 'Continuation', value: 'Authorization response' }
+		],
+		contract: {
+			contract_version: '2026-06-29',
+			interaction_id: 'preview_oidc_login_no_consent',
+			flow_kind: 'login',
+			protocol: 'oidc',
+			destination: {
+				type: 'oidc_client',
+				display_name: 'Example Web App'
+			},
+			capabilities: [
+				{
+					type: 'authentication',
+					required: true,
+					localized_content: {
+						ja: 'ログイン方法を選択してください。',
+						en: 'Choose a sign-in method.'
+					},
+					i18n_key: 'flow.oidc.login.authentication',
+					methods: ['passkey', 'totp', 'password', 'email_otp', 'social']
+				}
+			],
+			submit: {
+				method: 'POST',
+				url: '/api/flow/interactions/preview_oidc_login_no_consent/submit'
+			},
+			output: {
+				continuation: 'authorization_response',
+				records: ['session_event', 'authentication_event', 'audit_event']
+			}
+		}
 	}
 ];
 
 export const newFlowTemplates: NewFlowTemplate[] = allNewFlowTemplates.filter(
 	(template) =>
-		template.id === 'oidc-registration' ||
+		template.id === 'default-registration' ||
+		template.id === 'default-registration-no-consent' ||
 		template.id === 'academic-saml-login' ||
-		template.id === 'oidc-login'
+		template.id === 'default-login' ||
+		template.id === 'default-login-no-consent'
 );
 
+const templateIdAliases: Record<string, NewFlowTemplateId> = {
+	'oidc-registration': 'default-registration',
+	'oidc-login': 'default-login'
+};
+
 export function getNewFlowTemplate(id: string): NewFlowTemplate | undefined {
-	return newFlowTemplates.find((template) => template.id === id);
+	const resolvedId = templateIdAliases[id] ?? id;
+	return newFlowTemplates.find((template) => template.id === resolvedId);
 }
 
 export function formatFlowContract(template: NewFlowTemplate): string {
@@ -720,7 +915,7 @@ export function createLoginUiRuntimeContractPreview(
 				steps: template.nodes.map((node) => ({
 					id: `${node.id}:step`,
 					source_node_id: node.id,
-					component: loginUiComponentForNode(node.id),
+					component: loginUiComponentForNode(template, node.id),
 					render: node.id !== 'request' && node.id !== 'account-create',
 					config: runtimeConfigForNode(template, node),
 					content: {
@@ -777,8 +972,11 @@ function createPreviewEditorState(
 	if (template.id === 'academic-saml-login') {
 		return createAcademicSamlLoginPreviewEditorState();
 	}
-	if (template.id === 'oidc-login') {
+	if (template.id === 'default-login') {
 		return createLoginPreviewEditorState();
+	}
+	if (template.id === 'default-login-no-consent') {
+		return createLoginNoConsentPreviewEditorState();
 	}
 
 	const nodes = template.nodes.map((node, index) => ({
@@ -821,6 +1019,7 @@ function createAcademicSamlLoginPreviewEditorState(): LoginUiRuntimeContractPrev
 				config: {
 					ui_kind: 'authentication',
 					authentication_profile_ref: 'default',
+					screen_ref: 'login',
 					outputs: [
 						{ id: 'mail_otp', label: 'Email OTP' },
 						{ id: 'totp', label: 'Authenticator app' },
@@ -935,6 +1134,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				config: {
 					ui_kind: 'authentication',
 					authentication_profile_ref: 'default',
+					screen_ref: 'login',
 					outputs: [
 						{ id: 'mail_otp', label: 'Email OTP' },
 						{ id: 'totp', label: 'Authenticator app' },
@@ -1087,10 +1287,121 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 	};
 }
 
+function createLoginNoConsentPreviewEditorState(): LoginUiRuntimeContractPreview['editor'] {
+	const authenticationOutputs = [
+		{ id: 'mail_otp', label: 'Email OTP' },
+		{ id: 'totp', label: 'Authenticator app' },
+		{ id: 'passkey', label: 'Passkey' }
+	];
+	return {
+		nodes: [
+			{
+				id: 'request',
+				type: 'entry',
+				title: 'Login Request',
+				position: { x: 360, y: 0 },
+				config: { ui_kind: 'entry' }
+			},
+			{
+				id: 'session-check',
+				type: 'session_check',
+				title: 'Session Check',
+				position: { x: 360, y: 144 },
+				config: { ui_kind: 'session' }
+			},
+			{
+				id: 'authentication',
+				type: 'authentication',
+				title: 'Authentication Method',
+				position: { x: 520, y: 288 },
+				config: {
+					ui_kind: 'authentication',
+					authentication_profile_ref: 'default',
+					screen_ref: 'login',
+					outputs: authenticationOutputs
+				}
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				type: 'complete',
+				title: 'Complete',
+				position: { x: 120, y: 624 },
+				config: {
+					ui_kind: 'complete',
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
+						role: 'output'
+					}
+				}
+			},
+			{
+				id: 'oidc-authorization-complete',
+				type: 'complete',
+				title: 'Complete',
+				position: { x: 600, y: 624 },
+				config: {
+					ui_kind: 'complete',
+					completion_block: {
+						id: 'oidc-authorization-completion',
+						label: 'OIDC Authorization Completion',
+						protocol: 'oidc',
+						purpose: 'authorization',
+						role: 'output'
+					}
+				}
+			}
+		],
+		edges: [
+			{
+				id: 'request:next->session-check',
+				source: 'request',
+				source_handle: 'next',
+				target: 'session-check'
+			},
+			{
+				id: 'session-check:continue->saml-attribute-release-complete',
+				source: 'session-check',
+				source_handle: 'continue',
+				target: 'saml-attribute-release-complete'
+			},
+			{
+				id: 'session-check:continue->oidc-authorization-complete',
+				source: 'session-check',
+				source_handle: 'continue',
+				target: 'oidc-authorization-complete'
+			},
+			{
+				id: 'session-check:authenticate->authentication',
+				source: 'session-check',
+				source_handle: 'authenticate',
+				target: 'authentication'
+			},
+			...authenticationOutputs.flatMap((output) => [
+				{
+					id: `authentication:${output.id}->saml-attribute-release-complete`,
+					source: 'authentication',
+					source_handle: output.id,
+					target: 'saml-attribute-release-complete'
+				},
+				{
+					id: `authentication:${output.id}->oidc-authorization-complete`,
+					source: 'authentication',
+					source_handle: output.id,
+					target: 'oidc-authorization-complete'
+				}
+			])
+		],
+		viewport: { x: 36, y: 36, zoom: 1 }
+	};
+}
+
 function createPreviewEditorEdges(
 	template: NewFlowTemplate
 ): LoginUiRuntimeContractPreview['editor']['edges'] {
-	if (template.id === 'oidc-registration') {
+	if (template.id === 'default-registration') {
 		return [
 			{
 				id: 'request:next->registration-method',
@@ -1142,7 +1453,47 @@ function createPreviewEditorEdges(
 			}
 		];
 	}
-	if (template.id === 'oidc-login') {
+	if (template.id === 'default-registration-no-consent') {
+		return [
+			{
+				id: 'request:next->registration-method',
+				source: 'request',
+				source_handle: 'next',
+				target: 'registration-method'
+			},
+			{
+				id: 'registration-method:mail_otp->account-create',
+				source: 'registration-method',
+				source_handle: 'mail_otp',
+				target: 'account-create'
+			},
+			{
+				id: 'registration-method:totp->account-create',
+				source: 'registration-method',
+				source_handle: 'totp',
+				target: 'account-create'
+			},
+			{
+				id: 'registration-method:passkey->account-create',
+				source: 'registration-method',
+				source_handle: 'passkey',
+				target: 'account-create'
+			},
+			{
+				id: 'registration-method:facebook->account-create',
+				source: 'registration-method',
+				source_handle: 'facebook',
+				target: 'account-create'
+			},
+			{
+				id: 'account-create:completed->output',
+				source: 'account-create',
+				source_handle: 'completed',
+				target: 'output'
+			}
+		];
+	}
+	if (template.id === 'default-login') {
 		return [
 			{
 				id: 'request:next->session-check',
@@ -1226,18 +1577,16 @@ function runtimeConfigForNode(
 			{ id: 'passkey', label: 'Passkey' },
 			{ id: 'facebook', label: 'Facebook' }
 		];
+		config.screen_ref = type === 'registration' ? 'registration' : 'login';
 	}
-	if (type === 'registration') {
-		config.profile_form_ref = 'basic_profile';
-	}
-	if (type === 'profile_form') {
-		config.profile_form_ref = 'basic_profile';
+	if (type === 'screen') {
+		config.screen_ref = 'profile_completion';
 	}
 	if (type === 'consent') {
 		config.consent_policy_ref =
 			template.id === 'academic-saml-login' || template.id === 'saml-attribute-release'
 				? 'saml_attribute_release_policy'
-				: template.id === 'oidc-registration'
+				: template.id === 'default-registration'
 					? 'registration_consent_policy'
 					: 'oidc_authorization_consent_policy';
 	}
@@ -1248,15 +1597,22 @@ function completionBlockForNode(
 	template: NewFlowTemplate,
 	nodeId: string
 ): Record<string, string> | null {
-	const role = nodeId === 'consent' ? 'consent' : nodeId === 'output' ? 'output' : '';
+	const role =
+		nodeId === 'consent' || nodeId.endsWith('-consent')
+			? 'consent'
+			: nodeId === 'output' || nodeId.endsWith('-complete')
+				? 'output'
+				: '';
 	if (!role) return null;
-	const protocol = template.protocol.toLowerCase();
+	const explicitBlock = completionBlockProtocolAndPurposeForNode(nodeId);
+	const protocol = explicitBlock?.protocol ?? template.protocol.toLowerCase();
 	const purpose =
-		template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
+		explicitBlock?.purpose ??
+		(template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
 			? 'attribute_release'
-			: template.id === 'oidc-registration'
+			: template.id === 'default-registration' || template.id === 'default-registration-no-consent'
 				? 'registration'
-				: 'authorization';
+				: 'authorization');
 	return {
 		id: `${protocol}-${purpose}-completion`,
 		label: completionBlockLabel(protocol, purpose),
@@ -1264,6 +1620,21 @@ function completionBlockForNode(
 		purpose,
 		role
 	};
+}
+
+function completionBlockProtocolAndPurposeForNode(
+	nodeId: string
+): { protocol: string; purpose: string } | null {
+	if (nodeId.startsWith('saml-attribute-release')) {
+		return { protocol: 'saml', purpose: 'attribute_release' };
+	}
+	if (nodeId.startsWith('oidc-authorization')) {
+		return { protocol: 'oidc', purpose: 'authorization' };
+	}
+	if (nodeId.startsWith('oidc-registration')) {
+		return { protocol: 'oidc', purpose: 'registration' };
+	}
+	return null;
 }
 
 function completionBlockLabel(protocol: string, purpose: string): string {
@@ -1281,10 +1652,10 @@ function flowNodeTypeForNode(nodeId: string, flowKind: string): string {
 	if (nodeId === 'session-check') return 'session_check';
 	if (nodeId.includes('method') && flowKind === 'registration') return 'registration';
 	if (nodeId.includes('authentication')) return 'authentication';
-	if (nodeId.includes('profile')) return 'profile_form';
+	if (nodeId.includes('profile')) return 'screen';
 	if (nodeId.includes('consent')) return 'consent';
 	if (nodeId.includes('account')) return 'account_action';
-	if (nodeId === 'output') return 'complete';
+	if (nodeId === 'output' || nodeId.endsWith('-complete')) return 'complete';
 	return 'entry';
 }
 
@@ -1296,13 +1667,15 @@ function defaultSourceHandleForNode(nodeId: string): string {
 	return 'next';
 }
 
-function loginUiComponentForNode(nodeId: string): string {
+function loginUiComponentForNode(template: NewFlowTemplate, nodeId: string): string {
 	if (nodeId === 'request') return 'interaction_context';
 	if (nodeId.includes('session')) return 'session_check';
 	if (nodeId.includes('method') || nodeId.includes('authentication')) {
-		return 'authentication_method_selector';
+		return template.flowKind === 'registration'
+			? 'registration_method_selector'
+			: 'authentication_method_selector';
 	}
-	if (nodeId.includes('profile')) return 'profile_form';
+	if (nodeId.includes('profile')) return 'screen';
 	if (nodeId.includes('consent')) return 'consent_policy';
 	if (nodeId.includes('mapping')) return 'field_mapping_preview';
 	if (nodeId.includes('account')) return 'account_action';

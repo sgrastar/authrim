@@ -3511,6 +3511,7 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   config.features.queue = { enabled: queueEnabled };
   config.features.r2 = { enabled: r2Enabled };
   config.features.email = {
+    ...config.features.email,
     provider: emailProvider as 'none' | 'cloudflare' | 'resend' | 'sendgrid' | 'ses',
     configured: config.features.email?.configured || false,
     fromAddress: config.features.email?.fromAddress,

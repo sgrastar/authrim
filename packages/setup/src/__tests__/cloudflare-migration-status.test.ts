@@ -16,9 +16,9 @@ describe('getBlockingChangedMigrationFiles', () => {
       appliedChecksum: 'applied-002',
     },
     {
-      filename: '017_consent_statement_version_end_time.sql',
+      filename: '015_core_consent_screens_scopes.sql',
       status: 'pending',
-      checksum: 'current-017',
+      checksum: 'current-015',
     },
   ];
 
@@ -30,10 +30,7 @@ describe('getBlockingChangedMigrationFiles', () => {
 
   it('does not block a selected pending migration for unrelated changed files', () => {
     expect(
-      getBlockingChangedMigrationFiles(
-        migrations,
-        new Set(['017_consent_statement_version_end_time.sql'])
-      )
+      getBlockingChangedMigrationFiles(migrations, new Set(['015_core_consent_screens_scopes.sql']))
     ).toEqual([]);
   });
 

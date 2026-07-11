@@ -7,19 +7,13 @@
 		adminSettingsAPI,
 		adminUiConfigAPI,
 		scopedSettingsAPI,
-		isInternalSetting,
 		SettingsConflictError,
-		convertPatchesToAPIRequest,
 		type CategorySettings,
 		type CategoryMetaFull,
-		type SettingMetaItem,
-		type UIPatch,
 		type SettingsPatchRequest,
-		type SettingSource,
 		type UIConfigResponse,
 		type ScopeContext
 	} from '$lib/api/admin-settings';
-	import { InheritanceIndicator } from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
@@ -32,7 +26,6 @@
 	let meta = $state<CategoryMetaFull | null>(null);
 	let settings = $state<CategorySettings | null>(null);
 	let loading = $state(true);
-	let saving = $state(false);
 	let error = $state('');
 	let successMessage = $state('');
 	let tenantSettings = $state<CategorySettings | null>(null);
@@ -107,9 +100,6 @@
 	let initialUiConfigForm = $state<UIConfigForm | null>(null);
 
 	// Track pending changes
-	let pendingPatches = $state<UIPatch[]>([]);
-
-	// Get current scope context from store
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
 	let canEditGlobalUiConfig = $derived(canEdit);
@@ -118,7 +108,6 @@
 	let currentLevel = $derived(settingsContext.currentLevel);
 
 	// Derived: Check if there are unsaved changes
-	const hasChanges = $derived(pendingPatches.length > 0);
 	const hasTrustedOriginsChanges = $derived(trustedOriginsInput !== initialTrustedOriginsInput);
 	const hasUiConfigChanges = $derived(
 		initialUiConfigForm
@@ -144,14 +133,11 @@
 	const selectedAppLoginRedirectUris = $derived(
 		appLoginClientOptions.find((option) => option.clientId === appLoginClientId)?.redirectUris ?? []
 	);
-
-	// Load data on mount
 	onMount(async () => {
 		await settingsContext.initialize();
 		await loadData();
 	});
 
-	// Track previous scope context to detect changes
 	let prevScopeKey = $state<string | null>(null);
 
 	// Reload when scope changes
@@ -172,7 +158,6 @@
 		appLoginClientOptionsError = '';
 		serviceSiteError = '';
 		uiConfigError = '';
-		pendingPatches = [];
 
 		try {
 			const selectedTenantId = resolveSelectedTenantId();
@@ -339,48 +324,6 @@
 	}
 
 	// Get current value (considering pending patches)
-	function getCurrentValue(key: string): unknown {
-		const patch = pendingPatches.find((p) => p.key === key);
-		if (patch) {
-			if (patch.op === 'set') return patch.value;
-			if (patch.op === 'disable') return false;
-			if (patch.op === 'clear') return settings?.values[key];
-		}
-		return settings?.values[key];
-	}
-
-	// Check if a setting is locked by environment variable
-	function isLockedByEnv(key: string): boolean {
-		return settings?.sources[key] === 'env';
-	}
-
-	// Check if a setting is locked
-	function isSettingLocked(key: string, settingMeta: SettingMetaItem): boolean {
-		if (!canEditLoginUiSettings) return true;
-		if (isLockedByEnv(key)) return true;
-		if (isInternalSetting(settingMeta)) return true;
-		return false;
-	}
-
-	// Check if a setting should be hidden (in_development status)
-	function shouldHideSetting(settingMeta: SettingMetaItem): boolean {
-		return settingMeta.status === 'in_development';
-	}
-
-	// Handle value change
-	function handleChange(key: string, value: unknown) {
-		pendingPatches = pendingPatches.filter((p) => p.key !== key);
-		const originalValue = settings?.values[key];
-		if (value !== originalValue) {
-			pendingPatches = [...pendingPatches, { op: 'set', key, value }];
-		}
-	}
-
-	// Discard all changes
-	function discardChanges() {
-		pendingPatches = [];
-	}
-
 	function discardUiConfigChanges() {
 		if (!initialUiConfigForm) return;
 		uiConfigForm = {
@@ -743,59 +686,6 @@
 	}
 
 	// Save changes
-	async function saveChanges() {
-		if (!settings || pendingPatches.length === 0) return;
-
-		if (!canEditLoginUiSettings) {
-			error = $LL.admin_login_ui_error_no_settings_permission();
-			return;
-		}
-
-		saving = true;
-		error = '';
-		successMessage = '';
-
-		try {
-			const patchData = convertPatchesToAPIRequest(pendingPatches);
-
-			const result = await scopedSettingsAPI.updateSettingsForScope(CATEGORY, scopeContext, {
-				ifMatch: settings.version,
-				...patchData
-			});
-
-			pendingPatches = [];
-
-			const appliedCount = result.applied.length + result.cleared.length + result.disabled.length;
-			successMessage = $LL.admin_login_ui_updated_settings({ count: appliedCount });
-
-			await loadData();
-
-			setTimeout(() => {
-				successMessage = '';
-			}, 3000);
-		} catch (err) {
-			if (err instanceof SettingsConflictError) {
-				error = $LL.admin_login_ui_settings_conflict();
-			} else {
-				error = err instanceof Error ? err.message : $LL.admin_login_ui_error_save_settings();
-			}
-		} finally {
-			saving = false;
-		}
-	}
-
-	// Render input based on setting type
-	function getInputType(settingMeta: SettingMetaItem): string {
-		switch (settingMeta.type) {
-			case 'number':
-			case 'duration':
-				return 'number';
-			case 'boolean':
-				return 'checkbox';
-			default:
-				return 'text';
-		}
-	}
 </script>
 
 <svelte:head>
@@ -1472,154 +1362,16 @@
 				<p class="text-secondary">{$LL.admin_login_ui_loading_settings()}</p>
 			</div>
 		{:else if meta && settings}
-			<!-- Settings form -->
-			<div class="settings-form-card">
-				{#each Object.entries(meta.settings).filter(([_key, s]) => !shouldHideSetting(s)) as [key, settingMeta] (key)}
-					{@const value = getCurrentValue(key)}
-					{@const locked = isSettingLocked(key, settingMeta)}
-					{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
-					<div class="setting-item" class:modified={hasPendingChange}>
-						<div class="setting-item-content">
-							<div class="setting-info">
-								<div class="setting-label-row">
-									<label for={key} class="setting-label">{settingMeta.label}</label>
-									<InheritanceIndicator
-										source={(settings?.sources[key] as SettingSource) || 'default'}
-										currentScope={currentLevel}
-										{canEdit}
-										compact={true}
-									/>
-									{#if locked && !isLockedByEnv(key)}
-										<span class="setting-locked">{$LL.admin_login_ui_locked()}</span>
-									{/if}
-									{#if hasPendingChange}
-										<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
-									{/if}
-								</div>
-								<p class="setting-description">
-									{settingMeta.description}
-									{#if settingMeta.unit}
-										<span class="setting-unit">({settingMeta.unit})</span>
-									{/if}
-								</p>
-							</div>
-
-							<div class="setting-control">
-								{#if settingMeta.type === 'boolean'}
-									<ToggleSwitch
-										checked={Boolean(value)}
-										disabled={locked}
-										id={key}
-										onchange={(newValue) => handleChange(key, newValue)}
-									/>
-								{:else if settingMeta.type === 'enum' && settingMeta.enum}
-									<select
-										id={key}
-										value={String(value)}
-										disabled={locked}
-										onchange={(e) => handleChange(key, e.currentTarget.value)}
-										class="settings-select"
-									>
-										{#each settingMeta.enum as option (option)}
-											<option value={option}>{option}</option>
-										{/each}
-									</select>
-								{:else}
-									<input
-										type={getInputType(settingMeta)}
-										id={key}
-										value={String(value ?? '')}
-										disabled={locked}
-										min={settingMeta.min}
-										max={settingMeta.max}
-										oninput={(e) => {
-											const inputValue =
-												settingMeta.type === 'number' || settingMeta.type === 'duration'
-													? Number(e.currentTarget.value)
-													: e.currentTarget.value;
-											handleChange(key, inputValue);
-										}}
-										class="settings-input"
-									/>
-								{/if}
-								{#if settingMeta.min !== undefined || settingMeta.max !== undefined}
-									<p class="settings-range-hint">
-										{#if settingMeta.min !== undefined && settingMeta.max !== undefined}
-											{$LL.admin_login_ui_range({
-												min: settingMeta.min,
-												max: settingMeta.max
-											})}
-										{:else if settingMeta.min !== undefined}
-											{$LL.admin_login_ui_min({ min: settingMeta.min })}
-										{:else if settingMeta.max !== undefined}
-											{$LL.admin_login_ui_max({ max: settingMeta.max })}
-										{/if}
-									</p>
-								{/if}
-							</div>
-						</div>
+			<div class="settings-form-card moved-theme-card">
+				<div class="moved-theme-content">
+					<div>
+						<h2>{$LL.admin_header_theme()}</h2>
+						<p>
+							Theme templates, visual assets, page shell settings, preview, publish, and rollback
+							now live on a dedicated page.
+						</p>
 					</div>
-				{/each}
-			</div>
-
-			<!-- Action buttons -->
-			<div class="settings-actions">
-				<span class="cache-notice">{$LL.admin_login_ui_cache_notice()}</span>
-				<button
-					onclick={discardChanges}
-					disabled={!hasChanges || saving || !canEditLoginUiSettings}
-					class="btn btn-secondary"
-				>
-					{$LL.admin_login_ui_discard_changes()}
-				</button>
-				<button
-					onclick={saveChanges}
-					disabled={!hasChanges || saving || !canEditLoginUiSettings}
-					class="btn btn-primary"
-				>
-					{saving
-						? $LL.admin_login_ui_saving()
-						: `${$LL.admin_login_ui_save_changes()}${hasChanges ? ` (${pendingPatches.length})` : ''}`}
-				</button>
-			</div>
-
-			<!-- Coming Soon Section -->
-			<div class="coming-soon-section">
-				<h2 class="coming-soon-title">{$LL.admin_login_ui_coming_soon_title()}</h2>
-				<p class="coming-soon-description">{$LL.admin_login_ui_coming_soon_description()}</p>
-				<div class="coming-soon-list">
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_favicon()}</span>
-						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_favicon_desc()}</span>
-					</div>
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_background()}</span>
-						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_background_desc()}</span>
-					</div>
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_css()}</span>
-						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_custom_css_desc()}</span>
-					</div>
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_header()}</span>
-						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_header_desc()}</span>
-					</div>
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer()}</span>
-						<span class="coming-soon-desc">{$LL.admin_login_ui_coming_soon_footer_desc()}</span>
-					</div>
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_footer_links()}</span>
-						<span class="coming-soon-desc"
-							>{$LL.admin_login_ui_coming_soon_footer_links_desc()}</span
-						>
-					</div>
-					<div class="coming-soon-item">
-						<span class="coming-soon-label">{$LL.admin_login_ui_coming_soon_custom_blocks()}</span>
-						<span class="coming-soon-desc"
-							>{$LL.admin_login_ui_coming_soon_custom_blocks_desc()}</span
-						>
-					</div>
+					<a class="btn btn-primary" href="/admin/themes">Open theme settings</a>
 				</div>
 			</div>
 		{/if}
@@ -1779,15 +1531,36 @@
 		margin-top: 16px;
 	}
 
+	.moved-theme-card {
+		padding: 20px;
+		margin-bottom: 16px;
+	}
+
+	.moved-theme-content {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+		flex-wrap: wrap;
+	}
+
+	.moved-theme-content h2 {
+		margin: 0 0 4px;
+		font-size: 1rem;
+		color: var(--color-text);
+	}
+
+	.moved-theme-content p {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.875rem;
+		line-height: 1.35;
+	}
+
 	.cache-notice {
 		color: var(--color-text-muted);
 		font-size: 0.78rem;
 		line-height: 1.35;
-	}
-
-	.settings-actions {
-		align-items: center;
-		flex-wrap: wrap;
 	}
 
 	.reload-action {

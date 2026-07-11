@@ -42,6 +42,7 @@ import {
   getTextContent,
   generateSAMLId,
   base64Encode,
+  parseXmlBoolean,
 } from '../common/xml-utils';
 import {
   decodePostBindingMessage,
@@ -52,7 +53,7 @@ import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig } from '../admin/providers';
 import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
-import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSPWithDiagnostics,
@@ -1058,7 +1059,7 @@ function getRawQueryParam(search: string, name: string): string | undefined {
 /**
  * Parse AuthnRequest XML into structured data
  */
-function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
+export function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
   const doc = parseXml(xml);
   const authnRequestElement = doc.documentElement;
 
@@ -1111,7 +1112,7 @@ function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
     const format = getAttribute(nameIdPolicyElement, 'Format');
     nameIdPolicy = {
       format: format as NonNullable<SAMLAuthnRequest['nameIdPolicy']>['format'],
-      allowCreate: getAttribute(nameIdPolicyElement, 'AllowCreate') === 'true',
+      allowCreate: parseXmlBoolean(getAttribute(nameIdPolicyElement, 'AllowCreate')) ?? false,
       spNameQualifier: getAttribute(nameIdPolicyElement, 'SPNameQualifier') || undefined,
     };
   }
@@ -1127,8 +1128,8 @@ function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
     issuer,
     nameIdPolicy,
     requestedAuthnContext,
-    forceAuthn: forceAuthnAttr === 'true',
-    isPassive: isPassiveAttr === 'true',
+    forceAuthn: parseXmlBoolean(forceAuthnAttr) ?? false,
+    isPassive: parseXmlBoolean(isPassiveAttr) ?? false,
   };
 }
 
@@ -1283,11 +1284,10 @@ async function generateSAMLResponse(
   requestContext?: SAMLRequestContext,
   log?: { debug(message: string, context?: Record<string, unknown>): void }
 ): Promise<string> {
-  const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+  const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
-    role: 'idp',
     counterpartyEntityId: spConfig.entityId,
-    policy: getSAMLSigningPolicy(spConfig),
+    providerPolicy: spConfig.signingKeyPolicy,
   });
 
   const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig);
@@ -1639,11 +1639,10 @@ async function generateSAMLProtocolErrorResponse(
 ): Promise<string> {
   const signingMaterial =
     spConfig.signResponses || spConfig.signAssertions
-      ? await getSAMLSigningMaterial(env, {
+      ? await getSAMLIdPSigningMaterial(env, {
           tenantId,
-          role: 'idp',
           counterpartyEntityId: spConfig.entityId,
-          policy: getSAMLSigningPolicy(spConfig),
+          providerPolicy: spConfig.signingKeyPolicy,
         })
       : undefined;
 

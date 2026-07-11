@@ -86,6 +86,13 @@ describe('Admin UI theme assets', () => {
 		}
 	});
 
+	it('keeps screen preview and editor primary actions on a defined contrast token', () => {
+		const screenEditor = readSource('routes/admin/screens/+page.svelte');
+
+		expect(screenEditor).not.toContain('var(--color-primary-contrast)');
+		expect(screenEditor.match(/var\(--button-primary-color/g)).toHaveLength(2);
+	});
+
 	it('keeps detail and danger surfaces theme-token driven', () => {
 		const themesCss = readSource('lib/styles/themes.css');
 		const detailHeader = readSource('lib/components/admin/AdminDetailHeader.svelte');

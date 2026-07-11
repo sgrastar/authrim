@@ -87,7 +87,8 @@ const adminUsers = {
 	admin_user_detail_user_id: 'ユーザーID',
 	admin_user_detail_tenant: 'テナント',
 	admin_user_detail_mfa: 'MFA',
-	admin_user_detail_no_user_information_fields: 'ユーザー情報のカラムは設定されていません',
+	admin_user_detail_no_user_information_fields:
+		'このユーザーに追加のユーザー属性（カスタムクレーム）はありません',
 	admin_user_detail_phone_number: '電話番号',
 	admin_user_detail_phone_verified: '電話番号確認済み',
 	admin_user_detail_phone_verified_desc: 'ユーザーの電話番号を確認済みとして扱います',

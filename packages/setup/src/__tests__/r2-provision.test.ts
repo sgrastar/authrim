@@ -69,6 +69,7 @@ describe('r2-provision command', () => {
     deployCommandMock.mockResolvedValue(undefined);
     provisionR2BucketsMock.mockReset();
     provisionR2BucketsMock.mockResolvedValue([
+      { binding: 'PUBLIC_ASSETS', name: 'prod-public-assets' },
       { binding: 'AVATARS', name: 'prod-authrim-avatars' },
       { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
       { binding: 'AUDIT_ARCHIVE', name: 'prod-audit-archive' },
@@ -102,6 +103,7 @@ describe('r2-provision command', () => {
 
     expect(config.features.r2.enabled).toBe(true);
     expect(lock.r2).toEqual({
+      PUBLIC_ASSETS: { name: 'prod-public-assets' },
       AVATARS: { name: 'prod-authrim-avatars' },
       DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
       AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
@@ -117,6 +119,7 @@ describe('r2-provision command', () => {
       expect.objectContaining({ features: expect.objectContaining({ r2: { enabled: true } }) }),
       expect.objectContaining({
         r2: expect.objectContaining({
+          PUBLIC_ASSETS: { name: 'prod-public-assets' },
           DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
           SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
         }),
@@ -139,7 +142,7 @@ describe('r2-provision command', () => {
     expect(deployCommandMock).not.toHaveBeenCalled();
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
-    expect(Object.keys(lock.r2)).toHaveLength(6);
+    expect(Object.keys(lock.r2)).toHaveLength(7);
   });
 
   it('does not update local state or deploy when bucket provisioning fails', async () => {

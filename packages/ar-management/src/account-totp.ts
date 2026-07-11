@@ -121,16 +121,16 @@ async function getLegacyAuthenticationMethodDefault(
   try {
     const rawSystemSettings = await env.SETTINGS?.get('system_settings');
     if (!rawSystemSettings) {
-      return true;
+      return method === 'passkey';
     }
     const systemSettings = JSON.parse(rawSystemSettings) as {
       advanced?: { passkeyEnabled?: boolean; magicLinkEnabled?: boolean };
     };
     return method === 'passkey'
       ? systemSettings.advanced?.passkeyEnabled !== false
-      : systemSettings.advanced?.magicLinkEnabled !== false;
+      : systemSettings.advanced?.magicLinkEnabled === true;
   } catch {
-    return true;
+    return method === 'passkey';
   }
 }
 

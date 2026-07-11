@@ -29,7 +29,9 @@ import {
   getTenantIdFromContext,
   profileForTotpPreset,
   resolveAuthCorePersistenceAdapterFromEnv,
+  SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
+  validateLoginUICustomCss,
 } from '@authrim/ar-lib-core';
 import {
   decryptSecretFields,
@@ -142,13 +144,57 @@ interface AuthenticationMethods {
 interface UIConfig {
   theme: string;
   variant: string;
+  themeTemplate: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
   branding: {
     logoUrl: string | null;
     faviconUrl: string | null;
     brandName: string;
   };
+  pageTemplate: {
+    layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
+    fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
+    fontScale: 'compact' | 'comfortable' | 'spacious';
+    backgroundColor: string;
+    titleColor: string;
+    textColor: string;
+    copyColor: string;
+    logoDisplay: 'auto' | 'image' | 'text' | 'hidden';
+    logoLayout: 'stack' | 'row';
+    headerEnabled: boolean;
+    subtitleEnabled: boolean;
+    footerEnabled: boolean;
+    poweredByEnabled: boolean;
+    authSwitchLinkEnabled: boolean;
+    topbarPosition:
+      | 'below_card'
+      | 'in_card'
+      | 'top_right'
+      | 'bottom_left'
+      | 'bottom_center'
+      | 'bottom_right'
+      | 'hidden';
+    themeToggleEnabled: boolean;
+    languageSelectEnabled: boolean;
+    languageSwitcherPosition: 'below_card' | 'top_right' | 'hidden';
+    headerStyle: 'center' | 'bar';
+    footerStyle: 'simple' | 'bar';
+    splitFrame: 'full' | 'card';
+    splitPanelSide: 'left' | 'right';
+    splitPanelWidth: 'narrow' | 'wide';
+    splitBackgroundMode: 'shared' | 'brand' | 'panel';
+    loginPanelBackgroundColor: string;
+    loginPanelBackgroundGradientColor: string;
+    loginPanelBackgroundOpacity: number;
+    brandContentMode: 'logo_copy' | 'logo' | 'none';
+    brandPosition: 'top' | 'center' | 'bottom';
+    brandAlign: 'left' | 'center' | 'right';
+    brandPanelTitle: string | null;
+    brandPanelText: string | null;
+  };
   appearance: {
     backgroundImageUrl: string | null;
+    loginPanelBackgroundImageUrl: string | null;
+    thumbnailUrl: string | null;
     customCss: string | null;
     headerText: string | null;
     footerText: string | null;
@@ -190,7 +236,7 @@ interface AuthenticationMethodsErrorResponse {
 // Defaults
 // =============================================================================
 
-const DEFAULT_CACHE_TTL = 180; // 3 minutes (seconds)
+const DEFAULT_CACHE_TTL = 60; // seconds
 const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
@@ -236,13 +282,50 @@ const LOGIN_PROVIDER_ICON_NAMES = new Set([
 const DEFAULT_UI_CONFIG: UIConfig = {
   theme: 'light',
   variant: 'beige',
+  themeTemplate: 'meridian',
   branding: {
     logoUrl: null,
     faviconUrl: null,
     brandName: 'Authrim',
   },
+  pageTemplate: {
+    layout: 'centered_card',
+    fontFamily: 'system',
+    fontScale: 'comfortable',
+    backgroundColor: '',
+    titleColor: '',
+    textColor: '',
+    copyColor: '',
+    logoDisplay: 'auto',
+    logoLayout: 'stack',
+    headerEnabled: true,
+    subtitleEnabled: true,
+    footerEnabled: true,
+    poweredByEnabled: true,
+    authSwitchLinkEnabled: true,
+    topbarPosition: 'below_card',
+    themeToggleEnabled: true,
+    languageSelectEnabled: true,
+    languageSwitcherPosition: 'below_card',
+    headerStyle: 'center',
+    footerStyle: 'simple',
+    splitFrame: 'full',
+    splitPanelSide: 'left',
+    splitPanelWidth: 'narrow',
+    splitBackgroundMode: 'shared',
+    loginPanelBackgroundColor: '',
+    loginPanelBackgroundGradientColor: '',
+    loginPanelBackgroundOpacity: 70,
+    brandContentMode: 'logo_copy',
+    brandPosition: 'center',
+    brandAlign: 'left',
+    brandPanelTitle: null,
+    brandPanelText: null,
+  },
   appearance: {
     backgroundImageUrl: null,
+    loginPanelBackgroundImageUrl: null,
+    thumbnailUrl: null,
     customCss: null,
     headerText: null,
     footerText: null,
@@ -251,8 +334,8 @@ const DEFAULT_UI_CONFIG: UIConfig = {
   },
   supportedLocales: ['en', 'ja'],
   selfService: {
-    accountPageEnabled: false,
-    accountPagePath: '/account',
+    accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+    accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
   },
 };
 
@@ -304,16 +387,52 @@ async function getSystemSettings(env: Env): Promise<SystemSettings> {
 interface LoginUIKVSettings {
   'login-ui.theme'?: string;
   'login-ui.variant'?: string;
+  'login-ui.theme_template'?: string;
+  'login-ui.page_layout'?: string;
+  'login-ui.font_family'?: string;
+  'login-ui.font_scale'?: string;
+  'login-ui.background_color'?: string;
+  'login-ui.title_color'?: string;
+  'login-ui.text_color'?: string;
+  'login-ui.copy_color'?: string;
   'login-ui.brand_name'?: string;
   'login-ui.logo_url'?: string;
   'login-ui.favicon_url'?: string;
+  'login-ui.thumbnail_url'?: string;
+  'login-ui.logo_display'?: string;
+  'login-ui.logo_layout'?: string;
+  'login-ui.brand_panel_title'?: string;
+  'login-ui.brand_panel_text'?: string;
   'login-ui.supported_locales'?: string;
   'login-ui.background_image_url'?: string;
+  'login-ui.login_panel_background_image_url'?: string;
   'login-ui.custom_css'?: string;
+  'login-ui.header_enabled'?: boolean | string;
+  'login-ui.subtitle_enabled'?: boolean | string;
+  'login-ui.footer_enabled'?: boolean | string;
+  'login-ui.powered_by_enabled'?: boolean | string;
+  'login-ui.auth_switch_link_enabled'?: boolean | string;
+  'login-ui.topbar_position'?: string;
+  'login-ui.theme_toggle_enabled'?: boolean | string;
+  'login-ui.language_select_enabled'?: boolean | string;
+  'login-ui.language_switcher_position'?: string;
+  'login-ui.header_style'?: string;
+  'login-ui.footer_style'?: string;
+  'login-ui.split_frame'?: string;
+  'login-ui.split_panel_side'?: string;
+  'login-ui.split_panel_width'?: string;
+  'login-ui.split_background_mode'?: string;
+  'login-ui.login_panel_background_color'?: string;
+  'login-ui.login_panel_background_gradient_color'?: string;
+  'login-ui.login_panel_background_opacity'?: number | string;
+  'login-ui.brand_content_mode'?: string;
+  'login-ui.brand_position'?: string;
+  'login-ui.brand_align'?: string;
   'login-ui.header_text'?: string;
   'login-ui.footer_text'?: string;
   'login-ui.footer_links'?: string;
   'login-ui.custom_blocks'?: string;
+  'login-ui.custom_themes'?: string;
 }
 
 interface AuthenticationMethodKVSettings {
@@ -384,12 +503,47 @@ interface ExternalLoginProviderUsageConfig {
 interface LoginUIResolved {
   theme: string;
   variant: string;
+  themeTemplate: UIConfig['themeTemplate'];
+  pageLayout: UIConfig['pageTemplate']['layout'];
+  fontFamily: UIConfig['pageTemplate']['fontFamily'];
+  fontScale: UIConfig['pageTemplate']['fontScale'];
+  backgroundColor: string;
+  titleColor: string;
+  textColor: string;
+  copyColor: string;
   brandName: string;
   logoUrl: string | null;
   faviconUrl: string | null;
+  thumbnailUrl: string | null;
+  logoDisplay: UIConfig['pageTemplate']['logoDisplay'];
+  logoLayout: UIConfig['pageTemplate']['logoLayout'];
+  brandPanelTitle: string | null;
+  brandPanelText: string | null;
   supportedLocales: string[];
   backgroundImageUrl: string | null;
+  loginPanelBackgroundImageUrl: string | null;
   customCss: string | null;
+  headerEnabled: boolean;
+  subtitleEnabled: boolean;
+  footerEnabled: boolean;
+  poweredByEnabled: boolean;
+  authSwitchLinkEnabled: boolean;
+  topbarPosition: UIConfig['pageTemplate']['topbarPosition'];
+  themeToggleEnabled: boolean;
+  languageSelectEnabled: boolean;
+  languageSwitcherPosition: UIConfig['pageTemplate']['languageSwitcherPosition'];
+  headerStyle: UIConfig['pageTemplate']['headerStyle'];
+  footerStyle: UIConfig['pageTemplate']['footerStyle'];
+  splitFrame: UIConfig['pageTemplate']['splitFrame'];
+  splitPanelSide: UIConfig['pageTemplate']['splitPanelSide'];
+  splitPanelWidth: UIConfig['pageTemplate']['splitPanelWidth'];
+  splitBackgroundMode: UIConfig['pageTemplate']['splitBackgroundMode'];
+  loginPanelBackgroundColor: string;
+  loginPanelBackgroundGradientColor: string;
+  loginPanelBackgroundOpacity: number;
+  brandContentMode: UIConfig['pageTemplate']['brandContentMode'];
+  brandPosition: UIConfig['pageTemplate']['brandPosition'];
+  brandAlign: UIConfig['pageTemplate']['brandAlign'];
   headerText: string | null;
   footerText: string | null;
   footerLinks: Array<{ label: string; url: string }>;
@@ -416,6 +570,251 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
   }
 }
 
+function readEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
+}
+
+function readNonEmptyString(value: unknown, fallback: string | null = null): string | null {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, MAX_STRING_LENGTH) : fallback;
+}
+
+function readSafeColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmed)) return trimmed;
+  if (/^rgb[a]?\(\s*[0-9.,%\s]+\)$/iu.test(trimmed)) return trimmed;
+  if (/^[a-z]{3,20}$/iu.test(trimmed)) return trimmed;
+  return fallback;
+}
+
+function readBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function readCustomCss(value: unknown, fallback: string | null): string | null {
+  const validation = validateLoginUICustomCss(value);
+  return validation.valid ? validation.sanitizedCss : fallback;
+}
+
+function resolveLoginUIFromKVSettings(
+  kvSettings: LoginUIKVSettings,
+  defaults: LoginUIResolved
+): LoginUIResolved {
+  return {
+    theme: kvSettings['login-ui.theme'] || defaults.theme,
+    variant: kvSettings['login-ui.variant'] || defaults.variant,
+    themeTemplate: readEnum(
+      kvSettings['login-ui.theme_template'],
+      ['classic', 'meridian', 'split-brand-panel', 'fullbleed-glass'],
+      defaults.themeTemplate
+    ),
+    pageLayout: readEnum(
+      kvSettings['login-ui.page_layout'],
+      ['centered_card', 'split_panel', 'fullbleed_card'],
+      defaults.pageLayout
+    ),
+    fontFamily: readEnum(
+      kvSettings['login-ui.font_family'],
+      ['system', 'rounded', 'serif', 'mono'],
+      defaults.fontFamily
+    ),
+    fontScale: readEnum(
+      kvSettings['login-ui.font_scale'],
+      ['compact', 'comfortable', 'spacious'],
+      defaults.fontScale
+    ),
+    backgroundColor: readSafeColor(
+      kvSettings['login-ui.background_color'],
+      defaults.backgroundColor
+    ),
+    titleColor: readSafeColor(kvSettings['login-ui.title_color'], defaults.titleColor),
+    textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
+    copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),
+    brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
+    logoUrl: isValidLoginUIImageUrl(kvSettings['login-ui.logo_url'])
+      ? kvSettings['login-ui.logo_url']!
+      : defaults.logoUrl,
+    faviconUrl: isValidLoginUIImageUrl(kvSettings['login-ui.favicon_url'])
+      ? kvSettings['login-ui.favicon_url']!
+      : defaults.faviconUrl,
+    thumbnailUrl: isValidLoginUIImageUrl(kvSettings['login-ui.thumbnail_url'])
+      ? kvSettings['login-ui.thumbnail_url']!
+      : defaults.thumbnailUrl,
+    logoDisplay: readEnum(
+      kvSettings['login-ui.logo_display'],
+      ['auto', 'image', 'text', 'hidden'],
+      defaults.logoDisplay
+    ),
+    logoLayout: readEnum(kvSettings['login-ui.logo_layout'], ['stack', 'row'], defaults.logoLayout),
+    brandPanelTitle: readNonEmptyString(
+      kvSettings['login-ui.brand_panel_title'],
+      defaults.brandPanelTitle
+    ),
+    brandPanelText: readNonEmptyString(
+      kvSettings['login-ui.brand_panel_text'],
+      defaults.brandPanelText
+    ),
+    supportedLocales: kvSettings['login-ui.supported_locales']
+      ? kvSettings['login-ui.supported_locales']
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && s.length <= 10 && /^[a-z]{2}(-[A-Z]{2})?$/.test(s))
+          .slice(0, 20)
+      : defaults.supportedLocales,
+    backgroundImageUrl: isValidLoginUIImageUrl(kvSettings['login-ui.background_image_url'])
+      ? kvSettings['login-ui.background_image_url']!
+      : defaults.backgroundImageUrl,
+    loginPanelBackgroundImageUrl: isValidLoginUIImageUrl(
+      kvSettings['login-ui.login_panel_background_image_url']
+    )
+      ? kvSettings['login-ui.login_panel_background_image_url']!
+      : defaults.loginPanelBackgroundImageUrl,
+    customCss: readCustomCss(kvSettings['login-ui.custom_css'], defaults.customCss),
+    headerEnabled: readBoolean(kvSettings['login-ui.header_enabled'], defaults.headerEnabled),
+    subtitleEnabled: readBoolean(kvSettings['login-ui.subtitle_enabled'], defaults.subtitleEnabled),
+    footerEnabled: readBoolean(kvSettings['login-ui.footer_enabled'], defaults.footerEnabled),
+    poweredByEnabled: readBoolean(
+      kvSettings['login-ui.powered_by_enabled'],
+      defaults.poweredByEnabled
+    ),
+    authSwitchLinkEnabled: readBoolean(
+      kvSettings['login-ui.auth_switch_link_enabled'],
+      defaults.authSwitchLinkEnabled
+    ),
+    topbarPosition: readEnum(
+      kvSettings['login-ui.topbar_position'],
+      [
+        'below_card',
+        'in_card',
+        'top_right',
+        'bottom_left',
+        'bottom_center',
+        'bottom_right',
+        'hidden',
+      ],
+      readEnum(
+        kvSettings['login-ui.language_switcher_position'],
+        ['below_card', 'top_right', 'hidden'],
+        defaults.topbarPosition
+      )
+    ),
+    themeToggleEnabled: readBoolean(
+      kvSettings['login-ui.theme_toggle_enabled'],
+      defaults.themeToggleEnabled
+    ),
+    languageSelectEnabled: readBoolean(
+      kvSettings['login-ui.language_select_enabled'],
+      defaults.languageSelectEnabled
+    ),
+    languageSwitcherPosition: readEnum(
+      kvSettings['login-ui.language_switcher_position'],
+      ['below_card', 'top_right', 'hidden'],
+      defaults.languageSwitcherPosition
+    ),
+    headerStyle: readEnum(
+      kvSettings['login-ui.header_style'],
+      ['center', 'bar'],
+      defaults.headerStyle
+    ),
+    footerStyle: readEnum(
+      kvSettings['login-ui.footer_style'],
+      ['simple', 'bar'],
+      defaults.footerStyle
+    ),
+    splitFrame: readEnum(kvSettings['login-ui.split_frame'], ['full', 'card'], defaults.splitFrame),
+    splitPanelSide: readEnum(
+      kvSettings['login-ui.split_panel_side'],
+      ['left', 'right'],
+      defaults.splitPanelSide
+    ),
+    splitPanelWidth: readEnum(
+      kvSettings['login-ui.split_panel_width'],
+      ['narrow', 'wide'],
+      defaults.splitPanelWidth
+    ),
+    splitBackgroundMode: readEnum(
+      kvSettings['login-ui.split_background_mode'],
+      ['shared', 'brand', 'panel'],
+      defaults.splitBackgroundMode
+    ),
+    loginPanelBackgroundColor: readSafeColor(
+      kvSettings['login-ui.login_panel_background_color'],
+      defaults.loginPanelBackgroundColor
+    ),
+    loginPanelBackgroundGradientColor: readSafeColor(
+      kvSettings['login-ui.login_panel_background_gradient_color'],
+      defaults.loginPanelBackgroundGradientColor
+    ),
+    loginPanelBackgroundOpacity: readBoundedNumber(
+      kvSettings['login-ui.login_panel_background_opacity'],
+      defaults.loginPanelBackgroundOpacity,
+      0,
+      100
+    ),
+    brandContentMode: readEnum(
+      kvSettings['login-ui.brand_content_mode'],
+      ['logo_copy', 'logo', 'none'],
+      defaults.brandContentMode
+    ),
+    brandPosition: readEnum(
+      kvSettings['login-ui.brand_position'],
+      ['top', 'center', 'bottom'],
+      defaults.brandPosition
+    ),
+    brandAlign: readEnum(
+      kvSettings['login-ui.brand_align'],
+      ['left', 'center', 'right'],
+      defaults.brandAlign
+    ),
+    headerText: kvSettings['login-ui.header_text'] || defaults.headerText,
+    footerText: kvSettings['login-ui.footer_text'] || defaults.footerText,
+    footerLinks:
+      kvSettings['login-ui.footer_links'] === undefined
+        ? defaults.footerLinks
+        : safeParseJsonArray<{ label: string; url: string }>(kvSettings['login-ui.footer_links']),
+    customBlocks:
+      kvSettings['login-ui.custom_blocks'] === undefined
+        ? defaults.customBlocks
+        : safeParseJsonArray<{
+            position: string;
+            type: string;
+            content: string;
+            url?: string;
+            alt?: string;
+          }>(kvSettings['login-ui.custom_blocks']),
+  };
+}
+
+async function applyClientLoginUIOverride(
+  env: Env,
+  tenantId: string,
+  clientId: string | null | undefined,
+  base: LoginUIResolved
+): Promise<LoginUIResolved> {
+  if (!clientId || !/^[A-Za-z0-9._:-]{1,128}$/u.test(clientId)) {
+    return base;
+  }
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:client:${tenantId}:${clientId}:login-ui`);
+    if (!kvJson) return base;
+    return resolveLoginUIFromKVSettings(JSON.parse(kvJson) as LoginUIKVSettings, base);
+  } catch {
+    return base;
+  }
+}
+
 /**
  * Read Login UI settings from AUTHRIM_CONFIG KV (settings-v2 system)
  * Falls back to system_settings.loginUI for backward compatibility
@@ -423,17 +822,54 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
 async function getLoginUISettings(
   env: Env,
   tenantId: string,
-  systemSettings: SystemSettings
+  systemSettings: SystemSettings,
+  clientId?: string | null
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
     theme: DEFAULT_UI_CONFIG.theme,
     variant: DEFAULT_UI_CONFIG.variant,
+    themeTemplate: DEFAULT_UI_CONFIG.themeTemplate,
+    pageLayout: DEFAULT_UI_CONFIG.pageTemplate.layout,
+    fontFamily: DEFAULT_UI_CONFIG.pageTemplate.fontFamily,
+    fontScale: DEFAULT_UI_CONFIG.pageTemplate.fontScale,
+    backgroundColor: DEFAULT_UI_CONFIG.pageTemplate.backgroundColor,
+    titleColor: DEFAULT_UI_CONFIG.pageTemplate.titleColor,
+    textColor: DEFAULT_UI_CONFIG.pageTemplate.textColor,
+    copyColor: DEFAULT_UI_CONFIG.pageTemplate.copyColor,
     brandName: DEFAULT_UI_CONFIG.branding.brandName,
     logoUrl: DEFAULT_UI_CONFIG.branding.logoUrl,
     faviconUrl: DEFAULT_UI_CONFIG.branding.faviconUrl,
+    thumbnailUrl: DEFAULT_UI_CONFIG.appearance.thumbnailUrl,
+    logoDisplay: DEFAULT_UI_CONFIG.pageTemplate.logoDisplay,
+    logoLayout: DEFAULT_UI_CONFIG.pageTemplate.logoLayout,
+    brandPanelTitle: DEFAULT_UI_CONFIG.pageTemplate.brandPanelTitle,
+    brandPanelText: DEFAULT_UI_CONFIG.pageTemplate.brandPanelText,
     supportedLocales: [...DEFAULT_UI_CONFIG.supportedLocales],
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
+    loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     customCss: DEFAULT_UI_CONFIG.appearance.customCss,
+    headerEnabled: DEFAULT_UI_CONFIG.pageTemplate.headerEnabled,
+    subtitleEnabled: DEFAULT_UI_CONFIG.pageTemplate.subtitleEnabled,
+    footerEnabled: DEFAULT_UI_CONFIG.pageTemplate.footerEnabled,
+    poweredByEnabled: DEFAULT_UI_CONFIG.pageTemplate.poweredByEnabled,
+    authSwitchLinkEnabled: DEFAULT_UI_CONFIG.pageTemplate.authSwitchLinkEnabled,
+    topbarPosition: DEFAULT_UI_CONFIG.pageTemplate.topbarPosition,
+    themeToggleEnabled: DEFAULT_UI_CONFIG.pageTemplate.themeToggleEnabled,
+    languageSelectEnabled: DEFAULT_UI_CONFIG.pageTemplate.languageSelectEnabled,
+    languageSwitcherPosition: DEFAULT_UI_CONFIG.pageTemplate.languageSwitcherPosition,
+    headerStyle: DEFAULT_UI_CONFIG.pageTemplate.headerStyle,
+    footerStyle: DEFAULT_UI_CONFIG.pageTemplate.footerStyle,
+    splitFrame: DEFAULT_UI_CONFIG.pageTemplate.splitFrame,
+    splitPanelSide: DEFAULT_UI_CONFIG.pageTemplate.splitPanelSide,
+    splitPanelWidth: DEFAULT_UI_CONFIG.pageTemplate.splitPanelWidth,
+    splitBackgroundMode: DEFAULT_UI_CONFIG.pageTemplate.splitBackgroundMode,
+    loginPanelBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.loginPanelBackgroundColor,
+    loginPanelBackgroundGradientColor:
+      DEFAULT_UI_CONFIG.pageTemplate.loginPanelBackgroundGradientColor,
+    loginPanelBackgroundOpacity: DEFAULT_UI_CONFIG.pageTemplate.loginPanelBackgroundOpacity,
+    brandContentMode: DEFAULT_UI_CONFIG.pageTemplate.brandContentMode,
+    brandPosition: DEFAULT_UI_CONFIG.pageTemplate.brandPosition,
+    brandAlign: DEFAULT_UI_CONFIG.pageTemplate.brandAlign,
     headerText: DEFAULT_UI_CONFIG.appearance.headerText,
     footerText: DEFAULT_UI_CONFIG.appearance.footerText,
     footerLinks: [...DEFAULT_UI_CONFIG.appearance.footerLinks],
@@ -445,62 +881,69 @@ async function getLoginUISettings(
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
     if (kvJson) {
       const kvSettings = JSON.parse(kvJson) as LoginUIKVSettings;
-      return {
-        theme: kvSettings['login-ui.theme'] || defaults.theme,
-        variant: kvSettings['login-ui.variant'] || defaults.variant,
-        brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
-        logoUrl: isValidHttpsUrl(kvSettings['login-ui.logo_url'])
-          ? kvSettings['login-ui.logo_url']!
-          : defaults.logoUrl,
-        faviconUrl: isValidHttpsUrl(kvSettings['login-ui.favicon_url'])
-          ? kvSettings['login-ui.favicon_url']!
-          : defaults.faviconUrl,
-        supportedLocales: kvSettings['login-ui.supported_locales']
-          ? kvSettings['login-ui.supported_locales']
-              .split(',')
-              .map((s) => s.trim())
-              .filter((s) => s.length > 0 && s.length <= 10 && /^[a-z]{2}(-[A-Z]{2})?$/.test(s))
-              .slice(0, 20)
-          : defaults.supportedLocales,
-        backgroundImageUrl: isValidHttpsUrl(kvSettings['login-ui.background_image_url'])
-          ? kvSettings['login-ui.background_image_url']!
-          : defaults.backgroundImageUrl,
-        customCss: kvSettings['login-ui.custom_css'] || defaults.customCss,
-        headerText: kvSettings['login-ui.header_text'] || defaults.headerText,
-        footerText: kvSettings['login-ui.footer_text'] || defaults.footerText,
-        footerLinks: safeParseJsonArray<{ label: string; url: string }>(
-          kvSettings['login-ui.footer_links']
-        ),
-        customBlocks: safeParseJsonArray<{
-          position: string;
-          type: string;
-          content: string;
-          url?: string;
-          alt?: string;
-        }>(kvSettings['login-ui.custom_blocks']),
-      };
+      return applyClientLoginUIOverride(
+        env,
+        tenantId,
+        clientId,
+        resolveLoginUIFromKVSettings(kvSettings, defaults)
+      );
     }
   } catch {
     // Invalid JSON — fall through to legacy
   }
 
   // Fallback to legacy system_settings.loginUI
-  return {
+  return applyClientLoginUIOverride(env, tenantId, clientId, {
     theme: systemSettings.loginUI?.theme || defaults.theme,
     variant: systemSettings.loginUI?.variant || defaults.variant,
+    themeTemplate: defaults.themeTemplate,
+    pageLayout: defaults.pageLayout,
+    fontFamily: defaults.fontFamily,
+    fontScale: defaults.fontScale,
+    backgroundColor: defaults.backgroundColor,
+    titleColor: defaults.titleColor,
+    textColor: defaults.textColor,
+    copyColor: defaults.copyColor,
     brandName: systemSettings.general?.siteName || defaults.brandName,
-    logoUrl: isValidHttpsUrl(systemSettings.general?.logoUrl)
+    logoUrl: isValidLoginUIImageUrl(systemSettings.general?.logoUrl)
       ? systemSettings.general!.logoUrl!
       : defaults.logoUrl,
     faviconUrl: defaults.faviconUrl,
+    thumbnailUrl: defaults.thumbnailUrl,
+    logoDisplay: defaults.logoDisplay,
+    logoLayout: defaults.logoLayout,
+    brandPanelTitle: defaults.brandPanelTitle,
+    brandPanelText: defaults.brandPanelText,
     supportedLocales: systemSettings.loginUI?.supportedLocales || defaults.supportedLocales,
     backgroundImageUrl: defaults.backgroundImageUrl,
+    loginPanelBackgroundImageUrl: defaults.loginPanelBackgroundImageUrl,
     customCss: defaults.customCss,
+    headerEnabled: defaults.headerEnabled,
+    subtitleEnabled: defaults.subtitleEnabled,
+    footerEnabled: defaults.footerEnabled,
+    poweredByEnabled: defaults.poweredByEnabled,
+    authSwitchLinkEnabled: defaults.authSwitchLinkEnabled,
+    topbarPosition: defaults.topbarPosition,
+    themeToggleEnabled: defaults.themeToggleEnabled,
+    languageSelectEnabled: defaults.languageSelectEnabled,
+    languageSwitcherPosition: defaults.languageSwitcherPosition,
+    headerStyle: defaults.headerStyle,
+    footerStyle: defaults.footerStyle,
+    splitFrame: defaults.splitFrame,
+    splitPanelSide: defaults.splitPanelSide,
+    splitPanelWidth: defaults.splitPanelWidth,
+    splitBackgroundMode: defaults.splitBackgroundMode,
+    loginPanelBackgroundColor: defaults.loginPanelBackgroundColor,
+    loginPanelBackgroundGradientColor: defaults.loginPanelBackgroundGradientColor,
+    loginPanelBackgroundOpacity: defaults.loginPanelBackgroundOpacity,
+    brandContentMode: defaults.brandContentMode,
+    brandPosition: defaults.brandPosition,
+    brandAlign: defaults.brandAlign,
     headerText: defaults.headerText,
     footerText: defaults.footerText,
     footerLinks: defaults.footerLinks,
     customBlocks: defaults.customBlocks,
-  };
+  });
 }
 
 /**
@@ -515,6 +958,17 @@ function isValidHttpsUrl(url: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+function isValidLoginUIImageUrl(url: string | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  if (url.length > MAX_URL_LENGTH) return false;
+  if (url.startsWith('/api/assets/')) {
+    return /^\/api\/assets\/[A-Za-z0-9_-]{1,128}\/login-ui\/(?:logo|background|panel-background|favicon|thumbnail)\/[A-Za-z0-9._-]+\.(?:gif|ico|jpe?g|png|webp)$/u.test(
+      url
+    );
+  }
+  return isValidHttpsUrl(url);
 }
 
 /**
@@ -855,7 +1309,7 @@ async function resolveBuiltInAuthenticationMethods(
 ): Promise<BuiltInMethodsResolved> {
   const legacySettings = systemSettings ?? (await getSystemSettings(env));
   const legacyPasskeyDefault = legacySettings.advanced?.passkeyEnabled !== false;
-  const legacyEmailCodeDefault = legacySettings.advanced?.magicLinkEnabled !== false;
+  const legacyEmailCodeDefault = legacySettings.advanced?.magicLinkEnabled === true;
   const defaults: BuiltInMethodsResolved = {
     passkeyLoginEnabled: legacyPasskeyDefault,
     passkeySignupEnabled: legacyPasskeyDefault,
@@ -1274,13 +1728,50 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
   return {
     theme: loginUI.theme,
     variant: loginUI.variant,
+    themeTemplate: loginUI.themeTemplate,
     branding: {
       logoUrl: loginUI.logoUrl,
       faviconUrl: loginUI.faviconUrl,
       brandName: loginUI.brandName,
     },
+    pageTemplate: {
+      layout: loginUI.pageLayout,
+      fontFamily: loginUI.fontFamily,
+      fontScale: loginUI.fontScale,
+      backgroundColor: loginUI.backgroundColor,
+      titleColor: loginUI.titleColor,
+      textColor: loginUI.textColor,
+      copyColor: loginUI.copyColor,
+      logoDisplay: loginUI.logoDisplay,
+      logoLayout: loginUI.logoLayout,
+      headerEnabled: loginUI.headerEnabled,
+      subtitleEnabled: loginUI.subtitleEnabled,
+      footerEnabled: loginUI.footerEnabled,
+      poweredByEnabled: loginUI.poweredByEnabled,
+      authSwitchLinkEnabled: loginUI.authSwitchLinkEnabled,
+      topbarPosition: loginUI.topbarPosition,
+      themeToggleEnabled: loginUI.themeToggleEnabled,
+      languageSelectEnabled: loginUI.languageSelectEnabled,
+      languageSwitcherPosition: loginUI.languageSwitcherPosition,
+      headerStyle: loginUI.headerStyle,
+      footerStyle: loginUI.footerStyle,
+      splitFrame: loginUI.splitFrame,
+      splitPanelSide: loginUI.splitPanelSide,
+      splitPanelWidth: loginUI.splitPanelWidth,
+      splitBackgroundMode: loginUI.splitBackgroundMode,
+      loginPanelBackgroundColor: loginUI.loginPanelBackgroundColor,
+      loginPanelBackgroundGradientColor: loginUI.loginPanelBackgroundGradientColor,
+      loginPanelBackgroundOpacity: loginUI.loginPanelBackgroundOpacity,
+      brandContentMode: loginUI.brandContentMode,
+      brandPosition: loginUI.brandPosition,
+      brandAlign: loginUI.brandAlign,
+      brandPanelTitle: loginUI.brandPanelTitle,
+      brandPanelText: loginUI.brandPanelText,
+    },
     appearance: {
       backgroundImageUrl: loginUI.backgroundImageUrl,
+      loginPanelBackgroundImageUrl: loginUI.loginPanelBackgroundImageUrl,
+      thumbnailUrl: loginUI.thumbnailUrl,
       customCss: loginUI.customCss,
       headerText: loginUI.headerText,
       footerText: loginUI.footerText,
@@ -1289,8 +1780,8 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
     },
     supportedLocales: loginUI.supportedLocales,
     selfService: {
-      accountPageEnabled: false,
-      accountPagePath: '/account',
+      accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+      accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
     },
   };
 }
@@ -1302,16 +1793,27 @@ async function resolveSelfServiceUIConfig(
   try {
     const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:self-service`);
     if (!raw) {
-      return { accountPageEnabled: false, accountPagePath: '/account' };
+      return {
+        accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+        accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
+      };
     }
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const configuredPath = parsed['self-service.account_page_path'];
     return {
-      accountPageEnabled: parsed['self-service.account_page_enabled'] === true,
-      accountPagePath: validateAccountPagePath(configuredPath) ? configuredPath : '/account',
+      accountPageEnabled:
+        typeof parsed['self-service.account_page_enabled'] === 'boolean'
+          ? parsed['self-service.account_page_enabled']
+          : SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+      accountPagePath: validateAccountPagePath(configuredPath)
+        ? configuredPath
+        : SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
     };
   } catch {
-    return { accountPageEnabled: false, accountPagePath: '/account' };
+    return {
+      accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+      accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
+    };
   }
 }
 
@@ -1362,6 +1864,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
   try {
     const env = c.env as Env;
     const tenantId = getTenantIdFromContext(c);
+    const requestedClientId = c.req.query('client_id')?.trim() || null;
 
     // Fetch data in parallel
     const [
@@ -1482,7 +1985,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
     const [loginUISettings, selfServiceUI, cacheTTL] = await Promise.all([
-      getLoginUISettings(env, tenantId, settings),
+      getLoginUISettings(env, tenantId, settings, requestedClientId),
       resolveSelfServiceUIConfig(env, tenantId),
       resolveCacheTTL(env, tenantId),
     ]);

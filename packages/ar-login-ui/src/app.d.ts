@@ -1,5 +1,12 @@
 // See https://svelte.dev/docs/kit/types#app.d.ts
 // for information about these interfaces
+declare module 'svelte/elements' {
+	interface HTMLInputAttributes {
+		// Email Verification Protocol origin trial attribute. Svelte's HTML types do not include it yet.
+		nonce?: string | undefined | null;
+	}
+}
+
 declare global {
 	interface Window {
 		turnstile?: {
@@ -60,6 +67,15 @@ declare global {
 		// interface Error {}
 		interface Locals {
 			locale?: string;
+			emailVerificationProtocolEnabled?: boolean;
+			authenticationMethods?:
+				| import('$lib/api/authentication-methods').AuthenticationMethodsResponse
+				| null;
+			loginChallengeThemeTarget?: {
+				challengeId: string;
+				valid: boolean;
+				clientId: string | null;
+			};
 		}
 		// interface PageData {}
 		// interface PageState {}

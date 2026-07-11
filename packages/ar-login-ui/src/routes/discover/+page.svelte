@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { getDefaultDiscoveryMode, getInteractiveDiscoveryMethods } from '$lib/discovery-ui';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { themeStore } from '$lib/stores/theme.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
 	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
+
+	const { themeStore } = useLoginUIStores();
 
 	interface DiscoveryCandidate {
 		tenant_id: string;
@@ -250,7 +252,7 @@
 				{:else}
 					{@const rememberedHref = candidateHref(rememberedCandidate)}
 					{#if rememberedHref}
-						<a class="tenant-option" href={rememberedHref}>
+						<a class="tenant-option" href={rememberedHref} data-sveltekit-reload>
 							<div class="tenant-branding">
 								{#if rememberedCandidate.logo_url && isValidImageUrl(rememberedCandidate.logo_url)}
 									<img src={rememberedCandidate.logo_url} alt={rememberedCandidate.display_name} />
@@ -393,7 +395,7 @@
 					{:else}
 						{@const href = candidateHref(candidate)}
 						{#if href}
-							<a class="tenant-option" {href}>
+							<a class="tenant-option" {href} data-sveltekit-reload>
 								<div class="tenant-branding">
 									{#if candidate.logo_url && isValidImageUrl(candidate.logo_url)}
 										<img src={candidate.logo_url} alt={candidate.display_name} />

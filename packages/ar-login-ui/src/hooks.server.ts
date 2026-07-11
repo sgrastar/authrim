@@ -9,6 +9,7 @@
  */
 
 import { env as dynamicEnv } from '$env/dynamic/public';
+import { env as privateEnv } from '$env/dynamic/private';
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import {
@@ -29,8 +30,11 @@ import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonica
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 
 interface ServiceBinding {
-	fetch(request: Request): Promise<Response>;
+	fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
+
+const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH = 32;
+const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH = 4096;
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -320,7 +324,8 @@ async function fetchAuthenticationMethodsForRequest(
 	event: RequestEvent,
 	platformEnv: Record<string, unknown> | undefined,
 	apiBackendUrl: string,
-	forwardedHost: string
+	forwardedHost: string,
+	clientId?: string | null
 ): Promise<AuthenticationMethodsResponse | null> {
 	try {
 		const apiBinding =
@@ -331,17 +336,74 @@ async function fetchAuthenticationMethodsForRequest(
 			? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
 			: apiBackendUrl;
 		const upstreamUrl = new URL('/api/auth/authentication-methods', upstreamBaseUrl);
+		if (clientId) {
+			upstreamUrl.searchParams.set('client_id', clientId);
+		}
 		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
 		headers.set('Accept', 'application/json');
 
 		const response = apiBinding
-			? await apiBinding.fetch(new Request(upstreamUrl.toString(), { headers }))
+			? await apiBinding.fetch(upstreamUrl.toString(), { headers })
 			: await fetch(new Request(upstreamUrl.toString(), { headers }));
 		if (!response.ok) return null;
 
 		return (await response.json()) as AuthenticationMethodsResponse;
 	} catch {
 		return null;
+	}
+}
+
+export async function fetchAuthenticationMethodsForPageRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined,
+	clientId?: string | null
+): Promise<AuthenticationMethodsResponse | null> {
+	const apiBackendUrl = getApiBackendUrl(platformEnv);
+	const forwardedHost = getForwardedHost(event, platformEnv);
+	return fetchAuthenticationMethodsForRequest(
+		event,
+		platformEnv,
+		apiBackendUrl,
+		forwardedHost,
+		clientId
+	);
+}
+
+export async function fetchLoginChallengeThemeTargetForPageRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): Promise<App.Locals['loginChallengeThemeTarget'] | null> {
+	const challengeId = event.url.searchParams.get('challenge_id')?.trim();
+	if (!challengeId || challengeId.length > 512) return null;
+
+	try {
+		const apiBackendUrl = getApiBackendUrl(platformEnv);
+		const forwardedHost = getForwardedHost(event, platformEnv);
+		const apiBinding =
+			(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+			(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
+			null;
+		const upstreamBaseUrl = apiBinding
+			? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
+			: apiBackendUrl;
+		const upstreamUrl = new URL('/auth/login-challenge', upstreamBaseUrl);
+		upstreamUrl.searchParams.set('challenge_id', challengeId);
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+		headers.set('Accept', 'application/json');
+		const response = apiBinding
+			? await apiBinding.fetch(upstreamUrl.toString(), { headers })
+			: await fetch(new Request(upstreamUrl.toString(), { headers }));
+		if (!response.ok) {
+			return { challengeId, valid: false, clientId: null };
+		}
+		const data = (await response.json()) as { client?: { client_id?: unknown } };
+		const clientId = typeof data.client?.client_id === 'string' ? data.client.client_id.trim() : '';
+		if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(clientId)) {
+			return { challengeId, valid: false, clientId: null };
+		}
+		return { challengeId, valid: true, clientId };
+	} catch {
+		return { challengeId, valid: false, clientId: null };
 	}
 }
 
@@ -372,6 +434,19 @@ function isAuthShellPath(pathname: string): boolean {
 		pathname === '/signup' ||
 		pathname === '/reauth' ||
 		pathname === '/verify-email-code'
+	);
+}
+
+export function shouldPrefetchLoginUITheme(pathname: string): boolean {
+	return (
+		isAuthShellPath(pathname) ||
+		pathname === '/consent' ||
+		pathname === '/device' ||
+		pathname === '/ciba' ||
+		pathname === '/invite' ||
+		pathname === '/error' ||
+		pathname === '/account' ||
+		pathname.startsWith('/account/')
 	);
 }
 
@@ -427,6 +502,111 @@ export function shouldProxyPath(pathname: string): boolean {
 
 function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
 	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
+}
+
+function getServerEnvironmentValue(
+	platformEnv: Record<string, unknown> | undefined,
+	name: string
+): unknown {
+	if (platformEnv && Object.prototype.hasOwnProperty.call(platformEnv, name)) {
+		return platformEnv[name];
+	}
+	if (Object.prototype.hasOwnProperty.call(privateEnv, name)) {
+		return privateEnv[name];
+	}
+
+	return typeof process !== 'undefined' ? process.env?.[name] : undefined;
+}
+
+function normalizeEmailVerificationOriginTrialToken(value: unknown): string | null {
+	if (typeof value !== 'string' || /[\r\n]/u.test(value)) {
+		return null;
+	}
+
+	const token = value.trim();
+	if (
+		token.length < EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH ||
+		token.length > EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH ||
+		!/^[A-Za-z0-9+/_-]+={0,2}$/u.test(token)
+	) {
+		return null;
+	}
+
+	return token;
+}
+
+function getEmailVerificationOriginTrialRequestOrigin(event: RequestEvent): string {
+	const originalHost = getOriginalRequestHost(event);
+	if (!originalHost) {
+		return event.url.origin;
+	}
+
+	const protocol = event.url.protocol === 'http:' ? 'http:' : 'https:';
+	return `${protocol}//${originalHost}`;
+}
+
+function resolveEmailVerificationOriginTrialToken(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): string | null {
+	const rawTokenMap = getServerEnvironmentValue(
+		platformEnv,
+		'EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS'
+	);
+	const tokenMapIsConfigured =
+		rawTokenMap !== undefined &&
+		rawTokenMap !== null &&
+		!(typeof rawTokenMap === 'string' && !rawTokenMap.trim());
+	if (tokenMapIsConfigured) {
+		if (typeof rawTokenMap !== 'string') {
+			return null;
+		}
+
+		try {
+			const parsed = JSON.parse(rawTokenMap) as unknown;
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				return null;
+			}
+
+			const tokenMap = parsed as Record<string, unknown>;
+			const origin = getEmailVerificationOriginTrialRequestOrigin(event);
+			const rawToken = Object.prototype.hasOwnProperty.call(tokenMap, origin)
+				? tokenMap[origin]
+				: undefined;
+			return normalizeEmailVerificationOriginTrialToken(rawToken);
+		} catch {
+			return null;
+		}
+	}
+
+	return normalizeEmailVerificationOriginTrialToken(
+		getServerEnvironmentValue(platformEnv, 'EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN')
+	);
+}
+
+function isEmailCodeEnabledForOriginTrial(
+	pathname: string,
+	authenticationMethods: AuthenticationMethodsResponse | null | undefined
+): boolean {
+	const emailCode = authenticationMethods?.methods?.emailCode;
+	if (!emailCode) {
+		return false;
+	}
+
+	if (pathname === '/login') {
+		return (emailCode.loginEnabled ?? emailCode.enabled) === true;
+	}
+	if (pathname === '/signup') {
+		return (emailCode.signupEnabled ?? emailCode.enabled) === true;
+	}
+
+	return false;
+}
+
+function isHtmlDocumentResponse(response: Response): boolean {
+	return (
+		response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'text/html'
+	);
 }
 
 function getProxyRequestUrl(event: RequestEvent): URL {
@@ -653,7 +833,7 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	}
 
 	const response = apiBinding
-		? await apiBinding.fetch(new Request(upstreamUrl.toString(), requestInit))
+		? await apiBinding.fetch(upstreamUrl.toString(), requestInit)
 		: await fetch(new Request(upstreamUrl.toString(), requestInit));
 
 	return buildProxyResponse(response);
@@ -751,6 +931,43 @@ const csrfHandle: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
+const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
+	if (shouldPrefetchLoginUITheme(event.url.pathname)) {
+		const challengeTarget =
+			event.url.pathname === '/login'
+				? await fetchLoginChallengeThemeTargetForPageRequest(event, getPlatformEnv(event))
+				: null;
+		if (challengeTarget) {
+			event.locals.loginChallengeThemeTarget = challengeTarget;
+		}
+		event.locals.authenticationMethods = await fetchAuthenticationMethodsForPageRequest(
+			event,
+			getPlatformEnv(event),
+			challengeTarget?.valid ? challengeTarget.clientId : null
+		);
+	}
+
+	return resolve(event);
+};
+
+export const emailVerificationOriginTrialHandle: Handle = async ({ event, resolve }) => {
+	const method = event.request.method.toUpperCase();
+	const eligibleRequest =
+		(method === 'GET' || method === 'HEAD') &&
+		isEmailCodeEnabledForOriginTrial(event.url.pathname, event.locals.authenticationMethods);
+	const token = eligibleRequest
+		? resolveEmailVerificationOriginTrialToken(event, getPlatformEnv(event))
+		: null;
+
+	event.locals.emailVerificationProtocolEnabled = token !== null;
+	const response = await resolve(event);
+	if (token && isHtmlDocumentResponse(response)) {
+		response.headers.append('Origin-Trial', token);
+	}
+
+	return response;
+};
+
 const localeHandle: Handle = async ({ event, resolve }) => {
 	const supportedLocales = ['en', 'ja'];
 	const cookieLocale = event.cookies.get('lang');
@@ -783,6 +1000,8 @@ export const handle = sequence(
 	accountCanonicalHostHandle,
 	apiProxyHandle,
 	csrfHandle,
+	loginUIThemeBootstrapHandle,
+	emailVerificationOriginTrialHandle,
 	localeHandle,
 	securityHeadersHandle
 );

@@ -3,7 +3,7 @@
 	import { Card, Alert, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { getAuthConfig } from '$lib/auth';
 	import { auth } from '$lib/stores/auth';
@@ -18,6 +18,8 @@
 		removeLoginUiSessionItems
 	} from '$lib/authrim/storage-keys';
 	import { updateFlowRuntimePostAuthRedirect } from '$lib/authrim/flow-runtime-state';
+
+	const { brandingStore } = useLoginUIStores();
 
 	let status = $state<'processing' | 'success' | 'error'>('processing');
 	let errorMessage = $state('');
