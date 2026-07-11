@@ -10,6 +10,7 @@ import {
   deployUiWorkerComponent,
   deployUiWorkerBindingTargets,
   deployWorker,
+  hasBlockingDeploymentFailures,
 } from '../core/deploy.js';
 
 vi.mock('execa', () => ({
@@ -98,6 +99,51 @@ describe('buildUiWorkerBuildEnv', () => {
 
     expect(result.PUBLIC_API_BASE_URL).toBeUndefined();
     expect(result.PUBLIC_LOGIN_UI_CLIENT_ID).toBeUndefined();
+  });
+});
+
+describe('hasBlockingDeploymentFailures', () => {
+  const successfulState = {
+    workerFailedCount: 0,
+    migrationsSuccess: true,
+    initialTenantSuccess: true,
+    initialAdminRolesSuccess: true,
+    setupMachineAccessSuccess: true,
+    adminUiBffMachineAccessSuccess: true,
+    defaultCanonicalCatalogSeedSuccess: true,
+    runtimeProfileSeedSuccess: true,
+    uiWorkersSuccess: true,
+  };
+
+  it('accepts a fully successful deployment', () => {
+    expect(hasBlockingDeploymentFailures(successfulState)).toBe(false);
+  });
+
+  it('rejects a deployment with any Worker failure', () => {
+    expect(
+      hasBlockingDeploymentFailures({
+        ...successfulState,
+        workerFailedCount: 1,
+      })
+    ).toBe(true);
+  });
+
+  it.each([
+    'migrationsSuccess',
+    'initialTenantSuccess',
+    'initialAdminRolesSuccess',
+    'setupMachineAccessSuccess',
+    'adminUiBffMachineAccessSuccess',
+    'defaultCanonicalCatalogSeedSuccess',
+    'runtimeProfileSeedSuccess',
+    'uiWorkersSuccess',
+  ] as const)('rejects a deployment when %s is false', (key) => {
+    expect(
+      hasBlockingDeploymentFailures({
+        ...successfulState,
+        [key]: false,
+      })
+    ).toBe(true);
   });
 });
 
@@ -323,5 +369,26 @@ describe('deployAll', () => {
     expect(summary.successCount).toBe(2);
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
     expect(progressMessages).toContain('  ⏳ Waiting 0.1s before deploying the next worker...');
+  });
+
+  it('stops all later deployment levels after a critical Worker fails', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    vi.mocked(execa).mockRejectedValue(new Error('invalid D1 binding'));
+
+    const result = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        maxRetries: 1,
+        retryDelayMs: 1,
+      },
+      ['ar-lib-core', 'ar-auth']
+    );
+
+    expect(result.failedCount).toBe(1);
+    expect(result.results.map((item) => item.component)).toEqual(['ar-lib-core']);
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(1);
   });
 });

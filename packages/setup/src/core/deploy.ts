@@ -97,6 +97,18 @@ export interface DeploymentSummary {
   duration: number;
 }
 
+export interface DeploymentCompletionState {
+  workerFailedCount: number;
+  migrationsSuccess: boolean;
+  initialTenantSuccess: boolean;
+  initialAdminRolesSuccess: boolean;
+  setupMachineAccessSuccess: boolean;
+  adminUiBffMachineAccessSuccess: boolean;
+  defaultCanonicalCatalogSeedSuccess: boolean;
+  runtimeProfileSeedSuccess: boolean;
+  uiWorkersSuccess: boolean;
+}
+
 export interface BuildOptions {
   rootDir: string;
   components?: WorkerComponent[];
@@ -109,6 +121,20 @@ export interface BuildResult {
 }
 
 export const DEFAULT_INTER_DEPLOY_DELAY_MS = 10_000;
+
+export function hasBlockingDeploymentFailures(state: DeploymentCompletionState): boolean {
+  return (
+    state.workerFailedCount > 0 ||
+    !state.migrationsSuccess ||
+    !state.initialTenantSuccess ||
+    !state.initialAdminRolesSuccess ||
+    !state.setupMachineAccessSuccess ||
+    !state.adminUiBffMachineAccessSuccess ||
+    !state.defaultCanonicalCatalogSeedSuccess ||
+    !state.runtimeProfileSeedSuccess ||
+    !state.uiWorkersSuccess
+  );
+}
 
 const UI_BUILD_ENV_KEYS = [
   'PUBLIC_API_BASE_URL',
@@ -385,6 +411,7 @@ export async function deployAll(
   const allResults: DeployResult[] = [];
   const totalPlannedComponents = levels.reduce((count, level) => count + level.length, 0);
   let processedComponents = 0;
+  let shouldStopDeployment = false;
 
   onProgress?.('Starting Authrim deployment...\n');
   onProgress?.(`Environment: ${options.env}`);
@@ -392,6 +419,10 @@ export async function deployAll(
   onProgress?.(`Deployment levels: ${levels.length}\n`);
 
   for (let levelIndex = 0; levelIndex < levels.length; levelIndex++) {
+    if (shouldStopDeployment) {
+      break;
+    }
+
     const level = levels[levelIndex];
     onProgress?.(`\n━━━ Level ${levelIndex} ━━━`);
 
@@ -407,6 +438,7 @@ export async function deployAll(
         // Stop deployment if critical component fails
         if (['ar-lib-core', 'ar-discovery'].includes(component)) {
           onProgress?.(`\n⚠️  Critical component ${component} failed. Stopping deployment.`);
+          shouldStopDeployment = true;
           break;
         }
       }
