@@ -19,6 +19,7 @@ import {
   type EnvironmentPaths,
   type LegacyPaths,
 } from './paths.js';
+import { D1_DATABASES, getD1DatabaseName } from './naming.js';
 
 // =============================================================================
 // Schema
@@ -56,6 +57,12 @@ export type AuthrimLock = z.infer<typeof AuthrimLockSchema>;
 export type ResourceEntry = z.infer<typeof ResourceEntrySchema>;
 export type KVResourceEntry = z.infer<typeof KVResourceEntrySchema>;
 export type WorkerEntry = z.infer<typeof WorkerEntrySchema>;
+
+export interface SharedD1LockReconciliationResult {
+  lock: AuthrimLock;
+  updatedBindings: string[];
+  missingBindings: Array<{ binding: string; name: string }>;
+}
 
 // =============================================================================
 // Lock File Operations
@@ -302,6 +309,51 @@ export async function loadLockFileAuto(
   const legacyPath = getLegacyPaths(baseDir, env).lock;
   const lock = await loadLockFile({ path: legacyPath });
   return { lock, path: legacyPath, type: 'legacy' };
+}
+
+/**
+ * Refresh shared D1 lock entries from Cloudflare's current database list.
+ *
+ * Restored or copied lock files can retain UUIDs for databases that were
+ * recreated under the same canonical name. Wrangler requires the live UUID,
+ * so deployment reconciles these three shared bindings before generating its
+ * worker configurations.
+ */
+export function reconcileSharedD1ResourcesInLock(
+  lock: AuthrimLock,
+  env: string,
+  databases: Array<{ name: string; uuid: string }>
+): SharedD1LockReconciliationResult {
+  const databasesByName = new Map(databases.map((database) => [database.name, database]));
+  const nextD1 = { ...lock.d1 };
+  const updatedBindings: string[] = [];
+  const missingBindings: Array<{ binding: string; name: string }> = [];
+
+  for (const database of D1_DATABASES) {
+    const expectedName = getD1DatabaseName(env, database.dbType);
+    const liveDatabase = databasesByName.get(expectedName);
+    if (!liveDatabase) {
+      missingBindings.push({ binding: database.binding, name: expectedName });
+      continue;
+    }
+
+    const lockedDatabase = nextD1[database.binding];
+    if (lockedDatabase?.name === liveDatabase.name && lockedDatabase.id === liveDatabase.uuid) {
+      continue;
+    }
+
+    nextD1[database.binding] = {
+      name: liveDatabase.name,
+      id: liveDatabase.uuid,
+    };
+    updatedBindings.push(database.binding);
+  }
+
+  return {
+    lock: updatedBindings.length > 0 ? { ...lock, d1: nextD1 } : lock,
+    updatedBindings,
+    missingBindings,
+  };
 }
 
 /**

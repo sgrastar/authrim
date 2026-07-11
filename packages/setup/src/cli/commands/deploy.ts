@@ -12,7 +12,11 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
-import { saveLockFile, loadLockFileAuto } from '../../core/lock.js';
+import {
+  saveLockFile,
+  loadLockFileAuto,
+  reconcileSharedD1ResourcesInLock,
+} from '../../core/lock.js';
 import {
   getEnvironmentPaths,
   findLegacyConfigPath,
@@ -33,6 +37,7 @@ import {
   buildApiPackages,
   DEFAULT_INTER_DEPLOY_DELAY_MS,
   UI_WORKER_COMPONENTS,
+  hasBlockingDeploymentFailures,
   type DeployOptions,
   type UiWorkerComponent,
 } from '../../core/deploy.js';
@@ -49,14 +54,10 @@ import {
   seedRuntimeProfiles,
   getWorkersSubdomain,
   ensureWildcardDnsForMultiTenant,
+  listD1Databases,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
-import {
-  generateWranglerConfig,
-  toToml,
-  buildResourceIdsFromLock,
-  type ResourceIds,
-} from '../../core/wrangler.js';
+import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../../core/wrangler.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
 import { loadAdminUiBffWorkerSecrets } from '../../core/admin-machine-access.js';
@@ -683,6 +684,39 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     });
   }
 
+  if (!options.dryRun) {
+    const d1ReconciliationSpinner = ora('Refreshing shared D1 resource IDs...').start();
+    try {
+      const reconciliation = reconcileSharedD1ResourcesInLock(
+        currentLock,
+        env,
+        await listD1Databases()
+      );
+
+      if (reconciliation.missingBindings.length > 0) {
+        d1ReconciliationSpinner.fail('Required shared D1 databases are missing');
+        for (const missing of reconciliation.missingBindings) {
+          console.log(chalk.red(`  • ${missing.binding}: ${missing.name}`));
+        }
+        process.exit(1);
+      }
+
+      currentLock = reconciliation.lock;
+      if (reconciliation.updatedBindings.length > 0) {
+        await saveLockFile(currentLock, lockPath);
+        d1ReconciliationSpinner.succeed(
+          `Refreshed shared D1 bindings: ${reconciliation.updatedBindings.join(', ')}`
+        );
+      } else {
+        d1ReconciliationSpinner.succeed('Shared D1 resource IDs are current');
+      }
+    } catch (error) {
+      d1ReconciliationSpinner.fail('Failed to refresh shared D1 resource IDs');
+      console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+      process.exit(1);
+    }
+  }
+
   // Refresh generated wrangler configs from the current config/lock before deployment.
   // This prevents stale bindings such as send_email from surviving across setup upgrades.
   if (structureType === 'new' && lock) {
@@ -826,18 +860,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     const genSpinner = ora('Generating wrangler configs from lock file...').start();
 
     try {
-      // Build resource IDs from lock file
-      const resourceIds: ResourceIds = {
-        d1: {},
-        kv: {},
-      };
-
-      for (const [key, value] of Object.entries(lock.d1)) {
-        resourceIds.d1[key] = { id: value.id, name: value.name };
-      }
-      for (const [key, value] of Object.entries(lock.kv)) {
-        resourceIds.kv[key] = { id: value.id, name: value.name };
-      }
+      const resourceIds = buildResourceIdsFromLock(currentLock);
 
       // Get workers subdomain
       const workersSubdomain = await getWorkersSubdomain();
@@ -1565,15 +1588,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   // Final summary
   console.log(chalk.bold('\n━━━ Deployment Complete ━━━\n'));
 
-  if (
-    summary.failedCount === 0 &&
-    migrationsSuccess &&
-    initialTenantSuccess &&
-    initialAdminRolesSuccess &&
-    defaultCanonicalCatalogSeedSuccess &&
-    runtimeProfileSeedSuccess &&
-    uiWorkersSuccess
-  ) {
+  if (summary.failedCount === 0 && bootstrapSuccess && uiWorkersSuccess) {
     console.log(chalk.green('✅ All components deployed and migrations applied!\n'));
   } else if (summary.failedCount === 0 && !migrationsSuccess) {
     console.log(chalk.yellow('⚠️  All components deployed, but some migrations failed.\n'));
@@ -1680,7 +1695,19 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   await cleanupEphemeralSetupMachineAccess();
 
-  if (!migrationsSuccess) {
+  if (
+    hasBlockingDeploymentFailures({
+      workerFailedCount: summary.failedCount,
+      migrationsSuccess,
+      initialTenantSuccess,
+      initialAdminRolesSuccess,
+      setupMachineAccessSuccess,
+      adminUiBffMachineAccessSuccess,
+      defaultCanonicalCatalogSeedSuccess,
+      runtimeProfileSeedSuccess,
+      uiWorkersSuccess,
+    })
+  ) {
     // Let CI fail at the deploy step while still giving cleanup a chance to run.
     process.exitCode = 1;
   }
