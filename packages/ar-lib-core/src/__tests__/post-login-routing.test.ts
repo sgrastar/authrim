@@ -47,6 +47,15 @@ describe('post-login routing helpers', () => {
     expect(validateAccountPagePath('/accountant')).toBe(true);
   });
 
+  it('resolves the default direct login destination to Account Page', async () => {
+    const kv = createSettingsKV({});
+
+    await expect(resolvePostLoginRedirectUrl({ SETTINGS: kv }, 'tenant_123')).resolves.toEqual({
+      redirectUrl: '/account',
+      behavior: 'account',
+    });
+  });
+
   it('resolves configured custom URL redirects from AUTHRIM_CONFIG fallback', async () => {
     const kv = createSettingsKV({
       'settings:tenant:tenant_123:login-entry': {

@@ -72,6 +72,15 @@ export const load: PageServerLoad = async (event) => {
 		event.url.searchParams.get('return_to') === 'saml_sso';
 
 	if (challengeId) {
+		const bootstrapTarget = event.locals?.loginChallengeThemeTarget;
+		if (bootstrapTarget?.challengeId === challengeId) {
+			if (bootstrapTarget.valid) {
+				return {
+					authenticationMethods: event.locals?.authenticationMethods ?? undefined
+				};
+			}
+			throw redirect(303, INVALID_CHALLENGE_ERROR_URL);
+		}
 		const challengeBelongsToCurrentTenant = await verifyLoginChallengeForCurrentTenant(
 			event.fetch,
 			challengeId,

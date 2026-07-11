@@ -6,6 +6,9 @@ import {
   restoreEncryptedSAMLLocalSigningSecretDRBundle,
   restoreSAMLLocalSigningSecretDRBundle,
 } from '../local-signing-dr-bundle';
+import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../../common/entity-id';
+import { buildSAMLIdPSigningContext, getSAMLIdPSigningMaterial } from '../../common/idp-signing';
+import { getSAMLMetadataSigningCertificates } from '../../common/saml-signing-keys';
 
 describe('SAML local signing secret DR bundle', () => {
   it('exports encrypted and restores local SAML signing private keys', async () => {
@@ -100,6 +103,56 @@ describe('SAML local signing secret DR bundle', () => {
     await expect(
       restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', bundle)
     ).rejects.toThrow('SAML DR bundle signing key policy references a missing key');
+  });
+
+  it('uses the DR-restored active IdP key for metadata and SAML responses', async () => {
+    const bundle = await buildSAMLLocalSigningSecretDRBundle(createEnv(), 'test');
+    const idpKey = bundle.keys.find((key) => key.role === 'idp' && key.slot === 'active');
+    expect(idpKey).toBeDefined();
+
+    const restoredKeyRef = 'tenant:test:saml:idp:dr-restored-signing';
+    idpKey!.keyRef = restoredKeyRef;
+    bundle.settings.signingKeyPolicies.idp = {
+      active: {
+        slot: 'active',
+        keyRef: restoredKeyRef,
+        kid: idpKey!.kid,
+        certificate: idpKey!.certificate,
+        state: 'active',
+      },
+      metadataCertificatePublication: 'active_only',
+    };
+
+    const restoredEnv = createEnv();
+    await restoreSAMLLocalSigningSecretDRBundle(restoredEnv, 'test', bundle);
+
+    const messageMaterial = await getSAMLIdPSigningMaterial(restoredEnv, {
+      tenantId: 'test',
+      counterpartyEntityId: 'https://sp.example.test/shibboleth',
+    });
+    const [settings, entityIds] = await Promise.all([
+      getSAMLPublicSettings(restoredEnv, 'test'),
+      getSAMLLocalEntityIds(restoredEnv, 'test'),
+    ]);
+    const metadataCertificates = await getSAMLMetadataSigningCertificates(
+      restoredEnv,
+      buildSAMLIdPSigningContext({
+        tenantId: 'test',
+        settings,
+        entityIds,
+      })
+    );
+
+    expect(messageMaterial).toMatchObject({
+      keyRef: restoredKeyRef,
+      kid: idpKey!.kid,
+      certificate: idpKey!.certificate,
+    });
+    expect(metadataCertificates[0]).toMatchObject({
+      keyRef: restoredKeyRef,
+      kid: idpKey!.kid,
+      certificate: idpKey!.certificate,
+    });
   });
 });
 

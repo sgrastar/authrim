@@ -1,13 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$env/dynamic/public', () => ({ env: {} }));
+vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
 function createAuthenticationMethodsResponse(
 	provider: 'turnstile' | 'hcaptcha' | 'recaptcha' = 'turnstile',
-	enabled = true
+	enabled = true,
+	emailCodeUsage: {
+		enabled?: boolean;
+		loginEnabled?: boolean;
+		signupEnabled?: boolean;
+	} = {}
 ) {
 	return {
 		methods: {
+			emailCode: {
+				enabled: emailCodeUsage.enabled ?? false,
+				loginEnabled: emailCodeUsage.loginEnabled ?? false,
+				signupEnabled: emailCodeUsage.signupEnabled ?? false,
+				steps: ['email']
+			},
 			humanVerification: {
 				enabled,
 				provider,
@@ -15,10 +27,64 @@ function createAuthenticationMethodsResponse(
 			}
 		},
 		meta: {
-			cacheTTL: 180,
+			cacheTTL: 60,
 			revision: 'test'
 		}
 	};
+}
+
+const VALID_ORIGIN_TRIAL_TOKEN = 'A'.repeat(128);
+
+async function runAuthPageRequest(options: {
+	pathname: string;
+	method?: 'GET' | 'HEAD' | 'POST';
+	emailCodeUsage?: {
+		enabled?: boolean;
+		loginEnabled?: boolean;
+		signupEnabled?: boolean;
+	};
+	platformEnv?: Record<string, unknown>;
+	requestHeaders?: Record<string, string>;
+	responseContentType?: string;
+}) {
+	const { emailVerificationOriginTrialHandle } = await import('../hooks.server');
+	const url = new URL(options.pathname, 'https://login.example.com');
+	const request = new Request(url, {
+		method: options.method ?? 'GET',
+		headers: options.requestHeaders
+	});
+	const locals: App.Locals = {
+		authenticationMethods: createAuthenticationMethodsResponse(
+			'turnstile',
+			true,
+			options.emailCodeUsage
+		) as never
+	};
+	const event = {
+		request,
+		url,
+		locals,
+		platform: { env: options.platformEnv },
+		cookies: {
+			get: () => undefined,
+			set: vi.fn()
+		},
+		getClientAddress: () => '192.0.2.10'
+	};
+	let enabledDuringResolve: boolean | undefined;
+	const response = await emailVerificationOriginTrialHandle({
+		event: event as never,
+		resolve: async (resolvedEvent) => {
+			enabledDuringResolve = resolvedEvent.locals.emailVerificationProtocolEnabled;
+			return new Response(options.method === 'HEAD' ? null : '<!doctype html>', {
+				headers: {
+					'Content-Type': options.responseContentType ?? 'text/html; charset=utf-8'
+				}
+			});
+		}
+	});
+
+	return { response, locals, enabledDuringResolve };
 }
 
 describe('Login UI proxy hooks', () => {
@@ -287,7 +353,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('targets the forwarded tenant host when using the router service binding', async () => {
 		const { resolveHumanVerificationProviderForRequest } = await import('../hooks.server');
-		const fetch = vi.fn(async (_request: Request) =>
+		const fetch = vi.fn(async (_input: Request | string, _init?: RequestInit) =>
 			Response.json(createAuthenticationMethodsResponse('turnstile'))
 		);
 		const event = {
@@ -304,9 +370,73 @@ describe('Login UI proxy hooks', () => {
 
 		expect(provider).toBe('turnstile');
 		expect(fetch).toHaveBeenCalledTimes(1);
-		const request = fetch.mock.calls[0][0];
-		expect(request.url).toBe('https://second.test.authrim.com/api/auth/authentication-methods');
-		expect(request.headers.get('x-authrim-forwarded-host')).toBe('second.test.authrim.com');
+		const [input, init] = fetch.mock.calls[0];
+		expect(input).toBe('https://second.test.authrim.com/api/auth/authentication-methods');
+		expect(new Headers(init?.headers).get('x-authrim-forwarded-host')).toBe(
+			'second.test.authrim.com'
+		);
+	});
+
+	it('fetches the Login UI theme before rendering an auth page', async () => {
+		const { fetchAuthenticationMethodsForPageRequest, shouldPrefetchLoginUITheme } =
+			await import('../hooks.server');
+		const fetch = vi.fn(async (_input: Request | string, _init?: RequestInit) =>
+			Response.json(createAuthenticationMethodsResponse('turnstile'))
+		);
+		const event = {
+			request: new Request('https://login.example.com/login?tenant_host=second.test.authrim.com'),
+			url: new URL('https://login.example.com/login?tenant_host=second.test.authrim.com'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const result = await fetchAuthenticationMethodsForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(result?.meta.revision).toBe('test');
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch.mock.calls[0][0]).toBe(
+			'https://second.test.authrim.com/api/auth/authentication-methods'
+		);
+		expect(shouldPrefetchLoginUITheme('/login')).toBe(true);
+		expect(shouldPrefetchLoginUITheme('/discover')).toBe(false);
+	});
+
+	it('resolves the challenge client before fetching an overridden Login UI theme', async () => {
+		const {
+			fetchAuthenticationMethodsForPageRequest,
+			fetchLoginChallengeThemeTargetForPageRequest
+		} = await import('../hooks.server');
+		const fetch = vi.fn(async (input: Request | string, _init?: RequestInit) =>
+			String(input).includes('/auth/login-challenge')
+				? Response.json({ client: { client_id: 'client-123' } })
+				: Response.json(createAuthenticationMethodsResponse('turnstile'))
+		);
+		const event = {
+			request: new Request(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-1'
+			),
+			url: new URL(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-1'
+			),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const platformEnv = {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, platformEnv);
+		await fetchAuthenticationMethodsForPageRequest(event as never, platformEnv, target?.clientId);
+
+		expect(target).toEqual({ challengeId: 'challenge-1', valid: true, clientId: 'client-123' });
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(fetch.mock.calls[1][0]).toBe(
+			'https://second.test.authrim.com/api/auth/authentication-methods?client_id=client-123'
+		);
 	});
 
 	it('does not share a never-settling authentication methods loader across requests', async () => {
@@ -552,5 +682,162 @@ describe('Login UI proxy hooks', () => {
 		expect(first).toBe('recaptcha');
 		expect(second).toBe('recaptcha');
 		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it.each([
+		{
+			label: 'GET /login with an exact origin token',
+			pathname: '/login',
+			method: 'GET' as const,
+			emailCodeUsage: { enabled: true, loginEnabled: true },
+			tokenMapKey: 'https://login.example.com'
+		},
+		{
+			label: 'HEAD /signup with an exact origin token',
+			pathname: '/signup',
+			method: 'HEAD' as const,
+			emailCodeUsage: { enabled: true, signupEnabled: true },
+			tokenMapKey: 'https://login.example.com'
+		}
+	])(
+		'adds Origin-Trial and enables the protocol for $label',
+		async ({ pathname, method, emailCodeUsage, tokenMapKey }) => {
+			const result = await runAuthPageRequest({
+				pathname,
+				method,
+				emailCodeUsage,
+				platformEnv: {
+					EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: JSON.stringify({
+						[tokenMapKey]: `  ${VALID_ORIGIN_TRIAL_TOKEN}  `
+					})
+				}
+			});
+
+			expect(result.response.headers.get('Origin-Trial')).toBe(VALID_ORIGIN_TRIAL_TOKEN);
+			expect(result.enabledDuringResolve).toBe(true);
+			expect(result.locals.emailVerificationProtocolEnabled).toBe(true);
+		}
+	);
+
+	it('uses the single-origin fallback token when no token map is configured', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/login',
+			emailCodeUsage: { enabled: true, loginEnabled: true },
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+			}
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBe(VALID_ORIGIN_TRIAL_TOKEN);
+		expect(result.enabledDuringResolve).toBe(true);
+	});
+
+	it('matches a router-proxied page against its exact original browser origin', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/login',
+			emailCodeUsage: { enabled: true, loginEnabled: true },
+			requestHeaders: {
+				'x-authrim-original-host': 'tenant.example.com'
+			},
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: JSON.stringify({
+					'https://tenant.example.com': VALID_ORIGIN_TRIAL_TOKEN
+				})
+			}
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBe(VALID_ORIGIN_TRIAL_TOKEN);
+		expect(result.enabledDuringResolve).toBe(true);
+	});
+
+	it('does not enable the protocol when Mail OTP is disabled for the page usage', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/login',
+			emailCodeUsage: { enabled: true, loginEnabled: false, signupEnabled: true },
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: JSON.stringify({
+					'https://login.example.com': VALID_ORIGIN_TRIAL_TOKEN
+				})
+			}
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBeNull();
+		expect(result.enabledDuringResolve).toBe(false);
+		expect(result.locals.emailVerificationProtocolEnabled).toBe(false);
+	});
+
+	it('does not use a map token or fallback token for the wrong origin', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/login',
+			emailCodeUsage: { enabled: true, loginEnabled: true },
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: JSON.stringify({
+					'https://other.example.com': VALID_ORIGIN_TRIAL_TOKEN
+				}),
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+			}
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBeNull();
+		expect(result.enabledDuringResolve).toBe(false);
+	});
+
+	it('rejects an invalid origin trial token without writing a response header', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/signup',
+			emailCodeUsage: { enabled: true, signupEnabled: true },
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: JSON.stringify({
+					'https://login.example.com': `${VALID_ORIGIN_TRIAL_TOKEN}\r\nInjected: value`
+				})
+			}
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBeNull();
+		expect(result.enabledDuringResolve).toBe(false);
+	});
+
+	it('does not enable the protocol on unrelated paths', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/reauth',
+			emailCodeUsage: { enabled: true, loginEnabled: true, signupEnabled: true },
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+			}
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBeNull();
+		expect(result.enabledDuringResolve).toBe(false);
+	});
+
+	it('does not attach Origin-Trial to a non-document response', async () => {
+		const result = await runAuthPageRequest({
+			pathname: '/login',
+			emailCodeUsage: { enabled: true, loginEnabled: true },
+			platformEnv: {
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+			},
+			responseContentType: 'application/json'
+		});
+
+		expect(result.response.headers.get('Origin-Trial')).toBeNull();
+		expect(result.enabledDuringResolve).toBe(true);
+	});
+
+	it('exposes the hook decision through root layout data', async () => {
+		const { load } = await import('../routes/+layout.server');
+		const data = await load({
+			cookies: { get: () => undefined },
+			route: { id: '/login' },
+			locals: {
+				emailVerificationProtocolEnabled: true,
+				authenticationMethods: null
+			}
+		} as never);
+
+		expect(data).toMatchObject({
+			emailVerificationProtocolEnabled: true,
+			authenticationMethods: null
+		});
 	});
 });

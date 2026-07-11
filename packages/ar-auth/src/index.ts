@@ -99,6 +99,7 @@ import {
 import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
 import {
+  loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
   loginRuntimeInteractionSubmitHandler,
 } from './login-runtime-flow';
@@ -621,6 +622,10 @@ app.use('/api/v1/login/interactions/*', async (c, next) => {
 });
 
 app.post('/api/v1/login/interactions/start', loginRuntimeInteractionStartHandler);
+app.post(
+  '/api/v1/login/interactions/:interaction_id/email-verification/challenge',
+  loginRuntimeEmailVerificationChallengeHandler
+);
 app.post('/api/v1/login/interactions/:interaction_id/submit', loginRuntimeInteractionSubmitHandler);
 
 // Passkey Login endpoints

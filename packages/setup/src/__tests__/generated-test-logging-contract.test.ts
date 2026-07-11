@@ -93,6 +93,7 @@ describeGenerated('generated test environment logging/storage contract', () => {
         'AUDIT_ARCHIVE',
         'EXPORT_ARTIFACTS',
         'IMPORT_ARTIFACTS',
+        'PUBLIC_ASSETS',
         'SENSITIVE_DETAILS',
       ])
     );
@@ -113,6 +114,7 @@ describeGenerated('generated test environment logging/storage contract', () => {
         'AUDIT_ARCHIVE',
         'EXPORT_ARTIFACTS',
         'IMPORT_ARTIFACTS',
+        'PUBLIC_ASSETS',
         'SENSITIVE_DETAILS',
       ])
     );

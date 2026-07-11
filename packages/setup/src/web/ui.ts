@@ -9334,6 +9334,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             configured: true,
           };
           config.features.email = {
+            ...(config.features.email || {}),
             ...config.email,
           };
 	        } catch (error) {
@@ -9351,6 +9352,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           provider: 'none',
         };
         config.features.email = {
+          ...(config.features.email || {}),
           provider: 'none',
         };
       }
@@ -10199,6 +10201,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             enabled: config.features?.r2?.enabled !== false,
           },
           email: {
+            ...(config.features?.email || {}),
             provider: config.email?.provider || 'none',
             fromAddress: config.email?.fromAddress || undefined,
             fromName: config.email?.fromName || undefined,

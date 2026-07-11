@@ -56,6 +56,27 @@ describe('SAML metadata interoperability fixtures', () => {
     expect(coveredEntries.every((entry) => entry.ciTest)).toBe(true);
   });
 
+  it('keeps all NameID formats advertised by SP metadata', () => {
+    const config = parseSPMetadata(`
+      <md:EntityDescriptor xmlns:md="${SAML_NAMESPACES.MD}" entityID="https://sp.example.test/saml">
+        <md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat>
+          <md:NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:persistent</md:NameIDFormat>
+          <md:AssertionConsumerService
+            Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+            Location="https://sp.example.test/acs"
+            index="0" />
+        </md:SPSSODescriptor>
+      </md:EntityDescriptor>
+    `);
+
+    expect(config.nameIdFormat).toBe('urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress');
+    expect(config.metadataNameIdFormats).toEqual([
+      'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    ]);
+  });
+
   it('roundtrips Authrim SP metadata export through metadata import parser', () => {
     const xml = buildSPMetadata({
       entityId: 'https://tenant.example.com/saml/sp',

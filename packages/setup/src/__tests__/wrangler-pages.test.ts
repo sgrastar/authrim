@@ -114,6 +114,24 @@ describe('generateUiWorkersWranglerConfig', () => {
     expect(result).toContain('PUBLIC_AUTHRIM_ISSUER = "https://issuer.example.com"');
   });
 
+  it('quotes the Email Verification Origin Trial token map as one Worker var', () => {
+    const tokenMap = JSON.stringify({
+      'https://login.example.com': 'A'.repeat(64),
+    });
+    const result = generateUiWorkersWranglerConfig({
+      component: 'ar-login-ui',
+      env: 'test',
+      needsProxy: false,
+      vars: {
+        EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: tokenMap,
+      },
+    });
+
+    expect(result).toContain(
+      `EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS = ${JSON.stringify(tokenMap)}`
+    );
+  });
+
   it('disables workers.dev and binds a custom domain when UI custom domain routes are provided', () => {
     const result = generateUiWorkersWranglerConfig({
       component: 'ar-admin-ui',

@@ -33,6 +33,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAuditLog: vi.fn().mockResolvedValue(undefined),
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getLogger: () => ({
       module: () => ({

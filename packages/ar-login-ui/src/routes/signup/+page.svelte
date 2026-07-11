@@ -2,7 +2,7 @@
 	import QRCode from 'qrcode';
 	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import RuntimeFormProfile from '$lib/components/RuntimeFormProfile.svelte';
+	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import {
 		passkeyAPI,
@@ -14,7 +14,7 @@
 	} from '$lib/api/client';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import {
 		isValidImageUrl,
 		isValidLinkUrl,
@@ -27,6 +27,7 @@
 	} from '$lib/api/authentication-methods';
 	import {
 		flowRuntimeAPI,
+		type FlowRuntimeEmailVerificationChallenge,
 		type FlowRuntimeConsentPolicyContent,
 		type FlowRuntimeStartResponse,
 		type FlowRuntimeSubmitResponse,
@@ -58,6 +59,16 @@
 	} from '$lib/authrim/storage-keys';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onMount } from 'svelte';
+	import type { PageData } from './$types';
+
+	type SignupPageData = PageData & {
+		emailVerificationProtocolEnabled?: boolean;
+	};
+
+	let { data: pageData }: { data: SignupPageData } = $props();
+	const emailVerificationTokenAutocomplete = 'email-verification-token' as never;
+
+	const { brandingStore, loginUIPageStore } = useLoginUIStores();
 
 	type PasskeyProgressPhase = 'idle' | 'preparing' | 'waiting' | 'finishing';
 
@@ -95,6 +106,8 @@
 	let externalIdpLoading = $state<string | null>(null);
 	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
 	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
+	let emailVerificationChallenge = $state<FlowRuntimeEmailVerificationChallenge | null>(null);
+	let emailVerificationChallengeRequestKey = '';
 	let runtimeFlowLoading = $state(true);
 	let runtimeFlowError = $state('');
 	let runtimeFlowBlocked = $state(false);
@@ -131,6 +144,18 @@
 	let activeTurnstileTarget = $state<string | null>(null);
 	let pendingTurnstileTarget = $state<string | null>(null);
 	const turnstileAction = 'authrim-signup';
+	const hasBrandingLogo = $derived(
+		Boolean(brandingStore.logoUrl && isValidImageUrl(brandingStore.logoUrl))
+	);
+	const showBrandLogo = $derived(
+		loginUIPageStore.logoDisplay !== 'hidden' &&
+			loginUIPageStore.logoDisplay !== 'text' &&
+			hasBrandingLogo
+	);
+	const showBrandText = $derived(
+		loginUIPageStore.logoDisplay !== 'hidden' &&
+			(loginUIPageStore.logoDisplay !== 'image' || !hasBrandingLogo)
+	);
 
 	function normalizeSixOrEightDigits(value: unknown): number {
 		return value === 8 ? 8 : 6;
@@ -202,15 +227,16 @@
 	const hasVisibleSignupMethod = $derived(
 		showRuntimePasskey || showRuntimeEmailCode || showRuntimeTotp || showRuntimeExternal
 	);
-	const runtimeFormProfile = $derived(getRuntimeFormProfile(runtimeFlowStep));
-	const useRuntimeFormLayout = $derived(
-		Boolean(runtimeFormProfile) &&
+	const runtimeScreen = $derived(getRuntimeScreen(runtimeFlowStep));
+	const runtimeScreenWide = $derived(isRuntimeScreenWide(runtimeScreen));
+	const useRuntimeScreenLayout = $derived(
+		Boolean(runtimeScreen) &&
 			runtimeFlowStep !== null &&
 			runtimeFlowStep.render &&
 			shouldRenderRuntimeStep(runtimeFlowStep)
 	);
 	const useRuntimeAuthFormLayout = $derived(
-		useRuntimeFormLayout && isRuntimeAuthStep(runtimeFlowStep)
+		useRuntimeScreenLayout && isRuntimeAuthStep(runtimeFlowStep)
 	);
 	const runtimeInitialLoading = $derived(
 		runtimeFlowLoading && !runtimeFlow && !runtimeFlowStep && !runtimeFlowError
@@ -220,12 +246,12 @@
 			runtimeFlowStep &&
 			runtimeFlowStep.render &&
 			isRuntimeAuthStep(runtimeFlowStep) &&
-			!runtimeFormProfile &&
+			!runtimeScreen &&
 			!runtimeFlowError
 		)
 	);
 	const runtimeFormHasHumanVerificationField = $derived(
-		hasRuntimeFormHumanVerificationField(runtimeFormProfile)
+		hasRuntimeScreenHumanVerificationField(runtimeScreen)
 	);
 	const showRuntimeFallbackHumanVerification = $derived(
 		useRuntimeAuthFormLayout &&
@@ -235,12 +261,12 @@
 			!runtimeFormHasHumanVerificationField
 	);
 	const blockLegacyFormLayout = $derived(
-		useRuntimeFormLayout || runtimeFlowBlocked || runtimeAuthFormMissing
+		useRuntimeScreenLayout || runtimeFlowBlocked || runtimeAuthFormMissing
 	);
 	const blockLegacyAuthLayout = $derived(
 		useRuntimeAuthFormLayout || runtimeFlowBlocked || runtimeAuthFormMissing
 	);
-	const runtimeFormFieldValues = $derived<Record<string, string>>({
+	const runtimeScreenFieldValues = $derived<Record<string, string>>({
 		...customFieldValues,
 		email,
 		name,
@@ -310,7 +336,7 @@
 
 	function getMissingRequiredRegistrationFieldsMessage(): string {
 		return getLocale() === 'ja'
-			? '必須の登録項目がフォームに表示されていません。管理者に問い合わせてください。'
+			? '必須の登録項目がスクリーンに表示されていません。管理者に問い合わせてください。'
 			: 'A required registration field is not available in this signup form. Contact your administrator.';
 	}
 
@@ -386,6 +412,7 @@
 		}
 		tasks.push(runtimeTargetReady.then(() => startRuntimeFlowIfAvailable()));
 		await Promise.all(tasks);
+		await refreshEmailVerificationProtocolChallenge();
 	});
 
 	async function loadAuthenticationMethods() {
@@ -484,6 +511,61 @@
 		if (!flow?.interaction.current_step_id) return null;
 		return (
 			flow.contract.ui.steps.find((step) => step.id === flow.interaction.current_step_id) ?? null
+		);
+	}
+
+	async function refreshEmailVerificationProtocolChallenge(force = false): Promise<void> {
+		const flow = runtimeFlow;
+		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
+		const requestKey = flow && step ? `${flow.interaction.id}:${step.id}:${flow.signature}` : '';
+		if (!force && requestKey && emailVerificationChallengeRequestKey === requestKey) return;
+		emailVerificationChallengeRequestKey = requestKey;
+		emailVerificationChallenge = null;
+
+		if (
+			!requestKey ||
+			!flow ||
+			!step ||
+			!emailCodeEnabled ||
+			pageData.emailVerificationProtocolEnabled !== true
+		) {
+			return;
+		}
+
+		const { data } = await flowRuntimeAPI.createEmailVerificationChallenge(flow.interaction.id, {
+			step_id: step.id,
+			contract_hash: flow.contract_hash,
+			signature: flow.signature
+		});
+		if (emailVerificationChallengeRequestKey !== requestKey) return;
+		if (
+			data?.available === true &&
+			typeof data.challenge_id === 'string' &&
+			typeof data.nonce === 'string' &&
+			data.interaction_id === flow.interaction.id &&
+			data.step_id === step.id
+		) {
+			emailVerificationChallenge = data;
+		}
+	}
+
+	function handleEmailVerificationProtocolSubmit(event: SubmitEvent): void {
+		event.preventDefault();
+		const challenge = emailVerificationChallenge;
+		const form = event.currentTarget;
+		if (!(form instanceof HTMLFormElement) || !challenge?.challenge_id) {
+			void handleEmailCodeSignup();
+			return;
+		}
+		const token = String(new FormData(form).get('email_verification_token') ?? '').trim();
+		void handleEmailCodeSignup(
+			token
+				? {
+						token,
+						challengeId: challenge.challenge_id,
+						interactionId: challenge.interaction_id ?? ''
+					}
+				: undefined
 		);
 	}
 
@@ -601,6 +683,7 @@
 			return false;
 		}
 		await advanceRuntimePastNonRenderedSteps();
+		await refreshEmailVerificationProtocolChallenge();
 		return true;
 	}
 
@@ -616,7 +699,7 @@
 		return (
 			step.config?.interaction_ui === true ||
 			step.config?.render_ui === true ||
-			typeof step.config?.profile_form_ref === 'string'
+			typeof step.config?.screen_ref === 'string'
 		);
 	}
 
@@ -672,11 +755,21 @@
 		return typeof description === 'string' ? description : '';
 	}
 
-	function getRuntimeFormProfile(step: FlowRuntimeStep | null): Record<string, unknown> | null {
-		const profile = step?.config?.form_profile ?? step?.content?.form_profile;
-		return profile && typeof profile === 'object' && !Array.isArray(profile)
-			? (profile as Record<string, unknown>)
+	function getRuntimeScreen(step: FlowRuntimeStep | null): Record<string, unknown> | null {
+		const screen = step?.config?.screen ?? step?.content?.screen;
+		return screen && typeof screen === 'object' && !Array.isArray(screen)
+			? (screen as Record<string, unknown>)
 			: null;
+	}
+
+	function isRuntimeScreenWide(screen: Record<string, unknown> | null): boolean {
+		const settings = screen?.settings;
+		return (
+			settings !== null &&
+			typeof settings === 'object' &&
+			!Array.isArray(settings) &&
+			(settings as Record<string, unknown>).canvas_layout === 'wide'
+		);
 	}
 
 	function getRuntimeConsentPolicy(
@@ -728,8 +821,8 @@
 		return sanitizeRuntimeConsentHtml(fallback);
 	}
 
-	function hasRuntimeFormHumanVerificationField(profile: Record<string, unknown> | null): boolean {
-		const fields = Array.isArray(profile?.fields) ? profile.fields : [];
+	function hasRuntimeScreenHumanVerificationField(screen: Record<string, unknown> | null): boolean {
+		const fields = Array.isArray(screen?.fields) ? screen.fields : [];
 		return fields.some((field) => {
 			if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
 			const record = field as Record<string, unknown>;
@@ -757,12 +850,12 @@
 	}
 
 	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
-		return !isRuntimeAuthStep(step) || Boolean(getRuntimeFormProfile(step));
+		return !isRuntimeAuthStep(step) || Boolean(getRuntimeScreen(step));
 	}
 
-	function getRuntimeFormContinueHandle(step: FlowRuntimeStep | null): string {
+	function getRuntimeScreenContinueHandle(step: FlowRuntimeStep | null): string {
 		if (step?.component === 'consent_policy') return 'accepted';
-		if (step?.component === 'profile_form') return 'submitted';
+		if (step?.component === 'screen') return 'submitted';
 		return 'completed';
 	}
 
@@ -879,8 +972,8 @@
 		required: boolean;
 		block_type: string;
 	}> {
-		const profile = getRuntimeFormProfile(runtimeFlowStep);
-		const fields = Array.isArray(profile?.fields) ? profile.fields : [];
+		const screen = getRuntimeScreen(runtimeFlowStep);
+		const fields = Array.isArray(screen?.fields) ? screen.fields : [];
 		return fields
 			.filter(
 				(field): field is Record<string, unknown> => Boolean(field) && typeof field === 'object'
@@ -899,14 +992,14 @@
 			.filter((field) => field.field);
 	}
 
-	function getRuntimeFormFieldValue(field: string): string {
+	function getRuntimeScreenFieldValue(field: string): string {
 		const normalized = field.toLowerCase();
 		if (normalized === 'email' || normalized.endsWith('.email')) return email;
 		if (normalized === 'name' || normalized.endsWith('.name')) return name;
 		return customFieldValues[field] ?? '';
 	}
 
-	function setRuntimeFormFieldError(field: string, message: string) {
+	function setRuntimeScreenFieldError(field: string, message: string) {
 		const normalized = field.toLowerCase();
 		if (normalized === 'email' || normalized.endsWith('.email')) {
 			emailError = message;
@@ -919,12 +1012,12 @@
 		customFieldErrors[field] = message;
 	}
 
-	function validateRuntimeFormFields(): boolean {
+	function validateRuntimeScreenFields(): boolean {
 		if (!useRuntimeAuthFormLayout) return true;
 		for (const field of getRuntimeProfileFields()) {
 			if (field.block_type !== 'identity_field' || !field.required) continue;
-			if (getRuntimeFormFieldValue(field.field).trim()) continue;
-			setRuntimeFormFieldError(field.field, `${field.label} is required`);
+			if (getRuntimeScreenFieldValue(field.field).trim()) continue;
+			setRuntimeScreenFieldError(field.field, `${field.label} is required`);
 		}
 		return !nameError && !emailError && Object.values(customFieldErrors).every((value) => !value);
 	}
@@ -937,7 +1030,7 @@
 		if (!validateCustomFields()) {
 			return false;
 		}
-		if (!validateRuntimeFormFields()) {
+		if (!validateRuntimeScreenFields()) {
 			return false;
 		}
 		if (email.trim() && !validateEmail(email)) {
@@ -1116,10 +1209,18 @@
 		}
 	}
 
-	async function handleEmailCodeSignup() {
+	async function handleEmailCodeSignup(emailVerification?: {
+		token: string;
+		challengeId: string;
+		interactionId: string;
+	}) {
 		if (authActionLoading) return;
 		error = '';
 		if (!validateForm()) return;
+		if (!email.trim()) {
+			emailError = $LL.login_errorEmailRequired();
+			return;
+		}
 
 		emailCodeLoading = true;
 
@@ -1127,17 +1228,51 @@
 			const cfTurnstileResponse = getTurnstileToken('email-code');
 			if (turnstileRequired && !cfTurnstileResponse) return;
 			const submittedCustomFields = getSubmittedCustomFields();
-			const { error: apiError } = await emailCodeAPI.send({
+			const { data: sendData, error: apiError } = await emailCodeAPI.send({
 				email,
 				name: getSubmittedDisplayName(),
 				invite_token: inviteToken || undefined,
+				authorizationChallengeId: authorizationChallengeId || undefined,
 				custom_fields: submittedCustomFields,
-				human_verification_response: cfTurnstileResponse
+				human_verification_response: cfTurnstileResponse,
+				deferAuthorizationContinuation: Boolean(runtimeFlow),
+				runtimeInteractionId: runtimeFlow?.interaction.id,
+				emailVerification
 			});
 			if (apiError) {
 				throw new Error(getApiErrorMessage(apiError));
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
+			if (sendData && 'verified' in sendData && sendData.verified) {
+				const verifiedRedirectUrl =
+					'redirect_url' in sendData && typeof sendData.redirect_url === 'string'
+						? sendData.redirect_url
+						: undefined;
+				emailVerificationChallenge = null;
+				removeLoginUiSessionItems([
+					LOGIN_UI_SESSION_STORAGE_KEYS.signupCustomFields,
+					LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.signupCustomFields
+				]);
+				await auth.refreshFromSession();
+				if (runtimeFlow) {
+					if (
+						runtimeFlowStep?.component === 'authentication_method_selector' ||
+						runtimeFlowStep?.component === 'registration_method_selector'
+					) {
+						if (!(await submitRuntimeStep('mail_otp'))) return;
+					}
+					if (runtimeFlowStep?.component === 'email_verification') {
+						if (!(await submitRuntimeStep('verified'))) return;
+					}
+					if (runtimeFlow?.interaction.state !== 'completed') {
+						pendingPostAuthRedirect = getCompletedSignupRedirect(verifiedRedirectUrl);
+						return;
+					}
+				}
+				window.location.href = getCompletedSignupRedirect(verifiedRedirectUrl);
+				return;
+			}
+			emailVerificationChallenge = null;
 			// Persist custom field values for post-verification saving
 			if (Object.keys(submittedCustomFields).length > 0) {
 				try {
@@ -1355,11 +1490,12 @@
 
 	function handleKeyPress(event: KeyboardEvent) {
 		if (event.key === 'Enter' && showRuntimeEmailCode) {
+			if (emailVerificationChallenge) return;
 			handleEmailCodeSignup();
 		}
 	}
 
-	function handleRuntimeFormFieldValueChange(field: string, value: string | boolean) {
+	function handleRuntimeScreenFieldValueChange(field: string, value: string | boolean) {
 		const stringValue = typeof value === 'string' ? value : value ? 'true' : 'false';
 		const normalized = field.toLowerCase();
 		if (normalized === 'email' || normalized.endsWith('.email')) {
@@ -1373,7 +1509,7 @@
 		setCustomFieldValue(field, stringValue);
 	}
 
-	function handleRuntimeFormAuthAction(method: RuntimeAuthMethod, _action?: string) {
+	function handleRuntimeScreenAuthAction(method: RuntimeAuthMethod, _action?: string) {
 		if (method === 'passkey') {
 			void handlePasskeyRegister();
 			return;
@@ -1418,564 +1554,437 @@
 </svelte:head>
 
 <div class="auth-page">
-	<LanguageSwitcher />
+	<div class="auth-main">
+		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card'}
+			<LanguageSwitcher
+				showThemeToggle={loginUIPageStore.themeToggleEnabled}
+				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+			/>
+		{/if}
 
-	<div class="auth-container">
-		<!-- Header -->
-		<div class="auth-header">
-			{#if brandingStore.logoUrl && isValidImageUrl(brandingStore.logoUrl)}
-				<img
-					src={brandingStore.logoUrl}
-					alt={brandingStore.brandName || 'Logo'}
-					class="auth-header__logo"
-					onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+		{#if loginUIPageStore.showBrandPanel}
+			<aside class="auth-brand-panel" aria-hidden="true">
+				<div class="auth-brand-panel__content">
+					{#if showBrandLogo && brandingStore.logoUrl}
+						<img
+							src={brandingStore.logoUrl}
+							alt=""
+							class="auth-brand-panel__logo"
+							onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+						/>
+					{/if}
+					{#if loginUIPageStore.brandContentMode === 'logo_copy'}
+						<p class="auth-brand-panel__eyebrow">{brandingStore.brandName || $LL.app_title()}</p>
+						{#if loginUIPageStore.brandPanelTitle}
+							<h2>{loginUIPageStore.brandPanelTitle}</h2>
+						{/if}
+						{#if loginUIPageStore.brandPanelText}
+							<p>{loginUIPageStore.brandPanelText}</p>
+						{/if}
+					{:else if !showBrandLogo}
+						<h2>{brandingStore.brandName || $LL.app_title()}</h2>
+					{/if}
+				</div>
+			</aside>
+		{/if}
+
+		<div class="auth-container" class:auth-container--wide={runtimeScreenWide}>
+			{#if loginUIPageStore.headerEnabled}
+				<header class="auth-header">
+					{#if showBrandLogo && brandingStore.logoUrl}
+						<img
+							src={brandingStore.logoUrl}
+							alt={brandingStore.brandName || 'Logo'}
+							class="auth-header__logo"
+							onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+						/>
+					{/if}
+					{#if showBrandText}
+						<h1 class="auth-header__title">
+							{brandingStore.brandName || $LL.app_title()}
+						</h1>
+					{/if}
+					{#if loginUIPageStore.subtitleEnabled}
+						<p class="auth-header__subtitle">
+							{loginUIPageStore.headerText || $LL.app_subtitle()}
+						</p>
+					{/if}
+				</header>
+			{/if}
+
+			{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition === 'in_card'}
+				<LanguageSwitcher
+					showThemeToggle={loginUIPageStore.themeToggleEnabled}
+					showLanguageSelect={loginUIPageStore.languageSelectEnabled}
 				/>
 			{/if}
-			<h1 class="auth-header__title">
-				{brandingStore.brandName || $LL.app_title()}
-			</h1>
-			<p class="auth-header__subtitle">
-				{$LL.app_subtitle()}
-			</p>
-		</div>
 
-		<!-- Loading State -->
-		{#if methodsLoading || runtimeInitialLoading}
-			<Card class="mb-6">
-				<div class="flex flex-col items-center justify-center py-8 gap-3">
-					<div
-						class="h-8 w-8 border-3 rounded-full animate-spin"
-						style="border-color: var(--border); border-top-color: var(--primary);"
-					></div>
-					<p style="color: var(--text-muted); font-size: 0.875rem;">{$LL.common_loading()}</p>
-				</div>
-			</Card>
-		{:else}
-			<!-- Registration Card -->
-			<Card class="mb-6">
-				{#if !blockLegacyFormLayout}
-					<div class="mb-6">
-						<h2 class="auth-section-title">
-							{$LL.register_title()}
-						</h2>
-						{#if inviteTenantName}
-							<p class="auth-section-subtitle">
-								You've been invited to <strong>{inviteTenantName}</strong>. Create your account to
-								continue.
-							</p>
-						{:else}
-							<p class="auth-section-subtitle">
-								{$LL.register_subtitle()}
-							</p>
-						{/if}
+			<!-- Loading State -->
+			{#if methodsLoading || runtimeInitialLoading}
+				<Card class="mb-6">
+					<div class="flex flex-col items-center justify-center py-8 gap-3">
+						<div
+							class="h-8 w-8 border-3 rounded-full animate-spin"
+							style="border-color: var(--border); border-top-color: var(--primary);"
+						></div>
+						<p style="color: var(--text-muted); font-size: 0.875rem;">{$LL.common_loading()}</p>
 					</div>
-				{/if}
-
-				<!-- Error Alert -->
-				{#if error}
-					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
-						{error}
-					</Alert>
-				{/if}
-
-				{#if runtimeFlowError}
-					<Alert
-						variant="error"
-						dismissible={true}
-						onDismiss={() => (runtimeFlowError = '')}
-						class="mb-4"
-					>
-						{runtimeFlowError}
-					</Alert>
-				{/if}
-
-				{#if runtimeAuthFormMissing}
-					<Alert variant="error" class="mb-4">
-						{getLocale() === 'ja'
-							? 'このFlowノードにフォームが設定されていません。管理者に問い合わせてください。'
-							: 'This Flow node does not have a form profile. Contact your administrator.'}
-					</Alert>
-				{/if}
-
-				{#if passkeyProgressMessage}
-					<div class="auth-progress mb-4" role="status" aria-live="polite">
-						<span class="auth-progress__spinner" aria-hidden="true"></span>
-						<span>{passkeyProgressMessage}</span>
-					</div>
-				{/if}
-
-				{#if runtimeFlowStep && runtimeFlowStep.render && shouldRenderRuntimeStep(runtimeFlowStep)}
-					{#if runtimeFormProfile}
-						<div class="runtime-form-step mb-4">
-							<RuntimeFormProfile
-								profile={runtimeFormProfile}
-								disabled={authActionLoading}
-								authMethodMode="signup"
-								fieldValues={runtimeFormFieldValues}
-								fieldErrors={{
-									email: emailError,
-									name: nameError,
-									...customFieldErrors
-								}}
-								methodAvailability={runtimeMethodAvailability}
-								methodLoading={runtimeMethodLoading}
-								externalProviders={runtimeExternalProviders}
-								consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
-								consentDecisions={runtimeConsentDecisions}
-								consentSelectedValues={runtimeConsentSelectedValues}
-								consentReady={canSubmitRuntimeConsent()}
-								humanVerificationRequired={useRuntimeAuthFormLayout && turnstileRequired}
-								humanVerificationSiteKey={turnstileSiteKey}
-								{humanVerificationProvider}
-								{humanVerificationMode}
-								humanVerificationAction={turnstileAction}
-								humanVerificationTheme={turnstileTheme}
-								humanVerificationLanguage={turnstileLanguage}
-								bind:humanVerificationToken={turnstileToken}
-								humanVerificationResetKey={turnstileResetKey}
-								humanVerificationVisible={Boolean(activeTurnstileTarget)}
-								humanVerificationLoadingLabel={$LL.login_humanVerificationLoading()}
-								humanVerificationErrorLabel={$LL.login_humanVerificationLoadFailed()}
-								onFieldValueChange={handleRuntimeFormFieldValueChange}
-								onAuthAction={handleRuntimeFormAuthAction}
-								onExternalProviderAction={handleRuntimeExternalProviderAction}
-								onConsentDecisionChange={setRuntimeConsentDecision}
-								onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
-							/>
-							{#if showRuntimeFallbackHumanVerification && turnstileSiteKey}
-								<div class="runtime-form-human-verification">
-									<TurnstileWidget
-										siteKey={turnstileSiteKey}
-										provider={humanVerificationProvider}
-										mode={humanVerificationMode}
-										action={turnstileAction}
-										theme={turnstileTheme}
-										language={turnstileLanguage}
-										bind:token={turnstileToken}
-										resetKey={turnstileResetKey}
-										disabled={authActionLoading}
-										loadingLabel={$LL.login_humanVerificationLoading()}
-										errorLabel={$LL.login_humanVerificationLoadFailed()}
-									/>
-								</div>
-							{/if}
-							{#if !isRuntimeAuthStep(runtimeFlowStep)}
-								<Button
-									variant="primary"
-									class="w-full"
-									loading={runtimeFlowLoading}
-									disabled={authActionLoading || !canSubmitRuntimeConsent()}
-									onclick={() =>
-										completeRuntimeOnlyStep(
-											getRuntimeFormContinueHandle(runtimeFlowStep),
-											getRuntimeConsentItemDecisionPayload()
-										)}
-								>
-									{$LL.common_continue()}
-								</Button>
-							{/if}
-						</div>
-					{:else}
-						<Alert variant="info" class="mb-4">
-							<div class="space-y-3">
-								<div>
-									<p class="font-semibold">{getRuntimeStepTitle(runtimeFlowStep)}</p>
-									{#if getRuntimeStepDescription(runtimeFlowStep)}
-										<p class="text-sm mt-1" style="color: var(--text-secondary);">
-											{getRuntimeStepDescription(runtimeFlowStep)}
-										</p>
-									{/if}
-								</div>
-								{#if runtimeFlowStep.component === 'consent_policy'}
-									{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
-									{#if consentPolicy?.items.length}
-										<div class="space-y-3">
-											{#each consentPolicy.items as item (item.statement_id)}
-												<div class="runtime-consent-item">
-													{#if item.checkbox_mode === 'none'}
-														<SanitizedHtml
-															tag="div"
-															class="runtime-consent-content"
-															sanitizedHtml={getRuntimeConsentItemHtml(item)}
-														/>
-													{:else}
-														<label class="runtime-consent-choice">
-															<input
-																type="checkbox"
-																bind:checked={runtimeConsentDecisions[item.statement_id]}
-																required={item.is_required || item.checkbox_mode === 'required'}
-															/>
-															<SanitizedHtml
-																class="runtime-consent-content"
-																sanitizedHtml={getRuntimeConsentItemHtml(item)}
-															/>
-														</label>
-													{/if}
-													{#if item.document_url && isValidLinkUrl(item.document_url)}
-														<a
-															class="runtime-consent-link"
-															href={item.document_url}
-															target="_blank"
-															rel="noopener noreferrer"
-														>
-															{item.document_url}
-														</a>
-													{/if}
-												</div>
-											{/each}
-										</div>
-									{:else}
-										<p class="text-sm" style="color: var(--text-secondary);">
-											{getRuntimeStepDescription(runtimeFlowStep)}
-										</p>
-									{/if}
-									<Button
-										variant="primary"
-										class="w-full"
-										loading={runtimeFlowLoading}
-										disabled={authActionLoading || !canSubmitRuntimeConsent()}
-										onclick={() =>
-											completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
-									>
-										{$LL.common_continue()}
-									</Button>
-								{:else if runtimeFlowStep.component === 'completion'}
-									<Button
-										variant="primary"
-										class="w-full"
-										loading={runtimeFlowLoading}
-										disabled={authActionLoading}
-										onclick={() => completeRuntimeOnlyStep('completed')}
-									>
-										{$LL.common_continue()}
-									</Button>
+				</Card>
+			{:else}
+				<!-- Registration Card -->
+				<form onsubmit={handleEmailVerificationProtocolSubmit}>
+					{#if emailVerificationChallenge?.nonce}
+						<input
+							type="hidden"
+							name="email_verification_token"
+							nonce={emailVerificationChallenge.nonce}
+							autocomplete={emailVerificationTokenAutocomplete}
+						/>
+					{/if}
+					<Card class="mb-6">
+						{#if !blockLegacyFormLayout}
+							<div class="mb-6">
+								<h2 class="auth-section-title">
+									{$LL.register_title()}
+								</h2>
+								{#if inviteTenantName}
+									<p class="auth-section-subtitle">
+										You've been invited to <strong>{inviteTenantName}</strong>. Create your account
+										to continue.
+									</p>
 								{:else}
-									<Button
-										variant="secondary"
-										class="w-full"
-										loading={runtimeFlowLoading}
-										disabled={authActionLoading}
-										onclick={() => completeRuntimeOnlyStep('completed')}
-									>
-										{$LL.common_continue()}
-									</Button>
+									<p class="auth-section-subtitle">
+										{$LL.register_subtitle()}
+									</p>
 								{/if}
 							</div>
-						</Alert>
-					{/if}
-				{/if}
+						{/if}
 
-				{#if !blockLegacyAuthLayout && !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
-					<Alert variant="error" class="mb-4">
-						{methodsError || $LL.register_noMethodsAvailable()}
-					</Alert>
-				{/if}
+						<!-- Error Alert -->
+						{#if error}
+							<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
+								{error}
+							</Alert>
+						{/if}
 
-				<!-- Registration Fields -->
-				{#if !blockLegacyAuthLayout && registrationFields.length > 0}
-					{#each registrationFields as field (field.field_key)}
-						<div class="mb-4">
-							{#if isNameRegistrationField(field)}
-								<Input
-									label={getFieldLabel(field)}
-									type="text"
-									placeholder={field.placeholder ?? $LL.common_namePlaceholder()}
-									bind:value={name}
-									error={nameError}
-									autocomplete="name"
-									required={field.required}
-								/>
-							{:else if isEmailRegistrationField(field)}
-								<Input
-									label={getFieldLabel(field)}
-									type="email"
-									placeholder={field.placeholder ?? $LL.common_emailPlaceholder()}
-									bind:value={email}
-									error={emailError}
-									onkeypress={handleKeyPress}
-									autocomplete="email"
-									required={field.required}
-								/>
-							{:else if field.field_type === 'boolean'}
-								<label class="flex items-center gap-2" style="cursor: pointer;">
-									<input
-										type="checkbox"
-										checked={customFieldValues[field.field_key] === 'true'}
-										onchange={(e) => {
-											setCustomFieldValue(
-												field.field_key,
-												(e.currentTarget as HTMLInputElement).checked ? 'true' : 'false'
-											);
+						{#if runtimeFlowError}
+							<Alert
+								variant="error"
+								dismissible={true}
+								onDismiss={() => (runtimeFlowError = '')}
+								class="mb-4"
+							>
+								{runtimeFlowError}
+							</Alert>
+						{/if}
+
+						{#if runtimeAuthFormMissing}
+							<Alert variant="error" class="mb-4">
+								{getLocale() === 'ja'
+									? 'このFlowノードにスクリーンが設定されていません。管理者に問い合わせてください。'
+									: 'This Flow node does not have a screen. Contact your administrator.'}
+							</Alert>
+						{/if}
+
+						{#if passkeyProgressMessage}
+							<div class="auth-progress mb-4" role="status" aria-live="polite">
+								<span class="auth-progress__spinner" aria-hidden="true"></span>
+								<span>{passkeyProgressMessage}</span>
+							</div>
+						{/if}
+
+						{#if runtimeFlowStep && runtimeFlowStep.render && shouldRenderRuntimeStep(runtimeFlowStep)}
+							{#if runtimeScreen}
+								<div class="runtime-screen-step mb-4">
+									<RuntimeScreen
+										screen={runtimeScreen}
+										disabled={authActionLoading}
+										authMethodMode="signup"
+										fieldValues={runtimeScreenFieldValues}
+										fieldErrors={{
+											email: emailError,
+											name: nameError,
+											...customFieldErrors
 										}}
+										methodAvailability={runtimeMethodAvailability}
+										methodLoading={runtimeMethodLoading}
+										externalProviders={runtimeExternalProviders}
+										consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
+										consentDecisions={runtimeConsentDecisions}
+										consentSelectedValues={runtimeConsentSelectedValues}
+										consentReady={canSubmitRuntimeConsent()}
+										humanVerificationRequired={useRuntimeAuthFormLayout && turnstileRequired}
+										humanVerificationSiteKey={turnstileSiteKey}
+										{humanVerificationProvider}
+										{humanVerificationMode}
+										humanVerificationAction={turnstileAction}
+										humanVerificationTheme={turnstileTheme}
+										humanVerificationLanguage={turnstileLanguage}
+										bind:humanVerificationToken={turnstileToken}
+										humanVerificationResetKey={turnstileResetKey}
+										humanVerificationVisible={Boolean(activeTurnstileTarget)}
+										humanVerificationLoadingLabel={$LL.login_humanVerificationLoading()}
+										humanVerificationErrorLabel={$LL.login_humanVerificationLoadFailed()}
+										emailVerificationProtocolEnabled={Boolean(emailVerificationChallenge)}
+										onFieldValueChange={handleRuntimeScreenFieldValueChange}
+										onAuthAction={handleRuntimeScreenAuthAction}
+										onExternalProviderAction={handleRuntimeExternalProviderAction}
+										onConsentDecisionChange={setRuntimeConsentDecision}
+										onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
 									/>
-									<span style="font-size: 0.875rem; color: var(--text);"
-										>{getFieldLabel(field)}</span
-									>
-								</label>
-								{#if customFieldErrors[field.field_key]}
-									<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
-								{/if}
-							{:else if field.field_type === 'enum'}
-								<div class="form-group">
-									<label class="form-label" for={`signup-${field.field_key}`}
-										>{getFieldLabel(field)}</label
-									>
-									<select
-										id={`signup-${field.field_key}`}
-										class="custom-field-select"
-										class:has-error={!!customFieldErrors[field.field_key]}
-										value={customFieldValues[field.field_key]}
-										onchange={(e) =>
-											setCustomFieldValue(
-												field.field_key,
-												(e.currentTarget as HTMLSelectElement).value
-											)}
-									>
-										<option value="">{field.placeholder ?? 'Select an option'}</option>
-										{#each getEnumOptions(field) as option (option)}
-											<option value={option}>{option}</option>
-										{/each}
-									</select>
-									{#if customFieldErrors[field.field_key]}
-										<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+									{#if showRuntimeFallbackHumanVerification && turnstileSiteKey}
+										<div class="runtime-screen-human-verification">
+											<TurnstileWidget
+												siteKey={turnstileSiteKey}
+												provider={humanVerificationProvider}
+												mode={humanVerificationMode}
+												action={turnstileAction}
+												theme={turnstileTheme}
+												language={turnstileLanguage}
+												bind:token={turnstileToken}
+												resetKey={turnstileResetKey}
+												disabled={authActionLoading}
+												loadingLabel={$LL.login_humanVerificationLoading()}
+												errorLabel={$LL.login_humanVerificationLoadFailed()}
+											/>
+										</div>
+									{/if}
+									{#if !isRuntimeAuthStep(runtimeFlowStep)}
+										<Button
+											variant="primary"
+											class="w-full"
+											loading={runtimeFlowLoading}
+											disabled={authActionLoading || !canSubmitRuntimeConsent()}
+											onclick={() =>
+												completeRuntimeOnlyStep(
+													getRuntimeScreenContinueHandle(runtimeFlowStep),
+													getRuntimeConsentItemDecisionPayload()
+												)}
+										>
+											{$LL.common_continue()}
+										</Button>
 									{/if}
 								</div>
-							{:else if field.field_type === 'date'}
-								<Input
-									label={getFieldLabel(field)}
-									type="date"
-									placeholder={field.placeholder ?? ''}
-									bind:value={customFieldValues[field.field_key]}
-									error={customFieldErrors[field.field_key]}
-									oninput={() =>
-										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
-									required={field.required}
-								/>
-							{:else if field.field_type === 'number'}
-								<Input
-									label={getFieldLabel(field)}
-									type="number"
-									placeholder={field.placeholder ?? ''}
-									bind:value={customFieldValues[field.field_key]}
-									error={customFieldErrors[field.field_key]}
-									oninput={() =>
-										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
-									required={field.required}
-								/>
 							{:else}
-								<Input
-									label={getFieldLabel(field)}
-									type="text"
-									placeholder={field.placeholder ?? ''}
-									bind:value={customFieldValues[field.field_key]}
-									error={customFieldErrors[field.field_key]}
-									oninput={() =>
-										setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
-									required={field.required}
-								/>
+								<Alert variant="info" class="mb-4">
+									<div class="space-y-3">
+										<div>
+											<p class="font-semibold">{getRuntimeStepTitle(runtimeFlowStep)}</p>
+											{#if getRuntimeStepDescription(runtimeFlowStep)}
+												<p class="text-sm mt-1" style="color: var(--text-secondary);">
+													{getRuntimeStepDescription(runtimeFlowStep)}
+												</p>
+											{/if}
+										</div>
+										{#if runtimeFlowStep.component === 'consent_policy'}
+											{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
+											{#if consentPolicy?.items.length}
+												<div class="space-y-3">
+													{#each consentPolicy.items as item (item.statement_id)}
+														<div class="runtime-consent-item">
+															{#if item.checkbox_mode === 'none'}
+																<SanitizedHtml
+																	tag="div"
+																	class="runtime-consent-content"
+																	sanitizedHtml={getRuntimeConsentItemHtml(item)}
+																/>
+															{:else}
+																<label class="runtime-consent-choice">
+																	<input
+																		type="checkbox"
+																		bind:checked={runtimeConsentDecisions[item.statement_id]}
+																		required={item.is_required || item.checkbox_mode === 'required'}
+																	/>
+																	<SanitizedHtml
+																		class="runtime-consent-content"
+																		sanitizedHtml={getRuntimeConsentItemHtml(item)}
+																	/>
+																</label>
+															{/if}
+															{#if item.document_url && isValidLinkUrl(item.document_url)}
+																<a
+																	class="runtime-consent-link"
+																	href={item.document_url}
+																	target="_blank"
+																	rel="noopener noreferrer"
+																>
+																	{item.document_url}
+																</a>
+															{/if}
+														</div>
+													{/each}
+												</div>
+											{:else}
+												<p class="text-sm" style="color: var(--text-secondary);">
+													{getRuntimeStepDescription(runtimeFlowStep)}
+												</p>
+											{/if}
+											<Button
+												variant="primary"
+												class="w-full"
+												loading={runtimeFlowLoading}
+												disabled={authActionLoading || !canSubmitRuntimeConsent()}
+												onclick={() =>
+													completeRuntimeOnlyStep(
+														'accepted',
+														getRuntimeConsentItemDecisionPayload()
+													)}
+											>
+												{$LL.common_continue()}
+											</Button>
+										{:else if runtimeFlowStep.component === 'completion'}
+											<Button
+												variant="primary"
+												class="w-full"
+												loading={runtimeFlowLoading}
+												disabled={authActionLoading}
+												onclick={() => completeRuntimeOnlyStep('completed')}
+											>
+												{$LL.common_continue()}
+											</Button>
+										{:else}
+											<Button
+												variant="secondary"
+												class="w-full"
+												loading={runtimeFlowLoading}
+												disabled={authActionLoading}
+												onclick={() => completeRuntimeOnlyStep('completed')}
+											>
+												{$LL.common_continue()}
+											</Button>
+										{/if}
+									</div>
+								</Alert>
 							{/if}
-						</div>
-					{/each}
-				{/if}
+						{/if}
 
-				<!-- Passkey Button -->
-				{#if !blockLegacyAuthLayout && showRuntimePasskey}
-					<Button
-						variant="primary"
-						class="w-full mb-3"
-						loading={passkeyLoading}
-						disabled={authActionLoading}
-						onclick={handlePasskeyRegister}
-					>
-						<div class="i-heroicons-key h-5 w-5"></div>
-						{$LL.register_createWithPasskey()}
-					</Button>
-					{#if showTurnstileFor('passkey') && turnstileSiteKey}
-						<TurnstileWidget
-							siteKey={turnstileSiteKey}
-							provider={humanVerificationProvider}
-							mode={humanVerificationMode}
-							action={turnstileAction}
-							theme={turnstileTheme}
-							language={turnstileLanguage}
-							bind:token={turnstileToken}
-							resetKey={turnstileResetKey}
-							disabled={authActionLoading}
-							loadingLabel={$LL.login_humanVerificationLoading()}
-							errorLabel={$LL.login_humanVerificationLoadFailed()}
-						/>
-					{/if}
+						{#if !blockLegacyAuthLayout && !methodsLoading && (methodsError || !hasVisibleSignupMethod)}
+							<Alert variant="error" class="mb-4">
+								{methodsError || $LL.register_noMethodsAvailable()}
+							</Alert>
+						{/if}
 
-					{#if showRuntimeEmailCode}
-						<div class="auth-divider">
-							<div class="auth-divider__line"></div>
-							<span class="auth-divider__text">{$LL.common_or()}</span>
-							<div class="auth-divider__line"></div>
-						</div>
-					{/if}
-				{/if}
-
-				<!-- Email Code Button -->
-				{#if !blockLegacyAuthLayout && showRuntimeEmailCode}
-					<Button
-						variant="secondary"
-						class="w-full"
-						loading={emailCodeLoading}
-						disabled={authActionLoading}
-						onclick={handleEmailCodeSignup}
-					>
-						<div class="i-heroicons-envelope h-5 w-5"></div>
-						{$LL.register_sendCode()}
-					</Button>
-					{#if showTurnstileFor('email-code') && turnstileSiteKey}
-						<TurnstileWidget
-							siteKey={turnstileSiteKey}
-							provider={humanVerificationProvider}
-							mode={humanVerificationMode}
-							action={turnstileAction}
-							theme={turnstileTheme}
-							language={turnstileLanguage}
-							bind:token={turnstileToken}
-							resetKey={turnstileResetKey}
-							disabled={authActionLoading}
-							loadingLabel={$LL.login_humanVerificationLoading()}
-							errorLabel={$LL.login_humanVerificationLoadFailed()}
-						/>
-					{/if}
-				{/if}
-
-				<!-- TOTP Button and Setup -->
-				{#if showRuntimeTotp && (!blockLegacyAuthLayout || totpSignup)}
-					{#if showRuntimePasskey || showRuntimeEmailCode}
-						<div class="auth-divider">
-							<div class="auth-divider__line"></div>
-							<span class="auth-divider__text">{$LL.common_or()}</span>
-							<div class="auth-divider__line"></div>
-						</div>
-					{/if}
-
-					{#if totpSignup}
-						<div class="totp-signup-panel">
-							{#if totpSignup.backupCodes.length > 0}
-								<h3>{$LL.account_totpBackupCodes()}</h3>
-								<ul class="totp-backup-codes">
-									{#each totpSignup.backupCodes as backupCode (backupCode)}
-										<li><code>{backupCode}</code></li>
-									{/each}
-								</ul>
-								<Button
-									variant="primary"
-									class="w-full"
-									disabled={authActionLoading}
-									onclick={continueAfterTotpBackupCodes}
-								>
-									{$LL.common_continue()}
-								</Button>
-							{:else}
-								<h3>{$LL.register_totpSetupTitle()}</h3>
-								{#if totpQrDataUrl}
-									<img class="totp-signup-qr" src={totpQrDataUrl} alt={$LL.account_totpQrAlt()} />
-								{/if}
-								<div class="totp-manual-key">
-									<span>{$LL.account_totpManualKey()}</span>
-									<code>{totpSignup.secret}</code>
+						<!-- Registration Fields -->
+						{#if !blockLegacyAuthLayout && registrationFields.length > 0}
+							{#each registrationFields as field (field.field_key)}
+								<div class="mb-4">
+									{#if isNameRegistrationField(field)}
+										<Input
+											label={getFieldLabel(field)}
+											type="text"
+											placeholder={field.placeholder ?? $LL.common_namePlaceholder()}
+											bind:value={name}
+											error={nameError}
+											autocomplete="name"
+											required={field.required}
+										/>
+									{:else if isEmailRegistrationField(field)}
+										<Input
+											label={getFieldLabel(field)}
+											type="email"
+											name="email"
+											placeholder={field.placeholder ?? $LL.common_emailPlaceholder()}
+											bind:value={email}
+											error={emailError}
+											onkeypress={handleKeyPress}
+											autocomplete="email"
+											required={field.required}
+										/>
+									{:else if field.field_type === 'boolean'}
+										<label class="flex items-center gap-2" style="cursor: pointer;">
+											<input
+												type="checkbox"
+												checked={customFieldValues[field.field_key] === 'true'}
+												onchange={(e) => {
+													setCustomFieldValue(
+														field.field_key,
+														(e.currentTarget as HTMLInputElement).checked ? 'true' : 'false'
+													);
+												}}
+											/>
+											<span style="font-size: 0.875rem; color: var(--text);"
+												>{getFieldLabel(field)}</span
+											>
+										</label>
+										{#if customFieldErrors[field.field_key]}
+											<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+										{/if}
+									{:else if field.field_type === 'enum'}
+										<div class="form-group">
+											<label class="form-label" for={`signup-${field.field_key}`}
+												>{getFieldLabel(field)}</label
+											>
+											<select
+												id={`signup-${field.field_key}`}
+												class="custom-field-select"
+												class:has-error={!!customFieldErrors[field.field_key]}
+												value={customFieldValues[field.field_key]}
+												onchange={(e) =>
+													setCustomFieldValue(
+														field.field_key,
+														(e.currentTarget as HTMLSelectElement).value
+													)}
+											>
+												<option value="">{field.placeholder ?? 'Select an option'}</option>
+												{#each getEnumOptions(field) as option (option)}
+													<option value={option}>{option}</option>
+												{/each}
+											</select>
+											{#if customFieldErrors[field.field_key]}
+												<p class="custom-field-error">{customFieldErrors[field.field_key]}</p>
+											{/if}
+										</div>
+									{:else if field.field_type === 'date'}
+										<Input
+											label={getFieldLabel(field)}
+											type="date"
+											placeholder={field.placeholder ?? ''}
+											bind:value={customFieldValues[field.field_key]}
+											error={customFieldErrors[field.field_key]}
+											oninput={() =>
+												setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+											required={field.required}
+										/>
+									{:else if field.field_type === 'number'}
+										<Input
+											label={getFieldLabel(field)}
+											type="number"
+											placeholder={field.placeholder ?? ''}
+											bind:value={customFieldValues[field.field_key]}
+											error={customFieldErrors[field.field_key]}
+											oninput={() =>
+												setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+											required={field.required}
+										/>
+									{:else}
+										<Input
+											label={getFieldLabel(field)}
+											type="text"
+											placeholder={field.placeholder ?? ''}
+											bind:value={customFieldValues[field.field_key]}
+											error={customFieldErrors[field.field_key]}
+											oninput={() =>
+												setCustomFieldValue(field.field_key, customFieldValues[field.field_key])}
+											required={field.required}
+										/>
+									{/if}
 								</div>
-								<Input
-									label={$LL.login_totpCodeLabel()}
-									placeholder={$LL.login_totpCodePlaceholder()}
-									bind:value={totpCode}
-									autocomplete="one-time-code"
-									inputmode="numeric"
-									maxlength={8}
-								/>
-								<div class="totp-signup-actions">
-									<Button
-										variant="primary"
-										class="w-full"
-										loading={totpLoading}
-										disabled={!/^\d{6}$|^\d{8}$/.test(totpCode.trim())}
-										onclick={handleTotpSignupActivate}
-									>
-										{$LL.account_totpActivate()}
-									</Button>
-									<Button
-										variant="secondary"
-										class="w-full"
-										disabled={authActionLoading}
-										onclick={() => {
-											totpSignup = null;
-											totpCode = '';
-										}}
-									>
-										{$LL.dialog_cancel()}
-									</Button>
-								</div>
-							{/if}
-						</div>
-					{:else if !blockLegacyAuthLayout}
-						<Button
-							variant="secondary"
-							class="w-full"
-							loading={totpLoading}
-							disabled={authActionLoading}
-							onclick={handleTotpSignupStart}
-						>
-							<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
-							{$LL.register_createWithTotp()}
-						</Button>
-					{/if}
-					{#if showTurnstileFor('totp') && turnstileSiteKey}
-						<TurnstileWidget
-							siteKey={turnstileSiteKey}
-							provider={humanVerificationProvider}
-							mode={humanVerificationMode}
-							action={turnstileAction}
-							theme={turnstileTheme}
-							language={turnstileLanguage}
-							bind:token={turnstileToken}
-							resetKey={turnstileResetKey}
-							disabled={authActionLoading}
-							loadingLabel={$LL.login_humanVerificationLoading()}
-							errorLabel={$LL.login_humanVerificationLoadFailed()}
-						/>
-					{/if}
-				{/if}
+							{/each}
+						{/if}
 
-				<!-- External Login Section -->
-				{#if !blockLegacyAuthLayout && showRuntimeExternal}
-					<div class="auth-divider" style="margin: 24px 0;">
-						<div class="auth-divider__line"></div>
-						<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
-						<div class="auth-divider__line"></div>
-					</div>
-
-					<div class="space-y-3">
-						{#each visibleExternalProviders as provider (provider.id)}
-							{@const safeColor =
-								isDarkMode && provider.buttonColorDark
-									? sanitizeColor(provider.buttonColorDark)
-									: sanitizeColor(provider.buttonColor)}
+						<!-- Passkey Button -->
+						{#if !blockLegacyAuthLayout && showRuntimePasskey}
 							<Button
-								variant="secondary"
-								class="w-full justify-center"
-								loading={externalIdpLoading === provider.id}
+								variant="primary"
+								class="w-full mb-3"
+								loading={passkeyLoading}
 								disabled={authActionLoading}
-								onclick={() => handleExternalLogin(provider)}
-								style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
+								onclick={handlePasskeyRegister}
 							>
-								{#if provider.iconUrl && isValidImageUrl(provider.iconUrl)}
-									<img
-										src={provider.iconUrl}
-										alt=""
-										loading="lazy"
-										style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
-									/>
-								{:else if getProviderIcon(provider)}
-									<div class="{getProviderIcon(provider)} h-5 w-5"></div>
-								{/if}
-								{getProviderButtonText(provider)}
+								<div class="i-heroicons-key h-5 w-5"></div>
+								{$LL.register_createWithPasskey()}
 							</Button>
-							{#if showTurnstileFor(`external:${provider.id}`) && turnstileSiteKey}
+							{#if showTurnstileFor('passkey') && turnstileSiteKey}
 								<TurnstileWidget
 									siteKey={turnstileSiteKey}
 									provider={humanVerificationProvider}
@@ -1990,31 +1999,239 @@
 									errorLabel={$LL.login_humanVerificationLoadFailed()}
 								/>
 							{/if}
-						{/each}
-					</div>
-				{/if}
 
-				<!-- Terms Agreement -->
-				{#if !blockLegacyAuthLayout}
-					<p class="mt-4 text-xs text-center" style="color: var(--text-muted);">
-						{$LL.register_termsAgreement()}
-					</p>
-				{/if}
-			</Card>
-		{/if}
+							{#if showRuntimeEmailCode}
+								<div class="auth-divider">
+									<div class="auth-divider__line"></div>
+									<span class="auth-divider__text">{$LL.common_or()}</span>
+									<div class="auth-divider__line"></div>
+								</div>
+							{/if}
+						{/if}
 
-		<!-- Sign In Link -->
-		<p class="auth-bottom-link">
-			<a href="/login">
-				{$LL.register_alreadyHaveAccount()}
-			</a>
-		</p>
+						<!-- Email Code Button -->
+						{#if !blockLegacyAuthLayout && showRuntimeEmailCode}
+							<Button
+								variant="secondary"
+								class="w-full"
+								type={emailVerificationChallenge ? 'submit' : 'button'}
+								loading={emailCodeLoading}
+								disabled={authActionLoading}
+								onclick={emailVerificationChallenge ? undefined : () => handleEmailCodeSignup()}
+							>
+								<div class="i-heroicons-envelope h-5 w-5"></div>
+								{$LL.register_sendCode()}
+							</Button>
+							{#if showTurnstileFor('email-code') && turnstileSiteKey}
+								<TurnstileWidget
+									siteKey={turnstileSiteKey}
+									provider={humanVerificationProvider}
+									mode={humanVerificationMode}
+									action={turnstileAction}
+									theme={turnstileTheme}
+									language={turnstileLanguage}
+									bind:token={turnstileToken}
+									resetKey={turnstileResetKey}
+									disabled={authActionLoading}
+									loadingLabel={$LL.login_humanVerificationLoading()}
+									errorLabel={$LL.login_humanVerificationLoadFailed()}
+								/>
+							{/if}
+						{/if}
+
+						<!-- TOTP Button and Setup -->
+						{#if showRuntimeTotp && (!blockLegacyAuthLayout || totpSignup)}
+							{#if showRuntimePasskey || showRuntimeEmailCode}
+								<div class="auth-divider">
+									<div class="auth-divider__line"></div>
+									<span class="auth-divider__text">{$LL.common_or()}</span>
+									<div class="auth-divider__line"></div>
+								</div>
+							{/if}
+
+							{#if totpSignup}
+								<div class="totp-signup-panel">
+									{#if totpSignup.backupCodes.length > 0}
+										<h3>{$LL.account_totpBackupCodes()}</h3>
+										<ul class="totp-backup-codes">
+											{#each totpSignup.backupCodes as backupCode (backupCode)}
+												<li><code>{backupCode}</code></li>
+											{/each}
+										</ul>
+										<Button
+											variant="primary"
+											class="w-full"
+											disabled={authActionLoading}
+											onclick={continueAfterTotpBackupCodes}
+										>
+											{$LL.common_continue()}
+										</Button>
+									{:else}
+										<h3>{$LL.register_totpSetupTitle()}</h3>
+										{#if totpQrDataUrl}
+											<img
+												class="totp-signup-qr"
+												src={totpQrDataUrl}
+												alt={$LL.account_totpQrAlt()}
+											/>
+										{/if}
+										<div class="totp-manual-key">
+											<span>{$LL.account_totpManualKey()}</span>
+											<code>{totpSignup.secret}</code>
+										</div>
+										<Input
+											label={$LL.login_totpCodeLabel()}
+											placeholder={$LL.login_totpCodePlaceholder()}
+											bind:value={totpCode}
+											autocomplete="one-time-code"
+											inputmode="numeric"
+											maxlength={8}
+										/>
+										<div class="totp-signup-actions">
+											<Button
+												variant="primary"
+												class="w-full"
+												loading={totpLoading}
+												disabled={!/^\d{6}$|^\d{8}$/.test(totpCode.trim())}
+												onclick={handleTotpSignupActivate}
+											>
+												{$LL.account_totpActivate()}
+											</Button>
+											<Button
+												variant="secondary"
+												class="w-full"
+												disabled={authActionLoading}
+												onclick={() => {
+													totpSignup = null;
+													totpCode = '';
+												}}
+											>
+												{$LL.dialog_cancel()}
+											</Button>
+										</div>
+									{/if}
+								</div>
+							{:else if !blockLegacyAuthLayout}
+								<Button
+									variant="secondary"
+									class="w-full"
+									loading={totpLoading}
+									disabled={authActionLoading}
+									onclick={handleTotpSignupStart}
+								>
+									<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
+									{$LL.register_createWithTotp()}
+								</Button>
+							{/if}
+							{#if showTurnstileFor('totp') && turnstileSiteKey}
+								<TurnstileWidget
+									siteKey={turnstileSiteKey}
+									provider={humanVerificationProvider}
+									mode={humanVerificationMode}
+									action={turnstileAction}
+									theme={turnstileTheme}
+									language={turnstileLanguage}
+									bind:token={turnstileToken}
+									resetKey={turnstileResetKey}
+									disabled={authActionLoading}
+									loadingLabel={$LL.login_humanVerificationLoading()}
+									errorLabel={$LL.login_humanVerificationLoadFailed()}
+								/>
+							{/if}
+						{/if}
+
+						<!-- External Login Section -->
+						{#if !blockLegacyAuthLayout && showRuntimeExternal}
+							<div class="auth-divider" style="margin: 24px 0;">
+								<div class="auth-divider__line"></div>
+								<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
+								<div class="auth-divider__line"></div>
+							</div>
+
+							<div class="space-y-3">
+								{#each visibleExternalProviders as provider (provider.id)}
+									{@const safeColor =
+										isDarkMode && provider.buttonColorDark
+											? sanitizeColor(provider.buttonColorDark)
+											: sanitizeColor(provider.buttonColor)}
+									<Button
+										variant="secondary"
+										class="w-full justify-center"
+										loading={externalIdpLoading === provider.id}
+										disabled={authActionLoading}
+										onclick={() => handleExternalLogin(provider)}
+										style={safeColor ? `border-color: ${safeColor}; color: ${safeColor};` : ''}
+									>
+										{#if provider.iconUrl && isValidImageUrl(provider.iconUrl)}
+											<img
+												src={provider.iconUrl}
+												alt=""
+												loading="lazy"
+												style="width: 20px; height: 20px; object-fit: contain; flex: 0 0 20px;"
+											/>
+										{:else if getProviderIcon(provider)}
+											<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+										{/if}
+										{getProviderButtonText(provider)}
+									</Button>
+									{#if showTurnstileFor(`external:${provider.id}`) && turnstileSiteKey}
+										<TurnstileWidget
+											siteKey={turnstileSiteKey}
+											provider={humanVerificationProvider}
+											mode={humanVerificationMode}
+											action={turnstileAction}
+											theme={turnstileTheme}
+											language={turnstileLanguage}
+											bind:token={turnstileToken}
+											resetKey={turnstileResetKey}
+											disabled={authActionLoading}
+											loadingLabel={$LL.login_humanVerificationLoading()}
+											errorLabel={$LL.login_humanVerificationLoadFailed()}
+										/>
+									{/if}
+								{/each}
+							</div>
+						{/if}
+
+						<!-- Terms Agreement -->
+						{#if !blockLegacyAuthLayout}
+							<p class="mt-4 text-xs text-center" style="color: var(--text-muted);">
+								{$LL.register_termsAgreement()}
+							</p>
+						{/if}
+					</Card>
+				</form>
+			{/if}
+
+			<!-- Sign In Link -->
+			{#if loginUIPageStore.authSwitchLinkEnabled}
+				<p class="auth-bottom-link">
+					<a href="/login" data-sveltekit-reload>
+						{$LL.register_alreadyHaveAccount()}
+					</a>
+				</p>
+			{/if}
+		</div>
 	</div>
 
 	<!-- Footer -->
-	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
-	</footer>
+	{#if loginUIPageStore.footerEnabled}
+		<footer class="auth-footer auth-page-footer">
+			{#if loginUIPageStore.footerText}
+				<p>{loginUIPageStore.footerText}</p>
+			{/if}
+			{#if loginUIPageStore.footerLinks.length > 0}
+				<nav class="auth-footer__links" aria-label="Footer links">
+					{#each loginUIPageStore.footerLinks as link (link.url)}
+						<a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
+					{/each}
+				</nav>
+			{/if}
+			{#if loginUIPageStore.poweredByEnabled}
+				<p>{$LL.footer_stack()}</p>
+			{/if}
+		</footer>
+	{/if}
 </div>
 
 <style>
@@ -2090,7 +2307,7 @@
 		margin-top: 6px;
 	}
 
-	.runtime-form-human-verification {
+	.runtime-screen-human-verification {
 		display: grid;
 		justify-items: center;
 		width: 100%;

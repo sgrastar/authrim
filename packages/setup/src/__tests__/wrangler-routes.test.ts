@@ -1506,6 +1506,7 @@ id = "kv-id"
       d1: {},
       kv: {},
       r2: {
+        PUBLIC_ASSETS: { name: 'imports-public-assets' },
         AVATARS: { name: 'imports-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'imports-diagnostic-logs' },
         IMPORT_ARTIFACTS: { name: 'imports-import-artifacts' },

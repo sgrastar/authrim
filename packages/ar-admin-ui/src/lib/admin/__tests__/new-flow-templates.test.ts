@@ -4,12 +4,18 @@ import {
 	createLoginUiRuntimeContractPreview,
 	formatLoginUiRuntimeContractPreview,
 	getNewFlowTemplate,
+	newFlowTemplates,
 	type LoginUiRuntimeContractPreview,
 	type NewFlowTemplate
 } from '../new-flow-templates';
 
 function requireTemplate(
-	id: 'oidc-login' | 'oidc-registration' | 'academic-saml-login'
+	id:
+		| 'default-login'
+		| 'default-login-no-consent'
+		| 'default-registration'
+		| 'default-registration-no-consent'
+		| 'academic-saml-login'
 ): NewFlowTemplate {
 	const template = getNewFlowTemplate(id);
 	if (!template) {
@@ -38,8 +44,37 @@ function parsePreviewContract(value: string): LoginUiRuntimeContractPreview {
 }
 
 describe('new flow templates', () => {
+	it('assigns screen references to every renderable Login UI screen step', () => {
+		const screenBackedComponents = new Set([
+			'authentication_method_selector',
+			'registration_method_selector',
+			'screen'
+		]);
+
+		expect(newFlowTemplates.length).toBeGreaterThan(0);
+		for (const template of newFlowTemplates) {
+			const contract = createLoginUiRuntimeContractPreview(template);
+
+			for (const step of contract.runtime.ui.steps) {
+				if (!step.render || !screenBackedComponents.has(step.component)) continue;
+				expect(step.config, `${template.id}:${step.source_node_id}`).toMatchObject({
+					screen_ref: expect.any(String)
+				});
+				expect((step.config.screen_ref as string).trim()).not.toEqual('');
+			}
+
+			for (const node of contract.editor.nodes) {
+				if (!['authentication', 'registration', 'screen'].includes(node.type)) continue;
+				expect(node.config, `${template.id}:${node.id}`).toMatchObject({
+					screen_ref: expect.any(String)
+				});
+				expect((node.config.screen_ref as string).trim()).not.toEqual('');
+			}
+		}
+	});
+
 	it('creates a LoginUI runtime contract preview for the login flow', () => {
-		const template = requireTemplate('oidc-login');
+		const template = requireTemplate('default-login');
 
 		const contract = createLoginUiRuntimeContractPreview(template);
 
@@ -47,7 +82,7 @@ describe('new flow templates', () => {
 			schema_version: 'authrim.login_ui.contract.v1',
 			mode: 'preview',
 			runtime: {
-				flow_id: 'preview:oidc-login',
+				flow_id: 'preview:default-login',
 				flow_kind: 'login',
 				runtime_bindings: {
 					authentication_method_profile: 'default',
@@ -58,9 +93,9 @@ describe('new flow templates', () => {
 				}
 			},
 			preview: {
-				contract_id: 'preview:oidc-login',
+				contract_id: 'preview:default-login',
 				flow: {
-					id: 'oidc-login',
+					id: 'default-login',
 					kind: 'login',
 					protocol: 'oidc'
 				}
@@ -117,7 +152,7 @@ describe('new flow templates', () => {
 	});
 
 	it('serializes the registration preview as readable JSON', () => {
-		const template = requireTemplate('oidc-registration');
+		const template = requireTemplate('default-registration');
 
 		const parsed = parsePreviewContract(formatLoginUiRuntimeContractPreview(template));
 
@@ -125,7 +160,7 @@ describe('new flow templates', () => {
 			authentication_method_profile: 'default',
 			consent_statement_ref: 'terms_of_service / privacy_policy'
 		});
-		expect(parsed.runtime.ui.steps.map((step) => step.component)).toContain('profile_form');
+		expect(parsed.runtime.ui.steps.map((step) => step.component)).toContain('screen');
 		expect(parsed.runtime.ui.steps.map((step) => step.component)).toContain('account_action');
 		expect(parsed.editor.edges.some((edge) => edge.source_handle === 'passkey')).toBe(true);
 		expect(parsed.editor.edges.some((edge) => edge.source_handle === 'totp')).toBe(true);
@@ -134,6 +169,114 @@ describe('new flow templates', () => {
 				id: 'oidc-registration-completion',
 				protocol: 'oidc',
 				purpose: 'registration'
+			}
+		});
+	});
+
+	it('creates a login template without consent confirmation', () => {
+		const template = requireTemplate('default-login-no-consent');
+
+		const contract = createLoginUiRuntimeContractPreview(template);
+
+		expect(contract).toMatchObject({
+			runtime: {
+				flow_id: 'preview:default-login-no-consent',
+				flow_kind: 'login',
+				runtime_bindings: {
+					authentication_method_profile: 'default'
+				}
+			},
+			preview: {
+				flow: {
+					id: 'default-login-no-consent',
+					title: 'Login (No consent)'
+				}
+			}
+		});
+		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_policy_ref');
+		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_statement_ref');
+		expect(contract.runtime.ui.steps.map((step) => step.component)).toEqual([
+			'interaction_context',
+			'session_check',
+			'authentication_method_selector',
+			'completion',
+			'completion'
+		]);
+		expect(
+			contract.runtime.ui.steps.find((step) => step.source_node_id === 'authentication')?.config
+		).toMatchObject({
+			screen_ref: 'login'
+		});
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'authentication')?.config
+		).toMatchObject({
+			screen_ref: 'login'
+		});
+		expect(contract.runtime.ui.steps.map((step) => step.source_node_id)).not.toContain('consent');
+		expect(contract.runtime.capabilities).toHaveLength(1);
+		expect(contract.editor.nodes.map((node) => node.id)).not.toContain(
+			'oidc-authorization-consent'
+		);
+		expect(contract.editor.nodes.map((node) => node.id)).toEqual(
+			expect.arrayContaining(['saml-attribute-release-complete', 'oidc-authorization-complete'])
+		);
+		expect(
+			contract.editor.edges.some(
+				(edge) =>
+					edge.source === 'authentication' &&
+					edge.source_handle === 'passkey' &&
+					edge.target === 'oidc-authorization-complete'
+			)
+		).toBe(true);
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'oidc-authorization-complete')?.config
+		).toMatchObject({
+			completion_block: {
+				id: 'oidc-authorization-completion',
+				protocol: 'oidc',
+				purpose: 'authorization',
+				role: 'output'
+			}
+		});
+	});
+
+	it('creates a registration template without profile input or consent', () => {
+		const template = requireTemplate('default-registration-no-consent');
+
+		const parsed = parsePreviewContract(formatLoginUiRuntimeContractPreview(template));
+
+		expect(parsed.runtime.runtime_bindings).not.toHaveProperty('consent_policy_ref');
+		expect(parsed.runtime.runtime_bindings).not.toHaveProperty('consent_statement_ref');
+		expect(parsed.runtime.ui.steps.map((step) => step.component)).toEqual([
+			'interaction_context',
+			'registration_method_selector',
+			'account_action',
+			'completion'
+		]);
+		expect(parsed.runtime.ui.steps.map((step) => step.component)).not.toContain('screen');
+		expect(parsed.runtime.ui.steps.map((step) => step.component)).not.toContain('consent_policy');
+		expect(
+			parsed.runtime.ui.steps.find((step) => step.source_node_id === 'registration-method')?.config
+		).toMatchObject({
+			screen_ref: 'registration'
+		});
+		expect(parsed.runtime.capabilities).toHaveLength(1);
+		expect(parsed.editor.nodes.map((node) => node.id)).not.toContain('profile-input');
+		expect(parsed.editor.nodes.map((node) => node.id)).not.toContain('consent');
+		expect(
+			parsed.editor.edges.some(
+				(edge) =>
+					edge.source === 'registration-method' &&
+					edge.source_handle === 'passkey' &&
+					edge.target === 'account-create'
+			)
+		).toBe(true);
+		expect(parsed.editor.nodes.find((node) => node.id === 'output')?.config).toMatchObject({
+			completion_block: {
+				id: 'oidc-registration-completion',
+				protocol: 'oidc',
+				purpose: 'registration',
+				role: 'output'
 			}
 		});
 	});

@@ -98,6 +98,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAuditLog: vi.fn().mockResolvedValue(undefined),
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     generateId: vi.fn(() => 'challenge-001'),
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
@@ -560,6 +561,11 @@ describe('Account Page passkey management API', () => {
       createMockContext({
         cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
         body: {},
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.email_otp.enabled': true,
+          },
+        },
       })
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -608,6 +614,11 @@ describe('Account Page passkey management API', () => {
 
     const response = await completeAccountEmailCodeReauthHandler(
       createMockContext({
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.email_otp.enabled': true,
+          },
+        },
         cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
         body: {
           challenge_id: 'email-reauth-001',
@@ -1097,6 +1108,11 @@ describe('Account Page passkey management API', () => {
       createMockContext({
         cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
         params: { id: 'pk_001' },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.email_otp.enabled': true,
+          },
+        },
       })
     );
     const body = (await response.json()) as {

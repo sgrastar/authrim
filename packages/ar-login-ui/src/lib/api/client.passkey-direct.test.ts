@@ -172,7 +172,8 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			email: 'User@Example.com',
 			invite_token: 'invite_123',
 			authorizationChallengeId: 'oauth_email_challenge',
-			custom_fields: { team: 'platform' }
+			custom_fields: { team: 'platform' },
+			runtimeInteractionId: 'runtime_email_1'
 		});
 		const verified = await emailCodeAPI.verify({
 			email: 'user@example.com',
@@ -200,6 +201,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			channel: 'browser',
 			invite_token: 'invite_123',
 			authorization_challenge_id: 'oauth_email_challenge',
+			runtime_interaction_id: 'runtime_email_1',
 			custom_fields: { team: 'platform' }
 		});
 		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
@@ -222,6 +224,137 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 				acr: 'urn:mace:incommon:iap:bronze',
 				amr: ['email_code']
 			}
+		});
+	});
+
+	it('redeems a valid Email Verification Protocol artifact without entering the OTP state', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ direct_auth_artifact: 'artifact_evp', expires_in: 60 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						redirect_url: '/account',
+						session: {
+							userId: 'user_email',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000456,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['email_verification_protocol']
+						},
+						user: {
+							id: 'user_email',
+							email: 'user@example.com',
+							name: null
+						}
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { emailCodeAPI } = await loadClient();
+
+		const result = await emailCodeAPI.send({
+			email: 'user@example.com',
+			deferAuthorizationContinuation: true,
+			runtimeInteractionId: 'runtime_email_1',
+			emailVerification: {
+				token: 'evt-presentation',
+				challengeId: 'evp_challenge_1',
+				interactionId: 'runtime_email_1'
+			}
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			email_verification_token: 'evt-presentation',
+			email_verification_challenge_id: 'evp_challenge_1',
+			runtime_interaction_id: 'runtime_email_1'
+		});
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			direct_auth_artifact: 'artifact_evp',
+			defer_authorization_continuation: true
+		});
+		expect(result.data).toMatchObject({
+			success: true,
+			verified: true,
+			userId: 'user_email',
+			redirect_url: '/account',
+			session: { amr: ['email_verification_protocol'] }
+		});
+	});
+
+	it('retains Email Code PKCE state after an invalid code so the attempt can be retried', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						attempt_id: 'attempt_retry',
+						expires_in: 300,
+						masked_email: 'u***@example.com'
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ error: 'invalid_code', error_description: 'Invalid code' }), {
+					status: 400,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ direct_auth_artifact: 'artifact_retry', expires_in: 60 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						session: { userId: 'user_email', createdAt: 1, expiresAt: 2 },
+						user: { id: 'user_email', email: 'user@example.com', name: null }
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { emailCodeAPI } = await loadClient();
+
+		await emailCodeAPI.send({ email: 'user@example.com' });
+		const invalid = await emailCodeAPI.verify({
+			email: 'user@example.com',
+			code: '000000'
+		});
+		const valid = await emailCodeAPI.verify({
+			email: 'user@example.com',
+			code: '123456'
+		});
+
+		expect(invalid.error).toMatchObject({ error: 'invalid_code' });
+		expect(valid.data).toMatchObject({ success: true, userId: 'user_email' });
+		expect(fetchMock).toHaveBeenCalledTimes(4);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			attempt_id: 'attempt_retry',
+			code: '000000'
+		});
+		expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+			attempt_id: 'attempt_retry',
+			code: '123456'
 		});
 	});
 

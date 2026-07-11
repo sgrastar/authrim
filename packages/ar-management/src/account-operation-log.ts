@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createAuthContextFromHono, getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import { createAuditLog, getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
 export async function recordAccountOperation(
   c: Context<{ Bindings: Env }>,
@@ -13,27 +13,22 @@ export async function recordAccountOperation(
   }
 ): Promise<void> {
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
   try {
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO audit_log (
-         id, tenant_id, user_id, action, resource_type, resource_id,
-         ip_address, user_agent, metadata_json, created_at, severity
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        crypto.randomUUID(),
-        tenantId,
-        input.userId,
-        input.action,
-        input.resourceType ?? null,
-        input.resourceId ?? null,
-        null,
-        null,
-        input.metadata ? JSON.stringify(input.metadata) : null,
-        Math.floor(Date.now() / 1000),
-        'info',
-      ]
-    );
+    await createAuditLog(c.env, {
+      tenantId,
+      userId: input.userId,
+      action: input.action,
+      resource: input.resourceType ?? 'account',
+      resourceId: input.resourceId ?? input.userId,
+      ipAddress:
+        c.req.header('CF-Connecting-IP') ||
+        c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+        c.req.header('X-Real-IP') ||
+        'unknown',
+      userAgent: c.req.header('User-Agent') || 'unknown',
+      metadata: JSON.stringify(input.metadata ?? {}),
+      severity: 'info',
+    });
   } catch {
     const log = getLogger(c).module('ACCOUNT-OPERATIONS');
     log.warn('Failed to record Account Page operation', {

@@ -544,6 +544,8 @@ export interface SAMLSPConfig {
   samlProfile?: SAMLSPProfile;
   /** NameID format preference */
   nameIdFormat: NameIDFormat;
+  /** NameID formats explicitly advertised by imported SP metadata */
+  metadataNameIdFormats?: NameIDFormat[];
   /** OIDC claim to SAML attribute mapping */
   attributeMapping: Record<string, string>;
   /** Policy-based SAML attribute release rules */

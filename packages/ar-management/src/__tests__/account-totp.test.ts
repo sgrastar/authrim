@@ -66,6 +66,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    createAuditLog: vi.fn().mockResolvedValue(undefined),
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),

@@ -154,7 +154,7 @@ const adminFlows = {
 	admin_flows_node_title_label: 'Title',
 	admin_flows_node_description_label: 'Description',
 	admin_flows_auth_profile_label: 'Authentication method profile',
-	admin_flows_profile_form_label: 'Profile form',
+	admin_flows_screen_label: 'Profile screen',
 	admin_flows_consent_policy_label: 'Consent policy',
 	admin_flows_condition_type_label: 'Condition',
 	admin_flows_condition_value_label: 'Value',
@@ -232,7 +232,7 @@ const adminFlows = {
 	admin_flows_template_oidc_registration_user_action:
 		'Choose a registration method, enter a profile, and agree to the Terms of Service and Privacy Policy',
 	admin_flows_template_oidc_registration_recorded_state:
-		'tenant + user + OIDC Client + registration form + consent statements',
+		'tenant + user + OIDC Client + registration screen + consent statements',
 	admin_flows_template_oidc_login_title: 'Login',
 	admin_flows_template_oidc_login_subtitle: 'Sign-in for applications',
 	admin_flows_template_oidc_login_description:
@@ -385,9 +385,9 @@ const adminFlows = {
 	admin_flows_palette_verification_label: 'Email verification',
 	admin_flows_palette_verification_description:
 		'Insert email reachability confirmation or additional verification.',
-	admin_flows_palette_profile_label: 'Profile form',
+	admin_flows_palette_profile_label: 'Profile screen',
 	admin_flows_palette_profile_description:
-		'Profile input form required for registration or account linking.',
+		'Profile input screen required for registration or account linking.',
 	admin_flows_palette_consent_label: 'Consent',
 	admin_flows_palette_consent_description:
 		'Show Terms of Service, Privacy Policy, or attribute release confirmation.',
@@ -401,9 +401,9 @@ const adminFlows = {
 	admin_flows_palette_end_description:
 		'Complete the flow and continue to the service response, session, or redirect.',
 	admin_flows_auth_profile_default: 'Default profile',
-	admin_flows_profile_form_basic: 'Basic profile',
-	admin_flows_profile_form_email_name: 'Email + name',
-	admin_flows_profile_form_academic: 'Academic profile',
+	admin_flows_screen_basic: 'Basic profile',
+	admin_flows_screen_email_name: 'Email + name',
+	admin_flows_screen_academic: 'Academic profile',
 	admin_flows_consent_policy_registration: 'Registration consent policy',
 	admin_flows_consent_policy_oidc_authorization: 'OIDC authorization consent policy',
 	admin_flows_consent_policy_saml_attribute_release: 'SAML attribute release policy',

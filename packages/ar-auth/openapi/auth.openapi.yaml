@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Authentication API
-  version: 0.3.2
+  version: 0.3.3
   summary: Browser and API authentication endpoints.
   description: >
     Initial OpenAPI contract for endpoints owned by `@authrim/ar-auth`. This document intentionally
@@ -799,6 +799,77 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+  /api/v1/login/interactions/{interaction_id}/email-verification/challenge:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsInteractionIdEmailVerificationChallenge
+      summary: Create an Email Verification Protocol nonce for the active runtime Flow step.
+      description: >
+        Returns a short-lived nonce only when mail OTP is enabled and the active Flow step is an
+        explicit email-verification step, or its mail-OTP branch leads directly to one. A response
+        with available=false means the client must use the normal mail-OTP path.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - step_id
+                - contract_hash
+                - signature
+              properties:
+                step_id:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: Email Verification Protocol availability and, when available, its nonce.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Set to no-store when a nonce is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - available
+                properties:
+                  available:
+                    type: boolean
+                  challenge_id:
+                    type: string
+                  nonce:
+                    type: string
+                  expires_in:
+                    type: integer
+                  interaction_id:
+                    type: string
+                  step_id:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /api/v1/login/interactions/{interaction_id}/submit:
     post:
       tags:
@@ -901,7 +972,9 @@ paths:
       summary: Send a Direct Auth email code.
       description:
         Creates an email-code challenge for Direct Auth after validating the client, channel,
-        origin, and requested email identifier.
+        origin, and requested email identifier. For an eligible explicit email-verification Flow,
+        a valid Email Verification Protocol presentation completes verification without sending a
+        code; missing, unsupported, or invalid presentations use the normal mail-OTP response.
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
@@ -1179,7 +1252,7 @@ paths:
       operationId: getApiV1RegistrationFields
       summary: List registration-visible custom fields.
       description:
-        Returns custom claim schema definitions marked as visible on the registration form for
+        Returns custom claim schema definitions marked as visible on the registration screen for
         the resolved tenant.
       responses:
         '200':
@@ -4436,6 +4509,17 @@ components:
         human_verification_response:
           type: string
           example: turnstile_token
+        email_verification_token:
+          type: string
+          description: >
+            Browser-provided Email Verification Protocol SD-JWT presentation. It is accepted only
+            with the matching challenge and runtime interaction.
+        email_verification_challenge_id:
+          type: string
+          description: Challenge identifier returned by the runtime email-verification endpoint.
+        runtime_interaction_id:
+          type: string
+          description: Runtime Flow interaction to bind to either OTP or protocol verification.
       required:
         - client_id
         - email
@@ -4443,21 +4527,23 @@ components:
         - code_challenge_method
         - channel
     DirectEmailCodeSendResponse:
-      type: object
-      properties:
-        attempt_id:
-          type: string
-          example: attempt_123
-        expires_in:
-          type: integer
-          example: 300
-        masked_email:
-          type: string
-          example: u***r@example.com
-      required:
-        - attempt_id
-        - expires_in
-        - masked_email
+      oneOf:
+        - type: object
+          properties:
+            attempt_id:
+              type: string
+              example: attempt_123
+            expires_in:
+              type: integer
+              example: 300
+            masked_email:
+              type: string
+              example: u***r@example.com
+          required:
+            - attempt_id
+            - expires_in
+            - masked_email
+        - $ref: '#/components/schemas/DirectAuthArtifactResponse'
     DirectEmailCodeVerifyRequest:
       type: object
       properties:
@@ -4598,6 +4684,12 @@ components:
         authorization_challenge_id:
           type: string
           example: auth_chal_123
+        defer_authorization_continuation:
+          type: boolean
+          default: false
+          description: >
+            Creates the managed browser session without consuming an authorization challenge so a
+            runtime Flow can complete its remaining steps first.
       required:
         - direct_auth_artifact
         - client_id

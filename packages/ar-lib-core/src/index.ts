@@ -15,7 +15,7 @@ export * from './types/check-api';
 export * from './types/support-ops';
 export * from './types/runtime-profile';
 export * from './types/approval';
-export * from './types/form-profiles';
+export * from './types/screens';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
 
@@ -101,6 +101,7 @@ export * from './utils/canonical-runtime-claims';
 export * from './utils/dcr-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';
+export * from './utils/login-ui-css-validator';
 export * from './utils/pii-encryption';
 export * from './utils/pii-config';
 export * from './utils/challenge-sharding';
@@ -557,3 +558,19 @@ export type {
   IRelationParser,
   RelationEvaluationContext,
 } from './rebac';
+
+export type {
+  Screen,
+  ScreenBlockType,
+  ScreenCanvasLayout,
+  ScreenDisplayCondition,
+  ScreenDisplayConditionFeature,
+  ScreenDisplayConditionMode,
+  ScreenField,
+  ScreenHumanVerificationTiming,
+  ScreenKind,
+  ScreenLocalization,
+  ScreenResponse,
+  ScreenSettings,
+  ScreenValueType,
+} from './types/screens';

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildDefaultCanonicalCatalogSeedSql,
+  buildInitialTenantBootstrapSql,
   buildRecordMigrationSql,
   calculateD1MigrationChecksum,
   buildRuntimeProfileSeedSql,
@@ -382,6 +383,81 @@ describe('migration seed SQL portability', () => {
       try {
         runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
 
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT f.status
+                    || ':' || f.is_active
+                    || ':' || f.published_version_id
+                    || ':' || v.version_number
+                    || ':' || a.enabled
+             FROM flows f
+             JOIN flow_versions v
+               ON v.tenant_id = f.tenant_id AND v.id = f.published_version_id
+             JOIN flow_assignments a
+               ON a.tenant_id = f.tenant_id AND a.flow_id = f.id
+             WHERE f.tenant_id = 'default'
+               AND f.slug = 'default-login-no-consent'
+               AND f.template_id = 'default-login-no-consent'
+               AND a.target_type = 'tenant'
+               AND a.target_id IS NULL
+               AND a.flow_kind = 'login';`
+          )
+        ).toBe('published:1:flow-version-default-login-no-consent-v1:1:1');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT f.status
+                    || ':' || f.is_active
+                    || ':' || f.published_version_id
+                    || ':' || v.version_number
+                    || ':' || a.enabled
+             FROM flows f
+             JOIN flow_versions v
+               ON v.tenant_id = f.tenant_id AND v.id = f.published_version_id
+             JOIN flow_assignments a
+               ON a.tenant_id = f.tenant_id AND a.flow_id = f.id
+             WHERE f.tenant_id = 'default'
+               AND f.slug = 'default-registration-no-consent'
+               AND f.template_id = 'default-registration-no-consent'
+               AND a.target_type = 'tenant'
+               AND a.target_id IS NULL
+               AND a.flow_kind = 'registration';`
+          )
+        ).toBe('published:1:flow-version-default-registration-no-consent-v1:1:1');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flow_versions
+             WHERE flow_id IN ('flow-default-login-no-consent', 'flow-default-registration-no-consent')
+               AND editor_snapshot_json LIKE '%"type":"consent"%';`
+          )
+        ).toBe('0');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flow_versions
+             WHERE flow_id = 'flow-default-login-no-consent'
+               AND runtime_snapshot_json LIKE '%"screen_ref":"login"%';`
+          )
+        ).toBe('1');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flow_versions
+             WHERE flow_id = 'flow-default-registration-no-consent'
+               AND runtime_snapshot_json LIKE '%"screen_ref":"registration"%';`
+          )
+        ).toBe('1');
+
         runSqlite(
           sqlite3Path,
           dbPath,
@@ -545,6 +621,100 @@ INSERT INTO oauth_clients (
   );
 
   it(
+    'keeps seeded no-consent Flows assigned after initial tenant rename',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-flow-initial-tenant-'));
+      const dbPath = join(tempDir, 'test.db');
+      const config = createDefaultConfig('mt');
+      config.tenant.name = 'first';
+      config.tenant.displayName = 'First Tenant';
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(config));
+
+        expect(readSqlite(sqlite3Path, dbPath, 'SELECT id FROM tenants;')).toBe('first');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flows
+             WHERE tenant_id = 'first'
+               AND status = 'published'
+               AND is_active = 1
+               AND published_version_id IS NOT NULL
+               AND slug IN ('default-login-no-consent', 'default-registration-no-consent');`
+          )
+        ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM screens
+             WHERE tenant_id = 'first'
+               AND is_active = 1
+               AND is_system = 1
+               AND screen_key IN ('login', 'registration', 'profile_completion', 'code_input');`
+          )
+        ).toBe('4');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flow_versions
+             WHERE tenant_id = 'first'
+               AND flow_id IN ('flow-default-login-no-consent', 'flow-default-registration-no-consent');`
+          )
+        ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flow_assignments
+             WHERE tenant_id = 'first'
+               AND target_type = 'tenant'
+               AND target_id IS NULL
+               AND enabled = 1
+               AND flow_kind IN ('login', 'registration');`
+          )
+        ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM flows
+             WHERE tenant_id = 'default'
+               AND slug IN ('default-login-no-consent', 'default-registration-no-consent');`
+          )
+        ).toBe('0');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM screens
+             WHERE tenant_id = 'default'
+               AND screen_key IN ('login', 'registration', 'profile_completion', 'code_input');`
+          )
+        ).toBe('0');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
     'applies the consolidated PII baseline in SQLite',
     () => {
       const sqlite3Path = findSqlite3();
@@ -696,12 +866,19 @@ INSERT INTO tenants (
   it('keeps unified identity mapping schema migrations annotated with schema-readiness IDs', () => {
     const migrationSql = [
       readMigration('008_unified_identity_canonical_schema.sql'),
-      readMigration('admin/007_identity_mapping_control_plane_schema.sql'),
+      readMigration('admin/007_identity_mapping_control_plane.sql'),
     ].join('\n');
     const migrationIds = new Set(migrationSql.match(/UIM-SCH-\d{3}/g) ?? []);
     const expectedIds = [
       ...Array.from({ length: 84 }, (_, index) => `UIM-SCH-${String(index + 1).padStart(3, '0')}`),
       'UIM-SCH-088',
+      'UIM-SCH-089',
+      'UIM-SCH-090',
+      'UIM-SCH-091',
+      'UIM-SCH-092',
+      'UIM-SCH-093',
+      'UIM-SCH-094',
+      'UIM-SCH-095',
     ];
 
     expect([...migrationIds].sort()).toEqual(expectedIds.sort());

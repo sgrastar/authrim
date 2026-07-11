@@ -1,0 +1,87 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+function source(path: string): string {
+	return readFileSync(resolve(__dirname, '..', path), 'utf8');
+}
+
+function expectPageShellOrder(pageSource: string) {
+	const headerIndex = pageSource.indexOf('class="auth-header"');
+	const mainIndex = pageSource.indexOf('class="auth-main"');
+	const panelIndex = pageSource.indexOf('class="auth-container"');
+	const footerIndex = pageSource.indexOf('class="auth-footer auth-page-footer"');
+
+	expect(headerIndex).toBeGreaterThan(-1);
+	expect(panelIndex).toBeGreaterThan(mainIndex);
+	expect(headerIndex).toBeGreaterThan(panelIndex);
+	expect(footerIndex).toBeGreaterThan(headerIndex);
+	expect(pageSource).not.toContain('auth-page-header');
+}
+
+describe('split page shell', () => {
+	it('keeps the header in the auth panel and the full-width footer outside the main area', () => {
+		expectPageShellOrder(source('routes/login/+page.svelte'));
+		expectPageShellOrder(source('routes/signup/+page.svelte'));
+	});
+
+	it('uses viewport rows without reserving hidden footer space', () => {
+		const css = source('app.css');
+
+		expect(css).toContain('grid-template-rows: minmax(0, 1fr) auto;');
+		expect(css).toContain("[data-page-layout='split_panel'] .auth-main");
+		expect(css).toContain('height: 100dvh;');
+		expect(css).not.toContain("[data-page-layout='split_panel'] .auth-page-header");
+		expect(css).toContain("[data-page-layout='split_panel'] .auth-page-footer");
+		expect(css).toContain('grid-row: 2;');
+	});
+
+	it('removes the card surface for forms in the split auth panel', () => {
+		const css = source('app.css');
+
+		expect(css).toContain("[data-page-layout='split_panel'] .auth-container > form > .card");
+		expect(css).toContain('background: transparent;');
+		expect(css).toContain('box-shadow: none;');
+	});
+
+	it('expands only runtime screens configured with a wide canvas', () => {
+		const css = source('app.css');
+
+		expect(css).toContain('.auth-container.auth-container--wide > form > .card');
+		expect(css).toContain('max-width: 760px;');
+		expect(source('routes/login/+page.svelte')).toContain(
+			'class:auth-container--wide={runtimeScreenWide}'
+		);
+		expect(source('routes/signup/+page.svelte')).toContain(
+			'class:auth-container--wide={runtimeScreenWide}'
+		);
+	});
+
+	it('uses the shared compact scale for every login theme layout', () => {
+		const css = source('app.css');
+
+		expect(css).toContain('--auth-card-padding: 20px;');
+		expect(css).toContain('--auth-control-height: 2.75rem;');
+		expect(css).toContain('--auth-heading-size: 1.25rem;');
+		expect(css).toContain("[data-login-theme='fullbleed-glass'] .runtime-screen-heading h2");
+		expect(css).toContain('font-size: var(--auth-heading-size);');
+		expect(css).not.toContain("[data-page-layout='split_panel'] .runtime-auth-button {");
+	});
+
+	it('keeps authentication actions on one line at narrow mobile widths', () => {
+		const appCss = source('app.css');
+		const runtimeScreen = source('lib/components/RuntimeScreen.svelte');
+
+		expect(appCss).toContain('-webkit-text-size-adjust: 100%;');
+		expect(appCss).toMatch(
+			/@media \(max-width: 640px\)[\s\S]*?\.auth-container \{\s*max-width: 100%;/
+		);
+		expect(runtimeScreen).toContain('white-space: nowrap;');
+		expect(runtimeScreen).toMatch(
+			/@media \(max-width: 400px\)[\s\S]*?font-size: clamp\(0\.75rem, 3\.8vw, 0\.875rem\);/
+		);
+		expect(runtimeScreen).toMatch(
+			/@media \(max-width: 400px\)[\s\S]*?\.runtime-code-actions \{\s*grid-template-columns: minmax\(0, 1fr\);/
+		);
+	});
+});

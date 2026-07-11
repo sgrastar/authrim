@@ -26,7 +26,11 @@ describe('setup web email API', () => {
     const env = 'prod';
     const envDir = join(tempDir!, '.authrim', env);
     await mkdir(envDir, { recursive: true });
-    await writeFile(join(envDir, 'config.json'), JSON.stringify(createDefaultConfig(env), null, 2));
+    const initialConfig = createDefaultConfig(env);
+    initialConfig.features.email.verificationProtocolOriginTrial = {
+      tokens: { 'https://login.example.com': 'A'.repeat(64) },
+    };
+    await writeFile(join(envDir, 'config.json'), JSON.stringify(initialConfig, null, 2));
 
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -53,6 +57,9 @@ describe('setup web email API', () => {
           configured: boolean;
           fromAddress: string;
           fromName: string;
+          verificationProtocolOriginTrial: {
+            tokens: Record<string, string>;
+          };
         };
       };
     };
@@ -61,6 +68,9 @@ describe('setup web email API', () => {
       configured: true,
       fromAddress: 'no-reply@example.com',
       fromName: 'Authrim',
+    });
+    expect(config.features.email.verificationProtocolOriginTrial.tokens).toEqual({
+      'https://login.example.com': 'A'.repeat(64),
     });
     await expect(
       readFile(join(tempDir!, '.authrim-keys', env, 'email_from.txt'), 'utf-8')

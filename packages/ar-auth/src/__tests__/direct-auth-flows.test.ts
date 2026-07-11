@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
   };
   const coreAdapter = {
     execute: vi.fn(),
+    queryOne: vi.fn(),
   };
   const userCore = {
     findById: vi.fn(),
@@ -54,6 +55,8 @@ const mocks = vi.hoisted(() => {
     getClient: vi.fn(),
     getWebOriginRegistry: vi.fn(),
     getTenantSettings: vi.fn(),
+    getDefaultTenantId: vi.fn(),
+    resolveTenantFromEmailDomain: vi.fn(),
     generateUserIdFromSettings: vi.fn(),
     publishEvent: vi.fn(),
     generateAuthenticationOptions: vi.fn(),
@@ -67,6 +70,8 @@ const mocks = vi.hoisted(() => {
     validateRegistrationFieldSubmissionFromEnv: vi.fn(),
     persistRegistrationFieldValuesFromEnv: vi.fn(),
     verifyHumanVerificationForAction: vi.fn(),
+    verifyEmailVerificationProtocol: vi.fn(),
+    findActiveInvitationByToken: vi.fn(),
     getCookie: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -102,6 +107,19 @@ vi.mock('../registration-field-utils', () => ({
 vi.mock('../human-verification', () => ({
   verifyHumanVerificationForAction: mocks.verifyHumanVerificationForAction,
 }));
+
+vi.mock('../email-verification-protocol', () => ({
+  verifyEmailVerificationProtocol: mocks.verifyEmailVerificationProtocol,
+}));
+
+vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@authrim/ar-lib-core/services/invitation-auth-core')>();
+  return {
+    ...actual,
+    findActiveInvitationByToken: mocks.findActiveInvitationByToken,
+  };
+});
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -170,10 +188,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }
     },
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
-    getDefaultTenantId: vi.fn(() => 'default'),
+    getDefaultTenantId: mocks.getDefaultTenantId,
     getTenantSettings: mocks.getTenantSettings,
     getClient: mocks.getClient,
     getWebOriginRegistry: mocks.getWebOriginRegistry,
+    resolveTenantFromEmailDomain: mocks.resolveTenantFromEmailDomain,
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
       repositories: {
@@ -270,6 +289,31 @@ function createContext(
   };
 }
 
+function createEmailOtpEnabledSettings(
+  extraRecords: Record<string, string> = {},
+  overrides: Record<string, boolean | string> = {}
+) {
+  return createMockKV({
+    'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+      'authentication-methods.email_otp.login_enabled': true,
+      'authentication-methods.email_otp.signup_enabled': true,
+      'authentication-methods.email_otp.reauth_enabled': true,
+      'authentication-methods.email_otp.account_link_enabled': true,
+      ...overrides,
+    }),
+    ...extraRecords,
+  });
+}
+
+function enableEmailOtp(
+  context: ReturnType<typeof createContext>,
+  extraRecords: Record<string, string> = {},
+  overrides: Record<string, boolean | string> = {}
+) {
+  context.env.SETTINGS = createEmailOtpEnabledSettings(extraRecords, overrides) as never;
+  return context;
+}
+
 function webHeaders() {
   return {
     origin: 'https://app.example.com',
@@ -295,6 +339,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getTenantSettings.mockResolvedValue(null);
+    mocks.getDefaultTenantId.mockReturnValue('default');
+    mocks.resolveTenantFromEmailDomain.mockResolvedValue(null);
     mocks.getClient.mockResolvedValue({
       client_id: 'web-client',
       application_type: 'web',
@@ -319,6 +365,12 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       data: { amr: ['passkey'] },
     });
     mocks.coreAdapter.execute.mockResolvedValue(undefined);
+    mocks.coreAdapter.queryOne.mockResolvedValue({
+      state: 'active',
+      current_step_id: 'auth:step',
+      contract_hash: 'contract_hash',
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+    });
     mocks.userCore.findById.mockResolvedValue({
       id: 'user_existing',
       is_active: true,
@@ -390,6 +442,12 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       values: {},
     });
     mocks.persistRegistrationFieldValuesFromEnv.mockResolvedValue(undefined);
+    mocks.verifyEmailVerificationProtocol.mockResolvedValue({
+      verified: false,
+      reason: 'verification_failed',
+    });
+    mocks.findActiveInvitationByToken.mockReset();
+    mocks.findActiveInvitationByToken.mockResolvedValue(null);
     mocks.verifyHumanVerificationForAction.mockImplementation(
       async (
         c: { env: { SETTINGS?: { get: (key: string) => Promise<string | null> } } },
@@ -1138,16 +1196,18 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeSendHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          email: 'new@example.com',
-          code_challenge: 'email-pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-          scope: 'openid email',
-        },
-        webHeaders()
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            scope: 'openid email',
+          },
+          webHeaders()
+        )
       ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -1189,6 +1249,445 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('accepts a valid email verification presentation without sending an OTP', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    const protocolMetadata = {
+      interaction_id: 'interaction_1',
+      expected_origin: 'https://app.example.com',
+      source_step_id: 'auth:step',
+      verification_step_id: 'email-verify:step',
+      contract_hash: 'contract_hash',
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      metadata: protocolMetadata,
+    });
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      metadata: protocolMetadata,
+    });
+    mocks.verifyEmailVerificationProtocol.mockResolvedValue({
+      verified: true,
+      issuer: 'https://mail.example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            scope: 'openid email',
+            email_verification_token: 'presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      direct_auth_artifact: expect.any(String),
+      expires_in: 60,
+      is_new_user: false,
+    });
+    expect(body).not.toHaveProperty('attempt_id');
+    expect(mocks.verifyEmailVerificationProtocol).toHaveBeenCalledWith({
+      presentationToken: 'presentation-token',
+      expectedEmail: 'existing@example.com',
+      expectedNonce: 'protocol-nonce',
+      expectedAudience: 'https://app.example.com',
+    });
+    expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledWith(
+      'email_verification_protocol:challenge_1'
+    );
+    expect(mocks.coreAdapter.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('FROM flow_interactions'),
+      ['tenant_test', 'interaction_1']
+    );
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
+      id: 'email_verification_protocol:challenge_1',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      challenge: 'protocol-nonce',
+    });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_auth_code',
+        metadata: expect.objectContaining({
+          method: 'email_verification_protocol',
+          runtime_interaction_id: 'interaction_1',
+        }),
+      })
+    );
+    expect(mocks.generateEmailCode).not.toHaveBeenCalled();
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    expect(mocks.publishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: 'auth.email_verification_protocol.succeeded',
+        data: expect.objectContaining({
+          userId: 'user_existing',
+          method: 'email_verification_protocol',
+        }),
+      })
+    );
+  });
+
+  it('keeps a runtime-bound EVP request in the Flow tenant instead of email-domain routing', async () => {
+    mocks.getDefaultTenantId.mockReturnValue('tenant_test');
+    mocks.resolveTenantFromEmailDomain.mockResolvedValue('tenant_other');
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@other.example',
+      name: 'Existing User',
+    });
+    const protocolMetadata = {
+      interaction_id: 'interaction_1',
+      expected_origin: 'https://app.example.com',
+      source_step_id: 'auth:step',
+      verification_step_id: 'email-verify:step',
+      contract_hash: 'contract_hash',
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      metadata: protocolMetadata,
+    });
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      metadata: protocolMetadata,
+    });
+    mocks.verifyEmailVerificationProtocol.mockResolvedValue({
+      verified: true,
+      issuer: 'https://mail.example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@other.example',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            email_verification_token: 'presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveProperty('direct_auth_artifact');
+    expect(body).not.toHaveProperty('attempt_id');
+    expect(mocks.resolveTenantFromEmailDomain).not.toHaveBeenCalled();
+    expect(mocks.verifyEmailVerificationProtocol).toHaveBeenCalledTimes(1);
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant_test', userId: 'user_existing' })
+    );
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('rejects a runtime-bound invitation that would cross the Flow tenant boundary', async () => {
+    mocks.findActiveInvitationByToken.mockResolvedValueOnce({
+      id: 'invite_1',
+      token: 'invite-token',
+      tenant_id: 'tenant_other',
+      invited_email: 'existing@other.example',
+      role_id: null,
+      org_id: null,
+      max_uses: 1,
+      use_count: 0,
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@other.example',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            invite_token: 'invite-token',
+            email_verification_token: 'presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.rateLimiter.incrementRpc).not.toHaveBeenCalled();
+    expect(mocks.userPII.findByTenantAndEmail).not.toHaveBeenCalled();
+    expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('falls back to OTP without consuming the challenge when EVP validation fails', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      metadata: {
+        interaction_id: 'interaction_1',
+        expected_origin: 'https://app.example.com',
+        source_step_id: 'auth:step',
+        verification_step_id: 'email-verify:step',
+        contract_hash: 'contract_hash',
+      },
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            email_verification_token: 'invalid-presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+    });
+    expect(mocks.verifyEmailVerificationProtocol).toHaveBeenCalledTimes(1);
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'direct_email_code',
+        metadata: expect.objectContaining({ runtime_interaction_id: 'interaction_1' }),
+      })
+    );
+    expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks the external origin before validating an EVP presentation', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      metadata: {
+        interaction_id: 'interaction_1',
+        expected_origin: 'https://different.example.com',
+        source_step_id: 'auth:step',
+        verification_step_id: 'email-verify:step',
+        contract_hash: 'contract_hash',
+      },
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            email_verification_token: 'presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to OTP when the EVP challenge no longer matches the active Flow step', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      metadata: {
+        interaction_id: 'interaction_1',
+        expected_origin: 'https://app.example.com',
+        source_step_id: 'auth:step',
+        verification_step_id: 'email-verify:step',
+        contract_hash: 'contract_hash',
+      },
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      state: 'active',
+      current_step_id: 'complete:step',
+      contract_hash: 'contract_hash',
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            email_verification_token: 'presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveProperty('attempt_id');
+    expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to OTP when a verified EVP challenge loses the atomic consume race', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'existing@example.com',
+      name: 'Existing User',
+    });
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({
+      challenge: 'protocol-nonce',
+      tenantId: 'tenant_test',
+      type: 'email_verification_protocol',
+      metadata: {
+        interaction_id: 'interaction_1',
+        expected_origin: 'https://app.example.com',
+        source_step_id: 'auth:step',
+        verification_step_id: 'email-verify:step',
+        contract_hash: 'contract_hash',
+      },
+    });
+    mocks.challengeStore.consumeChallengeRpc.mockRejectedValueOnce(new Error('already consumed'));
+    mocks.verifyEmailVerificationProtocol.mockResolvedValue({
+      verified: true,
+      issuer: 'https://mail.example.com',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            email_verification_token: 'presentation-token',
+            email_verification_challenge_id: 'challenge_1',
+            runtime_interaction_id: 'interaction_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveProperty('attempt_id');
+    expect(body).not.toHaveProperty('direct_auth_artifact');
+    expect(mocks.verifyEmailVerificationProtocol).toHaveBeenCalledTimes(1);
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an accepted email-code response when Email OTP is disabled by default', async () => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          scope: 'openid email',
+          email_verification_token: 'presentation-token',
+          email_verification_challenge_id: 'challenge_1',
+          runtime_interaction_id: 'interaction_1',
+        },
+        webHeaders()
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+    expect(mocks.verifyEmailVerificationProtocol).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
   it('does not validate signup registration fields for existing email-code users', async () => {
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
@@ -1198,15 +1697,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeSendHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          email: 'existing@example.com',
-          code_challenge: 'email-pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-        },
-        webHeaders()
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'existing@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        )
       ) as never
     );
 
@@ -1300,20 +1801,24 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       },
       webHeaders()
     );
-    context.env.SETTINGS = createMockKV({
-      'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+    context.env.SETTINGS = createEmailOtpEnabledSettings(
+      {
+        'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_test': 'true',
+        'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_test': JSON.stringify(
+          {
+            siteKey: '0x4AAAAAA_site_key',
+            secretKey: '0x4AAAAAA_secret_key',
+            failurePolicy: 'fail_closed',
+          }
+        ),
+      },
+      {
         'authentication-methods.human_verification.provider':
           'human-verification-cloudflare-turnstile',
         'authentication-methods.human_verification.login_enabled': false,
         'authentication-methods.human_verification.signup_enabled': true,
-      }),
-      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant_test': 'true',
-      'plugins:config:human-verification-cloudflare-turnstile:tenant:tenant_test': JSON.stringify({
-        siteKey: '0x4AAAAAA_site_key',
-        secretKey: '0x4AAAAAA_secret_key',
-        failurePolicy: 'fail_closed',
-      }),
-    }) as never;
+      }
+    ) as never;
 
     const response = await directEmailCodeSendHandler(context as never);
     const body = (await response.json()) as Record<string, unknown>;
@@ -1346,15 +1851,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeSendHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          email: 'new@example.com',
-          code_challenge: 'email-pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-        },
-        webHeaders()
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        )
       ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -1378,15 +1885,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeSendHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          email: 'new@example.com',
-          code_challenge: 'email-pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-        },
-        webHeaders()
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        )
       ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -1398,15 +1907,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
   it('rejects email-code send when OTP_HMAC_SECRET is missing', async () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
-    const ctx = createContext(
-      {
-        client_id: 'web-client',
-        email: 'new@example.com',
-        code_challenge: 'email-pkce-challenge',
-        code_challenge_method: 'S256',
-        channel: 'browser',
-      },
-      webHeaders()
+    const ctx = enableEmailOtp(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      )
     );
     delete (ctx.env as { OTP_HMAC_SECRET?: string }).OTP_HMAC_SECRET;
 
@@ -1423,16 +1934,18 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeSendHandler(
-      createContext(
-        {
-          client_id: 'web-client',
-          email: 'new@example.com',
-          code_challenge: 'email-pkce-challenge',
-          code_challenge_method: 'S256',
-          channel: 'browser',
-        },
-        tenantProxyHeaders(),
-        'https://test.authrim.com/api/v1/auth/direct/email-code/send'
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          tenantProxyHeaders(),
+          'https://test.authrim.com/api/v1/auth/direct/email-code/send'
+        )
       ) as never
     );
 
@@ -1443,7 +1956,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const codeVerifier = 'email-code-verifier';
     const codeChallenge = await s256Challenge(codeVerifier);
     const issuedAt = Date.now() - 10_000;
-    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+    const challengeData = {
       challenge: 'hashed-email-code',
       userId: 'user_existing',
       email: 'user@example.com',
@@ -1455,7 +1968,9 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         transaction_id: 'attempt_1',
         issued_at: issuedAt,
       },
-    });
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
     const { directEmailCodeVerifyHandler } = await import('../direct-auth');
 
     const response = await directEmailCodeVerifyHandler(
@@ -1482,6 +1997,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'hashed-email-code',
       'otp-test-secret'
     );
+    expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledWith(
+      'direct_email_code:attempt_1'
+    );
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
     expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
       'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
       [expect.any(Number), expect.any(Number), 'user_existing', 'tenant_test']
@@ -1494,5 +2013,44 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         codeChallenge,
       })
     );
+  });
+
+  it('keeps an email-code challenge available after an invalid code', async () => {
+    const codeVerifier = 'email-code-retry-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        transaction_id: 'attempt_retry',
+        issued_at: Date.now() - 10_000,
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    mocks.verifyEmailCodeHash.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+    const request = {
+      attempt_id: 'attempt_retry',
+      code: '123456',
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    };
+
+    const invalidResponse = await directEmailCodeVerifyHandler(createContext(request) as never);
+
+    expect(invalidResponse.ok).toBe(false);
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+
+    const validResponse = await directEmailCodeVerifyHandler(createContext(request) as never);
+
+    expect(validResponse.status).toBe(200);
+    expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledTimes(2);
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
   });
 });

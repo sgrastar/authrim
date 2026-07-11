@@ -117,7 +117,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'tenant_consent_requirements',
   'user_consent_records',
   // Flow runtime resources
-  'form_profiles',
+  'screens',
   'oidc_scopes',
   // Compliance
   'compliance_reports',

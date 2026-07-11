@@ -142,6 +142,26 @@ CREATE TABLE audit_log (
   created_at INTEGER NOT NULL
 , tenant_id TEXT NOT NULL DEFAULT 'default', severity TEXT DEFAULT 'info');
 
+CREATE TABLE event_log (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  event_type TEXT NOT NULL,
+  event_category TEXT NOT NULL,
+  result TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'info',
+  error_code TEXT,
+  error_message TEXT,
+  anonymized_user_id TEXT,
+  client_id TEXT,
+  session_id TEXT,
+  request_id TEXT,
+  duration_ms INTEGER,
+  details_r2_key TEXT,
+  details_json TEXT,
+  retention_until INTEGER,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE branding_settings (
   id TEXT PRIMARY KEY DEFAULT 'default',
   custom_css TEXT,

@@ -585,6 +585,10 @@ export function generateWranglerConfig(
 
     if (component === 'ar-auth' || component === 'ar-management') {
       r2Buckets.push({
+        binding: 'PUBLIC_ASSETS',
+        bucket_name: resourceIds.r2['PUBLIC_ASSETS']?.name || `${env}-public-assets`,
+      });
+      r2Buckets.push({
         binding: 'AVATARS',
         bucket_name: resourceIds.r2['AVATARS']?.name || `${env}-authrim-avatars`,
       });

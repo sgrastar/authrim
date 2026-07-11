@@ -97,13 +97,17 @@ export function isValidReturnUrl(url: string): boolean {
  */
 export function isValidImageUrl(url: string): boolean {
 	if (!url) return false;
+	if (url.startsWith('//')) return false;
 	// Explicitly reject SVG data URIs — SVG can contain <script> and event handlers (XSS).
 	// This guard catches all SVG variants (svg+xml, svg+xml;charset=..., etc.)
 	if (/^data:image\/svg/i.test(url)) return false;
 	// Allow base64-encoded data:image URIs for safe raster formats only.
 	if (/^data:image\/(png|jpeg|jpg|gif|webp|bmp|ico|avif);base64,/i.test(url)) return true;
 	try {
-		const parsed = new URL(url);
+		const currentOrigin =
+			typeof window !== 'undefined' ? window.location.origin : 'https://login.authrim.invalid';
+		const parsed = new URL(url, currentOrigin);
+		if (parsed.origin === currentOrigin) return true;
 		return parsed.protocol === 'https:';
 	} catch {
 		return false;

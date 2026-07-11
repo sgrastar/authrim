@@ -73,4 +73,33 @@ describe('SAML SP profile defaults', () => {
       nameIdFormat: NAMEID_FORMATS.EMAIL,
     });
   });
+
+  it('does not select a profile NameID format that metadata does not advertise', () => {
+    expect(
+      applySAMLSPProfileDefaults(
+        {
+          ...baseConfig,
+          metadataNameIdFormats: [NAMEID_FORMATS.EMAIL],
+        },
+        'academic_publisher'
+      )
+    ).toMatchObject({
+      nameIdFormat: NAMEID_FORMATS.EMAIL,
+      metadataNameIdFormats: [NAMEID_FORMATS.EMAIL],
+    });
+  });
+
+  it('selects the profile preference when metadata advertises multiple formats', () => {
+    expect(
+      applySAMLSPProfileDefaults(
+        {
+          ...baseConfig,
+          metadataNameIdFormats: [NAMEID_FORMATS.EMAIL, NAMEID_FORMATS.PERSISTENT],
+        },
+        'academic_publisher'
+      )
+    ).toMatchObject({
+      nameIdFormat: NAMEID_FORMATS.PERSISTENT,
+    });
+  });
 });

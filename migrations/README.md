@@ -1,279 +1,102 @@
 ---
 project: Authrim
 lang: en
-date: 2025-12-23
-description: "This directory contains SQL migration scripts for Authrim's Cloudflare D1 database."
+date: 2026-07-06
+description: "Database migration layout for Authrim D1 and external PostgreSQL schemas."
 type: reference
 tags:
   - authrim
   - migrations
-  - oauth2
-  - consent
-  - testing
+  - d1
+  - postgres
   - database
 ---
-# Authrim Database Migrations 🗄️
+# Authrim Database Migrations
 
-This directory contains SQL migration scripts for Authrim's Cloudflare D1 database.
+This directory contains the SQL schema migrations used by Authrim setup and CI.
+The D1 runner applies files in lexical order and records applied files in each
+database's `authrim_migrations` table.
 
-## 📋 Migration Files
+These files are consolidated for fresh Authrim installs. Current preview
+releases do not guarantee in-place upgrades from older migration layouts; use a
+fresh database or reinstall when moving between incompatible release snapshots.
 
-| File                                   | Description                                                | Status   |
-| -------------------------------------- | ---------------------------------------------------------- | -------- |
-| `000_schema_migrations.sql`            | Migration tracking infrastructure (**DO NOT MODIFY**)      | ✅ Ready |
-| `001_initial_schema.sql`               | Creates all 12 tables and indexes                          | ✅ Ready |
-| `002_seed_default_data.sql`            | Default roles, settings, and test data                     | ✅ Ready |
-| `003_add_consent_table.sql`            | Adds consent table for OAuth consent management            | ✅ Ready |
-| `004_add_client_trust_settings.sql`    | Adds trusted client settings (is_trusted, skip_consent)    | ✅ Ready |
-| `005_add_claims_parameter_setting.sql` | Adds claims parameter setting (allow_claims_without_scope) | ✅ Ready |
+## Layout
 
-## 🎯 Migration Management (Issue #14)
+| Path | Target database | Notes |
+| --- | --- | --- |
+| `migrations/*.sql` | D1 core database | Runtime protocol, identity, consent, flow, directory auth, and end-user auth state. |
+| `migrations/pii/*.sql` | D1 PII database | Personal data, linked identities, sensitive values, and PII audit rows. |
+| `migrations/admin/*.sql` | D1 admin database | Admin users, RBAC, approvals, jobs, logging, storage, identity mapping, and admin object catalog. |
+| `migrations/external/postgres/*.sql` | External PostgreSQL profile | Durable external core/PII schema and feature-specific PostgreSQL extensions. |
 
-Authrim now includes automated migration tracking with version management and checksum validation.
+Top-level core migrations intentionally exclude the `admin`, `archive`,
+`external`, and `pii` directories when the D1 core runner walks this directory.
 
-### Quick Commands
+## Current Core Files
 
-```bash
-# Show migration status
-pnpm migrate:status
+| File | Category |
+| --- | --- |
+| `001_core_foundation.sql` | Tenant foundation and trust groups. |
+| `002_core_protocol_and_consent.sql` | OAuth/OIDC, sessions, grants, consent baseline, and device credentials. |
+| `003_core_policy_identity_tables.sql` | Policy, permissions, tenants, identity schema, and runtime identity tables. |
+| `004_core_integrations_users_tables.sql` | Integrations, users, passkeys, custom fields, and external providers. |
+| `005_core_indexes_and_log_objects.sql` | Indexes, logs, imports, exports, object catalog, and operational storage. |
+| `006_core_extended_operations.sql` | Webhooks, flows, SAML, CIBA, alerts, setup tokens, and runtime support tables. |
+| `007_tenant_lifecycle_state.sql` | Tenant lifecycle state. |
+| `008_unified_identity_canonical_schema.sql` | Unified identity canonical schema. |
+| `009_custom_claim_schema_ui_metadata.sql` | Custom claim UI metadata. |
+| `010_oidc_identity_mapping_selector.sql` | OIDC identity mapping selector. |
+| `011_oidc_attribute_release_consent.sql` | OIDC attribute release consent. |
+| `012_attribute_release_consents.sql` | Attribute release consent records. |
+| `013_passkeys_canonical_user_binding.sql` | Passkey canonical user binding. |
+| `014_core_identity_sessions_authenticators.sql` | Field usage bindings, session revocation epochs, passkey AAGUID display metadata, and TOTP credentials. |
+| `015_core_consent_screens_scopes.sql` | Consent policy, consent records, screen profiles, OIDC scopes, and consent canonical user IDs. |
+| `016_core_directory_auth.sql` | Directory identity links, connector fleet, directory-auth migration/compliance tables, release channels, and object catalog classes. |
+| `017_core_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
 
-# Apply pending migrations
-pnpm migrate:up
+## Current Admin Files
 
-# Validate migration integrity
-pnpm migrate:validate
+| File | Category |
+| --- | --- |
+| `001_admin_users_rbac_security.sql` | Admin users, sessions, passkeys, RBAC, audit, and security controls. |
+| `002_admin_policy_relationships.sql` | Admin ABAC/ReBAC, setup tokens, role inheritance, and relationship definitions. |
+| `003_admin_workflows_infrastructure.sql` | Audit indexes, object catalog, approvals, storage resources, role templates, machine access, and role assignment normalization. |
+| `004_admin_tenant_runtime_jobs.sql` | External token refresh, tenant database registry/statistics, discovery/runtime registry, notifications, migration jobs, admin jobs, and database slots. |
+| `005_admin_logging_storage.sql` | Logging storage foundation. |
+| `006_admin_logging_jobs_roles.sql` | Logging message jobs and system role canonicalization. |
+| `007_identity_mapping_control_plane.sql` | Identity mapping, source profiles, destination profiles, and field catalog metadata. |
+| `008_persistent_identifier_profiles.sql` | Persistent identifier profiles and values. |
+| `009_directory_auth_object_catalog_classes.sql` | Directory-auth object catalog classes. |
 
-# Preview changes (dry run)
-pnpm migrate:dry-run
+## Current PII Files
 
-# Create new migration
-pnpm migrate:create description_here
-```
+| File | Category |
+| --- | --- |
+| `001_pii_schema.sql` | D1 PII baseline and cleanup from earlier mixed-database layouts. |
 
-## 🚀 Quick Start
+## Current External PostgreSQL Files
 
-### 1. Create D1 Database
+| File | Category |
+| --- | --- |
+| `001_external_durable_core.sql` | External durable core schema. |
+| `002_external_durable_pii.sql` | External durable PII schema. |
+| `003_external_consent_screens_scopes.sql` | Consent audit snapshots, consent records, screen profiles, OIDC scopes, and consent canonical user IDs. |
+| `004_external_passkeys.sql` | Passkey AAGUID display metadata. |
+| `005_external_directory_auth.sql` | Directory identity links, connector fleet, and release channel metadata. |
+| `006_external_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
+| `007_external_totp_credentials.sql` | TOTP credentials and backup codes. |
 
-```bash
-# Create production database
-wrangler d1 create authrim-prod
-
-# Create development database (recommended for testing)
-wrangler d1 create authrim-dev
-```
-
-Update your `wrangler.toml` with the database binding:
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "authrim-dev"
-database_id = "your-database-id-here"
-```
-
-### 2. Run Migrations
-
-#### Apply All Migrations
-
-```bash
-# Development
-wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
-wrangler d1 execute authrim-dev --file=migrations/002_seed_default_data.sql
-
-# Production (⚠️ IMPORTANT: Remove test data from 002 first!)
-wrangler d1 execute authrim-prod --file=migrations/001_initial_schema.sql
-wrangler d1 execute authrim-prod --file=migrations/002_seed_default_data.sql
-```
-
-#### Apply Single Migration
-
-```bash
-wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
-```
-
-### 3. Verify Migrations
+## Commands
 
 ```bash
-# List all tables
-wrangler d1 execute authrim-dev --command="SELECT name FROM sqlite_master WHERE type='table';"
+# Apply D1 migrations for an environment through the setup migration runner
+DEPLOY_ENV=test node scripts/ci-run-migrations.mjs
 
-# Check table structure
-wrangler d1 execute authrim-dev --command="PRAGMA table_info(users);"
-
-# Count records
-wrangler d1 execute authrim-dev --command="SELECT COUNT(*) FROM users;"
+# Inspect migration status through setup package helpers
+pnpm --filter @authrim/setup test -- src/__tests__/cloudflare-migration-status.test.ts
 ```
 
-## 📊 Database Schema
-
-### Tables Created (11 total)
-
-1. **users** - User accounts with OIDC standard claims
-2. **user_custom_fields** - Searchable custom user attributes
-3. **passkeys** - WebAuthn/Passkey credentials
-4. **oauth_clients** - OAuth 2.0/OIDC clients (RFC 7591)
-5. **sessions** - User sessions for ITP-compatible SSO
-6. **roles** - RBAC role definitions
-7. **user_roles** - User-to-role assignments (N:M)
-8. **scope_mappings** - Custom scope-to-claim mappings
-9. **branding_settings** - UI customization settings
-10. **identity_providers** - External auth providers (SAML/LDAP)
-11. **audit_log** - System audit trail
-
-### Indexes Created (20 total)
-
-Optimized for common queries:
-
-- User lookup by email, creation date
-- Session lookup by user, expiration
-- Audit log filtering by user, action, resource
-- Custom field search
-
-Full schema documentation: [docs/architecture/database-schema.md](../docs/architecture/database-schema.md)
-
-## 🔑 Default Data
-
-### Roles (4)
-
-| Role        | Name          | Permissions                         |
-| ----------- | ------------- | ----------------------------------- |
-| Super Admin | `super_admin` | Full system access (`*`)            |
-| Admin       | `admin`       | Users, clients, sessions management |
-| Viewer      | `viewer`      | Read-only access                    |
-| Support     | `support`     | User support operations             |
-
-### Test Users (Development Only)
-
-⚠️ **IMPORTANT**: Remove test users before production deployment!
-
-| Email                      | Role        | Purpose                    |
-| -------------------------- | ----------- | -------------------------- |
-| `admin@test.authrim.org`   | Super Admin | Testing admin features     |
-| `user@test.authrim.org`    | None        | Testing regular user flows |
-| `support@test.authrim.org` | Support     | Testing support operations |
-
-**Default password**: None (use Passkey or Magic Link)
-
-### Test OAuth Clients (Development Only)
-
-| Client ID         | Type         | Redirect URIs                    |
-| ----------------- | ------------ | -------------------------------- |
-| `test_client_app` | Confidential | `http://localhost:3000/callback` |
-| `test_spa_app`    | Public (SPA) | `http://localhost:5173/callback` |
-
-**Client Secret** (test_client_app): `test_secret` (change in production!)
-
-## 🔄 Migration Best Practices
-
-### Before Running Migrations
-
-1. **Backup existing data** (if any)
-
-   ```bash
-   wrangler d1 backup create authrim-prod
-   ```
-
-2. **Test in development first**
-
-   ```bash
-   wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
-   ```
-
-3. **Review migration output** for errors
-
-### Production Deployment
-
-1. **Remove test data** from `002_seed_default_data.sql`
-   - Delete all `INSERT` statements under "Test Data" section
-   - Keep default roles, branding settings, and scope mappings
-
-2. **Use secure secrets**
-   - Generate strong client secrets
-   - Use environment variables for sensitive data
-
-3. **Run migrations during maintenance window**
-   - Minimal traffic
-   - Prepare rollback plan
-
-### Adding New Migrations
-
-1. Create new file: `003_your_migration_name.sql`
-2. Document changes in this README
-3. Test locally first
-4. Apply to staging, then production
-
-## 🛠️ Troubleshooting
-
-### Migration Failed
-
-```bash
-# Check D1 status
-wrangler d1 info authrim-dev
-
-# View recent errors (if available)
-wrangler d1 execute authrim-dev --command="SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;"
-```
-
-### Table Already Exists
-
-```bash
-# Drop all tables (⚠️ DESTRUCTIVE - Development only!)
-wrangler d1 execute authrim-dev --command="DROP TABLE IF EXISTS users;"
-wrangler d1 execute authrim-dev --command="DROP TABLE IF EXISTS user_custom_fields;"
-# ... repeat for all tables
-
-# Re-run migrations
-wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
-```
-
-### Reset Development Database
-
-```bash
-# Delete and recreate
-wrangler d1 delete authrim-dev
-wrangler d1 create authrim-dev
-
-# Re-run all migrations
-wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
-wrangler d1 execute authrim-dev --file=migrations/002_seed_default_data.sql
-```
-
-## 🔐 Security Considerations
-
-### Sensitive Data
-
-- **Client Secrets**: Always hash with bcrypt (cost factor 10+)
-- **Personal Data**: Ensure GDPR compliance (cascade deletes configured)
-- **Audit Logs**: Retain for 90 days, then archive or delete
-
-### Access Control
-
-- Migrations require Cloudflare account access
-- Use Wrangler authentication
-- Never commit database credentials to Git
-
-### Data Privacy
-
-- `users.custom_attributes_json`: Store non-searchable data
-- `user_custom_fields`: Only for searchable fields
-- Audit log anonymization on user deletion
-
-## 📚 Related Documentation
-
-- [Database Schema ER Diagram](../docs/architecture/database-schema.md)
-- [API Specification](../docs/api/openapi.yaml)
-- [Phase 5 Planning](../docs/project-management/PHASE5_PLANNING.md)
-
-## 🔄 Version History
-
-| Version | Date       | Description                                           |
-| ------- | ---------- | ----------------------------------------------------- |
-| 001     | 2025-11-13 | Initial schema (11 tables, 20 indexes)                |
-| 002     | 2025-11-13 | Default data (roles, settings, test data)             |
-| 003     | 2025-11-20 | Consent table for OAuth consent management            |
-| 004     | 2025-11-20 | Trusted client settings (is_trusted, skip_consent)    |
-| 005     | 2025-11-21 | Claims parameter setting (allow_claims_without_scope) |
-
----
-
-**Need help?** See [DEVELOPMENT.md](../DEVELOPMENT.md) or [docs/architecture/database-schema.md](../docs/architecture/database-schema.md)
+When adding a new feature migration, prefer extending the appropriate category
+file during preview releases. If a release guarantees in-place upgrades, add a
+new migration file instead of changing already-applied files.

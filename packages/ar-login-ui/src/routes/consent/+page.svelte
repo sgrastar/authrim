@@ -3,10 +3,12 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+
+	const { brandingStore } = useLoginUIStores();
 
 	// ---------------------------------------------------------------------------
 	// Types

@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Frontend Auth Discovery API
-  version: 0.3.2
+  version: 0.3.3
   summary: Login UI discovery and grant bootstrap endpoints.
   description: OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
 servers:
@@ -13,24 +13,86 @@ servers:
 tags:
   - name: Frontend Auth Discovery
 paths:
+  /api/assets/{tenantId}/login-ui/{kind}/{filename}:
+    get:
+      tags:
+        - Frontend Auth Discovery
+      operationId: getApiAssetsTenantLoginUiKindFilename
+      summary: Download a public Login UI image asset.
+      description: Streams a tenant-scoped public image asset uploaded for Login UI branding or themes.
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - logo
+              - background
+              - panel-background
+              - favicon
+              - thumbnail
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Image bytes.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: []
   /api/auth/authentication-methods:
     get:
       tags:
         - Frontend Auth Discovery
       operationId: getApiAuthAuthenticationMethods
       summary: List public login authentication methods.
-      description: Returns the enabled login methods and Login UI configuration for the current tenant,
+      description:
+        Returns the enabled login methods and Login UI configuration for the current tenant,
         including passkey, email code, TOTP, directory password, human verification, SAML, and external
         provider options when configured.
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          description: Optional OAuth client id used to resolve client-level Login UI theme overrides.
+          schema:
+            type: string
       responses:
-        "200":
-          $ref: "#/components/responses/AuthMethods"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/AuthMethods'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       security: []
   /api/auth/discovery:
     get:
@@ -38,36 +100,38 @@ paths:
         - Frontend Auth Discovery
       operationId: getApiAuthDiscovery
       summary: Read tenant discovery configuration.
-      description: Returns common-login discovery settings, Login UI branding, and candidate tenant hints
+      description:
+        Returns common-login discovery settings, Login UI branding, and candidate tenant hints
         for the current host.
       responses:
-        "200":
-          $ref: "#/components/responses/DiscoveryConfig"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DiscoveryConfig'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       security: []
     post:
       tags:
         - Frontend Auth Discovery
       operationId: postApiAuthDiscovery
       summary: Resolve a tenant discovery input.
-      description: Resolves an email domain, tenant code, tenant slug, invitation token, WAYF choice, or
+      description:
+        Resolves an email domain, tenant code, tenant slug, invitation token, WAYF choice, or
         app hint into one or more tenant login candidates.
       responses:
-        "200":
-          $ref: "#/components/responses/Discovery"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/Discovery'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/Discovery"
+        $ref: '#/components/requestBodies/Discovery'
       security: []
   /api/auth/discovery/grant:
     post:
@@ -75,19 +139,20 @@ paths:
         - Frontend Auth Discovery
       operationId: postApiAuthDiscoveryGrant
       summary: Create a tenant discovery grant.
-      description: Issues a short-lived signed grant that allows the Login UI to continue from common
+      description:
+        Issues a short-lived signed grant that allows the Login UI to continue from common
         discovery to the selected tenant login surface.
       responses:
-        "200":
-          $ref: "#/components/responses/DiscoveryGrant"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DiscoveryGrant'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DiscoveryGrant"
+        $ref: '#/components/requestBodies/DiscoveryGrant'
       security: []
   /api/auth/discovery/grant/verify:
     post:
@@ -95,19 +160,20 @@ paths:
         - Frontend Auth Discovery
       operationId: postApiAuthDiscoveryGrantVerify
       summary: Verify a tenant discovery grant.
-      description: Validates a discovery grant for the current URL and returns the selected tenant login
+      description:
+        Validates a discovery grant for the current URL and returns the selected tenant login
         target when the grant is still valid.
       responses:
-        "200":
-          $ref: "#/components/responses/DiscoveryGrantVerify"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DiscoveryGrantVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       requestBody:
-        $ref: "#/components/requestBodies/DiscoveryGrantVerify"
+        $ref: '#/components/requestBodies/DiscoveryGrantVerify'
       security: []
 components:
   securitySchemes:
@@ -180,55 +246,55 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     AdminClientCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientCreate"
+            $ref: '#/components/schemas/AdminClientCreate'
     AdminClientUpdate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientUpdate"
+            $ref: '#/components/schemas/AdminClientUpdate'
     AdminUserCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserCreate"
+            $ref: '#/components/schemas/AdminUserCreate'
     AdminUserUpdate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserUpdate"
+            $ref: '#/components/schemas/AdminUserUpdate'
     AdminUserStatusChange:
       required: false
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserStatusChange"
+            $ref: '#/components/schemas/AdminUserStatusChange'
     WebhookCreate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/WebhookCreate"
+            $ref: '#/components/schemas/WebhookCreate'
     WebhookUpdate:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/WebhookUpdate"
+            $ref: '#/components/schemas/WebhookUpdate'
     Discovery:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryRequest"
+            $ref: '#/components/schemas/DiscoveryRequest'
           example:
             mode: email
             value: user@example.com
@@ -237,7 +303,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryGrantRequest"
+            $ref: '#/components/schemas/DiscoveryGrantRequest'
           example:
             tenant_id: tenant_123
             return_to: https://app.example.com/
@@ -246,7 +312,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryGrantVerifyRequest"
+            $ref: '#/components/schemas/DiscoveryGrantVerifyRequest'
           example:
             grant: eyJhbGciOiJIUzI1NiJ9...
             current_url: https://auth.example.com/login
@@ -256,61 +322,61 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     List:
       description: Successful JSON list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JsonObject"
+            $ref: '#/components/schemas/JsonObject'
     AdminClient:
       description: OAuth/OIDC client response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientResponse"
+            $ref: '#/components/schemas/AdminClientResponse'
     AdminClientMutation:
       description: OAuth/OIDC client mutation response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientMutationResponse"
+            $ref: '#/components/schemas/AdminClientMutationResponse'
     AdminClientList:
       description: OAuth/OIDC client list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminClientListResponse"
+            $ref: '#/components/schemas/AdminClientListResponse'
     AdminUser:
       description: Admin end-user response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserResponse"
+            $ref: '#/components/schemas/AdminUserResponse'
     AdminUserDetail:
       description: Admin end-user detail response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserDetailResponse"
+            $ref: '#/components/schemas/AdminUserDetailResponse'
     AdminUserList:
       description: Admin end-user list response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminUserListResponse"
+            $ref: '#/components/schemas/AdminUserListResponse'
     Error:
       description: Error response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: '#/components/schemas/Error'
     AuthMethods:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AuthMethodsResponse"
+            $ref: '#/components/schemas/AuthMethodsResponse'
           example:
             methods:
               passkey:
@@ -340,14 +406,14 @@ components:
               branding:
                 brandName: Authrim
             meta:
-              cacheTTL: 180
+              cacheTTL: 60
               revision: 2026-06-19T00:00:00.000Z
     DiscoveryConfig:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryConfigResponse"
+            $ref: '#/components/schemas/DiscoveryConfigResponse'
           example:
             config:
               tenant_id: default
@@ -368,7 +434,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryResponse"
+            $ref: '#/components/schemas/DiscoveryResponse'
           example:
             result: resolved
             candidate:
@@ -383,7 +449,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryGrantResponse"
+            $ref: '#/components/schemas/DiscoveryGrantResponse'
           example:
             grant: eyJhbGciOiJIUzI1NiJ9...
             login_url: https://acme.auth.example.com/login?discovery_grant=...
@@ -393,7 +459,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryGrantVerifyResponse"
+            $ref: '#/components/schemas/DiscoveryGrantVerifyResponse'
           example:
             valid: true
             tenant_id: tenant_123
@@ -448,12 +514,12 @@ components:
         description:
           type:
             - string
-            - "null"
+            - 'null'
         redirect_uris:
           type: array
           minItems: 1
           items:
-            $ref: "#/components/schemas/UriString"
+            $ref: '#/components/schemas/UriString'
         grant_types:
           type: array
           items:
@@ -476,15 +542,15 @@ components:
         scope:
           type: string
         logo_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         client_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         policy_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         tos_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         contacts:
-          $ref: "#/components/schemas/StringArray"
+          $ref: '#/components/schemas/StringArray'
         token_endpoint_auth_method:
           type: string
           enum:
@@ -499,7 +565,7 @@ components:
             - public
             - pairwise
         sector_identifier_uri:
-          $ref: "#/components/schemas/UriString"
+          $ref: '#/components/schemas/UriString'
         is_trusted:
           type: boolean
         skip_consent:
@@ -509,11 +575,11 @@ components:
         allowed_redirect_origins:
           type: array
           items:
-            $ref: "#/components/schemas/OriginString"
+            $ref: '#/components/schemas/OriginString'
         web_origin_registry:
           type:
             - object
-            - "null"
+            - 'null'
           additionalProperties: true
         require_pkce:
           type: boolean
@@ -526,11 +592,11 @@ components:
         trust_group:
           type:
             - string
-            - "null"
+            - 'null'
         browser_public_client_mode:
           type:
             - string
-            - "null"
+            - 'null'
           enum:
             - disabled
             - enabled
@@ -539,7 +605,7 @@ components:
         browser_refresh_token_policy:
           type:
             - string
-            - "null"
+            - 'null'
           enum:
             - disabled
             - rotation
@@ -548,15 +614,15 @@ components:
         native_sso_enabled:
           type:
             - boolean
-            - "null"
+            - 'null'
         native_channel_allowed:
           type:
             - boolean
-            - "null"
+            - 'null'
         allowed_channels:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         token_exchange_allowed:
@@ -564,13 +630,13 @@ components:
         allowed_subject_token_clients:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         allowed_token_exchange_resources:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         delegation_mode:
@@ -584,40 +650,40 @@ components:
         allowed_scopes:
           type:
             - array
-            - "null"
+            - 'null'
           items:
             type: string
         default_scope:
           type:
             - string
-            - "null"
+            - 'null'
         default_audience:
           type:
             - string
-            - "null"
+            - 'null'
         default_resource:
           type:
             - string
-            - "null"
+            - 'null'
     AdminClientCreate:
       allOf:
-        - $ref: "#/components/schemas/AdminClientBase"
+        - $ref: '#/components/schemas/AdminClientBase'
         - type: object
           required:
             - client_name
             - redirect_uris
     AdminClientUpdate:
       allOf:
-        - $ref: "#/components/schemas/AdminClientBase"
+        - $ref: '#/components/schemas/AdminClientBase'
         - type: object
           properties:
             initiate_login_uri:
-              $ref: "#/components/schemas/UriString"
+              $ref: '#/components/schemas/UriString'
             login_ui_url:
-              $ref: "#/components/schemas/UriString"
+              $ref: '#/components/schemas/UriString'
     AdminClient:
       allOf:
-        - $ref: "#/components/schemas/AdminClientBase"
+        - $ref: '#/components/schemas/AdminClientBase'
         - type: object
           additionalProperties: true
           required:
@@ -649,7 +715,7 @@ components:
         - client
       properties:
         client:
-          $ref: "#/components/schemas/AdminClient"
+          $ref: '#/components/schemas/AdminClient'
     AdminClientMutationResponse:
       type: object
       required:
@@ -658,7 +724,7 @@ components:
         success:
           type: boolean
         client:
-          $ref: "#/components/schemas/AdminClient"
+          $ref: '#/components/schemas/AdminClient'
     AdminClientListResponse:
       type: object
       required:
@@ -668,9 +734,9 @@ components:
         clients:
           type: array
           items:
-            $ref: "#/components/schemas/AdminClient"
+            $ref: '#/components/schemas/AdminClient'
         pagination:
-          $ref: "#/components/schemas/Pagination"
+          $ref: '#/components/schemas/Pagination'
     AdminUserCreate:
       type: object
       additionalProperties:
@@ -678,7 +744,7 @@ components:
           - type: string
           - type: number
           - type: boolean
-          - type: "null"
+          - type: 'null'
       required:
         - email
       properties:
@@ -719,39 +785,39 @@ components:
         email:
           type:
             - string
-            - "null"
+            - 'null'
           format: email
         name:
           type:
             - string
-            - "null"
+            - 'null'
         given_name:
           type:
             - string
-            - "null"
+            - 'null'
         family_name:
           type:
             - string
-            - "null"
+            - 'null'
         nickname:
           type:
             - string
-            - "null"
+            - 'null'
         preferred_username:
           type:
             - string
-            - "null"
+            - 'null'
         picture:
           type:
             - string
-            - "null"
+            - 'null'
           format: uri
         email_verified:
           type: boolean
         phone_number:
           type:
             - string
-            - "null"
+            - 'null'
         phone_number_verified:
           type: boolean
         user_type:
@@ -775,11 +841,11 @@ components:
       properties:
         user:
           oneOf:
-            - $ref: "#/components/schemas/AdminUser"
-            - type: "null"
+            - $ref: '#/components/schemas/AdminUser'
+            - type: 'null'
     AdminUserDetailResponse:
       allOf:
-        - $ref: "#/components/schemas/AdminUserResponse"
+        - $ref: '#/components/schemas/AdminUserResponse'
         - type: object
           properties:
             passkeys:
@@ -795,17 +861,17 @@ components:
                   device_name:
                     type:
                       - string
-                      - "null"
+                      - 'null'
                   created_at:
                     oneOf:
                       - type: integer
                       - type: string
-                      - type: "null"
+                      - type: 'null'
                   last_used_at:
                     oneOf:
                       - type: integer
                       - type: string
-                      - type: "null"
+                      - type: 'null'
             missing_required_fields:
               type: array
               items:
@@ -825,9 +891,9 @@ components:
         users:
           type: array
           items:
-            $ref: "#/components/schemas/AdminUser"
+            $ref: '#/components/schemas/AdminUser'
         pagination:
-          $ref: "#/components/schemas/Pagination"
+          $ref: '#/components/schemas/Pagination'
     AdminUserUpdate:
       type: object
       additionalProperties:
@@ -835,7 +901,7 @@ components:
           - type: string
           - type: number
           - type: boolean
-          - type: "null"
+          - type: 'null'
       properties:
         name:
           type: string
@@ -912,7 +978,7 @@ components:
           additionalProperties:
             type: string
         retryPolicy:
-          $ref: "#/components/schemas/WebhookRetryPolicy"
+          $ref: '#/components/schemas/WebhookRetryPolicy'
         timeoutMs:
           type: integer
           minimum: 1000
@@ -941,7 +1007,7 @@ components:
           additionalProperties:
             type: string
         retryPolicy:
-          $ref: "#/components/schemas/WebhookRetryPolicy"
+          $ref: '#/components/schemas/WebhookRetryPolicy'
         timeoutMs:
           type: integer
           minimum: 1000
@@ -959,7 +1025,7 @@ components:
         clientId:
           type:
             - string
-            - "null"
+            - 'null'
         scope:
           type: string
         name:
@@ -978,7 +1044,7 @@ components:
           additionalProperties:
             type: string
         retryPolicy:
-          $ref: "#/components/schemas/WebhookRetryPolicy"
+          $ref: '#/components/schemas/WebhookRetryPolicy'
         timeoutMs:
           type: integer
         active:
@@ -990,11 +1056,11 @@ components:
         lastSuccessAt:
           type:
             - string
-            - "null"
+            - 'null'
         lastFailureAt:
           type:
             - string
-            - "null"
+            - 'null'
     WebhookMutationResponse:
       type: object
       required:
@@ -1004,8 +1070,8 @@ components:
           type: boolean
         webhook:
           oneOf:
-            - $ref: "#/components/schemas/Webhook"
-            - type: "null"
+            - $ref: '#/components/schemas/Webhook'
+            - type: 'null'
     Error:
       type: object
       additionalProperties: true
@@ -1077,7 +1143,7 @@ components:
         logo_url:
           type:
             - string
-            - "null"
+            - 'null'
           format: uri
         login_url:
           type: string
@@ -1112,16 +1178,16 @@ components:
         common_discover_url:
           type:
             - string
-            - "null"
+            - 'null'
           format: uri
         wayf_candidates:
           type: array
           items:
-            $ref: "#/components/schemas/DiscoveryCandidate"
+            $ref: '#/components/schemas/DiscoveryCandidate'
         single_active_tenant_candidate:
-          $ref: "#/components/schemas/DiscoveryCandidate"
+          $ref: '#/components/schemas/DiscoveryCandidate'
         default_candidate:
-          $ref: "#/components/schemas/DiscoveryCandidate"
+          $ref: '#/components/schemas/DiscoveryCandidate'
     DiscoveryRequest:
       type: object
       required:
@@ -1152,11 +1218,11 @@ components:
               enum:
                 - resolved
             candidate:
-              $ref: "#/components/schemas/DiscoveryCandidate"
+              $ref: '#/components/schemas/DiscoveryCandidate'
             invited_email:
               type:
                 - string
-                - "null"
+                - 'null'
         - type: object
           required:
             - result
@@ -1169,7 +1235,7 @@ components:
             candidates:
               type: array
               items:
-                $ref: "#/components/schemas/DiscoveryCandidate"
+                $ref: '#/components/schemas/DiscoveryCandidate'
         - type: object
           required:
             - result

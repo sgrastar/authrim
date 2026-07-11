@@ -905,6 +905,7 @@ describe('Passkey Handlers', () => {
       expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO user_custom_fields')
       );
+      expect(mockUserCoreRepository.updateLastLogin).toHaveBeenCalledWith('user-123');
       expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
     });
   });

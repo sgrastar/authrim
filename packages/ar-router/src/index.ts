@@ -9,6 +9,7 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
 } from '@authrim/ar-lib-core';
 
@@ -295,9 +296,14 @@ async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
     : null;
   const record = parseSettingsRecord(raw);
   const configuredPath = record['self-service.account_page_path'];
-  const accountPath = validateAccountPagePath(configuredPath) ? configuredPath : '/account';
+  const accountPath = validateAccountPagePath(configuredPath)
+    ? configuredPath
+    : SELF_SERVICE_DEFAULTS['self-service.account_page_path'];
   const settings = {
-    enabled: record['self-service.account_page_enabled'] === true,
+    enabled:
+      typeof record['self-service.account_page_enabled'] === 'boolean'
+        ? record['self-service.account_page_enabled']
+        : SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
     path: accountPath,
     expiresAt: Date.now() + ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS,
   };
@@ -1101,6 +1107,11 @@ app.all('/api/account/*', async (c) => {
 });
 
 app.get('/api/avatars/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.get('/api/assets/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });

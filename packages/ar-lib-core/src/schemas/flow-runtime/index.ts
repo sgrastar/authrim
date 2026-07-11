@@ -36,7 +36,7 @@ export type FlowRuntimeComponent =
   | 'registration_method_selector'
   | 'authentication_method_selector'
   | 'email_verification'
-  | 'profile_form'
+  | 'screen'
   | 'consent_policy'
   | 'account_action'
   | 'completion'
@@ -49,7 +49,7 @@ export type FlowStandardNodeType =
   | 'registration'
   | 'authentication'
   | 'email_verification'
-  | 'profile_form'
+  | 'screen'
   | 'consent'
   | 'account_action'
   | 'complete'
@@ -125,9 +125,9 @@ export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
     output_handles: ['verified', 'failed'],
   },
   {
-    type: 'profile_form',
-    label: 'Profile Form',
-    runtime_component: 'profile_form',
+    type: 'screen',
+    label: 'Profile Screen',
+    runtime_component: 'screen',
     category: 'input',
     accepts_input: true,
     emits_output: true,

@@ -140,6 +140,7 @@ describe('Cloudflare R2 helpers', () => {
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
+        PUBLIC_ASSETS: { name: 'prod-public-assets' },
         AVATARS: { name: 'prod-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
         AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
@@ -148,6 +149,7 @@ describe('Cloudflare R2 helpers', () => {
         SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
       },
       [
+        'prod-public-assets',
         'prod-authrim-avatars',
         'prod-diagnostic-logs',
         'prod-audit-archive',
@@ -158,8 +160,8 @@ describe('Cloudflare R2 helpers', () => {
     );
 
     expect(status.enabled).toBe(true);
-    expect(status.required).toBe(6);
-    expect(status.configured).toBe(6);
+    expect(status.required).toBe(7);
+    expect(status.configured).toBe(7);
     expect(status.missing).toEqual([]);
     expect(status.buckets.every((bucket) => bucket.state === 'configured')).toBe(true);
   });

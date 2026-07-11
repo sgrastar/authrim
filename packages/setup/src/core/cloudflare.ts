@@ -164,6 +164,7 @@ export interface MigrationProfileConfig {
 }
 
 export const R2_BUCKETS = [
+  { binding: 'PUBLIC_ASSETS', suffix: 'public-assets' },
   { binding: 'AVATARS', suffix: 'authrim-avatars' },
   { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
   { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
@@ -2454,6 +2455,37 @@ WHERE id = 'default'
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
   AND (SELECT COUNT(*) FROM tenants) = 1;
 
+UPDATE flows
+SET tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE flow_versions
+SET tenant_id = ${tenantIdSql}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE flow_assignments
+SET tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE screens
+SET tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
 INSERT INTO tenants (
   id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
   default_tenant_guard, created_at, updated_at
@@ -4432,7 +4464,7 @@ const AUTHRIM_PATTERNS = {
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };

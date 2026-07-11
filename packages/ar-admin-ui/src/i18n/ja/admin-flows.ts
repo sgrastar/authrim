@@ -150,7 +150,7 @@ const adminFlows = {
 	admin_flows_node_title_label: 'タイトル',
 	admin_flows_node_description_label: '説明',
 	admin_flows_auth_profile_label: '認証方式プロフィール',
-	admin_flows_profile_form_label: 'プロフィールフォーム',
+	admin_flows_screen_label: 'プロフィールスクリーン',
 	admin_flows_consent_policy_label: '同意ポリシー',
 	admin_flows_condition_type_label: '条件',
 	admin_flows_condition_value_label: '値',
@@ -226,7 +226,7 @@ const adminFlows = {
 	admin_flows_template_oidc_registration_user_action:
 		'登録方法を選び、プロフィールを入力し、利用規約とプライバシーポリシーに同意',
 	admin_flows_template_oidc_registration_recorded_state:
-		'tenant + user + OIDC Client + registration form + consent statements',
+		'tenant + user + OIDC Client + registration screen + consent statements',
 	admin_flows_template_oidc_login_title: 'Login',
 	admin_flows_template_oidc_login_subtitle: 'アプリケーション向けログイン',
 	admin_flows_template_oidc_login_description:
@@ -375,8 +375,8 @@ const adminFlows = {
 	admin_flows_palette_authentication_description: 'ログインや再認証で使う認証方式を選ばせます。',
 	admin_flows_palette_verification_label: 'Email verification',
 	admin_flows_palette_verification_description: 'メール到達確認や追加検証を挟みます。',
-	admin_flows_palette_profile_label: 'Profile form',
-	admin_flows_palette_profile_description: '登録や連携に必要なプロフィール入力フォームです。',
+	admin_flows_palette_profile_label: 'プロフィール入力スクリーン',
+	admin_flows_palette_profile_description: '登録や連携に必要なプロフィール入力スクリーンです。',
 	admin_flows_palette_consent_label: 'Consent',
 	admin_flows_palette_consent_description:
 		'利用規約、プライバシーポリシー、属性送信確認を表示します。',
@@ -389,9 +389,9 @@ const adminFlows = {
 	admin_flows_palette_end_description:
 		'Flowを完了し、サービスへのレスポンス、セッション、リダイレクトへ接続します。',
 	admin_flows_auth_profile_default: 'Default profile',
-	admin_flows_profile_form_basic: 'Basic profile',
-	admin_flows_profile_form_email_name: 'Email + name',
-	admin_flows_profile_form_academic: 'Academic profile',
+	admin_flows_screen_basic: 'Basic profile',
+	admin_flows_screen_email_name: 'Email + name',
+	admin_flows_screen_academic: 'Academic profile',
 	admin_flows_consent_policy_registration: 'Registration consent policy',
 	admin_flows_consent_policy_oidc_authorization: 'OIDC authorization consent policy',
 	admin_flows_consent_policy_saml_attribute_release: 'SAML attribute release policy',

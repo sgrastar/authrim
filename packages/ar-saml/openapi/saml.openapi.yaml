@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim SAML API
-  version: 0.3.2
+  version: 0.3.3
   summary: SAML protocol endpoints and SAML administration API.
   description: >
     Initial OpenAPI contract for `@authrim/ar-saml`. SAML XML and browser binding responses are
@@ -1079,6 +1079,12 @@ components:
           format: uri
         metadataXml:
           type: string
+        nameIdFormat:
+          type: string
+        metadataNameIdFormats:
+          type: array
+          items:
+            type: string
     SAMLProviderCreateRequest:
       type: object
       required:

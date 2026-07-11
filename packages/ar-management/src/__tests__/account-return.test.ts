@@ -106,6 +106,26 @@ describe('Account Page return transaction API', () => {
     );
   });
 
+  it('creates a return transaction for the default Account Page path without self-service settings', async () => {
+    const response = await createAccountReturnHandler(
+      createMockContext({
+        body: { path: '/account/security?tab=passkeys' },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(201);
+    expect(body.account_return).toBe('ret_001');
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          path: '/account/security?tab=passkeys',
+          accountPagePath: '/account',
+        },
+      })
+    );
+  });
+
   it('rejects return paths outside the Account Page prefix', async () => {
     const response = await createAccountReturnHandler(
       createMockContext({

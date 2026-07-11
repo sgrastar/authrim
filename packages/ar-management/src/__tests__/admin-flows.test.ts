@@ -707,7 +707,7 @@ describe('admin Flow management handlers', () => {
     const nextEditor = {
       nodes: [
         { id: 'entry', type: 'entry' },
-        { id: 'profile', type: 'profile_form' },
+        { id: 'profile', type: 'screen' },
         { id: 'complete', type: 'complete' },
       ],
       edges: [
@@ -747,7 +747,7 @@ describe('admin Flow management handlers', () => {
           preview: {
             display_name: 'Imported Login',
             slug: 'imported-login',
-            template_id: 'oidc-login',
+            template_id: 'default-login',
           },
           editor: validEditor,
         },
@@ -762,7 +762,7 @@ describe('admin Flow management handlers', () => {
     });
     expect(saved).not.toContain('secret-csrf');
     expect(saved).not.toContain('secret-token');
-    expect(flows[0].template_id).toBe('oidc-login');
+    expect(flows[0].template_id).toBe('default-login');
     expect(parseRuntimeJson(flows[0]?.draft_runtime_base_json)).toMatchObject({
       flow_id: 'flow-imported',
       flow_kind: 'login',

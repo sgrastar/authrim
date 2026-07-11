@@ -7,7 +7,7 @@
 		getFlowAuthProfileOptions,
 		getFlowConsentPolicyOptions,
 		getFlowNodePalette,
-		getFlowProfileFormOptions,
+		getFlowScreenOptions,
 		getFlowTemplateText,
 		getLocalizedFlowNode,
 		getSavedFlowDescription,
@@ -21,10 +21,10 @@
 	} from '$lib/api/admin-authentication-methods';
 	import { adminConsentPoliciesAPI, type ConsentPolicy } from '$lib/api/admin-consent-policies';
 	import {
-		adminFormProfilesAPI,
-		type FormProfile,
-		type FormProfileKind
-	} from '$lib/api/admin-form-profiles';
+		adminScreensAPI,
+		type Screen,
+		type ScreenKind
+	} from '$lib/api/admin-screens';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
@@ -95,7 +95,7 @@
 		description: string;
 		settingsText: string;
 		authProfile: string;
-		profileForm: string;
+		screen: string;
 		consentPolicy: string;
 		conditionType: ConditionDraftType;
 		conditionValue: string;
@@ -122,7 +122,7 @@
 	const flowText = $derived(flow ? getFlowTemplateText($LL, flow) : null);
 	const localeMarker = $derived($LL.admin_flows_locale_marker());
 	const fallbackAuthProfileOptions = $derived(getFlowAuthProfileOptions($LL));
-	const fallbackProfileFormOptions = $derived(getFlowProfileFormOptions($LL));
+	const fallbackScreenOptions = $derived(getFlowScreenOptions($LL));
 	const fallbackConsentPolicyOptions = $derived(getFlowConsentPolicyOptions($LL));
 	const nodePalette = $derived(getFlowNodePalette($LL));
 	const currentTenantId = $derived(settingsContext.tenantId);
@@ -131,10 +131,10 @@
 	let initializedOptionsTenantId = $state('');
 	let nextNodeIndex = $state(0);
 	let loadedAuthProfileOptions = $state<FlowEditorAuthProfileOption[]>([]);
-	let loadedFormProfiles = $state<FormProfile[]>([]);
-	let loadedProfileFormOptions = $state<FlowEditorOption[]>([]);
+	let loadedScreens = $state<Screen[]>([]);
+	let loadedScreenOptions = $state<FlowEditorOption[]>([]);
 	let loadedConsentPolicyOptions = $state<FlowEditorOption[]>([]);
-	let formProfilesLoaded = $state(false);
+	let screensLoaded = $state(false);
 	let consentPoliciesLoaded = $state(false);
 	let savedFlow = $state<AdminFlow | null>(null);
 	let flowLoading = $state(true);
@@ -169,10 +169,10 @@
 	const authProfileOptions = $derived(
 		loadedAuthProfileOptions.length > 0 ? loadedAuthProfileOptions : fallbackAuthProfileOptions
 	);
-	const profileFormOptions = $derived.by(() => {
-		if (!formProfilesLoaded) return fallbackProfileFormOptions;
-		if (loadedProfileFormOptions.length > 0) return loadedProfileFormOptions;
-		return fallbackProfileFormOptions;
+	const screenOptions = $derived.by(() => {
+		if (!screensLoaded) return fallbackScreenOptions;
+		if (loadedScreenOptions.length > 0) return loadedScreenOptions;
+		return fallbackScreenOptions;
 	});
 	const consentPolicyOptions = $derived.by(() => {
 		if (!consentPoliciesLoaded) return fallbackConsentPolicyOptions;
@@ -262,7 +262,7 @@
 			description: '',
 			settingsText: '',
 			authProfile: 'default',
-			profileForm: 'basic_profile',
+			screen: 'basic_profile',
 			consentPolicy: 'registration_consent_policy',
 			conditionType: 'always',
 			conditionValue: '',
@@ -281,32 +281,32 @@
 		const optionsTenantId = tenantId || 'default';
 		flowSettingsError = '';
 		try {
-			const [authenticationMethods, formProfiles, consentPolicies] = await Promise.all([
+			const [authenticationMethods, screens, consentPolicies] = await Promise.all([
 				adminAuthenticationMethodsAPI.get(tenantId),
-				adminFormProfilesAPI.list(),
+				adminScreensAPI.list(),
 				adminConsentPoliciesAPI.listPolicies()
 			]);
 			const nextAuthProfileOptions = [createDefaultAuthProfileOption(authenticationMethods)];
-			const nextProfileFormOptions = formProfiles.profiles.map(createProfileFormOption);
+			const nextScreenOptions = screens.screens.map(createScreenOption);
 			const nextConsentPolicyOptions = consentPolicies.policies.map(createConsentPolicyOption);
 			loadedAuthProfileOptions = nextAuthProfileOptions;
-			loadedFormProfiles = formProfiles.profiles;
-			loadedProfileFormOptions = nextProfileFormOptions;
+			loadedScreens = screens.screens;
+			loadedScreenOptions = nextScreenOptions;
 			loadedConsentPolicyOptions = nextConsentPolicyOptions;
-			formProfilesLoaded = true;
+			screensLoaded = true;
 			consentPoliciesLoaded = true;
 			initializedOptionsTenantId = optionsTenantId;
 			syncConfiguredNodeOptions(
 				nextAuthProfileOptions,
-				nextProfileFormOptions,
+				nextScreenOptions,
 				nextConsentPolicyOptions
 			);
 		} catch (error) {
 			flowSettingsError =
 				error instanceof Error ? error.message : $LL.admin_flows_runtime_options_error();
 			initializedOptionsTenantId = optionsTenantId;
-			loadedFormProfiles = [];
-			formProfilesLoaded = false;
+			loadedScreens = [];
+			screensLoaded = false;
 			consentPoliciesLoaded = false;
 		}
 	}
@@ -436,11 +436,11 @@
 		};
 	}
 
-	function createProfileFormOption(profile: FormProfile): FlowEditorOption {
-		const label = profile.display_name || profile.profile_key || profile.id;
+	function createScreenOption(screen: Screen): FlowEditorOption {
+		const label = screen.display_name || screen.screen_key || screen.id;
 		return {
-			value: profile.id,
-			label: profile.is_active ? label : `${label} (${$LL.admin_flows_consent_policy_inactive()})`
+			value: screen.id,
+			label: screen.is_active ? label : `${label} (${$LL.admin_flows_consent_policy_inactive()})`
 		};
 	}
 
@@ -448,34 +448,34 @@
 		return options.find((option) => !option.disabled && option.value)?.value ?? '';
 	}
 
-	function noFormProfileOption(): FlowEditorOption {
+	function noScreenOption(): FlowEditorOption {
 		return {
 			value: '',
-			label: ft('利用できるフォームがありません', 'No form profiles are available'),
+			label: ft('利用できるスクリーンがありません', 'No screens are available'),
 			disabled: true
 		};
 	}
 
-	function formKind(profile: FormProfile): FormProfileKind {
-		return profile.form_kind;
+	function screenKind(screen: Screen): ScreenKind {
+		return screen.screen_kind;
 	}
 
-	function profileMatchesFormKinds(profile: FormProfile, formKinds: FormProfileKind[]): boolean {
-		const active = profile.is_active === true || profile.is_active === 1;
-		const kind = formKind(profile);
-		if (formKinds.includes('code_input')) return active && kind === 'code_input';
-		return active && (formKinds.includes(kind) || kind === 'custom');
+	function screenMatchesScreenKinds(screen: Screen, screenKinds: ScreenKind[]): boolean {
+		const active = screen.is_active === true || screen.is_active === 1;
+		const kind = screenKind(screen);
+		if (screenKinds.includes('code_input')) return active && kind === 'code_input';
+		return active && (screenKinds.includes(kind) || kind === 'custom');
 	}
 
-	function profileFormOptionsForKinds(formKinds: FormProfileKind[]): FlowEditorOption[] {
-		if (!formProfilesLoaded) return profileFormOptions;
-		const options = loadedFormProfiles
-			.filter((profile) => profileMatchesFormKinds(profile, formKinds))
-			.map(createProfileFormOption);
-		return options.length > 0 ? options : [noFormProfileOption()];
+	function screenOptionsForKinds(screenKinds: ScreenKind[]): FlowEditorOption[] {
+		if (!screensLoaded) return screenOptions;
+		const options = loadedScreens
+			.filter((screen) => screenMatchesScreenKinds(screen, screenKinds))
+			.map(createScreenOption);
+		return options.length > 0 ? options : [noScreenOption()];
 	}
 
-	function profileFormKindsForNode(kind: FlowEditorNodeKind): FormProfileKind[] {
+	function screenKindsForNode(kind: FlowEditorNodeKind): ScreenKind[] {
 		if (kind === 'registration') return ['registration'];
 		if (kind === 'authentication') return ['login'];
 		if (kind === 'verification') return ['code_input'];
@@ -484,33 +484,33 @@
 		return ['custom'];
 	}
 
-	function profileFormOptionsForNodeKind(kind: FlowEditorNodeKind): FlowEditorOption[] {
-		return profileFormOptionsForKinds(profileFormKindsForNode(kind));
+	function screenOptionsForNodeKind(kind: FlowEditorNodeKind): FlowEditorOption[] {
+		return screenOptionsForKinds(screenKindsForNode(kind));
 	}
 
-	function firstProfileFormForNodeKind(kind: FlowEditorNodeKind, fallback: string): string {
+	function firstScreenForNodeKind(kind: FlowEditorNodeKind, fallback: string): string {
 		if (kind === 'verification') {
-			return preferredFormProfileValue(['code_input'], ['code_input'], fallback);
+			return preferredScreenValue(['code_input'], ['code_input'], fallback);
 		}
-		return firstSelectableValue(profileFormOptionsForNodeKind(kind)) || fallback;
+		return firstSelectableValue(screenOptionsForNodeKind(kind)) || fallback;
 	}
 
-	function preferredFormProfileValue(
-		profileKeys: string[],
-		formKinds: FormProfileKind[],
+	function preferredScreenValue(
+		screenKeys: string[],
+		screenKinds: ScreenKind[],
 		fallback: string
 	): string {
-		const keyMatches = new Set(profileKeys.map((value) => value.toLowerCase()));
-		const acceptedKinds = formKinds.includes('code_input') ? formKinds : [...formKinds, 'custom'];
+		const keyMatches = new Set(screenKeys.map((value) => value.toLowerCase()));
+		const acceptedKinds = screenKinds.includes('code_input') ? screenKinds : [...screenKinds, 'custom'];
 		const kindMatches = new Set(acceptedKinds.map((value) => value.toLowerCase()));
-		const profile =
-			loadedFormProfiles.find(
-				(item) => item.is_active && keyMatches.has((item.profile_key ?? '').toLowerCase())
+		const screen =
+			loadedScreens.find(
+				(item) => item.is_active && keyMatches.has((item.screen_key ?? '').toLowerCase())
 			) ??
-			loadedFormProfiles.find(
-				(item) => item.is_active && kindMatches.has((item.form_kind ?? '').toLowerCase())
+			loadedScreens.find(
+				(item) => item.is_active && kindMatches.has((item.screen_kind ?? '').toLowerCase())
 			);
-		return profile?.id ?? (firstSelectableValue(profileFormOptionsForKinds(formKinds)) || fallback);
+		return screen?.id ?? (firstSelectableValue(screenOptionsForKinds(screenKinds)) || fallback);
 	}
 
 	function normalizeOptionValue(
@@ -524,7 +524,7 @@
 
 	function syncConfiguredNodeOptions(
 		nextAuthProfileOptions: FlowEditorAuthProfileOption[],
-		_nextProfileFormOptions: FlowEditorOption[],
+		_nextScreenOptions: FlowEditorOption[],
 		nextConsentPolicyOptions: FlowEditorOption[]
 	) {
 		const effectiveConsentPolicyOptions =
@@ -539,19 +539,19 @@
 					];
 		const nextNodes = getEditorNodes().map<EditorNode>((node) => {
 			if (node.data.kind === 'registration' || node.data.kind === 'authentication') {
-				const formOptions = profileFormOptionsForNodeKind(node.data.kind);
+				const screenOptions = screenOptionsForNodeKind(node.data.kind);
 				const authProfile = normalizeOptionValue(
 					getConfigValue(node, 'authProfile', 'default'),
 					nextAuthProfileOptions,
 					'default'
 				);
 				const outputs = getAuthProfileOutputsFromOptions(nextAuthProfileOptions, authProfile);
-				const profileForm = normalizeOptionValue(
-					getConfigValue(node, 'profileForm', 'basic_profile'),
-					formOptions,
-					firstSelectableValue(formOptions) || 'basic_profile'
+				const screen = normalizeOptionValue(
+					getConfigValue(node, 'screen', 'basic_profile'),
+					screenOptions,
+					firstSelectableValue(screenOptions) || 'basic_profile'
 				);
-				const hasConsentWidget = selectedFormHasConsentWidget(profileForm);
+				const hasConsentWidget = selectedScreenHasConsentWidget(screen);
 				const consentPolicy = hasConsentWidget
 					? normalizeOptionValue(
 							getConfigValue(node, 'consentPolicy', ''),
@@ -563,7 +563,7 @@
 					node.data.kind === 'registration' || node.data.kind === 'authentication'
 						? [
 								getLabel(nextAuthProfileOptions, authProfile),
-								getLabel(formOptions, profileForm),
+								getLabel(screenOptions, screen),
 								...(hasConsentWidget && consentPolicy
 									? [getLabel(effectiveConsentPolicyOptions, consentPolicy)]
 									: [])
@@ -574,7 +574,7 @@
 					data: {
 						...node.data,
 						authProfile,
-						profileForm,
+						screen,
 						consentPolicy,
 						outputs,
 						settings
@@ -583,29 +583,29 @@
 			}
 
 			if (node.data.kind === 'consent') {
-				const formOptions = profileFormOptionsForNodeKind('consent');
-				const profileForm = normalizeOptionValue(
-					getConfigValue(node, 'profileForm', firstSelectableValue(formOptions)),
-					formOptions,
-					firstSelectableValue(formOptions)
+				const screenOptions = screenOptionsForNodeKind('consent');
+				const screen = normalizeOptionValue(
+					getConfigValue(node, 'screen', firstSelectableValue(screenOptions)),
+					screenOptions,
+					firstSelectableValue(screenOptions)
 				);
 				const consentPolicy = normalizeOptionValue(
 					getConfigValue(node, 'consentPolicy', 'registration_consent_policy'),
 					effectiveConsentPolicyOptions,
 					''
 				);
-				const retainedSettings = node.data.profileForm
+				const retainedSettings = node.data.screen
 					? node.data.settings.slice(2)
 					: node.data.settings.slice(1);
 				return {
 					...node,
 					data: {
 						...node.data,
-						profileForm,
+						screen,
 						consentPolicy,
 						settings: [
 							getLabel(effectiveConsentPolicyOptions, consentPolicy),
-							...(profileForm ? [getLabel(formOptions, profileForm)] : []),
+							...(screen ? [getLabel(screenOptions, screen)] : []),
 							...retainedSettings
 						]
 					}
@@ -613,13 +613,13 @@
 			}
 
 			if (node.data.kind === 'profile') {
-				const formOptions = profileFormOptionsForNodeKind('profile');
-				const profileForm = normalizeOptionValue(
-					getConfigValue(node, 'profileForm', 'basic_profile'),
-					formOptions,
-					firstSelectableValue(formOptions) || 'basic_profile'
+				const screenOptions = screenOptionsForNodeKind('profile');
+				const screen = normalizeOptionValue(
+					getConfigValue(node, 'screen', 'basic_profile'),
+					screenOptions,
+					firstSelectableValue(screenOptions) || 'basic_profile'
 				);
-				const hasConsentWidget = selectedFormHasConsentWidget(profileForm);
+				const hasConsentWidget = selectedScreenHasConsentWidget(screen);
 				const consentPolicy = hasConsentWidget
 					? normalizeOptionValue(
 							getConfigValue(node, 'consentPolicy', ''),
@@ -632,9 +632,9 @@
 					...node,
 					data: {
 						...node.data,
-						profileForm,
+						screen,
 						settings: [
-							getLabel(formOptions, profileForm),
+							getLabel(screenOptions, screen),
 							...(hasConsentWidget && consentPolicy
 								? [getLabel(effectiveConsentPolicyOptions, consentPolicy)]
 								: []),
@@ -783,11 +783,17 @@
 		nodes: EditorNode[];
 		edges: EditorEdge[];
 	} {
-		if (template.id === 'oidc-registration') {
+		if (template.id === 'default-registration') {
 			return buildRegistrationGraph();
 		}
-		if (template.id === 'oidc-login') {
+		if (template.id === 'default-registration-no-consent') {
+			return buildRegistrationNoConsentGraph();
+		}
+		if (template.id === 'default-login') {
 			return buildLoginGraph();
+		}
+		if (template.id === 'default-login-no-consent') {
+			return buildLoginNoConsentGraph();
 		}
 
 		const nodes = template.nodes.map<EditorNode>((node, index) =>
@@ -849,11 +855,13 @@
 			data.runtimeType = 'session_check';
 		}
 		if (kind === 'consent') {
-			data.profileForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
+			data.screen = preferredScreenValue(['consent'], ['consent'], 'basic_profile');
 			data.consentPolicy = resolveConsentPolicyValue(
 				template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
 					? 'saml_attribute_release_policy'
-					: 'oidc_authorization_consent_policy'
+					: template.id === 'default-registration'
+						? 'registration_consent_policy'
+						: 'oidc_authorization_consent_policy'
 			);
 		}
 		return data;
@@ -869,12 +877,12 @@
 
 	function buildRegistrationGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
 		const registrationOutputs = getAuthProfileOutputs('default');
-		const defaultProfileForm = preferredFormProfileValue(
+		const defaultScreen = preferredScreenValue(
 			['registration'],
 			['registration'],
 			'basic_profile'
 		);
-		const defaultConsentForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
+		const defaultConsentScreen = preferredScreenValue(['consent'], ['consent'], 'basic_profile');
 		const oidcRegistrationBlock = createCompletionBlock('oidc', 'registration', 'consent');
 		const nodes: EditorNode[] = [
 			createEditorNode({
@@ -897,13 +905,13 @@
 				description: $LL.admin_flows_editor_registration_method_description(),
 				settings: [
 					getLabel(authProfileOptions, 'default'),
-					getLabel(profileFormOptionsForNodeKind('registration'), defaultProfileForm)
+					getLabel(screenOptionsForNodeKind('registration'), defaultScreen)
 				],
 				position: { x: DEFAULT_NODE_X, y: 140 },
 				outputs: registrationOutputs,
 				data: {
 					authProfile: 'default',
-					profileForm: defaultProfileForm
+					screen: defaultScreen
 				}
 			}),
 			createEditorNode({
@@ -918,7 +926,7 @@
 				],
 				position: { x: DEFAULT_NODE_X, y: 380 },
 				outputs: [{ id: 'submitted', label: $LL.admin_flows_output_profile_completed() }],
-				data: { profileForm: defaultProfileForm }
+				data: { screen: defaultScreen }
 			}),
 			createEditorNode({
 				id: 'consent',
@@ -927,14 +935,14 @@
 				description: $LL.admin_flows_editor_registration_consent_description(),
 				settings: [
 					$LL.admin_flows_consent_policy_registration(),
-					getLabel(profileFormOptionsForNodeKind('consent'), defaultConsentForm),
+					getLabel(screenOptionsForNodeKind('consent'), defaultConsentScreen),
 					$LL.admin_flows_setting_terms_of_service(),
 					$LL.admin_flows_setting_privacy_policy()
 				],
 				position: { x: DEFAULT_NODE_X, y: 520 },
 				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 				data: {
-					profileForm: defaultConsentForm,
+					screen: defaultConsentScreen,
 					consentPolicy: 'registration_consent_policy',
 					completionBlock: oidcRegistrationBlock
 				}
@@ -987,10 +995,81 @@
 		return { nodes, edges };
 	}
 
+	function buildRegistrationNoConsentGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
+		const registrationOutputs = getAuthProfileOutputs('default');
+		const oidcRegistrationBlock = createCompletionBlock('oidc', 'registration', 'output');
+		const nodes: EditorNode[] = [
+			createEditorNode({
+				id: 'request',
+				kind: 'start',
+				title: $LL.admin_flows_node_registration_request(),
+				description: $LL.admin_flows_editor_registration_request_description(),
+				settings: [
+					$LL.admin_flows_setting_application_context(),
+					$LL.admin_flows_editor_setting_prompt_create(),
+					$LL.admin_flows_editor_setting_signup_entry()
+				],
+				position: { x: DEFAULT_NODE_X, y: 0 },
+				outputs: [{ id: 'next', label: $LL.admin_flows_output_start_registration() }]
+			}),
+			createEditorNode({
+				id: 'registration-method',
+				kind: 'registration',
+				title: $LL.admin_flows_node_registration_method(),
+				description: $LL.admin_flows_editor_registration_method_description(),
+				settings: [getLabel(authProfileOptions, 'default')],
+				position: { x: DEFAULT_NODE_X, y: 140 },
+				outputs: registrationOutputs,
+				data: {
+					authProfile: 'default'
+				}
+			}),
+			createEditorNode({
+				id: 'account-create',
+				kind: 'account',
+				title: $LL.admin_flows_node_account_creation(),
+				description: $LL.admin_flows_editor_account_creation_description(),
+				settings: [
+					$LL.admin_flows_setting_user_record(),
+					$LL.admin_flows_setting_credential_binding(),
+					$LL.admin_flows_setting_audit_event()
+				],
+				position: { x: DEFAULT_NODE_X, y: 280 },
+				outputs: [{ id: 'completed', label: $LL.admin_flows_output_created() }]
+			}),
+			createEditorNode({
+				id: 'end',
+				kind: 'end',
+				title: $LL.admin_flows_palette_end_label(),
+				description: $LL.admin_flows_editor_end_description(),
+				settings: [
+					$LL.admin_flows_setting_authorization_code(),
+					$LL.admin_flows_setting_id_token_claims(),
+					$LL.admin_flows_editor_setting_redirect()
+				],
+				position: { x: DEFAULT_NODE_X, y: 420 },
+				outputs: [{ id: 'default', label: $LL.admin_flows_output_complete() }],
+				data: {
+					completionBlock: oidcRegistrationBlock
+				}
+			})
+		];
+
+		const edges: EditorEdge[] = [
+			createEditorEdge('request', 'registration-method', 'next'),
+			...registrationOutputs.map((output) =>
+				createEditorEdge('registration-method', 'account-create', output.id)
+			),
+			createEditorEdge('account-create', 'end', 'completed')
+		];
+
+		return { nodes, edges };
+	}
+
 	function buildLoginGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
 		const authenticationOutputs = getAuthProfileOutputs('default');
-		const defaultLoginForm = preferredFormProfileValue(['login'], ['login'], 'basic_profile');
-		const defaultConsentForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
+		const defaultLoginScreen = preferredScreenValue(['login'], ['login'], 'basic_profile');
+		const defaultConsentScreen = preferredScreenValue(['consent'], ['consent'], 'basic_profile');
 		const samlConsentPolicy = resolveConsentPolicyValue('saml_attribute_release_policy');
 		const oidcConsentPolicy = resolveConsentPolicyValue('oidc_authorization_consent_policy');
 		const samlAttributeReleaseBlock = createCompletionBlock('saml', 'attribute_release', 'consent');
@@ -1026,11 +1105,11 @@
 				description: $LL.admin_flows_node_oidc_login_authentication_description(),
 				settings: [
 					getLabel(authProfileOptions, 'default'),
-					getLabel(profileFormOptionsForNodeKind('authentication'), defaultLoginForm)
+					getLabel(screenOptionsForNodeKind('authentication'), defaultLoginScreen)
 				],
 				position: { x: 522, y: 280 },
 				outputs: authenticationOutputs,
-				data: { authProfile: 'default', profileForm: defaultLoginForm }
+				data: { authProfile: 'default', screen: defaultLoginScreen }
 			}),
 			createEditorNode({
 				id: 'saml-attribute-release-consent',
@@ -1039,12 +1118,12 @@
 				description: $LL.admin_flows_node_oidc_login_consent_description(),
 				settings: [
 					...(samlConsentPolicy ? [getLabel(consentPolicyOptions, samlConsentPolicy)] : []),
-					getLabel(profileFormOptionsForNodeKind('consent'), defaultConsentForm)
+					getLabel(screenOptionsForNodeKind('consent'), defaultConsentScreen)
 				],
 				position: { x: 108, y: 468 },
 				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 				data: {
-					profileForm: defaultConsentForm,
+					screen: defaultConsentScreen,
 					consentPolicy: samlConsentPolicy,
 					completionBlock: samlAttributeReleaseBlock
 				}
@@ -1071,12 +1150,12 @@
 				description: $LL.admin_flows_node_oidc_login_consent_description(),
 				settings: [
 					...(oidcConsentPolicy ? [getLabel(consentPolicyOptions, oidcConsentPolicy)] : []),
-					getLabel(profileFormOptionsForNodeKind('consent'), defaultConsentForm)
+					getLabel(screenOptionsForNodeKind('consent'), defaultConsentScreen)
 				],
 				position: { x: 594, y: 468 },
 				outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 				data: {
-					profileForm: defaultConsentForm,
+					screen: defaultConsentScreen,
 					consentPolicy: oidcConsentPolicy,
 					completionBlock: oidcAuthorizationBlock
 				}
@@ -1117,6 +1196,92 @@
 				'accepted'
 			),
 			createEditorEdge('oidc-authorization-consent', 'oidc-authorization-complete', 'accepted')
+		];
+
+		return { nodes, edges };
+	}
+
+	function buildLoginNoConsentGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
+		const authenticationOutputs = getAuthProfileOutputs('default');
+		const defaultLoginScreen = preferredScreenValue(['login'], ['login'], 'basic_profile');
+		const samlAttributeReleaseBlock = createCompletionBlock('saml', 'attribute_release', 'output');
+		const oidcAuthorizationBlock = createCompletionBlock('oidc', 'authorization', 'output');
+		const nodes: EditorNode[] = [
+			createEditorNode({
+				id: 'request',
+				kind: 'start',
+				title: $LL.admin_flows_node_login_request(),
+				description: $LL.admin_flows_editor_login_request_description(),
+				settings: [
+					$LL.admin_flows_setting_application_context(),
+					$LL.admin_flows_setting_redirect_uri(),
+					$LL.admin_flows_setting_scope_prompt_max_age()
+				],
+				position: { x: DEFAULT_NODE_X, y: 0 },
+				outputs: [{ id: 'next', label: $LL.admin_flows_output_next() }]
+			}),
+			createEditorNode({
+				id: 'session-check',
+				kind: 'session',
+				title: $LL.admin_flows_node_session_check(),
+				description: $LL.admin_flows_node_oidc_login_session_description(),
+				settings: getDefaultNodeSettings('session', 'default', 'basic_profile', ''),
+				position: { x: DEFAULT_NODE_X, y: 140 },
+				outputs: getDefaultOutputsForRuntimeType('session_check'),
+				data: { runtimeType: 'session_check' }
+			}),
+			createEditorNode({
+				id: 'authentication',
+				kind: 'authentication',
+				title: $LL.admin_flows_node_authentication_method(),
+				description: $LL.admin_flows_node_oidc_login_authentication_description(),
+				settings: [
+					getLabel(authProfileOptions, 'default'),
+					getLabel(screenOptionsForNodeKind('authentication'), defaultLoginScreen)
+				],
+				position: { x: 522, y: 280 },
+				outputs: authenticationOutputs,
+				data: { authProfile: 'default', screen: defaultLoginScreen }
+			}),
+			createEditorNode({
+				id: 'saml-attribute-release-complete',
+				kind: 'end',
+				title: $LL.admin_flows_palette_end_label(),
+				description: $LL.admin_flows_node_saml_output_description(),
+				settings: [$LL.admin_flows_setting_saml_assertion()],
+				position: { x: 108, y: 612 },
+				outputs: [],
+				data: {
+					completionBlock: samlAttributeReleaseBlock
+				}
+			}),
+			createEditorNode({
+				id: 'oidc-authorization-complete',
+				kind: 'end',
+				title: $LL.admin_flows_palette_end_label(),
+				description: $LL.admin_flows_node_oidc_login_output_description(),
+				settings: [
+					$LL.admin_flows_setting_authorization_code(),
+					$LL.admin_flows_setting_id_token_claims(),
+					$LL.admin_flows_setting_userinfo_claims()
+				],
+				position: { x: 594, y: 612 },
+				outputs: [],
+				data: {
+					completionBlock: oidcAuthorizationBlock
+				}
+			})
+		];
+
+		const edges: EditorEdge[] = [
+			createEditorEdge('request', 'session-check', 'next'),
+			createEditorEdge('session-check', 'saml-attribute-release-complete', 'continue'),
+			createEditorEdge('session-check', 'oidc-authorization-complete', 'continue'),
+			createEditorEdge('session-check', 'authentication', 'authenticate'),
+			...authenticationOutputs.flatMap((output) => [
+				createEditorEdge('authentication', 'saml-attribute-release-complete', output.id),
+				createEditorEdge('authentication', 'oidc-authorization-complete', output.id)
+			])
 		];
 
 		return { nodes, edges };
@@ -1167,7 +1332,8 @@
 		const purpose =
 			template.id === 'saml-attribute-release' || template.id === 'academic-saml-login'
 				? 'attribute_release'
-				: template.id === 'oidc-registration'
+				: template.id === 'default-registration' ||
+					  template.id === 'default-registration-no-consent'
 					? 'registration'
 					: 'authorization';
 		return createCompletionBlock(protocol, purpose, role);
@@ -1186,7 +1352,7 @@
 			case 'verification':
 				return 'email_verification';
 			case 'profile':
-				return 'profile_form';
+				return 'screen';
 			case 'consent':
 				return 'consent';
 			case 'account':
@@ -1218,7 +1384,7 @@
 				return 'authentication';
 			case 'email_verification':
 				return 'verification';
-			case 'profile_form':
+			case 'screen':
 				return 'profile';
 			case 'consent':
 				return 'consent';
@@ -1270,7 +1436,7 @@
 					{ id: 'verified', label: $LL.admin_flows_output_accepted() },
 					{ id: 'failed', label: $LL.admin_flows_cancel() }
 				];
-			case 'profile_form':
+			case 'screen':
 				return [{ id: 'submitted', label: $LL.admin_flows_output_profile_completed() }];
 			case 'consent':
 				return [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }];
@@ -1511,7 +1677,7 @@
 			const kind = getPersistedEditorNodeKind(node, config);
 			const settings = getConfigStringArray(config, 'settings');
 			const authProfile = getConfigString(config, 'authentication_profile_ref', 'default');
-			const profileForm = getConfigString(config, 'profile_form_ref', 'basic_profile');
+			const screen = getConfigString(config, 'screen_ref', 'basic_profile');
 			const consentPolicy = getConfigString(
 				config,
 				'consent_policy_ref',
@@ -1525,10 +1691,10 @@
 				description: getConfigString(config, 'description', ''),
 				settings:
 					kind === 'session'
-						? getDefaultNodeSettings('session', authProfile, profileForm, consentPolicy)
+						? getDefaultNodeSettings('session', authProfile, screen, consentPolicy)
 						: settings.length > 0
 							? settings
-							: getDefaultNodeSettings(kind, authProfile, profileForm, consentPolicy),
+							: getDefaultNodeSettings(kind, authProfile, screen, consentPolicy),
 				position: node.position ?? { x: DEFAULT_NODE_X, y: index * COMPACT_NODE_Y_GAP },
 				outputs:
 					kind === 'session'
@@ -1537,7 +1703,7 @@
 				data: {
 					runtimeType: kind === 'session' ? 'session_check' : node.type,
 					authProfile,
-					profileForm,
+					screen,
 					consentPolicy,
 					completionBlock: getCompletionBlockFromConfig(config),
 					...conditionDraft
@@ -1574,47 +1740,47 @@
 	function getDefaultNodeSettings(
 		kind: FlowEditorNodeKind,
 		authProfile: string,
-		profileForm: string,
+		screen: string,
 		consentPolicy: string
 	): string[] {
 		if (kind === 'registration') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, authProfile),
-				getLabel(formOptions, profileForm),
-				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
+				getLabel(screenOptions, screen),
+				...(selectedScreenHasConsentWidget(screen) && consentPolicy
 					? [getLabel(consentPolicyOptions, consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'authentication') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, authProfile),
-				getLabel(formOptions, profileForm),
-				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
+				getLabel(screenOptions, screen),
+				...(selectedScreenHasConsentWidget(screen) && consentPolicy
 					? [getLabel(consentPolicyOptions, consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'profile') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
-				getLabel(formOptions, profileForm),
-				...(selectedFormHasConsentWidget(profileForm) && consentPolicy
+				getLabel(screenOptions, screen),
+				...(selectedScreenHasConsentWidget(screen) && consentPolicy
 					? [getLabel(consentPolicyOptions, consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'verification') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
-			return [getLabel(formOptions, profileForm)];
+			const screenOptions = screenOptionsForNodeKind(kind);
+			return [getLabel(screenOptions, screen)];
 		}
 		if (kind === 'consent') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
 				getLabel(consentPolicyOptions, consentPolicy),
-				...(profileForm ? [getLabel(formOptions, profileForm)] : [])
+				...(screen ? [getLabel(screenOptions, screen)] : [])
 			];
 		}
 		if (kind === 'session') {
@@ -1771,44 +1937,44 @@
 		return localeMarker === 'ja' ? ja : en;
 	}
 
-	function getSelectedFormProfile(profileId: string): FormProfile | null {
-		return loadedFormProfiles.find((profile) => profile.id === profileId) ?? null;
+	function getSelectedScreen(screenId: string): Screen | null {
+		return loadedScreens.find((screen) => screen.id === screenId) ?? null;
 	}
 
-	function fieldBlockType(field: FormProfile['fields'][number]): string {
+	function fieldBlockType(field: Screen['fields'][number]): string {
 		return field.block_type ?? 'identity_field';
 	}
 
-	function profileHasIdentityField(profile: FormProfile, fieldNames: string[]): boolean {
+	function screenHasIdentityField(screen: Screen, fieldNames: string[]): boolean {
 		const normalizedNames = new Set(fieldNames.map((fieldName) => fieldName.toLowerCase()));
-		return profile.fields.some(
+		return screen.fields.some(
 			(field) =>
 				fieldBlockType(field) === 'identity_field' &&
 				normalizedNames.has((field.field ?? '').toLowerCase())
 		);
 	}
 
-	function profileHasAuthBlock(profile: FormProfile): boolean {
-		return profile.fields.some((field) => fieldBlockType(field) === 'auth_widget');
+	function screenHasAuthBlock(screen: Screen): boolean {
+		return screen.fields.some((field) => fieldBlockType(field) === 'auth_widget');
 	}
 
-	function profileHasMailAuthWidget(profile: FormProfile): boolean {
-		return profile.fields.some(
+	function screenHasMailAuthWidget(screen: Screen): boolean {
+		return screen.fields.some(
 			(field) => fieldBlockType(field) === 'auth_widget' && field.auth_method === 'mail_otp'
 		);
 	}
 
-	function profileHasConsentWidget(profile: FormProfile): boolean {
-		return profile.fields.some((field) => fieldBlockType(field) === 'consent_widget');
+	function screenHasConsentWidget(screen: Screen): boolean {
+		return screen.fields.some((field) => fieldBlockType(field) === 'consent_widget');
 	}
 
-	function selectedFormHasConsentWidget(profileId: string): boolean {
-		const profile = getSelectedFormProfile(profileId);
-		return profile ? profileHasConsentWidget(profile) : false;
+	function selectedScreenHasConsentWidget(screenId: string): boolean {
+		const screen = getSelectedScreen(screenId);
+		return screen ? screenHasConsentWidget(screen) : false;
 	}
 
-	function draftFormHasConsentWidget(): boolean {
-		return selectedFormHasConsentWidget(draft.profileForm);
+	function draftScreenHasConsentWidget(): boolean {
+		return selectedScreenHasConsentWidget(draft.screen);
 	}
 
 	function authProfileNeedsEmail(profileId: string): boolean {
@@ -1817,51 +1983,51 @@
 		);
 	}
 
-	function getRegistrationFormValidationMessages(): Array<{
+	function getRegistrationScreenValidationMessages(): Array<{
 		level: 'ok' | 'warning';
 		text: string;
 	}> {
 		if (!editingNode || editingNode.data.kind !== 'registration') return [];
 		const messages: Array<{ level: 'ok' | 'warning'; text: string }> = [];
-		const profile = getSelectedFormProfile(draft.profileForm);
-		if (!profile) {
+		const screen = getSelectedScreen(draft.screen);
+		if (!screen) {
 			messages.push({
 				level: 'warning',
 				text: ft(
-					'選択したフォームを読み込めません。保存済みフォームを選択してください。',
-					'The selected form profile could not be loaded. Select a saved form profile.'
+					'選択したスクリーンを読み込めません。保存済みスクリーンを選択してください。',
+					'The selected screen could not be loaded. Select a saved screen.'
 				)
 			});
 			return messages;
 		}
-		if (!profileHasAuthBlock(profile)) {
+		if (!screenHasAuthBlock(screen)) {
 			messages.push({
 				level: 'warning',
 				text: ft(
-					'選択した登録フォームに認証ウィジェットがありません。',
-					'Registration form has no authentication widget.'
+					'選択した登録スクリーンに認証ウィジェットがありません。',
+					'Registration screen has no authentication widget.'
 				)
 			});
 		}
 		if (
 			authProfileNeedsEmail(draft.authProfile) &&
-			!profileHasIdentityField(profile, ['email']) &&
-			!profileHasMailAuthWidget(profile)
+			!screenHasIdentityField(screen, ['email']) &&
+			!screenHasMailAuthWidget(screen)
 		) {
 			messages.push({
 				level: 'warning',
 				text: ft(
-					'メール系の認証経路を使う場合、登録フォームにメールアドレス項目が必要になることがあります。',
-					'Mail-based routes usually require an email field in the selected registration form.'
+					'メール系の認証経路を使う場合、登録スクリーンにメールアドレス項目が必要になることがあります。',
+					'Mail-based routes usually require an email field in the selected registration screen.'
 				)
 			});
 		}
-		if (profileHasConsentWidget(profile) && !draft.consentPolicy) {
+		if (screenHasConsentWidget(screen) && !draft.consentPolicy) {
 			messages.push({
 				level: 'warning',
 				text: ft(
-					'選択した登録フォームに同意ウィジェットがあります。同じノードで同意ポリシーを選択してください。',
-					'The selected registration form contains a consent widget. Select a consent policy on this node.'
+					'選択した登録スクリーンに同意ウィジェットがあります。同じノードで同意ポリシーを選択してください。',
+					'The selected registration screen contains a consent widget. Select a consent policy on this node.'
 				)
 			});
 		}
@@ -1869,8 +2035,8 @@
 			messages.push({
 				level: 'ok',
 				text: ft(
-					'認証方式プロフィールと登録フォームの基本的な組み合わせは問題なさそうです。',
-					'Registration method and form profile look compatible.'
+					'認証方式プロフィールと登録スクリーンの基本的な組み合わせは問題なさそうです。',
+					'Registration method and screen look compatible.'
 				)
 			});
 		}
@@ -1915,22 +2081,22 @@
 			consentPolicyOptions,
 			''
 		);
-		const nodeProfileFormOptions = profileFormOptionsForNodeKind(node.data.kind);
-		const profileForm = normalizeOptionValue(
+		const nodeScreenOptions = screenOptionsForNodeKind(node.data.kind);
+		const screen = normalizeOptionValue(
 			getConfigValue(
 				node,
-				'profileForm',
-				firstProfileFormForNodeKind(node.data.kind, 'basic_profile')
+				'screen',
+				firstScreenForNodeKind(node.data.kind, 'basic_profile')
 			),
-			nodeProfileFormOptions,
-			firstSelectableValue(nodeProfileFormOptions) || 'basic_profile'
+			nodeScreenOptions,
+			firstSelectableValue(nodeScreenOptions) || 'basic_profile'
 		);
 		draft = {
 			title: node.data.title,
 			description: node.data.description,
 			settingsText: node.data.settings.join('\n'),
 			authProfile,
-			profileForm,
+			screen,
 			consentPolicy,
 			conditionType: getConfigConditionType(node),
 			conditionValue: getConfigValue(node, 'conditionValue', ''),
@@ -1968,44 +2134,44 @@
 			.filter(Boolean);
 
 		if (kind === 'registration') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, draft.authProfile),
-				getLabel(formOptions, draft.profileForm),
-				...(draftFormHasConsentWidget() && draft.consentPolicy
+				getLabel(screenOptions, draft.screen),
+				...(draftScreenHasConsentWidget() && draft.consentPolicy
 					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'authentication') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
 				getLabel(authProfileOptions, draft.authProfile),
-				getLabel(formOptions, draft.profileForm),
-				...(draftFormHasConsentWidget() && draft.consentPolicy
+				getLabel(screenOptions, draft.screen),
+				...(draftScreenHasConsentWidget() && draft.consentPolicy
 					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
 					: [])
 			];
 		}
 		if (kind === 'profile') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
-				getLabel(formOptions, draft.profileForm),
-				...(draftFormHasConsentWidget() && draft.consentPolicy
+				getLabel(screenOptions, draft.screen),
+				...(draftScreenHasConsentWidget() && draft.consentPolicy
 					? [getLabel(consentPolicyOptions, draft.consentPolicy)]
 					: []),
 				...freeTextSettings
 			];
 		}
 		if (kind === 'verification') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
-			return [getLabel(formOptions, draft.profileForm), ...freeTextSettings];
+			const screenOptions = screenOptionsForNodeKind(kind);
+			return [getLabel(screenOptions, draft.screen), ...freeTextSettings];
 		}
 		if (kind === 'consent') {
-			const formOptions = profileFormOptionsForNodeKind(kind);
+			const screenOptions = screenOptionsForNodeKind(kind);
 			return [
 				getLabel(consentPolicyOptions, draft.consentPolicy),
-				...(draft.profileForm ? [getLabel(formOptions, draft.profileForm)] : []),
+				...(draft.screen ? [getLabel(screenOptions, draft.screen)] : []),
 				...freeTextSettings
 			];
 		}
@@ -2047,7 +2213,7 @@
 				settings: getDraftSettings(node.data.kind),
 				outputs,
 				authProfile: draft.authProfile,
-				profileForm: draft.profileForm,
+				screen: draft.screen,
 				consentPolicy: draft.consentPolicy,
 				conditionType: draft.conditionType,
 				conditionValue: draft.conditionValue,
@@ -2232,41 +2398,41 @@
 		const maxY = realNodes.reduce((value, node) => Math.max(value, node.position.y), 0);
 		const id = `${kind}-${nextNodeIndex}`;
 		const defaultAuthProfile = firstSelectableValue(authProfileOptions) || 'default';
-		const nodeProfileFormOptions = profileFormOptionsForNodeKind(kind);
-		const defaultProfileForm =
+		const nodeScreenOptions = screenOptionsForNodeKind(kind);
+		const defaultScreen =
 			kind === 'verification'
-				? preferredFormProfileValue(['code_input'], ['code_input'], 'code_input')
-				: firstSelectableValue(nodeProfileFormOptions) || 'basic_profile';
+				? preferredScreenValue(['code_input'], ['code_input'], 'code_input')
+				: firstSelectableValue(nodeScreenOptions) || 'basic_profile';
 		const defaultConsentPolicy = firstSelectableValue(consentPolicyOptions);
 		const settings =
 			kind === 'registration'
 				? [
 						getLabel(authProfileOptions, defaultAuthProfile),
-						getLabel(nodeProfileFormOptions, defaultProfileForm)
+						getLabel(nodeScreenOptions, defaultScreen)
 					]
 				: kind === 'authentication'
 					? [
 							getLabel(authProfileOptions, defaultAuthProfile),
-							getLabel(nodeProfileFormOptions, defaultProfileForm)
+							getLabel(nodeScreenOptions, defaultScreen)
 						]
 					: kind === 'profile'
-						? [getLabel(nodeProfileFormOptions, defaultProfileForm)]
+						? [getLabel(nodeScreenOptions, defaultScreen)]
 						: kind === 'verification'
-							? [getLabel(nodeProfileFormOptions, defaultProfileForm)]
+							? [getLabel(nodeScreenOptions, defaultScreen)]
 							: kind === 'consent'
-							? [
-									getLabel(consentPolicyOptions, defaultConsentPolicy),
-									getLabel(nodeProfileFormOptions, defaultProfileForm)
-								]
-							: kind === 'session'
 								? [
-										$LL.admin_flows_setting_existing_session(),
-										$LL.admin_flows_setting_prompt_login(),
-										$LL.admin_flows_setting_max_age_acr()
+										getLabel(consentPolicyOptions, defaultConsentPolicy),
+										getLabel(nodeScreenOptions, defaultScreen)
 									]
-								: kind === 'decision'
-									? [$LL.admin_flows_condition_type_always()]
-									: [];
+								: kind === 'session'
+									? [
+											$LL.admin_flows_setting_existing_session(),
+											$LL.admin_flows_setting_prompt_login(),
+											$LL.admin_flows_setting_max_age_acr()
+										]
+									: kind === 'decision'
+										? [$LL.admin_flows_condition_type_always()]
+										: [];
 		const node = createEditorNode({
 			id,
 			kind,
@@ -2284,43 +2450,43 @@
 				kind === 'registration'
 					? {
 							authProfile: defaultAuthProfile,
-							profileForm: defaultProfileForm
+							screen: defaultScreen
 						}
 					: kind === 'authentication'
 						? {
 								authProfile: defaultAuthProfile,
-								profileForm: defaultProfileForm
+								screen: defaultScreen
 							}
 						: kind === 'profile'
 							? {
-									profileForm: defaultProfileForm
+									screen: defaultScreen
 								}
 							: kind === 'verification'
 								? {
-										profileForm: defaultProfileForm
+										screen: defaultScreen
 									}
 								: kind === 'consent'
-								? {
-										profileForm: defaultProfileForm,
-										consentPolicy: defaultConsentPolicy
-									}
-								: kind === 'session'
 									? {
-											runtimeType: 'session_check'
+											screen: defaultScreen,
+											consentPolicy: defaultConsentPolicy
 										}
-									: kind === 'decision'
+									: kind === 'session'
 										? {
-												conditionType: 'always',
-												conditionValue: '',
-												conditionOutputHandle: 'matched',
-												conditionOutputLabel: $LL.admin_flows_output_matched(),
-												conditionOtherwiseMode: 'output',
-												conditionOtherwiseOutputHandle: 'otherwise',
-												conditionOtherwiseOutputLabel: $LL.admin_flows_output_otherwise(),
-												conditionTerminalError: 'condition_not_met',
-												conditionTerminalMessage: ''
+												runtimeType: 'session_check'
 											}
-										: {}
+										: kind === 'decision'
+											? {
+													conditionType: 'always',
+													conditionValue: '',
+													conditionOutputHandle: 'matched',
+													conditionOutputLabel: $LL.admin_flows_output_matched(),
+													conditionOtherwiseMode: 'output',
+													conditionOtherwiseOutputHandle: 'otherwise',
+													conditionOtherwiseOutputLabel: $LL.admin_flows_output_otherwise(),
+													conditionTerminalError: 'condition_not_met',
+													conditionTerminalMessage: ''
+												}
+											: {}
 		});
 		editorNodes = withCompletionSubflows(withNodeActions([...realNodes, node]));
 	}
@@ -2344,7 +2510,7 @@
 				? 'saml_attribute_release_policy'
 				: 'oidc_authorization_consent_policy'
 		);
-		const consentForm = preferredFormProfileValue(['consent'], ['consent'], 'basic_profile');
+		const consentScreen = preferredScreenValue(['consent'], ['consent'], 'basic_profile');
 		const consentNode = createEditorNode({
 			id: `${protocol}-${purpose}-consent-${nextNodeIndex}`,
 			kind: 'consent',
@@ -2355,12 +2521,12 @@
 					: $LL.admin_flows_node_oidc_authorization_consent_description(),
 			settings: [
 				...(consentPolicy ? [getLabel(consentPolicyOptions, consentPolicy)] : []),
-				getLabel(profileFormOptionsForNodeKind('consent'), consentForm)
+				getLabel(screenOptionsForNodeKind('consent'), consentScreen)
 			],
 			position: basePosition,
 			outputs: [{ id: 'accepted', label: $LL.admin_flows_output_accepted() }],
 			data: {
-				profileForm: consentForm,
+				screen: consentScreen,
 				consentPolicy,
 				completionBlock: block
 			}
@@ -2511,14 +2677,14 @@
 			node.data.kind === 'profile' ||
 			node.data.kind === 'consent'
 		) {
-			config.profile_form_ref = getConfigValue(node, 'profileForm', 'basic_profile');
+			config.screen_ref = getConfigValue(node, 'screen', 'basic_profile');
 		}
 		if (
 			node.data.kind === 'consent' ||
 			((node.data.kind === 'registration' ||
 				node.data.kind === 'authentication' ||
 				node.data.kind === 'profile') &&
-				selectedFormHasConsentWidget(getConfigValue(node, 'profileForm', 'basic_profile')))
+				selectedScreenHasConsentWidget(getConfigValue(node, 'screen', 'basic_profile')))
 		) {
 			config.consent_policy_ref = getConfigValue(
 				node,
@@ -2896,14 +3062,14 @@
 					</select>
 				</label>
 				<label class="field field-wide">
-					<span>{$LL.admin_flows_profile_form_label()}</span>
-					<select class="admin-input" bind:value={draft.profileForm}>
-						{#each profileFormOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
+					<span>{$LL.admin_flows_screen_label()}</span>
+					<select class="admin-input" bind:value={draft.screen}>
+						{#each screenOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
 							<option value={option.value} disabled={option.disabled}>{option.label}</option>
 						{/each}
 					</select>
 				</label>
-				{#if draftFormHasConsentWidget()}
+				{#if draftScreenHasConsentWidget()}
 					<label class="field field-wide">
 						<span>{$LL.admin_flows_consent_policy_label()}</span>
 						<select class="admin-input" bind:value={draft.consentPolicy}>
@@ -2914,10 +3080,10 @@
 					</label>
 				{/if}
 				{#if editingNode.data.kind === 'registration'}
-					<div class="registration-form-check field-wide">
+					<div class="registration-screen-check field-wide">
 						<strong>{ft('組み合わせチェック', 'Compatibility check')}</strong>
 						<ul>
-							{#each getRegistrationFormValidationMessages() as item (item.text)}
+							{#each getRegistrationScreenValidationMessages() as item (item.text)}
 								<li data-level={item.level}>{item.text}</li>
 							{/each}
 						</ul>
@@ -2925,14 +3091,14 @@
 				{/if}
 			{:else if editingNode.data.kind === 'profile' || editingNode.data.kind === 'verification'}
 				<label class="field field-wide">
-					<span>{$LL.admin_flows_profile_form_label()}</span>
-					<select class="admin-input" bind:value={draft.profileForm}>
-						{#each profileFormOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
+					<span>{$LL.admin_flows_screen_label()}</span>
+					<select class="admin-input" bind:value={draft.screen}>
+						{#each screenOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
 							<option value={option.value} disabled={option.disabled}>{option.label}</option>
 						{/each}
 					</select>
 				</label>
-				{#if draftFormHasConsentWidget()}
+				{#if draftScreenHasConsentWidget()}
 					<label class="field field-wide">
 						<span>{$LL.admin_flows_consent_policy_label()}</span>
 						<select class="admin-input" bind:value={draft.consentPolicy}>
@@ -2944,9 +3110,9 @@
 				{/if}
 			{:else if editingNode.data.kind === 'consent'}
 				<label class="field field-wide">
-					<span>{$LL.admin_flows_profile_form_label()}</span>
-					<select class="admin-input" bind:value={draft.profileForm}>
-						{#each profileFormOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
+					<span>{$LL.admin_flows_screen_label()}</span>
+					<select class="admin-input" bind:value={draft.screen}>
+						{#each screenOptionsForNodeKind(editingNode.data.kind) as option (option.value)}
 							<option value={option.value} disabled={option.disabled}>{option.label}</option>
 						{/each}
 					</select>
@@ -3363,7 +3529,7 @@
 		line-height: 1.5;
 	}
 
-	.registration-form-check {
+	.registration-screen-check {
 		display: grid;
 		gap: 8px;
 		padding: 10px 12px;
@@ -3372,12 +3538,12 @@
 		background: color-mix(in srgb, var(--color-surface-muted) 52%, transparent);
 	}
 
-	.registration-form-check strong {
+	.registration-screen-check strong {
 		color: var(--color-text);
 		font-size: 0.84rem;
 	}
 
-	.registration-form-check ul {
+	.registration-screen-check ul {
 		display: grid;
 		gap: 6px;
 		margin: 0;
@@ -3385,13 +3551,13 @@
 		list-style: none;
 	}
 
-	.registration-form-check li {
+	.registration-screen-check li {
 		color: var(--color-text-muted);
 		font-size: 0.8rem;
 		line-height: 1.45;
 	}
 
-	.registration-form-check li[data-level='warning'] {
+	.registration-screen-check li[data-level='warning'] {
 		color: var(--color-warning, #c58a00);
 	}
 

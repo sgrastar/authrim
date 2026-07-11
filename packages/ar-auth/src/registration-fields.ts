@@ -1,7 +1,7 @@
 /**
  * Registration Fields API Handler
  *
- * Returns custom claim schemas marked as visible on the registration form.
+ * Returns custom claim schemas marked as visible on the registration screen.
  * Public endpoint — no authentication required.
  *
  * - GET /api/v1/registration-fields

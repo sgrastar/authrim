@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Alert, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl } from '$lib/utils/url-validation';
@@ -14,6 +14,8 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
 	} from '$lib/webauthn/signal';
+
+	const { brandingStore } = useLoginUIStores();
 
 	// ---------------------------------------------------------------------------
 	// State

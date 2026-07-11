@@ -7,7 +7,7 @@ export type FlowRuntimeComponent =
 	| 'registration_method_selector'
 	| 'authentication_method_selector'
 	| 'email_verification'
-	| 'profile_form'
+	| 'screen'
 	| 'consent_policy'
 	| 'account_action'
 	| 'completion'
@@ -137,6 +137,15 @@ export interface FlowRuntimeSubmitResponse {
 	} | null;
 }
 
+export interface FlowRuntimeEmailVerificationChallenge {
+	available: boolean;
+	challenge_id?: string;
+	nonce?: string;
+	expires_in?: number;
+	interaction_id?: string;
+	step_id?: string;
+}
+
 export interface FlowRuntimeApiResult<T> {
 	data?: T;
 	error?: APIError & {
@@ -183,6 +192,16 @@ export const flowRuntimeAPI = {
 	submit(interactionId: string, input: FlowRuntimeSubmitRequest) {
 		return flowRuntimeFetch<FlowRuntimeSubmitResponse>(
 			`/api/v1/login/interactions/${encodeURIComponent(interactionId)}/submit`,
+			input
+		);
+	},
+
+	createEmailVerificationChallenge(
+		interactionId: string,
+		input: Pick<FlowRuntimeSubmitRequest, 'step_id' | 'contract_hash' | 'signature'>
+	) {
+		return flowRuntimeFetch<FlowRuntimeEmailVerificationChallenge>(
+			`/api/v1/login/interactions/${encodeURIComponent(interactionId)}/email-verification/challenge`,
 			input
 		);
 	}

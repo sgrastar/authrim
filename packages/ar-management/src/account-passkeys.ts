@@ -322,7 +322,7 @@ async function getLegacyAuthenticationMethodDefault(
   env: Env,
   method: BuiltInAuthenticationMethod
 ): Promise<boolean> {
-  let legacyDefault = true;
+  let legacyDefault = method === 'passkey';
   try {
     const rawSystemSettings = await env.SETTINGS?.get('system_settings');
     if (!rawSystemSettings) {
@@ -336,11 +336,9 @@ async function getLegacyAuthenticationMethodDefault(
         ? (systemSettings.advanced as Record<string, unknown>)
         : {};
     legacyDefault =
-      method === 'passkey'
-        ? advanced.passkeyEnabled !== false
-        : advanced.magicLinkEnabled !== false;
+      method === 'passkey' ? advanced.passkeyEnabled !== false : advanced.magicLinkEnabled === true;
   } catch {
-    legacyDefault = true;
+    legacyDefault = method === 'passkey';
   }
   return legacyDefault;
 }

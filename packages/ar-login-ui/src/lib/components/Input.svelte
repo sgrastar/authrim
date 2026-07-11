@@ -70,16 +70,16 @@
 <style>
 	.form-group {
 		width: 100%;
-		margin-bottom: 20px;
+		margin-bottom: var(--auth-field-stack-gap, 20px);
 	}
 
 	.form-label {
 		display: block;
 		font-family: var(--font-display);
-		font-size: 0.9375rem;
+		font-size: var(--auth-label-size, 0.9375rem);
 		font-weight: 600;
 		color: var(--text-primary);
-		margin-bottom: 8px;
+		margin-bottom: var(--auth-field-gap, 8px);
 	}
 
 	.input-wrapper {
@@ -106,11 +106,12 @@
 
 	.form-input {
 		width: 100%;
-		padding: 12px 16px;
+		min-height: var(--auth-control-height, 0);
+		padding: var(--auth-control-padding-y, 12px) var(--auth-control-padding-x, 16px);
 		background: var(--bg-glass);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
-		font-size: 0.9375rem;
+		font-size: var(--auth-control-font-size, 0.9375rem);
 		font-family: var(--font-body);
 		color: var(--text-primary);
 		transition: all var(--transition-fast);

@@ -10,6 +10,7 @@
 		type UserListParams
 	} from '$lib/api/admin-users';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	import { normalizeTimestampMs } from '$lib/utils/timestamp';
 	import { Modal } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
@@ -123,8 +124,10 @@
 	}
 
 	function formatDate(timestamp: number | null): string {
-		if (!timestamp) return '-';
-		return new Date(timestamp).toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+		if (timestamp === null) return '-';
+		const date = new Date(normalizeTimestampMs(timestamp));
+		if (Number.isNaN(date.getTime())) return '-';
+		return date.toLocaleDateString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function formatStatus(status: string): string {

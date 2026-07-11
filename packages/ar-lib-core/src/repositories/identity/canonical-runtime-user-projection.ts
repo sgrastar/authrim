@@ -221,7 +221,17 @@ function activeClause(includeInactive: boolean | undefined): string {
 }
 
 function unixToIso(value: number | null | undefined): string {
-  return new Date((value ?? 0) * 1000).toISOString();
+  const timestamp = value ?? 0;
+  const absolute = Math.abs(timestamp);
+  const milliseconds =
+    absolute < 100_000_000_000
+      ? timestamp * 1000
+      : absolute < 100_000_000_000_000
+        ? timestamp
+        : absolute < 100_000_000_000_000_000
+          ? timestamp / 1000
+          : timestamp / 1_000_000;
+  return new Date(milliseconds).toISOString();
 }
 
 function parseJson(value: string | null | undefined): unknown {

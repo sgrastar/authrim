@@ -227,10 +227,14 @@ function buildCanonicalPiiDeletionPatch(): Record<string, null> {
   };
 }
 
-function formatCanonicalAdminUser(projection: CanonicalRuntimeUserProjection) {
+function formatCanonicalAdminUser(
+  projection: CanonicalRuntimeUserProjection,
+  sessionLastLoginAt: number | null = null
+) {
   const address = addressPartsFromProjection(projection);
   const createdAt = Date.parse(projection.created_at);
   const updatedAt = Date.parse(projection.updated_at);
+  const lastLoginAt = projection.last_login_at ?? sessionLastLoginAt;
   return {
     id: projection.id,
     tenant_id: projection.tenant_id,
@@ -263,7 +267,7 @@ function formatCanonicalAdminUser(projection: CanonicalRuntimeUserProjection) {
     pii_status: projection.active ? 'active' : 'deleted',
     created_at: Number.isFinite(createdAt) ? createdAt : null,
     updated_at: Number.isFinite(updatedAt) ? updatedAt : null,
-    last_login_at: null,
+    last_login_at: toMilliseconds(lastLoginAt),
     status: projection.active ? 'active' : 'inactive',
     suspended_at: null,
     suspended_until: null,
@@ -501,14 +505,33 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const accountRows = await authCtx.coreAdapter.query<{ legacy_user_id: string }>(
-      `SELECT legacy_user_id
-         FROM identity_accounts
-        WHERE tenant_id = ?
-          AND legacy_user_id IS NOT NULL
-          AND lifecycle_state = 'active'
-        ORDER BY created_at DESC`,
-      [tenantId]
+    const [accountRows, sessionRows] = await Promise.all([
+      authCtx.coreAdapter.query<{ legacy_user_id: string }>(
+        `SELECT legacy_user_id
+           FROM identity_accounts
+          WHERE tenant_id = ?
+            AND legacy_user_id IS NOT NULL
+            AND lifecycle_state = 'active'
+          ORDER BY created_at DESC`,
+        [tenantId]
+      ),
+      authCtx.coreAdapter.query<{ user_id: string; last_login_at: number | null }>(
+        `SELECT user_id, MAX(created_at) AS last_login_at
+           FROM sessions
+          WHERE tenant_id = ?
+          GROUP BY user_id`,
+        [tenantId]
+      ),
+    ]);
+    const sessionLastLoginByUserId = new Map(
+      sessionRows
+        .filter(
+          (row) =>
+            typeof row.user_id === 'string' &&
+            row.user_id.length > 0 &&
+            typeof row.last_login_at === 'number'
+        )
+        .map((row) => [row.user_id, row.last_login_at] as const)
     );
     const projections: CanonicalRuntimeUserProjection[] = [];
     for (const row of accountRows) {
@@ -549,7 +572,9 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const totalPages = Math.ceil(total / limit);
     const formattedUsers = filteredUsers
       .slice(offset, offset + limit)
-      .map(formatCanonicalAdminUser);
+      .map((projection) =>
+        formatCanonicalAdminUser(projection, sessionLastLoginByUserId.get(projection.id) ?? null)
+      );
 
     return c.json({
       users: formattedUsers,
@@ -599,9 +624,15 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const [passkeys, totpCredentials] = await Promise.all([
+    const [passkeys, totpCredentials, latestSession] = await Promise.all([
       authCtx.repositories.passkey.findByUserId(userId),
       authCtx.repositories.totp.findByUserId(userId),
+      authCtx.coreAdapter.queryOne<{ last_login_at: number | null }>(
+        `SELECT MAX(created_at) AS last_login_at
+           FROM sessions
+          WHERE tenant_id = ? AND user_id = ?`,
+        [tenantId, userId]
+      ),
     ]);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const customFields = await ensureDatabaseAdapter(
@@ -628,7 +659,10 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     });
     const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];
 
-    const formattedUser = formatCanonicalAdminUser(projection);
+    const formattedUser = formatCanonicalAdminUser(
+      projection,
+      latestSession?.last_login_at ?? null
+    );
 
     const formattedPasskeys = passkeys.map((p) => ({
       id: p.id,
@@ -944,6 +978,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const body = await c.req.json<{
+      email?: string;
       name?: string;
       given_name?: string;
       family_name?: string;

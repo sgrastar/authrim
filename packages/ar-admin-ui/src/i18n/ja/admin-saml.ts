@@ -59,7 +59,7 @@ const adminSaml = {
 	admin_saml_local_copy_pem: 'コピー',
 	admin_saml_local_download_pem: 'PEM',
 	admin_saml_local_metadata_title: 'SAMLメタデータ',
-	admin_saml_local_metadata_desc: 'SAML登録フォームに入力するURLと証明書です。',
+	admin_saml_local_metadata_desc: 'SAML登録スクリーンに入力するURLと証明書です。',
 	admin_saml_local_authrim_idp_metadata: 'Authrim IdPメタデータ',
 	admin_saml_local_authrim_sp_metadata: 'Authrim SPメタデータ',
 	admin_saml_local_idp_registration_hint:

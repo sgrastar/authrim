@@ -331,6 +331,30 @@ describe('SAML user-store helpers', () => {
     });
   });
 
+  it('returns active SAML users without an email address', async () => {
+    const coreAdapter = createCanonicalCoreAdapter('tenant-no-email', 'user-no-email');
+    const piiAdapter = createMockAdapter();
+
+    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
+      storageProfile: {
+        id: 'builtin:storage:single-db',
+        kind: 'storage',
+        label: 'Single DB',
+        slices: {},
+      },
+      coreDb: coreAdapter,
+      piiDb: piiAdapter,
+    });
+
+    await expect(
+      getSamlUserInfoById({ DB: {} } as Env, 'tenant-no-email', 'user-no-email')
+    ).resolves.toEqual({
+      id: 'user-no-email',
+      customClaims: {},
+      customFields: {},
+    });
+  });
+
   it('prefers canonical runtime projection for SAML user info when cutover flag is enabled', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {

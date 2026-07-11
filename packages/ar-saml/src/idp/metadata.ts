@@ -40,11 +40,8 @@ import {
   shouldSignSAMLMetadata,
   signSAMLMetadata,
 } from '../common/metadata-signing';
-import {
-  buildSAMLSigningCertificateSubjectAlternativeNames,
-  getSAMLLocalEntityIds,
-  getSAMLPublicSettings,
-} from '../common/entity-id';
+import { getSAMLLocalEntityIds, getSAMLPublicSettings } from '../common/entity-id';
+import { buildSAMLIdPSigningContext } from '../common/idp-signing';
 
 /**
  * Handle IdP metadata request
@@ -59,22 +56,16 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
     getSAMLPublicSettings(env, tenantId),
   ]);
   const { issuerUrl, idpEntityId: entityId } = entityIds;
-  const certificateSubjectAlternativeNames = buildSAMLSigningCertificateSubjectAlternativeNames(
+  const signingContext = buildSAMLIdPSigningContext({
+    tenantId,
+    settings,
     entityIds,
-    'idp',
-    settings.certificateSubjectAlternativeNames
-  );
+  });
 
   // Get signing certificates from KeyManager / SAML rollover policy.
   let signingCertificates: SAMLMetadataSigningCertificate[];
   try {
-    signingCertificates = await getSAMLMetadataSigningCertificates(env, {
-      tenantId,
-      role: 'idp',
-      policy: settings.signingKeyPolicies.idp,
-      certificateSubject: settings.certificateSubject,
-      certificateSubjectAlternativeNames,
-    });
+    signingCertificates = await getSAMLMetadataSigningCertificates(env, signingContext);
   } catch (error) {
     log.error('Failed to get signing certificate', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -89,13 +80,7 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
 
   if (shouldSignSAMLMetadata(env)) {
     try {
-      const signingMaterial = await getSAMLMetadataSigningMaterial(env, {
-        tenantId,
-        role: 'idp',
-        policy: settings.signingKeyPolicies.idp,
-        certificateSubject: settings.certificateSubject,
-        certificateSubjectAlternativeNames,
-      });
+      const signingMaterial = await getSAMLMetadataSigningMaterial(env, signingContext);
       metadataXml = signSAMLMetadata(metadataXml, signingMaterial);
     } catch (error) {
       log.error('Failed to sign IdP metadata', {}, error as Error);

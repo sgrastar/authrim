@@ -28,7 +28,6 @@
 		// Tenant + Client (can be overridden at client level)
 		oauth: ['tenant', 'client'],
 		security: ['tenant', 'client'],
-		consent: ['tenant', 'client'],
 		'device-flow': ['tenant', 'client'],
 		// Tenant-only
 		session: ['tenant'],
@@ -67,7 +66,6 @@
 		tokens: { icon: '🎫' },
 		federation: { icon: '🔗' },
 		credentials: { icon: '🔑' },
-		consent: { icon: '✅' },
 		ciba: { icon: '📱' },
 		'device-flow': { icon: '📺' },
 		'external-idp': { icon: '🌐' },
@@ -105,7 +103,7 @@
 	}
 
 	// Categories that have dedicated pages (excluded from settings list)
-	const DEDICATED_PAGE_CATEGORIES = ['login-ui', 'consent'];
+	const DEDICATED_PAGE_CATEGORIES = ['login-ui'];
 
 	// Filter categories based on current scope and exclude dedicated page categories
 	let filteredCategories = $derived(

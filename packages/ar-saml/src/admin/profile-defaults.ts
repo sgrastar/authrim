@@ -83,6 +83,23 @@ export function applySAMLSPProfileDefaults(
     logoutResponseBinding: defaults.logoutResponseBinding,
     acceptedAuthnRequestSignatureAlgorithms: defaults.acceptedAuthnRequestSignatureAlgorithms,
     acceptedAuthnRequestDigestAlgorithms: defaults.acceptedAuthnRequestDigestAlgorithms,
-    nameIdFormat: defaults.nameIdFormat ?? config.nameIdFormat ?? NAMEID_FORMATS.EMAIL,
+    nameIdFormat: selectSAMLSPNameIDFormat(config, defaults),
   };
+}
+
+export function selectSAMLSPNameIDFormat(
+  config: Pick<SAMLSPConfig, 'nameIdFormat' | 'metadataNameIdFormats'>,
+  defaults: Pick<SAMLSPProfileDefaults, 'nameIdFormat'>
+): SAMLSPConfig['nameIdFormat'] {
+  const advertisedFormats = config.metadataNameIdFormats ?? [];
+  if (advertisedFormats.length === 0) {
+    return defaults.nameIdFormat ?? config.nameIdFormat ?? NAMEID_FORMATS.EMAIL;
+  }
+  if (defaults.nameIdFormat && advertisedFormats.includes(defaults.nameIdFormat)) {
+    return defaults.nameIdFormat;
+  }
+  if (advertisedFormats.includes(config.nameIdFormat)) {
+    return config.nameIdFormat;
+  }
+  return advertisedFormats[0];
 }

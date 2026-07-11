@@ -67,6 +67,7 @@ import {
   parseTrustedRedirectOrigins,
   validateAccountPagePath,
   validatePostLoginRedirectUrl,
+  validateLoginUICustomCss,
   validateTrustedRedirectOrigins,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
@@ -204,6 +205,29 @@ function parsePatchRequest(rawBody: unknown): SettingsPatchRequest {
   };
 }
 
+function validateLoginUIPatch(body: SettingsPatchRequest): {
+  ok: boolean;
+  message?: string;
+  details?: Record<string, unknown>;
+} {
+  const customCss = body.set?.['login-ui.custom_css'];
+  if (customCss === undefined) {
+    return { ok: true };
+  }
+
+  const validation = validateLoginUICustomCss(customCss);
+  if (validation.valid) {
+    body.set!['login-ui.custom_css'] = validation.sanitizedCss ?? '';
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    message: validation.errors.join(' '),
+    details: { errors: validation.errors },
+  };
+}
+
 // Create the settings-v2 app with typed variables
 const settingsV2 = new Hono<{
   Bindings: Env;
@@ -233,19 +257,27 @@ function getSettingsManager(
         diff: event.diff,
       });
       if (auditContext) {
-        await createAuditLogFromContext(
-          auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
-          `settings.${event.event}`,
-          'settings',
-          `${event.scope}:${event.scopeId}:${event.category}`,
-          {
-            scope: event.scope,
-            scope_id: event.scopeId,
+        try {
+          await createAuditLogFromContext(
+            auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
+            `settings.${event.event}`,
+            'settings',
+            `${event.scope}:${event.scopeId}:${event.category}`,
+            {
+              scope: event.scope,
+              scope_id: event.scopeId,
+              category: event.category,
+              actor: event.actor,
+              diff: sanitizeObject(event.diff),
+            }
+          );
+        } catch {
+          log.warn('Failed to mirror settings update audit', {
             category: event.category,
-            actor: event.actor,
-            diff: sanitizeObject(event.diff),
-          }
-        );
+            scope: event.scope,
+            scopeId: event.scopeId,
+          });
+        }
       }
     },
   });
@@ -957,6 +989,25 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
+    if (category === 'login-ui') {
+      const loginUiValidation = validateLoginUIPatch(body);
+      if (!loginUiValidation.ok) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'login_ui_validation_failed',
+          metadata: loginUiValidation.details,
+        });
+        return errorResponse(
+          c,
+          'validation_failed',
+          loginUiValidation.message ?? 'Login UI settings are invalid',
+          400,
+          loginUiValidation.details
+        );
+      }
+    }
+
     const postLoginValidation = await validatePostLoginRelatedPatch(
       c.env,
       tenantId,
@@ -1370,6 +1421,25 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
+    if (category === 'login-ui') {
+      const loginUiValidation = validateLoginUIPatch(body);
+      if (!loginUiValidation.ok) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'login_ui_validation_failed',
+          metadata: loginUiValidation.details,
+        });
+        return errorResponse(
+          c,
+          'validation_failed',
+          loginUiValidation.message ?? 'Login UI settings are invalid',
+          400,
+          loginUiValidation.details
+        );
+      }
+    }
+
     if (category === 'client') {
       const appLoginValidation = await validateClientAppLoginPatch(
         c.env,
@@ -1549,6 +1619,25 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       if (!body.ifMatch) {
         await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
         return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+      }
+
+      if (category === 'login-ui') {
+        const loginUiValidation = validateLoginUIPatch(body);
+        if (!loginUiValidation.ok) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'login_ui_validation_failed',
+            metadata: loginUiValidation.details,
+          });
+          return errorResponse(
+            c,
+            'validation_failed',
+            loginUiValidation.message ?? 'Login UI settings are invalid',
+            400,
+            loginUiValidation.details
+          );
+        }
       }
 
       const actor = adminAuth?.userId ?? 'unknown';

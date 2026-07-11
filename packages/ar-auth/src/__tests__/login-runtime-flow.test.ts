@@ -4,6 +4,7 @@ import type { DatabaseAdapter, Env, FlowRuntimeContract } from '@authrim/ar-lib-
 import {
   cleanupExpiredFlowInteractions,
   clearLoginRuntimeFlowVersionCacheForTests,
+  loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
   loginRuntimeInteractionSubmitHandler,
 } from '../login-runtime-flow';
@@ -24,6 +25,10 @@ const mocks = vi.hoisted(() => {
   };
   const challengeStore = {
     getChallengeRpc: vi.fn(),
+    storeChallengeRpc: vi.fn(),
+  };
+  const runtimeUsers = {
+    findById: vi.fn(),
   };
   const idQueue = ['interaction_1', 'step_1', 'audit_1', 'audit_2', 'step_2', 'audit_3'];
 
@@ -31,6 +36,7 @@ const mocks = vi.hoisted(() => {
     coreAdapter,
     sessionStore,
     challengeStore,
+    runtimeUsers,
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
     getFeatureFlag: vi.fn(),
@@ -47,6 +53,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
     })),
+    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
+    CanonicalRuntimeUserStore: class {
+      findById(...args: unknown[]) {
+        return mocks.runtimeUsers.findById(...args);
+      }
+    },
     generateId: vi.fn(() => mocks.idQueue.shift() ?? `generated_${mocks.idQueue.length}`),
     getChallengeStoreByChallengeId: vi.fn(() => mocks.challengeStore),
     getFeatureFlag: mocks.getFeatureFlag,
@@ -178,24 +190,24 @@ const oidcCompletionRuntime: FlowRuntimeContract = {
   },
 };
 
-const profileFormRuntime: FlowRuntimeContract = {
+const screenRuntime: FlowRuntimeContract = {
   flow_kind: 'registration',
   ui: {
     steps: [
       {
         id: 'profile:step',
         source_node_id: 'profile',
-        component: 'profile_form',
+        component: 'screen',
         render: true,
         config: {
-          profile_form_ref: 'registration',
+          screen_ref: 'registration',
         },
       },
     ],
   },
 };
 
-const authFormConsentRuntime: FlowRuntimeContract = {
+const authScreenConsentRuntime: FlowRuntimeContract = {
   flow_kind: 'login',
   ui: {
     steps: [
@@ -206,7 +218,7 @@ const authFormConsentRuntime: FlowRuntimeContract = {
         render: true,
         config: {
           authentication_profile_ref: 'default',
-          profile_form_ref: 'login',
+          screen_ref: 'login',
           consent_policy_ref: 'policy_login',
         },
       },
@@ -409,6 +421,54 @@ const emailVerificationRuntime: FlowRuntimeContract = {
   },
 };
 
+const explicitEmailVerificationRuntime: FlowRuntimeContract = {
+  flow_kind: 'login',
+  ui: {
+    steps: [
+      {
+        id: 'auth:step',
+        source_node_id: 'auth',
+        component: 'authentication_method_selector',
+        render: true,
+      },
+      {
+        id: 'email-verify:step',
+        source_node_id: 'email-verify',
+        component: 'email_verification',
+        render: false,
+      },
+      {
+        id: 'complete:step',
+        source_node_id: 'complete',
+        component: 'completion',
+        render: true,
+      },
+    ],
+  },
+};
+
+const explicitEmailVerificationEditor = {
+  nodes: [
+    { id: 'auth', type: 'authentication' },
+    { id: 'email-verify', type: 'email_verification' },
+    { id: 'complete', type: 'complete' },
+  ],
+  edges: [
+    {
+      id: 'edge_auth_email_verify',
+      source: 'auth',
+      target: 'email-verify',
+      source_handle: 'mail_otp',
+    },
+    {
+      id: 'edge_email_verify_complete',
+      source: 'email-verify',
+      target: 'complete',
+      source_handle: 'verified',
+    },
+  ],
+};
+
 const sessionCheckEditor = {
   nodes: [
     { id: 'entry', type: 'entry' },
@@ -597,6 +657,7 @@ function createContext(input: {
         status,
         headers: { 'Content-Type': 'application/json' },
       }),
+    header: vi.fn(),
   } as unknown as RuntimeContext;
 }
 
@@ -619,6 +680,8 @@ function resetAdapter() {
   mocks.coreAdapter.close.mockReset();
   mocks.sessionStore.getSessionRpc.mockReset();
   mocks.challengeStore.getChallengeRpc.mockReset();
+  mocks.challengeStore.storeChallengeRpc.mockReset();
+  mocks.runtimeUsers.findById.mockReset();
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
@@ -954,6 +1017,233 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  it('creates an EVP nonce only for a mail-OTP branch with explicit email verification', async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'login' },
+      explicitEmailVerificationRuntime,
+      explicitEmailVerificationEditor
+    );
+    const interaction = startData.interaction as Record<string, unknown>;
+    resetAdapter();
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        id: 'interaction_1',
+        flow_id: 'flow_login',
+        flow_version_id: 'fv_1',
+        user_id: null,
+        client_id: null,
+        saml_sp_id: null,
+        state: 'active',
+        current_node_id: 'auth',
+        current_step_id: 'auth:step',
+        context_json: JSON.stringify({
+          protocol: 'oidc',
+          target_type: 'tenant',
+          target_id: null,
+          requested_scope: ['openid'],
+          locale: 'en',
+        }),
+        contract_hash: startData.contract_hash,
+        signature: startData.signature,
+        expires_at: interaction.expires_at,
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_login',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify(explicitEmailVerificationRuntime),
+        editor_snapshot_json: JSON.stringify(explicitEmailVerificationEditor),
+        published_at: 1782770000,
+      });
+
+    const response = await loginRuntimeEmailVerificationChallengeHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        url: 'https://api.example.com/api/v1/login/interactions/interaction_1/email-verification/challenge',
+        headers: { origin: 'https://login.example.com' },
+        body: {
+          step_id: 'auth:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(data).toMatchObject({
+      available: true,
+      interaction_id: 'interaction_1',
+      step_id: 'auth:step',
+      expires_in: expect.any(Number),
+      nonce: expect.any(String),
+      challenge_id: expect.any(String),
+    });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant_test',
+        type: 'email_verification_protocol',
+        challenge: data.nonce,
+        metadata: expect.objectContaining({
+          interaction_id: 'interaction_1',
+          source_step_id: 'auth:step',
+          verification_step_id: 'email-verify:step',
+          expected_origin: 'https://login.example.com',
+          contract_hash: startData.contract_hash,
+        }),
+      })
+    );
+  });
+
+  it('does not create an EVP nonce when the Flow has no explicit email-verification step', async () => {
+    const { data: startData } = await startInteraction();
+    const interaction = startData.interaction as Record<string, unknown>;
+    resetAdapter();
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        id: 'interaction_1',
+        flow_id: 'flow_login',
+        flow_version_id: 'fv_1',
+        user_id: null,
+        client_id: null,
+        saml_sp_id: null,
+        state: 'active',
+        current_node_id: 'auth',
+        current_step_id: 'auth:step',
+        context_json: JSON.stringify({
+          protocol: 'oidc',
+          target_type: 'tenant',
+          target_id: null,
+          requested_scope: ['openid'],
+          locale: 'en',
+        }),
+        contract_hash: startData.contract_hash,
+        signature: startData.signature,
+        expires_at: interaction.expires_at,
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_login',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify(runtime),
+        editor_snapshot_json: null,
+        published_at: 1782770000,
+      });
+
+    const response = await loginRuntimeEmailVerificationChallengeHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'auth:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+
+    await expect(response.json()).resolves.toEqual({ available: false });
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects a manually selected verified handle without email authentication', async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'login' },
+      explicitEmailVerificationRuntime,
+      explicitEmailVerificationEditor
+    );
+    const interaction = startData.interaction as Record<string, unknown>;
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Number(interaction.expires_at),
+      currentNodeId: 'email-verify',
+      currentStepId: 'email-verify:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: explicitEmailVerificationRuntime,
+      editorSnapshot: explicitEmailVerificationEditor,
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'email-verify:step',
+          node_id: 'email-verify',
+          selected_handle: 'verified',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(data).toMatchObject({
+      error: 'email_verification_required',
+      error_code: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+      category: 'security_error',
+    });
+  });
+
+  it('accepts a recent verified-email session bound to the same runtime interaction', async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'login' },
+      explicitEmailVerificationRuntime,
+      explicitEmailVerificationEditor
+    );
+    const interaction = startData.interaction as Record<string, unknown>;
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Number(interaction.expires_at),
+      currentNodeId: 'email-verify',
+      currentStepId: 'email-verify:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: explicitEmailVerificationRuntime,
+      editorSnapshot: explicitEmailVerificationEditor,
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      id: 'sess_runtime_1',
+      userId: 'user_1',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      data: {
+        amr: ['email_verification_protocol'],
+        authTime: Math.floor(Date.now() / 1000),
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    mocks.runtimeUsers.findById.mockResolvedValueOnce({
+      id: 'user_1',
+      active: 1,
+      email: 'user@example.com',
+      email_verified: 1,
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'email-verify:step',
+          node_id: 'email-verify',
+          selected_handle: 'verified',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(data.completed).toBe(true);
+    expect(mocks.runtimeUsers.findById).toHaveBeenCalledWith('user_1', {
+      includeInactive: true,
+    });
+  });
+
   it('rejects start when the runtime feature flag is disabled', async () => {
     const response = await loginRuntimeInteractionStartHandler(
       createContext({
@@ -1024,7 +1314,7 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.category).toBe('security_error');
   });
 
-  it('hydrates profile form steps with the active form profile snapshot', async () => {
+  it('hydrates screen steps with the active screen snapshot', async () => {
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
         flow_id: 'flow_registration',
@@ -1037,16 +1327,16 @@ describe('LoginUI runtime Flow handlers', () => {
         id: 'fv_1',
         flow_id: 'flow_registration',
         schema_version: 'authrim.login_ui.contract.v1',
-        runtime_snapshot_json: JSON.stringify(profileFormRuntime),
+        runtime_snapshot_json: JSON.stringify(screenRuntime),
         editor_snapshot_json: null,
         published_at: 1782770000,
       })
       .mockResolvedValueOnce({
         id: 'profile_1',
-        profile_key: 'registration',
+        screen_key: 'registration',
         display_name: 'Registration',
-        description: 'Registration form',
-        form_kind: 'registration',
+        description: 'Registration screen',
+        screen_kind: 'registration',
         fields_json: JSON.stringify([
           {
             field: 'auth.mail_otp',
@@ -1060,7 +1350,7 @@ describe('LoginUI runtime Flow handlers', () => {
         localizations_json: JSON.stringify({
           ja: {
             display_name: '新規登録',
-            description: '標準の新規登録フォームです。',
+            description: '標準の新規登録スクリーンです。',
             fields: {
               'auth.mail_otp-0': {
                 label: '認証コードを送信',
@@ -1080,12 +1370,12 @@ describe('LoginUI runtime Flow handlers', () => {
 
     expect(response.status).toBe(200);
     expect(runtimeData.ui.steps[0].config).toMatchObject({
-      profile_form_ref: 'registration',
-      form_profile: {
+      screen_ref: 'registration',
+      screen: {
         id: 'profile_1',
-        profile_key: 'registration',
+        screen_key: 'registration',
         display_name: '新規登録',
-        description: '標準の新規登録フォームです。',
+        description: '標準の新規登録スクリーンです。',
         fields: [
           {
             label: '認証コードを送信',
@@ -1111,16 +1401,16 @@ describe('LoginUI runtime Flow handlers', () => {
         id: 'fv_1',
         flow_id: 'flow_login',
         schema_version: 'authrim.login_ui.contract.v1',
-        runtime_snapshot_json: JSON.stringify(authFormConsentRuntime),
+        runtime_snapshot_json: JSON.stringify(authScreenConsentRuntime),
         editor_snapshot_json: null,
         published_at: 1782770000,
       })
       .mockResolvedValueOnce({
         id: 'profile_login',
-        profile_key: 'login',
+        screen_key: 'login',
         display_name: 'Login',
         description: 'Login form',
-        form_kind: 'login',
+        screen_kind: 'login',
         fields_json: JSON.stringify([
           {
             field: 'auth.passkey',
@@ -1128,6 +1418,20 @@ describe('LoginUI runtime Flow handlers', () => {
             required: false,
             block_type: 'auth_widget',
             auth_method: 'passkey',
+          },
+          {
+            field: 'divider.or',
+            label: 'or',
+            required: false,
+            block_type: 'divider',
+            text: 'or',
+          },
+          {
+            field: 'divider.other_accounts',
+            label: 'Continue with another account',
+            required: false,
+            block_type: 'divider',
+            text: 'Continue with another account',
           },
           {
             field: 'consent.policy',
@@ -1155,14 +1459,22 @@ describe('LoginUI runtime Flow handlers', () => {
 
     expect(response.status).toBe(200);
     expect(runtimeData.ui.steps[0].config).toMatchObject({
-      profile_form_ref: 'login',
-      form_profile: {
+      screen_ref: 'login',
+      screen: {
         id: 'profile_login',
-        profile_key: 'login',
+        screen_key: 'login',
         fields: [
           {
             block_type: 'auth_widget',
             auth_method: 'passkey',
+          },
+          {
+            block_type: 'divider',
+            display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
+          },
+          {
+            block_type: 'divider',
+            display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
           },
           {
             block_type: 'consent_widget',
@@ -1177,6 +1489,85 @@ describe('LoginUI runtime Flow handlers', () => {
         items: [],
       },
     });
+  });
+
+  it('hydrates built-in screens from the default system seed when initial tenant screens are missing', async () => {
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        flow_id: 'flow_login',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'login',
+        published_version_id: 'fv_1',
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_login',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify({
+          flow_kind: 'login',
+          ui: {
+            steps: [
+              {
+                id: 'auth:step',
+                source_node_id: 'auth',
+                component: 'authentication_method_selector',
+                render: true,
+                config: {
+                  screen_ref: 'login',
+                },
+              },
+            ],
+          },
+        } satisfies FlowRuntimeContract),
+        editor_snapshot_json: null,
+        published_at: 1782770000,
+      })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'screen-login-default',
+        screen_key: 'login',
+        display_name: 'Login',
+        description: 'Default login screen.',
+        screen_kind: 'login',
+        fields_json: JSON.stringify([
+          {
+            field: 'auth.passkey',
+            label: 'Sign in with Passkey',
+            required: false,
+            block_type: 'auth_widget',
+            auth_method: 'passkey',
+          },
+        ]),
+        localizations_json: JSON.stringify({}),
+        settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
+      });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'login' } })
+    );
+    const data = await readJson(response);
+    const runtimeData = data.contract as FlowRuntimeContract;
+
+    expect(response.status).toBe(200);
+    expect(runtimeData.ui.steps[0].config).toMatchObject({
+      screen_ref: 'login',
+      screen: {
+        id: 'screen-login-default',
+        screen_key: 'login',
+        fields: [
+          {
+            block_type: 'auth_widget',
+            auth_method: 'passkey',
+          },
+        ],
+      },
+    });
+    expect(mocks.coreAdapter.queryOne).toHaveBeenNthCalledWith(
+      4,
+      expect.stringContaining('AND is_system = 1'),
+      ['default', 'login', 'login']
+    );
   });
 
   it('advances a signed active interaction to the next runtime step', async () => {

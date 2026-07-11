@@ -526,6 +526,16 @@ export interface IdentityMappingActivateFieldMappingRequest {
 	holderId?: string;
 }
 
+export interface IdentityMappingCompiledSnapshot {
+	id: string;
+	tenantId: string;
+	fieldMappingVersionId: string;
+	catalogVersionId: string;
+	snapshotHash: string;
+	dependencyGraphId: string;
+	lifecycleState: string;
+}
+
 async function parseJson<T>(response: Response, fallbackMessage: string): Promise<T> {
 	if (response.ok) {
 		return (await response.json()) as T;
@@ -710,7 +720,7 @@ export const adminIdentityMappingAPI = {
 		fieldMappingSetId: string,
 		fieldMappingVersionId: string,
 		request: IdentityMappingCompileFieldMappingRequest
-	): Promise<Record<string, unknown>> {
+	): Promise<{ result: IdentityMappingCompiledSnapshot }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions/${encodeURIComponent(fieldMappingVersionId)}/compile`,
 			{

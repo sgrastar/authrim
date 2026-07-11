@@ -27,8 +27,8 @@ import { base64Encode, generateSAMLId } from '../common/xml-utils';
 import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
-import { getSamlUserInfoById } from '../common/user-store';
-import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
+import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSP,
@@ -202,7 +202,7 @@ async function getUserInfo(
   env: Env,
   tenantId: string,
   userId: string
-): Promise<{ id: string; email: string; name?: string } | null> {
+): Promise<SAMLUserInfo | null> {
   return getSamlUserInfoById(env, tenantId, userId);
 }
 
@@ -214,15 +214,14 @@ async function generateIdPInitiatedResponse(
   idpEntityId: string,
   env: Env,
   spConfig: SAMLSPConfig,
-  userInfo: { id: string; email: string; name?: string },
+  userInfo: SAMLUserInfo,
   tenantId: string,
   authSession: AuthenticatedSAMLSession
 ): Promise<string> {
-  const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+  const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
-    role: 'idp',
     counterpartyEntityId: spConfig.entityId,
-    policy: getSAMLSigningPolicy(spConfig),
+    providerPolicy: spConfig.signingKeyPolicy,
   });
 
   const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;

@@ -1136,6 +1136,80 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('returns normalized creation and last-login timestamps from the canonical projection', async () => {
+      const userId = 'user-with-login';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+      const lastLoginAt = createdAt + 90_000;
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'user@example.com',
+        name: 'User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+        last_login_at: lastLoginAt,
+      });
+      const c = createMockContext({
+        query: { page: '1', limit: '20' },
+        db: createMockDB({ allResults: [{ legacy_user_id: userId }] }),
+      });
+
+      const response = await adminUsersListHandler(c);
+      const body = (await response.json()) as {
+        users: Array<{ created_at: number; last_login_at: number | null }>;
+      };
+
+      expect(body.users).toEqual([
+        expect.objectContaining({
+          created_at: createdAt,
+          last_login_at: lastLoginAt,
+        }),
+      ]);
+    });
+
+    it('uses the latest persisted session when a legacy user has no login timestamp', async () => {
+      const userId = 'user-with-session-only';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+      const lastLoginAt = createdAt + 90_000;
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'user@example.com',
+        name: 'User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+        last_login_at: null,
+      });
+      const c = createMockContext({
+        query: { page: '1', limit: '20' },
+        db: createSqlAwareMockDB((sql, _params, operation) => {
+          if (operation !== 'all') return null;
+          if (sql.includes('FROM identity_accounts')) {
+            return [{ legacy_user_id: userId }];
+          }
+          if (sql.includes('FROM sessions')) {
+            return [{ user_id: userId, last_login_at: Math.floor(lastLoginAt / 1000) }];
+          }
+          return [];
+        }),
+      });
+
+      const response = await adminUsersListHandler(c);
+      const body = (await response.json()) as {
+        users: Array<{ last_login_at: number | null }>;
+      };
+
+      expect(body.users[0]?.last_login_at).toBe(lastLoginAt);
+    });
+
     it('should support search filtering by email or name', async () => {
       // PII/Non-PII DB Separation:
       // 1. Search queries PII DB first to get matching user IDs
@@ -1861,6 +1935,7 @@ describe('Admin API Handlers', () => {
         method: 'PUT',
         params: { id: userId },
         body: {
+          email: 'old@example.com',
           name: 'Updated Name',
           email_verified: true,
         },

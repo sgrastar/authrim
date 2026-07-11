@@ -26,7 +26,7 @@ function readMigration(relativePath: string): string {
 
 describe('consent canonical runtime user binding migrations', () => {
   it('rebuilds D1 consent tables without users_core foreign keys', () => {
-    const sql = readMigration('migrations/034_consent_canonical_user_ids.sql');
+    const sql = readMigration('migrations/015_core_consent_screens_scopes.sql');
 
     expect(sql).toContain('CREATE TABLE oauth_client_consents_new');
     expect(sql).toContain('CREATE TABLE user_consent_records_new');
@@ -36,7 +36,7 @@ describe('consent canonical runtime user binding migrations', () => {
 
   it('drops external postgres users_core consent foreign keys', () => {
     const sql = readMigration(
-      'migrations/external/postgres/016_external_consent_canonical_user_ids.sql'
+      'migrations/external/postgres/003_external_consent_screens_scopes.sql'
     );
 
     expect(sql).toMatch(/\bDROP CONSTRAINT IF EXISTS oauth_client_consents_user_fk\b/iu);

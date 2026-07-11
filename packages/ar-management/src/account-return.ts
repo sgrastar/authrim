@@ -4,10 +4,10 @@ import {
   generateId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
+  SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
 } from '@authrim/ar-lib-core';
 
-const DEFAULT_ACCOUNT_PAGE_PATH = '/account';
 const ACCOUNT_RETURN_TTL_SECONDS = 5 * 60;
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
@@ -37,8 +37,13 @@ async function resolveAccountPageSettings(
   const record = parseSettingsRecord(raw);
   const configuredPath = record['self-service.account_page_path'];
   return {
-    enabled: record['self-service.account_page_enabled'] === true,
-    path: validateAccountPagePath(configuredPath) ? configuredPath : DEFAULT_ACCOUNT_PAGE_PATH,
+    enabled:
+      typeof record['self-service.account_page_enabled'] === 'boolean'
+        ? record['self-service.account_page_enabled']
+        : SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+    path: validateAccountPagePath(configuredPath)
+      ? configuredPath
+      : SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
   };
 }
 

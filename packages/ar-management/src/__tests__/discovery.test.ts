@@ -321,7 +321,7 @@ describe('discovery API', () => {
     expect(body.common_discover_url).toBe('https://auth.example.com/discover');
     expect(body.config.redirect_default_login_to_discovery).toBe(true);
     expect(body.config.require_common_discovery_before_login).toBe(true);
-    expect(body.config.skip_discovery_if_only_one_tenant).toBe(false);
+    expect(body.config.skip_discovery_if_only_one_tenant).toBe(true);
     expect(body.ui.brand_name).toBe('Shared Discovery');
     expect(body.ui.theme).toBe('dark');
     expect(body.ui.title_text).toBe('Find your workspace');

@@ -552,6 +552,9 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       aaguid: regInfo.aaguid ?? null,
     });
 
+    // Registration creates an authenticated session, so retain it as the user's first login.
+    await runtimeUsers.touchLastLogin(userId, now);
+
     // Registering a passkey proves possession of the authenticator, not the email address.
     // Keep email verification tied to email-code or explicit verification flows.
     const updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });

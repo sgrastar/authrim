@@ -71,6 +71,24 @@ CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
 
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
 
+CREATE INDEX idx_event_log_tenant_created
+    ON event_log(tenant_id, created_at);
+
+CREATE INDEX idx_event_log_tenant_type_created
+    ON event_log(tenant_id, event_type, created_at);
+
+CREATE INDEX idx_event_log_tenant_category_created
+    ON event_log(tenant_id, event_category, created_at);
+
+CREATE INDEX idx_event_log_tenant_anon_created
+    ON event_log(tenant_id, anonymized_user_id, created_at);
+
+CREATE INDEX idx_event_log_tenant_client_created
+    ON event_log(tenant_id, client_id, created_at);
+
+CREATE INDEX idx_event_log_tenant_retention
+    ON event_log(tenant_id, retention_until, created_at, id);
+
 CREATE INDEX idx_check_api_keys_client
     ON check_api_keys(client_id);
 

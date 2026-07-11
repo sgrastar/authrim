@@ -150,6 +150,7 @@ export interface SAMLProviderConfig {
 	certificates?: string[];
 	certificateValidation?: SAMLCertificateValidationSummary;
 	nameIdFormat?: string;
+	metadataNameIdFormats?: string[];
 	attributeMapping?: Record<string, string>;
 	attributeReleasePolicy?: {
 		attributes: SAMLAttributeReleaseRule[];

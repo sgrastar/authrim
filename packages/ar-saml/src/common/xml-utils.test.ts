@@ -12,6 +12,7 @@ import {
   appendChild,
   findElement,
   getAttribute,
+  parseXmlBoolean,
   getTextContent,
   generateSAMLId,
   formatDateTime,
@@ -77,6 +78,26 @@ describe('XML Utilities', () => {
       const request = findElement(doc, SAML_NAMESPACES.SAML2P, 'AuthnRequest');
       expect(request).toBeDefined();
       expect(getAttribute(request!, 'ID')).toBe('_abc123');
+      expect(getAttribute(request!, 'Missing')).toBeNull();
+    });
+  });
+
+  describe('parseXmlBoolean', () => {
+    it.each([
+      ['true', true],
+      ['1', true],
+      ['false', false],
+      ['0', false],
+    ])('parses %s', (value, expected) => {
+      expect(parseXmlBoolean(value)).toBe(expected);
+    });
+
+    it('returns undefined for an absent attribute', () => {
+      expect(parseXmlBoolean(null)).toBeUndefined();
+    });
+
+    it('rejects invalid XML boolean values', () => {
+      expect(() => parseXmlBoolean('yes')).toThrow('Invalid XML boolean value');
     });
   });
 

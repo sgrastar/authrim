@@ -498,6 +498,13 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /api/assets/* to OP_MANAGEMENT', async () => {
+        const req = new Request('https://example.com/api/assets/first/login-ui/logo/logo-123.png');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route /scim/v2/* to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/scim/v2/Users');
         await app.fetch(req, mockEnv);

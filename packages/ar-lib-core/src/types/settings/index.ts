@@ -12,7 +12,6 @@ export * from './oauth';
 export * from './session';
 export * from './security';
 export * from './infrastructure';
-export * from './consent';
 export * from './ciba';
 export * from './rate-limit';
 export * from './device-flow';
@@ -74,7 +73,6 @@ import { OAUTH_CATEGORY_META } from './oauth';
 import { SESSION_CATEGORY_META } from './session';
 import { SECURITY_CATEGORY_META } from './security';
 import { INFRASTRUCTURE_CATEGORY_META } from './infrastructure';
-import { CONSENT_CATEGORY_META } from './consent';
 import { CIBA_CATEGORY_META } from './ciba';
 import { RATE_LIMIT_CATEGORY_META } from './rate-limit';
 import { DEVICE_FLOW_CATEGORY_META } from './device-flow';
@@ -115,7 +113,6 @@ export const ALL_CATEGORY_META = {
   oauth: OAUTH_CATEGORY_META,
   session: SESSION_CATEGORY_META,
   security: SECURITY_CATEGORY_META,
-  consent: CONSENT_CATEGORY_META,
   ciba: CIBA_CATEGORY_META,
   'rate-limit': RATE_LIMIT_CATEGORY_META,
   'device-flow': DEVICE_FLOW_CATEGORY_META,
@@ -219,9 +216,6 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   security: {
     allowedScopes: ['tenant', 'client'],
   },
-  consent: {
-    allowedScopes: ['tenant', 'client'],
-  },
   'device-flow': {
     allowedScopes: ['tenant', 'client'],
   },
@@ -279,7 +273,7 @@ export const CATEGORY_SCOPE_CONFIG: Record<
 
   // Login UI Customization
   'login-ui': {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['tenant', 'client'],
   },
   'authentication-methods': {
     allowedScopes: ['tenant'],

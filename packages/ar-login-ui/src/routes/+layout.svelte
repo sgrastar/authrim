@@ -3,19 +3,21 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { setLocale, getLocale } from '$i18n/i18n-svelte';
-	import { themeStore } from '$lib/stores/theme.svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { initializeLoginUIStores } from '$lib/stores/login-ui-context';
+	import { isValidImageUrl } from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
 		type AuthenticationMethodsResponse
 	} from '$lib/api/authentication-methods';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 
 	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
+	const { brandingStore, loginUIPageStore, themeStore } = initializeLoginUIStores();
+	const initialAuthenticationMethods = untrack(() => data.authenticationMethods);
 
 	// Set language from server-provided data (from cookie)
 	$effect.pre(() => {
@@ -35,16 +37,33 @@
 	function applyTenantBranding(authenticationMethods: AuthenticationMethodsResponse) {
 		if (!authenticationMethods.ui) return;
 		themeStore.setTenantDefaults(authenticationMethods.ui.theme, authenticationMethods.ui.variant);
+		loginUIPageStore.setFromUIConfig(authenticationMethods.ui);
 		brandingStore.set(
 			authenticationMethods.ui.branding.brandName || '',
 			authenticationMethods.ui.branding.logoUrl || null
 		);
+		if (
+			typeof document !== 'undefined' &&
+			authenticationMethods.ui.branding.faviconUrl &&
+			isValidImageUrl(authenticationMethods.ui.branding.faviconUrl)
+		) {
+			const faviconLink = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+			if (faviconLink) {
+				faviconLink.href = authenticationMethods.ui.branding.faviconUrl;
+			}
+		}
+	}
+
+	if (initialAuthenticationMethods) {
+		applyTenantBranding(initialAuthenticationMethods);
 	}
 
 	function getEmbeddedAuthenticationMethods(): AuthenticationMethodsResponse | null {
-		const authenticationMethods = (get(page).data as {
-			authenticationMethods?: AuthenticationMethodsResponse;
-		}).authenticationMethods;
+		const authenticationMethods = (
+			get(page).data as {
+				authenticationMethods?: AuthenticationMethodsResponse;
+			}
+		).authenticationMethods;
 		return authenticationMethods ?? null;
 	}
 
@@ -83,4 +102,61 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{@render children()}
+<div
+	class="login-ui-theme-boundary"
+	data-theme={themeStore.mode}
+	data-variant={themeStore.currentVariant}
+	data-login-theme={loginUIPageStore.themeTemplate}
+	data-page-layout={loginUIPageStore.layout}
+	data-font-family={loginUIPageStore.fontFamily}
+	data-font-scale={loginUIPageStore.fontScale}
+	data-language-switcher-position={loginUIPageStore.languageSwitcherPosition}
+	data-topbar-position={loginUIPageStore.topbarPosition}
+	data-header-style={loginUIPageStore.headerStyle}
+	data-footer-style={loginUIPageStore.footerStyle}
+	data-logo-layout={loginUIPageStore.logoLayout}
+	data-split-frame={loginUIPageStore.splitFrame}
+	data-split-panel-side={loginUIPageStore.splitPanelSide}
+	data-split-panel-width={loginUIPageStore.splitPanelWidth}
+	data-split-background-mode={loginUIPageStore.splitBackgroundMode}
+	data-has-page-background-image={loginUIPageStore.backgroundImageUrl ? 'true' : 'false'}
+	data-has-login-panel-background-image={loginUIPageStore.loginPanelBackgroundImageUrl
+		? 'true'
+		: 'false'}
+	data-brand-content-mode={loginUIPageStore.brandContentMode}
+	data-brand-position={loginUIPageStore.brandPosition}
+	data-brand-align={loginUIPageStore.brandAlign}
+	data-logo-display={loginUIPageStore.logoDisplay}
+	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
+	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
+	style:--login-title-color={loginUIPageStore.titleColor || undefined}
+	style:--login-text-color={loginUIPageStore.textColor || undefined}
+	style:--login-copy-color={loginUIPageStore.copyColor || undefined}
+	style:--login-page-background-layer={loginUIPageStore.backgroundImageUrl
+		? `url("${loginUIPageStore.backgroundImageUrl}")`
+		: undefined}
+	style:--login-panel-background-layer={loginUIPageStore.loginPanelBackgroundImageUrl
+		? `url("${loginUIPageStore.loginPanelBackgroundImageUrl}")`
+		: undefined}
+	style:--login-panel-background-fill={loginUIPageStore.loginPanelBackgroundColor
+		? loginUIPageStore.loginPanelBackgroundGradientColor
+			? `linear-gradient(135deg, ${loginUIPageStore.loginPanelBackgroundColor}, ${loginUIPageStore.loginPanelBackgroundGradientColor})`
+			: loginUIPageStore.loginPanelBackgroundColor
+		: undefined}
+	style:--login-panel-background-opacity={String(
+		loginUIPageStore.loginPanelBackgroundOpacity / 100
+	)}
+>
+	{#if loginUIPageStore.customCss}
+		<svelte:element this={'style'} id="authrim-login-ui-custom-css">
+			{loginUIPageStore.customCss}
+		</svelte:element>
+	{/if}
+	{@render children()}
+</div>
+
+<style>
+	.login-ui-theme-boundary {
+		display: contents;
+	}
+</style>

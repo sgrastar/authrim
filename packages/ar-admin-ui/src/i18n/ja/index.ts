@@ -53,7 +53,7 @@ import adminPlugins from './admin-plugins';
 import adminIdentityMapping from './admin-identity-mapping';
 import adminConsentPolicies from './admin-consent-policies';
 import adminFlows from './admin-flows';
-import adminForms from './admin-forms';
+import adminScreens from './admin-screens';
 import adminOther from './admin-other';
 
 const ja: Translation = {
@@ -111,7 +111,7 @@ const ja: Translation = {
 	...adminIdentityMapping,
 	...adminConsentPolicies,
 	...adminFlows,
-	...adminForms,
+	...adminScreens,
 	...adminOther
 } satisfies Translation;
 

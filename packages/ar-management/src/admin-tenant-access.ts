@@ -61,8 +61,11 @@ export function getTenantInventoryScope(adminAuth: AdminAuthContext | undefined)
   return [...scopedTenantIds];
 }
 
-export function isTenantScopedDirectoryAdminPath(pathname: string): boolean {
-  return /^\/api\/admin\/tenants\/[^/]+\/directory-(?:auth|connectors)(?:\/|$)/.test(pathname);
+export function isTenantScopedAdminPath(pathname: string): boolean {
+  return (
+    /^\/api\/admin\/tenants\/[^/]+\/directory-(?:auth|connectors)(?:\/|$)/.test(pathname) ||
+    /^\/api\/admin\/tenants\/[^/]+\/settings(?:\/|$)/.test(pathname)
+  );
 }
 
 export async function requireTenantResourceAccess(

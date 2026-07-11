@@ -45,11 +45,20 @@ import {
 import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import { STATUS_CODES, DEFAULTS, NAMEID_FORMATS } from '../common/constants';
 import { signRedirectBinding, signXml } from '../common/signature';
-import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
+import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { getSPConfig } from '../admin/providers';
-import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
+import {
+  findActiveSamlUserByEmail,
+  getSamlUserInfoById,
+  getSamlUserNameIdById,
+} from '../common/user-store';
 import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
-import { resolveSAMLSessionIndexToSessionId } from './subject';
+import {
+  resolveSAMLPersistentNameIDRegistryStore,
+  resolveSAMLNameIDValue,
+  resolveSAMLPairwiseSecret,
+  resolveSAMLSessionIndexToSessionId,
+} from './subject';
 import {
   SAMLLogoutRequestSignatureValidationError,
   validateSAMLLogoutRequestSignature,
@@ -835,11 +844,10 @@ async function sendLogoutResponse(
 
   // Sign the response. POST uses XML Signature; Redirect uses binding-level signature.
   try {
-    const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+    const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
       tenantId,
-      role: 'idp',
       counterpartyEntityId: options.counterpartyEntityId,
-      policy: getSAMLSigningPolicy(spConfig ?? undefined),
+      providerPolicy: spConfig?.signingKeyPolicy,
     });
 
     if (responseBinding === 'redirect') {
@@ -1066,11 +1074,10 @@ export async function initiateIdPLogout(
 
   // Sign the request as XML. This is the historical core API behavior.
   try {
-    const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+    const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
       tenantId: built.tenantId,
-      role: 'idp',
       counterpartyEntityId: spConfig.entityId,
-      policy: getSAMLSigningPolicy(spConfig),
+      providerPolicy: spConfig.signingKeyPolicy,
     });
 
     logoutRequestXml = signXml(logoutRequestXml, {
@@ -1105,11 +1112,10 @@ export async function initiateIdPLogoutBindingResponse(
   const built = await buildIdPLogoutRequest(env, userId, spConfig, options.sessionIndex, tenantId);
 
   try {
-    const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+    const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
       tenantId: built.tenantId,
-      role: 'idp',
       counterpartyEntityId: spConfig.entityId,
-      policy: getSAMLSigningPolicy(spConfig),
+      providerPolicy: spConfig.signingKeyPolicy,
     });
 
     let response: Response;
@@ -1195,8 +1201,8 @@ async function buildIdPLogoutRequest(
   sessionIndex: string | undefined,
   tenantId: string
 ): Promise<BuiltIdPLogoutRequest> {
-  // Get user info for NameID (PII/Non-PII DB separation)
-  const nameId = await getSamlUserNameIdById(env, tenantId, userId);
+  const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
+  const nameId = await resolveIdPLogoutNameID(env, tenantId, userId, spConfig);
 
   if (!nameId) {
     throw new Error('Logout request could not be processed');
@@ -1211,11 +1217,35 @@ async function buildIdPLogoutRequest(
     issuer,
     destination,
     nameId,
-    nameIdFormat: spConfig.nameIdFormat || 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    nameIdFormat,
     sessionIndex,
   });
 
   return { logoutRequestId, logoutRequestXml, destination, tenantId };
+}
+
+export async function resolveIdPLogoutNameID(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  spConfig: Pick<SAMLSPConfig, 'entityId' | 'nameIdFormat'>
+): Promise<string | null> {
+  const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
+  if (nameIdFormat !== NAMEID_FORMATS.PERSISTENT) {
+    return getSamlUserNameIdById(env, tenantId, userId);
+  }
+
+  const userInfo = await getSamlUserInfoById(env, tenantId, userId);
+  if (!userInfo) {
+    return null;
+  }
+  return resolveSAMLNameIDValue(userInfo, nameIdFormat, {
+    tenantId,
+    spEntityId: spConfig.entityId,
+    pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
+    persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
+    allowCreate: false,
+  });
 }
 
 async function sendNextIdPMultiSPLogoutRequest(
@@ -1288,11 +1318,10 @@ async function sendIdPLogoutRequestForTransactionTarget(
   );
 
   try {
-    const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
+    const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
       tenantId: built.tenantId,
-      role: 'idp',
       counterpartyEntityId: options.spConfig.entityId,
-      policy: getSAMLSigningPolicy(options.spConfig),
+      providerPolicy: options.spConfig.signingKeyPolicy,
     });
 
     let response: Response;

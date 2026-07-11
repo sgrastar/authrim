@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
@@ -10,10 +11,9 @@
 		type FlowRuntimeStep
 	} from '$lib/api/flow-runtime';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { auth } from '$lib/stores/auth';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
-	import { createPinInput, melt } from '@melt-ui/svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import {
@@ -28,6 +28,8 @@
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
 
+	const { brandingStore } = useLoginUIStores();
+
 	let email = $state('');
 	let inviteToken = $state('');
 	let authorizationChallengeId = $state('');
@@ -39,11 +41,13 @@
 	let runtimeFlowKind = $state<'login' | 'registration'>('login');
 	let error = $state('');
 	let success = $state('');
+	let resendNotice = $state('');
 	let loading = $state(false);
 	let resendLoading = $state(false);
 	let countdown = $state(60);
 	let canResend = $state(false);
 	let intervalId: number | null = null;
+	let code = $state('');
 
 	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
 		return messageForApiError(apiError, {
@@ -76,20 +80,9 @@
 		}
 	}
 
-	// Melt UI Pin Input - 6 digits
-	const {
-		elements: { root, input, hiddenInput },
-		states: { value }
-	} = createPinInput({
-		placeholder: '0',
-		type: 'text',
-		defaultValue: []
-	});
-
 	// Watch for PIN input value changes and auto-submit when complete
 	$effect(() => {
-		const code = $value.join('');
-		if (code.length === 6 && !loading && !success) {
+		if (code.length === 6 && !loading && !resendLoading && !success) {
 			handleVerify(code);
 		}
 	});
@@ -144,11 +137,11 @@
 		}, 1000);
 	}
 
-	async function handleVerify(code?: string) {
+	async function handleVerify(codeValue?: string) {
 		// Prevent concurrent submissions (race condition: auto-verify + button click)
 		if (loading) return;
 
-		const verifyCode = code || $value.join('');
+		const verifyCode = codeValue || code;
 
 		// Validate code is 6 digits
 		if (!/^\d{6}$/.test(verifyCode)) {
@@ -172,7 +165,7 @@
 				// leaking session state information (e.g., session_mismatch)
 				error = getApiErrorMessage(apiError);
 				// Clear the input on error
-				value.set([]);
+				code = '';
 				return;
 			}
 
@@ -198,7 +191,7 @@
 			}, 2000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
-			value.set([]);
+			code = '';
 		} finally {
 			loading = false;
 		}
@@ -310,7 +303,10 @@
 			};
 			if (submittedFlow.completed || flow.interaction.state === 'completed') {
 				consumeFlowRuntimeState(flow.interaction.id);
-				if (submittedFlow.output?.redirect_url && isValidRedirectUrl(submittedFlow.output.redirect_url)) {
+				if (
+					submittedFlow.output?.redirect_url &&
+					isValidRedirectUrl(submittedFlow.output.redirect_url)
+				) {
 					return submittedFlow.output.redirect_url;
 				}
 				return postAuthRedirect;
@@ -323,12 +319,16 @@
 	async function handleResend() {
 		resendLoading = true;
 		error = '';
+		resendNotice = '';
 
 		try {
 			const { error: apiError } = await emailCodeAPI.send({
 				email,
 				invite_token: inviteToken || undefined,
-				custom_fields: getStoredCustomFields()
+				authorizationChallengeId: authorizationChallengeId || undefined,
+				custom_fields: getStoredCustomFields(),
+				deferAuthorizationContinuation: Boolean(runtimeInteractionId),
+				runtimeInteractionId: runtimeInteractionId || undefined
 			});
 
 			if (apiError) {
@@ -336,18 +336,18 @@
 			}
 
 			// Clear the input
-			value.set([]);
+			code = '';
 
 			// Show success message
-			success = $LL.emailCode_resendSuccess();
+			resendNotice = $LL.emailCode_resendSuccess();
 
 			// Restart countdown timer
 			startCountdown();
 
 			// Clear success message after delay
 			setTimeout(() => {
-				if (success === $LL.emailCode_resendSuccess()) {
-					success = '';
+				if (resendNotice === $LL.emailCode_resendSuccess()) {
+					resendNotice = '';
 				}
 			}, 3000);
 		} catch (err) {
@@ -415,6 +415,17 @@
 				</Alert>
 			{/if}
 
+			{#if resendNotice}
+				<Alert
+					variant="success"
+					dismissible={true}
+					onDismiss={() => (resendNotice = '')}
+					class="mb-4"
+				>
+					{resendNotice}
+				</Alert>
+			{/if}
+
 			<!-- Error Message -->
 			{#if error}
 				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
@@ -431,29 +442,21 @@
 					{$LL.emailCode_codeLabel()}
 				</div>
 
-				<div use:melt={$root} class="flex gap-2 items-center justify-center">
-					{#each Array.from({ length: 6 }, (_, i) => i) as i (i)}
-						<input
-							use:melt={$input()}
-							aria-label={$LL.emailCode_digitLabel({ position: i + 1 })}
-							autocomplete="one-time-code"
-							inputmode="numeric"
-							pattern="[0-9]*"
-							class="auth-pin-cell"
-							maxlength="1"
-							disabled={loading || !!success}
-						/>
-					{/each}
-				</div>
-
-				<input use:melt={$hiddenInput} />
+				<PinCodeInput
+					value={code}
+					length={6}
+					disabled={loading || resendLoading || !!success}
+					label={$LL.emailCode_codeLabel()}
+					digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
+					onValueChange={(nextValue) => (code = nextValue)}
+				/>
 			</div>
 
 			<!-- Verify Button -->
 			<Button
 				variant="primary"
 				class="w-full mb-4"
-				disabled={$value.join('').length !== 6 || loading || !!success}
+				disabled={code.length !== 6 || loading || resendLoading || !!success}
 				{loading}
 				onclick={() => handleVerify()}
 			>
@@ -478,7 +481,7 @@
 
 		<!-- Back to Login Link -->
 		<p class="auth-bottom-link">
-			<a href="/login" class="inline-flex items-center gap-2">
+			<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
 				<span class="i-heroicons-arrow-left h-4 w-4"></span>
 				{$LL.common_backToLogin()}
 			</a>

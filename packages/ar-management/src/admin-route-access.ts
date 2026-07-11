@@ -282,6 +282,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ),
   readOnly('/api/admin/avatars/*', ADMIN_PERMISSIONS.USERS_READ, 'user avatars'),
   ...byMethod(
+    '/api/admin/assets/login-ui',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'Login UI public assets'
+  ),
+  ...byMethod(
     '/api/admin/anonymous-users',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
@@ -670,19 +677,19 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     TENANT_ADMIN_ROLES
   ),
   ...byMethod(
-    '/api/admin/form-profiles',
+    '/api/admin/screens',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'form profiles',
+    'screens',
     TENANT_ADMIN_ROLES
   ),
   ...byMethod(
-    '/api/admin/form-profiles/*',
+    '/api/admin/screens/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'form profiles',
+    'screens',
     TENANT_ADMIN_ROLES
   ),
   ...byMethod(

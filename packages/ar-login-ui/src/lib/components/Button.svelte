@@ -42,11 +42,12 @@
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
-		padding: 12px 20px;
+		min-height: var(--auth-control-height, 0);
+		padding: var(--auth-control-padding-y, 12px) var(--auth-control-padding-x, 20px);
 		border-radius: var(--radius-lg);
 		font-family: var(--font-display);
-		font-size: 0.9375rem;
-		font-weight: 600;
+		font-size: var(--auth-control-font-size, 0.9375rem);
+		font-weight: var(--auth-control-font-weight, 600);
 		border: none;
 		cursor: pointer;
 		transition: all var(--transition-fast);
@@ -134,7 +135,7 @@
 	}
 
 	.btn-md {
-		padding: 12px 20px;
+		padding: var(--auth-control-padding-y, 12px) var(--auth-control-padding-x, 20px);
 	}
 
 	.btn-lg {

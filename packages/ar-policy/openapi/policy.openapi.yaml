@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Policy API
-  version: 0.3.2
+  version: 0.3.3
   summary: Policy, ReBAC, and authorization check APIs.
   description: Initial OpenAPI contract for `@authrim/ar-policy`.
 servers:

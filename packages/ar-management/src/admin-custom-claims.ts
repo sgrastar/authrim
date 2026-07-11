@@ -315,8 +315,8 @@ async function resolveAuthenticationMethodsSettings(
   const defaults: AuthenticationMethodsSettingsView = {
     passkeyLoginEnabled: true,
     passkeySignupEnabled: true,
-    emailOtpLoginEnabled: true,
-    emailOtpSignupEnabled: true,
+    emailOtpLoginEnabled: false,
+    emailOtpSignupEnabled: false,
   };
 
   try {
@@ -1705,7 +1705,7 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       is_vc_claim: (v) => (v ? 1 : 0),
       description: (v) => v || null,
       display_order: (v) => v,
-      // Registration form fields (migration 060)
+      // Registration screen fields (migration 060)
       show_on_registration: (v) => (v ? 1 : 0),
       registration_required: (v) => (v ? 1 : 0),
       registration_order: (v) => v,
