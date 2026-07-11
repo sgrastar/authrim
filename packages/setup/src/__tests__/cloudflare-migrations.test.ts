@@ -81,9 +81,59 @@ function runMigrationFiles(sqlite3Path: string, dbPath: string, relativePaths: s
     runSqlite(
       sqlite3Path,
       dbPath,
-      renderPortableMigrationSql(readMigration(relativePath), 'sqlite')
+      `PRAGMA foreign_keys = ON;\n${renderPortableMigrationSql(
+        readMigration(relativePath),
+        'sqlite'
+      )}`
     );
   }
+}
+
+type ForeignKeyReference = {
+  sourceTable: string;
+  targetTable: string;
+};
+
+function readSqliteLines(sqlite3Path: string, dbPath: string, sql: string): string[] {
+  const output = readSqlite(sqlite3Path, dbPath, sql);
+  return output ? output.split(/\r?\n/u) : [];
+}
+
+function listForeignKeyReferences(sqlite3Path: string, dbPath: string): ForeignKeyReference[] {
+  const tableNames = readSqliteLines(
+    sqlite3Path,
+    dbPath,
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"
+  );
+
+  return tableNames.flatMap((sourceTable) => {
+    const escapedTable = sourceTable.replaceAll("'", "''");
+    return readSqliteLines(
+      sqlite3Path,
+      dbPath,
+      `SELECT DISTINCT "table" FROM pragma_foreign_key_list('${escapedTable}') ORDER BY "table";`
+    ).map((targetTable) => ({ sourceTable, targetTable }));
+  });
+}
+
+function findInvalidForeignKeyReferences(
+  sqlite3Path: string,
+  dbPath: string
+): ForeignKeyReference[] {
+  const existingTables = new Set(
+    readSqliteLines(
+      sqlite3Path,
+      dbPath,
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;"
+    )
+  );
+
+  return listForeignKeyReferences(sqlite3Path, dbPath).filter(
+    ({ targetTable }) =>
+      !existingTables.has(targetTable) ||
+      targetTable.endsWith('_old') ||
+      targetTable.endsWith('_repaired')
+  );
 }
 
 function insertOAuthClientSql(tenantId: string, clientId: string, clientName: string): string {
@@ -106,6 +156,65 @@ INSERT INTO oauth_clients (
   '[]',
   1,
   1
+);
+`;
+}
+
+function insertApprovalRequestSql(id: string, detailObjectCatalogId: string | null = null): string {
+  const escapedId = id.replaceAll("'", "''");
+  const detailObjectCatalogSql = detailObjectCatalogId
+    ? `'${detailObjectCatalogId.replaceAll("'", "''")}'`
+    : 'NULL';
+
+  return `
+INSERT INTO approval_requests (
+  id,
+  public_request_id,
+  tenant_id,
+  investigation_id,
+  requester_subject_type,
+  requester_subject_id,
+  target_subject_type,
+  target_subject_id,
+  request_surface,
+  requested_action,
+  redaction_level,
+  status,
+  scope_canonical,
+  scope_json,
+  reason_code,
+  reuse_scope,
+  policy_preset,
+  partial_access_allowed,
+  requested_at,
+  expires_at,
+  detail_object_catalog_id,
+  created_at,
+  updated_at
+) VALUES (
+  '${escapedId}',
+  'apr-${escapedId}',
+  'default',
+  'inv-${escapedId}',
+  'service_principal',
+  'approval-smoke',
+  'user',
+  'user-${escapedId}',
+  'service_data',
+  'detail_read',
+  'masked',
+  'pending',
+  'surface=service_data&action=detail_read',
+  '{}',
+  'technical_support',
+  'request',
+  'technical_debug_default',
+  0,
+  100,
+  200,
+  ${detailObjectCatalogSql},
+  100,
+  100
 );
 `;
 }
@@ -744,6 +853,162 @@ INSERT INTO oauth_clients (
     sqliteMigrationApplyTimeoutMs
   );
 
+  for (const [databaseRole, migrationFiles] of [
+    ['core', activeCoreMigrationFiles()],
+    ['admin', activeAdminMigrationFiles()],
+    ['pii', activePiiMigrationFiles()],
+  ] as const) {
+    it(
+      `keeps every ${databaseRole} foreign-key target valid after all migrations`,
+      () => {
+        const sqlite3Path = findSqlite3();
+        if (!sqlite3Path) {
+          return;
+        }
+
+        const tempDir = mkdtempSync(join(tmpdir(), `authrim-${databaseRole}-foreign-keys-`));
+        const dbPath = join(tempDir, 'test.db');
+
+        try {
+          runMigrationFiles(sqlite3Path, dbPath, migrationFiles);
+
+          expect(findInvalidForeignKeyReferences(sqlite3Path, dbPath)).toEqual([]);
+          expect(readSqlite(sqlite3Path, dbPath, 'PRAGMA foreign_key_check;')).toBe('');
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      },
+      sqliteMigrationApplyTimeoutMs
+    );
+  }
+
+  it(
+    'repairs device-code client foreign keys while retaining only redeemable codes',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-device-code-fk-repair-'));
+      const dbPath = join(tempDir, 'test.db');
+      const repairMigration = '018_repair_device_code_client_foreign_key.sql';
+      const migrationsBeforeRepair = activeCoreMigrationFiles().filter(
+        (migrationFile) => migrationFile !== repairMigration
+      );
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, migrationsBeforeRepair);
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
+PRAGMA foreign_keys = OFF;
+${insertOAuthClientSql('default', 'device-client', 'Device Client')}
+INSERT INTO device_codes (
+  device_code,
+  user_code,
+  client_id,
+  scope,
+  status,
+  created_at,
+  expires_at,
+  tenant_id
+) VALUES (
+  'device-valid',
+  'USER-VALID',
+  'device-client',
+  'openid',
+  'pending',
+  100,
+  200,
+  'default'
+);
+INSERT INTO device_codes (
+  device_code,
+  user_code,
+  client_id,
+  scope,
+  status,
+  created_at,
+  expires_at,
+  tenant_id
+) VALUES (
+  'device-orphan',
+  'USER-ORPHAN',
+  'missing-client',
+  'openid',
+  'pending',
+  100,
+  200,
+  'default'
+);
+`
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [repairMigration]);
+
+        expect(readSqlite(sqlite3Path, dbPath, 'SELECT device_code FROM device_codes;')).toBe(
+          'device-valid'
+        );
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT group_concat("from" || ':' || "to", ',')
+               FROM (
+                 SELECT "from", "to"
+                   FROM pragma_foreign_key_list('device_codes')
+                  WHERE "table" = 'oauth_clients'
+                  ORDER BY id, seq
+               );`
+          )
+        ).toBe('tenant_id:tenant_id,client_id:client_id');
+        expect(findInvalidForeignKeyReferences(sqlite3Path, dbPath)).toEqual([]);
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `PRAGMA foreign_keys = ON;
+INSERT INTO device_codes (
+  device_code,
+  user_code,
+  client_id,
+  scope,
+  status,
+  created_at,
+  expires_at,
+  tenant_id
+) VALUES (
+  'device-cross-tenant',
+  'USER-CROSS-TENANT',
+  'device-client',
+  'openid',
+  'pending',
+  100,
+  200,
+  'another-tenant'
+);`
+          )
+        ).toThrow();
+
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+DELETE FROM oauth_clients
+ WHERE tenant_id = 'default'
+   AND client_id = 'device-client';`
+        );
+        expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_codes;')).toBe('0');
+        expect(readSqlite(sqlite3Path, dbPath, 'PRAGMA foreign_key_check;')).toBe('');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
   it('backfills tenant lifecycle state from is_active and drops the legacy column', () => {
     const sqlite3Path = findSqlite3();
     if (!sqlite3Path) {
@@ -802,6 +1067,278 @@ INSERT INTO tenants (
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it(
+    'repairs approval object-catalog foreign keys without losing approval data',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-admin-approval-fk-repair-'));
+      const dbPath = join(tempDir, 'test.db');
+      const directoryCatalogMigration = 'admin/009_directory_auth_object_catalog_classes.sql';
+      const repairMigration = 'admin/010_repair_approval_object_catalog_foreign_key.sql';
+      const migrationsBeforeCatalogRebuild = activeAdminMigrationFiles().filter(
+        (migrationFile) =>
+          migrationFile !== directoryCatalogMigration && migrationFile !== repairMigration
+      );
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, migrationsBeforeCatalogRebuild);
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `
+PRAGMA foreign_keys = ON;
+INSERT INTO object_catalog (
+  id,
+  public_artifact_id,
+  tenant_id,
+  object_class,
+  created_at,
+  updated_at
+) VALUES (
+  'catalog-existing',
+  'artifact-existing',
+  'default',
+  'approval_transport_detail',
+  100,
+  100
+);
+${insertApprovalRequestSql('request-existing')}
+INSERT INTO approval_request_approvals (
+  id,
+  approval_request_id,
+  step_key,
+  side,
+  subject_type,
+  subject_id,
+  status,
+  method,
+  requested_at,
+  expires_at,
+  created_at,
+  updated_at,
+  last_notification_action,
+  last_notified_at,
+  notification_count
+) VALUES (
+  'approval-existing',
+  'request-existing',
+  'customer-owner',
+  'customer_data_owner',
+  'end_user',
+  'user-existing',
+  'pending',
+  'portal_confirm',
+  100,
+  200,
+  100,
+  100,
+  'initial',
+  101,
+  3
+);
+INSERT INTO elevation_grants (
+  id,
+  public_grant_id,
+  approval_request_id,
+  tenant_id,
+  status,
+  target_audience,
+  resource_class,
+  redaction_level,
+  scope_canonical,
+  scope_json,
+  requester_subject_type,
+  requester_subject_id,
+  actor_subject_type,
+  actor_subject_id,
+  issued_at,
+  expires_at,
+  created_at,
+  updated_at
+) VALUES (
+  'grant-existing',
+  'egr-existing',
+  'request-existing',
+  'default',
+  'active',
+  'admin-api',
+  'customer_profile',
+  'masked',
+  'surface=service_data&action=detail_read',
+  '{}',
+  'service_principal',
+  'approval-smoke',
+  'service_principal',
+  'approval-smoke',
+  100,
+  200,
+  100,
+  100
+);
+`
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [directoryCatalogMigration]);
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT "table"
+               FROM pragma_foreign_key_list('approval_requests')
+              WHERE "from" = 'detail_object_catalog_id';`
+          )
+        ).toBe('object_catalog_old');
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `PRAGMA foreign_keys = ON;${insertApprovalRequestSql('request-before-repair')}`
+          )
+        ).toThrow();
+
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;\n${renderPortableMigrationSql(
+            readMigration(repairMigration),
+            'sqlite'
+          )}`
+        );
+
+        expect(findInvalidForeignKeyReferences(sqlite3Path, dbPath)).toEqual([]);
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT "table"
+               FROM pragma_foreign_key_list('approval_requests')
+              WHERE "from" = 'detail_object_catalog_id';`
+          )
+        ).toBe('object_catalog');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT "table"
+               FROM pragma_foreign_key_list('approval_request_approvals')
+              WHERE "from" = 'approval_request_id';`
+          )
+        ).toBe('approval_requests');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT "table"
+               FROM pragma_foreign_key_list('elevation_grants')
+              WHERE "from" = 'approval_request_id';`
+          )
+        ).toBe('approval_requests');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT public_request_id FROM approval_requests WHERE id = 'request-existing';"
+          )
+        ).toBe('apr-request-existing');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT last_notification_action || ':' || last_notified_at || ':' || notification_count
+               FROM approval_request_approvals
+              WHERE id = 'approval-existing';`
+          )
+        ).toBe('initial:101:3');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT public_grant_id FROM elevation_grants WHERE id = 'grant-existing';"
+          )
+        ).toBe('egr-existing');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+               FROM sqlite_master
+              WHERE type = 'table'
+                AND (name LIKE '%_old' OR name LIKE '%_repaired');`
+          )
+        ).toBe('0');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+               FROM sqlite_master
+              WHERE type = 'index'
+                AND name IN (
+                  'idx_approval_requests_tenant_status_requested',
+                  'idx_approval_requests_investigation',
+                  'idx_approval_requests_requester',
+                  'idx_approval_requests_target',
+                  'idx_approval_requests_expires',
+                  'idx_approval_requests_detail_object_catalog',
+                  'idx_approval_request_approvals_unique_subject',
+                  'idx_approval_request_approvals_request_status',
+                  'idx_approval_request_approvals_subject',
+                  'idx_approval_request_approvals_expires',
+                  'idx_elevation_grants_tenant_status_issued',
+                  'idx_elevation_grants_request',
+                  'idx_elevation_grants_actor',
+                  'idx_elevation_grants_expires'
+                );`
+          )
+        ).toBe('14');
+
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `PRAGMA foreign_keys = ON;${insertApprovalRequestSql('request-after-repair')}`
+          )
+        ).not.toThrow();
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `PRAGMA foreign_keys = ON;${insertApprovalRequestSql(
+              'request-invalid-catalog',
+              'catalog-missing'
+            )}`
+          )
+        ).toThrow();
+
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+UPDATE approval_requests
+   SET detail_object_catalog_id = 'catalog-existing'
+ WHERE id = 'request-existing';
+DELETE FROM object_catalog WHERE id = 'catalog-existing';`
+        );
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT detail_object_catalog_id IS NULL FROM approval_requests WHERE id = 'request-existing';"
+          )
+        ).toBe('1');
+        expect(readSqlite(sqlite3Path, dbPath, 'PRAGMA foreign_key_check;')).toBe('');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
 
   it(
     'applies the unified identity mapping admin control-plane baseline in SQLite',

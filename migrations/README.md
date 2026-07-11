@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-07-06
+date: 2026-07-11
 description: "Database migration layout for Authrim D1 and external PostgreSQL schemas."
 type: reference
 tags:
@@ -54,6 +54,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `015_core_consent_screens_scopes.sql` | Consent policy, consent records, screen profiles, OIDC scopes, and consent canonical user IDs. |
 | `016_core_directory_auth.sql` | Directory identity links, connector fleet, directory-auth migration/compliance tables, release channels, and object catalog classes. |
 | `017_core_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
+| `018_repair_device_code_client_foreign_key.sql` | Repairs tenant-scoped device-code client foreign keys. |
 
 ## Current Admin Files
 
@@ -68,6 +69,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `007_identity_mapping_control_plane.sql` | Identity mapping, source profiles, destination profiles, and field catalog metadata. |
 | `008_persistent_identifier_profiles.sql` | Persistent identifier profiles and values. |
 | `009_directory_auth_object_catalog_classes.sql` | Directory-auth object catalog classes. |
+| `010_repair_approval_object_catalog_foreign_key.sql` | Repairs approval foreign keys after the object catalog rebuild. |
 
 ## Current PII Files
 
