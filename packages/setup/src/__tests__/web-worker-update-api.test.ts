@@ -9,7 +9,9 @@ const buildApiPackagesMock = vi.hoisted(() => vi.fn());
 const deployAllMock = vi.hoisted(() => vi.fn());
 const deployWorkerMock = vi.hoisted(() => vi.fn());
 const deployUiWorkerBindingTargetsMock = vi.hoisted(() => vi.fn());
-const uploadSecretsMock = vi.hoisted(() => vi.fn());
+const resolveExistingWorkerComponentsMock = vi.hoisted(() => vi.fn());
+const resolveMissingUiWorkerBindingTargetsMock = vi.hoisted(() => vi.fn());
+const loadDeploySecretsFromKeysMock = vi.hoisted(() => vi.fn());
 const getWorkersSubdomainMock = vi.hoisted(() => vi.fn());
 const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
 const syncWranglerConfigsMock = vi.hoisted(() => vi.fn());
@@ -27,7 +29,9 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     deployAll: deployAllMock,
     deployWorker: deployWorkerMock,
     deployUiWorkerBindingTargets: deployUiWorkerBindingTargetsMock,
-    uploadSecrets: uploadSecretsMock,
+    resolveExistingWorkerComponents: resolveExistingWorkerComponentsMock,
+    resolveMissingUiWorkerBindingTargets: resolveMissingUiWorkerBindingTargetsMock,
+    loadDeploySecretsFromKeys: loadDeploySecretsFromKeysMock,
   };
 });
 
@@ -157,7 +161,9 @@ describe('setup web worker update API', () => {
     deployAllMock.mockReset();
     deployWorkerMock.mockReset();
     deployUiWorkerBindingTargetsMock.mockReset();
-    uploadSecretsMock.mockReset();
+    resolveExistingWorkerComponentsMock.mockReset();
+    resolveMissingUiWorkerBindingTargetsMock.mockReset();
+    loadDeploySecretsFromKeysMock.mockReset();
     getWorkersSubdomainMock.mockReset();
     saveMasterWranglerConfigsMock.mockReset();
     syncWranglerConfigsMock.mockReset();
@@ -179,7 +185,14 @@ describe('setup web worker update API', () => {
       failedCount: 0,
       results: [],
     });
-    uploadSecretsMock.mockResolvedValue({ success: true, errors: [] });
+    resolveExistingWorkerComponentsMock.mockImplementation(
+      async (_options, components: string[]) => [...components]
+    );
+    resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({ loginUi: true, adminUi: true });
+    loadDeploySecretsFromKeysMock.mockResolvedValue({
+      FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
+      PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
+    });
     getWorkersSubdomainMock.mockResolvedValue('example-subdomain');
     saveMasterWranglerConfigsMock.mockResolvedValue({ success: true, errors: [] });
     syncWranglerConfigsMock.mockResolvedValue({ success: true, errors: [], synced: ['ar-auth'] });
@@ -490,6 +503,10 @@ describe('setup web worker update API', () => {
     await addVersionedWorkerPackage(env, 'ar-router', '0.1.0', '0.2.0');
     await addVersionedWorkerPackage(env, 'ar-login-ui', '0.1.0', '0.1.0');
     await addVersionedWorkerPackage(env, 'ar-admin-ui', '0.1.0', '0.1.0');
+    resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({
+      loginUi: false,
+      adminUi: false,
+    });
 
     deployAllMock.mockResolvedValue({
       totalComponents: 1,
@@ -522,7 +539,7 @@ describe('setup web worker update API', () => {
     expect(deployUiWorkerBindingTargetsMock).not.toHaveBeenCalled();
   });
 
-  it('uploads supplemental API worker secrets before bulk worker updates', async () => {
+  it('passes supplemental API worker secrets into bulk worker updates', async () => {
     const env = 'test';
     await writeEnvironment(env);
     await saveKeysToDirectory(generateAllSecrets('test-key'), { keysBaseDir: tempDir!, env });
@@ -555,27 +572,52 @@ describe('setup web worker update API', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ success: true });
-    expect(uploadSecretsMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        FLOW_RUNTIME_HMAC_SECRET: expect.any(String),
-        PLUGIN_ENCRYPTION_KEY: expect.any(String),
-      }),
+    expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining(['ar-auth'])
+    );
+    expect(saveMasterWranglerConfigsMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      expect.not.objectContaining({ includeDurableObjectMigrations: false })
+    );
+    expect(resolveExistingWorkerComponentsMock).toHaveBeenCalledWith(
       expect.objectContaining({ env, rootDir: tempDir }),
+      expect.any(Array)
+    );
+    expect(deployAllMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env,
+        rootDir: tempDir,
+        deploymentStrategy: 'auto',
+        existingComponents: expect.arrayContaining(['ar-auth']),
+        secrets: expect.objectContaining({
+          FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
+          PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
+        }),
+      }),
       expect.arrayContaining(['ar-auth'])
     );
   });
 
-  it('uploads supplemental API worker secrets before single worker deploys', async () => {
+  it('passes supplemental API worker secrets into single worker deploys', async () => {
     const env = 'test';
     await writeEnvironment(env);
     await saveKeysToDirectory(generateAllSecrets('test-key'), { keysBaseDir: tempDir!, env });
 
-    deployWorkerMock.mockResolvedValue({
-      success: true,
-      component: 'ar-auth',
-      workerName: 'test-ar-auth',
-      version: '0.2.0',
-      deployedAt: '2026-06-18T00:00:00.000Z',
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 1,
+      failedCount: 0,
+      results: [
+        {
+          success: true,
+          component: 'ar-auth',
+          workerName: 'test-ar-auth',
+          version: '0.2.0',
+          deployedAt: '2026-06-18T00:00:00.000Z',
+        },
+      ],
     });
 
     const token = generateSessionToken();
@@ -591,12 +633,18 @@ describe('setup web worker update API', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ success: true, component: 'ar-auth' });
-    expect(uploadSecretsMock).toHaveBeenCalledWith(
+    expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(expect.any(String), ['ar-auth']);
+    expect(deployAllMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        FLOW_RUNTIME_HMAC_SECRET: expect.any(String),
-        PLUGIN_ENCRYPTION_KEY: expect.any(String),
+        env,
+        rootDir: tempDir,
+        deploymentStrategy: 'auto',
+        existingComponents: expect.arrayContaining(['ar-auth']),
+        secrets: expect.objectContaining({
+          FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
+          PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
+        }),
       }),
-      expect.objectContaining({ env, rootDir: tempDir }),
       ['ar-auth']
     );
   });

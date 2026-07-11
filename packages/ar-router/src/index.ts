@@ -352,7 +352,19 @@ async function proxyToUiWorker(
   path: string,
   serviceBinding?: Fetcher
 ): Promise<Response> {
-  const targetUrl = new URL(path, baseUrl);
+  if (!/^\/(?!\/)[a-zA-Z0-9._~!$&'()*+,;=:@%/-]*$/u.test(path)) {
+    return Response.json(
+      {
+        error: 'invalid_request',
+        message: 'Invalid UI proxy path',
+      },
+      { status: 400 }
+    );
+  }
+
+  const targetUrl = new URL(baseUrl);
+  // Treat the validated request path strictly as a pathname so the configured UI host is fixed.
+  targetUrl.pathname = path;
   targetUrl.search = new URL(request.url).search;
 
   const headers = new Headers(request.headers);

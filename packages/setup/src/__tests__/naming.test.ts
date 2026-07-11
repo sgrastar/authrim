@@ -11,6 +11,7 @@ import {
   getEnabledComponents,
   CORE_WORKER_COMPONENTS,
   WORKER_COMPONENTS,
+  WORKER_DEPLOYMENT_DEPENDENCIES,
 } from '../core/naming.js';
 
 describe('Worker Naming', () => {
@@ -112,5 +113,29 @@ describe('getDeploymentOrder', () => {
     const samlIndex = allComponents.indexOf('ar-saml');
     const routerIndex = allComponents.indexOf('ar-router');
     expect(samlIndex).toBeLessThan(routerIndex);
+  });
+});
+
+describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
+  it('should require ar-lib-core before every other Worker', () => {
+    for (const component of WORKER_COMPONENTS.filter((worker) => worker !== 'ar-lib-core')) {
+      expect(WORKER_DEPLOYMENT_DEPENDENCIES[component]).toContain('ar-lib-core');
+    }
+  });
+
+  it('should require ar-bridge before ar-auth', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-auth']).toContain('ar-bridge');
+  });
+
+  it('should require ar-auth and ar-bridge before ar-management', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-management']).toEqual(
+      expect.arrayContaining(['ar-auth', 'ar-bridge'])
+    );
+  });
+
+  it('should require every API target before ar-router', () => {
+    const apiTargets = CORE_WORKER_COMPONENTS.filter((component) => component !== 'ar-router');
+
+    expect([...WORKER_DEPLOYMENT_DEPENDENCIES['ar-router']].sort()).toEqual([...apiTargets].sort());
   });
 });

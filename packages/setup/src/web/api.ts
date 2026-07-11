@@ -90,13 +90,14 @@ import {
 } from '../core/tenant-d1-bootstrap.js';
 import {
   deployAll,
-  uploadSecrets,
   buildApiPackages,
   deployAllUiWorkers,
   deployUiWorkerBindingTargets,
+  resolveMissingUiWorkerBindingTargets,
+  resolveExistingWorkerComponents,
   deployUiWorkerComponent,
   deployWorker,
-  DEFAULT_INTER_DEPLOY_DELAY_MS,
+  loadDeploySecretsFromKeys,
   UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
   type DeployResult,
@@ -115,10 +116,9 @@ import {
   getComponentsToUpdate,
 } from '../core/version.js';
 import { completeInitialSetup } from '../core/admin.js';
-import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
+import { prepareAdminUiBffDeployment } from '../core/admin-ui-bff-deployment.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
-import { getSecretNamesForWorker } from '../core/secrets.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
 import {
   buildWorkerHttpReadinessTargets,
@@ -451,82 +451,23 @@ async function ensureSupplementalKeysForWebDeploy(keysDir: string): Promise<void
   }
 }
 
-const SECRET_KEY_FILES: Record<string, string> = {
-  PRIVATE_KEY_PEM: 'private.pem',
-  PUBLIC_JWK_JSON: 'public.jwk.json',
-  RP_TOKEN_ENCRYPTION_KEY: 'rp_token_encryption_key.txt',
-  PII_ENCRYPTION_KEY: 'pii_encryption_key.txt',
-  OBJECT_ENCRYPTION_ROOT_KEY: 'object_encryption_root_key.txt',
-  OTP_HMAC_SECRET: 'otp_hmac_secret.txt',
-  VERSION_MANAGER_SECRET: 'version_manager_secret.txt',
-  LOGGING_CURSOR_HMAC_SECRET: 'logging_cursor_hmac_secret.txt',
-  FLOW_RUNTIME_HMAC_SECRET: 'flow_runtime_hmac_secret.txt',
-  PLUGIN_ENCRYPTION_KEY: 'plugin_encryption_key.txt',
-  TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK: 'tenant_runtime_registry_signing_private.jwk.json',
-  TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'tenant_runtime_registry_signing_key_id.txt',
-  TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: 'tenant_runtime_registry_verify.jwks.json',
-  ADMIN_API_SECRET: 'admin_api_secret.txt',
-  KEY_MANAGER_SECRET: 'key_manager_secret.txt',
-  CLOUDFLARE_API_TOKEN: 'cloudflare_api_token.txt',
-  RESEND_API_KEY: 'resend_api_key.txt',
-};
-
-async function loadSecretsForWorkersFromKeys(
-  keysDir: string,
-  workers: WorkerComponent[]
-): Promise<Record<string, string>> {
-  const secretNames = new Set<string>();
-  for (const worker of workers) {
-    for (const secretName of getSecretNamesForWorker(worker)) {
-      secretNames.add(secretName);
-    }
-  }
-
-  const secrets: Record<string, string> = {};
-  for (const secretName of secretNames) {
-    const fileName = SECRET_KEY_FILES[secretName];
-    if (!fileName) {
-      continue;
-    }
-    const filePath = join(keysDir, fileName);
-    if (existsSync(filePath)) {
-      secrets[secretName] = await readFile(filePath, 'utf-8');
-    }
-  }
-
-  return secrets;
-}
-
-async function uploadSupplementalSecretsForWorkers(options: {
+async function loadSupplementalSecretsForWorkers(options: {
   env: string;
-  rootDir: string;
   keysDir: string;
   workers: WorkerComponent[];
-  dryRun?: boolean;
-}): Promise<{ success: boolean; errors: string[] }> {
-  const { env, rootDir, keysDir, workers, dryRun } = options;
+}): Promise<Record<string, string>> {
+  const { env, keysDir, workers } = options;
   if (!existsSync(keysDir)) {
     addProgress(`Warning: Keys directory not found at ${keysDir}`);
-    return { success: true, errors: [] };
+    return {};
   }
 
   await ensureSupplementalKeysForWebDeploy(keysDir);
-  const secrets = await loadSecretsForWorkersFromKeys(keysDir, workers);
-  if (Object.keys(secrets).length === 0) {
-    return { success: true, errors: [] };
-  }
-
-  addProgress('Uploading worker secrets...');
-  return uploadSecrets(
-    secrets,
-    {
-      env,
-      rootDir: resolve(rootDir),
-      dryRun,
-      onProgress: addProgress,
-    },
-    workers
+  const secrets = await loadDeploySecretsFromKeys(keysDir, workers);
+  addProgress(
+    `Prepared ${Object.keys(secrets).length} secret value(s) for ${env} Worker deployment.`
   );
+  return secrets;
 }
 
 async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
@@ -1373,12 +1314,21 @@ export function createApiRoutes(): Hono {
         }
 
         addProgress('Deploying ar-router...');
-        const deployResult = await deployWorker('ar-router', {
+        const routerDeployOptions = {
           env,
           rootDir: baseDir,
           dryRun: false,
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => lock.workers?.[component] !== undefined
+          ),
           onProgress: addProgress,
-        });
+        };
+        routerDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+          routerDeployOptions,
+          WORKER_COMPONENTS
+        );
+        const deployResult = await deployWorker('ar-router', routerDeployOptions);
         if (!deployResult.success) {
           state.status = 'error';
           state.error = deployResult.error || 'ar-router deployment failed';
@@ -1552,30 +1502,42 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: state.error }, 500);
         }
 
-        const deployResults: DeployResult[] = [];
-        for (const component of ['ar-auth', 'ar-management'] as const) {
-          const result = await deployWorker(component, {
-            env,
-            rootDir: resolve(rootDir),
-            onProgress: addProgress,
-          });
-          deployResults.push(result);
-
-          if (!result.success) {
-            state.status = 'error';
-            state.error = `${component} deployment failed: ${result.error || 'Unknown error'}`;
-            await flushProgressLog();
-            return c.json(
-              {
-                success: false,
-                error: state.error,
-                progress: state.progress,
-              },
-              500
-            );
-          }
+        const emailDeployOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          concurrency: 2,
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => lock.workers?.[component] !== undefined
+          ),
+          onProgress: addProgress,
+        };
+        emailDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+          emailDeployOptions,
+          WORKER_COMPONENTS
+        );
+        const emailDeploySummary = await deployAll(emailDeployOptions, [
+          'ar-auth',
+          'ar-management',
+        ]);
+        if (emailDeploySummary.failedCount > 0) {
+          state.status = 'error';
+          state.error = `Email Worker deployment failed: ${emailDeploySummary.results
+            .filter((result) => !result.success)
+            .map((result) => `${result.component}: ${result.error || 'Unknown error'}`)
+            .join(', ')}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+            },
+            500
+          );
         }
 
+        const deployResults: DeployResult[] = emailDeploySummary.results;
         const updatedLock = updateLockWithDeployments(lock, deployResults);
         await saveLock(updatedLock, lockPath);
         addProgress(`Lock file updated: ${lockPath}`);
@@ -2006,68 +1968,13 @@ export function createApiRoutes(): Hono {
         }
         cleanupKeysDir = keysDir;
 
+        let deploymentSecrets: Record<string, string> = {};
         if (!dryRun && existsSync(keysDir)) {
           await ensureSupplementalKeysForWebDeploy(keysDir);
-          addProgress(`Uploading secrets from ${keysDir}...`);
-
-          const secrets: Record<string, string> = {};
-          const secretFiles = [
-            { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
-            { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
-            { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
-            { file: join(keysDir, 'pii_encryption_key.txt'), name: 'PII_ENCRYPTION_KEY' },
-            {
-              file: join(keysDir, 'object_encryption_root_key.txt'),
-              name: 'OBJECT_ENCRYPTION_ROOT_KEY',
-            },
-            { file: join(keysDir, 'otp_hmac_secret.txt'), name: 'OTP_HMAC_SECRET' },
-            { file: join(keysDir, 'version_manager_secret.txt'), name: 'VERSION_MANAGER_SECRET' },
-            {
-              file: join(keysDir, 'logging_cursor_hmac_secret.txt'),
-              name: 'LOGGING_CURSOR_HMAC_SECRET',
-            },
-            {
-              file: join(keysDir, 'flow_runtime_hmac_secret.txt'),
-              name: 'FLOW_RUNTIME_HMAC_SECRET',
-            },
-            {
-              file: join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'),
-              name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
-            },
-            {
-              file: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
-              name: 'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
-            },
-            {
-              file: join(keysDir, 'tenant_runtime_registry_verify.jwks.json'),
-              name: 'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
-            },
-            { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
-            { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
-            { file: join(keysDir, 'plugin_encryption_key.txt'), name: 'PLUGIN_ENCRYPTION_KEY' },
-            { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
-            // Email provider secrets (optional)
-            { file: join(keysDir, 'resend_api_key.txt'), name: 'RESEND_API_KEY' },
-          ];
-
-          for (const { file, name } of secretFiles) {
-            if (existsSync(file)) {
-              secrets[name] = await readFile(file, 'utf-8');
-            }
-          }
-
-          if (Object.keys(secrets).length > 0) {
-            await uploadSecrets(
-              secrets,
-              {
-                env,
-                rootDir: resolve(rootDir),
-                onProgress: addProgress,
-              },
-              enabledComponents
-            );
-            // Note: secrets object goes out of scope here and will be garbage collected
-          }
+          deploymentSecrets = await loadDeploySecretsFromKeys(keysDir, enabledComponents);
+          addProgress(
+            `Prepared ${Object.keys(deploymentSecrets).length} secret value(s) for Worker deployment.`
+          );
         } else if (!dryRun) {
           addProgress(`Warning: Keys directory not found at ${keysDir}`);
         }
@@ -2170,9 +2077,41 @@ export function createApiRoutes(): Hono {
           }
         }
 
+        const { lock: deploymentLock } = await loadLockFileAuto(rootDir, env);
+        let existingComponents = WORKER_COMPONENTS.filter(
+          (component) => deploymentLock?.workers?.[component] !== undefined
+        );
+        const remoteProbeOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          dryRun,
+          concurrency: 2,
+          existingComponents,
+          onProgress: addProgress,
+        };
+        if (!dryRun) {
+          existingComponents = await resolveExistingWorkerComponents(
+            remoteProbeOptions,
+            WORKER_COMPONENTS
+          );
+        }
+        const enabledUiBindingTargets = {
+          loginUi: cfg?.components?.loginUi ?? true,
+          adminUi: cfg?.components?.adminUi ?? true,
+        };
+        const routerSelected = enabledComponents?.includes('ar-router') === true;
+        const missingUiBindingTargets = routerSelected
+          ? dryRun
+            ? enabledUiBindingTargets
+            : await resolveMissingUiWorkerBindingTargets(
+                { env, rootDir: resolve(rootDir), onProgress: addProgress },
+                enabledUiBindingTargets
+              )
+          : { loginUi: false, adminUi: false };
+
         if (
-          (cfg?.components?.loginUi || cfg?.components?.adminUi) &&
-          enabledComponents?.includes('ar-router')
+          (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) &&
+          routerSelected
         ) {
           const placeholderSummary = await deployUiWorkerBindingTargets(
             {
@@ -2182,10 +2121,7 @@ export function createApiRoutes(): Hono {
               apiBaseUrl: resolveIssuerUrl(cfg, { env }),
               onProgress: addProgress,
             },
-            {
-              loginUi: cfg?.components?.loginUi ?? true,
-              adminUi: cfg?.components?.adminUi ?? true,
-            }
+            missingUiBindingTargets
           );
 
           if (placeholderSummary.failedCount > 0) {
@@ -2206,7 +2142,10 @@ export function createApiRoutes(): Hono {
             env,
             rootDir: resolve(rootDir),
             dryRun,
-            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
+            concurrency: 2,
+            deploymentStrategy: 'auto',
+            existingComponents,
+            secrets: deploymentSecrets,
             onProgress: addProgress,
             onError: (comp, error) => {
               addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -2235,7 +2174,10 @@ export function createApiRoutes(): Hono {
         };
 
         // Update lock file with deployed workers information
-        if (workersSuccess && !dryRun && summary.successCount > 0) {
+        if (
+          !dryRun &&
+          summary.results.some((result) => result.success || result.trafficCommitted)
+        ) {
           try {
             const {
               loadLockFileAuto,
@@ -2564,7 +2506,12 @@ export function createApiRoutes(): Hono {
           });
           const adminUiBffSecrets =
             (cfg?.components?.adminUi ?? true) && !dryRun
-              ? await loadAdminUiBffWorkerSecrets(keysDir)
+              ? await prepareAdminUiBffDeployment({
+                  env,
+                  config: cfg as AuthrimConfig,
+                  keysDir,
+                  onProgress: addProgress,
+                })
               : undefined;
           if ((cfg?.components?.adminUi ?? true) && adminUiSettings.adminUiApiMode) {
             addProgress(
@@ -2606,6 +2553,35 @@ export function createApiRoutes(): Hono {
               adminUi: cfg?.components?.adminUi ?? true,
             }
           );
+
+          if (
+            !dryRun &&
+            uiWorkersSummary.results.some((result) => result.success || result.trafficCommitted)
+          ) {
+            const { lock: currentLock, path: currentLockPath } = await loadLockFileAuto(
+              rootDir,
+              env
+            );
+            if (currentLock && currentLockPath) {
+              const workers = { ...currentLock.workers };
+              for (const result of uiWorkersSummary.results) {
+                if ((!result.success && !result.trafficCommitted) || !result.deployedAt) {
+                  continue;
+                }
+                workers[result.component] = {
+                  name: result.projectName,
+                  deployedAt: result.deployedAt,
+                  version:
+                    (await getPackageVersion(join(rootDir, 'packages', result.component))) ??
+                    undefined,
+                };
+              }
+              await saveLockFile(
+                { ...currentLock, workers, updatedAt: new Date().toISOString() },
+                currentLockPath
+              );
+            }
+          }
 
           if (uiWorkersSummary.failedCount === 0) {
             addProgress('✓ All UI packages deployed to Workers');
@@ -3503,7 +3479,6 @@ export function createApiRoutes(): Hono {
           baseDir: rootDir,
           env,
           dryRun: false,
-          includeDurableObjectMigrations: false,
           components: componentsToUpdate,
           onProgress: addProgress,
         });
@@ -3555,28 +3530,14 @@ export function createApiRoutes(): Hono {
           (component): component is WorkerComponent =>
             (WORKER_COMPONENTS as readonly string[]).includes(component)
         );
+        let deploymentSecrets: Record<string, string> = {};
         if (workerComponentsToUpdate.length > 0) {
           const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
-          const secretResult = await uploadSupplementalSecretsForWorkers({
+          deploymentSecrets = await loadSupplementalSecretsForWorkers({
             env,
-            rootDir,
             keysDir,
             workers: workerComponentsToUpdate,
           });
-          if (!secretResult.success) {
-            state.status = 'error';
-            state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
-            await flushProgressLog();
-            return c.json(
-              {
-                success: false,
-                error: state.error,
-                progress: state.progress,
-                logPath: state.logPath,
-              },
-              500
-            );
-          }
         }
 
         // Build packages
@@ -3601,15 +3562,37 @@ export function createApiRoutes(): Hono {
           );
         }
 
+        const workerDeployOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          concurrency: 2,
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => lock.workers?.[component] !== undefined
+          ),
+          secrets: deploymentSecrets,
+          onProgress: addProgress,
+          onError: (comp: string, error: Error) => {
+            addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+          },
+        };
+        workerDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+          workerDeployOptions,
+          WORKER_COMPONENTS
+        );
+
         if (
           includeUiWorkers !== false &&
           (config.components.loginUi || config.components.adminUi) &&
           componentsToUpdate.includes('ar-router')
         ) {
-          const missingUiBindingTargets = {
-            loginUi: (config.components.loginUi ?? true) && !lock.workers?.['ar-login-ui'],
-            adminUi: (config.components.adminUi ?? true) && !lock.workers?.['ar-admin-ui'],
-          };
+          const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
+            { env, rootDir: resolve(rootDir), onProgress: addProgress },
+            {
+              loginUi: config.components.loginUi ?? true,
+              adminUi: config.components.adminUi ?? true,
+            }
+          );
 
           const placeholderSummary =
             missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi
@@ -3643,25 +3626,14 @@ export function createApiRoutes(): Hono {
 
         // Deploy workers
         addProgress('Deploying workers...');
-        const summary = await deployAll(
-          {
-            env,
-            rootDir: resolve(rootDir),
-            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
-            onProgress: addProgress,
-            onError: (comp, error) => {
-              addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
-            },
-          },
-          componentsToUpdate
-        );
+        const summary = await deployAll(workerDeployOptions, componentsToUpdate);
         state.deployResults = summary.results;
 
         // Update lock file with new versions
-        if (summary.successCount > 0) {
+        if (summary.results.some((result) => result.success || result.trafficCommitted)) {
           const workers = { ...lock.workers };
           for (const result of summary.results) {
-            if (result.success && result.deployedAt) {
+            if ((result.success || result.trafficCommitted) && result.deployedAt) {
               workers[result.component] = {
                 name: result.workerName,
                 deployedAt: result.deployedAt,
@@ -3861,10 +3833,21 @@ export function createApiRoutes(): Hono {
           if (!dryRun) {
             await ensureSupplementalKeysForWebDeploy(keysDir);
           }
+          if (!cfg) {
+            state.status = 'error';
+            return c.json(
+              { success: false, error: 'Environment config is required for UI deployment' },
+              400
+            );
+          }
 
           // Build first (unless skipped)
-          if (!skipBuild && !dryRun) {
-            addProgress(`Building ${componentName}...`);
+          if (!dryRun) {
+            addProgress(
+              skipBuild
+                ? `Reusing the existing ${componentName} build output...`
+                : `Building ${componentName}...`
+            );
             const uiDir = join(rootDir, 'packages', componentName);
 
             if (!existsSync(uiDir)) {
@@ -3971,7 +3954,12 @@ export function createApiRoutes(): Hono {
             }
             const adminUiBffSecrets =
               componentName === 'ar-admin-ui' && !dryRun
-                ? await loadAdminUiBffWorkerSecrets(keysDir)
+                ? await prepareAdminUiBffDeployment({
+                    env,
+                    config: cfg as AuthrimConfig,
+                    keysDir,
+                    onProgress: addProgress,
+                  })
                 : undefined;
 
             const result = await deployUiWorkerComponent(componentName as UiWorkerComponent, {
@@ -3985,36 +3973,32 @@ export function createApiRoutes(): Hono {
               workersDev: uiSettings.workersDev,
               routes: uiSettings.routes,
               adminUiBffSecrets,
+              skipBuild,
               onProgress: addProgress,
             });
 
-            if (result.success) {
-              if (!dryRun) {
-                try {
-                  const { lock: currentLock, path: lockPath } = await loadLockFileAuto(
-                    rootDir,
-                    env
-                  );
+            if (!dryRun && result.deployedAt && (result.success || result.trafficCommitted)) {
+              try {
+                const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
-                  if (currentLock && lockPath) {
-                    const version = await getPackageVersion(
-                      join(rootDir, 'packages', componentName)
-                    );
-                    const workers = { ...currentLock.workers };
-                    workers[componentName] = {
-                      name: result.projectName,
-                      deployedAt: result.deployedAt,
-                      version: version ?? undefined,
-                    };
+                if (currentLock && lockPath) {
+                  const version = await getPackageVersion(join(rootDir, 'packages', componentName));
+                  const workers = { ...currentLock.workers };
+                  workers[componentName] = {
+                    name: result.projectName,
+                    deployedAt: result.deployedAt,
+                    version: version ?? undefined,
+                  };
 
-                    await saveLockFile({ ...currentLock, workers }, lockPath);
-                    addProgress('Lock file updated');
-                  }
-                } catch (lockError) {
-                  addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
+                  await saveLockFile({ ...currentLock, workers }, lockPath);
+                  addProgress('Lock file updated');
                 }
+              } catch (lockError) {
+                addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
               }
+            }
 
+            if (result.success) {
               state.status = 'complete';
               addProgress(`✓ ${componentName} deployed successfully`);
               return c.json({
@@ -4072,7 +4056,6 @@ export function createApiRoutes(): Hono {
                 baseDir: rootDir,
                 env,
                 dryRun: false,
-                includeDurableObjectMigrations: false,
                 components: [componentName as WorkerComponent],
                 onProgress: addProgress,
               });
@@ -4105,19 +4088,18 @@ export function createApiRoutes(): Hono {
             // Continue anyway - the config might already exist
           }
 
+          const { lock: componentLock, path: componentLockPath } = await loadLockFileAuto(
+            rootDir,
+            env
+          );
+          let deploymentSecrets: Record<string, string> = {};
           if (!dryRun) {
             const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
-            const secretResult = await uploadSupplementalSecretsForWorkers({
+            deploymentSecrets = await loadSupplementalSecretsForWorkers({
               env,
-              rootDir,
               keysDir,
               workers: [componentName as WorkerComponent],
             });
-            if (!secretResult.success) {
-              state.status = 'error';
-              state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
-              return c.json({ success: false, error: state.error }, 500);
-            }
           }
 
           // Build first (unless skipped)
@@ -4125,7 +4107,9 @@ export function createApiRoutes(): Hono {
             addProgress('Building packages...');
             const buildResult = await buildApiPackages({
               rootDir,
-              components: [componentName as WorkerComponent],
+              components: componentLock?.workers?.[componentName]
+                ? [componentName as WorkerComponent]
+                : undefined,
               onProgress: addProgress,
             });
 
@@ -4133,6 +4117,25 @@ export function createApiRoutes(): Hono {
               state.status = 'error';
               return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
             }
+          }
+
+          const componentDeployOptions = {
+            env,
+            rootDir,
+            dryRun,
+            concurrency: 2,
+            deploymentStrategy: 'auto' as const,
+            existingComponents: WORKER_COMPONENTS.filter(
+              (component) => componentLock?.workers?.[component] !== undefined
+            ),
+            secrets: deploymentSecrets,
+            onProgress: addProgress,
+          };
+          if (!dryRun) {
+            componentDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+              componentDeployOptions,
+              WORKER_COMPONENTS
+            );
           }
 
           if (!dryRun && componentName === 'ar-router') {
@@ -4160,35 +4163,50 @@ export function createApiRoutes(): Hono {
             }
           }
 
-          // Deploy the worker
-          const result = await deployWorker(componentName as WorkerComponent, {
-            env,
-            rootDir,
-            dryRun,
-            onProgress: addProgress,
-          });
+          if (!dryRun && componentName === 'ar-router') {
+            const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
+              { env, rootDir, onProgress: addProgress },
+              {
+                loginUi: cfg?.components?.loginUi ?? true,
+                adminUi: cfg?.components?.adminUi ?? true,
+              }
+            );
+            if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
+              const placeholder = await deployUiWorkerBindingTargets(
+                {
+                  env,
+                  rootDir,
+                  apiBaseUrl: resolveIssuerUrl(cfg, { env }),
+                  onProgress: addProgress,
+                },
+                missingUiBindingTargets
+              );
+              if (placeholder.failedCount > 0) {
+                state.status = 'error';
+                return c.json(
+                  { success: false, error: 'UI Worker binding-target deployment failed' },
+                  500
+                );
+              }
+            }
+          }
+
+          const summary = await deployAll(componentDeployOptions, [
+            componentName as WorkerComponent,
+          ]);
+          const result = summary.results.find((candidate) => candidate.component === componentName);
 
           // Update lock file if successful
-          if (result.success && !dryRun) {
+          if (
+            summary.results.some((candidate) => candidate.success || candidate.trafficCommitted) &&
+            !dryRun
+          ) {
             try {
-              const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
-              const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
-
-              if (currentLock && lockPath) {
-                const workers = { ...currentLock.workers };
-                workers[componentName] = {
-                  name: result.workerName,
-                  deployedAt: result.deployedAt,
-                  version: result.version,
-                };
-
-                const updatedLock = {
-                  ...currentLock,
-                  workers,
-                  updatedAt: new Date().toISOString(),
-                };
-
-                await saveLock(updatedLock, lockPath);
+              if (componentLock && componentLockPath) {
+                await saveLockFile(
+                  updateLockWithDeployments(componentLock, summary.results),
+                  componentLockPath
+                );
                 addProgress('Lock file updated');
               }
             } catch (lockError) {
@@ -4196,7 +4214,7 @@ export function createApiRoutes(): Hono {
             }
           }
 
-          if (result.success) {
+          if (summary.failedCount === 0 && result?.success) {
             await maybeConfigureDownstreamIntrospectionForWebDeploy({
               env,
               rootDir,
@@ -4206,7 +4224,7 @@ export function createApiRoutes(): Hono {
             });
           }
 
-          if (result.success) {
+          if (summary.failedCount === 0 && result?.success) {
             state.status = 'complete';
             addProgress(`✓ ${componentName} deployed successfully`);
             return c.json({
@@ -4224,7 +4242,7 @@ export function createApiRoutes(): Hono {
                 success: false,
                 component: componentName,
                 type: 'worker',
-                error: result.error,
+                error: result?.error || 'dependency deployment failed',
               },
               500
             );

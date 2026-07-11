@@ -1152,6 +1152,28 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('login.example.com');
     });
 
+    it('should reject protocol-relative Login UI paths before proxying', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithSeparateLoginUiHost = {
+        ...mockEnv,
+        LOGIN_UI_URL: 'https://login.example.com',
+        LOGIN_UI_HOST_MODE: 'dedicated' as const,
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const req = new Request('https://login.example.com//attacker.example/path');
+      const res = await app.fetch(req, envWithSeparateLoginUiHost);
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: 'invalid_request',
+        message: 'Invalid UI proxy path',
+      });
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
     it('should keep API routes on a shared Login UI host routed to API workers', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
       const envWithSharedLoginUiHost = {
