@@ -97,6 +97,47 @@ FOO = "bar"
     expect(conformanceSection).not.toContain('compatibility_date = "2024-09-23"');
     expect(merged.match(/^main = "src\/index\.ts"$/gm) ?? []).toHaveLength(1);
   });
+
+  it('advances the generated top-level Durable Object migration history while preserving other envs', () => {
+    const deployContent = `main = "src/index.ts"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionStore"]
+
+# Environment: prod
+[env.prod]
+name = "prod-old"
+
+# Environment: staging
+[env.staging]
+name = "staging-current"
+`;
+    const masterContent = `main = "src/index.ts"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionStore"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["KeyManager"]
+
+# Environment: prod
+[env.prod]
+name = "prod-new"
+`;
+
+    const merged = mergeEnvironmentSectionIntoToml(deployContent, masterContent, 'prod');
+
+    expect(merged).toContain('tag = "v1"');
+    expect(merged).toContain('tag = "v2"');
+    expect(merged).toContain('new_sqlite_classes = ["KeyManager"]');
+    expect(merged).toContain('[env.staging]');
+    expect(merged).toContain('name = "staging-current"');
+    expect(merged).toContain('name = "prod-new"');
+    expect(merged).not.toContain('name = "prod-old"');
+  });
 });
 
 describe('cleanupLocalEnvironmentArtifacts', () => {

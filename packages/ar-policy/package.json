@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
-    "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-policy --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'policy-service: lint skipped'",
@@ -15,13 +15,13 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
-    "hono": "4.12.25"
+    "hono": "4.12.29"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   }
 }

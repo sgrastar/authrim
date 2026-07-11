@@ -5,6 +5,7 @@ import {
   getSecretTargetWorkers,
   SECRET_UPLOAD_PLAN,
 } from '../core/deploy.js';
+import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
 
 describe('DEFAULT_SECRET_TARGET_WORKERS', () => {
   it('includes ar-saml so SAML signing secrets are uploaded by default', () => {
@@ -63,6 +64,29 @@ describe('getSecretTargetWorkers', () => {
 });
 
 describe('SECRET_UPLOAD_PLAN', () => {
+  it('fails fresh Workers only for missing required secrets', () => {
+    expect(
+      getMissingRequiredDeploySecrets(
+        {
+          PUBLIC_JWK_JSON: '{}',
+          DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: '',
+          DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: '',
+        },
+        ['ar-discovery', 'ar-userinfo']
+      )
+    ).toEqual(['TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS']);
+  });
+
+  it('treats provider credentials as optional during a first deployment', () => {
+    const authSecrets = Object.fromEntries(
+      getSecretNamesForWorker('ar-auth')
+        .filter((name) => name !== 'RESEND_API_KEY')
+        .map((name) => [name, 'configured'])
+    );
+
+    expect(getMissingRequiredDeploySecrets(authSecrets, ['ar-auth'])).toEqual([]);
+  });
+
   it('keeps discovery to public JWKS fallback only', () => {
     expect(getSecretNamesForWorker('ar-discovery')).toEqual(['PUBLIC_JWK_JSON']);
   });

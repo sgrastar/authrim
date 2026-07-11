@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-async --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-async: lint skipped'",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "hono": "4.12.25",
+    "hono": "4.12.29",
     "jose": "^6.1.2"
   },
   "devDependencies": {
@@ -22,7 +22,7 @@
     "@vitest/ui": "^4.1.8",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   }
 }

@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-saml --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-saml: lint skipped (uses root eslint config)'",
@@ -18,7 +18,7 @@
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-plugin": "workspace:*",
     "@xmldom/xmldom": "^0.8.13",
-    "hono": "4.12.25",
+    "hono": "4.12.29",
     "jose": "^6.1.2",
     "pako": "^2.1.0",
     "xml-crypto": "^6.0.0"
@@ -30,7 +30,7 @@
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   }
 }

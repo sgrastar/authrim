@@ -9,7 +9,7 @@ import {
   resolveDownstreamIntrospectionKeysDir,
 } from '../core/downstream-introspection-deploy.js';
 import { getWorkersSubdomain } from '../core/cloudflare.js';
-import { deployWorker, uploadSecrets } from '../core/deploy.js';
+import { deployWorker } from '../core/deploy.js';
 import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
@@ -21,7 +21,6 @@ vi.mock('../core/cloudflare.js', () => ({
 }));
 
 vi.mock('../core/deploy.js', () => ({
-  uploadSecrets: vi.fn(),
   deployWorker: vi.fn(),
 }));
 
@@ -44,7 +43,6 @@ function createTempRoot(): string {
 
 beforeEach(() => {
   vi.mocked(getWorkersSubdomain).mockReset();
-  vi.mocked(uploadSecrets).mockReset();
   vi.mocked(deployWorker).mockReset();
   vi.mocked(ensureDownstreamIntrospectionClient).mockReset();
   vi.mocked(loadDownstreamIntrospectionClientSecrets).mockReset();
@@ -118,10 +116,6 @@ describe('configureDownstreamIntrospectionDeployment', () => {
       DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-123',
       DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-123',
     });
-    vi.mocked(uploadSecrets).mockResolvedValue({
-      success: true,
-      errors: [],
-    });
     vi.mocked(deployWorker).mockResolvedValue(redeployResult);
 
     const result = await configureDownstreamIntrospectionDeployment({
@@ -143,29 +137,23 @@ describe('configureDownstreamIntrospectionDeployment', () => {
       maxRetries: 24,
       onProgress: undefined,
     });
-    expect(vi.mocked(uploadSecrets)).toHaveBeenCalledWith(
-      {
-        DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-123',
-        DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-123',
-      },
-      expect.objectContaining({
-        env: 'single',
-        rootDir,
-        dryRun: undefined,
-      }),
-      ['ar-userinfo']
-    );
     expect(vi.mocked(deployWorker)).toHaveBeenCalledWith(
       'ar-userinfo',
       expect.objectContaining({
         env: 'single',
         rootDir,
         dryRun: undefined,
+        deploymentStrategy: 'staged',
+        existingComponents: ['ar-userinfo'],
+        secrets: {
+          DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-123',
+          DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-123',
+        },
       })
     );
   });
 
-  it('returns a failure when secret upload fails', async () => {
+  it('returns a failure when the deployment carrying the secrets fails', async () => {
     const rootDir = createTempRoot();
     const keysDir = join(rootDir, '.authrim-keys', 'single');
 
@@ -178,9 +166,11 @@ describe('configureDownstreamIntrospectionDeployment', () => {
       DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-123',
       DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-123',
     });
-    vi.mocked(uploadSecrets).mockResolvedValue({
+    vi.mocked(deployWorker).mockResolvedValue({
+      component: 'ar-userinfo',
+      workerName: 'single-ar-userinfo',
       success: false,
-      errors: ['wrangler secret put failed'],
+      error: 'version upload failed',
     });
 
     const result = await configureDownstreamIntrospectionDeployment({
@@ -190,8 +180,8 @@ describe('configureDownstreamIntrospectionDeployment', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.secretUploadErrors).toEqual(['wrangler secret put failed']);
-    expect(vi.mocked(deployWorker)).not.toHaveBeenCalled();
+    expect(result.error).toBe('version upload failed');
+    expect(vi.mocked(deployWorker)).toHaveBeenCalledOnce();
   });
 
   it('falls back to the next API base URL candidate when readiness fails', async () => {
@@ -227,10 +217,6 @@ describe('configureDownstreamIntrospectionDeployment', () => {
     vi.mocked(loadDownstreamIntrospectionClientSecrets).mockResolvedValue({
       DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-123',
       DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-123',
-    });
-    vi.mocked(uploadSecrets).mockResolvedValue({
-      success: true,
-      errors: [],
     });
     vi.mocked(deployWorker).mockResolvedValue(redeployResult);
 

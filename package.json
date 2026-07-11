@@ -11,11 +11,11 @@
     "build:admin-ui": "turbo run build --filter=@authrim/ar-admin-ui",
     "build:login-ui": "turbo run build --filter=@authrim/ar-login-ui",
     "dev": "turbo run dev --parallel",
-    "deploy": "./scripts/deploy-with-retry.sh",
-    "deploy:with-router": "./scripts/deploy-with-retry.sh",
-    "deploy:retry": "./scripts/deploy-with-retry.sh",
+    "deploy": "./scripts/deploy-with-retry.sh --api-only",
+    "deploy:with-router": "./scripts/deploy-with-retry.sh --api-only",
+    "deploy:retry": "./scripts/deploy-with-retry.sh --api-only",
     "deploy:ui": "./scripts/deploy-ui.sh",
-    "deploy:api": "BUILD_TARGET=api ./scripts/deploy-with-retry.sh",
+    "deploy:api": "./scripts/deploy-with-retry.sh --api-only",
     "deploy:all": "./scripts/deploy-all.sh",
     "test": "turbo run test",
     "test:ui": "turbo run test --filter=@authrim/ar-admin-ui --filter=@authrim/ar-login-ui",
@@ -86,7 +86,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "hono": "4.12.25",
+    "hono": "4.12.29",
     "jose": "^6.1.2"
   },
   "devDependencies": {
@@ -108,7 +108,7 @@
     "turbo": "^2.9.17",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   },
   "optionalDependencies": {
@@ -141,7 +141,7 @@
       "vite": ">=7.3.2",
       "@sveltejs/kit": ">=2.57.1",
       "rollup": ">=4.59.0",
-      "hono": "4.12.25",
+      "hono": "4.12.29",
       "@hono/node-server": "^1.19.13",
       "tar": "^7.5.14",
       "devalue": "^5.8.1",

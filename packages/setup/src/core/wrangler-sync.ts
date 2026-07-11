@@ -162,14 +162,40 @@ export function extractEnvironmentSectionFromToml(content: string, env: string):
   return section.join('\n').trimEnd();
 }
 
+function findFirstEnvironmentBoundary(lines: string[]): number {
+  return lines.findIndex((line) => {
+    const trimmed = line.trim();
+    return trimmed.startsWith('# Environment: ') || /^\[\[?env\.[a-z0-9-]+/.test(trimmed);
+  });
+}
+
+function extractTopLevelPreamble(content: string): string {
+  const lines = content.split('\n');
+  const boundary = findFirstEnvironmentBoundary(lines);
+  return (boundary === -1 ? lines : lines.slice(0, boundary)).join('\n').trimEnd();
+}
+
+function extractEnvironmentSections(content: string): string {
+  const lines = content.split('\n');
+  const boundary = findFirstEnvironmentBoundary(lines);
+  return boundary === -1 ? '' : lines.slice(boundary).join('\n').trim();
+}
+
 export function mergeEnvironmentSectionIntoToml(
   deployContent: string,
   masterContent: string,
   env: string
 ): string {
-  const withoutTargetEnv = removeEnvironmentSectionFromToml(deployContent, env).content.trimEnd();
+  // Generated top-level settings (especially the complete Durable Object
+  // migration history) must advance together with the target environment.
+  // Other environment sections remain byte-for-byte from the deploy copy.
+  const masterPreamble = extractTopLevelPreamble(masterContent);
+  const withoutTargetEnv = removeEnvironmentSectionFromToml(deployContent, env).content;
+  const otherEnvironmentSections = extractEnvironmentSections(withoutTargetEnv);
   const targetSection = extractEnvironmentSectionFromToml(masterContent, env).trim();
-  return [withoutTargetEnv, targetSection].filter(Boolean).join('\n\n') + '\n';
+  return (
+    [masterPreamble, otherEnvironmentSections, targetSection].filter(Boolean).join('\n\n') + '\n'
+  );
 }
 
 /**
