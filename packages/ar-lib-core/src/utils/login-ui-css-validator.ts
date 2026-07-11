@@ -167,6 +167,21 @@ function normalizeSelector(selector: string): string {
   return selector.replace(/\s+/g, ' ').trim();
 }
 
+function parseAttributeSelectorSequence(selector: string): string[] | null {
+  const attributes: string[] = [];
+  let cursor = 0;
+
+  while (cursor < selector.length) {
+    if (selector[cursor] !== '[') return null;
+    const closingBracket = selector.indexOf(']', cursor + 1);
+    if (closingBracket === -1) return null;
+    attributes.push(selector.slice(cursor, closingBracket + 1));
+    cursor = closingBracket + 1;
+  }
+
+  return attributes.length > 0 ? attributes : null;
+}
+
 function selectorIsAllowed(selector: string): boolean {
   const normalized = normalizeSelector(selector);
   if (!normalized) return false;
@@ -180,10 +195,60 @@ function selectorIsAllowed(selector: string): boolean {
     const base = part.replace(/:(?:hover|focus|focus-visible|disabled|active)$/u, '');
     if (ALLOWED_SELECTORS.includes(base)) return true;
 
-    const attributeSelectors = base.match(/\[[^\]]+\]/gu);
-    if (!attributeSelectors || attributeSelectors.join('') !== base) return false;
+    const attributeSelectors = parseAttributeSelectorSequence(base);
+    if (!attributeSelectors) return false;
     return attributeSelectors.every((attribute) => ALLOWED_SELECTORS.includes(attribute));
   });
+}
+
+interface SimpleCssRule {
+  selector: string;
+  declarations: string;
+}
+
+function isCssWhitespace(character: string): boolean {
+  return (
+    character === ' ' ||
+    character === '\t' ||
+    character === '\n' ||
+    character === '\r' ||
+    character === '\f'
+  );
+}
+
+function parseSimpleCssRules(css: string): SimpleCssRule[] | null {
+  const rules: SimpleCssRule[] = [];
+  let cursor = 0;
+
+  while (cursor < css.length) {
+    while (cursor < css.length && isCssWhitespace(css[cursor])) cursor += 1;
+    if (cursor >= css.length) break;
+
+    const openingBrace = css.indexOf('{', cursor);
+    const unexpectedClosingBrace = css.indexOf('}', cursor);
+    if (
+      openingBrace === -1 ||
+      (unexpectedClosingBrace !== -1 && unexpectedClosingBrace < openingBrace)
+    ) {
+      return null;
+    }
+
+    const closingBrace = css.indexOf('}', openingBrace + 1);
+    if (closingBrace === -1) return null;
+
+    const nestedOpeningBrace = css.indexOf('{', openingBrace + 1);
+    if (nestedOpeningBrace !== -1 && nestedOpeningBrace < closingBrace) return null;
+
+    const selector = css.slice(cursor, openingBrace).trim();
+    if (!selector) return null;
+    rules.push({
+      selector,
+      declarations: css.slice(openingBrace + 1, closingBrace),
+    });
+    cursor = closingBrace + 1;
+  }
+
+  return rules;
 }
 
 function declarationIsAllowed(declaration: string): string | null {
@@ -242,13 +307,17 @@ export function validateLoginUICustomCss(input: unknown): LoginUICssValidationRe
 
   const errors: string[] = [];
   const sanitizedRules: string[] = [];
-  const rulePattern = /([^{}]+)\{([^{}]*)\}/gu;
-  let consumed = '';
-  let match: RegExpExecArray | null;
+  const rules = parseSimpleCssRules(css);
+  if (!rules) {
+    return {
+      valid: false,
+      sanitizedCss: null,
+      errors: ['Custom CSS must contain only simple selector blocks.'],
+    };
+  }
 
-  while ((match = rulePattern.exec(css)) !== null) {
-    consumed += match[0];
-    const selectorList = match[1]
+  for (const rule of rules) {
+    const selectorList = rule.selector
       .split(',')
       .map((selector) => normalizeSelector(selector))
       .filter(Boolean);
@@ -256,17 +325,17 @@ export function validateLoginUICustomCss(input: unknown): LoginUICssValidationRe
       selectorList.length === 0 ||
       selectorList.some((selector) => !selectorIsAllowed(selector))
     ) {
-      errors.push(`Selector is not allowed: ${match[1].trim()}`);
+      errors.push(`Selector is not allowed: ${rule.selector}`);
       continue;
     }
 
-    const declarations = match[2]
+    const declarations = rule.declarations
       .split(';')
       .map((declaration) => declaration.trim())
       .filter(Boolean)
       .map(declarationIsAllowed);
     if (declarations.some((declaration) => declaration === null)) {
-      errors.push(`Declaration is not allowed in selector: ${match[1].trim()}`);
+      errors.push(`Declaration is not allowed in selector: ${rule.selector}`);
       continue;
     }
 
@@ -274,15 +343,11 @@ export function validateLoginUICustomCss(input: unknown): LoginUICssValidationRe
       Boolean(declaration)
     );
     if (safeDeclarations.length === 0) {
-      errors.push(`Selector has no valid declarations: ${match[1].trim()}`);
+      errors.push(`Selector has no valid declarations: ${rule.selector}`);
       continue;
     }
 
     sanitizedRules.push(`${selectorList.join(', ')} { ${safeDeclarations.join('; ')}; }`);
-  }
-
-  if (css.replace(/\s+/gu, '') !== consumed.replace(/\s+/gu, '')) {
-    errors.push('Custom CSS must contain only simple selector blocks.');
   }
 
   if (errors.length > 0) {

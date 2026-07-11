@@ -74,4 +74,15 @@ describe('validateLoginUICustomCss', () => {
     expect(validateLoginUICustomCss('.auth-page { color: red; /* hidden */ }').valid).toBe(false);
     expect(validateLoginUICustomCss('.auth-page { color: red; } .x').valid).toBe(false);
   });
+
+  it('rejects long malformed input without regex backtracking', () => {
+    const malformedAttributes = `${'['.repeat(8_000)} { color: red; }`;
+    const missingBlock = 'z'.repeat(8_000);
+
+    expect(validateLoginUICustomCss(malformedAttributes).valid).toBe(false);
+    expect(validateLoginUICustomCss(missingBlock)).toMatchObject({
+      valid: false,
+      errors: ['Custom CSS must contain only simple selector blocks.'],
+    });
+  });
 });
