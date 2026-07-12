@@ -58,6 +58,7 @@ export interface Env {
 
   // R2 Buckets
   AVATARS: R2Bucket;
+  PUBLIC_ASSETS?: R2Bucket; // Public Login UI assets such as logos, backgrounds, and favicons
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
   AUDIT_ARCHIVE?: R2Bucket; // Canonical R2 archive for audit/admin audit/runtime log chunks and DLQ backup
   IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts
@@ -100,6 +101,7 @@ export interface Env {
   SAML_AGGREGATE_METADATA_STORE?: DurableObjectNamespace<SAMLAggregateMetadataStore>; // SAML aggregate metadata previews and batch imports
   PERMISSION_CHANGE_HUB?: DurableObjectNamespace; // Phase 8.3: Real-time permission change notifications
   FLOW_STATE_STORE?: DurableObjectNamespace; // Track C: Flow Engine state management
+  DIRECTORY_CONNECTOR_RELAY?: DurableObjectNamespace; // Wordwarden outbound connector relay
 
   // Service Bindings (Worker-to-Worker communication)
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
@@ -174,6 +176,8 @@ export interface Env {
 
   ENABLE_CLIENT_CREDENTIALS?: string; // "true" to enable RFC 6749 Section 4.4 Client Credentials Grant
   ENABLE_RAR?: string; // "true" to enable RFC 9396 Rich Authorization Requests
+  ENABLE_LOGIN_RUNTIME_FLOW?: string; // "true" to enable new LoginUI runtime Flow interactions
+  FLOW_RUNTIME_HMAC_SECRET?: string; // HMAC secret for Flow runtime contract signatures
 
   // AI Ephemeral Auth Features
   ENABLE_AI_SCOPES?: string; // "true" to enable ai:* scope namespace (ai:read, ai:write, ai:execute, ai:admin)
@@ -224,6 +228,7 @@ export interface Env {
   DEFAULT_TENANT_ID?: string; // Default tenant ID (default: "default")
   PRIMARY_TENANT_ID?: string; // Tenant ID for naked domain access (e.g., example.com → tenantA)
   NAKED_DOMAIN_AS_ISSUER?: string; // "true" to use naked domain as issuer (e.g., https://example.com instead of https://tenant.example.com)
+  AUTHRIM_TRUST_FORWARDED_HOST?: string; // "true" when this Worker is reachable only behind ar-router service bindings
 
   // Check API (Phase 8.3)
   ENABLE_CHECK_API?: string; // "true" to enable Check API endpoints
@@ -310,6 +315,8 @@ export interface Env {
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
   KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
+  PLUGIN_ENCRYPTION_KEY?: string; // Dedicated encryption key for plugin configuration secrets
+  PLUGIN_ENCRYPTION_SALT?: string; // Optional salt override for plugin configuration secret encryption
   VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
   TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK?: string; // Ed25519 private JWK for control/management snapshot publishing only
   TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID?: string; // Key ID for runtime registry snapshot signatures
@@ -359,6 +366,7 @@ export interface Env {
   LOG_LEVEL?: string; // "debug", "info", "warn", "error" (default: "info")
   LOG_FORMAT?: string; // "json" (structured), "pretty" (human-readable) (default: "json")
   ENABLE_LOG_HASH_USER_ID?: string; // "true" to hash user IDs in logs for privacy
+  AUTHRIM_FLOW_RUNTIME_TIMING?: string; // Temporary: "true" to emit Flow runtime timing diagnostics
 
   // ============================================================
   // Environment Detection & Version Management

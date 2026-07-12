@@ -3,10 +3,12 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+
+	const { brandingStore } = useLoginUIStores();
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -64,6 +66,8 @@
 		legal_basis: string;
 		title: string;
 		description: string;
+		processing_purpose?: string;
+		withdrawal_impact?: string;
 		document_url?: string;
 		inline_content?: string;
 		version: string;
@@ -75,6 +79,8 @@
 		needs_version_upgrade: boolean;
 		show_deletion_link: boolean;
 		deletion_url?: string;
+		checkbox_mode?: 'none' | 'required' | 'optional';
+		checkbox_default_checked?: boolean;
 		display_order: number;
 	}
 
@@ -110,6 +116,17 @@
 	const selectedOrg = $derived(
 		consentData?.organizations.find((o) => o.id === selectedOrgId) || consentData?.primary_org
 	);
+	const hasBlockingConsentItems = $derived(
+		Boolean(
+			consentData?.consent_management_enabled &&
+			consentData.consent_items?.some(
+				(item) =>
+					item.is_required &&
+					item.enforcement === 'block' &&
+					consentItemDecisions[item.statement_id] !== 'granted'
+			)
+		)
+	);
 
 	// ---------------------------------------------------------------------------
 	// Lifecycle
@@ -142,8 +159,10 @@
 				if (consentData.consent_items) {
 					const decisions: Record<string, 'granted' | 'denied'> = {};
 					for (const item of consentData.consent_items) {
-						// Required items default to granted, optional to denied
-						decisions[item.statement_id] = item.is_required ? 'granted' : 'denied';
+						decisions[item.statement_id] =
+							item.checkbox_mode === 'none' || item.checkbox_default_checked === true
+								? 'granted'
+								: 'denied';
 					}
 					consentItemDecisions = decisions;
 				}
@@ -420,18 +439,19 @@
 									class="flex items-start gap-3 p-3 rounded-lg mb-2"
 									style="background: var(--surface-secondary);"
 								>
-									<input
-										type="checkbox"
-										checked={consentItemDecisions[item.statement_id] === 'granted'}
-										disabled={item.enforcement === 'block'}
-										onchange={() => {
-											consentItemDecisions[item.statement_id] =
-												consentItemDecisions[item.statement_id] === 'granted'
-													? 'denied'
-													: 'granted';
-										}}
-										class="mt-1 flex-shrink-0"
-									/>
+									{#if item.checkbox_mode !== 'none'}
+										<input
+											type="checkbox"
+											checked={consentItemDecisions[item.statement_id] === 'granted'}
+											onchange={() => {
+												consentItemDecisions[item.statement_id] =
+													consentItemDecisions[item.statement_id] === 'granted'
+														? 'denied'
+														: 'granted';
+											}}
+											class="mt-1 flex-shrink-0"
+										/>
+									{/if}
 									<div class="flex-1 min-w-0">
 										<div class="flex items-center gap-2 flex-wrap">
 											<span class="text-sm font-medium" style="color: var(--text-primary);">
@@ -458,6 +478,18 @@
 										<p class="text-xs mt-1" style="color: var(--text-secondary);">
 											{item.description}
 										</p>
+										{#if item.processing_purpose}
+											<p class="text-xs mt-1" style="color: var(--text-secondary);">
+												<strong>{$LL.consent_item_processing_purpose()}:</strong>
+												{item.processing_purpose}
+											</p>
+										{/if}
+										{#if item.withdrawal_impact}
+											<p class="text-xs mt-1" style="color: var(--text-secondary);">
+												<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
+												{item.withdrawal_impact}
+											</p>
+										{/if}
 										{#if item.document_url && isValidLinkUrl(item.document_url)}
 											<a
 												href={item.document_url}
@@ -487,17 +519,19 @@
 									class="flex items-start gap-3 p-3 rounded-lg mb-2"
 									style="background: var(--surface-secondary);"
 								>
-									<input
-										type="checkbox"
-										checked={consentItemDecisions[item.statement_id] === 'granted'}
-										onchange={() => {
-											consentItemDecisions[item.statement_id] =
-												consentItemDecisions[item.statement_id] === 'granted'
-													? 'denied'
-													: 'granted';
-										}}
-										class="mt-1 flex-shrink-0"
-									/>
+									{#if item.checkbox_mode !== 'none'}
+										<input
+											type="checkbox"
+											checked={consentItemDecisions[item.statement_id] === 'granted'}
+											onchange={() => {
+												consentItemDecisions[item.statement_id] =
+													consentItemDecisions[item.statement_id] === 'granted'
+														? 'denied'
+														: 'granted';
+											}}
+											class="mt-1 flex-shrink-0"
+										/>
+									{/if}
 									<div class="flex-1 min-w-0">
 										<div class="flex items-center gap-2 flex-wrap">
 											<span class="text-sm font-medium" style="color: var(--text-primary);">
@@ -524,6 +558,18 @@
 										<p class="text-xs mt-1" style="color: var(--text-secondary);">
 											{item.description}
 										</p>
+										{#if item.processing_purpose}
+											<p class="text-xs mt-1" style="color: var(--text-secondary);">
+												<strong>{$LL.consent_item_processing_purpose()}:</strong>
+												{item.processing_purpose}
+											</p>
+										{/if}
+										{#if item.withdrawal_impact}
+											<p class="text-xs mt-1" style="color: var(--text-secondary);">
+												<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
+												{item.withdrawal_impact}
+											</p>
+										{/if}
 										{#if item.document_url && isValidLinkUrl(item.document_url)}
 											<a
 												href={item.document_url}
@@ -610,7 +656,7 @@
 						variant="primary"
 						class="flex-1"
 						loading={allowLoading}
-						disabled={denyLoading}
+						disabled={denyLoading || hasBlockingConsentItems}
 						onclick={handleAllow}
 					>
 						{$LL.consent_allowButton()}
@@ -619,13 +665,7 @@
 
 				<!-- Block Message and Deletion Link -->
 				{#if consentData.consent_management_enabled}
-					{@const blockItems = consentData.consent_items?.filter(
-						(i) =>
-							i.is_required &&
-							i.enforcement === 'block' &&
-							consentItemDecisions[i.statement_id] !== 'granted'
-					)}
-					{#if blockItems && blockItems.length > 0}
+					{#if hasBlockingConsentItems}
 						<div
 							class="mt-4 p-3 rounded-lg text-sm"
 							style="background: var(--warning-light, #fffbeb); color: var(--warning-dark, #92400e);"

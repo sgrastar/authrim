@@ -28,6 +28,7 @@ function createApp(permissions: string[]) {
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/anonymize', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/roles', (c) => c.json({ ok: true }));
   app.get('/api/admin/settings', (c) => c.json({ ok: true }));
@@ -96,6 +97,21 @@ describe('admin resource permission middleware', () => {
 
     expect(deleteUser.status).toBe(200);
     expect(anonymize.status).toBe(200);
+  });
+
+  it('requires users write permission for TOTP credential resets', async () => {
+    const readOnly = createApp([ADMIN_PERMISSIONS.USERS_READ]);
+    const writer = createApp([ADMIN_PERMISSIONS.USERS_WRITE]);
+
+    const denied = await readOnly.request('/api/admin/users/user-1/totp/reset', {
+      method: 'POST',
+    });
+    const allowed = await writer.request('/api/admin/users/user-1/totp/reset', {
+      method: 'POST',
+    });
+
+    expect(denied.status).toBe(403);
+    expect(allowed.status).toBe(200);
   });
 
   it('does not double-gate RBAC user subresources with users permissions', async () => {

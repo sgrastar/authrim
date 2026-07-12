@@ -22,5 +22,5 @@
   Cache-Control: no-cache, no-store, must-revalidate
 
 # Allow caching for static assets (JS, CSS, images) with revalidation
-/_app/*
+/_authrim_admin/*
   Cache-Control: public, max-age=31536000, immutable

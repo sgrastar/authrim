@@ -7,6 +7,12 @@
 		type NotificationDeliveryRoute,
 		type NotificationCenterSummaryRow
 	} from '$lib/api/admin-logging-control';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY_OPTIONS = [
@@ -206,13 +212,12 @@
 	<title>{$LL.admin_notifications_page_title()}</title>
 </svelte:head>
 
-<div class="page-shell">
-	<header class="page-header">
-		<div>
-			<p class="eyebrow">{$LL.admin_notifications_eyebrow()}</p>
-			<h1>{$LL.admin_notifications_title()}</h1>
-		</div>
-		<div class="header-actions">
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_notifications_eyebrow()}
+		title={$LL.admin_notifications_title()}
+	>
+		{#snippet actions()}
 			<button
 				class="btn btn-secondary"
 				type="button"
@@ -227,46 +232,50 @@
 				<i class="i-ph-arrow-clockwise"></i>
 				{loading ? $LL.admin_notifications_loading() : $LL.admin_notifications_refresh()}
 			</button>
-		</div>
-	</header>
+		{/snippet}
+	</AdminPageHeader>
 
-	<section class="filter-panel">
-		<label>
-			{$LL.admin_notifications_tenant_id()}
-			<input bind:value={tenantId} placeholder={$LL.admin_notifications_platform_view()} />
+	<AdminToolbar>
+		<label class="admin-field admin-field--compact">
+			<span class="admin-field__label">{$LL.admin_notifications_tenant_id()}</span>
+			<input
+				class="admin-input"
+				bind:value={tenantId}
+				placeholder={$LL.admin_notifications_platform_view()}
+			/>
 		</label>
-		<label>
-			{$LL.admin_notifications_category()}
-			<select bind:value={category}>
+		<label class="admin-field admin-field--compact">
+			<span class="admin-field__label">{$LL.admin_notifications_category()}</span>
+			<select class="admin-select" bind:value={category}>
 				{#each CATEGORY_OPTIONS as option (option.value)}
 					<option value={option.value}>{option.getLabel()}</option>
 				{/each}
 			</select>
 		</label>
-		<label>
-			{$LL.admin_notifications_status()}
-			<select bind:value={status}>
+		<label class="admin-field admin-field--compact">
+			<span class="admin-field__label">{$LL.admin_notifications_status()}</span>
+			<select class="admin-select" bind:value={status}>
 				{#each STATUS_OPTIONS as option (option.value)}
 					<option value={option.value}>{option.getLabel()}</option>
 				{/each}
 			</select>
 		</label>
-		<label>
-			{$LL.admin_notifications_severity()}
-			<select bind:value={severity}>
+		<label class="admin-field admin-field--compact">
+			<span class="admin-field__label">{$LL.admin_notifications_severity()}</span>
+			<select class="admin-select" bind:value={severity}>
 				{#each SEVERITY_OPTIONS as option (option.value)}
 					<option value={option.value}>{option.getLabel()}</option>
 				{/each}
 			</select>
 		</label>
-		<label>
-			{$LL.admin_notifications_limit()}
-			<input type="number" min="1" max="200" bind:value={limit} />
+		<label class="admin-field admin-field--compact">
+			<span class="admin-field__label">{$LL.admin_notifications_limit()}</span>
+			<input class="admin-input" type="number" min="1" max="200" bind:value={limit} />
 		</label>
-	</section>
+	</AdminToolbar>
 
 	{#if error}
-		<p class="alert-error">{error}</p>
+		<div class="alert alert-error">{error}</div>
 	{/if}
 
 	<section class="summary-strip">
@@ -303,186 +312,132 @@
 		</section>
 	{/if}
 
-	<section class="table-panel">
-		<div class="table-wrap">
-			<table>
-				<thead>
+	<AdminDataTable width="xwide">
+		<thead>
+			<tr>
+				<th>{$LL.admin_notifications_severity()}</th>
+				<th>{$LL.admin_notifications_status()}</th>
+				<th>{$LL.admin_notifications_category()}</th>
+				<th>{$LL.admin_notifications_tenant()}</th>
+				<th>{$LL.admin_notifications_event()}</th>
+				<th>{$LL.admin_notifications_attempts()}</th>
+				<th>{$LL.admin_notifications_updated()}</th>
+				<th>{$LL.admin_notifications_action()}</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#if events.length === 0}
+				<tr>
+					<td colspan="8" class="empty-cell">{$LL.admin_notifications_empty()}</td>
+				</tr>
+			{:else}
+				{#each events as event (event.id)}
 					<tr>
-						<th>{$LL.admin_notifications_severity()}</th>
-						<th>{$LL.admin_notifications_status()}</th>
-						<th>{$LL.admin_notifications_category()}</th>
-						<th>{$LL.admin_notifications_tenant()}</th>
-						<th>{$LL.admin_notifications_event()}</th>
-						<th>{$LL.admin_notifications_attempts()}</th>
-						<th>{$LL.admin_notifications_updated()}</th>
-						<th>{$LL.admin_notifications_action()}</th>
+						<td>
+							<span class={`severity severity-${event.severity}`}>{event.severity}</span>
+						</td>
+						<td><span class={`status status-${event.status}`}>{event.status}</span></td>
+						<td>{event.category}</td>
+						<td>{event.tenant_id}</td>
+						<td>
+							<div class="event-title">{event.event_type}</div>
+							<div class="event-sub">{payloadPreview(event)}</div>
+							{#if event.last_error}
+								<div class="event-error">{event.last_error}</div>
+							{/if}
+						</td>
+						<td>{event.attempts}</td>
+						<td>{formatDate(event.updated_at)}</td>
+						<td>
+							<div class="notification-actions">
+								<button
+									class="btn btn-secondary btn-sm"
+									type="button"
+									onclick={() => deliverEvent(event)}
+									disabled={deliveringId === event.id}
+								>
+									{deliveringId === event.id
+										? $LL.admin_notifications_sending()
+										: $LL.admin_notifications_deliver()}
+								</button>
+								<button
+									class="btn btn-secondary btn-sm"
+									type="button"
+									onclick={() => resolveEvent(event)}
+									disabled={resolvingId === event.id ||
+										!['pending', 'failed', 'dead_letter'].includes(event.status)}
+								>
+									{resolvingId === event.id
+										? $LL.admin_notifications_resolving()
+										: $LL.admin_notifications_resolve()}
+								</button>
+							</div>
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#if events.length === 0}
-						<tr>
-							<td colspan="8" class="empty-cell">{$LL.admin_notifications_empty()}</td>
-						</tr>
-					{:else}
-						{#each events as event (event.id)}
-							<tr>
-								<td>
-									<span class={`severity severity-${event.severity}`}>{event.severity}</span>
-								</td>
-								<td><span class={`status status-${event.status}`}>{event.status}</span></td>
-								<td>{event.category}</td>
-								<td>{event.tenant_id}</td>
-								<td>
-									<div class="event-title">{event.event_type}</div>
-									<div class="event-sub">{payloadPreview(event)}</div>
-									{#if event.last_error}
-										<div class="event-error">{event.last_error}</div>
-									{/if}
-								</td>
-								<td>{event.attempts}</td>
-								<td>{formatDate(event.updated_at)}</td>
-								<td>
-									<button
-										class="btn btn-secondary btn-small"
-										type="button"
-										onclick={() => deliverEvent(event)}
-										disabled={deliveringId === event.id}
-									>
-										{deliveringId === event.id
-											? $LL.admin_notifications_sending()
-											: $LL.admin_notifications_deliver()}
-									</button>
-									<button
-										class="btn btn-secondary btn-small"
-										type="button"
-										onclick={() => resolveEvent(event)}
-										disabled={resolvingId === event.id ||
-											!['pending', 'failed', 'dead_letter'].includes(event.status)}
-									>
-										{resolvingId === event.id
-											? $LL.admin_notifications_resolving()
-											: $LL.admin_notifications_resolve()}
-									</button>
-								</td>
-							</tr>
-						{/each}
-					{/if}
-				</tbody>
-			</table>
-		</div>
-	</section>
-</div>
+				{/each}
+			{/if}
+		</tbody>
+	</AdminDataTable>
+</AdminPageShell>
 
 <style>
-	.page-shell {
-		display: flex;
-		flex-direction: column;
-		gap: 18px;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
-	.header-actions {
-		display: flex;
-		gap: 8px;
-		flex-wrap: wrap;
-		justify-content: flex-end;
-	}
-
-	.eyebrow {
-		margin: 0 0 4px;
-		color: var(--text-secondary);
-		font-size: 12px;
-		text-transform: uppercase;
-	}
-
-	h1 {
-		margin: 0;
-		font-size: 28px;
-	}
-
-	.filter-panel,
-	.summary-strip,
-	.table-panel {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-	}
-
-	.filter-panel {
-		display: grid;
-		grid-template-columns: repeat(5, minmax(140px, 1fr));
-		gap: 12px;
-		padding: 16px;
-	}
-
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		color: var(--text-secondary);
-		font-size: 12px;
-		font-weight: 600;
-	}
-
-	input,
-	select {
-		min-height: 36px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		padding: 0 10px;
-		background: var(--bg-input);
-		color: var(--text-primary);
-	}
-
 	.summary-strip {
 		display: grid;
 		grid-template-columns: repeat(4, minmax(120px, 1fr));
 		gap: 1px;
+		margin-bottom: 18px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 		overflow: hidden;
+		box-shadow: var(--card-shadow, var(--shadow-panel, none));
 	}
 
 	.summary-strip > div {
 		padding: 14px 16px;
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 	}
 
 	.metric-label {
 		display: block;
-		color: var(--text-secondary);
-		font-size: 12px;
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: var(--table-header-letter-spacing, 0.08em);
+		text-transform: uppercase;
 	}
 
 	.summary-strip strong {
 		display: block;
 		margin-top: 4px;
-		font-size: 24px;
+		color: var(--color-text);
+		font-size: 1.5rem;
+		line-height: 1.15;
 	}
 
 	.summary-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 		gap: 10px;
+		margin-bottom: 18px;
 	}
 
 	.summary-cell {
 		display: flex;
 		gap: 12px;
 		align-items: center;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 12px;
-		background: var(--bg-card);
+		background: var(--color-surface);
+		box-shadow: var(--card-shadow, var(--shadow-panel, none));
 	}
 
 	.summary-count {
 		min-width: 42px;
-		font-size: 22px;
+		color: var(--color-text);
+		font-size: 1.35rem;
 		font-weight: 700;
 	}
 
@@ -490,33 +445,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 3px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 12px;
 		word-break: break-word;
-	}
-
-	.table-wrap {
-		overflow-x: auto;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-		min-width: 960px;
-	}
-
-	th,
-	td {
-		padding: 12px;
-		border-bottom: 1px solid var(--border);
-		text-align: left;
-		vertical-align: top;
-	}
-
-	th {
-		color: var(--text-secondary);
-		font-size: 12px;
-		text-transform: uppercase;
 	}
 
 	.severity,
@@ -525,126 +456,85 @@
 		align-items: center;
 		min-height: 22px;
 		border-radius: 999px;
+		border: 1px solid transparent;
 		padding: 2px 8px;
 		font-size: 12px;
 		font-weight: 600;
+		white-space: nowrap;
 	}
 
 	.severity-critical,
 	.status-dead_letter {
-		background: rgba(220, 38, 38, 0.12);
-		color: #b91c1c;
+		border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-danger);
 	}
 
 	.severity-high,
 	.status-failed {
-		background: rgba(234, 88, 12, 0.12);
-		color: #c2410c;
+		border-color: color-mix(in srgb, var(--color-warning) 36%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+		color: var(--color-warning);
 	}
 
 	.severity-medium,
 	.status-pending {
-		background: rgba(202, 138, 4, 0.14);
-		color: #a16207;
+		border-color: color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+		color: var(--color-warning);
 	}
 
 	.severity-low,
 	.severity-info,
 	.status-delivered,
 	.status-suppressed {
-		background: rgba(37, 99, 235, 0.1);
-		color: #1d4ed8;
+		border-color: color-mix(in srgb, var(--color-accent) 26%, var(--color-border));
+		background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+		color: var(--color-accent);
 	}
 
 	.event-title {
+		color: var(--color-text);
 		font-weight: 600;
 	}
 
 	.event-sub,
 	.event-error {
 		margin-top: 4px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 12px;
 		word-break: break-word;
 	}
 
 	.event-error {
-		color: #b91c1c;
+		color: var(--color-danger);
+	}
+
+	.alert {
+		margin-bottom: 18px;
+		border-radius: var(--radius-control);
+		padding: 10px 12px;
+		font-size: 14px;
 	}
 
 	.alert-error {
-		border: 1px solid rgba(220, 38, 38, 0.25);
-		border-radius: 8px;
-		padding: 10px 12px;
-		background: rgba(220, 38, 38, 0.08);
-		color: #b91c1c;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
 	}
 
 	.empty-cell {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-align: center;
 	}
 
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		min-height: 36px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		padding: 0 12px;
-		cursor: pointer;
-		font: inherit;
-		transition: background var(--transition-fast);
-	}
-
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.btn-primary {
-		background: var(--primary);
-		color: white;
-		border-color: var(--primary);
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: var(--primary-hover);
-	}
-
-	.btn-secondary {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
-	}
-
-	.btn-secondary:hover:not(:disabled) {
-		background: var(--border);
-	}
-
-	.btn-small {
-		min-height: 30px;
-		font-size: 12px;
-	}
-
-	.btn:disabled {
-		cursor: not-allowed;
-		opacity: 0.55;
-	}
-
-	@media (max-width: 1100px) {
-		.filter-panel {
-			grid-template-columns: repeat(2, minmax(160px, 1fr));
-		}
+	.notification-actions {
+		display: flex;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	@media (max-width: 720px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.filter-panel,
 		.summary-strip {
 			grid-template-columns: 1fr;
 		}

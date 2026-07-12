@@ -63,18 +63,21 @@ describe('KV Utilities', () => {
   let stateStoreKV: MockKVNamespace;
   let nonceStoreKV: MockKVNamespace;
   let clientsCacheKV: MockKVNamespace;
+  let authrimConfigKV: MockKVNamespace;
 
   beforeEach(() => {
     authCodesKV = new MockKVNamespace();
     stateStoreKV = new MockKVNamespace();
     nonceStoreKV = new MockKVNamespace();
     clientsCacheKV = new MockKVNamespace();
+    authrimConfigKV = new MockKVNamespace();
 
     env = {
       AUTH_CODES: authCodesKV as unknown as KVNamespace,
       STATE_STORE: stateStoreKV as unknown as KVNamespace,
       NONCE_STORE: nonceStoreKV as unknown as KVNamespace,
       CLIENTS_CACHE: clientsCacheKV as unknown as KVNamespace,
+      AUTHRIM_CONFIG: authrimConfigKV as unknown as KVNamespace,
       DB: {
         prepare: vi.fn().mockReturnValue({
           bind: vi.fn().mockReturnThis(),
@@ -297,6 +300,23 @@ describe('KV Utilities', () => {
       };
 
       // Pre-populate cache using tenant-prefixed key pattern
+      await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
+
+      const retrieved = await getClient(env, 'default', clientId, env.DB);
+
+      expect(retrieved).toBeNull();
+      expect(env.DB.prepare).toHaveBeenCalled();
+    });
+
+    it('should ignore stale client metadata cache even when maintenance cache mode is enabled', async () => {
+      const clientId = 'maintenance-cached-client';
+      const cachedData = {
+        client_id: clientId,
+        client_name: 'Stale Maintenance Cache Client',
+        redirect_uris: ['http://stale.example.com/callback'],
+      };
+
+      await authrimConfigKV.put('v1:cache-mode:platform', 'maintenance');
       await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
       const retrieved = await getClient(env, 'default', clientId, env.DB);

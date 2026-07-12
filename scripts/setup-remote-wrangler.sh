@@ -315,6 +315,7 @@ generate_base_wrangler() {
     local d1_databases=$3
     local r2_buckets=$4
     local do_bindings=$5
+    local service_bindings=${6:-}
 
     local file="packages/$package/wrangler.${DEPLOY_ENV}.toml"
 
@@ -360,6 +361,9 @@ $r2_buckets
 $audit_config
 # Durable Objects Bindings
 $do_bindings
+
+# Service Bindings
+$service_bindings
 
 # Environment variables
 [vars]
@@ -790,7 +794,9 @@ script_name = \"${DEPLOY_ENV}-ar-lib-core\"
 [[durable_objects.bindings]]
 name = \"VERSION_MANAGER\"
 class_name = \"VersionManager\"
-script_name = \"${DEPLOY_ENV}-ar-lib-core\""
+script_name = \"${DEPLOY_ENV}-ar-lib-core\"" "[[services]]
+binding = \"EXTERNAL_IDP\"
+service = \"${DEPLOY_ENV}-ar-bridge\""
 fi
 
 # Generate ar-auth wrangler file
@@ -1104,7 +1110,9 @@ script_name = \"${DEPLOY_ENV}-ar-lib-core\"
 [[durable_objects.bindings]]
 name = \"VERSION_MANAGER\"
 class_name = \"VersionManager\"
-script_name = \"${DEPLOY_ENV}-ar-lib-core\""
+script_name = \"${DEPLOY_ENV}-ar-lib-core\"" "[[services]]
+binding = \"EXTERNAL_IDP\"
+service = \"${DEPLOY_ENV}-ar-bridge\""
 fi
 
 # Generate policy-service wrangler file (ReBAC)

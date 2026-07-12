@@ -4,7 +4,12 @@
  * Generates SAML 2.0 Assertions and Responses according to OASIS SAML 2.0 specification.
  */
 
-import { SAML_NAMESPACES, STATUS_CODES, SUBJECT_CONFIRMATION_METHODS } from '../common/constants';
+import {
+  NAMEID_FORMATS,
+  SAML_NAMESPACES,
+  STATUS_CODES,
+  SUBJECT_CONFIRMATION_METHODS,
+} from '../common/constants';
 import {
   createDocument,
   createElement,
@@ -345,20 +350,7 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
       }
 
       for (const value of attr.values) {
-        const attributeValueElement = createElement(
-          doc,
-          SAML_NAMESPACES.SAML2,
-          'AttributeValue',
-          'saml'
-        );
-        setAttributeNS(
-          attributeValueElement,
-          SAML_NAMESPACES.XSI,
-          'xsi:type',
-          attr.valueType ?? 'xs:string'
-        );
-        setTextContent(attributeValueElement, value);
-        appendChild(attributeElement, attributeValueElement);
+        appendChild(attributeElement, buildAttributeValueElement(doc, attr, value));
       }
 
       appendChild(attributeStatementElement, attributeElement);
@@ -368,6 +360,50 @@ function buildAssertion(doc: XMLDocument, options: AssertionOptions): XMLElement
   }
 
   return assertionElement;
+}
+
+function buildAttributeValueElement(
+  doc: XMLDocument,
+  attr: SAMLAttribute,
+  value: string
+): XMLElement {
+  const attributeValueElement = createElement(doc, SAML_NAMESPACES.SAML2, 'AttributeValue', 'saml');
+
+  if (attr.valueType === 'saml:persistent-nameid') {
+    const persistentNameID = parsePersistentNameIDValue(value);
+    if (persistentNameID) {
+      const nameIDElement = createElement(doc, SAML_NAMESPACES.SAML2, 'NameID', 'saml');
+      setAttribute(nameIDElement, 'Format', NAMEID_FORMATS.PERSISTENT);
+      setAttribute(nameIDElement, 'NameQualifier', persistentNameID.nameQualifier);
+      setAttribute(nameIDElement, 'SPNameQualifier', persistentNameID.spNameQualifier);
+      setTextContent(nameIDElement, persistentNameID.nameID);
+      appendChild(attributeValueElement, nameIDElement);
+      return attributeValueElement;
+    }
+  }
+
+  setAttributeNS(
+    attributeValueElement,
+    SAML_NAMESPACES.XSI,
+    'xsi:type',
+    attr.valueType ?? 'xs:string'
+  );
+  setTextContent(attributeValueElement, value);
+  return attributeValueElement;
+}
+
+function parsePersistentNameIDValue(
+  value: string
+): { nameQualifier: string; spNameQualifier: string; nameID: string } | null {
+  const parts = value.split('!');
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+    return null;
+  }
+  return {
+    nameQualifier: parts[0],
+    spNameQualifier: parts[1],
+    nameID: parts[2],
+  };
 }
 
 /**

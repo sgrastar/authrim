@@ -1,11 +1,11 @@
 {
   "name": "@authrim/ar-router",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
-    "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-router --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'router: lint skipped'",
@@ -14,13 +14,13 @@
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "hono": "4.12.21"
+    "hono": "4.12.29"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   }
 }

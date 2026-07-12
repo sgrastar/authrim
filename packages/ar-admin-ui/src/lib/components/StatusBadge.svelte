@@ -35,7 +35,7 @@
 		align-items: center;
 		gap: 6px;
 		padding: 4px 10px;
-		border-radius: 20px;
+		border-radius: var(--status-badge-radius, var(--radius-control, 20px));
 		font-size: 0.75rem;
 		font-weight: 500;
 	}
@@ -47,60 +47,60 @@
 	.status-dot {
 		width: 6px;
 		height: 6px;
-		border-radius: 50%;
+		border-radius: var(--status-dot-radius, 50%);
 	}
 
 	/* Active / Success */
 	.status-badge.active,
 	.status-badge.success {
-		background: var(--success-light);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.status-badge.active .status-dot,
 	.status-badge.success .status-dot {
-		background: var(--success);
+		background: var(--color-success);
 	}
 
 	/* Inactive / Neutral */
 	.status-badge.inactive,
 	.status-badge.neutral {
-		background: rgba(100, 116, 139, 0.1);
-		color: var(--system-color);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 
 	.status-badge.inactive .status-dot,
 	.status-badge.neutral .status-dot {
-		background: var(--system-color);
+		background: var(--color-text-subtle);
 	}
 
 	/* Warning */
 	.status-badge.warning {
-		background: var(--warning-light);
-		color: var(--warning);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.status-badge.warning .status-dot {
-		background: var(--warning);
+		background: var(--color-warning);
 	}
 
 	/* Danger */
 	.status-badge.danger {
-		background: var(--danger-light);
-		color: var(--danger);
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+		color: var(--color-danger);
 	}
 
 	.status-badge.danger .status-dot {
-		background: var(--danger);
+		background: var(--color-danger);
 	}
 
 	/* Info */
 	.status-badge.info {
-		background: var(--primary-light);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.status-badge.info .status-dot {
-		background: var(--primary);
+		background: var(--color-accent);
 	}
 </style>

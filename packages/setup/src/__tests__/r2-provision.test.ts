@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deployCommandMock = vi.hoisted(() => vi.fn());
 const provisionR2BucketsMock = vi.hoisted(() => vi.fn());
+const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../cli/commands/deploy.js', () => ({
   deployCommand: deployCommandMock,
@@ -17,6 +18,10 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     provisionR2Buckets: provisionR2BucketsMock,
   };
 });
+
+vi.mock('../core/wrangler-sync.js', () => ({
+  saveMasterWranglerConfigs: saveMasterWranglerConfigsMock,
+}));
 
 import { r2ProvisionCommand } from '../cli/commands/r2-provision.js';
 
@@ -64,6 +69,7 @@ describe('r2-provision command', () => {
     deployCommandMock.mockResolvedValue(undefined);
     provisionR2BucketsMock.mockReset();
     provisionR2BucketsMock.mockResolvedValue([
+      { binding: 'PUBLIC_ASSETS', name: 'prod-public-assets' },
       { binding: 'AVATARS', name: 'prod-authrim-avatars' },
       { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
       { binding: 'AUDIT_ARCHIVE', name: 'prod-audit-archive' },
@@ -71,6 +77,12 @@ describe('r2-provision command', () => {
       { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
     ]);
+    saveMasterWranglerConfigsMock.mockReset();
+    saveMasterWranglerConfigsMock.mockResolvedValue({
+      success: true,
+      files: ['ar-management.toml'],
+      errors: [],
+    });
   });
 
   afterEach(async () => {
@@ -91,6 +103,7 @@ describe('r2-provision command', () => {
 
     expect(config.features.r2.enabled).toBe(true);
     expect(lock.r2).toEqual({
+      PUBLIC_ASSETS: { name: 'prod-public-assets' },
       AVATARS: { name: 'prod-authrim-avatars' },
       DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
       AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
@@ -101,6 +114,17 @@ describe('r2-provision command', () => {
     expect(provisionR2BucketsMock).toHaveBeenCalledWith(
       'prod',
       expect.objectContaining({ existing: undefined })
+    );
+    expect(saveMasterWranglerConfigsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ features: expect.objectContaining({ r2: { enabled: true } }) }),
+      expect.objectContaining({
+        r2: expect.objectContaining({
+          PUBLIC_ASSETS: { name: 'prod-public-assets' },
+          DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
+          SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
+        }),
+      }),
+      expect.objectContaining({ baseDir: tempDir, env: 'prod' })
     );
     expect(deployCommandMock).toHaveBeenCalledWith({
       env: 'prod',
@@ -116,8 +140,9 @@ describe('r2-provision command', () => {
     await r2ProvisionCommand({ env: 'prod', yes: true, skipDeploy: true });
 
     expect(deployCommandMock).not.toHaveBeenCalled();
+    expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
-    expect(Object.keys(lock.r2)).toHaveLength(6);
+    expect(Object.keys(lock.r2)).toHaveLength(7);
   });
 
   it('does not update local state or deploy when bucket provisioning fails', async () => {

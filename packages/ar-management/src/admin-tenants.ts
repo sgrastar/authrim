@@ -102,15 +102,23 @@ export const TENANT_TABLES_TO_DELETE = [
   'password_reset_tokens',
   // Consents
   'client_consent_overrides',
+  'client_trust_policies',
   'consent_history',
   'consent_item_history',
+  'consent_policies',
+  'consent_policy_items',
   'consent_policy_versions',
+  'consent_records',
   'consent_statement_localizations',
   'consent_statement_versions',
   'consent_statements',
   'oauth_client_consents',
+  'sign_in_confirmation_policies',
   'tenant_consent_requirements',
   'user_consent_records',
+  // Flow runtime resources
+  'screens',
+  'oidc_scopes',
   // Compliance
   'compliance_reports',
   'data_export_requests',
@@ -566,6 +574,15 @@ async function seedTenantDefaultSettings(c: Context<{ Bindings: Env }>, tenantId
     ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:tenant-discovery-ui`, JSON.stringify({})),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:authentication-methods`, JSON.stringify({})),
+    env.SETTINGS?.put(
+      `settings:tenant:${tenantId}:directory-connectors`,
+      JSON.stringify({
+        enabled: false,
+        default_connector_id: 'campus',
+        auto_provision: false,
+        connectors: [],
+      })
+    ),
     env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
   ]);
 }
@@ -1052,6 +1069,7 @@ async function runTenantD1PoolProvisioning(
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:login-ui`),
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:tenant-discovery-ui`),
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:authentication-methods`),
+            c.env.SETTINGS.delete(`settings:tenant:${input.id}:directory-connectors`),
             c.env.SETTINGS.delete(`settings:tenant:${input.id}:login-entry`),
           ]
         : []),
@@ -1302,7 +1320,8 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
     try {
       // 1. Write TenantContract to KV
       await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
-      // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui, authentication-methods, login-entry)
+      // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui,
+      // authentication-methods, directory-connectors, login-entry)
       await seedTenantDefaultSettings(c, id);
       // 3. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
       await initTenantKeyManager(c.env.KEY_MANAGER, id);
@@ -1321,6 +1340,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:authentication-methods`),
+        c.env.SETTINGS?.delete(`settings:tenant:${id}:directory-connectors`),
         c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
         // KeyManager DO cleanup is not possible (no delete/reset RPC) — orphaned DO is harmless
       ]);
@@ -1725,6 +1745,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
       c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:authentication-methods`),
+      c.env.SETTINGS?.delete(`settings:tenant:${id}:directory-connectors`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
     ]);
     await recordTenantSlotAudit(adminAdapter, {

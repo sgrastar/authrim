@@ -12,6 +12,10 @@ import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
 } from '$lib/authrim/storage-keys';
+import type {
+	PublicKeyCredentialCreationOptionsJSON,
+	PublicKeyCredentialRequestOptionsJSON
+} from '@simplewebauthn/browser';
 
 interface ApiFetchOptions extends RequestInit {
 	baseUrl?: string;
@@ -102,6 +106,11 @@ interface ScimToken {
 export interface APIError {
 	error: string;
 	error_description: string;
+	error_details?: Record<string, unknown>;
+	webauthn_signal?: {
+		unknown_credential?: boolean;
+	};
+	extensions?: Record<string, unknown>;
 }
 
 interface DirectAuthPkceState {
@@ -131,6 +140,52 @@ interface ManagedDirectSessionResponse {
 	authorization?: {
 		challenge_id: string;
 		type: 'login' | 'reauth';
+	};
+	migration?: DirectoryPasswordMigrationResponse['migration'];
+}
+
+interface DirectoryPasswordMigrationResponse {
+	ok: false;
+	migration: {
+		required: boolean;
+		action: 'prompt_passkey' | 'require_passkey';
+		transaction_id?: string;
+		transaction_token?: string;
+		expires_at?: number;
+		campaign_id: string;
+		state: string;
+		reason?: string;
+		passkey_required_at?: number | null;
+		email_code_fallback_mode?: string;
+		email_code_fallback_available?: boolean;
+		email_code_fallback?: {
+			transaction_id: string;
+			transaction_token: string;
+			expires_at: number;
+			masked_email: string;
+		};
+	};
+	user?: {
+		id: string;
+		email: string;
+		name?: string | null;
+	};
+}
+
+interface DirectoryPasswordRecoveryResponse {
+	ok: false;
+	recovery: {
+		required: boolean;
+		reason: 'directory_unavailable';
+		transaction_id: string;
+		transaction_token: string;
+		expires_at: number;
+		masked_email: string;
+	};
+	user?: {
+		id: string;
+		email: string;
+		name?: string | null;
 	};
 }
 
@@ -313,10 +368,9 @@ function persistDirectEmailCodeState(email: string, state: DirectEmailCodeState)
 	}
 }
 
-function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null {
+function readDirectEmailCodeState(email: string): DirectEmailCodeState | null {
 	const normalizedEmail = normalizeDirectEmail(email);
 	const memoryState = directEmailCodePkce.get(normalizedEmail);
-	directEmailCodePkce.delete(normalizedEmail);
 
 	if (!browser) {
 		return memoryState ?? null;
@@ -326,8 +380,6 @@ function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null
 		const key = getDirectEmailCodeStateKey(normalizedEmail);
 		const legacyKey = getLegacyDirectEmailCodeStateKey(normalizedEmail);
 		const raw = sessionStorage.getItem(key) ?? sessionStorage.getItem(legacyKey);
-		sessionStorage.removeItem(key);
-		sessionStorage.removeItem(legacyKey);
 		if (!raw) {
 			return memoryState ?? null;
 		}
@@ -346,10 +398,24 @@ function consumeDirectEmailCodeState(email: string): DirectEmailCodeState | null
 	return memoryState ?? null;
 }
 
+function clearDirectEmailCodeState(email: string): void {
+	const normalizedEmail = normalizeDirectEmail(email);
+	directEmailCodePkce.delete(normalizedEmail);
+	if (!browser) return;
+
+	try {
+		sessionStorage.removeItem(getDirectEmailCodeStateKey(normalizedEmail));
+		sessionStorage.removeItem(getLegacyDirectEmailCodeStateKey(normalizedEmail));
+	} catch {
+		// State also lives in memory for the current page lifecycle.
+	}
+}
+
 async function finalizeManagedDirectAuthSession(
 	directAuthArtifact: string,
 	codeVerifier: string,
-	authorizationChallengeId?: string
+	authorizationChallengeId?: string,
+	deferAuthorizationContinuation = false
 ): Promise<{ data?: ManagedDirectSessionResponse; error?: APIError }> {
 	return apiFetch<ManagedDirectSessionResponse>('/api/v1/auth/direct/session', {
 		method: 'POST',
@@ -358,7 +424,8 @@ async function finalizeManagedDirectAuthSession(
 			client_id: getAuthConfig().clientId,
 			code_verifier: codeVerifier,
 			channel: 'browser',
-			authorization_challenge_id: authorizationChallengeId
+			authorization_challenge_id: authorizationChallengeId,
+			defer_authorization_continuation: deferAuthorizationContinuation
 		})
 	});
 }
@@ -702,27 +769,31 @@ export const passkeyAPI = {
 	 * Get registration options for Passkey
 	 */
 	async getRegisterOptions(data: {
-		email: string;
+		email?: string;
 		name?: string;
 		userId?: string;
 		custom_fields?: Record<string, unknown>;
+		authorizationChallengeId?: string;
+		human_verification_response?: string;
 	}) {
 		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
-			'/api/v1/auth/direct/passkey/signup/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					client_id: getAuthConfig().clientId,
-					code_challenge: pkce.codeChallenge,
-					code_challenge_method: pkce.codeChallengeMethod,
-					channel: 'browser',
-					email: data.email,
-					display_name: data.name,
-					custom_fields: data.custom_fields
-				})
-			}
-		);
+		const response = await apiFetch<{
+			options: PublicKeyCredentialCreationOptionsJSON;
+			challenge_id: string;
+		}>('/api/v1/auth/direct/passkey/signup/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				email: data.email || undefined,
+				display_name: data.name,
+				custom_fields: data.custom_fields,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
 		if (response.data) {
 			directPasskeySignupPkce.set(response.data.challenge_id, {
 				codeVerifier: pkce.codeVerifier
@@ -736,7 +807,10 @@ export const passkeyAPI = {
 				error: undefined
 			};
 		}
-		return response as { data?: { options: unknown; userId: string }; error?: APIError };
+		return response as {
+			data?: { options: PublicKeyCredentialCreationOptionsJSON; userId: string };
+			error?: APIError;
+		};
 	},
 
 	/**
@@ -747,6 +821,7 @@ export const passkeyAPI = {
 		credential: unknown;
 		deviceName?: string;
 		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
 	}) {
 		const pkce = directPasskeySignupPkce.get(data.userId);
 		if (!pkce) {
@@ -787,7 +862,8 @@ export const passkeyAPI = {
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,
 			pkce.codeVerifier,
-			data.authorizationChallengeId
+			data.authorizationChallengeId,
+			data.deferAuthorizationContinuation === true
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -815,21 +891,27 @@ export const passkeyAPI = {
 	/**
 	 * Get authentication options for Passkey login
 	 */
-	async getLoginOptions(data: { email?: string }) {
+	async getLoginOptions(data: {
+		email?: string;
+		authorizationChallengeId?: string;
+		human_verification_response?: string;
+	}) {
 		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{ options: unknown; challenge_id: string }>(
-			'/api/v1/auth/direct/passkey/login/start',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					client_id: getAuthConfig().clientId,
-					code_challenge: pkce.codeChallenge,
-					code_challenge_method: pkce.codeChallengeMethod,
-					channel: 'browser',
-					email: data.email
-				})
-			}
-		);
+		const response = await apiFetch<{
+			options: PublicKeyCredentialRequestOptionsJSON;
+			challenge_id: string;
+		}>('/api/v1/auth/direct/passkey/login/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_id: getAuthConfig().clientId,
+				code_challenge: pkce.codeChallenge,
+				code_challenge_method: pkce.codeChallengeMethod,
+				channel: 'browser',
+				email: data.email,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
 		if (response.data) {
 			directPasskeyLoginPkce.set(response.data.challenge_id, {
 				codeVerifier: pkce.codeVerifier
@@ -842,7 +924,10 @@ export const passkeyAPI = {
 				error: undefined
 			};
 		}
-		return response as { data?: { options: unknown; challengeId: string }; error?: APIError };
+		return response as {
+			data?: { options: PublicKeyCredentialRequestOptionsJSON; challengeId: string };
+			error?: APIError;
+		};
 	},
 
 	/**
@@ -852,6 +937,7 @@ export const passkeyAPI = {
 		challengeId: string;
 		credential: unknown;
 		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
 	}) {
 		const pkce = directPasskeyLoginPkce.get(data.challengeId);
 		if (!pkce) {
@@ -891,7 +977,8 @@ export const passkeyAPI = {
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,
 			pkce.codeVerifier,
-			data.authorizationChallengeId
+			data.authorizationChallengeId,
+			data.deferAuthorizationContinuation === true
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -923,24 +1010,41 @@ export const emailCodeAPI = {
 		email: string;
 		name?: string;
 		invite_token?: string;
+		authorizationChallengeId?: string;
 		custom_fields?: Record<string, unknown>;
+		human_verification_response?: string;
+		deferAuthorizationContinuation?: boolean;
+		runtimeInteractionId?: string;
+		emailVerification?: {
+			token: string;
+			challengeId: string;
+			interactionId: string;
+		};
 	}) {
 		const pkce = await createDirectAuthPkce();
 		const response = await apiFetch<{
-			attempt_id: string;
+			attempt_id?: string;
 			expires_in: number;
-			masked_email: string;
+			masked_email?: string;
 			_dev_code?: string;
+			direct_auth_artifact?: string;
+			is_new_user?: boolean;
 		}>('/api/v1/auth/direct/email-code/send', {
 			method: 'POST',
 			body: JSON.stringify({
 				client_id: getAuthConfig().clientId,
 				email: data.email,
+				display_name: data.name,
 				code_challenge: pkce.codeChallenge,
 				code_challenge_method: pkce.codeChallengeMethod,
 				channel: 'browser',
 				invite_token: data.invite_token,
-				custom_fields: data.custom_fields
+				authorization_challenge_id: data.authorizationChallengeId,
+				custom_fields: data.custom_fields,
+				human_verification_response: data.human_verification_response,
+				email_verification_token: data.emailVerification?.token,
+				email_verification_challenge_id: data.emailVerification?.challengeId,
+				runtime_interaction_id: data.runtimeInteractionId ?? data.emailVerification?.interactionId
 			})
 		});
 
@@ -948,6 +1052,42 @@ export const emailCodeAPI = {
 			return response as {
 				data?: { success: boolean; message: string; messageId?: string; code?: string };
 				error?: APIError;
+			};
+		}
+		if (response.data.direct_auth_artifact) {
+			const session = await finalizeManagedDirectAuthSession(
+				response.data.direct_auth_artifact,
+				pkce.codeVerifier,
+				data.authorizationChallengeId,
+				data.deferAuthorizationContinuation === true
+			);
+			if (session.error || !session.data) {
+				return session as {
+					data?: {
+						success: boolean;
+						verified: boolean;
+						userId: string;
+						user: User;
+						redirect_url?: string;
+					};
+					error?: APIError;
+				};
+			}
+			return {
+				data: {
+					success: true,
+					message: 'Email verified by provider',
+					...directSessionToLegacyAuthResponse(session.data)
+				},
+				error: undefined
+			};
+		}
+		if (!response.data.attempt_id) {
+			return {
+				error: {
+					error: 'invalid_response',
+					error_description: 'Email verification response is missing an attempt identifier'
+				}
 			};
 		}
 
@@ -959,6 +1099,7 @@ export const emailCodeAPI = {
 		return {
 			data: {
 				success: true,
+				verified: false,
 				message: 'Verification code sent',
 				messageId: response.data.attempt_id,
 				code: response.data._dev_code
@@ -970,8 +1111,13 @@ export const emailCodeAPI = {
 	/**
 	 * Verify email code
 	 */
-	async verify(data: { code: string; email: string; authorizationChallengeId?: string }) {
-		const state = consumeDirectEmailCodeState(data.email);
+	async verify(data: {
+		code: string;
+		email: string;
+		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
+	}) {
+		const state = readDirectEmailCodeState(data.email);
 		if (!state) {
 			return {
 				error: {
@@ -1004,11 +1150,13 @@ export const emailCodeAPI = {
 				error?: APIError;
 			};
 		}
+		clearDirectEmailCodeState(data.email);
 
 		const session = await finalizeManagedDirectAuthSession(
 			finish.data.direct_auth_artifact,
 			state.codeVerifier,
-			data.authorizationChallengeId
+			data.authorizationChallengeId,
+			data.deferAuthorizationContinuation === true
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -1033,18 +1181,245 @@ export const emailCodeAPI = {
 };
 
 /**
+ * Auth API - TOTP
+ */
+export const totpAPI = {
+	async startLogin(data: { identifier: string }) {
+		return apiFetch<{ challenge_id: string; expires_in: number }>('/api/auth/totp/login/start', {
+			method: 'POST',
+			body: JSON.stringify({
+				identifier: data.identifier
+			})
+		});
+	},
+
+	async verifyLogin(data: {
+		challengeId: string;
+		code: string;
+		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
+	}) {
+		return apiFetch<{
+			success: boolean;
+			sessionId: string;
+			redirect_url?: string;
+			authorization?: {
+				challenge_id?: string;
+				type?: string;
+			};
+			session?: {
+				userId: string;
+				createdAt: number;
+				expiresAt: number;
+				authTime: number;
+				acr?: string;
+				amr?: string[];
+			};
+			user: {
+				id: string;
+				email: string;
+				name?: string | null;
+			};
+		}>('/api/auth/totp/login/verify', {
+			method: 'POST',
+			body: JSON.stringify({
+				challenge_id: data.challengeId,
+				code: data.code,
+				authorization_challenge_id: data.authorizationChallengeId,
+				defer_authorization_continuation: data.deferAuthorizationContinuation === true
+			})
+		});
+	},
+
+	async createSignupOptions(data: {
+		email: string;
+		name?: string;
+		label?: string;
+		custom_fields?: Record<string, unknown>;
+		authorizationChallengeId?: string;
+		human_verification_response?: string;
+	}) {
+		return apiFetch<{
+			challenge_id: string;
+			expires_in: number;
+			credential: {
+				id: string;
+				label: string | null;
+				algorithm: 'SHA1' | 'SHA256';
+				digits: number;
+				period: number;
+				window: number;
+				status: 'pending' | 'active' | 'disabled';
+				created_at: number;
+				activated_at: number | null;
+				last_used_at: number | null;
+			};
+			secret: string;
+			otpauth_uri: string;
+			profile: {
+				algorithm: 'SHA1' | 'SHA256';
+				digits: number;
+				period: number;
+				window: number;
+			};
+		}>('/api/auth/totp/signup/options', {
+			method: 'POST',
+			body: JSON.stringify({
+				email: data.email,
+				name: data.name,
+				label: data.label,
+				custom_fields: data.custom_fields,
+				authorization_challenge_id: data.authorizationChallengeId,
+				human_verification_response: data.human_verification_response
+			})
+		});
+	},
+
+	async activateSignup(data: {
+		challengeId: string;
+		code: string;
+		deferAuthorizationContinuation?: boolean;
+	}) {
+		return apiFetch<{
+			ok: boolean;
+			success: boolean;
+			backup_codes: string[];
+			sessionId: string;
+			redirect_url?: string;
+			authorization?: {
+				challenge_id?: string;
+				type?: string;
+			};
+			session: {
+				userId: string;
+				createdAt: number;
+				expiresAt: number;
+				authTime: number;
+				acr?: string;
+				amr?: string[];
+			};
+			user: {
+				id: string;
+				email: string;
+				name?: string | null;
+			};
+		}>('/api/auth/totp/signup/activate', {
+			method: 'POST',
+			body: JSON.stringify({
+				challenge_id: data.challengeId,
+				code: data.code,
+				defer_authorization_continuation: data.deferAuthorizationContinuation === true
+			})
+		});
+	}
+};
+
+/**
  * Auth API - Directory Password
  */
 export const directoryPasswordAPI = {
-	async login(data: { username: string; password: string; authorizationChallengeId?: string }) {
+	async login(data: {
+		username: string;
+		password: string;
+		inviteToken?: string;
+		authorizationChallengeId?: string;
+		deferAuthorizationContinuation?: boolean;
+		human_verification_response?: string;
+	}) {
+		const session = await apiFetch<
+			| ManagedDirectSessionResponse
+			| DirectoryPasswordMigrationResponse
+			| DirectoryPasswordRecoveryResponse
+		>('/api/auth/directory-password/login', {
+			method: 'POST',
+			body: JSON.stringify({
+				username: data.username,
+				password: data.password,
+				invite_token: data.inviteToken,
+				authorization_challenge_id: data.authorizationChallengeId,
+				defer_authorization_continuation: data.deferAuthorizationContinuation === true,
+				human_verification_response: data.human_verification_response
+			})
+		});
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
+
+		if (session.data.ok === false && 'migration' in session.data) {
+			return {
+				data: {
+					success: false,
+					user: session.data.user,
+					migration: session.data.migration
+				},
+				error: undefined
+			};
+		}
+
+		if (session.data.ok === false && 'recovery' in session.data) {
+			return {
+				data: {
+					success: false,
+					user: session.data.user,
+					recovery: session.data.recovery
+				},
+				error: undefined
+			};
+		}
+
+		return {
+			data: {
+				success: true,
+				...directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse),
+				...(session.data.migration ? { migration: session.data.migration } : {})
+			},
+			error: undefined
+		};
+	},
+
+	async migrationPasskeyOptions(data: {
+		transactionId: string;
+		transactionToken: string;
+		displayName?: string;
+	}) {
+		return apiFetch<{
+			challenge_id: string;
+			options: PublicKeyCredentialCreationOptionsJSON;
+		}>('/api/auth/directory-password/migration/passkey/options', {
+			method: 'POST',
+			body: JSON.stringify({
+				transaction_id: data.transactionId,
+				transaction_token: data.transactionToken,
+				display_name: data.displayName
+			})
+		});
+	},
+
+	async migrationPasskeyVerify(data: {
+		transactionId: string;
+		transactionToken: string;
+		challengeId: string;
+		credential: unknown;
+		deviceName?: string;
+	}) {
 		const session = await apiFetch<ManagedDirectSessionResponse>(
-			'/api/auth/directory-password/login',
+			'/api/auth/directory-password/migration/passkey/verify',
 			{
 				method: 'POST',
 				body: JSON.stringify({
-					username: data.username,
-					password: data.password,
-					authorization_challenge_id: data.authorizationChallengeId
+					transaction_id: data.transactionId,
+					transaction_token: data.transactionToken,
+					challenge_id: data.challengeId,
+					credential: data.credential,
+					device_name: data.deviceName
 				})
 			}
 		);
@@ -1059,7 +1434,59 @@ export const directoryPasswordAPI = {
 				error?: APIError;
 			};
 		}
+		return {
+			data: {
+				success: true,
+				...directSessionToLegacyAuthResponse(session.data)
+			},
+			error: undefined
+		};
+	},
 
+	async migrationEmailCodeSend(data: { transactionId: string; transactionToken: string }) {
+		return apiFetch<{
+			success: boolean;
+			challenge_id: string;
+			expires_in: number;
+			masked_email: string;
+		}>('/api/auth/directory-password/migration/email-code/send', {
+			method: 'POST',
+			body: JSON.stringify({
+				transaction_id: data.transactionId,
+				transaction_token: data.transactionToken
+			})
+		});
+	},
+
+	async migrationEmailCodeVerify(data: {
+		transactionId: string;
+		transactionToken: string;
+		challengeId: string;
+		code: string;
+	}) {
+		const session = await apiFetch<ManagedDirectSessionResponse>(
+			'/api/auth/directory-password/migration/email-code/verify',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					transaction_id: data.transactionId,
+					transaction_token: data.transactionToken,
+					challenge_id: data.challengeId,
+					code: data.code
+				})
+			}
+		);
+		if (session.error || !session.data) {
+			return session as {
+				data?: {
+					success: boolean;
+					userId: string;
+					user: User;
+					redirect_url?: string;
+				};
+				error?: APIError;
+			};
+		}
 		return {
 			data: {
 				success: true,
@@ -1584,15 +2011,16 @@ export const externalIdpAPI = {
 		providerId: string,
 		redirectUri?: string,
 		startUrl?: string,
-		startMode: 'oauth_redirect' | 'saml_sp' | 'direct' = 'oauth_redirect'
+		startMode: 'oauth_redirect' | 'saml_sp' = 'oauth_redirect',
+		humanVerification?: { token?: string }
 	): Promise<{
 		url: string;
 	}> {
 		const encodedProviderId = encodeURIComponent(providerId);
 		const targetUrl = new URL(startUrl || `/api/external/${encodedProviderId}/start`, API_BASE_URL);
 
-		if (startMode === 'direct') {
-			return { url: targetUrl.toString() };
+		if (humanVerification?.token) {
+			targetUrl.searchParams.set('human_verification_response', humanVerification.token);
 		}
 
 		if (startMode === 'saml_sp') {

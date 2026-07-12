@@ -16,6 +16,11 @@
 	import { adminDataRetentionAPI } from '$lib/api/admin-data-retention';
 	import RetentionPolicyEditDialog from '$lib/components/RetentionPolicyEditDialog.svelte';
 	import { Modal } from '$lib/components';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminTabs from '$lib/components/admin/AdminTabs.svelte';
+	import type { AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import { formatDate, isValidDownloadUrl, SMALL_PAGE_SIZE, sanitizeText } from '$lib/utils';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -37,6 +42,7 @@
 		{ id: 'reports', getLabel: () => $LL.admin_compliance_tab_reports() },
 		{ id: 'retention', getLabel: () => $LL.admin_compliance_tab_retention() }
 	] as const;
+	type ComplianceTab = (typeof TABS)[number]['id'];
 
 	// Start Review Dialog
 	let showStartReviewDialog = $state(false);
@@ -745,41 +751,34 @@
 				return $LL.admin_compliance_category_unknown_desc();
 		}
 	}
+
+	const tabItems = $derived<AdminTabItem[]>(
+		TABS.map((tab) => ({
+			id: tab.id,
+			label: tab.getLabel()
+		}))
+	);
+
+	function changeTab(id: string) {
+		if (!TABS.some((tab) => tab.id === id)) return;
+		error = '';
+		activeTab = id as ComplianceTab;
+	}
 </script>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<div class="admin-page">
-	<div class="page-header">
-		<div class="page-header-info">
-			<h1 class="page-title">{$LL.admin_compliance_title()}</h1>
-			<p class="modal-description">
-				{$LL.admin_compliance_description()}
-			</p>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_compliance_title()}
+		description={$LL.admin_compliance_description()}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
 
-	<!-- Tabs -->
-	<div class="security-tabs" role="tablist">
-		{#each TABS as tab (tab.id)}
-			<button
-				onclick={() => {
-					error = '';
-					activeTab = tab.id;
-				}}
-				role="tab"
-				aria-selected={activeTab === tab.id}
-				class="security-tab"
-				class:active={activeTab === tab.id}
-			>
-				{tab.getLabel()}
-			</button>
-		{/each}
-	</div>
+	<AdminTabs items={tabItems} active={activeTab} onChange={changeTab} />
 
 	{#if loading}
 		<div class="loading-state">{$LL.admin_compliance_loading()}</div>
@@ -840,7 +839,8 @@
 						</div>
 						{#if framework.issues.length > 0}
 							<div class="framework-issues">
-								⚠️ {$LL.admin_compliance_issue_count({
+								<i class="i-ph-warning-circle" aria-hidden="true"></i>
+								{$LL.admin_compliance_issue_count({
 									count: framework.issues.length
 								})}
 							</div>
@@ -904,50 +904,48 @@
 					<p>{$LL.admin_compliance_no_reviews()}</p>
 				</div>
 			{:else}
-				<div class="table-container">
-					<table class="data-table">
-						<thead>
+				<AdminDataTable width="wide">
+					<thead>
+						<tr>
+							<th>{$LL.admin_compliance_name()}</th>
+							<th>{$LL.admin_compliance_scope()}</th>
+							<th>{$LL.admin_compliance_review_progress()}</th>
+							<th>{$LL.admin_compliance_section_status()}</th>
+							<th>{$LL.admin_compliance_started()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each accessReviews as review (review.id)}
 							<tr>
-								<th>{$LL.admin_compliance_name()}</th>
-								<th>{$LL.admin_compliance_scope()}</th>
-								<th>{$LL.admin_compliance_review_progress()}</th>
-								<th>{$LL.admin_compliance_section_status()}</th>
-								<th>{$LL.admin_compliance_started()}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each accessReviews as review (review.id)}
-								<tr>
-									<td>
-										<div class="cell-primary">{review.name}</div>
-									</td>
-									<td>{formatScopeDisplay(review.scope)}</td>
-									<td>
-										<div class="review-progress-cell">
-											<div class="progress-bar review-progress">
-												<div
-													class="progress-fill primary"
-													style="width: {review.total_users > 0
-														? (review.reviewed_users / review.total_users) * 100
-														: 0}%"
-												></div>
-											</div>
-											<span class="review-progress-text">
-												{review.reviewed_users}/{review.total_users}
-											</span>
+								<td>
+									<div class="cell-primary">{review.name}</div>
+								</td>
+								<td>{formatScopeDisplay(review.scope)}</td>
+								<td>
+									<div class="review-progress-cell">
+										<div class="progress-bar review-progress">
+											<div
+												class="progress-fill primary"
+												style="width: {review.total_users > 0
+													? (review.reviewed_users / review.total_users) * 100
+													: 0}%"
+											></div>
 										</div>
-									</td>
-									<td>
-										<span class={getReviewStatusClass(review.status)}>
-											{getReviewStatusLabel(review.status)}
+										<span class="review-progress-text">
+											{review.reviewed_users}/{review.total_users}
 										</span>
-									</td>
-									<td class="text-muted">{formatDate(review.started_at)}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+									</div>
+								</td>
+								<td>
+									<span class={getReviewStatusClass(review.status)}>
+										{getReviewStatusLabel(review.status)}
+									</span>
+								</td>
+								<td class="text-muted">{formatDate(review.started_at)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</div>
 	{:else if activeTab === 'reports'}
@@ -958,47 +956,45 @@
 					<p>{$LL.admin_compliance_no_reports()}</p>
 				</div>
 			{:else}
-				<div class="table-container">
-					<table class="data-table">
-						<thead>
+				<AdminDataTable>
+					<thead>
+						<tr>
+							<th>{$LL.admin_compliance_type()}</th>
+							<th>{$LL.admin_compliance_section_status()}</th>
+							<th>{$LL.admin_compliance_requested()}</th>
+							<th>{$LL.admin_compliance_actions()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each reports as report (report.id)}
 							<tr>
-								<th>{$LL.admin_compliance_type()}</th>
-								<th>{$LL.admin_compliance_section_status()}</th>
-								<th>{$LL.admin_compliance_requested()}</th>
-								<th>{$LL.admin_compliance_actions()}</th>
+								<td>
+									<div class="cell-primary">{formatReportTypeDisplay(report.type)}</div>
+								</td>
+								<td>
+									<span class={getReportStatusClass(report.status)}>
+										{getReportStatusLabel(report.status)}
+									</span>
+								</td>
+								<td class="text-muted">{formatDate(report.requested_at)}</td>
+								<td>
+									{#if report.status === 'completed' && report.download_url && isValidDownloadUrl(report.download_url)}
+										<a
+											href={report.download_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="link-primary"
+										>
+											{$LL.admin_compliance_download()}
+										</a>
+									{:else}
+										<span class="text-muted">-</span>
+									{/if}
+								</td>
 							</tr>
-						</thead>
-						<tbody>
-							{#each reports as report (report.id)}
-								<tr>
-									<td>
-										<div class="cell-primary">{formatReportTypeDisplay(report.type)}</div>
-									</td>
-									<td>
-										<span class={getReportStatusClass(report.status)}>
-											{getReportStatusLabel(report.status)}
-										</span>
-									</td>
-									<td class="text-muted">{formatDate(report.requested_at)}</td>
-									<td>
-										{#if report.status === 'completed' && report.download_url && isValidDownloadUrl(report.download_url)}
-											<a
-												href={report.download_url}
-												target="_blank"
-												rel="noopener noreferrer"
-												class="link-primary"
-											>
-												{$LL.admin_compliance_download()}
-											</a>
-										{:else}
-											<span class="text-muted">-</span>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+						{/each}
+					</tbody>
+				</AdminDataTable>
 			{/if}
 		</div>
 	{:else if activeTab === 'retention' && dataRetention}
@@ -1048,60 +1044,58 @@
 							</p>
 						</div>
 						<button class="btn btn-warning" onclick={openCleanupDialog}>
-							<span>🗑️</span>
+							<i class="i-ph-trash" aria-hidden="true"></i>
 							{$LL.admin_compliance_run_cleanup()}
 						</button>
 					</div>
-					<div class="table-container">
-						<table class="data-table">
-							<thead>
+					<AdminDataTable width="wide">
+						<thead>
+							<tr>
+								<th>{$LL.admin_compliance_category()}</th>
+								<th class="table-cell--center">{$LL.admin_compliance_retention()}</th>
+								<th class="text-right">{$LL.admin_compliance_records()}</th>
+								<th>{$LL.admin_compliance_oldest_record()}</th>
+								<th>{$LL.admin_compliance_next_cleanup()}</th>
+								<th class="table-cell--center">{$LL.admin_compliance_actions()}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each dataRetention.categories as category (category.category)}
 								<tr>
-									<th>{$LL.admin_compliance_category()}</th>
-									<th class="text-center">{$LL.admin_compliance_retention()}</th>
-									<th class="text-right">{$LL.admin_compliance_records()}</th>
-									<th>{$LL.admin_compliance_oldest_record()}</th>
-									<th>{$LL.admin_compliance_next_cleanup()}</th>
-									<th class="text-center">{$LL.admin_compliance_actions()}</th>
+									<td>
+										<div class="cell-primary">{getCategoryDisplayName(category.category)}</div>
+										<div class="cell-secondary">{getCategoryDescription(category.category)}</div>
+									</td>
+									<td class="table-cell--center">
+										<span class="retention-days-badge"
+											>{$LL.admin_compliance_days({ count: category.retention_days })}</span
+										>
+									</td>
+									<td class="text-right">{category.records_count.toLocaleString()}</td>
+									<td class="text-muted">
+										{category.oldest_record ? formatDate(category.oldest_record) : '-'}
+									</td>
+									<td class="text-muted">
+										{category.next_cleanup ? formatDate(category.next_cleanup) : '-'}
+									</td>
+									<td class="table-cell--center">
+										<button
+											class="btn btn-ghost btn-sm"
+											onclick={() =>
+												openRetentionEditDialog(category.category, category.retention_days)}
+										>
+											{$LL.admin_compliance_edit()}
+										</button>
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{#each dataRetention.categories as category (category.category)}
-									<tr>
-										<td>
-											<div class="cell-primary">{getCategoryDisplayName(category.category)}</div>
-											<div class="cell-secondary">{getCategoryDescription(category.category)}</div>
-										</td>
-										<td class="text-center">
-											<span class="retention-days-badge"
-												>{$LL.admin_compliance_days({ count: category.retention_days })}</span
-											>
-										</td>
-										<td class="text-right">{category.records_count.toLocaleString()}</td>
-										<td class="text-muted">
-											{category.oldest_record ? formatDate(category.oldest_record) : '-'}
-										</td>
-										<td class="text-muted">
-											{category.next_cleanup ? formatDate(category.next_cleanup) : '-'}
-										</td>
-										<td class="text-center">
-											<button
-												class="btn btn-ghost btn-sm"
-												onclick={() =>
-													openRetentionEditDialog(category.category, category.retention_days)}
-											>
-												{$LL.admin_compliance_edit()}
-											</button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+							{/each}
+						</tbody>
+					</AdminDataTable>
 				</div>
 
 				<!-- Information Notice -->
 				<div class="info-box">
-					<span class="info-box-icon">ℹ️</span>
+					<i class="info-box-icon i-ph-info" aria-hidden="true"></i>
 					<div>
 						<div class="info-box-title">{$LL.admin_compliance_about_retention()}</div>
 						<p class="info-box-text">
@@ -1112,7 +1106,7 @@
 			{/if}
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Start Review Dialog -->
 <Modal
@@ -1202,7 +1196,7 @@
 		{/if}
 
 		<div class="warning-box">
-			<span class="warning-box-icon">⚠️</span>
+			<i class="warning-box-icon i-ph-warning-circle" aria-hidden="true"></i>
 			<div>
 				<div class="warning-box-title">{$LL.admin_compliance_cleanup_warning_title()}</div>
 				<p class="warning-box-text">
@@ -1347,6 +1341,109 @@
 </Modal>
 
 <style>
+	.panel,
+	.framework-grid,
+	.framework-card,
+	.compliance-overall-header,
+	.framework-card-header,
+	.framework-progress,
+	.framework-progress-info,
+	.quick-stats-grid,
+	.quick-stat-card,
+	.progress-bar,
+	.fw-detail-body,
+	.fw-check-item {
+		box-sizing: border-box;
+		min-width: 0;
+	}
+
+	.compliance-overview,
+	.panel,
+	.framework-grid,
+	.framework-card {
+		width: 100%;
+		max-width: 100%;
+	}
+
+	.compliance-overview {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.panel {
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
+	}
+
+	.compliance-overall-header,
+	.framework-card-header,
+	.framework-progress-info {
+		gap: 12px;
+	}
+
+	.compliance-status-badge {
+		color: var(--color-text);
+		white-space: nowrap;
+	}
+
+	.table-cell--center {
+		text-align: center;
+	}
+
+	.framework-grid {
+		grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+	}
+
+	.framework-card {
+		width: 100%;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
+	}
+
+	.quick-stats-grid {
+		grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+	}
+
+	.quick-stat-card {
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
+	}
+
+	.quick-stat-label {
+		color: var(--color-text-subtle);
+	}
+
+	.framework-name {
+		color: var(--color-text);
+	}
+
+	.framework-progress-info,
+	.framework-last-checked {
+		color: var(--color-text-subtle);
+	}
+
+	.framework-issues,
+	.btn-warning {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.framework-issues :global(i),
+	.info-box-icon,
+	.warning-box-icon,
+	.btn-warning :global(i) {
+		flex: none;
+		width: 1em;
+		height: 1em;
+	}
+
+	.progress-bar {
+		background-color: var(--color-surface-muted);
+	}
+
 	/* Framework card clickable state */
 	.framework-card-clickable {
 		cursor: pointer;
@@ -1355,17 +1452,17 @@
 			box-shadow var(--transition-fast);
 	}
 	.framework-card-clickable:hover {
-		border-color: var(--primary);
-		box-shadow: 0 0 0 1px var(--primary);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 1px var(--color-accent);
 	}
 	.framework-card-clickable:focus-visible {
-		outline: 2px solid var(--primary);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
 	/* Framework Detail Modal */
 	.fw-detail-fullname {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		margin: 4px 0 0 0;
 	}
@@ -1373,7 +1470,7 @@
 		margin-bottom: 0;
 	}
 	.fw-detail-description {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		line-height: 1.5;
 		margin: 0 0 20px 0;
@@ -1387,12 +1484,12 @@
 	.fw-detail-section-title {
 		font-size: 0.8125rem;
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		margin: 0 0 12px 0;
 		padding-bottom: 8px;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	/* Check items */
@@ -1407,7 +1504,7 @@
 		justify-content: space-between;
 		padding: 10px 12px;
 		border-radius: var(--radius-md);
-		background: var(--bg-subtle);
+		background: var(--color-surface-muted);
 		gap: 12px;
 	}
 	.fw-check-item.planned {
@@ -1434,39 +1531,39 @@
 	}
 	.check-compliant,
 	.check-implemented {
-		background: rgba(34, 197, 94, 0.15);
-		color: #22c55e;
+		background: color-mix(in srgb, var(--color-success) 15%, transparent);
+		color: var(--color-success);
 	}
 	.check-partial {
-		background: rgba(245, 158, 11, 0.15);
-		color: #f59e0b;
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
 	}
 	.check-non_compliant {
-		background: rgba(239, 68, 68, 0.15);
-		color: #ef4444;
+		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+		color: var(--color-danger);
 	}
 	.check-planned {
-		background: var(--bg-card);
-		color: var(--text-tertiary);
-		border: 1px dashed var(--border);
+		background: var(--color-surface);
+		color: var(--color-text-subtle);
+		border: 1px dashed var(--color-border);
 	}
 	.fw-check-name {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 	.fw-check-desc {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin-top: 2px;
 	}
 	.planned-badge {
 		font-size: 0.75rem;
-		color: var(--text-tertiary);
-		background: var(--bg-card);
+		color: var(--color-text-subtle);
+		background: var(--color-surface);
 		padding: 2px 8px;
 		border-radius: var(--radius-sm);
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		white-space: nowrap;
 	}
 
@@ -1484,7 +1581,7 @@
 		align-items: baseline;
 		gap: 8px;
 		font-size: 0.875rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		line-height: 1.4;
 	}
 	.scope-icon {
@@ -1493,13 +1590,32 @@
 		font-weight: 600;
 	}
 	.scope-icon.in {
-		color: #22c55e;
+		color: var(--color-success);
 	}
 	.scope-icon.out {
-		color: var(--text-tertiary);
+		color: var(--color-text-subtle);
 	}
 	.scope-reason {
-		color: var(--text-tertiary);
+		color: var(--color-text-subtle);
 		font-size: 0.8125rem;
+	}
+
+	@media (max-width: 520px) {
+		.compliance-overall-header,
+		.framework-card-header,
+		.framework-progress-info,
+		.fw-check-item,
+		.scope-list li {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.compliance-status-badge {
+			align-self: flex-start;
+		}
+
+		.fw-check-info {
+			width: 100%;
+		}
 	}
 </style>

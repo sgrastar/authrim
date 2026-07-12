@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
@@ -43,7 +43,21 @@ import {
   passkeyLoginVerifyHandler,
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
-import { directoryPasswordLoginHandler } from './directory-password-login';
+import {
+  totpLoginStartHandler,
+  totpLoginVerifyHandler,
+  totpSignupActivateHandler,
+  totpSignupOptionsHandler,
+} from './totp';
+import {
+  directoryPasswordLoginHandler,
+  directoryMigrationEmailCodeSendHandler,
+  directoryMigrationEmailCodeVerifyHandler,
+  directoryMigrationPasskeyOptionsHandler,
+  directoryMigrationPasskeyVerifyHandler,
+} from './directory-password-login';
+import { directoryConnectorHeartbeatHandler } from './directory-connector-heartbeat';
+import { directoryRelayConnectHandler } from './directory-relay-route';
 import { consentGetHandler, consentPostHandler } from './consent';
 import { loginChallengeGetHandler } from './login-challenge';
 import {
@@ -84,6 +98,11 @@ import {
 } from './direct-auth';
 import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
+import {
+  loginRuntimeEmailVerificationChallengeHandler,
+  loginRuntimeInteractionStartHandler,
+  loginRuntimeInteractionSubmitHandler,
+} from './login-runtime-flow';
 
 function escapeHtml(value: string): string {
   return value
@@ -96,10 +115,34 @@ function escapeHtml(value: string): string {
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function requestUsesHttp(c: Context<{ Bindings: Env }>): boolean {
+  const requestUrl = new URL(c.req.url);
+  if (requestUrl.protocol === 'http:') {
+    return true;
+  }
+
+  return (c.req.header('x-forwarded-proto') ?? '').toLowerCase() === 'http';
+}
+
+async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: Next) {
+  const requestUrl = new URL(c.req.url);
+  if (!requestUsesHttp(c) || isLoopbackHost(requestUrl.hostname)) {
+    return next();
+  }
+
+  requestUrl.protocol = 'https:';
+  return c.redirect(requestUrl.toString(), 308);
+}
 const AUTH_REQUEST_BODY_MAX_BYTES = 100 * 1024;
 
 // Middleware
 app.use('*', logger());
+app.use('*', redirectExternalHttpToHttps);
 app.use('*', requestContextMiddleware());
 app.use('*', (c, next) =>
   bodyLimit({
@@ -121,9 +164,9 @@ app.use(
   })
 );
 
-// Plugin Context - provides access to notifiers, idp handlers, authenticators.
+// Notification plugin context.
 // Bootstrap config comes from Worker env, but tenant/global KV overrides remain authoritative.
-const loadPlugins = createPluginLoader([
+const loadNotificationPlugins = createPluginLoader([
   {
     plugin: cloudflareEmailPlugin,
     skipIfConfigEmpty: true,
@@ -132,10 +175,23 @@ const loadPlugins = createPluginLoader([
   {
     plugin: resendEmailPlugin,
     skipIfConfigEmpty: true,
+    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
     envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
   },
 ]);
-app.use('*', pluginContextMiddleware({ loadPlugins }));
+
+const notificationPluginContextMiddleware = pluginContextMiddleware({
+  scope: 'notification',
+  failurePolicy: 'fail_open',
+  loadPlugins: loadNotificationPlugins,
+});
+
+app.use('/api/auth/email-codes/send', notificationPluginContextMiddleware);
+app.use(
+  '/api/auth/directory-password/migration/email-code/send',
+  notificationPluginContextMiddleware
+);
+app.use('/api/v1/auth/direct/email-code/send', notificationPluginContextMiddleware);
 
 // Enhanced security headers
 // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
@@ -261,6 +317,27 @@ app.use('/api/auth/directory-password/login', async (c, next) => {
     endpoints: ['/api/auth/directory-password/login'],
   })(c, next);
 });
+app.use('/api/auth/directory-password/migration/passkey/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-password/migration/passkey'],
+  })(c, next);
+});
+app.use('/api/auth/directory-relay/connect/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-relay/connect'],
+  })(c, next);
+});
+app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/directory-connectors/heartbeat'],
+  })(c, next);
+});
 
 // Rate limiting for upgrade endpoints (architecture-decisions.md §17)
 // Moderate profile: balance security and usability for account upgrade
@@ -289,9 +366,15 @@ app.use('/api/auth/upgrade/*', async (c, next) => {
 // - /flow/* endpoints handle login form submissions from the Login UI
 //
 // Note: /par, /logout/backchannel are server-to-server endpoints (use client auth, not cookies)
-app.use('/api/auth/*', csrfProtectionMiddleware());
+app.use(
+  '/api/auth/*',
+  csrfProtectionMiddleware({
+    excludePaths: ['/api/auth/directory-connectors/heartbeat'],
+  })
+);
 app.use('/api/sessions/*', csrfProtectionMiddleware());
 app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
+app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
 
@@ -346,8 +429,35 @@ app.post('/api/auth/passkeys/login/verify', passkeyLoginVerifyHandler);
 app.post('/api/auth/email-codes/send', emailCodeSendHandler);
 app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
 
+// TOTP endpoints
+app.post('/api/auth/totp/login/start', totpLoginStartHandler);
+app.post('/api/auth/totp/login/verify', totpLoginVerifyHandler);
+app.post('/api/auth/totp/signup/options', totpSignupOptionsHandler);
+app.post('/api/auth/totp/signup/activate', totpSignupActivateHandler);
+
 // Directory Password endpoint
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
+app.post(
+  '/api/auth/directory-password/migration/passkey/options',
+  directoryMigrationPasskeyOptionsHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/passkey/verify',
+  directoryMigrationPasskeyVerifyHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/email-code/send',
+  directoryMigrationEmailCodeSendHandler
+);
+app.post(
+  '/api/auth/directory-password/migration/email-code/verify',
+  directoryMigrationEmailCodeVerifyHandler
+);
+app.post(
+  '/api/auth/directory-connectors/heartbeat/:tenantId/:connectorId',
+  directoryConnectorHeartbeatHandler
+);
+app.get('/api/auth/directory-relay/connect/:tenantId/:connectorId', directoryRelayConnectHandler);
 
 // DID Authentication endpoints (Phase 9)
 // Challenge-response pattern for DID-based authentication
@@ -502,6 +612,21 @@ app.use('/api/v1/auth/direct/*', async (c, next) => {
     endpoints: ['/api/v1/auth/direct'],
   })(c, next);
 });
+
+app.use('/api/v1/login/interactions/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/login/interactions'],
+  })(c, next);
+});
+
+app.post('/api/v1/login/interactions/start', loginRuntimeInteractionStartHandler);
+app.post(
+  '/api/v1/login/interactions/:interaction_id/email-verification/challenge',
+  loginRuntimeEmailVerificationChallengeHandler
+);
+app.post('/api/v1/login/interactions/:interaction_id/submit', loginRuntimeInteractionSubmitHandler);
 
 // Passkey Login endpoints
 app.post('/api/v1/auth/direct/passkey/login/start', directPasskeyLoginStartHandler);
@@ -689,3 +814,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { DirectoryConnectorRelay } from './directory-connector-relay';

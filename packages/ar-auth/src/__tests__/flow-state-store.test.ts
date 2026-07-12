@@ -29,6 +29,7 @@ function createTestUIContract(overrides: Partial<UIContract> = {}): UIContract {
       targets: { human: true, iot: false, ai_agent: false, ai_mcp: false, service: false },
       authMethods: {
         passkey: true,
+        totp: true,
         email_code: true,
         password: false,
         external_idp: false,
@@ -354,6 +355,7 @@ describe('FlowStateStore', () => {
             targets: { human: true, iot: false, ai_agent: false, ai_mcp: false, service: false },
             authMethods: {
               passkey: false,
+              totp: false,
               email_code: false,
               password: false,
               external_idp: false,

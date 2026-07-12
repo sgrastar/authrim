@@ -30,6 +30,7 @@ import {
   normalizeWebAuthnOrigin,
   resolveAdminWebAuthnBrowserOrigin,
 } from '@authrim/ar-lib-core';
+import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { writeAdminAuditLog } from '../../admin-shared';
 import type {
@@ -117,12 +118,16 @@ async function createAuditLog(
 function sanitizePasskey(passkey: {
   id: string;
   device_name: string | null;
+  aaguid?: string | null;
   created_at: number;
   last_used_at: number | null;
 }) {
+  const provider = resolveAaguidAuthenticator(passkey.aaguid);
   return {
     id: passkey.id,
     device_name: passkey.device_name,
+    aaguid: provider?.aaguid ?? passkey.aaguid ?? null,
+    provider,
     created_at: passkey.created_at,
     last_used_at: passkey.last_used_at,
   };

@@ -15,6 +15,65 @@ import type {
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   { operation: 'copy', parameters: [] },
   {
+    operation: 'as_array',
+    parameters: [
+      { name: 'trimItems', kind: 'boolean', required: false },
+      { name: 'omitEmpty', kind: 'boolean', required: false },
+      { name: 'unique', kind: 'boolean', required: false },
+    ],
+    outputCardinality: 'multi',
+  },
+  {
+    operation: 'split',
+    parameters: [
+      { name: 'delimiter', kind: 'string', required: false },
+      { name: 'trimItems', kind: 'boolean', required: false },
+      { name: 'omitEmpty', kind: 'boolean', required: false },
+      { name: 'unique', kind: 'boolean', required: false },
+    ],
+    outputCardinality: 'multi',
+  },
+  {
+    operation: 'join',
+    parameters: [
+      { name: 'delimiter', kind: 'string', required: false },
+      { name: 'trimItems', kind: 'boolean', required: false },
+      { name: 'omitEmpty', kind: 'boolean', required: false },
+      { name: 'unique', kind: 'boolean', required: false },
+    ],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    operation: 'first',
+    parameters: [
+      { name: 'trimItems', kind: 'boolean', required: false },
+      { name: 'omitEmpty', kind: 'boolean', required: false },
+    ],
+    outputCardinality: 'single',
+  },
+  {
+    operation: 'oidc_pairwise_sub',
+    parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    operation: 'saml_edu_person_targeted_id',
+    parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    operation: 'affix_text',
+    parameters: [
+      { name: 'prefix', kind: 'string', required: false },
+      { name: 'suffix', kind: 'string', required: false },
+    ],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
     operation: 'concat',
     parameters: [{ name: 'delimiter', kind: 'string', required: false }],
     outputValueType: 'string',
@@ -163,7 +222,7 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   }
 
   const sourceValues = values.filter(Boolean) as SourceValueEnvelope[];
-  const output = executeOperation(input.step, sourceValues);
+  const output = executeOperation(input.step, sourceValues, input.runtimeContext);
 
   if (!isTransformOutputValid(input.step.operation, output)) {
     reasons.push(reason('transform.invalid_output'));
@@ -222,12 +281,30 @@ function transformResult(
   };
 }
 
-function executeOperation(step: MappingTransformStep, values: SourceValueEnvelope[]): unknown {
+function executeOperation(
+  step: MappingTransformStep,
+  values: SourceValueEnvelope[],
+  runtimeContext?: Record<string, unknown>
+): unknown {
   const rawValues = values.map((item) => item.value);
 
   switch (step.operation) {
     case 'copy':
       return rawValues[0];
+    case 'as_array':
+      return normalizeArrayValue([rawValues[0]], step.parameters);
+    case 'split':
+      return splitValue(rawValues[0], step.parameters);
+    case 'join':
+      return normalizeArrayValue(rawValues, step.parameters).join(delimiter(step, ','));
+    case 'first':
+      return normalizeArrayValue(rawValues, step.parameters)[0] ?? null;
+    case 'oidc_pairwise_sub':
+      return buildOIDCPairwiseSub(runtimeContext, step.parameters);
+    case 'saml_edu_person_targeted_id':
+      return buildSAMLEduPersonTargetedID(runtimeContext);
+    case 'affix_text':
+      return affixText(rawValues[0], step.parameters);
     case 'concat':
       return rawValues.filter((item) => item !== undefined && item !== null).join(delimiter(step));
     case 'fallback':
@@ -253,8 +330,120 @@ function executeOperation(step: MappingTransformStep, values: SourceValueEnvelop
   }
 }
 
-function delimiter(step: MappingTransformStep): string {
-  return typeof step.parameters?.delimiter === 'string' ? step.parameters.delimiter : '';
+function delimiter(step: MappingTransformStep, fallback = ''): string {
+  return typeof step.parameters?.delimiter === 'string' ? step.parameters.delimiter : fallback;
+}
+
+function buildOIDCPairwiseSub(
+  runtimeContext?: Record<string, unknown>,
+  parameters?: Record<string, unknown>
+): string | undefined {
+  const oidcContext = isRecord(runtimeContext?.oidc) ? runtimeContext.oidc : runtimeContext;
+  const profileId = readString(parameters?.persistentIdentifierProfileId);
+  const persistentIdentifiers = isRecord(oidcContext?.persistentIdentifiers)
+    ? oidcContext.persistentIdentifiers
+    : undefined;
+  if (profileId) {
+    return readString(persistentIdentifiers?.[profileId]);
+  }
+  return readString(oidcContext?.pairwiseSubject) ?? readString(oidcContext?.subject);
+}
+
+function buildSAMLEduPersonTargetedID(
+  runtimeContext?: Record<string, unknown>
+): string | undefined {
+  const samlContext = isRecord(runtimeContext?.saml) ? runtimeContext.saml : runtimeContext;
+  const localEntityId = readString(samlContext?.localEntityId);
+  const partnerEntityId = readString(samlContext?.partnerEntityId);
+  const opaqueId = readString(samlContext?.eduPersonTargetedIdOpaque);
+  if (!localEntityId || !partnerEntityId || !opaqueId) {
+    return undefined;
+  }
+  return `${localEntityId}!${partnerEntityId}!${opaqueId}`;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function affixText(value: unknown, parameters: Record<string, unknown> | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const body = String(value).trim();
+  if (!body) {
+    return null;
+  }
+  const prefix = typeof parameters?.prefix === 'string' ? parameters.prefix : '';
+  const suffix = typeof parameters?.suffix === 'string' ? parameters.suffix : '';
+  return `${prefix}${body}${suffix}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function splitValue(value: unknown, parameters: Record<string, unknown> | undefined): unknown[] {
+  if (Array.isArray(value)) {
+    return normalizeArrayValue(value, parameters);
+  }
+  if (value === undefined || value === null) {
+    return normalizeArrayValue([], parameters);
+  }
+  if (typeof value !== 'string') {
+    return normalizeArrayValue([value], parameters);
+  }
+  const separator =
+    typeof parameters?.delimiter === 'string' && parameters.delimiter.length > 0
+      ? parameters.delimiter
+      : ',';
+  return normalizeArrayValue(value.split(separator), parameters);
+}
+
+function normalizeArrayValue(
+  value: unknown[],
+  parameters: Record<string, unknown> | undefined
+): unknown[] {
+  const trimItems = booleanParameter(parameters?.trimItems);
+  const omitEmpty = booleanParameter(parameters?.omitEmpty);
+  const unique = booleanParameter(parameters?.unique);
+  const flattened = value.flatMap((item) => (Array.isArray(item) ? item : [item]));
+  const normalized = flattened
+    .map((item) => (trimItems && typeof item === 'string' ? item.trim() : item))
+    .filter((item) => !omitEmpty || !isEmptyArrayItem(item));
+  if (!unique) {
+    return normalized;
+  }
+  const seen = new Set<string>();
+  return normalized.filter((item) => {
+    const key = stableArrayItemKey(item);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function booleanParameter(value: unknown): boolean {
+  return value === true || value === 'true';
+}
+
+function isEmptyArrayItem(value: unknown): boolean {
+  return value === undefined || value === null || value === '';
+}
+
+function stableArrayItemKey(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value) ?? String(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return `${typeof value}:${String(value)}`;
 }
 
 function normalizeValue(value: unknown, mode: unknown): unknown {

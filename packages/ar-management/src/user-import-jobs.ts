@@ -49,6 +49,15 @@ const USER_IMPORT_DEFAULT_HEADERS = [
 
 const USER_IMPORT_ALLOWED_STATUSES = new Set(['active', 'suspended', 'locked']);
 const USER_IMPORT_ALLOWED_TYPES = new Set(['end_user', 'admin', 'm2m', 'anonymous']);
+const USER_IMPORT_FORBIDDEN_CREDENTIAL_FIELDS = new Set([
+  'password',
+  'password_hash',
+  'password_hash_envelope',
+  'legacy_password_hash',
+  'legacy_hash',
+  'hash_algorithm',
+  'salt',
+]);
 
 async function readR2ObjectTextWithLimit(object: R2ObjectBody, maxBytes: number): Promise<string> {
   if (typeof object.size === 'number' && object.size > maxBytes) {
@@ -453,10 +462,19 @@ function parseOptionalBoolean(
   throw new Error(`Invalid boolean value for ${field}: ${value}`);
 }
 
-function normalizeImportRecord(record: Record<string, string>): ImportedUserRowInput {
+export function normalizeImportRecord(record: Record<string, string>): ImportedUserRowInput {
   const email = record.email?.trim();
   if (!email) {
     throw new Error('Email is required');
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (USER_IMPORT_FORBIDDEN_CREDENTIAL_FIELDS.has(key.trim().toLowerCase())) {
+      throw new Error(`Unsupported credential field in user import: ${key}`);
+    }
+    if (key.trim().toLowerCase().startsWith('password_') && value.trim()) {
+      throw new Error(`Unsupported credential field in user import: ${key}`);
+    }
   }
 
   const result: ImportedUserRowInput = {

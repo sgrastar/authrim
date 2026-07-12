@@ -6,6 +6,8 @@ import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
 import { loadLockFileAuto, mergeLockFiles, saveLockFile } from '../../core/lock.js';
 import { findAuthrimBaseDir, getEnvironmentPaths } from '../../core/paths.js';
 import { getRequiredR2Buckets, provisionR2Buckets } from '../../core/cloudflare.js';
+import { buildResourceIdsFromLock } from '../../core/wrangler.js';
+import { saveMasterWranglerConfigs } from '../../core/wrangler-sync.js';
 import { deployCommand } from './deploy.js';
 
 interface R2ProvisionOptions {
@@ -92,6 +94,26 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
 
   console.log(chalk.green('✓ R2 buckets are recorded in the environment lock file.'));
   console.log(chalk.green('✓ R2 feature flag is enabled in config.'));
+
+  const wranglerResult = await saveMasterWranglerConfigs(
+    updatedConfig,
+    buildResourceIdsFromLock(updatedLock),
+    {
+      baseDir,
+      env,
+      onProgress: (message) => console.log(chalk.gray(message)),
+    }
+  );
+  if (!wranglerResult.success) {
+    console.error(chalk.red('Failed to refresh generated wrangler configs:'));
+    for (const error of wranglerResult.errors) {
+      console.error(chalk.red(`  • ${error}`));
+    }
+    process.exit(1);
+  }
+  console.log(
+    chalk.green(`✓ Refreshed ${wranglerResult.files.length} generated wrangler config(s).`)
+  );
 
   if (options.skipDeploy) {
     console.log(chalk.yellow('Skipped deploy. Run authrim-setup deploy to publish bindings.'));

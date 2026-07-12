@@ -246,6 +246,37 @@ function getRequestHostHeader(c: Context<{ Bindings: Env }>): string {
     .toLowerCase();
 }
 
+function getConfiguredUrlHostname(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+async function getConfiguredCommonEntryHostname(env: Env): Promise<string | null> {
+  const uiConfig = await getUIConfig(env).catch(() => null);
+  return getConfiguredUrlHostname(uiConfig?.baseUrl);
+}
+
+function getPrimaryTenantIssuerHostname(env: Env): string | null {
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (!baseDomain) {
+    return null;
+  }
+
+  if (env.NAKED_DOMAIN_AS_ISSUER === 'true') {
+    return baseDomain;
+  }
+
+  const tenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || getDefaultTenantId(env);
+  return `${tenantId.toLowerCase()}.${baseDomain}`;
+}
+
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
@@ -940,7 +971,7 @@ function getDiscoverySettingsScope(
   return { type: 'tenant', id: tenantId };
 }
 
-function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
+async function isCommonEntryHost(c: Context<{ Bindings: Env }>): Promise<boolean> {
   if (!c.env.BASE_DOMAIN || isSingleTenantMode(c.env)) {
     return false;
   }
@@ -949,6 +980,15 @@ function isCommonEntryHost(c: Context<{ Bindings: Env }>): boolean {
   const host = getRequestHostHeader(c);
   if (!host) {
     return false;
+  }
+
+  const configuredCommonEntryHost = await getConfiguredCommonEntryHostname(c.env);
+  if (
+    configuredCommonEntryHost &&
+    host === configuredCommonEntryHost &&
+    host !== getPrimaryTenantIssuerHostname(c.env)
+  ) {
+    return true;
   }
 
   if (host === c.env.BASE_DOMAIN) {
@@ -972,7 +1012,7 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DISCOVERY');
 
   try {
-    const commonEntryHost = isCommonEntryHost(c);
+    const commonEntryHost = await isCommonEntryHost(c);
     const settingsScope = getDiscoverySettingsScope(c, commonEntryHost);
     const config = await getDiscoverySettings(c.env, settingsScope);
     const singleTenantMode = isSingleTenantMode(c.env);
@@ -1026,7 +1066,7 @@ export async function postDiscoveryHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const commonEntryHost = isCommonEntryHost(c);
+    const commonEntryHost = await isCommonEntryHost(c);
     const settingsScope = getDiscoverySettingsScope(c, commonEntryHost);
     const settings = await getDiscoverySettings(c.env, settingsScope);
     const result = await resolveDiscoveryRequest(

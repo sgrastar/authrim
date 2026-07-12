@@ -7,6 +7,9 @@
 	import StatCard from '$lib/components/StatCard.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Alert from '$lib/components/Alert.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let stats = $state<DashboardStats | null>(null);
@@ -83,18 +86,11 @@
 	<title>{$LL.admin_dashboard_page_title()}</title>
 </svelte:head>
 
-<div class="dashboard">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div class="page-header-row">
-			<div>
-				<h1 class="page-title">{$LL.admin_dashboard_welcome_title()}</h1>
-				<p class="page-description">
-					{$LL.admin_dashboard_description()}
-				</p>
-			</div>
-		</div>
-	</div>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_dashboard_welcome_title()}
+		description={$LL.admin_dashboard_description()}
+	/>
 
 	{#if loading}
 		<div class="loading-state">
@@ -128,35 +124,36 @@
 			</div>
 		{/if}
 
-		<!-- Stats Grid -->
-		<div class="stats-grid">
-			<StatCard
-				value={stats.stats.activeUsers}
-				label={$LL.admin_dashboard_activeUsers()}
-				icon="i-ph-users"
-				iconColor="pink"
-				change={{ value: '+12%', positive: true }}
-			/>
-			<StatCard
-				value={stats.stats.totalUsers}
-				label={$LL.admin_dashboard_totalUsers()}
-				icon="i-ph-users"
-				iconColor="purple"
-			/>
-			<StatCard
-				value={stats.stats.registeredClients}
-				label={$LL.admin_dashboard_clients()}
-				icon="i-ph-monitor"
-				iconColor="green"
-				change={{ value: '+5', positive: true }}
-			/>
-			<StatCard
-				value={stats.stats.loginsToday}
-				label={$LL.admin_dashboard_todayLogins()}
-				icon="i-ph-sign-in"
-				iconColor="orange"
-			/>
-		</div>
+		<AdminSection>
+			<div class="stats-grid">
+				<StatCard
+					value={stats.stats.activeUsers}
+					label={$LL.admin_dashboard_activeUsers()}
+					icon="i-ph-users"
+					iconColor="pink"
+					change={{ value: '+12%', positive: true }}
+				/>
+				<StatCard
+					value={stats.stats.totalUsers}
+					label={$LL.admin_dashboard_totalUsers()}
+					icon="i-ph-users"
+					iconColor="purple"
+				/>
+				<StatCard
+					value={stats.stats.registeredClients}
+					label={$LL.admin_dashboard_clients()}
+					icon="i-ph-monitor"
+					iconColor="green"
+					change={{ value: '+5', positive: true }}
+				/>
+				<StatCard
+					value={stats.stats.loginsToday}
+					label={$LL.admin_dashboard_todayLogins()}
+					icon="i-ph-sign-in"
+					iconColor="orange"
+				/>
+			</div>
+		</AdminSection>
 
 		<!-- Content Grid -->
 		<div class="content-grid">
@@ -237,7 +234,7 @@
 			</Card>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
 	.dashboard {
@@ -246,9 +243,9 @@
 
 	/* Cache Warning Banner */
 	.cache-warning-banner {
-		background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.05));
-		border: 1px solid rgba(245, 158, 11, 0.3);
-		border-radius: var(--radius-xl);
+		background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+		border-radius: var(--radius-panel, var(--radius-xl));
 		padding: 16px 20px;
 		margin-bottom: 24px;
 	}
@@ -262,8 +259,8 @@
 	.cache-warning-icon {
 		width: 44px;
 		height: 44px;
-		background: rgba(245, 158, 11, 0.2);
-		border-radius: var(--radius-lg);
+		background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+		border-radius: var(--radius-control, var(--radius-lg));
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -273,7 +270,7 @@
 	.cache-warning-icon :global(i) {
 		width: 24px;
 		height: 24px;
-		color: #f59e0b;
+		color: var(--color-warning);
 	}
 
 	.cache-warning-text {
@@ -283,20 +280,20 @@
 	.cache-warning-text strong {
 		font-size: 0.9375rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		display: block;
 		margin-bottom: 4px;
 	}
 
 	.cache-warning-text p {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		margin: 0;
 		line-height: 1.5;
 	}
 
 	.cache-warning-text a {
-		color: var(--primary);
+		color: var(--color-accent);
 		text-decoration: none;
 		font-weight: 500;
 	}
@@ -310,10 +307,10 @@
 		align-items: center;
 		gap: 8px;
 		padding: 10px 16px;
-		background: rgba(245, 158, 11, 0.15);
-		border: 1px solid rgba(245, 158, 11, 0.3);
-		border-radius: var(--radius-lg);
-		color: #f59e0b;
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
+		border-radius: var(--radius-control, var(--radius-lg));
+		color: var(--color-warning);
 		font-size: 0.875rem;
 		font-weight: 600;
 		text-decoration: none;
@@ -322,44 +319,13 @@
 	}
 
 	.cache-warning-action:hover {
-		background: rgba(245, 158, 11, 0.25);
+		background: color-mix(in srgb, var(--color-warning) 20%, transparent);
 		transform: translateY(-1px);
 	}
 
 	.cache-warning-action :global(i) {
 		width: 18px;
 		height: 18px;
-	}
-
-	/* Page Header */
-	.page-header {
-		margin-bottom: 32px;
-	}
-
-	.page-header-row {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 24px;
-	}
-
-	.page-title {
-		font-size: 2.25rem;
-		font-weight: 800;
-		background: var(--gradient-primary);
-		-webkit-background-clip: text;
-		-webkit-text-fill-color: transparent;
-		background-clip: text;
-		line-height: 1.2;
-		margin: 0;
-	}
-
-	.page-description {
-		color: var(--text-primary);
-		opacity: 0.8;
-		font-size: 1rem;
-		margin-top: 8px;
-		font-weight: 500;
 	}
 
 	/* Loading State */
@@ -369,14 +335,14 @@
 		align-items: center;
 		justify-content: center;
 		padding: 64px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		gap: 16px;
 	}
 
 	.loading-state :global(i) {
 		width: 32px;
 		height: 32px;
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	/* Stats Grid */
@@ -398,13 +364,13 @@
 	.card-title {
 		font-size: 1.125rem;
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin: 0;
 	}
 
 	/* Empty State */
 	.empty-state {
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		text-align: center;
 		padding: 40px 20px;
 	}
@@ -420,7 +386,7 @@
 		display: flex;
 		gap: 16px;
 		padding: 16px 0;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.activity-item:last-child {
@@ -430,7 +396,7 @@
 	.activity-icon {
 		width: 40px;
 		height: 40px;
-		border-radius: var(--radius-lg);
+		border-radius: var(--radius-control, var(--radius-lg));
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -443,23 +409,23 @@
 	}
 
 	.stat-icon.green {
-		background: var(--success-light);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.stat-icon.purple {
-		background: var(--primary-light);
-		color: var(--primary);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.stat-icon.pink {
-		background: var(--accent-light);
-		color: var(--accent);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
 	}
 
 	.stat-icon.orange {
-		background: var(--warning-light);
-		color: var(--warning);
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.activity-content {
@@ -468,17 +434,17 @@
 
 	.activity-text {
 		font-size: 0.9375rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.activity-text :global(strong) {
 		font-weight: 600;
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	.activity-time {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		margin-top: 4px;
 	}
 
@@ -494,34 +460,32 @@
 		align-items: center;
 		gap: 12px;
 		padding: 12px 16px;
-		background: var(--bg-glass);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		color: var(--text-primary);
+		background: var(--control-bg, var(--color-surface));
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, var(--radius-lg));
+		color: var(--color-text);
 		font-size: 0.9375rem;
 		font-weight: 500;
 		text-decoration: none;
 		transition: all var(--transition-fast);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
 	}
 
 	.quick-action-btn:hover {
-		background: var(--bg-card);
-		border-color: var(--primary);
-		color: var(--primary);
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 		transform: translateY(-2px);
 	}
 
 	.quick-action-btn :global(i) {
 		width: 20px;
 		height: 20px;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 		transition: color var(--transition-fast);
 	}
 
 	.quick-action-btn:hover :global(i) {
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	/* Responsive */
@@ -536,10 +500,6 @@
 	}
 
 	@media (max-width: 768px) {
-		.page-title {
-			font-size: 1.75rem;
-		}
-
 		.stats-grid {
 			grid-template-columns: 1fr;
 		}

@@ -9,9 +9,7 @@ import {
 } from '@authrim/ar-lib-core';
 import type { SAMLAttributeSubject } from '../idp/attributes';
 
-export interface SAMLUserInfo extends SAMLAttributeSubject {
-  email: string;
-}
+export type SAMLUserInfo = SAMLAttributeSubject;
 
 async function resolveUserStoreAdapters(
   env: Env,
@@ -105,10 +103,10 @@ export async function getSamlUserInfoById(
     coreAdapter,
     piiAdapter
   )?.findByLegacyUserId(userId);
-  if (canonicalProjection?.email) {
+  if (canonicalProjection) {
     return {
       id: canonicalProjection.id,
-      email: canonicalProjection.email,
+      ...(canonicalProjection.email ? { email: canonicalProjection.email } : {}),
       name: canonicalProjection.name ?? undefined,
       customClaims: await getNonPiiCustomClaims(env, tenantId, userId),
       customFields: parseCustomFields(canonicalProjection.custom_attributes_json),

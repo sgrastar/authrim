@@ -77,6 +77,69 @@ describe('AuthrimConfigSchema', () => {
     }
   });
 
+  it('validates Email Verification Protocol Origin Trial configuration', () => {
+    const token = 'A'.repeat(64);
+    const baseConfig = {
+      version: '1.0.0',
+      environment: { prefix: 'prod' },
+      features: {
+        email: {
+          verificationProtocolOriginTrial: {
+            tokens: {
+              'https://login.example.com': token,
+            },
+          },
+        },
+      },
+    };
+
+    const result = AuthrimConfigSchema.safeParse(baseConfig);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.features.email.verificationProtocolOriginTrial?.tokens).toEqual({
+        'https://login.example.com': token,
+      });
+    }
+
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        features: {
+          email: {
+            verificationProtocolOriginTrial: {
+              token,
+              tokens: { 'https://login.example.com': token },
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        features: {
+          email: {
+            verificationProtocolOriginTrial: {
+              tokens: { 'http://login.example.com': token },
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+    expect(
+      AuthrimConfigSchema.safeParse({
+        ...baseConfig,
+        features: {
+          email: {
+            verificationProtocolOriginTrial: {
+              token: `${token}\r\nInjected: value`,
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+
   it('rejects tenant identifiers with uppercase characters', () => {
     const baseConfig = {
       version: '1.0.0',

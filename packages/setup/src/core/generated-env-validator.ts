@@ -18,7 +18,7 @@ import {
 } from './wrangler.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
 import { D1_DATABASES, getEnabledComponents, type WorkerComponent } from './naming.js';
-import { listD1Databases, listR2Buckets, queryD1Rows } from './cloudflare.js';
+import { listD1Databases, listKVNamespaces, listR2Buckets, queryD1Rows } from './cloudflare.js';
 
 type ValidationStatus = 'pass' | 'warn' | 'fail';
 
@@ -126,6 +126,7 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
       'contact_points',
       'custom_claim_schemas',
       'user_custom_fields',
+      'event_log',
     ],
   },
   {
@@ -744,13 +745,13 @@ async function validateLoggingSecretMaterial(
 ): Promise<ValidationCheck> {
   const check = makeCheck(
     'logging-secret-material',
-    'generated keys include logging and object encryption secrets'
+    'generated keys include logging, OTP, and encryption secrets'
   );
   const keysDir = resolveKeysDirectory(baseDir, env, envPaths, config, keysBaseDir);
 
   if (!existsSync(keysDir)) {
     pushDetail(check, 'fail', `keys directory is missing: ${keysDir}`);
-    return finishCheck(check, 'generated keys include logging and object encryption secrets');
+    return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
   }
 
   await inspectSecretFile(
@@ -767,12 +768,24 @@ async function validateLoggingSecretMaterial(
   );
   await inspectSecretFile(
     check,
+    join(keysDir, 'pii_encryption_key.txt'),
+    'PII_ENCRYPTION_KEY',
+    isHexRootKey
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'otp_hmac_secret.txt'),
+    'OTP_HMAC_SECRET',
+    isBase64UrlSecret
+  );
+  await inspectSecretFile(
+    check,
     join(keysDir, 'version_manager_secret.txt'),
     'VERSION_MANAGER_SECRET',
     isBase64UrlSecret
   );
 
-  return finishCheck(check, 'generated keys include logging and object encryption secrets');
+  return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
 }
 
 async function validateDeployWranglers(
@@ -1050,6 +1063,42 @@ async function validateLiveCloudflareD1(lock: AuthrimLock): Promise<ValidationCh
   return finishCheck(check, 'All lock.json D1 databases exist in Cloudflare');
 }
 
+async function validateLiveCloudflareKV(lock: AuthrimLock): Promise<ValidationCheck> {
+  const check = makeCheck('live-cloudflare-kv', 'Cloudflare KV namespaces in lock.json exist');
+
+  try {
+    const cloudflareNamespaces = await listKVNamespaces();
+    const byTitle = new Map(
+      cloudflareNamespaces.map((namespace) => [namespace.title, namespace.id])
+    );
+
+    for (const [binding, namespace] of Object.entries(lock.kv)) {
+      const cloudflareId = byTitle.get(namespace.name);
+      if (!cloudflareId) {
+        pushDetail(check, 'fail', `${binding}: ${namespace.name} is missing in Cloudflare KV`);
+        continue;
+      }
+      if (cloudflareId !== namespace.id) {
+        pushDetail(
+          check,
+          'fail',
+          `${binding}: ${namespace.name} id mismatch lock=${namespace.id} cloudflare=${cloudflareId}`
+        );
+        continue;
+      }
+      pushDetail(check, 'pass', `${binding}: ${namespace.name} (${namespace.id})`);
+    }
+  } catch (error) {
+    pushDetail(
+      check,
+      'fail',
+      `Cloudflare KV list failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  return finishCheck(check, 'All lock.json KV namespaces exist in Cloudflare');
+}
+
 async function validateLiveCloudflareR2(lock: AuthrimLock): Promise<ValidationCheck> {
   const check = makeCheck('live-cloudflare-r2', 'Cloudflare R2 buckets in lock.json exist');
   const recordedBuckets = Object.entries(lock.r2 ?? {});
@@ -1308,6 +1357,7 @@ export async function validateGeneratedEnvironment(
   if (options.liveCloudflare) {
     checks.push(
       await validateLiveCloudflareD1(lock),
+      await validateLiveCloudflareKV(lock),
       await validateLiveCloudflareR2(lock),
       await validateLiveRuntimeD1Schema(lock),
       await validateLiveTenantD1Slots(config, lock)

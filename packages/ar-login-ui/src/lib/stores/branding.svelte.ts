@@ -7,7 +7,7 @@
  * Populated in +layout.svelte from fetchAuthenticationMethods() response.
  */
 
-function createBrandingStore() {
+export function createBrandingStore() {
 	let brandName = $state('');
 	let logoUrl = $state<string | null>(null);
 	let isLoaded = $state(false);
@@ -31,6 +31,3 @@ function createBrandingStore() {
 		set
 	};
 }
-
-// Export singleton instance
-export const brandingStore = createBrandingStore();

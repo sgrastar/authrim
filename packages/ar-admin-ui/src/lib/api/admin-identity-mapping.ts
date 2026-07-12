@@ -9,6 +9,8 @@ export interface IdentityMappingFieldMappingSetSummary {
 	displayName: string;
 	description?: string | null;
 	lifecycleState: string;
+	createdAt?: number | null;
+	updatedAt?: number | null;
 }
 
 export interface IdentityMappingFieldMappingVersionSummary {
@@ -177,6 +179,53 @@ export type IdentityMappingDestinationType = 'oidc' | 'csv' | 'saml';
 export type IdentityMappingProfileOwnerScope = 'platform' | 'tenant' | 'client';
 export type IdentityMappingRegistryOwnerScope = 'platform' | 'tenant';
 export type IdentityMappingOidcSurface = 'id_token' | 'userinfo';
+export type PersistentIdentifierMode = 'computed' | 'stored' | 'imported';
+export type PersistentIdentifierAlgorithm =
+	| 'authrim_sha256_base64url'
+	| 'shibboleth_sha1_base64'
+	| 'stored'
+	| 'imported';
+export type PersistentIdentifierProtocolScope = 'any' | 'saml' | 'oidc' | 'generic';
+export type PersistentIdentifierAudienceMode =
+	| 'runtime'
+	| 'saml_sp_entity_id'
+	| 'oidc_sector_identifier';
+
+export interface PersistentIdentifierProfileSummary {
+	id: string;
+	tenantId: string;
+	profileKey: string;
+	displayName: string;
+	description?: string | null;
+	mode: PersistentIdentifierMode;
+	algorithm: PersistentIdentifierAlgorithm;
+	protocolScope: PersistentIdentifierProtocolScope;
+	usage: string[];
+	sourceRef?: Record<string, unknown> | null;
+	secretRef?: string | null;
+	issuerEntityId?: string | null;
+	audienceMode: PersistentIdentifierAudienceMode;
+	format: Record<string, unknown>;
+	lifecycleState: string;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface PersistentIdentifierProfileUpsertRequest {
+	profileKey: string;
+	displayName: string;
+	description?: string | null;
+	mode?: PersistentIdentifierMode;
+	algorithm?: PersistentIdentifierAlgorithm;
+	protocolScope?: PersistentIdentifierProtocolScope;
+	usage?: string[];
+	sourceRef?: Record<string, unknown> | null;
+	secretRef?: string | null;
+	issuerEntityId?: string | null;
+	audienceMode?: PersistentIdentifierAudienceMode;
+	format?: Record<string, unknown>;
+	lifecycleState?: string;
+}
 
 export interface IdentityMappingDestinationProfileVersion {
 	id: string;
@@ -477,6 +526,16 @@ export interface IdentityMappingActivateFieldMappingRequest {
 	holderId?: string;
 }
 
+export interface IdentityMappingCompiledSnapshot {
+	id: string;
+	tenantId: string;
+	fieldMappingVersionId: string;
+	catalogVersionId: string;
+	snapshotHash: string;
+	dependencyGraphId: string;
+	lifecycleState: string;
+}
+
 async function parseJson<T>(response: Response, fallbackMessage: string): Promise<T> {
 	if (response.ok) {
 		return (await response.json()) as T;
@@ -514,6 +573,64 @@ function mutationHeaders(): Record<string, string> {
 }
 
 export const adminIdentityMappingAPI = {
+	async listPersistentIdentifierProfiles(): Promise<{
+		profiles: PersistentIdentifierProfileSummary[];
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/field-mapping/persistent-identifier-profiles`
+		);
+		return parseJson(response, 'Failed to load persistent identifier profiles');
+	},
+
+	async createPersistentIdentifierProfile(
+		request: PersistentIdentifierProfileUpsertRequest
+	): Promise<{ result: PersistentIdentifierProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/field-mapping/persistent-identifier-profiles`,
+			{
+				method: 'POST',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to create persistent identifier profile');
+	},
+
+	async getPersistentIdentifierProfile(
+		profileId: string
+	): Promise<{ result: PersistentIdentifierProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/field-mapping/persistent-identifier-profiles/${encodeURIComponent(profileId)}`
+		);
+		return parseJson(response, 'Failed to load persistent identifier profile');
+	},
+
+	async updatePersistentIdentifierProfile(
+		profileId: string,
+		request: PersistentIdentifierProfileUpsertRequest
+	): Promise<{ result: PersistentIdentifierProfileSummary }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/field-mapping/persistent-identifier-profiles/${encodeURIComponent(profileId)}`,
+			{
+				method: 'PUT',
+				headers: mutationHeaders(),
+				body: JSON.stringify(request)
+			}
+		);
+		return parseJson(response, 'Failed to update persistent identifier profile');
+	},
+
+	async deletePersistentIdentifierProfile(profileId: string): Promise<Record<string, unknown>> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/field-mapping/persistent-identifier-profiles/${encodeURIComponent(profileId)}`,
+			{
+				method: 'DELETE',
+				headers: mutationHeaders()
+			}
+		);
+		return parseJson(response, 'Failed to delete persistent identifier profile');
+	},
+
 	async listFieldMappingSets(): Promise<{
 		fieldMappingSets: IdentityMappingFieldMappingSetSummary[];
 	}> {
@@ -603,7 +720,7 @@ export const adminIdentityMappingAPI = {
 		fieldMappingSetId: string,
 		fieldMappingVersionId: string,
 		request: IdentityMappingCompileFieldMappingRequest
-	): Promise<Record<string, unknown>> {
+	): Promise<{ result: IdentityMappingCompiledSnapshot }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/field-mapping-sets/${encodeURIComponent(fieldMappingSetId)}/versions/${encodeURIComponent(fieldMappingVersionId)}/compile`,
 			{

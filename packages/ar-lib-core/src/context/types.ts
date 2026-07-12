@@ -37,6 +37,7 @@ import type {
   ClientRepository,
   SessionRepository,
   PasskeyRepository,
+  TotpCredentialRepository,
   RoleRepository,
   SessionClientRepository,
 } from '../repositories/core';
@@ -63,6 +64,9 @@ export interface CoreRepositories {
 
   /** WebAuthn passkey credentials */
   passkey: PasskeyRepository;
+
+  /** TOTP authenticator credentials and backup codes */
+  totp: TotpCredentialRepository;
 
   /** RBAC roles and user-role assignments */
   role: RoleRepository;

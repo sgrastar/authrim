@@ -7,6 +7,7 @@
 	 */
 
 	import { settingsContext, type SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -29,13 +30,11 @@
 	// Scope configuration
 	const scopeConfig: Array<{
 		level: SettingScopeLevel;
-		label: string;
 		icon: string;
-		description: string;
 	}> = [
-		{ level: 'platform', label: 'Platform', icon: '🏗️', description: 'Global platform settings' },
-		{ level: 'tenant', label: 'Tenant', icon: '🏢', description: 'Tenant-specific settings' },
-		{ level: 'client', label: 'Client', icon: '📦', description: 'Client application settings' }
+		{ level: 'platform', icon: 'i-ph-stack' },
+		{ level: 'tenant', icon: 'i-ph-buildings' },
+		{ level: 'client', icon: 'i-ph-app-window' }
 	];
 
 	// Filter accessible scopes
@@ -74,6 +73,24 @@
 		);
 	}
 
+	function getScopeLabel(level: SettingScopeLevel): string {
+		const labels: Record<SettingScopeLevel, string> = {
+			platform: $LL.admin_settings_scope_platform(),
+			tenant: $LL.admin_settings_scope_tenant(),
+			client: $LL.admin_settings_scope_client()
+		};
+		return labels[level];
+	}
+
+	function getScopeDescription(level: SettingScopeLevel): string {
+		const descriptions: Record<SettingScopeLevel, string> = {
+			platform: $LL.admin_settings_scope_platform_desc(),
+			tenant: $LL.admin_settings_scope_tenant_desc(),
+			client: $LL.admin_settings_scope_client_desc()
+		};
+		return descriptions[level];
+	}
+
 	// Initialize on mount
 	onMount(async () => {
 		await settingsContext.initialize();
@@ -92,10 +109,10 @@
 				class:active={isActive}
 				class:disabled={!settingsContext.canAccessScope(scope.level)}
 				onclick={() => handleScopeChange(scope.level)}
-				title={scope.description}
+				title={getScopeDescription(scope.level)}
 			>
-				<span class="scope-icon">{scope.icon}</span>
-				<span class="scope-label">{scope.label}</span>
+				<i class="scope-icon {scope.icon}" aria-hidden="true"></i>
+				<span class="scope-label">{getScopeLabel(scope.level)}</span>
 			</button>
 		{/each}
 	</div>
@@ -105,7 +122,9 @@
 		<div class="entity-selectors">
 			<!-- Tenant Selector -->
 			<div class="selector-group">
-				<label for="tenant-select" class="selector-label">Tenant:</label>
+				<label for="tenant-select" class="selector-label">
+					{$LL.admin_settings_scope_tenant_label()}
+				</label>
 				<select
 					id="tenant-select"
 					class="selector-input"
@@ -122,7 +141,9 @@
 			<!-- Client Selector (only for client scope) -->
 			{#if currentLevel === 'client'}
 				<div class="selector-group">
-					<label for="client-select" class="selector-label">Client:</label>
+					<label for="client-select" class="selector-label">
+						{$LL.admin_settings_scope_client_label()}
+					</label>
 					<select
 						id="client-select"
 						class="selector-input"
@@ -130,7 +151,7 @@
 						onchange={handleClientChange}
 						disabled={isLoading || availableClients.length === 0}
 					>
-						<option value="">Select a client...</option>
+						<option value="">{$LL.admin_settings_scope_select_client()}</option>
 						{#each availableClients as client (client.id)}
 							<option value={client.id}>{client.name}</option>
 						{/each}
@@ -144,13 +165,13 @@
 	<div class="permission-indicator">
 		{#if settingsContext.canEditAtCurrentScope()}
 			<span class="permission-badge editable">
-				<span class="permission-icon">✏️</span>
-				Editable
+				<i class="permission-icon i-ph-pencil-simple" aria-hidden="true"></i>
+				{$LL.admin_settings_scope_editable()}
 			</span>
 		{:else}
 			<span class="permission-badge readonly">
-				<span class="permission-icon">🔒</span>
-				Read-only
+				<i class="permission-icon i-ph-lock-key" aria-hidden="true"></i>
+				{$LL.admin_settings_readonly()}
 			</span>
 		{/if}
 	</div>
@@ -162,16 +183,16 @@
 		flex-direction: column;
 		gap: 12px;
 		padding: 12px 16px;
-		background-color: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
+		background-color: var(--color-surface-muted);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 	}
 
 	/* Scope Tabs */
 	.scope-tabs {
 		display: flex;
 		gap: 4px;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 		padding-bottom: 8px;
 	}
 
@@ -182,22 +203,22 @@
 		padding: 8px 16px;
 		background-color: transparent;
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-control);
 		cursor: pointer;
 		transition: all var(--transition-fast);
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		font-weight: 500;
 	}
 
 	.scope-tab:hover:not(.disabled) {
-		background-color: var(--bg-hover);
-		color: var(--text-primary);
+		background-color: color-mix(in srgb, var(--color-accent) 8%, transparent);
+		color: var(--color-text);
 	}
 
 	.scope-tab.active {
-		background-color: var(--primary);
-		color: white;
+		background-color: var(--color-accent);
+		color: var(--color-accent-contrast);
 	}
 
 	.scope-tab.disabled {
@@ -229,31 +250,31 @@
 	.selector-label {
 		font-size: 0.8125rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text);
 		white-space: nowrap;
 	}
 
 	.selector-input {
 		padding: 6px 12px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background-color: var(--bg-card);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background-color: var(--control-bg, var(--color-surface));
 		font-size: 0.8125rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		min-width: 160px;
 		cursor: pointer;
 	}
 
 	.selector-input:focus {
 		outline: none;
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-light);
+		border-color: var(--color-accent);
+		box-shadow: var(--control-focus-shadow, 0 0 0 3px var(--color-accent-muted));
 	}
 
 	.selector-input:disabled {
-		background-color: var(--bg-subtle);
+		background-color: var(--color-surface-muted);
 		cursor: not-allowed;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 	}
 
 	/* Permission Indicator */
@@ -267,19 +288,19 @@
 		align-items: center;
 		gap: 4px;
 		padding: 4px 10px;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-control);
 		font-size: 0.75rem;
 		font-weight: 500;
 	}
 
 	.permission-badge.editable {
-		background-color: var(--success-light);
-		color: var(--success);
+		background-color: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.permission-badge.readonly {
-		background-color: var(--warning-light);
-		color: var(--warning);
+		background-color: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.permission-icon {

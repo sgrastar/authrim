@@ -22,6 +22,7 @@
  *   - counter: INTEGER DEFAULT 0 (signature counter)
  *   - transports: TEXT (JSON array of transport types)
  *   - device_name: TEXT (user-friendly name)
+ *   - aaguid: TEXT (authenticator display metadata key)
  *   - created_at: INTEGER NOT NULL (timestamp)
  *   - last_used_at: INTEGER (timestamp)
  */
@@ -55,6 +56,8 @@ export interface Passkey {
   transports: AuthenticatorTransport[];
   /** User-friendly device name */
   device_name: string | null;
+  /** Authenticator Attestation GUID for display metadata */
+  aaguid: string | null;
   /** Creation timestamp (Unix ms) */
   created_at: number;
   /** Last authentication timestamp (Unix ms) */
@@ -79,6 +82,8 @@ export interface CreatePasskeyInput {
   transports?: AuthenticatorTransport[];
   /** User-friendly device name */
   device_name?: string;
+  /** Authenticator Attestation GUID for display metadata */
+  aaguid?: string | null;
 }
 
 /**
@@ -115,6 +120,7 @@ interface PasskeyRow {
   counter: number;
   transports: string | null;
   device_name: string | null;
+  aaguid: string | null;
   created_at: number;
   last_used_at: number | null;
 }
@@ -179,8 +185,8 @@ export class PasskeyRepository {
     const transportsJson = input.transports ? JSON.stringify(input.transports) : null;
 
     const sql = `
-      INSERT INTO passkeys (id, tenant_id, user_id, credential_id, public_key, counter, transports, device_name, created_at, last_used_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      INSERT INTO passkeys (id, tenant_id, user_id, credential_id, public_key, counter, transports, device_name, aaguid, created_at, last_used_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     `;
 
     await this.adapter.execute(sql, [
@@ -192,6 +198,7 @@ export class PasskeyRepository {
       validCounter,
       transportsJson,
       input.device_name ?? null,
+      input.aaguid ?? null,
       now,
     ]);
 
@@ -204,6 +211,7 @@ export class PasskeyRepository {
       counter: validCounter,
       transports: input.transports ?? [],
       device_name: input.device_name ?? null,
+      aaguid: input.aaguid ?? null,
       created_at: now,
       last_used_at: null,
     };
@@ -479,6 +487,7 @@ export class PasskeyRepository {
       counter: row.counter,
       transports,
       device_name: row.device_name,
+      aaguid: row.aaguid ?? null,
       created_at: row.created_at,
       last_used_at: row.last_used_at,
     };

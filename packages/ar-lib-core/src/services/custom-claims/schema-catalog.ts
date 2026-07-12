@@ -27,6 +27,8 @@ export interface SeedCustomClaimSchemaInput {
   display_label: string;
   field_type: string;
   is_pii: number;
+  is_required?: number;
+  is_system?: number;
   is_searchable: number;
   is_exportable: number;
   display_order: number;
@@ -51,13 +53,17 @@ function getAdapter(db: DatabaseSource): DatabaseAdapter {
 
 export async function listRegistrationFieldSchemas(
   db: DatabaseSource,
-  tenantId: string
+  tenantId: string,
+  options: { includeRequiredHidden?: boolean } = {}
 ): Promise<RegistrationFieldSchemaRow[]> {
+  const visibilityFilter = options.includeRequiredHidden
+    ? '(show_on_registration = 1 OR registration_required = 1)'
+    : 'show_on_registration = 1';
   return getAdapter(db).query<RegistrationFieldSchemaRow>(
     `SELECT field_key, display_label, field_type, is_pii, registration_required,
             registration_order, registration_placeholder, validation_rules
      FROM custom_claim_schemas
-     WHERE tenant_id = ? AND show_on_registration = 1 AND is_active = 1
+     WHERE tenant_id = ? AND ${visibilityFilter} AND is_active = 1
      ORDER BY registration_order ASC, display_order ASC`,
     [tenantId]
   );
@@ -126,7 +132,7 @@ export async function seedCustomClaimSchemas({
         scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
         examples_json, schema_version, operation_status,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
       [
         idFactory(),
         tenantId,
@@ -135,6 +141,8 @@ export async function seedCustomClaimSchemas({
         schema.display_label,
         schema.field_type,
         schema.is_pii,
+        schema.is_required ?? 0,
+        schema.is_system ?? 1,
         schema.is_searchable,
         schema.is_exportable,
         schema.display_order,

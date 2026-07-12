@@ -11,6 +11,8 @@ import {
   getConsentItemsForScreen,
   processConsentItemDecisions,
   getUserClaimsForRules,
+  resolveClientTrustPolicy,
+  resolveSignInConfirmationPolicy,
   activateVersion,
   computeContentHash,
   hashIpAddress,
@@ -51,11 +53,33 @@ function createMockAdapter(
       if (sql.includes('FROM consent_statements') && sql.includes('is_active = 1')) {
         return queryResults.get('active_statements') || [];
       }
+      if (
+        sql.includes('record_retention_days') &&
+        sql.includes('reconsent_interval_days') &&
+        sql.includes('FROM consent_statements')
+      ) {
+        return queryResults.get('consent_statement_settings') || [];
+      }
       if (sql.includes('FROM consent_statement_versions') && sql.includes('is_current = 1')) {
         return queryResults.get('current_version') || [];
       }
+      if (sql.includes('content_type') && sql.includes('consent_statement_versions')) {
+        return queryResults.get('version_content_type') || [];
+      }
+      if (sql.includes('FROM consent_statement_versions') && sql.includes('id = ?')) {
+        return queryResults.get('version_by_id') || [];
+      }
       if (sql.includes('FROM consent_statement_localizations')) {
         return queryResults.get('localizations') || [];
+      }
+      if (sql.includes('FROM consent_policy_items')) {
+        return queryResults.get('consent_policy_items') || [];
+      }
+      if (sql.includes('FROM client_trust_policies')) {
+        return queryResults.get('client_trust_policies') || [];
+      }
+      if (sql.includes('FROM sign_in_confirmation_policies')) {
+        return queryResults.get('sign_in_confirmation_policies') || [];
       }
       if (sql.includes('FROM tenant_consent_requirements')) {
         return queryResults.get('tenant_requirements') || [];
@@ -235,9 +259,6 @@ function createMockAdapter(
       }
       if (sql.includes('COUNT(*)') && sql.includes('consent_statement_localizations')) {
         return queryResults.get('localization_count') || [{ cnt: 0 }];
-      }
-      if (sql.includes('content_type') && sql.includes('consent_statement_versions')) {
-        return queryResults.get('version_content_type') || [];
       }
       return [];
     }),
@@ -478,6 +499,417 @@ describe('Consent Statements Utility', () => {
         ['tenant-a', 'ver-1']
       );
     });
+
+    it('should fall back to English when requested and tenant default languages are unavailable', async () => {
+      const adapter = {
+        query: vi.fn(async () => [
+          {
+            id: 'loc-ja',
+            tenant_id: 'tenant-a',
+            version_id: 'ver-1',
+            language: 'ja',
+            title: '利用規約',
+            description: '日本語',
+            processing_purpose: null,
+            withdrawal_impact: null,
+            document_url: null,
+            inline_content: '日本語',
+            created_at: 1,
+            updated_at: 1,
+          },
+          {
+            id: 'loc-en',
+            tenant_id: 'tenant-a',
+            version_id: 'ver-1',
+            language: 'en',
+            title: 'Terms',
+            description: 'English',
+            processing_purpose: null,
+            withdrawal_impact: null,
+            document_url: null,
+            inline_content: 'English',
+            created_at: 1,
+            updated_at: 1,
+          },
+        ]),
+        execute: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const result = await getLocalization(adapter, 'tenant-a', 'ver-1', 'fr', 'de');
+
+      expect(result?.language).toBe('en');
+      expect(result?.title).toBe('Terms');
+    });
+
+    it('should fall back to the only available non-English localization', async () => {
+      const adapter = {
+        query: vi.fn(async () => [
+          {
+            id: 'loc-ja',
+            tenant_id: 'tenant-a',
+            version_id: 'ver-1',
+            language: 'ja',
+            title: '利用規約',
+            description: '日本語',
+            processing_purpose: null,
+            withdrawal_impact: null,
+            document_url: null,
+            inline_content: '日本語',
+            created_at: 1,
+            updated_at: 1,
+          },
+        ]),
+        execute: vi.fn(),
+      } as unknown as DatabaseAdapter;
+
+      const result = await getLocalization(adapter, 'tenant-a', 'ver-1', 'fr', 'de');
+
+      expect(result?.language).toBe('ja');
+      expect(result?.title).toBe('利用規約');
+    });
+  });
+
+  describe('resolveConsentRequirements', () => {
+    it('should resolve legacy tenant requirements without reading direct consent policy assignments', async () => {
+      const now = Date.now();
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'active_statements',
+            [
+              {
+                id: 'stmt-1',
+                tenant_id: 'default',
+                slug: 'privacy',
+                category: 'privacy_policy',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 10,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: 180,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'tenant_requirements',
+            [
+              {
+                id: 'req-1',
+                tenant_id: 'default',
+                statement_id: 'stmt-1',
+                requirement: 'required',
+                min_version: null,
+                conditional_rules_json: null,
+                display_order: 5,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'consent_statement_settings',
+            [
+              {
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                reconsent_interval_days: 180,
+              },
+            ],
+          ],
+          [
+            'client_overrides',
+            [
+              {
+                id: 'override-1',
+                client_id: 'client-1',
+                statement_id: 'stmt-1',
+                requirement: 'required',
+                min_version: '20260601',
+                enforcement: 'block',
+                checkbox_mode: 'required',
+                checkbox_default_checked: 0,
+                binding_type: 'scope',
+                binding_value: 'profile email',
+                evidence_profile: 'attribute_release',
+                language_fallback: 'tenant_default',
+                display_order: 5,
+                conditional_rules_json: null,
+              },
+            ],
+          ],
+          [
+            'current_version',
+            [
+              {
+                id: 'ver-1',
+                tenant_id: 'default',
+                statement_id: 'stmt-1',
+                version: '20260601',
+                content_type: 'url',
+                effective_at: now,
+                content_hash: null,
+                is_current: 1,
+                status: 'active',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const result = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          requested_scopes: ['openid', 'email'],
+        }
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        statement_id: 'stmt-1',
+        is_required: true,
+        min_version: '20260601',
+        reconsent_interval_days: 180,
+        checkbox_mode: 'required',
+        checkbox_default_checked: false,
+        binding_type: 'scope',
+        binding_value: 'profile email',
+      });
+      const directPolicyAssignmentQuery = vi
+        .mocked(adapter.query)
+        .mock.calls.find(([sql]) => String(sql).includes('consent_policy_assignments'));
+      expect(directPolicyAssignmentQuery).toBeUndefined();
+    });
+
+    it('should not include unbound tenant-wide or SAML statements in an OIDC consent context', async () => {
+      const now = Date.now();
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'active_statements',
+            [
+              {
+                id: 'stmt-terms',
+                tenant_id: 'default',
+                slug: 'terms_of_service',
+                category: 'terms_of_service',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 1,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: null,
+                created_at: now,
+                updated_at: now,
+              },
+              {
+                id: 'stmt-saml',
+                tenant_id: 'default',
+                slug: 'saml_attribute_release_confirmation',
+                category: 'saml_attribute_release_confirmation',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 2,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'tenant_requirements',
+            [
+              {
+                id: 'req-terms',
+                tenant_id: 'default',
+                statement_id: 'stmt-terms',
+                is_required: 1,
+                min_version: null,
+                enforcement: 'block',
+                show_deletion_link: 0,
+                deletion_url: null,
+                conditional_rules_json: null,
+                display_order: 1,
+                created_at: now,
+                updated_at: now,
+              },
+              {
+                id: 'req-saml',
+                tenant_id: 'default',
+                statement_id: 'stmt-saml',
+                is_required: 1,
+                min_version: null,
+                enforcement: 'block',
+                show_deletion_link: 0,
+                deletion_url: null,
+                conditional_rules_json: null,
+                display_order: 2,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'current_version',
+            [
+              {
+                id: 'ver-current',
+                tenant_id: 'default',
+                statement_id: 'stmt-terms',
+                version: '20260601',
+                content_type: 'url',
+                effective_at: now,
+                effective_until: null,
+                content_hash: null,
+                is_current: 1,
+                status: 'active',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const result = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          target_type: 'oidc_client',
+          target_id: 'client-1',
+          requested_scopes: ['openid'],
+        }
+      );
+
+      expect(result).toHaveLength(0);
+    });
+
+    it('should include scope-bound client overrides only when the scope is requested', async () => {
+      const now = Date.now();
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'active_statements',
+            [
+              {
+                id: 'stmt-email',
+                tenant_id: 'default',
+                slug: 'email_release',
+                category: 'data_sharing',
+                legal_basis: 'consent',
+                processing_purpose: null,
+                display_order: 1,
+                is_active: 1,
+                record_retention_days: 365,
+                withdrawal_allowed: 1,
+                withdrawal_impact: null,
+                reconsent_on_version_change: 1,
+                reconsent_interval_days: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          ['tenant_requirements', []],
+          [
+            'client_overrides',
+            [
+              {
+                id: 'override-email',
+                tenant_id: 'default',
+                client_id: 'client-1',
+                statement_id: 'stmt-email',
+                requirement: 'required',
+                min_version: null,
+                enforcement: 'block',
+                conditional_rules_json: null,
+                checkbox_mode: 'required',
+                checkbox_default_checked: 0,
+                binding_type: 'scope',
+                binding_value: 'email profile',
+                evidence_profile: 'attribute_release',
+                language_fallback: 'tenant_default',
+                display_order: 1,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+          [
+            'current_version',
+            [
+              {
+                id: 'ver-email',
+                tenant_id: 'default',
+                statement_id: 'stmt-email',
+                version: '20260601',
+                content_type: 'url',
+                effective_at: now,
+                effective_until: null,
+                content_hash: null,
+                is_current: 1,
+                status: 'active',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const noMatch = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          target_type: 'oidc_client',
+          target_id: 'client-1',
+          requested_scopes: ['openid'],
+        }
+      );
+      expect(noMatch).toHaveLength(0);
+
+      const match = await resolveConsentRequirements(
+        adapter,
+        'default',
+        'client-1',
+        {},
+        {
+          target_type: 'oidc_client',
+          target_id: 'client-1',
+          requested_scopes: ['openid', 'email'],
+        }
+      );
+      expect(match).toHaveLength(1);
+      expect(match[0]).toMatchObject({
+        statement_id: 'stmt-email',
+        is_required: true,
+        checkbox_default_checked: false,
+        binding_type: 'scope',
+        binding_value: 'email profile',
+      });
+    });
   });
 
   describe('checkUserConsentSatisfaction', () => {
@@ -614,6 +1046,147 @@ describe('Consent Statements Utility', () => {
 
       expect(result.satisfied).toBe(false);
       expect(result.unsatisfied).toEqual(['stmt-1']);
+    });
+
+    it('should detect reconsent interval expiration', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'user_records',
+            [
+              {
+                statement_id: 'stmt-1',
+                version: '20260601',
+                status: 'granted',
+                granted_at: Date.now() - 31 * 24 * 60 * 60 * 1000,
+                expires_at: null,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const requirements: ResolvedConsentRequirement[] = [
+        {
+          statement_id: 'stmt-1',
+          statement: { slug: 'tos' } as any,
+          current_version: { version: '20260601' } as any,
+          is_required: true,
+          enforcement: 'block',
+          show_deletion_link: false,
+          reconsent_interval_days: 30,
+          display_order: 0,
+        },
+      ];
+
+      const result = await checkUserConsentSatisfaction(adapter, 'default', 'user-1', requirements);
+
+      expect(result.satisfied).toBe(false);
+      expect(result.unsatisfied).toEqual(['stmt-1']);
+    });
+
+    it('should honor stored audit snapshot expiration without recalculating from current settings', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'user_records',
+            [
+              {
+                statement_id: 'stmt-1',
+                version: '20260601',
+                status: 'granted',
+                granted_at: Date.now() - 31 * 24 * 60 * 60 * 1000,
+                expires_at: null,
+                consent_settings_snapshot_at: Date.now() - 31 * 24 * 60 * 60 * 1000,
+                reconsent_interval_days_snapshot: null,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const requirements: ResolvedConsentRequirement[] = [
+        {
+          statement_id: 'stmt-1',
+          statement: { slug: 'tos' } as any,
+          current_version: { version: '20260601' } as any,
+          is_required: true,
+          enforcement: 'block',
+          show_deletion_link: false,
+          reconsent_interval_days: 30,
+          display_order: 0,
+        },
+      ];
+
+      const result = await checkUserConsentSatisfaction(adapter, 'default', 'user-1', requirements);
+
+      expect(result.satisfied).toBe(true);
+      expect(result.unsatisfied).toEqual([]);
+    });
+  });
+
+  describe('policy setting resolution', () => {
+    it('should resolve target client trust policy', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'client_trust_policies',
+            [
+              {
+                target_type: 'oidc_client',
+                target_id: 'client-1',
+                first_party: 1,
+                trusted: 1,
+                skip_authorization_consent: 1,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const result = await resolveClientTrustPolicy(adapter, 'default', 'oidc_client', 'client-1');
+
+      expect(result).toEqual({
+        target_type: 'oidc_client',
+        target_id: 'client-1',
+        first_party: true,
+        trusted: true,
+        skip_authorization_consent: true,
+      });
+      const trustPolicyQuery = vi
+        .mocked(adapter.query)
+        .mock.calls.find(([sql]) => String(sql).includes('FROM client_trust_policies'));
+      expect(trustPolicyQuery?.[0]).toContain('AND target_type = ?');
+      expect(trustPolicyQuery?.[0]).toContain('AND target_id = ?');
+      expect(trustPolicyQuery?.[0]).not.toContain('tenant_default');
+      expect(trustPolicyQuery?.[1]).toEqual(['default', 'oidc_client', 'client-1']);
+    });
+
+    it('should resolve login sign-in confirmation policy', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'sign_in_confirmation_policies',
+            [
+              {
+                mode: 'every_time',
+                remember_duration_days: 7,
+                show_application_context: 1,
+                show_tenant_context: 0,
+              },
+            ],
+          ],
+        ]),
+      });
+
+      const result = await resolveSignInConfirmationPolicy(adapter, 'default');
+
+      expect(result).toEqual({
+        mode: 'every_time',
+        remember_duration_days: 7,
+        show_application_context: true,
+        show_tenant_context: false,
+      });
     });
   });
 
@@ -779,6 +1352,10 @@ describe('Consent Statements Utility', () => {
         queryResults: new Map([
           ['user_records', []],
           ['current_version', [{ id: 'ver-1', version: '20250206' }]],
+          [
+            'consent_statement_settings',
+            [{ record_retention_days: 365, reconsent_interval_days: 180 }],
+          ],
         ]),
       });
 
@@ -790,7 +1367,22 @@ describe('Consent Statements Utility', () => {
 
       await processConsentItemDecisions(adapter, 'default', 'user-1', decisions, evidence);
 
-      expect(adapter.execute).toHaveBeenCalled();
+      const executeCalls = (adapter.execute as any).mock.calls;
+      const insertRecordCall = executeCalls.find((call: unknown[]) =>
+        String(call[0]).includes('INSERT INTO user_consent_records')
+      );
+      const historyCall = executeCalls.find((call: unknown[]) =>
+        String(call[0]).includes('INSERT INTO consent_item_history')
+      );
+
+      expect(insertRecordCall?.[0]).toContain('expires_at');
+      expect(insertRecordCall?.[0]).toContain('retain_until');
+      expect(insertRecordCall?.[0]).toContain('consent_settings_snapshot_at');
+      expect(insertRecordCall?.[1]).toContain(365);
+      expect(insertRecordCall?.[1]).toContain(180);
+      expect(historyCall?.[0]).toContain('version_id_after');
+      expect(historyCall?.[0]).toContain('record_retention_days_snapshot');
+      expect(historyCall?.[0]).toContain('reconsent_interval_days_snapshot');
     });
 
     it('should be idempotent for same version granted (D9)', async () => {
@@ -835,6 +1427,119 @@ describe('Consent Statements Utility', () => {
       await processConsentItemDecisions(adapter, 'default', 'user-1', decisions, evidence);
 
       expect(adapter.execute).toHaveBeenCalled();
+    });
+
+    it('should save the displayed fixed version when a decision target is supplied', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([['user_records', []]]),
+      });
+
+      await processConsentItemDecisions(
+        adapter,
+        'default',
+        'user-1',
+        { 'stmt-1': 'granted' },
+        { client_id: 'client-1' },
+        undefined,
+        {
+          'stmt-1': {
+            version_id: 'fixed-ver-1',
+            version: '20250101',
+            withdrawal_allowed: true,
+          },
+        }
+      );
+
+      const insertCall = (adapter.execute as any).mock.calls.find((call: unknown[]) =>
+        String(call[0]).includes('INSERT INTO user_consent_records')
+      );
+      expect(insertCall?.[1]).toContain('fixed-ver-1');
+      expect(insertCall?.[1]).toContain('20250101');
+    });
+
+    it('should not withdraw an existing grant when withdrawal is not allowed', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'user_records',
+            [
+              {
+                statement_id: 'stmt-1',
+                version: '20250206',
+                status: 'granted',
+                granted_at: Date.now(),
+              },
+            ],
+          ],
+        ]),
+      });
+
+      await processConsentItemDecisions(
+        adapter,
+        'default',
+        'user-1',
+        { 'stmt-1': 'denied' },
+        { client_id: 'client-1' },
+        undefined,
+        {
+          'stmt-1': {
+            version_id: 'ver-1',
+            version: '20250206',
+            withdrawal_allowed: false,
+          },
+        }
+      );
+
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('should extend prior audit history retention when granted consent is withdrawn', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'user_records',
+            [
+              {
+                statement_id: 'stmt-1',
+                version_id: 'ver-1',
+                version: '20250206',
+                status: 'granted',
+                granted_at: Date.now(),
+                expires_at: null,
+              },
+            ],
+          ],
+          [
+            'consent_statement_settings',
+            [{ record_retention_days: 365, reconsent_interval_days: 180 }],
+          ],
+        ]),
+      });
+
+      await processConsentItemDecisions(
+        adapter,
+        'default',
+        'user-1',
+        { 'stmt-1': 'denied' },
+        { client_id: 'client-1' },
+        undefined,
+        {
+          'stmt-1': {
+            version_id: 'ver-1',
+            version: '20250206',
+            withdrawal_allowed: true,
+          },
+        }
+      );
+
+      const retentionUpdateCall = (adapter.execute as any).mock.calls.find((call: unknown[]) =>
+        String(call[0]).includes('UPDATE consent_item_history')
+      );
+
+      expect(retentionUpdateCall?.[0]).toContain('retain_until');
+      expect(retentionUpdateCall?.[0]).toContain('consent_settings_snapshot_at');
+      expect(retentionUpdateCall?.[1]).toContain(365);
+      expect(retentionUpdateCall?.[1]).toContain(180);
     });
   });
 

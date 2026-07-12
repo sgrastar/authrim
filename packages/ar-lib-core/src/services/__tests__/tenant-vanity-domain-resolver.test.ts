@@ -92,4 +92,65 @@ describe('tenant-vanity-domain-resolver', () => {
     expect(adapter.queryOne).toHaveBeenCalledOnce();
     expect(kv.put).toHaveBeenCalledOnce();
   });
+
+  it('uses a cached primary vanity domain without querying the database', async () => {
+    const adapter = createMockAdapter();
+    const kv = createMockKV();
+
+    vi.mocked(kv.get).mockResolvedValueOnce(
+      JSON.stringify({
+        id: 'vanity-1',
+        tenant_id: 'tenant-123',
+        hostname: 'login.example.com',
+        is_active: true,
+        is_primary: true,
+        status: 'active',
+        cloudflare_zone_id: null,
+        cloudflare_custom_hostname_id: null,
+        ssl_status: null,
+        ownership_status: null,
+        validation_method: null,
+        validation_records_json: null,
+        last_sync_at: null,
+        created_by: null,
+        created_at: 100,
+        updated_at: 200,
+      })
+    );
+
+    const result = await getPrimaryTenantVanityDomain(
+      { DB: adapter as never, AUTHRIM_CONFIG: kv } as never,
+      'tenant-123'
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        tenant_id: 'tenant-123',
+        hostname: 'login.example.com',
+        is_primary: true,
+        is_active: true,
+      })
+    );
+    expect(adapter.queryOne).not.toHaveBeenCalled();
+  });
+
+  it('negative-caches a missing primary vanity domain', async () => {
+    const adapter = createMockAdapter();
+    const kv = createMockKV();
+
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce(null);
+
+    const result = await getPrimaryTenantVanityDomain(
+      { DB: adapter as never, AUTHRIM_CONFIG: kv } as never,
+      'tenant-123'
+    );
+
+    expect(result).toBeNull();
+    expect(adapter.queryOne).toHaveBeenCalledOnce();
+    expect(kv.put).toHaveBeenCalledWith(
+      'v1:tenant-primary-vanity-domain:tenant-123',
+      expect.any(String),
+      { expirationTtl: 60 }
+    );
+  });
 });

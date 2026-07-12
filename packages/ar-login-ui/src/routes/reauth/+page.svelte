@@ -1,14 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { Button, Card, Alert } from '$lib/components';
+	import { Button, Card, Alert, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl } from '$lib/utils/url-validation';
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
+	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { startAuthentication } from '@simplewebauthn/browser';
+	import {
+		signalUnknownCredential,
+		shouldSignalUnknownCredentialAfterLoginFailure
+	} from '$lib/webauthn/signal';
+
+	const { brandingStore } = useLoginUIStores();
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -40,6 +47,21 @@
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
 	let email = $state('');
+	let turnstileSiteKey = $state<string | null>(null);
+	let humanVerificationProvider = $state<'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom'>(
+		'turnstile'
+	);
+	let humanVerificationMode = $state<'managed' | 'checkbox' | 'invisible' | 'score'>('managed');
+	let turnstileRequired = $state(false);
+	let turnstileToken = $state('');
+	let activeTurnstileTarget = $state<string | null>(null);
+	let pendingTurnstileTarget = $state<string | null>(null);
+	const turnstileAction = 'authrim-reauth';
+
+	let isDarkMode = $state(false);
+	let turnstileLanguage = $state('en');
+	const turnstileTheme = $derived(isDarkMode ? 'dark' : 'light');
+	const authActionLoading = $derived(passkeyLoading || emailCodeLoading);
 
 	// Derived
 	const isPasskeySupported = $derived(
@@ -50,10 +72,37 @@
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
 
+	function resolveTurnstileLanguage(): string {
+		return resolveConfiguredTurnstileLanguage(document.documentElement.lang, getLocale());
+	}
+
 	// ---------------------------------------------------------------------------
 	// Lifecycle
 	// ---------------------------------------------------------------------------
 	onMount(async () => {
+		const checkDarkMode = () => {
+			const theme = document.documentElement.getAttribute('data-theme');
+			if (theme === 'dark') return true;
+			if (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches) return true;
+			return false;
+		};
+		isDarkMode = checkDarkMode();
+		turnstileLanguage = resolveTurnstileLanguage();
+
+		const observer = new MutationObserver(() => {
+			isDarkMode = checkDarkMode();
+			turnstileLanguage = resolveTurnstileLanguage();
+		});
+		observer.observe(document.documentElement, {
+			attributes: true,
+			attributeFilter: ['data-theme', 'lang']
+		});
+
+		const mql = window.matchMedia('(prefers-color-scheme: dark)');
+		mql.addEventListener('change', () => {
+			isDarkMode = checkDarkMode();
+		});
+
 		challengeId = $page.url.searchParams.get('challenge_id') || '';
 		if (!challengeId) {
 			error = 'Missing challenge_id parameter';
@@ -87,8 +136,22 @@
 		try {
 			const { data } = await fetchAuthenticationMethods();
 			if (data) {
-				passkeyEnabled = data.methods.passkey.enabled;
-				emailCodeEnabled = data.methods.emailCode.enabled;
+				passkeyEnabled = data.methods.passkey.reauthEnabled ?? data.methods.passkey.enabled;
+				emailCodeEnabled = data.methods.emailCode.reauthEnabled ?? data.methods.emailCode.enabled;
+				const humanVerificationRequired =
+					data.methods.humanVerification.enabled && data.methods.humanVerification.reauthEnabled;
+				humanVerificationProvider =
+					data.methods.humanVerification.provider === 'hcaptcha' ||
+					data.methods.humanVerification.provider === 'recaptcha' ||
+					data.methods.humanVerification.provider === 'custom'
+						? data.methods.humanVerification.provider
+						: 'turnstile';
+				humanVerificationMode = data.methods.humanVerification.widget.mode ?? 'managed';
+				turnstileRequired =
+					humanVerificationRequired &&
+					humanVerificationProvider !== 'custom' &&
+					Boolean(data.methods.humanVerification.siteKey);
+				turnstileSiteKey = turnstileRequired ? data.methods.humanVerification.siteKey : null;
 			}
 		} catch {
 			passkeyEnabled = true;
@@ -99,13 +162,49 @@
 	// ---------------------------------------------------------------------------
 	// Handlers
 	// ---------------------------------------------------------------------------
+	function getTurnstileToken(target: string): string | undefined {
+		if (!turnstileRequired) return undefined;
+		if (!turnstileToken) {
+			activeTurnstileTarget = target;
+			pendingTurnstileTarget = target;
+			return undefined;
+		}
+		return turnstileToken;
+	}
+
+	function showTurnstileFor(target: string): boolean {
+		return turnstileRequired && Boolean(turnstileSiteKey) && activeTurnstileTarget === target;
+	}
+
+	function resumeTurnstileTarget(target: string) {
+		if (target === 'passkey') {
+			void handlePasskeyReauth();
+			return;
+		}
+		if (target === 'email-code') {
+			void handleEmailCodeReauth();
+		}
+	}
+
+	$effect(() => {
+		if (!turnstileToken || !pendingTurnstileTarget) return;
+		const target = pendingTurnstileTarget;
+		pendingTurnstileTarget = null;
+		queueMicrotask(() => resumeTurnstileTarget(target));
+	});
+
 	async function handlePasskeyReauth() {
 		if (passkeyLoading) return;
 		error = '';
 		passkeyLoading = true;
 
 		try {
-			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({});
+			const cfTurnstileResponse = getTurnstileToken('passkey');
+			if (turnstileRequired && !cfTurnstileResponse) return;
+			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({
+				human_verification_response: cfTurnstileResponse,
+				authorizationChallengeId: challengeId || undefined
+			});
 			if (optionsError) {
 				throw new Error(optionsError.error_description || 'Failed to get authentication options');
 			}
@@ -120,6 +219,9 @@
 			});
 
 			if (verifyError) {
+				if (shouldSignalUnknownCredentialAfterLoginFailure(verifyError)) {
+					await signalUnknownCredential(credential.id);
+				}
 				throw new Error(verifyError.error_description || 'Authentication failed');
 			}
 
@@ -148,7 +250,13 @@
 		emailCodeLoading = true;
 
 		try {
-			const { error: apiError } = await emailCodeAPI.send({ email });
+			const cfTurnstileResponse = getTurnstileToken('email-code');
+			if (turnstileRequired && !cfTurnstileResponse) return;
+			const { error: apiError } = await emailCodeAPI.send({
+				email,
+				human_verification_response: cfTurnstileResponse,
+				authorizationChallengeId: challengeId || undefined
+			});
 			if (apiError) {
 				throw new Error(apiError.error_description || 'Failed to send verification code');
 			}
@@ -243,6 +351,20 @@
 						<div class="i-heroicons-key h-5 w-5"></div>
 						{$LL.reauth_verifyWithPasskey()}
 					</Button>
+					{#if showTurnstileFor('passkey') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 
 					{#if emailCodeEnabled}
 						<div class="auth-divider">
@@ -265,6 +387,20 @@
 						<div class="i-heroicons-envelope h-5 w-5"></div>
 						{$LL.reauth_verifyWithEmailCode()}
 					</Button>
+					{#if showTurnstileFor('email-code') && turnstileSiteKey}
+						<TurnstileWidget
+							siteKey={turnstileSiteKey}
+							provider={humanVerificationProvider}
+							mode={humanVerificationMode}
+							action={turnstileAction}
+							theme={turnstileTheme}
+							language={turnstileLanguage}
+							bind:token={turnstileToken}
+							disabled={authActionLoading}
+							loadingLabel={$LL.login_humanVerificationLoading()}
+							errorLabel={$LL.login_humanVerificationLoadFailed()}
+						/>
+					{/if}
 				{/if}
 			</Card>
 		{/if}

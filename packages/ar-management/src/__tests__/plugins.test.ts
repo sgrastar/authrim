@@ -54,6 +54,7 @@ import {
   registerPlugin,
   updatePluginHealth,
 } from '../routes/settings/plugins';
+import { getPluginEncryptionKey } from '@authrim/ar-lib-plugin';
 
 // =============================================================================
 // Test Fixtures
@@ -248,6 +249,7 @@ describe('Plugin Admin API - List Plugins', () => {
       const kv = createMockKV({
         getValues: {
           'plugins:registry': JSON.stringify(registry),
+          'plugins:enabled:enabled-plugin': 'true',
           'plugins:enabled:disabled-plugin': 'false',
         },
       });
@@ -444,7 +446,7 @@ describe('Plugin Admin API - Get Plugin', () => {
           }),
           status: expect.objectContaining({
             pluginId: 'test-plugin',
-            enabled: true,
+            enabled: false,
           }),
         })
       );
@@ -1020,6 +1022,43 @@ describe('Plugin Admin API - Update Plugin Config', () => {
         })
       );
     });
+
+    it('should reject secret config updates when plugin encryption key is unavailable', async () => {
+      vi.mocked(getPluginEncryptionKey).mockRejectedValueOnce(
+        new Error('Plugin encryption key not configured')
+      );
+
+      let savedConfig = '';
+      const registry = {
+        'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+        },
+        putCallback: (_key, value) => {
+          savedConfig = value;
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        body: {
+          config: {
+            apiKey: 'secret-value',
+          },
+        },
+        kv,
+      });
+
+      const response = (await updatePluginConfigHandler(c)) as Response;
+      const { status } = await getResponseData(response);
+
+      expect(status).toBe(500);
+      expect(savedConfig).toBe('');
+    });
   });
 });
 
@@ -1083,6 +1122,38 @@ describe('Plugin Admin API - Enable/Disable', () => {
 
       expect(status).toBe(404);
       expect(body).toHaveProperty('error');
+    });
+
+    it('should reject enabling a plugin with missing required configuration', async () => {
+      const registry = {
+        'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+      };
+
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:test-plugin': JSON.stringify({
+            type: 'object',
+            required: ['apiKey'],
+          }),
+        },
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        body: {},
+        kv,
+      });
+
+      const response = await enablePluginHandler(c);
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(400);
+      expect(body).toMatchObject({
+        error: expect.any(String),
+      });
+      expect(kv.put).not.toHaveBeenCalledWith('plugins:enabled:test-plugin', 'true');
     });
 
     it('should support tenant-specific enable', async () => {
@@ -1263,6 +1334,7 @@ describe('Plugin Admin API - Test Email', () => {
           'plugins:config:notifier-cloudflare': JSON.stringify({
             defaultFrom: 'noreply@example.com',
           }),
+          'plugins:enabled:notifier-cloudflare': 'true',
         },
       });
 
@@ -2200,9 +2272,9 @@ describe('Plugin Admin API - Security', () => {
       await getPluginHandler(c);
 
       const response = (c.json as any).mock.calls[0][0];
-      // The encrypted prefix should be masked
-      expect(response.config.apiKey).toContain('****');
-      expect(response.config.apiKey).not.toContain('enc:v1:');
+      // Undecryptable encrypted fields are omitted rather than exposing ciphertext.
+      expect(response.config).not.toHaveProperty('apiKey');
+      expect(JSON.stringify(response.config)).not.toContain('enc:v1:');
     });
   });
 

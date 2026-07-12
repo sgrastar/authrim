@@ -12,6 +12,12 @@
 	} from '$lib/api/admin-support-ops';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	type TabId = 'aggregate' | 'cohort' | 'action';
 	type SelectorRow = {
@@ -30,6 +36,13 @@
 		{ id: 'cohort', getLabel: () => $LL.admin_support_ops_tab_cohort(), icon: 'i-ph-funnel' },
 		{ id: 'action', getLabel: () => $LL.admin_support_ops_tab_action(), icon: 'i-ph-checks' }
 	];
+	const supportOpsTabs = $derived<AdminTabItem[]>(
+		tabs.map((tab) => ({
+			id: tab.id,
+			label: tab.getLabel(),
+			icon: tab.icon
+		}))
+	);
 
 	let activeTab = $state<TabId>('aggregate');
 	let loading = $state(false);
@@ -391,76 +404,83 @@
 	<title>{$LL.admin_support_ops_page_title()}</title>
 </svelte:head>
 
-<div class="page-shell">
-	<header class="page-header">
-		<div>
-			<p class="eyebrow">{$LL.admin_support_ops_eyebrow()}</p>
-			<h1>{$LL.admin_support_ops_title()}</h1>
-		</div>
-		<div class="tenant-chip">
-			<i class="i-ph-buildings"></i>
-			<span>{settingsContext.tenantId}</span>
-		</div>
-	</header>
+{#snippet tenantChip()}
+	<div class="tenant-chip">
+		<i class="i-ph-buildings" aria-hidden="true"></i>
+		<span>{settingsContext.tenantId}</span>
+	</div>
+{/snippet}
+
+{#snippet selectorActions()}
+	<button
+		type="button"
+		class="btn btn-secondary btn-sm icon-button"
+		onclick={addSelectorRow}
+		aria-label={$LL.admin_support_ops_add_condition()}
+	>
+		<i class="i-ph-plus" aria-hidden="true"></i>
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		eyebrow={$LL.admin_support_ops_eyebrow()}
+		title={$LL.admin_support_ops_title()}
+		titleAccessory={tenantChip}
+	/>
 
 	{#if error}
-		<div class="alert error">{error}</div>
+		<div class="alert alert-error">{error}</div>
 	{/if}
 	{#if success}
-		<div class="alert success">{success}</div>
+		<div class="alert alert-success">{success}</div>
 	{/if}
 
-	<div class="tabs">
-		{#each tabs as tab (tab.id)}
-			<button
-				type="button"
-				class:active={activeTab === tab.id}
-				onclick={() => (activeTab = tab.id)}
-			>
-				<i class={tab.icon}></i>
-				<span>{tab.getLabel()}</span>
-			</button>
-		{/each}
-	</div>
+	<AdminTabs
+		items={supportOpsTabs}
+		active={activeTab}
+		onChange={(tabId) => (activeTab = tabId as TabId)}
+		ariaLabel={$LL.admin_support_ops_title()}
+	/>
 
-	<section class="panel">
-		<div class="toolbar">
-			<label>
-				<span>{$LL.admin_support_ops_resource()}</span>
-				<select bind:value={selectedResourceName}>
+	<AdminSection title={$LL.admin_support_ops_selector()} actions={selectorActions}>
+		<AdminToolbar>
+			<div class="admin-field support-field">
+				<label for="support-resource" class="admin-field__label">
+					{$LL.admin_support_ops_resource()}
+				</label>
+				<select id="support-resource" class="admin-select" bind:value={selectedResourceName}>
 					{#each resources as resource (resource.resource)}
 						<option value={resource.resource}>{resource.displayName}</option>
 					{/each}
 				</select>
-			</label>
-			<label>
-				<span>{$LL.admin_support_ops_support_case()}</span>
-				<input bind:value={supportCaseId} placeholder="CASE-1234" />
-			</label>
-			<label>
-				<span>{$LL.admin_support_ops_tab_action()}</span>
-				<select bind:value={actionName}>
+			</div>
+			<div class="admin-field support-field">
+				<label for="support-case-id" class="admin-field__label">
+					{$LL.admin_support_ops_support_case()}
+				</label>
+				<input
+					id="support-case-id"
+					class="admin-input"
+					bind:value={supportCaseId}
+					placeholder="CASE-1234"
+				/>
+			</div>
+			<div class="admin-field support-field">
+				<label for="support-action" class="admin-field__label">
+					{$LL.admin_support_ops_tab_action()}
+				</label>
+				<select id="support-action" class="admin-select" bind:value={actionName}>
 					<option value="suspend">{$LL.admin_support_ops_action_suspend()}</option>
 				</select>
-			</label>
-		</div>
+			</div>
+		</AdminToolbar>
 
 		<div class="selector-list">
-			<div class="selector-header">
-				<h2>{$LL.admin_support_ops_selector()}</h2>
-				<button
-					type="button"
-					class="icon-button"
-					onclick={addSelectorRow}
-					aria-label={$LL.admin_support_ops_add_condition()}
-				>
-					<i class="i-ph-plus"></i>
-				</button>
-			</div>
-
 			{#each selectorRows as row (row.id)}
 				<div class="selector-row">
 					<select
+						class="admin-select"
 						value={row.field}
 						onchange={(event) => updateRowField(row.id, event.currentTarget.value)}
 					>
@@ -469,6 +489,7 @@
 						{/each}
 					</select>
 					<select
+						class="admin-select"
 						value={row.op}
 						onchange={(event) =>
 							updateRow(row.id, { op: event.currentTarget.value as SupportOpsSelectorOperator })}
@@ -478,9 +499,15 @@
 						{/each}
 					</select>
 					{#if row.op === 'exists' || row.op === 'not_exists'}
-						<input value="" disabled aria-label={$LL.admin_support_ops_no_value()} />
+						<input
+							class="admin-input"
+							value=""
+							disabled
+							aria-label={$LL.admin_support_ops_no_value()}
+						/>
 					{:else if fieldDescriptor(row.field)?.values}
 						<select
+							class="admin-select"
 							value={row.value}
 							onchange={(event) => updateRow(row.id, { value: event.currentTarget.value })}
 						>
@@ -491,6 +518,7 @@
 						</select>
 					{:else if fieldDescriptor(row.field)?.type === 'boolean'}
 						<select
+							class="admin-select"
 							value={row.value}
 							onchange={(event) => updateRow(row.id, { value: event.currentTarget.value })}
 						>
@@ -499,43 +527,51 @@
 						</select>
 					{:else}
 						<input
+							class="admin-input"
 							value={row.value}
 							oninput={(event) => updateRow(row.id, { value: event.currentTarget.value })}
 						/>
 					{/if}
 					<button
 						type="button"
-						class="icon-button danger"
+						class="btn btn-secondary btn-sm icon-button danger"
 						disabled={selectorRows.length <= 1}
 						onclick={() => removeSelectorRow(row.id)}
 						aria-label={$LL.admin_support_ops_remove_condition()}
 					>
-						<i class="i-ph-trash"></i>
+						<i class="i-ph-trash" aria-hidden="true"></i>
 					</button>
 				</div>
 			{/each}
 		</div>
-	</section>
+	</AdminSection>
 
 	{#if activeTab === 'aggregate'}
-		<section class="panel">
-			<div class="toolbar compact">
-				<label>
-					<span>{$LL.admin_support_ops_group_by()}</span>
-					<select bind:value={groupBy}>
+		<AdminSection title={$LL.admin_support_ops_tab_aggregate()}>
+			<AdminToolbar>
+				<div class="admin-field support-field support-field--compact">
+					<label for="support-group-by" class="admin-field__label">
+						{$LL.admin_support_ops_group_by()}
+					</label>
+					<select id="support-group-by" class="admin-select" bind:value={groupBy}>
 						{#each aggregatableFields as [fieldName] (fieldName)}
 							<option value={fieldName}>{fieldName}</option>
 						{/each}
 					</select>
-				</label>
-				<button type="button" class="primary" disabled={loading || !groupBy} onclick={runAggregate}>
-					<i class="i-ph-chart-bar"></i>
+				</div>
+				<button
+					type="button"
+					class="btn btn-primary"
+					disabled={loading || !groupBy}
+					onclick={runAggregate}
+				>
+					<i class="i-ph-chart-bar" aria-hidden="true"></i>
 					<span>{$LL.admin_support_ops_run()}</span>
 				</button>
-			</div>
+			</AdminToolbar>
 
 			{#if aggregateResult}
-				<table>
+				<AdminDataTable>
 					<thead>
 						<tr>
 							<th>{$LL.admin_support_ops_group()}</th>
@@ -550,26 +586,33 @@
 							</tr>
 						{/each}
 					</tbody>
-				</table>
+				</AdminDataTable>
 				<div class="privacy-line">
 					min_count {aggregateResult.privacy.min_count} · bucket
 					{aggregateResult.privacy.count_precision} · suppressed {aggregateResult.suppressed_groups}
 				</div>
 			{/if}
-		</section>
+		</AdminSection>
 	{:else if activeTab === 'cohort'}
-		<section class="panel">
-			<label class="reason">
-				<span>{$LL.admin_support_ops_reason()}</span>
-				<textarea bind:value={actionReason} rows="3"></textarea>
-			</label>
+		<AdminSection title={$LL.admin_support_ops_tab_cohort()}>
+			<div class="admin-field support-field support-field--full">
+				<label for="support-cohort-reason" class="admin-field__label">
+					{$LL.admin_support_ops_reason()}
+				</label>
+				<textarea
+					id="support-cohort-reason"
+					class="admin-input support-textarea"
+					bind:value={actionReason}
+					rows="3"
+				></textarea>
+			</div>
 			<div class="actions">
-				<button type="button" class="secondary" disabled={loading} onclick={previewCohort}>
-					<i class="i-ph-eye"></i>
+				<button type="button" class="btn btn-secondary" disabled={loading} onclick={previewCohort}>
+					<i class="i-ph-eye" aria-hidden="true"></i>
 					<span>{$LL.admin_support_ops_preview()}</span>
 				</button>
-				<button type="button" class="primary" disabled={loading} onclick={createCohort}>
-					<i class="i-ph-funnel"></i>
+				<button type="button" class="btn btn-primary" disabled={loading} onclick={createCohort}>
+					<i class="i-ph-funnel" aria-hidden="true"></i>
 					<span>{$LL.admin_support_ops_create_cohort()}</span>
 				</button>
 			</div>
@@ -612,65 +655,76 @@
 					<span>expires {formatDateTime(cohortResult.expires_at)}</span>
 					<button
 						type="button"
-						class="mini-button"
+						class="btn btn-secondary btn-sm mini-button"
 						disabled={loading}
 						onclick={() => refreshCohortStatus()}
 					>
-						<i class="i-ph-arrows-clockwise"></i>
+						<i class="i-ph-arrows-clockwise" aria-hidden="true"></i>
 						<span>{$LL.admin_support_ops_refresh()}</span>
 					</button>
 				</div>
 			{/if}
-		</section>
+		</AdminSection>
 	{:else}
-		<section class="panel">
-			<div class="toolbar">
-				<label>
-					<span>{$LL.admin_support_ops_cohort_id()}</span>
-					<input bind:value={currentCohortId} />
+		<AdminSection title={$LL.admin_support_ops_tab_action()}>
+			<AdminToolbar>
+				<div class="admin-field support-field">
+					<label for="support-cohort-id" class="admin-field__label">
+						{$LL.admin_support_ops_cohort_id()}
+					</label>
+					<input id="support-cohort-id" class="admin-input" bind:value={currentCohortId} />
+				</div>
+				<div class="admin-field support-field">
+					<label for="support-action-id" class="admin-field__label">
+						{$LL.admin_support_ops_action_id()}
+					</label>
+					<input id="support-action-id" class="admin-input" bind:value={currentActionId} />
+				</div>
+			</AdminToolbar>
+			<div class="admin-field support-field support-field--full">
+				<label for="support-action-reason" class="admin-field__label">
+					{$LL.admin_support_ops_reason()}
 				</label>
-				<label>
-					<span>{$LL.admin_support_ops_action_id()}</span>
-					<input bind:value={currentActionId} />
-				</label>
+				<textarea
+					id="support-action-reason"
+					class="admin-input support-textarea"
+					bind:value={actionReason}
+					rows="3"
+				></textarea>
 			</div>
-			<label class="reason">
-				<span>{$LL.admin_support_ops_reason()}</span>
-				<textarea bind:value={actionReason} rows="3"></textarea>
-			</label>
 			<div class="actions">
 				<button
 					type="button"
-					class="secondary"
+					class="btn btn-secondary"
 					disabled={loading || !currentCohortId || !currentCohortSnapshotReady}
 					onclick={requestAction}
 				>
-					<i class="i-ph-paper-plane-tilt"></i>
+					<i class="i-ph-paper-plane-tilt" aria-hidden="true"></i>
 					<span>{$LL.admin_support_ops_request()}</span>
 				</button>
 				{#if approvalUrl}
-					<a class="secondary link-button" href={approvalUrl}>
-						<i class="i-ph-check"></i>
+					<a class="btn btn-secondary link-button" href={approvalUrl}>
+						<i class="i-ph-check" aria-hidden="true"></i>
 						<span>{$LL.admin_support_ops_approval()}</span>
 					</a>
 				{:else}
 					<button
 						type="button"
-						class="secondary"
+						class="btn btn-secondary"
 						disabled={loading || !currentActionId}
 						onclick={approveAction}
 					>
-						<i class="i-ph-check"></i>
+						<i class="i-ph-check" aria-hidden="true"></i>
 						<span>{$LL.admin_support_ops_approve()}</span>
 					</button>
 				{/if}
 				<button
 					type="button"
-					class="primary"
+					class="btn btn-primary"
 					disabled={loading || !currentActionId}
 					onclick={executeAction}
 				>
-					<i class="i-ph-play"></i>
+					<i class="i-ph-play" aria-hidden="true"></i>
 					<span>{$LL.admin_support_ops_execute()}</span>
 				</button>
 			</div>
@@ -684,150 +738,73 @@
 			{#if actionResult}
 				<pre>{JSON.stringify(actionResult, null, 2)}</pre>
 			{/if}
-		</section>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.page-shell {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-		max-width: 1120px;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
-	.eyebrow {
-		margin: 0 0 4px;
-		color: var(--text-secondary);
-		font-size: 0.78rem;
-		font-weight: 700;
-		text-transform: uppercase;
-	}
-
-	h1,
-	h2 {
-		margin: 0;
-		color: var(--text-primary);
-	}
-
-	h1 {
-		font-size: 2rem;
-	}
-
-	h2 {
-		font-size: 1rem;
-	}
-
 	.tenant-chip {
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
 		padding: 8px 12px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		color: var(--text-secondary);
-		background: var(--bg-card);
-	}
-
-	.tabs {
-		display: flex;
-		gap: 8px;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.tabs button,
-	button,
-	.link-button {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		min-height: 36px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 0 14px;
-		background: var(--bg-card);
-		color: var(--text-primary);
-		font-weight: 600;
-		cursor: pointer;
-		text-decoration: none;
-	}
-
-	.tabs button {
-		border-bottom: 0;
-		border-bottom-left-radius: 0;
-		border-bottom-right-radius: 0;
-		color: var(--text-secondary);
-	}
-
-	.tabs button.active,
-	button.primary {
-		background: var(--primary);
-		border-color: var(--primary);
-		color: white;
-	}
-
-	button.secondary,
-	.link-button.secondary {
-		background: var(--bg-subtle);
-	}
-
-	button:disabled {
-		cursor: not-allowed;
-		opacity: 0.55;
-	}
-
-	.panel {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 18px;
-		background: var(--bg-card);
-	}
-
-	.toolbar {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 14px;
-	}
-
-	.toolbar.compact {
-		grid-template-columns: minmax(220px, 320px) auto;
-		align-items: end;
-	}
-
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		color: var(--text-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		color: var(--color-text-muted);
+		background: var(--color-surface-raised);
+		font-family: var(--font-meta, var(--font-body));
 		font-size: 0.82rem;
+		font-weight: 650;
+	}
+
+	.support-field {
+		flex: 1 1 220px;
+		display: grid;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.support-field--compact {
+		flex: 0 1 320px;
+	}
+
+	.support-field--full {
+		margin-bottom: 14px;
+	}
+
+	.support-field :global(.admin-field__label) {
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
 		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+		color: var(--color-text-subtle);
 	}
 
-	input,
-	select,
-	textarea {
+	.support-field :global(.admin-input),
+	.support-field :global(.admin-select),
+	.selector-row :global(.admin-input),
+	.selector-row :global(.admin-select) {
 		width: 100%;
-		min-height: 38px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 8px 10px;
-		background: var(--bg-input);
-		color: var(--text-primary);
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
 		font: inherit;
+		outline: none;
 	}
 
-	textarea {
+	.support-field :global(.admin-input:focus),
+	.support-field :global(.admin-select:focus),
+	.selector-row :global(.admin-input:focus),
+	.selector-row :global(.admin-select:focus) {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.support-textarea {
 		resize: vertical;
 	}
 
@@ -835,12 +812,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-	}
-
-	.selector-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
 	}
 
 	.selector-row {
@@ -857,49 +828,14 @@
 	}
 
 	.icon-button.danger {
-		color: var(--danger);
+		color: var(--color-danger);
 	}
 
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 10px;
-	}
-
-	.alert {
-		border-radius: 8px;
-		padding: 12px 14px;
-		font-weight: 600;
-	}
-
-	.alert.error {
-		border: 1px solid var(--danger);
-		color: var(--danger);
-		background: color-mix(in srgb, var(--danger) 10%, transparent);
-	}
-
-	.alert.success {
-		border: 1px solid var(--success);
-		color: var(--success);
-		background: color-mix(in srgb, var(--success) 10%, transparent);
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	th,
-	td {
-		border-bottom: 1px solid var(--border);
-		padding: 10px;
-		text-align: left;
-	}
-
-	th {
-		color: var(--text-secondary);
-		font-size: 0.78rem;
-		text-transform: uppercase;
+		margin-top: 12px;
 	}
 
 	.summary-grid {
@@ -909,21 +845,22 @@
 	}
 
 	.summary-grid > div {
-		border: 1px solid var(--border);
-		border-radius: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 12px;
+		background: var(--color-surface-raised);
 	}
 
 	.summary-grid span,
 	.privacy-line {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.82rem;
 	}
 
 	.summary-grid strong {
 		display: block;
 		margin-top: 4px;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 1.35rem;
 	}
 
@@ -932,10 +869,10 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 12px;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 		padding-top: 12px;
-		color: var(--text-secondary);
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		color: var(--color-text-muted);
+		font-family: var(--font-mono);
 		font-size: 0.84rem;
 	}
 
@@ -949,24 +886,18 @@
 	pre {
 		max-height: 360px;
 		overflow: auto;
-		border: 1px solid var(--border);
-		border-radius: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
 		padding: 12px;
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		background: var(--color-surface-raised);
+		color: var(--color-text);
+		font-family: var(--font-mono);
 	}
 
 	@media (max-width: 860px) {
-		.toolbar,
-		.toolbar.compact,
 		.selector-row,
 		.summary-grid {
 			grid-template-columns: 1fr;
-		}
-
-		.page-header {
-			align-items: flex-start;
-			flex-direction: column;
 		}
 	}
 </style>

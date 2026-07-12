@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -65,24 +66,22 @@
 	<title>{$LL.admin_tenants_head_title()}</title>
 </svelte:head>
 
-<div class="page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_tenants_title()}</h1>
-			<p class="page-description">{$LL.admin_tenants_description()}</p>
-		</div>
-		{#if !singleTenantMode}
-			<a href="/admin/tenants/new" class="btn btn-primary">
-				<i class="i-ph-plus"></i>
-				{$LL.admin_tenants_add()}
-			</a>
-		{:else}
-			<button class="btn btn-primary" disabled title={$LL.admin_tenants_add_disabled_title()}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_tenants_add()}
-			</button>
-		{/if}
-	</div>
+<AdminPageShell>
+	<AdminPageHeader title={$LL.admin_tenants_title()} description={$LL.admin_tenants_description()}>
+		{#snippet actions()}
+			{#if !singleTenantMode}
+				<a href="/admin/tenants/new" class="btn btn-primary">
+					<i class="i-ph-plus"></i>
+					{$LL.admin_tenants_add()}
+				</a>
+			{:else}
+				<button class="btn btn-primary" disabled title={$LL.admin_tenants_add_disabled_title()}>
+					<i class="i-ph-plus"></i>
+					{$LL.admin_tenants_add()}
+				</button>
+			{/if}
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if singleTenantMode}
 		<div class="alert alert-info">
@@ -130,162 +129,79 @@
 			<p>{$LL.admin_tenants_empty()}</p>
 		</div>
 	{:else}
-		<div class="table-container">
-			<table class="table">
-				<thead>
-					<tr>
-						<th>{$LL.admin_tenants_id()}</th>
-						<th>{$LL.admin_tenants_code()}</th>
-						<th>{$LL.admin_tenants_name()}</th>
-						<th>{$LL.admin_tenants_description_label()}</th>
-						<th>{$LL.admin_tenants_status()}</th>
-						<th>{$LL.admin_tenants_default()}</th>
+		<AdminDataTable width="wide">
+			<thead>
+				<tr>
+					<th>{$LL.admin_tenants_id()}</th>
+					<th>{$LL.admin_tenants_code()}</th>
+					<th>{$LL.admin_tenants_name()}</th>
+					<th>{$LL.admin_tenants_description_label()}</th>
+					<th>{$LL.admin_tenants_status()}</th>
+					<th>{$LL.admin_tenants_default()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each tenants as tenant (tenant.id)}
+					<tr
+						data-clickable="true"
+						class="tenant-row"
+						onclick={() => goto(`/admin/tenants/${encodeURIComponent(tenant.id)}`)}
+						role="link"
+						tabindex="0"
+						onkeydown={(e) =>
+							e.key === 'Enter' && goto(`/admin/tenants/${encodeURIComponent(tenant.id)}`)}
+						aria-label={$LL.admin_tenants_view_aria({ name: tenant.name })}
+					>
+						<td class="tenant-id">{tenant.id}</td>
+						<td class="tenant-id">{tenant.tenant_code}</td>
+						<td class="tenant-name">{tenant.name}</td>
+						<td class="tenant-description">{tenant.description ?? '—'}</td>
+						<td>
+							{#if tenant.lifecycle_state === 'active'}
+								<span class="badge badge-active">{$LL.admin_tenants_active()}</span>
+							{:else}
+								<span class="badge badge-inactive">{lifecycleLabel(tenant.lifecycle_state)}</span>
+							{/if}
+						</td>
+						<td>
+							{#if tenant.is_default}
+								<span
+									class="default-star is-default"
+									title={$LL.admin_tenants_default_tenant()}
+									aria-label={$LL.admin_tenants_default_tenant()}
+								>
+									<i class="i-ph-star-fill"></i>
+								</span>
+							{:else}
+								<span
+									class="default-star"
+									title={$LL.admin_tenants_not_default()}
+									aria-label={$LL.admin_tenants_not_default()}
+								>
+									<i class="i-ph-star"></i>
+								</span>
+							{/if}
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{#each tenants as tenant (tenant.id)}
-						<tr
-							class="tenant-row"
-							onclick={() => goto(`/admin/tenants/${encodeURIComponent(tenant.id)}`)}
-							role="link"
-							tabindex="0"
-							onkeydown={(e) =>
-								e.key === 'Enter' && goto(`/admin/tenants/${encodeURIComponent(tenant.id)}`)}
-							aria-label={$LL.admin_tenants_view_aria({ name: tenant.name })}
-						>
-							<td class="tenant-id">{tenant.id}</td>
-							<td class="tenant-id">{tenant.tenant_code}</td>
-							<td class="tenant-name">{tenant.name}</td>
-							<td class="tenant-description">{tenant.description ?? '—'}</td>
-							<td>
-								{#if tenant.lifecycle_state === 'active'}
-									<span class="badge badge-active">{$LL.admin_tenants_active()}</span>
-								{:else}
-									<span class="badge badge-inactive">{lifecycleLabel(tenant.lifecycle_state)}</span>
-								{/if}
-							</td>
-							<td>
-								{#if tenant.is_default}
-									<span
-										class="default-star is-default"
-										title={$LL.admin_tenants_default_tenant()}
-										aria-label={$LL.admin_tenants_default_tenant()}
-									>
-										<i class="i-ph-star-fill"></i>
-									</span>
-								{:else}
-									<span
-										class="default-star"
-										title={$LL.admin_tenants_not_default()}
-										aria-label={$LL.admin_tenants_not_default()}
-									>
-										<i class="i-ph-star"></i>
-									</span>
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+				{/each}
+			</tbody>
+		</AdminDataTable>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		gap: 24px;
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
-	.page-title {
-		font-family: var(--font-display);
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: var(--text-primary);
-		margin: 0 0 4px;
-	}
-
-	.page-description {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin: 0;
-	}
-
-	/* Table */
-	.table-container {
-		background: var(--bg-card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		overflow: hidden;
-	}
-
-	.table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.table th {
-		padding: 12px 16px;
-		text-align: left;
-		font-size: 0.75rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-muted);
-		background: var(--bg-subtle);
-		border-bottom: 1px solid var(--border);
-	}
-
-	.table td {
-		padding: 14px 16px;
-		font-size: 0.875rem;
-		color: var(--text-primary);
-		border-bottom: 1px solid var(--border-subtle);
-		vertical-align: middle;
-	}
-
-	.table tr:last-child td {
-		border-bottom: none;
-	}
-
-	/* Clickable rows */
-	.tenant-row {
-		cursor: pointer;
-		transition: background var(--transition-fast);
-	}
-
-	.tenant-row:hover td {
-		background: var(--bg-subtle);
-	}
-
-	.tenant-row:focus {
-		outline: none;
-	}
-
-	.tenant-row:focus-visible td {
-		background: var(--primary-light);
-	}
-
 	.tenant-id {
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.tenant-name {
-		font-weight: 500;
+		font-weight: 600;
 	}
 
 	.tenant-description {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		max-width: 240px;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -296,28 +212,27 @@
 	.badge {
 		display: inline-flex;
 		align-items: center;
-		padding: 2px 8px;
-		border-radius: var(--radius-full);
+		padding: 0.15rem 0.5rem;
+		border-radius: 999px;
 		font-size: 0.75rem;
-		font-weight: 500;
+		font-weight: 700;
 	}
 
 	.badge-active {
-		background: var(--success-subtle);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.badge-inactive {
-		background: var(--bg-subtle);
-		color: var(--text-muted);
+		background: var(--color-surface-raised);
+		color: var(--color-text-muted);
 	}
 
-	/* Default star */
 	.default-star {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--text-muted);
+		color: var(--color-text-subtle);
 	}
 
 	.default-star :global(i) {
@@ -326,52 +241,21 @@
 	}
 
 	.default-star.is-default {
-		color: var(--warning);
+		color: var(--color-warning);
 	}
 
-	/* Buttons */
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px 16px;
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		border: none;
-		text-decoration: none;
-		font-family: var(--font-body);
-	}
-
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.btn :global(i) {
-		width: 16px;
-		height: 16px;
-	}
-
-	.btn-primary {
-		background: var(--primary);
-		color: white;
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: var(--primary-dark);
-	}
-
-	/* Alert */
 	.alert {
 		display: flex;
 		align-items: flex-start;
-		gap: 10px;
-		padding: 12px 16px;
-		border-radius: var(--radius-md);
+		gap: 0.65rem;
+		padding: 0.85rem 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-md));
+		background: var(--color-surface);
+		box-shadow: var(--shadow-sm);
+		color: var(--color-text);
 		font-size: 0.875rem;
+		margin-bottom: 1rem;
 	}
 
 	.alert :global(i) {
@@ -382,26 +266,38 @@
 	}
 
 	.alert-error {
-		background: var(--danger-subtle);
-		color: var(--danger);
-		border: 1px solid var(--danger-border);
+		border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 9%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.alert-info {
-		background: var(--info-subtle, var(--primary-light));
-		color: var(--info, var(--primary));
-		border: 1px solid var(--info-border, var(--primary-light));
+		border-color: color-mix(in srgb, var(--color-accent) 26%, var(--color-border));
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+		color: var(--color-text);
 	}
 
-	/* Loading / Empty */
+	.alert-info :global(i) {
+		color: var(--color-accent);
+	}
+
+	.alert p {
+		margin: 0.2rem 0 0;
+		color: var(--color-text-muted);
+		line-height: 1.6;
+	}
+
 	.loading-state,
 	.empty-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 12px;
-		padding: 48px;
-		color: var(--text-muted);
+		gap: 0.75rem;
+		padding: 3rem;
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-panel, var(--radius-md));
+		background: var(--color-surface);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
@@ -409,5 +305,9 @@
 	.empty-state :global(i) {
 		width: 32px;
 		height: 32px;
+	}
+
+	.empty-state p {
+		margin: 0;
 	}
 </style>

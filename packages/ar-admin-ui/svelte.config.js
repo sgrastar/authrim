@@ -9,6 +9,7 @@ const config = {
 	preprocess: sequence([vitePreprocess(), preprocessMeltUI()]),
 
 	kit: {
+		appDir: '_authrim_admin',
 		// Cloudflare Workers static-assets adapter configuration
 		adapter: adapter({
 			// Route all requests through the generated Worker when no static asset matches.

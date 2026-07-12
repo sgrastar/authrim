@@ -13,6 +13,19 @@ function node(id: string, label: string, role: MappingNode['role'], type = 'stri
 	};
 }
 
+function nodeWithFieldRef(
+	id: string,
+	label: string,
+	role: MappingNode['role'],
+	type: string,
+	fieldRef: NonNullable<MappingNode['fieldRef']>
+): MappingNode {
+	return {
+		...node(id, label, role, type),
+		fieldRef
+	};
+}
+
 describe('field mapping auto-map candidates', () => {
 	it('suggests semantic matches without depending on UI fixtures', () => {
 		const candidates = suggestAutoMapConnections({
@@ -199,6 +212,61 @@ describe('field mapping auto-map candidates', () => {
 		});
 
 		expect(candidates).toEqual([]);
+	});
+
+	it('uses field refs for SAML OID to destination claim matching', () => {
+		const candidates = suggestAutoMapConnections({
+			fromNodes: [
+				nodeWithFieldRef('src-mail', 'mail', 'source', 'string', {
+					namespace: 'saml.attribute',
+					path: 'urn:oid:0.9.2342.19200300.100.1.3'
+				}),
+				nodeWithFieldRef('src-targeted-id', 'eduPersonTargetedID', 'source', 'identifier', {
+					namespace: 'saml.attribute',
+					path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10'
+				})
+			],
+			toNodes: [
+				nodeWithFieldRef('target-mail', 'mail', 'destination', 'String', {
+					namespace: 'saml.attribute',
+					path: 'mail'
+				}),
+				nodeWithFieldRef('target-targeted-id', 'eduPersonTargetedID', 'destination', 'String', {
+					namespace: 'saml.attribute',
+					path: 'saml:persistent-nameid'
+				})
+			],
+			existingEdges: []
+		});
+
+		expect(candidates.map((candidate) => [candidate.fromId, candidate.toId])).toEqual(
+			expect.arrayContaining([
+				['src-mail', 'target-mail'],
+				['src-targeted-id', 'target-targeted-id']
+			])
+		);
+	});
+
+	it('does not collapse distinct person name fields into generic name targets', () => {
+		const candidates = suggestAutoMapConnections({
+			fromNodes: [
+				node('src-first', 'First Name', 'source'),
+				node('src-display', 'Display Name', 'source'),
+				node('src-name', 'Full Name', 'source')
+			],
+			toNodes: [
+				node('target-name', 'Name', 'destination', 'String'),
+				node('target-display', 'displayName', 'destination', 'String'),
+				node('target-given', 'givenName', 'destination', 'String')
+			],
+			existingEdges: []
+		});
+		const pairs = candidates.map((candidate) => [candidate.fromId, candidate.toId]);
+
+		expect(pairs).toContainEqual(['src-display', 'target-display']);
+		expect(pairs).toContainEqual(['src-first', 'target-given']);
+		expect(pairs).not.toContainEqual(['src-display', 'target-name']);
+		expect(pairs).not.toContainEqual(['src-first', 'target-name']);
 	});
 
 	it('does not map an email value into an email verification boolean', () => {

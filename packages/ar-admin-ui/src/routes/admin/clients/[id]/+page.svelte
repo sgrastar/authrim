@@ -30,6 +30,12 @@
 		SettingsConflictError
 	} from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import AdminDetailHeader from '$lib/components/admin/AdminDetailHeader.svelte';
+	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
+	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import { onMount } from 'svelte';
 
 	const clientId = $derived($page.params.id ?? '');
@@ -67,6 +73,7 @@
 		// Security tab
 		consent_required?: boolean;
 		first_party?: boolean;
+		app_login_enabled?: boolean;
 		sso_enabled?: boolean;
 		strict_redirect_matching?: boolean;
 		allow_localhost_redirect?: boolean;
@@ -153,6 +160,13 @@
 		{ id: 'metadata', label: 'Client Metadata' },
 		{ id: 'advanced', label: 'Advanced' }
 	];
+	const clientTabItems = $derived<AdminTabItem[]>(
+		TAB_DEFINITIONS.map((tab) => ({
+			id: tab.id,
+			label: tabLabel(tab.id),
+			panelId: `${tab.id}-panel`
+		}))
+	);
 
 	const CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
 		'scope_required',
@@ -196,6 +210,7 @@
 		// Security tab
 		consent_required?: boolean;
 		first_party?: boolean;
+		app_login_enabled?: boolean;
 		sso_enabled?: boolean;
 		strict_redirect_matching?: boolean;
 		allow_localhost_redirect?: boolean;
@@ -960,6 +975,7 @@
 			// Security tab
 			consent_required: (clientSettings.values['client.consent_required'] as boolean) ?? false,
 			first_party: (clientSettings.values['client.first_party'] as boolean) ?? false,
+			app_login_enabled: (clientSettings.values['client.app_login_enabled'] as boolean) ?? false,
 			sso_enabled: (clientSettings.values['client.sso_enabled'] as boolean) ?? false,
 			strict_redirect_matching:
 				(clientSettings.values['client.strict_redirect_matching'] as boolean) ?? false,
@@ -1052,6 +1068,18 @@
 		);
 	}
 
+	function clientInitials(currentClient: Client): string {
+		const words = currentClient.client_name.trim().split(/\s+/).filter(Boolean);
+		if (words.length >= 2) {
+			return `${words[0][0] ?? ''}${words[1][0] ?? ''}`.toUpperCase();
+		}
+		return currentClient.client_name.slice(0, 2).toUpperCase();
+	}
+
+	function clientKindLabel(currentClient: Client): string {
+		return currentClient.token_endpoint_auth_method === 'none' ? 'public' : 'confidential';
+	}
+
 	function cancelEditing() {
 		isEditing = false;
 		editForm = {};
@@ -1105,6 +1133,7 @@
 							// Security tab
 							'client.consent_required': settingsEditForm.consent_required,
 							'client.first_party': settingsEditForm.first_party,
+							'client.app_login_enabled': settingsEditForm.app_login_enabled,
 							'client.sso_enabled': settingsEditForm.sso_enabled,
 							'client.strict_redirect_matching': settingsEditForm.strict_redirect_matching,
 							'client.allow_localhost_redirect': settingsEditForm.allow_localhost_redirect,
@@ -1321,9 +1350,7 @@
 	<title>{client?.client_name || $LL.admin_client_detail_page_title_fallback()} - Authrim</title>
 </svelte:head>
 
-<div class="admin-page">
-	<a href="/admin/clients" class="back-link">← {$LL.admin_clients_new_back()}</a>
-
+<AdminPageShell>
 	{#if loading}
 		<div class="loading-state">
 			<i class="i-ph-circle-notch loading-spinner"></i>
@@ -1332,21 +1359,16 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if client}
-		<!-- Header -->
-		<div class="page-header-with-status">
-			<div class="page-header-info">
-				<div class="client-title-row">
-					<h1>{client.client_name}</h1>
-					{#if isSystemClient(client)}
-						<span class="system-client-badge">{$LL.admin_client_detail_system()}</span>
-					{/if}
-				</div>
-				<p class="mono">{client.client_id}</p>
-				{#if client.description}
-					<p class="client-header-description">{client.description}</p>
-				{/if}
-			</div>
-			<div class="action-buttons">
+		{#snippet detailBadges()}
+			<span class="detail-tag detail-tag--ok">{formatEnabled(true)}</span>
+			<span class="detail-tag">{clientKindLabel(client!)}</span>
+			{#if isSystemClient(client!)}
+				<span class="detail-tag detail-tag--system">{$LL.admin_client_detail_system()}</span>
+			{/if}
+		{/snippet}
+
+		{#snippet actions()}
+			<div class="client-header-actions">
 				<div class="admin-toggle-inline">
 					<ToggleSwitch
 						bind:checked={showAdminSettings}
@@ -1360,26 +1382,29 @@
 					</button>
 				{/if}
 			</div>
-		</div>
+		{/snippet}
 
-		<!-- Tabs -->
-		<div class="client-tabs" role="tablist">
-			{#each TAB_DEFINITIONS as tab (tab.id)}
-				<button
-					onclick={() => handleTabChange(tab.id)}
-					role="tab"
-					aria-selected={activeTab === tab.id}
-					aria-controls="{tab.id}-panel"
-					class="client-tab"
-					class:active={activeTab === tab.id}
-				>
-					{tabLabel(tab.id)}
-				</button>
-			{/each}
-		</div>
+		<AdminDetailHeader
+			title={client.client_name}
+			description={client.description ?? undefined}
+			initials={clientInitials(client)}
+			meta={`client_id: ${client.client_id}`}
+			metaActionLabel={copiedField === 'client_id'
+				? $LL.admin_client_detail_copied()
+				: $LL.admin_client_detail_copy()}
+			onMetaAction={() => copyToClipboard(client!.client_id, 'client_id')}
+			badges={detailBadges}
+			{actions}
+		/>
 
-		<!-- Client Details -->
-		<div class="panel">
+		<AdminTabs
+			items={clientTabItems}
+			active={activeTab}
+			onChange={(tabId) => handleTabChange(tabId as TabId)}
+			ariaLabel={$LL.admin_client_detail_title()}
+		/>
+
+		<AdminSection>
 			{#if saveError}
 				<div class="alert alert-error">{saveError}</div>
 			{/if}
@@ -1763,7 +1788,7 @@
 				<section class="section-spacing">
 					<h2 class="section-title-border">{$LL.admin_client_detail_redirectUris()}</h2>
 					{#if isEditing}
-						<div style="display: flex; flex-direction: column; gap: 8px;">
+						<div class="redirect-uri-editor">
 							{#each editForm.redirect_uris || [] as uri, index (index)}
 								<div class="input-copy-group">
 									<input
@@ -2131,6 +2156,11 @@
 										bind:checked={settingsEditForm.first_party}
 										label={$LL.admin_client_detail_first_party_app()}
 										description={$LL.admin_client_detail_first_party_app_desc()}
+										onchange={(newValue) => {
+											if (!newValue) {
+												settingsEditForm.app_login_enabled = false;
+											}
+										}}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
@@ -2139,6 +2169,25 @@
 										{formatEnabled(clientSettings?.values['client.first_party'] as boolean)}
 									</p>
 									<p class="form-hint">{$LL.admin_client_detail_first_party_app_desc()}</p>
+								{/if}
+							</div>
+
+							<!-- App Login Enabled -->
+							<div class="form-group">
+								{#if isEditing}
+									<ToggleSwitch
+										bind:checked={settingsEditForm.app_login_enabled}
+										label={$LL.admin_client_detail_app_login_enabled()}
+										description={$LL.admin_client_detail_app_login_enabled_desc()}
+										disabled={!settingsEditForm.first_party}
+									/>
+								{:else}
+									<!-- svelte-ignore a11y_label_has_associated_control -->
+									<label class="form-label">{$LL.admin_client_detail_app_login_enabled()}</label>
+									<p class="display-text">
+										{formatEnabled(clientSettings?.values['client.app_login_enabled'] as boolean)}
+									</p>
+									<p class="form-hint">{$LL.admin_client_detail_app_login_enabled_desc()}</p>
 								{/if}
 							</div>
 
@@ -2277,6 +2326,18 @@
 							</div>
 						{/if}
 					</div>
+				</section>
+
+				<section class="section-spacing">
+					<FlowAssignmentSettings targetType="oidc_client" targetId={clientId} />
+				</section>
+
+				<section class="section-spacing">
+					<ConsentPolicyTargetSettings
+						targetType="oidc_client"
+						targetId={clientId}
+						title="OIDC consent policy"
+					/>
 				</section>
 
 				<!-- Edit Actions for Security Tab -->
@@ -3576,9 +3637,9 @@
 					</div>
 				{/if}
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Delete Confirmation Modal -->
 <Modal
@@ -3591,7 +3652,7 @@
 	size="md"
 >
 	{#snippet header()}
-		<h3 class="modal-title" style="color: var(--danger);">
+		<h3 class="modal-title modal-title-danger">
 			{$LL.admin_client_detail_delete_modal_title()}
 		</h3>
 	{/snippet}
@@ -3646,11 +3707,11 @@
 >
 	{#snippet header()}
 		{#if newSecret}
-			<h3 class="modal-title" style="color: var(--success);">
+			<h3 class="modal-title modal-title-success">
 				{$LL.admin_client_detail_secret_regenerated()}
 			</h3>
 		{:else}
-			<h3 class="modal-title" style="color: var(--warning);">
+			<h3 class="modal-title modal-title-warning">
 				{$LL.admin_client_detail_regenerate_secret_title()}
 			</h3>
 		{/if}
@@ -3715,118 +3776,76 @@
 </Modal>
 
 <style>
-	/* Tabs */
-	.client-tabs {
-		display: flex;
-		gap: 8px;
-		padding: 0.5rem;
-		background:
-			radial-gradient(
-				circle at 14% 18%,
-				color-mix(in srgb, var(--primary, #2c2724) 10%, transparent),
-				transparent 40%
-			),
-			var(--bg-card, #fefdfa);
-		border: 1px solid var(--border, #e5e7eb);
-		border-radius: 12px;
-		margin-bottom: 1.5rem;
-		overflow-x: auto;
-		scrollbar-width: none;
-		-ms-overflow-style: none;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
-	}
-
-	.client-tabs::-webkit-scrollbar {
-		display: none;
-	}
-
-	.client-tab {
-		padding: 0.65rem 1.25rem;
-		background: var(--bg-card, #ffffff);
-		border: 1px solid var(--border, #e5e7eb);
-		border-radius: 10px;
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: var(--text-secondary, #475569);
-		cursor: pointer;
-		transition:
-			transform 0.12s ease,
-			box-shadow 0.12s ease,
-			color 0.12s ease,
-			border-color 0.12s ease,
-			background-color 0.12s ease;
-		white-space: nowrap;
-		flex-shrink: 0;
-		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);
-	}
-
-	.client-tab:hover {
-		color: var(--text-primary, #0f172a);
-		border-color: color-mix(in srgb, var(--primary, #2c2724) 35%, var(--border, #e5e7eb));
-		transform: translateY(-1px);
-		box-shadow: 0 8px 18px color-mix(in srgb, var(--primary, #2c2724) 18%, rgba(0, 0, 0, 0.12));
-	}
-
-	.client-tab.active {
-		color: var(--primary, #2c2724);
-		background: color-mix(in srgb, var(--primary, #2c2724) 18%, var(--bg-card, #ffffff));
-		border-color: color-mix(in srgb, var(--primary, #2c2724) 38%, var(--border, #e5e7eb));
-		box-shadow: 0 10px 22px color-mix(in srgb, var(--primary, #2c2724) 22%, rgba(0, 0, 0, 0.22));
-	}
-
-	.client-tab:focus-visible {
-		outline: 2px solid color-mix(in srgb, var(--primary, #2c2724) 55%, transparent);
-		outline-offset: 3px;
-	}
-
-	.client-title-row {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		flex-wrap: wrap;
-	}
-
-	.client-title-row h1 {
-		margin: 0;
-	}
-
-	.client-header-description {
-		margin: 0.35rem 0 0;
-		color: var(--text-secondary, #64748b);
-		line-height: 1.4;
-	}
-
-	.system-client-badge {
+	.detail-tag {
 		display: inline-flex;
 		align-items: center;
-		padding: 0.18rem 0.5rem;
-		border-radius: 999px;
-		border: 1px solid var(--border-color, #d1d5db);
-		color: var(--text-secondary, #64748b);
-		font-size: 0.68rem;
+		padding: var(--detail-tag-padding, 0.12rem 0.5rem);
+		border: 1px solid var(--detail-tag-border, var(--color-border));
+		border-radius: var(--detail-tag-radius, var(--radius-xs));
+		background: var(--detail-tag-bg, var(--color-surface-muted));
+		color: var(--color-text-muted);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--detail-tag-font-size, 0.68rem);
 		font-weight: 700;
 		text-transform: uppercase;
+		letter-spacing: var(--detail-tag-letter-spacing, 0.08em);
+		line-height: 1.45;
 	}
 
-	/* Admin Toggle */
+	.detail-tag--ok {
+		border-color: var(--color-success);
+		background: color-mix(in srgb, var(--color-success) 9%, transparent);
+		color: var(--color-success);
+	}
+
+	.detail-tag--system {
+		border-color: var(--color-warning);
+		background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+		color: var(--color-warning);
+	}
+
+	.client-header-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
 	.admin-toggle-inline {
 		display: flex;
 		align-items: center;
-		margin-left: 1rem;
-		margin-right: 100px;
 		z-index: 1;
 		position: relative;
+	}
+
+	.redirect-uri-editor {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.modal-title-danger {
+		color: var(--color-danger);
+	}
+
+	.modal-title-success {
+		color: var(--color-success);
+	}
+
+	.modal-title-warning {
+		color: var(--color-warning);
 	}
 
 	/* Danger Zone */
 	.danger-section {
 		margin-top: 3rem;
 		padding-top: 2rem;
-		border-top: 2px solid var(--border, #e5e7eb);
+		border-top: 2px solid var(--color-border);
 	}
 
 	.danger-title {
-		color: var(--danger, #dc2626);
+		color: var(--color-danger);
 	}
 
 	.danger-zone {
@@ -3834,10 +3853,16 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1.5rem;
-		padding: 1.5rem;
-		background-color: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--bg-card, #ffffff));
-		border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 30%, var(--border, #e5e7eb));
-		border-radius: 8px;
+		padding: var(--danger-zone-padding, 1.5rem);
+		background-color: var(
+			--danger-zone-bg,
+			color-mix(in srgb, var(--color-danger) 8%, var(--color-surface))
+		);
+		border: var(
+			--danger-zone-border,
+			1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))
+		);
+		border-radius: var(--danger-zone-radius, var(--radius-panel));
 	}
 
 	.danger-zone-content {
@@ -3845,15 +3870,15 @@
 	}
 
 	.danger-zone-title {
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--danger, #dc2626);
+		font-size: var(--danger-zone-title-size, 1rem);
+		font-weight: var(--danger-zone-title-weight, 600);
+		color: var(--color-danger);
 		margin: 0 0 0.5rem 0;
 	}
 
 	.danger-zone-description {
-		font-size: 0.875rem;
-		color: var(--text-secondary, #64748b);
+		font-size: var(--danger-zone-description-size, 0.875rem);
+		color: var(--color-text-muted);
 		margin: 0;
 		line-height: 1.5;
 	}
@@ -3872,18 +3897,18 @@
 	}
 
 	.badge-success {
-		background-color: var(--success, #10b981);
-		color: white;
-		padding: 2px 8px;
-		border-radius: 4px;
-		font-size: 0.75rem;
+		background-color: color-mix(in srgb, var(--color-success) 16%, transparent);
+		color: var(--color-success);
+		padding: var(--badge-padding, 2px 8px);
+		border-radius: var(--status-badge-radius, var(--radius-control));
+		font-size: var(--badge-font-size, 0.75rem);
 		font-weight: 500;
 		white-space: nowrap;
 	}
 
 	.cors-hint {
 		margin-top: 8px;
-		color: var(--warning, #f59e0b);
+		color: var(--color-warning);
 	}
 
 	.textarea-input {
@@ -3896,45 +3921,19 @@
 		word-break: break-word;
 	}
 
-	/* Dark mode support */
-	:global(.dark) .client-tabs {
-		background:
-			radial-gradient(
-				circle at 12% 18%,
-				color-mix(in srgb, var(--primary, #c8b8a8) 14%, transparent),
-				transparent 42%
-			),
-			var(--bg-card, #2d2824);
-		border-color: var(--border, #334155);
-		box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-	}
+	@media (max-width: 640px) {
+		.client-header-actions {
+			justify-content: flex-start;
+			width: 100%;
+		}
 
-	:global(.dark) .client-tab {
-		background: color-mix(in srgb, var(--bg-card, #2d2824) 85%, var(--primary, #c8b8a8) 15%);
-		border-color: color-mix(in srgb, var(--border, #334155) 70%, var(--primary, #c8b8a8) 20%);
-		color: var(--text-secondary, #cbd5e1);
-		box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
-	}
+		.input-copy-group {
+			flex-wrap: wrap;
+		}
 
-	:global(.dark) .client-tab:hover {
-		color: var(--text-primary, #f5f3f0);
-		border-color: color-mix(in srgb, var(--primary, #c8b8a8) 35%, var(--border, #334155));
-		box-shadow: 0 10px 22px color-mix(in srgb, var(--primary, #c8b8a8) 20%, rgba(0, 0, 0, 0.25));
-	}
-
-	:global(.dark) .client-tab.active {
-		color: var(--primary, #c8b8a8);
-		background: color-mix(in srgb, var(--primary, #c8b8a8) 22%, var(--bg-card, #2d2824));
-		border-color: color-mix(in srgb, var(--primary, #c8b8a8) 40%, var(--border, #334155));
-		box-shadow: 0 12px 28px color-mix(in srgb, var(--primary, #c8b8a8) 28%, rgba(0, 0, 0, 0.4));
-	}
-
-	:global(.dark) .danger-zone {
-		background-color: color-mix(in srgb, var(--danger, #ef4444) 10%, var(--bg-card, #2d2824));
-		border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border, #374151));
-	}
-
-	:global(.dark) .danger-zone-description {
-		color: var(--text-secondary, #94a3b8);
+		.input-copy-group .form-input,
+		.input-copy-group .input-readonly {
+			min-width: 0;
+		}
 	}
 </style>

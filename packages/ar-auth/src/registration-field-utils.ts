@@ -32,6 +32,103 @@ function getRequiredFieldError(label: string): string {
   return `${label} is required`;
 }
 
+const FIXED_REGISTRATION_FIELD_KEYS = new Set([
+  'name',
+  'field.canonical.name',
+  'email',
+  'field.canonical.email',
+  'email_verified',
+  'field.canonical.email_verified',
+]);
+
+const GIVEN_NAME_FIELD_KEYS = [
+  'given_name',
+  'first_name',
+  'field.canonical.given_name',
+  'field.canonical.first_name',
+];
+
+const FAMILY_NAME_FIELD_KEYS = [
+  'family_name',
+  'last_name',
+  'field.canonical.family_name',
+  'field.canonical.last_name',
+];
+
+export interface SubmittedCanonicalProfileFields {
+  given_name?: string;
+  family_name?: string;
+}
+
+export interface CanonicalProfileRuntimeUserFields {
+  piiFields: Partial<Record<'given_name' | 'family_name', boolean>>;
+  sensitiveValues: Partial<Record<'given_name' | 'family_name', string>>;
+}
+
+export function isFixedRegistrationFieldKey(fieldKey: string): boolean {
+  return FIXED_REGISTRATION_FIELD_KEYS.has(fieldKey.trim().toLowerCase());
+}
+
+function readSubmittedStringByKeys(
+  submitted: Record<string, unknown> | undefined,
+  keys: string[]
+): string | undefined {
+  if (!submitted || typeof submitted !== 'object' || Array.isArray(submitted)) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = submitted[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const stringValue = String(value).trim();
+    if (stringValue) {
+      return stringValue;
+    }
+  }
+  return undefined;
+}
+
+export function resolveSubmittedCanonicalProfileFields(
+  submitted: Record<string, unknown> | undefined
+): SubmittedCanonicalProfileFields {
+  const fields: SubmittedCanonicalProfileFields = {};
+  const givenName = readSubmittedStringByKeys(submitted, GIVEN_NAME_FIELD_KEYS);
+  const familyName = readSubmittedStringByKeys(submitted, FAMILY_NAME_FIELD_KEYS);
+
+  if (givenName) {
+    fields.given_name = givenName;
+  }
+  if (familyName) {
+    fields.family_name = familyName;
+  }
+
+  return fields;
+}
+
+export function buildCanonicalProfileRuntimeUserFields(
+  submitted: Record<string, unknown> | undefined
+): CanonicalProfileRuntimeUserFields {
+  const fields = resolveSubmittedCanonicalProfileFields(submitted);
+  return {
+    piiFields: {
+      ...(fields.given_name ? { given_name: true } : {}),
+      ...(fields.family_name ? { family_name: true } : {}),
+    },
+    sensitiveValues: {
+      ...(fields.given_name ? { given_name: fields.given_name } : {}),
+      ...(fields.family_name ? { family_name: fields.family_name } : {}),
+    },
+  };
+}
+
+function filterCustomRegistrationFieldSchemas(
+  schemas: RegistrationFieldSchemaRow[]
+): RegistrationFieldSchemaRow[] {
+  return schemas.filter((schema) => !isFixedRegistrationFieldKey(schema.field_key));
+}
+
 function toMissingRequiredRegistrationField(
   schema: RegistrationFieldSchemaRow
 ): MissingRequiredRegistrationField {
@@ -53,7 +150,9 @@ export async function validateRegistrationFieldSubmission(
   tenantId: string,
   submitted: Record<string, unknown> | undefined
 ): Promise<ValidationResult> {
-  const schemas = await listRegistrationFieldSchemas(db, tenantId);
+  const schemas = await listRegistrationFieldSchemas(db, tenantId, {
+    includeRequiredHidden: true,
+  });
   const input =
     submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
   const values: Record<string, string> = {};
@@ -197,12 +296,15 @@ export async function persistRegistrationFieldValues(
     return;
   }
 
-  const schemas = await listRegistrationFieldSchemas(db, tenantId);
-  if (schemas.length === 0) {
+  const schemas = await listRegistrationFieldSchemas(db, tenantId, {
+    includeRequiredHidden: true,
+  });
+  const customSchemas = filterCustomRegistrationFieldSchemas(schemas);
+  if (customSchemas.length === 0) {
     return;
   }
 
-  const schemaMap = new Map(schemas.map((schema) => [schema.field_key, schema] as const));
+  const schemaMap = new Map(customSchemas.map((schema) => [schema.field_key, schema] as const));
   const nonPiiValues: Record<string, string> = {};
   const piiValues: Record<string, string> = {};
 
@@ -221,7 +323,7 @@ export async function persistRegistrationFieldValues(
 
   const validation: ValidatedCustomClaimWriteResult = {
     ok: true,
-    schemas: schemas.map((schema) => ({
+    schemas: customSchemas.map((schema) => ({
       ...schema,
       tenant_id: tenantId,
       id: `${tenantId}:${schema.field_key}`,

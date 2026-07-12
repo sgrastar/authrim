@@ -106,6 +106,7 @@ export class UIContractGenerator {
         },
         authMethods: {
           passkey: true,
+          totp: true,
           email_code: true,
           password: false,
           external_idp: false,
@@ -127,6 +128,7 @@ export class UIContractGenerator {
         },
         authMethods: {
           passkey: true,
+          totp: true,
           email_code: true,
           password: false,
           external_idp: true,
@@ -148,6 +150,7 @@ export class UIContractGenerator {
         },
         authMethods: {
           passkey: true,
+          totp: true,
           email_code: false,
           password: false,
           external_idp: false,
@@ -169,6 +172,7 @@ export class UIContractGenerator {
         },
         authMethods: {
           passkey: false,
+          totp: false,
           email_code: false,
           password: false,
           external_idp: false,

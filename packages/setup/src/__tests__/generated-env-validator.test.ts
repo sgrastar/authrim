@@ -5,11 +5,12 @@ import { createDefaultConfig } from '../core/config.js';
 import { saveKeysToDirectory, type GeneratedSecrets, type KeyPair } from '../core/keys.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
-import { WORKER_COMPONENTS } from '../core/naming.js';
+import { KV_NAMESPACES, WORKER_COMPONENTS, getKVNamespaceName } from '../core/naming.js';
 import { buildResourceIdsFromLock, generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { validateGeneratedEnvironment } from '../core/generated-env-validator.js';
 
 const listD1DatabasesMock = vi.hoisted(() => vi.fn());
+const listKVNamespacesMock = vi.hoisted(() => vi.fn());
 const listR2BucketsMock = vi.hoisted(() => vi.fn());
 const queryD1RowsMock = vi.hoisted(() => vi.fn());
 
@@ -18,12 +19,24 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
   return {
     ...actual,
     listD1Databases: listD1DatabasesMock,
+    listKVNamespaces: listKVNamespacesMock,
     listR2Buckets: listR2BucketsMock,
     queryD1Rows: queryD1RowsMock,
   };
 });
 
 const tempDirs: string[] = [];
+const PORTABLE_KV_IDS: Record<(typeof KV_NAMESPACES)[number], string> = {
+  CLIENTS_CACHE: 'kv-clients',
+  INITIAL_ACCESS_TOKENS: 'kv-iat',
+  SETTINGS: 'kv-settings',
+  REBAC_CACHE: 'kv-rebac',
+  USER_CACHE: 'kv-user',
+  AUTHRIM_CONFIG: 'kv-config',
+  TENANT_RUNTIME_REGISTRY: 'kv-tenant-runtime-registry',
+  STATE_STORE: 'kv-state',
+  CONSENT_CACHE: 'kv-consent',
+};
 
 async function createFixtureRoot() {
   const root = await mkdtemp(join(process.cwd(), '.test-generated-env-'));
@@ -72,9 +85,13 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
       createdAt: '2026-01-01T00:00:00.000Z',
     },
     rpTokenEncryptionKey: 'a'.repeat(64),
+    piiEncryptionKey: 'd'.repeat(64),
     objectEncryptionRootKey: 'b'.repeat(64),
+    otpHmacSecret: 'fixture_otp_hmac_secret_1234567890',
     versionManagerSecret: 'fixture_version_manager_secret_123',
     loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
+    flowRuntimeHmacSecret: 'fixture_flow_runtime_secret_123',
+    pluginEncryptionKey: 'c'.repeat(64),
     adminApiSecret: 'fixture_admin_api_secret_123456',
     keyManagerSecret: 'fixture_key_manager_secret_1234',
     setupToken: 'fixture_setup_token_1234567890',
@@ -196,6 +213,7 @@ async function writeGeneratedEnvironment(
     ],
     queues,
     r2: [
+      { binding: 'PUBLIC_ASSETS', name: `${env}-public-assets` },
       { binding: 'AVATARS', name: `${env}-authrim-avatars` },
       { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
       { binding: 'AUDIT_ARCHIVE', name: `${env}-audit-archive` },
@@ -231,7 +249,11 @@ async function writeGeneratedEnvironment(
 
 function mockLiveRuntimeSchema(
   env: string,
-  options?: { missingPiiTables?: string[]; legacyUserCustomFieldsFk?: boolean }
+  options?: {
+    missingCoreTables?: string[];
+    missingPiiTables?: string[];
+    legacyUserCustomFieldsFk?: boolean;
+  }
 ) {
   const schemaTablesByDatabase = new Map<string, string[]>([
     [
@@ -244,7 +266,8 @@ function mockLiveRuntimeSchema(
         'contact_points',
         'custom_claim_schemas',
         'user_custom_fields',
-      ],
+        'event_log',
+      ].filter((table) => !(options?.missingCoreTables ?? []).includes(table)),
     ],
     [
       `${env}-authrim-pii-db`,
@@ -276,6 +299,13 @@ function mockLiveRuntimeSchema(
 describe('validateGeneratedEnvironment', () => {
   beforeEach(() => {
     listD1DatabasesMock.mockReset();
+    listKVNamespacesMock.mockReset();
+    listKVNamespacesMock.mockResolvedValue(
+      KV_NAMESPACES.map((binding) => ({
+        title: getKVNamespaceName('portable', binding),
+        id: PORTABLE_KV_IDS[binding],
+      }))
+    );
     listR2BucketsMock.mockReset();
     queryD1RowsMock.mockReset();
   });
@@ -345,6 +375,20 @@ describe('validateGeneratedEnvironment', () => {
     expect(secretCheck?.status).toBe('fail');
     expect(secretCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('LOGGING_CURSOR_HMAC_SECRET')])
+    );
+  });
+
+  it('fails when generated OTP key material is missing', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    await unlink(join(root, '.authrim', env, 'keys', 'otp_hmac_secret.txt'));
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const secretCheck = result.checks.find((check) => check.id === 'logging-secret-material');
+
+    expect(result.ok).toBe(false);
+    expect(secretCheck?.status).toBe('fail');
+    expect(secretCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('OTP_HMAC_SECRET')])
     );
   });
 
@@ -427,6 +471,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
@@ -439,6 +484,7 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(result.ok).toBe(true);
     expect(result.checks.find((check) => check.id === 'live-cloudflare-d1')?.status).toBe('pass');
+    expect(result.checks.find((check) => check.id === 'live-cloudflare-kv')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-cloudflare-r2')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-runtime-d1-schema')?.status).toBe(
       'pass'
@@ -465,15 +511,56 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
+  it('fails live Cloudflare validation when a recorded KV namespace ID is stale', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    mockLiveRuntimeSchema(env);
+    listD1DatabasesMock.mockResolvedValueOnce([
+      { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
+      { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
+      { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+    ]);
+    listKVNamespacesMock.mockResolvedValueOnce(
+      KV_NAMESPACES.map((binding) => ({
+        title: getKVNamespaceName(env, binding),
+        id: binding === 'AUTHRIM_CONFIG' ? 'replacement-config-id' : PORTABLE_KV_IDS[binding],
+      }))
+    );
+    listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
+      { name: `${env}-authrim-avatars` },
+      { name: `${env}-diagnostic-logs` },
+      { name: `${env}-audit-archive` },
+      { name: `${env}-import-artifacts` },
+      { name: `${env}-export-artifacts` },
+      { name: `${env}-sensitive-details` },
+    ]);
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
+    const kvCheck = result.checks.find((check) => check.id === 'live-cloudflare-kv');
+
+    expect(result.ok).toBe(false);
+    expect(kvCheck?.status).toBe('fail');
+    expect(kvCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('AUTHRIM_CONFIG')])
+    );
+    expect(kvCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('id mismatch')])
+    );
+  });
+
   it('fails live Cloudflare validation when runtime schema tables are missing', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
-    mockLiveRuntimeSchema(env, { missingPiiTables: ['identity_sensitive_values'] });
+    mockLiveRuntimeSchema(env, {
+      missingCoreTables: ['event_log'],
+      missingPiiTables: ['identity_sensitive_values'],
+    });
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
@@ -490,6 +577,9 @@ describe('validateGeneratedEnvironment', () => {
     expect(schemaCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('missing PII runtime schema table(s)')])
     );
+    expect(schemaCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('missing core runtime schema table(s)')])
+    );
   });
 
   it('fails live Cloudflare validation when custom fields still reference users_core', async () => {
@@ -501,6 +591,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
@@ -537,6 +628,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `authrim-${env}-tdb-slot-0003-pii`, uuid: 'slot-0003-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },

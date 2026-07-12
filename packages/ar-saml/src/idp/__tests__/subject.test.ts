@@ -7,6 +7,7 @@ import {
   buildSAMLPairwiseSecretRef,
   buildSAMLPairwiseSectorIdentifier,
   createSAMLSessionIndex,
+  resolveSAMLEduPersonTargetedIDOpaque,
   resolveSAMLNameIDFormat,
   resolveSAMLNameIDValue,
   resolveSAMLPairwiseSalt,
@@ -45,6 +46,42 @@ describe('resolveSAMLNameIDValue', () => {
         pairwiseSalt: 'test-pairwise-salt',
       })
     ).resolves.toBe(nameId);
+  });
+
+  it('generates persistent NameID without an email address', async () => {
+    await expect(
+      resolveSAMLNameIDValue({ id: 'user-without-email' }, NAMEID_FORMATS.PERSISTENT, {
+        tenantId: 'tenant-a',
+        spEntityId: 'https://sp.example.com/saml',
+        pairwiseSalt: 'test-pairwise-salt',
+      })
+    ).resolves.toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('requires email only for email-derived NameID formats', async () => {
+    await expect(
+      resolveSAMLNameIDValue({ id: 'user-without-email' }, NAMEID_FORMATS.EMAIL)
+    ).rejects.toMatchObject({
+      name: 'SAMLNameIDPolicyError',
+      details: {
+        requested_format: NAMEID_FORMATS.EMAIL,
+        required_subject_attribute: 'email',
+        attribute_present: false,
+      },
+    });
+  });
+
+  it('generates eduPersonTargetedID opaque values without an email address', async () => {
+    await expect(
+      resolveSAMLEduPersonTargetedIDOpaque(
+        { id: 'user-without-email' },
+        {
+          tenantId: 'tenant-a',
+          spEntityId: 'https://sp.example.com/saml',
+          pairwiseSalt: 'test-pairwise-salt',
+        }
+      )
+    ).resolves.toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it('changes persistent NameID across tenants and SPs', async () => {

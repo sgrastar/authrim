@@ -1,0 +1,6 @@
+# Snyk policy file
+---
+exclude:
+  code:
+    - "packages/ar-admin-ui/src/i18n/*/**"
+    - "packages/ar-login-ui/src/i18n/*/**"

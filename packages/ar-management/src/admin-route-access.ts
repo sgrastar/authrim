@@ -282,6 +282,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ),
   readOnly('/api/admin/avatars/*', ADMIN_PERMISSIONS.USERS_READ, 'user avatars'),
   ...byMethod(
+    '/api/admin/assets/login-ui',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'Login UI public assets'
+  ),
+  ...byMethod(
     '/api/admin/anonymous-users',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
@@ -360,6 +367,112 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'tenant email settings'
+  ),
+  ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-connectors',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    'tenant directory connectors'
+  ),
+  ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-connectors/*',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    'tenant directory connector operations'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/overview',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    'tenant directory authentication overview'
+  ),
+  ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-auth/policy',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    'tenant directory authentication policy'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    'tenant directory authentication migration campaigns'
+  ),
+  writeOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE,
+    'tenant directory authentication migration campaign changes'
+  ),
+  writeOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns/*',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE,
+    'tenant directory authentication migration campaign changes'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/migration/user-states',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    'tenant directory authentication migration user states'
+  ),
+  writeOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/migration/user-states/*',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE,
+    'tenant directory authentication migration user state changes'
+  ),
+  ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-auth/compliance/retention',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    'tenant directory authentication retention policy'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/compliance/config-history',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    'tenant directory authentication config history'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
+    'tenant directory authentication evidence exports'
+  ),
+  writeOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
+    'tenant directory authentication evidence export creation'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports/*',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
+    'tenant directory authentication evidence export artifacts'
+  ),
+  ...byMethod(
+    '/api/admin/tenants/:tenantId/directory-auth/support/bundles',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    'tenant directory authentication support bundles'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/support/bundles/*',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+    'tenant directory authentication support bundle artifacts'
+  ),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/managed/advisories',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    'tenant directory authentication managed advisories'
+  ),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/directory-auth/maintenance/cleanup',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    roles: TENANT_ADMIN_ROLES,
+    description: 'tenant directory authentication maintenance cleanup',
+  }),
+  readOnly(
+    '/api/admin/tenants/:tenantId/directory-auth/managed/connectors',
+    ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+    'tenant directory authentication managed connectors'
   ),
   ...byMethod(
     '/api/admin/tenants/:tenantId/audit/*',
@@ -561,6 +674,30 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'flow definitions',
+    TENANT_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/screens',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'screens',
+    TENANT_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/screens/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'screens',
+    TENANT_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/flow-assignments',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'flow assignments',
     TENANT_ADMIN_ROLES
   ),
 
@@ -1099,6 +1236,34 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'consent statements'
+  ),
+  ...byMethod(
+    '/api/admin/consent-policies',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'consent policies'
+  ),
+  ...byMethod(
+    '/api/admin/consent-policies/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'consent policies'
+  ),
+  ...byMethod(
+    '/api/admin/client-trust-policies',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'client trust policies'
+  ),
+  ...byMethod(
+    '/api/admin/sign-in-confirmation-policies',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'sign-in confirmation policies'
   ),
   ...byMethod(
     '/api/admin/consent-requirements',

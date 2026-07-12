@@ -5,6 +5,8 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('TENANT-VANITY-DOMAINS');
 const CACHE_TTL_SECONDS = 300;
+const NEGATIVE_CACHE_TTL_SECONDS = 60;
+const NO_PRIMARY_VANITY_DOMAIN = '__authrim_no_primary_vanity_domain__';
 
 export interface TenantVanityDomain {
   id: string;
@@ -86,6 +88,24 @@ function isVanityDomainRow(row: unknown): row is TenantVanityDomainRow {
     typeof candidate.status === 'string' &&
     typeof candidate.is_active === 'number' &&
     typeof candidate.is_primary === 'number' &&
+    typeof candidate.created_at === 'number' &&
+    typeof candidate.updated_at === 'number'
+  );
+}
+
+function isTenantVanityDomain(value: unknown): value is TenantVanityDomain {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<TenantVanityDomain>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.tenant_id === 'string' &&
+    typeof candidate.hostname === 'string' &&
+    typeof candidate.status === 'string' &&
+    typeof candidate.is_active === 'boolean' &&
+    typeof candidate.is_primary === 'boolean' &&
     typeof candidate.created_at === 'number' &&
     typeof candidate.updated_at === 'number'
   );
@@ -173,10 +193,20 @@ export async function getPrimaryTenantVanityDomain(
   if (kv) {
     try {
       const cached = await kv.get(cacheKey);
+      if (cached === NO_PRIMARY_VANITY_DOMAIN) {
+        return null;
+      }
       if (cached) {
         const parsed: unknown = JSON.parse(cached);
+        if (isTenantVanityDomain(parsed)) {
+          return parsed;
+        }
         if (isVanityDomainRow(parsed)) {
-          return mapRow(parsed);
+          const mapped = mapRow(parsed);
+          await kv
+            .put(cacheKey, JSON.stringify(mapped), { expirationTtl: CACHE_TTL_SECONDS })
+            .catch(() => {});
+          return mapped;
         }
       }
     } catch {
@@ -206,6 +236,14 @@ export async function getPrimaryTenantVanityDomain(
       [tenantId]
     );
 
+    if (!row) {
+      await kv
+        ?.put(cacheKey, NO_PRIMARY_VANITY_DOMAIN, {
+          expirationTtl: NEGATIVE_CACHE_TTL_SECONDS,
+        })
+        .catch(() => {});
+      return null;
+    }
     if (!isVanityDomainRow(row)) return null;
 
     const mapped = mapRow(row);

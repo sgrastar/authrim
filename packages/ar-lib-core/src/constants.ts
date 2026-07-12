@@ -220,7 +220,7 @@ export const RESPONSE_TYPES = {
 export const RESPONSE_MODES = {
   QUERY: 'query',
   FRAGMENT: 'fragment',
-  FORM_POST: 'form_post',
+  SCREEN_POST: 'form_post',
 } as const;
 
 /**
@@ -350,7 +350,7 @@ export const CACHE_CONTROL = {
  */
 export const CONTENT_TYPES = {
   JSON: 'application/json',
-  FORM_URLENCODED: 'application/x-www-form-urlencoded',
+  SCREEN_URLENCODED: 'application/x-www-form-urlencoded',
   JWT: 'application/jwt',
   JWKS_JSON: 'application/jwk-set+json',
 } as const;

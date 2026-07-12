@@ -1,68 +1,51 @@
 /**
- * Admin Flows API
+ * Admin Flow Management API.
  *
- * Handlers for managing authentication/authorization flows.
- * Flows define the steps and capabilities required for different auth scenarios.
+ * This file owns the new LoginUI runtime Flow management surface. Legacy Flow
+ * Designer handlers were intentionally replaced by draft/publish/import/export
+ * operations that match the Flow runtime contract model.
  */
 
 import { Context } from 'hono';
-import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
-import {
-  createAuthContextFromHono,
-  type DatabaseAdapter,
-  generateId,
-  getTenantIdFromContext,
-  createAuditLogFromContext,
-  getLogger,
-} from '@authrim/ar-lib-core';
 import type {
-  GraphDefinition,
-  GraphNode,
-  GraphEdge,
-  GraphNodeType,
-  GraphEdgeType,
-  CompiledPlan,
-  CompiledNode,
-  CompiledTransition,
-} from '@authrim/ar-auth/flow-engine';
-import { createFlowCompiler } from '@authrim/ar-auth/flow-engine';
+  Env,
+  AdminAuthContext,
+  DatabaseAdapter,
+  FlowAssignmentTargetType,
+  FlowEditorState,
+  FlowKind,
+  FlowRuntimeContract,
+  FlowRuntimeContractPackage,
+  FlowValidationIssue,
+} from '@authrim/ar-lib-core';
+import {
+  FLOW_NODE_DEFINITIONS,
+  FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+  createAuthContextFromHono,
+  createAuditLogFromContext,
+  generateId,
+  getFlowNodeDefinition,
+  getLogger,
+  getTenantIdFromContext,
+  isFlowNodeType,
+  sanitizeImportedFlowContract,
+  validateFlowEditorState,
+  validateFlowRuntimeContractPackage,
+} from '@authrim/ar-lib-core';
 
-// =============================================================================
-// Types
-// =============================================================================
-
-/**
- * Hono context type with admin auth variable
- */
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
-
-/**
- * Base context type for functions that need simple Env bindings
- */
 type BaseContext = Context<{ Bindings: Env }>;
 
-/**
- * Cast AdminContext to BaseContext for functions that expect simpler context
- */
-function asBaseContext(c: AdminContext): BaseContext {
-  return c as unknown as BaseContext;
-}
+type FlowStatus = 'draft' | 'published' | 'disabled';
 
-function getCoreAdapter(c: BaseContext, tenantId: string): DatabaseAdapter {
-  return createAuthContextFromHono(c, tenantId).coreAdapter;
-}
-
-/**
- * Flow database row
- */
 interface FlowRow {
   id: string;
   tenant_id: string;
   client_id: string | null;
-  profile_id: string;
+  profile_id: string | null;
   name: string;
   description: string | null;
-  graph_definition: string;
+  graph_definition: string | null;
   compiled_plan: string | null;
   version: string;
   is_active: number;
@@ -71,170 +54,515 @@ interface FlowRow {
   created_at: number;
   updated_by: string | null;
   updated_at: number;
+  slug: string | null;
+  display_name: string | null;
+  kind: string;
+  status: string;
+  draft_editor_json: string | null;
+  draft_runtime_base_json: string | null;
+  published_version_id: string | null;
+  deleted_at: number | null;
+  template_id: string | null;
 }
 
-/**
- * Profile ID type
- */
-type ProfileId = 'human-basic' | 'human-org' | 'ai-agent' | 'iot-device';
-
-/**
- * Node type metadata for UI
- */
-interface NodeTypeMetadata {
-  type: GraphNodeType;
-  label: string;
-  description: string;
-  category: 'control' | 'input' | 'auth' | 'consent';
-  color: string;
-  icon: string;
-  maxConnections: { inputs: number; outputs: number };
-  hasErrorOutput: boolean;
-}
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Node type definitions for Flow Designer UI
- */
-const NODE_TYPE_METADATA: NodeTypeMetadata[] = [
-  {
-    type: 'start',
-    label: 'Start',
-    description: 'Entry point of the flow',
-    category: 'control',
-    color: '#22c55e',
-    icon: 'play',
-    maxConnections: { inputs: 0, outputs: 1 },
-    hasErrorOutput: false,
-  },
-  {
-    type: 'identifier',
-    label: 'Identifier Input',
-    description: 'Collect user identifier (email, phone, username)',
-    category: 'input',
-    color: '#3b82f6',
-    icon: 'user',
-    maxConnections: { inputs: 1, outputs: 1 },
-    hasErrorOutput: true,
-  },
-  {
-    type: 'auth_method',
-    label: 'Authentication',
-    description: 'Verify user credentials (password, passkey, etc.)',
-    category: 'auth',
-    color: '#8b5cf6',
-    icon: 'key',
-    maxConnections: { inputs: 1, outputs: 1 },
-    hasErrorOutput: true,
-  },
-  {
-    type: 'mfa',
-    label: 'MFA',
-    description: 'Multi-factor authentication step',
-    category: 'auth',
-    color: '#f59e0b',
-    icon: 'shield',
-    maxConnections: { inputs: 1, outputs: 1 },
-    hasErrorOutput: true,
-  },
-  {
-    type: 'consent',
-    label: 'Consent',
-    description: 'User consent and scope approval',
-    category: 'consent',
-    color: '#06b6d4',
-    icon: 'check-circle',
-    maxConnections: { inputs: 1, outputs: 1 },
-    hasErrorOutput: true,
-  },
-  {
-    type: 'condition',
-    label: 'Condition',
-    description: 'Conditional branching based on context',
-    category: 'control',
-    color: '#ec4899',
-    icon: 'git-branch',
-    maxConnections: { inputs: 1, outputs: 3 },
-    hasErrorOutput: false,
-  },
-  {
-    type: 'end',
-    label: 'End',
-    description: 'Successful completion of the flow',
-    category: 'control',
-    color: '#10b981',
-    icon: 'check',
-    maxConnections: { inputs: 1, outputs: 0 },
-    hasErrorOutput: false,
-  },
-  {
-    type: 'error',
-    label: 'Error',
-    description: 'Error termination of the flow',
-    category: 'control',
-    color: '#ef4444',
-    icon: 'x-circle',
-    maxConnections: { inputs: 1, outputs: 0 },
-    hasErrorOutput: false,
-  },
-];
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-function getAdminUserId(c: AdminContext): string | null {
-  const adminAuth = c.get('adminAuth');
-  return adminAuth?.userId ?? null;
-}
-
-function parseGraphDefinition(json: string): GraphDefinition | null {
-  try {
-    return JSON.parse(json) as GraphDefinition;
-  } catch {
-    return null;
-  }
-}
-
-function parseCompiledPlan(json: string | null): Record<string, unknown> | null {
-  if (!json) return null;
-  try {
-    return JSON.parse(json) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function rowToFlow(row: FlowRow): {
+interface FlowVersionRow {
   id: string;
   tenant_id: string;
-  client_id: string | null;
-  profile_id: ProfileId;
-  name: string;
-  description: string | null;
-  graph_definition: GraphDefinition | null;
-  compiled_plan: Record<string, unknown> | null;
-  version: string;
-  is_active: boolean;
-  is_builtin: boolean;
-  created_by: string | null;
+  flow_id: string;
+  version_number: number;
+  schema_version: string;
+  runtime_snapshot_json: string;
+  editor_snapshot_json: string | null;
+  validation_result_json: string;
+  published_by: string | null;
+  published_at: number;
   created_at: number;
-  updated_by: string | null;
+}
+
+interface FlowAssignmentRow {
+  id: string;
+  tenant_id: string;
+  target_type: FlowAssignmentTargetType;
+  target_id: string | null;
+  flow_kind: FlowKind;
+  flow_id: string;
+  enabled: number;
+  created_at: number;
   updated_at: number;
+}
+
+interface CreateFlowBody {
+  slug?: string;
+  name?: string;
+  display_name?: string;
+  description?: string | null;
+  template_id?: string | null;
+  kind?: FlowKind;
+  editor?: FlowEditorState;
+  runtime?: FlowRuntimeContract;
+  status?: FlowStatus;
+}
+
+interface UpdateFlowBody {
+  slug?: string;
+  name?: string;
+  display_name?: string;
+  description?: string | null;
+  template_id?: string | null;
+  kind?: FlowKind;
+  editor?: FlowEditorState;
+  runtime?: FlowRuntimeContract;
+  status?: FlowStatus;
+}
+
+const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve', 'account']);
+const FLOW_STATUSES = new Set<FlowStatus>(['draft', 'published', 'disabled']);
+const FLOW_ASSIGNMENT_TARGET_TYPES = new Set<FlowAssignmentTargetType>([
+  'tenant',
+  'oidc_client',
+  'saml_sp',
+]);
+
+function asBaseContext(c: AdminContext): BaseContext {
+  return c as unknown as BaseContext;
+}
+
+function getCoreAdapter(c: BaseContext, tenantId: string): DatabaseAdapter {
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function getAdminUserId(c: AdminContext): string | null {
+  return c.get('adminAuth')?.userId ?? null;
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function parseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+}
+
+function normalizeDisplayName(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 200) {
+    return null;
+  }
+  return trimmed;
+}
+
+function isAllowedFlowKind(value: unknown): value is FlowKind {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  if (STANDARD_FLOW_KINDS.has(value as FlowKind)) {
+    return true;
+  }
+  if (!value.startsWith('custom:')) {
+    return false;
+  }
+  return /^custom:[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
+}
+
+function isAllowedFlowStatus(value: unknown): value is FlowStatus {
+  return typeof value === 'string' && FLOW_STATUSES.has(value as FlowStatus);
+}
+
+function isAllowedAssignmentTargetType(value: unknown): value is FlowAssignmentTargetType {
+  return (
+    typeof value === 'string' && FLOW_ASSIGNMENT_TARGET_TYPES.has(value as FlowAssignmentTargetType)
+  );
+}
+
+function normalizeRuntime(
+  flowId: string,
+  kind: FlowKind,
+  editor: FlowEditorState,
+  runtime?: FlowRuntimeContract | null
+): FlowRuntimeContract {
+  const base = runtime ?? buildRuntimeFromEditor(flowId, kind, editor);
+  return {
+    ...base,
+    flow_id: flowId,
+    flow_kind: kind,
+  };
+}
+
+async function slugExists(
+  db: DatabaseAdapter,
+  tenantId: string,
+  slug: string,
+  excludeFlowId?: string
+): Promise<boolean> {
+  const row = await db.queryOne<{ id: string }>(
+    excludeFlowId
+      ? 'SELECT id FROM flows WHERE tenant_id = ? AND slug = ? AND id <> ? AND deleted_at IS NULL'
+      : 'SELECT id FROM flows WHERE tenant_id = ? AND slug = ? AND deleted_at IS NULL',
+    excludeFlowId ? [tenantId, slug, excludeFlowId] : [tenantId, slug]
+  );
+  return row !== null;
+}
+
+async function makeUniqueSlug(
+  db: DatabaseAdapter,
+  tenantId: string,
+  preferredSlug: string
+): Promise<string> {
+  const base = normalizeSlug(preferredSlug) || `flow-${generateId()}`;
+  if (!(await slugExists(db, tenantId, base))) {
+    return base;
+  }
+
+  for (let i = 2; i <= 100; i++) {
+    const suffix = `-${i}`;
+    const candidate = `${base.slice(0, 96 - suffix.length)}${suffix}`;
+    if (!(await slugExists(db, tenantId, candidate))) {
+      return candidate;
+    }
+  }
+
+  return normalizeSlug(`${base}-${generateId()}`);
+}
+
+function defaultEditorState(kind: FlowKind): FlowEditorState {
+  const entryTitle = kind === 'registration' ? 'Registration Request' : 'Login Request';
+  return {
+    nodes: [
+      {
+        id: 'entry',
+        type: 'entry',
+        title: entryTitle,
+        position: { x: 0, y: 0 },
+      },
+      {
+        id: 'complete',
+        type: 'complete',
+        title: 'Complete',
+        position: { x: 0, y: 160 },
+      },
+    ],
+    edges: [
+      {
+        id: 'edge-entry-complete',
+        source: 'entry',
+        source_handle: 'next',
+        target: 'complete',
+      },
+    ],
+  };
+}
+
+function buildRuntimeFromEditor(
+  flowId: string,
+  kind: FlowKind,
+  editor: FlowEditorState
+): FlowRuntimeContract {
+  const steps = editor.nodes
+    .filter((node) => isFlowNodeType(node.type))
+    .map((node) => {
+      const definition = getFlowNodeDefinition(node.type);
+      return {
+        id: `${node.id}:step`,
+        source_node_id: node.id,
+        component: definition?.runtime_component ?? `custom:${node.type}`,
+        render: definition?.default_render ?? true,
+        config: node.config,
+      };
+    });
+
+  return {
+    flow_kind: kind,
+    flow_id: flowId,
+    ui: {
+      steps,
+    },
+  };
+}
+
+function splitIssues(issues: FlowValidationIssue[]): {
+  valid: boolean;
+  errors: FlowValidationIssue[];
+  warnings: FlowValidationIssue[];
+  issues: FlowValidationIssue[];
 } {
+  const errors = issues.filter((issue) => issue.level === 'error');
+  const warnings = issues.filter((issue) => issue.level === 'warning');
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    issues,
+  };
+}
+
+function validateRuntimePackage(
+  runtime: FlowRuntimeContract,
+  editor: FlowEditorState
+): FlowValidationIssue[] {
+  return validateFlowRuntimeContractPackage({
+    schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+    mode: 'runtime',
+    runtime,
+    editor,
+  });
+}
+
+function validateDraft(editor: unknown, forPublish: boolean): FlowValidationIssue[] {
+  return validateFlowEditorState(editor, { for_publish: forPublish }).filter(
+    (issue) => !isAllowedSessionCheckOutputHandleIssue(issue)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAllowedSessionCheckOutputHandleIssue(issue: FlowValidationIssue): boolean {
+  if (issue.code !== 'invalid_output_handle') return false;
+  if (issue.ref?.type !== 'handle') return false;
+  if (issue.ref.id !== 'continue' && issue.ref.id !== 'authenticate') return false;
+  return issue.message.includes('node type session_check');
+}
+
+function readConfigString(config: unknown, key: string): string | null {
+  if (!isRecord(config)) return null;
+  const value = config[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readConfigRecord(config: unknown, key: string): Record<string, unknown> | null {
+  if (!isRecord(config)) return null;
+  const value = config[key];
+  return isRecord(value) ? value : null;
+}
+
+function readCompletionBlockProtocol(config: unknown): string | null {
+  const block = readConfigRecord(config, 'completion_block');
+  const value = block?.protocol;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function editorCompletionProtocols(editor: FlowEditorState): Set<string> {
+  const protocols = new Set<string>();
+  for (const node of editor.nodes) {
+    const protocol = readCompletionBlockProtocol(node.config);
+    if (protocol) protocols.add(protocol);
+  }
+  return protocols;
+}
+
+function consentReferenceIssueLevel(
+  editorProtocols: Set<string>,
+  node: FlowEditorState['nodes'][number]
+): FlowValidationIssue['level'] {
+  const protocol = readCompletionBlockProtocol(node.config);
+  if (!protocol || editorProtocols.size <= 1) return 'error';
+  return 'warning';
+}
+
+async function validateDraftReferences(
+  db: DatabaseAdapter,
+  tenantId: string,
+  editor: FlowEditorState
+): Promise<FlowValidationIssue[]> {
+  const issues: FlowValidationIssue[] = [];
+  const completionProtocols = editorCompletionProtocols(editor);
+
+  for (const [index, node] of editor.nodes.entries()) {
+    const path = `$.editor.nodes[${index}].config`;
+    if (node.type === 'registration' || node.type === 'authentication') {
+      const profileRef = readConfigString(node.config, 'authentication_profile_ref');
+      if (profileRef && profileRef !== 'default') {
+        issues.push({
+          level: 'error',
+          code: 'unsupported_authentication_profile',
+          message: `Authentication method profile is not available: ${profileRef}.`,
+          path: `${path}.authentication_profile_ref`,
+          node_id: node.id,
+          ref: { type: 'reference', id: profileRef, key: 'authentication_profile_ref' },
+        });
+      }
+    }
+
+    const policyRef = readConfigString(node.config, 'consent_policy_ref');
+    if (policyRef) {
+      const issueLevel =
+        node.type === 'consent' ? consentReferenceIssueLevel(completionProtocols, node) : 'error';
+      issues.push(
+        ...(await validateConsentPolicyReference(
+          db,
+          tenantId,
+          node.id,
+          path,
+          policyRef,
+          issueLevel
+        ))
+      );
+    }
+  }
+
+  return issues;
+}
+
+async function validateConsentPolicyReference(
+  db: DatabaseAdapter,
+  tenantId: string,
+  nodeId: string,
+  path: string,
+  policyId: string,
+  blockingLevel: FlowValidationIssue['level']
+): Promise<FlowValidationIssue[]> {
+  const policy = await db.queryOne<{ id: string; is_active: number }>(
+    'SELECT id, is_active FROM consent_policies WHERE tenant_id = ? AND id = ?',
+    [tenantId, policyId]
+  );
+  if (!policy) {
+    return [
+      {
+        level: blockingLevel,
+        code: 'missing_consent_policy',
+        message: `Consent policy does not exist: ${policyId}.`,
+        path: `${path}.consent_policy_ref`,
+        node_id: nodeId,
+        ref: { type: 'reference', id: policyId, key: 'consent_policy_ref' },
+      },
+    ];
+  }
+
+  const issues: FlowValidationIssue[] = [];
+  if (policy.is_active !== 1) {
+    issues.push({
+      level: 'warning',
+      code: 'inactive_consent_policy',
+      message: `Consent policy is inactive: ${policyId}.`,
+      path: `${path}.consent_policy_ref`,
+      node_id: nodeId,
+      ref: { type: 'reference', id: policyId, key: 'consent_policy_ref' },
+    });
+  }
+
+  const items = await db.query<{
+    id: string;
+    statement_id: string;
+    requirement: string;
+    version_mode: string;
+    version_id: string | null;
+    statement_active: number | null;
+    current_version_id: string | null;
+    fixed_version_id: string | null;
+  }>(
+    `SELECT i.id, i.statement_id, i.requirement, i.version_mode, i.version_id,
+            s.is_active AS statement_active,
+            current_v.id AS current_version_id,
+            fixed_v.id AS fixed_version_id
+       FROM consent_policy_items i
+       LEFT JOIN consent_statements s
+         ON s.tenant_id = i.tenant_id AND s.id = i.statement_id
+       LEFT JOIN consent_statement_versions current_v
+         ON current_v.tenant_id = i.tenant_id
+        AND current_v.statement_id = i.statement_id
+        AND current_v.is_current = 1
+       LEFT JOIN consent_statement_versions fixed_v
+         ON fixed_v.tenant_id = i.tenant_id
+        AND fixed_v.id = i.version_id
+      WHERE i.tenant_id = ? AND i.policy_id = ?
+      ORDER BY i.display_order, i.id`,
+    [tenantId, policyId]
+  );
+  const visibleItems = items.filter((item) => item.requirement !== 'hidden');
+  if (visibleItems.length === 0) {
+    issues.push({
+      level: blockingLevel,
+      code: 'empty_consent_policy',
+      message: `Consent policy has no visible consent statements: ${policyId}.`,
+      path: `${path}.consent_policy_ref`,
+      node_id: nodeId,
+      ref: { type: 'reference', id: policyId, key: 'consent_policy_ref' },
+    });
+  }
+
+  for (const item of visibleItems) {
+    if (item.statement_active !== 1) {
+      issues.push({
+        level: blockingLevel,
+        code: 'inactive_consent_statement',
+        message: `Consent policy references an inactive or missing statement: ${item.statement_id}.`,
+        path: `${path}.consent_policy_ref`,
+        node_id: nodeId,
+        ref: { type: 'reference', id: item.statement_id, key: 'statement_id' },
+      });
+    }
+    if (item.version_mode === 'fixed') {
+      if (!item.version_id || !item.fixed_version_id) {
+        issues.push({
+          level: blockingLevel,
+          code: 'missing_fixed_consent_statement_version',
+          message: `Consent policy item references a missing fixed version: ${item.id}.`,
+          path: `${path}.consent_policy_ref`,
+          node_id: nodeId,
+          ref: { type: 'reference', id: item.id, key: 'version_id' },
+        });
+      }
+    } else if (!item.current_version_id) {
+      issues.push({
+        level: blockingLevel,
+        code: 'missing_current_consent_statement_version',
+        message: `Consent statement has no current version: ${item.statement_id}.`,
+        path: `${path}.consent_policy_ref`,
+        node_id: nodeId,
+        ref: { type: 'reference', id: item.statement_id, key: 'current_version' },
+      });
+    }
+  }
+
+  return issues;
+}
+
+function rowToFlow(row: FlowRow) {
+  const displayName = row.display_name || row.name;
+  const slug = row.slug || row.id;
+  const kind = (row.kind || 'login') as FlowKind;
+  const editor = parseJson<FlowEditorState | null>(
+    row.draft_editor_json ?? row.graph_definition,
+    null
+  );
+  const runtime = parseJson<FlowRuntimeContract | null>(
+    row.draft_runtime_base_json ?? row.compiled_plan,
+    null
+  );
+
   return {
     id: row.id,
     tenant_id: row.tenant_id,
-    client_id: row.client_id,
-    profile_id: row.profile_id as ProfileId,
+    slug,
     name: row.name,
+    display_name: displayName,
     description: row.description,
-    graph_definition: parseGraphDefinition(row.graph_definition),
-    compiled_plan: parseCompiledPlan(row.compiled_plan),
-    version: row.version,
+    kind,
+    status: (row.status || (row.is_active === 1 ? 'published' : 'disabled')) as FlowStatus,
+    editor,
+    runtime,
+    template_id: row.template_id ?? null,
+    published_version_id: row.published_version_id,
     is_active: row.is_active === 1,
     is_builtin: row.is_builtin === 1,
     created_by: row.created_by,
@@ -244,890 +572,1014 @@ function rowToFlow(row: FlowRow): {
   };
 }
 
-/**
- * Validate GraphDefinition structure
- */
-function validateGraphDefinition(
-  graph: unknown
-): { valid: true } | { valid: false; errors: string[] } {
-  const errors: string[] = [];
-
-  if (!graph || typeof graph !== 'object') {
-    return { valid: false, errors: ['Graph definition must be an object'] };
-  }
-
-  const g = graph as Partial<GraphDefinition>;
-
-  // Required fields
-  if (!g.id || typeof g.id !== 'string') {
-    errors.push('Graph definition must have a valid id');
-  }
-  if (!g.name || typeof g.name !== 'string') {
-    errors.push('Graph definition must have a valid name');
-  }
-  if (!g.flowVersion || typeof g.flowVersion !== 'string') {
-    errors.push('Graph definition must have a valid flowVersion');
-  }
-  if (!g.profileId || typeof g.profileId !== 'string') {
-    errors.push('Graph definition must have a valid profileId');
-  }
-  if (!Array.isArray(g.nodes)) {
-    errors.push('Graph definition must have a nodes array');
-  }
-  if (!Array.isArray(g.edges)) {
-    errors.push('Graph definition must have an edges array');
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-
-  // Validate nodes
-  const nodeIds = new Set<string>();
-  let hasStartNode = false;
-  let hasEndNode = false;
-
-  for (const node of g.nodes!) {
-    if (!node.id || typeof node.id !== 'string') {
-      errors.push('Each node must have a valid id');
-      continue;
-    }
-    if (nodeIds.has(node.id)) {
-      errors.push(`Duplicate node id: ${node.id}`);
-    }
-    nodeIds.add(node.id);
-
-    const validTypes: GraphNodeType[] = [
-      // 1. Control Nodes
-      'start',
-      'end',
-      'goto',
-      // 2. State/Check Nodes
-      'check_session',
-      'check_auth_level',
-      'check_first_login',
-      'check_user_attribute',
-      'check_context',
-      'check_risk',
-      // 3. Selection/UI Nodes
-      'auth_method_select',
-      'login_method_select',
-      'identifier',
-      'profile_input',
-      'custom_form',
-      'information',
-      'challenge',
-      // 4. Authentication Nodes
-      'login',
-      'mfa',
-      'register',
-      // 5. Consent/Profile Nodes
-      'consent',
-      'check_consent_status',
-      'record_consent',
-      // 6. Resolve Nodes
-      'resolve_tenant',
-      'resolve_org',
-      'resolve_policy',
-      // 7. Session/Token Nodes
-      'issue_tokens',
-      'refresh_session',
-      'revoke_session',
-      'bind_device',
-      'link_account',
-      // 8. Side Effect Nodes
-      'redirect',
-      'webhook',
-      'event_emit',
-      'email_send',
-      'sms_send',
-      'push_notify',
-      // 9. Logic/Decision Nodes
-      'decision',
-      'switch',
-      // 10. Policy Nodes
-      'policy_check',
-      // 11. Error/Debug Nodes
-      'error',
-      'log',
-      // Legacy (deprecated)
-      'auth_method',
-      'user_input',
-      'condition',
-      'check_user',
-      'set_variable',
-      'call_api',
-      'send_notification',
-      'risk_check',
-      'wait_input',
-    ];
-    if (!validTypes.includes(node.type as GraphNodeType)) {
-      errors.push(`Invalid node type: ${node.type}`);
-    }
-
-    if (node.type === 'start') hasStartNode = true;
-    if (node.type === 'end') hasEndNode = true;
-  }
-
-  if (!hasStartNode) {
-    errors.push('Graph must have a start node');
-  }
-  if (!hasEndNode) {
-    errors.push('Graph must have an end node');
-  }
-
-  // Validate edges
-  for (const edge of g.edges!) {
-    if (!edge.id || typeof edge.id !== 'string') {
-      errors.push('Each edge must have a valid id');
-      continue;
-    }
-    if (!edge.source || !nodeIds.has(edge.source)) {
-      errors.push(`Edge ${edge.id} has invalid source: ${edge.source}`);
-    }
-    if (!edge.target || !nodeIds.has(edge.target)) {
-      errors.push(`Edge ${edge.id} has invalid target: ${edge.target}`);
-    }
-
-    const validEdgeTypes: GraphEdgeType[] = ['success', 'error', 'conditional'];
-    if (edge.type && !validEdgeTypes.includes(edge.type as GraphEdgeType)) {
-      errors.push(`Invalid edge type: ${edge.type}`);
-    }
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-
-  return { valid: true };
+function rowToVersion(row: FlowVersionRow) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    flow_id: row.flow_id,
+    version_number: row.version_number,
+    schema_version: row.schema_version,
+    runtime_snapshot: parseJson<FlowRuntimeContract | null>(row.runtime_snapshot_json, null),
+    editor_snapshot: parseJson<FlowEditorState | null>(row.editor_snapshot_json, null),
+    validation_result: parseJson(row.validation_result_json, { valid: false, issues: [] }),
+    published_by: row.published_by,
+    published_at: row.published_at,
+    created_at: row.created_at,
+  };
 }
 
-// =============================================================================
-// Handlers
-// =============================================================================
+function rowToAssignment(row: FlowAssignmentRow) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    target_type: row.target_type,
+    target_id: row.target_id,
+    flow_kind: row.flow_kind,
+    flow_id: row.flow_id,
+    enabled: row.enabled === 1,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
 
-/**
- * List flows with pagination and filters
- */
-export async function adminFlowsListHandler(c: Context<{ Bindings: Env }>) {
+async function getFlowRow(db: DatabaseAdapter, tenantId: string, flowId: string) {
+  return db.queryOne<FlowRow>(
+    'SELECT * FROM flows WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL',
+    [tenantId, flowId]
+  );
+}
+
+function invalidRequest(c: AdminContext | BaseContext, description: string, details?: unknown) {
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description: description,
+      details,
+    },
+    400
+  );
+}
+
+function getPathId(c: AdminContext | BaseContext): string | null {
+  const value = c.req.param('id');
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+export async function adminFlowsListHandler(c: BaseContext) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const db = getCoreAdapter(c, tenantId);
-
-    const { profile_id, client_id, is_active, search, page = '1', limit = '20' } = c.req.query();
-
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const { kind, status, search, page = '1', limit = '20' } = c.req.query();
+    const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 20));
     const offset = (pageNum - 1) * limitNum;
 
-    const whereClauses: string[] = ['tenant_id = ?'];
+    const where: string[] = ['tenant_id = ?', 'deleted_at IS NULL'];
     const params: unknown[] = [tenantId];
-
-    if (profile_id) {
-      whereClauses.push('profile_id = ?');
-      params.push(profile_id);
+    if (kind) {
+      if (!isAllowedFlowKind(kind)) {
+        return invalidRequest(c, 'kind is invalid');
+      }
+      where.push('kind = ?');
+      params.push(kind);
     }
-
-    if (client_id) {
-      whereClauses.push('client_id = ?');
-      params.push(client_id);
-    } else if (client_id === '') {
-      // Explicitly filter for tenant default flows (client_id IS NULL)
-      whereClauses.push('client_id IS NULL');
+    if (status) {
+      if (!isAllowedFlowStatus(status)) {
+        return invalidRequest(c, 'status is invalid');
+      }
+      where.push('status = ?');
+      params.push(status);
     }
-
-    if (is_active !== undefined) {
-      whereClauses.push('is_active = ?');
-      params.push(is_active === 'true' ? 1 : 0);
-    }
-
     if (search) {
-      whereClauses.push('(name LIKE ? OR description LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
+      where.push('(name LIKE ? OR display_name LIKE ? OR description LIKE ? OR slug LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    const whereClause = ' WHERE ' + whereClauses.join(' AND ');
-
-    // Get total count
+    const whereSql = `WHERE ${where.join(' AND ')}`;
     const countResult = await db.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM flows ${whereClause}`,
+      `SELECT COUNT(*) AS count FROM flows ${whereSql}`,
       params
     );
-    const total = countResult?.count || 0;
-
-    // Get flows
     const rows = await db.query<FlowRow>(
-      `SELECT * FROM flows ${whereClause} ORDER BY is_builtin DESC, name ASC LIMIT ? OFFSET ?`,
+      `SELECT * FROM flows ${whereSql} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
       [...params, limitNum, offset]
     );
 
-    const flows = rows.map(rowToFlow);
-
     return c.json({
-      flows,
+      flows: rows.map(rowToFlow),
       pagination: {
         page: pageNum,
         limit: limitNum,
-        total,
-        total_pages: Math.ceil(total / limitNum),
+        total: countResult?.count ?? 0,
+        total_pages: Math.ceil((countResult?.count ?? 0) / limitNum),
       },
     });
   } catch (error) {
-    const log = getLogger(c).module('ADMIN-FLOWS');
-    log.error('Failed to list flows', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to list flows',
-      },
-      500
-    );
+    getLogger(c)
+      .module('ADMIN-FLOWS')
+      .error('Failed to list flows', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to list flows' }, 500);
   }
 }
 
-/**
- * Get flow by ID
- */
-export async function adminFlowGetHandler(c: Context<{ Bindings: Env }>) {
+export async function adminFlowGetHandler(c: BaseContext) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const db = getCoreAdapter(c, tenantId);
-    const flowId = c.req.param('id')!;
-
-    const row = await db.queryOne<FlowRow>('SELECT * FROM flows WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      flowId,
-    ]);
-
-    if (!row) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Flow not found',
-        },
-        404
-      );
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
     }
+    const row = await getFlowRow(db, tenantId, flowId);
+    if (!row) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
+
+    const assignments = await db.query<FlowAssignmentRow>(
+      'SELECT * FROM flow_assignments WHERE tenant_id = ? AND flow_id = ? ORDER BY target_type, target_id',
+      [tenantId, flowId]
+    );
 
     return c.json({
       flow: rowToFlow(row),
+      assignments: assignments.map(rowToAssignment),
     });
   } catch (error) {
-    const log = getLogger(c).module('ADMIN-FLOWS');
-    log.error('Failed to get flow', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to get flow',
-      },
-      500
-    );
+    getLogger(c)
+      .module('ADMIN-FLOWS')
+      .error('Failed to get flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to get flow' }, 500);
   }
 }
 
-/**
- * Create a new flow
- */
 export async function adminFlowCreateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = getCoreAdapter(asBaseContext(c), tenantId);
-
-    const body = await c.req.json<{
-      name: string;
-      description?: string;
-      profile_id: ProfileId;
-      client_id?: string | null;
-      graph_definition: GraphDefinition;
-      version?: string;
-      is_active?: boolean;
-    }>();
-
-    // Validate required fields
-    if (!body.name) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Name is required',
-        },
-        400
-      );
+    const body = await c.req.json<CreateFlowBody>();
+    const displayName = normalizeDisplayName(body.display_name ?? body.name);
+    if (!displayName) {
+      return invalidRequest(c, 'display_name is required');
     }
 
-    if (!body.profile_id) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Profile ID is required',
-        },
-        400
-      );
+    const kind = body.kind ?? 'login';
+    if (!isAllowedFlowKind(kind)) {
+      return invalidRequest(c, 'kind is invalid');
+    }
+    if (body.status !== undefined && !isAllowedFlowStatus(body.status)) {
+      return invalidRequest(c, 'status is invalid');
+    }
+    if (body.status === 'published') {
+      return invalidRequest(c, 'Use the publish endpoint to publish a Flow');
+    }
+    const slug = normalizeSlug(body.slug || displayName);
+    if (!slug) {
+      return invalidRequest(c, 'slug is required');
     }
 
-    const validProfiles: ProfileId[] = ['human-basic', 'human-org', 'ai-agent', 'iot-device'];
-    if (!validProfiles.includes(body.profile_id)) {
+    if (await slugExists(db, tenantId, slug)) {
       return c.json(
-        {
-          error: 'invalid_request',
-          error_description: `Invalid profile_id. Must be one of: ${validProfiles.join(', ')}`,
-        },
-        400
-      );
-    }
-
-    if (!body.graph_definition) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Graph definition is required',
-        },
-        400
-      );
-    }
-
-    // Validate graph definition
-    const validation = validateGraphDefinition(body.graph_definition);
-    if (!validation.valid) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Invalid graph definition',
-          details: validation.errors,
-        },
-        400
-      );
-    }
-
-    // Check for duplicate tenant+client+profile combination
-    const existing = await db.queryOne<{ id: string }>(
-      'SELECT id FROM flows WHERE tenant_id = ? AND client_id IS ? AND profile_id = ?',
-      [tenantId, body.client_id || null, body.profile_id]
-    );
-
-    if (existing) {
-      return c.json(
-        {
-          error: 'conflict',
-          error_description: 'A flow already exists for this tenant/client/profile combination',
-        },
+        { error: 'conflict', error_description: 'A Flow with this slug already exists' },
         409
       );
     }
 
     const flowId = generateId();
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowSeconds();
+    const editor = body.editor ?? defaultEditorState(kind);
+    const issues = validateDraft(editor, false);
+    const runtime = normalizeRuntime(flowId, kind, editor, body.runtime);
     const adminUserId = getAdminUserId(c);
-
-    // Update graph definition with generated ID
-    const graphDef: GraphDefinition = {
-      ...body.graph_definition,
-      id: flowId,
-    };
 
     await db.execute(
       `INSERT INTO flows (
-        id, tenant_id, client_id, profile_id, name, description,
-        graph_definition, version, is_active, is_builtin,
-        created_by, created_at, updated_by, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, tenant_id, client_id, profile_id, name, description, graph_definition,
+        compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         flowId,
         tenantId,
-        body.client_id || null,
-        body.profile_id,
-        body.name,
-        body.description || null,
-        JSON.stringify(graphDef),
-        body.version || '1.0.0',
-        body.is_active !== false ? 1 : 0,
-        0, // Custom flows are not builtin
+        null,
+        'human-basic',
+        displayName,
+        body.description ?? null,
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        '1.0.0',
+        body.status === 'disabled' ? 0 : 1,
+        0,
         adminUserId,
         now,
         adminUserId,
         now,
+        slug,
+        displayName,
+        kind,
+        body.status ?? 'draft',
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        body.template_id ?? null,
       ]
     );
 
     await createAuditLogFromContext(asBaseContext(c), 'flow_create', 'flow', flowId, {
-      name: body.name,
-      profile_id: body.profile_id,
+      slug,
+      kind,
     });
 
     return c.json(
       {
-        success: true,
-        flow_id: flowId,
+        flow: rowToFlow({
+          id: flowId,
+          tenant_id: tenantId,
+          client_id: null,
+          profile_id: 'human-basic',
+          name: displayName,
+          description: body.description ?? null,
+          graph_definition: JSON.stringify(editor),
+          compiled_plan: JSON.stringify(runtime),
+          version: '1.0.0',
+          is_active: body.status === 'disabled' ? 0 : 1,
+          is_builtin: 0,
+          created_by: adminUserId,
+          created_at: now,
+          updated_by: adminUserId,
+          updated_at: now,
+          slug,
+          display_name: displayName,
+          kind,
+          status: body.status ?? 'draft',
+          draft_editor_json: JSON.stringify(editor),
+          draft_runtime_base_json: JSON.stringify(runtime),
+          published_version_id: null,
+          deleted_at: null,
+          template_id: body.template_id ?? null,
+        }),
+        validation: splitIssues(issues),
       },
       201
     );
   } catch (error) {
-    const log = getLogger(asBaseContext(c)).module('ADMIN-FLOWS');
-    log.error('Failed to create flow', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create flow',
-      },
-      500
-    );
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to create flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to create flow' }, 500);
   }
 }
 
-/**
- * Update an existing flow
- */
 export async function adminFlowUpdateHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = getCoreAdapter(asBaseContext(c), tenantId);
-    const flowId = c.req.param('id')!;
-
-    // Check existence
-    const existing = await db.queryOne<FlowRow>(
-      'SELECT * FROM flows WHERE tenant_id = ? AND id = ?',
-      [tenantId, flowId]
-    );
-
-    if (!existing) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Flow not found',
-        },
-        404
-      );
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
     }
-
-    // Builtin flows cannot be modified
+    const existing = await getFlowRow(db, tenantId, flowId);
+    if (!existing) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
     if (existing.is_builtin === 1) {
       return c.json(
-        {
-          error: 'forbidden',
-          error_description: 'Builtin flows cannot be modified',
-        },
+        { error: 'forbidden', error_description: 'Builtin flows cannot be modified' },
         403
       );
     }
 
-    const body = await c.req.json<{
-      name?: string;
-      description?: string;
-      graph_definition?: GraphDefinition;
-      version?: string;
-      is_active?: boolean;
-    }>();
-
+    const body = await c.req.json<UpdateFlowBody>();
     const updates: string[] = [];
     const params: unknown[] = [];
+    let nextKind = (existing.kind || 'login') as FlowKind;
+    let nextEditor =
+      parseJson<FlowEditorState | null>(existing.draft_editor_json, null) ??
+      defaultEditorState(nextKind);
+    let shouldRewriteRuntime = false;
 
-    if (body.name !== undefined) {
-      updates.push('name = ?');
-      params.push(body.name);
+    if (body.slug !== undefined) {
+      const slug = normalizeSlug(body.slug);
+      if (!slug) {
+        return invalidRequest(c, 'slug is invalid');
+      }
+      if (await slugExists(db, tenantId, slug, flowId)) {
+        return c.json(
+          { error: 'conflict', error_description: 'A Flow with this slug already exists' },
+          409
+        );
+      }
+      updates.push('slug = ?');
+      params.push(slug);
+    }
+    if (body.display_name !== undefined || body.name !== undefined) {
+      const displayName = normalizeDisplayName(body.display_name ?? body.name);
+      if (!displayName) {
+        return invalidRequest(c, 'display_name is invalid');
+      }
+      updates.push('display_name = ?', 'name = ?');
+      params.push(displayName, displayName);
     }
     if (body.description !== undefined) {
       updates.push('description = ?');
-      params.push(body.description || null);
+      params.push(body.description ?? null);
     }
-    if (body.graph_definition !== undefined) {
-      // Validate graph definition
-      const validation = validateGraphDefinition(body.graph_definition);
-      if (!validation.valid) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'Invalid graph definition',
-            details: validation.errors,
-          },
-          400
-        );
+    if (body.template_id !== undefined) {
+      updates.push('template_id = ?');
+      params.push(body.template_id ?? null);
+    }
+    if (body.kind !== undefined) {
+      if (!isAllowedFlowKind(body.kind)) {
+        return invalidRequest(c, 'kind is invalid');
       }
-
-      // Preserve the original ID
-      const graphDef: GraphDefinition = {
-        ...body.graph_definition,
-        id: flowId,
-      };
-      updates.push('graph_definition = ?');
-      params.push(JSON.stringify(graphDef));
-
-      // Clear compiled plan when graph changes
-      updates.push('compiled_plan = ?');
-      params.push(null);
+      nextKind = body.kind;
+      shouldRewriteRuntime = true;
+      updates.push('kind = ?');
+      params.push(body.kind);
     }
-    if (body.version !== undefined) {
-      updates.push('version = ?');
-      params.push(body.version);
+    if (body.status !== undefined) {
+      if (!isAllowedFlowStatus(body.status)) {
+        return invalidRequest(c, 'status is invalid');
+      }
+      if (body.status === 'published') {
+        return invalidRequest(c, 'Use the publish endpoint to publish a Flow');
+      }
+      updates.push('status = ?', 'is_active = ?');
+      params.push(body.status, body.status === 'disabled' ? 0 : 1);
     }
-    if (body.is_active !== undefined) {
-      updates.push('is_active = ?');
-      params.push(body.is_active ? 1 : 0);
+    if (body.editor !== undefined) {
+      nextEditor = body.editor;
+      shouldRewriteRuntime = true;
+      updates.push('draft_editor_json = ?', 'graph_definition = ?');
+      params.push(JSON.stringify(body.editor), JSON.stringify(body.editor));
+    }
+    if (body.runtime !== undefined || shouldRewriteRuntime) {
+      const nextRuntime = normalizeRuntime(
+        flowId,
+        nextKind,
+        nextEditor,
+        body.runtime ?? (shouldRewriteRuntime ? null : undefined)
+      );
+      updates.push('draft_runtime_base_json = ?', 'compiled_plan = ?');
+      params.push(JSON.stringify(nextRuntime), JSON.stringify(nextRuntime));
     }
 
     if (updates.length === 0) {
       return c.json({ success: true });
     }
 
+    const now = nowSeconds();
     const adminUserId = getAdminUserId(c);
-    const now = Math.floor(Date.now() / 1000);
-
     updates.push('updated_by = ?', 'updated_at = ?');
     params.push(adminUserId, now, tenantId, flowId);
-
     await db.execute(
       `UPDATE flows SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
       params
     );
 
     await createAuditLogFromContext(asBaseContext(c), 'flow_update', 'flow', flowId, {
-      updates: Object.keys(body),
+      fields: Object.keys(body),
     });
 
-    return c.json({ success: true });
+    const updated = await getFlowRow(db, tenantId, flowId);
+    return c.json({ flow: updated ? rowToFlow(updated) : null });
   } catch (error) {
-    const log = getLogger(asBaseContext(c)).module('ADMIN-FLOWS');
-    log.error('Failed to update flow', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to update flow',
-      },
-      500
-    );
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to update flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to update flow' }, 500);
   }
 }
 
-/**
- * Delete a flow
- */
 export async function adminFlowDeleteHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = getCoreAdapter(asBaseContext(c), tenantId);
-    const flowId = c.req.param('id')!;
-
-    // Check existence
-    const existing = await db.queryOne<FlowRow>(
-      'SELECT * FROM flows WHERE tenant_id = ? AND id = ?',
-      [tenantId, flowId]
-    );
-
-    if (!existing) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Flow not found',
-        },
-        404
-      );
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
     }
-
-    // Builtin flows cannot be deleted
+    const existing = await getFlowRow(db, tenantId, flowId);
+    if (!existing) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
     if (existing.is_builtin === 1) {
       return c.json(
-        {
-          error: 'forbidden',
-          error_description: 'Builtin flows cannot be deleted',
-        },
+        { error: 'forbidden', error_description: 'Builtin flows cannot be deleted' },
         403
       );
     }
+    const assignment = await db.queryOne<{ id: string }>(
+      'SELECT id FROM flow_assignments WHERE tenant_id = ? AND flow_id = ? LIMIT 1',
+      [tenantId, flowId]
+    );
+    if (assignment) {
+      return c.json(
+        { error: 'conflict', error_description: 'Flow is assigned and cannot be deleted' },
+        409
+      );
+    }
 
-    await db.execute('DELETE FROM flows WHERE tenant_id = ? AND id = ?', [tenantId, flowId]);
-
+    const now = nowSeconds();
+    await db.execute(
+      'UPDATE flows SET deleted_at = ?, status = ?, is_active = 0, updated_at = ? WHERE tenant_id = ? AND id = ?',
+      [now, 'disabled', now, tenantId, flowId]
+    );
     await createAuditLogFromContext(asBaseContext(c), 'flow_delete', 'flow', flowId, {
-      name: existing.name,
+      slug: existing.slug,
     });
-
     return c.json({ success: true });
   } catch (error) {
-    const log = getLogger(asBaseContext(c)).module('ADMIN-FLOWS');
-    log.error('Failed to delete flow', {}, error as Error);
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to delete flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to delete flow' }, 500);
+  }
+}
+
+export async function adminFlowValidateHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
+    const flowId = c.req.param('id');
+    const body = await c.req
+      .json<{ editor?: FlowEditorState; contract?: unknown }>()
+      .catch((): { editor?: FlowEditorState; contract?: unknown } => ({}));
+
+    if (body.contract) {
+      return c.json(splitIssues(validateFlowRuntimeContractPackage(body.contract)));
+    }
+
+    let editor: FlowEditorState | undefined = body.editor;
+    if (!editor && flowId) {
+      const existing = await getFlowRow(db, tenantId, flowId);
+      editor = existing
+        ? parseJson<FlowEditorState | undefined>(existing.draft_editor_json, undefined)
+        : undefined;
+    }
+    if (!editor) {
+      return invalidRequest(c, 'editor is required');
+    }
+
     return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to delete flow',
+      splitIssues([
+        ...validateDraft(editor, true),
+        ...(await validateDraftReferences(db, tenantId, editor)),
+      ])
+    );
+  } catch (error) {
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to validate flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to validate flow' }, 500);
+  }
+}
+
+export async function adminFlowPublishHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
+    }
+    const existing = await getFlowRow(db, tenantId, flowId);
+    if (!existing) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
+
+    const editor = parseJson<FlowEditorState | null>(existing.draft_editor_json, null);
+    if (!editor) {
+      return invalidRequest(c, 'Flow draft editor state is missing');
+    }
+
+    const kind = (existing.kind || 'login') as FlowKind;
+    const runtime = normalizeRuntime(
+      flowId,
+      kind,
+      editor,
+      parseJson<FlowRuntimeContract | null>(existing.draft_runtime_base_json, null)
+    );
+    const validation = splitIssues([
+      ...validateDraft(editor, true),
+      ...validateRuntimePackage(runtime, editor),
+      ...(await validateDraftReferences(db, tenantId, editor)),
+    ]);
+    if (!validation.valid) {
+      return c.json(
+        {
+          error: 'invalid_flow',
+          error_description: 'Flow has publish-blocking validation errors',
+          validation,
+        },
+        400
+      );
+    }
+
+    const latest = await db.queryOne<{ version_number: number }>(
+      'SELECT MAX(version_number) AS version_number FROM flow_versions WHERE tenant_id = ? AND flow_id = ?',
+      [tenantId, flowId]
+    );
+    const nextVersion = Number(latest?.version_number ?? 0) + 1;
+    const versionId = generateId();
+    const now = nowSeconds();
+    const adminUserId = getAdminUserId(c);
+
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO flow_versions (
+          id, tenant_id, flow_id, version_number, schema_version, runtime_snapshot_json,
+          editor_snapshot_json, validation_result_json, published_by, published_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          versionId,
+          tenantId,
+          flowId,
+          nextVersion,
+          FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+          JSON.stringify(runtime),
+          JSON.stringify(editor),
+          JSON.stringify(validation),
+          adminUserId,
+          now,
+          now,
+        ]
+      );
+
+      await tx.execute(
+        `UPDATE flows
+         SET status = ?, is_active = 1, published_version_id = ?, updated_by = ?, updated_at = ?
+         WHERE tenant_id = ? AND id = ?`,
+        ['published', versionId, adminUserId, now, tenantId, flowId]
+      );
+    });
+
+    await createAuditLogFromContext(asBaseContext(c), 'flow_publish', 'flow', flowId, {
+      flow_version_id: versionId,
+      version_number: nextVersion,
+    });
+
+    return c.json({
+      version: {
+        id: versionId,
+        version_number: nextVersion,
+        flow_id: flowId,
+        schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+        published_at: now,
       },
+      validation,
+    });
+  } catch (error) {
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to publish flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to publish flow' }, 500);
+  }
+}
+
+export async function adminFlowVersionsHandler(c: BaseContext) {
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const db = getCoreAdapter(c, tenantId);
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
+    }
+    const rows = await db.query<FlowVersionRow>(
+      'SELECT * FROM flow_versions WHERE tenant_id = ? AND flow_id = ? ORDER BY version_number DESC',
+      [tenantId, flowId]
+    );
+    return c.json({ versions: rows.map(rowToVersion) });
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN-FLOWS')
+      .error('Failed to list flow versions', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to list flow versions' },
       500
     );
   }
 }
 
-/**
- * Copy (duplicate) a flow
- */
+export async function adminFlowExportHandler(c: BaseContext) {
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const db = getCoreAdapter(c, tenantId);
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
+    }
+    const row = await getFlowRow(db, tenantId, flowId);
+    if (!row) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
+    const editor = parseJson<FlowEditorState | null>(row.draft_editor_json, null);
+    const kind = (row.kind || 'login') as FlowKind;
+    const runtime = normalizeRuntime(
+      flowId,
+      kind,
+      editor ?? defaultEditorState(kind),
+      parseJson<FlowRuntimeContract | null>(row.draft_runtime_base_json, null)
+    );
+    const payload: FlowRuntimeContractPackage = {
+      schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+      mode: 'export',
+      runtime,
+      preview: {
+        flow_id: row.id,
+        slug: row.slug ?? row.id,
+        display_name: row.display_name ?? row.name,
+        template_id: row.template_id ?? null,
+      },
+      editor: editor ?? defaultEditorState(kind),
+    };
+    return c.json(payload);
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN-FLOWS')
+      .error('Failed to export flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to export flow' }, 500);
+  }
+}
+
+export async function adminFlowImportHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
+    const raw = await c.req.json<unknown>();
+    const sanitized = sanitizeImportedFlowContract(raw);
+    const validation = splitIssues(validateFlowRuntimeContractPackage(sanitized));
+    if (!validation.valid) {
+      return c.json(
+        {
+          error: 'invalid_flow_import',
+          error_description: 'Imported Flow JSON is invalid',
+          validation,
+        },
+        400
+      );
+    }
+    const payload = sanitized as FlowRuntimeContractPackage;
+    const flowId = generateId();
+    const now = nowSeconds();
+    const kind = payload.runtime.flow_kind;
+    if (!isAllowedFlowKind(kind)) {
+      return invalidRequest(c, 'Imported Flow kind is invalid');
+    }
+    const displayName = normalizeDisplayName(payload.preview?.display_name) ?? 'Imported Flow';
+    const slug = await makeUniqueSlug(
+      db,
+      tenantId,
+      typeof payload.preview?.slug === 'string' ? payload.preview.slug : `${displayName}-${flowId}`
+    );
+    const editor = payload.editor ?? defaultEditorState(kind);
+    const runtime = normalizeRuntime(flowId, kind, editor, payload.runtime);
+    const adminUserId = getAdminUserId(c);
+
+    await db.execute(
+      `INSERT INTO flows (
+        id, tenant_id, client_id, profile_id, name, description, graph_definition,
+        compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        flowId,
+        tenantId,
+        null,
+        'human-basic',
+        displayName,
+        null,
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        '1.0.0',
+        1,
+        0,
+        adminUserId,
+        now,
+        adminUserId,
+        now,
+        slug,
+        displayName,
+        kind,
+        'draft',
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        typeof payload.preview?.template_id === 'string' ? payload.preview.template_id : null,
+      ]
+    );
+
+    await createAuditLogFromContext(asBaseContext(c), 'flow_import', 'flow', flowId, {
+      slug,
+      kind,
+    });
+
+    return c.json(
+      {
+        flow_id: flowId,
+        validation,
+      },
+      201
+    );
+  } catch (error) {
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to import flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to import flow' }, 500);
+  }
+}
+
+export async function adminFlowAssignmentsListHandler(c: BaseContext) {
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const db = getCoreAdapter(c, tenantId);
+    const { flow_id, target_type, target_id } = c.req.query();
+    const where: string[] = ['tenant_id = ?'];
+    const params: unknown[] = [tenantId];
+    if (flow_id) {
+      where.push('flow_id = ?');
+      params.push(flow_id);
+    }
+    if (target_type) {
+      if (!isAllowedAssignmentTargetType(target_type)) {
+        return invalidRequest(c, 'target_type is invalid');
+      }
+      where.push('target_type = ?');
+      params.push(target_type);
+    }
+    if (target_id) {
+      where.push('target_id = ?');
+      params.push(target_id);
+    }
+    const rows = await db.query<FlowAssignmentRow>(
+      `SELECT * FROM flow_assignments WHERE ${where.join(' AND ')} ORDER BY target_type, target_id`,
+      params
+    );
+    return c.json({ assignments: rows.map(rowToAssignment) });
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN-FLOWS')
+      .error('Failed to list flow assignments', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to list flow assignments' },
+      500
+    );
+  }
+}
+
+export async function adminFlowAssignmentUpsertHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
+    const body = await c.req.json<{
+      target_type: FlowAssignmentTargetType;
+      target_id?: string | null;
+      flow_kind: FlowKind;
+      flow_id: string;
+      enabled?: boolean;
+    }>();
+
+    if (!body.target_type || !body.flow_kind || !body.flow_id) {
+      return invalidRequest(c, 'target_type, flow_kind, and flow_id are required');
+    }
+    if (!isAllowedAssignmentTargetType(body.target_type)) {
+      return invalidRequest(c, 'target_type is invalid');
+    }
+    if (!isAllowedFlowKind(body.flow_kind)) {
+      return invalidRequest(c, 'flow_kind is invalid');
+    }
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      return invalidRequest(c, 'enabled must be a boolean');
+    }
+    const rawTargetId =
+      typeof body.target_id === 'string' ? body.target_id.trim() : (body.target_id ?? null);
+    const targetId = body.target_type === 'tenant' ? null : rawTargetId;
+    if (body.target_type !== 'tenant' && (typeof targetId !== 'string' || targetId.length === 0)) {
+      return invalidRequest(c, 'target_id is required for Client/SP Flow assignments');
+    }
+
+    const flow = await getFlowRow(db, tenantId, body.flow_id);
+    if (!flow) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
+    if ((flow.kind || 'login') !== body.flow_kind) {
+      return invalidRequest(c, 'Assigned Flow kind does not match flow_kind');
+    }
+    if (body.enabled !== false && (flow.status !== 'published' || !flow.published_version_id)) {
+      return invalidRequest(c, 'Only published Flows can be enabled for runtime assignment');
+    }
+
+    const now = nowSeconds();
+    const enabled = body.enabled !== false ? 1 : 0;
+
+    await db.execute(
+      body.target_type === 'tenant'
+        ? `DELETE FROM flow_assignments
+           WHERE tenant_id = ? AND target_type = ? AND target_id IS NULL AND flow_kind = ?`
+        : `DELETE FROM flow_assignments
+           WHERE tenant_id = ? AND target_type = ? AND target_id = ? AND flow_kind = ?`,
+      body.target_type === 'tenant'
+        ? [tenantId, body.target_type, body.flow_kind]
+        : [tenantId, body.target_type, targetId, body.flow_kind]
+    );
+    await db.execute(
+      `INSERT INTO flow_assignments (
+        id, tenant_id, target_type, target_id, flow_kind, flow_id, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        generateId(),
+        tenantId,
+        body.target_type,
+        targetId,
+        body.flow_kind,
+        body.flow_id,
+        enabled,
+        now,
+        now,
+      ]
+    );
+
+    await createAuditLogFromContext(
+      asBaseContext(c),
+      'flow_assignment_upsert',
+      'flow',
+      body.flow_id,
+      {
+        target_type: body.target_type,
+        target_id: targetId,
+        flow_kind: body.flow_kind,
+        enabled: enabled === 1,
+      }
+    );
+
+    return c.json({ success: true });
+  } catch (error) {
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to upsert flow assignment', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to upsert flow assignment' },
+      500
+    );
+  }
+}
+
+export async function adminFlowAssignmentDeleteHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const db = getCoreAdapter(asBaseContext(c), tenantId);
+    const body = await c.req.json<{
+      target_type: FlowAssignmentTargetType;
+      target_id?: string | null;
+      flow_kind: FlowKind;
+    }>();
+
+    if (!body.target_type || !body.flow_kind) {
+      return invalidRequest(c, 'target_type and flow_kind are required');
+    }
+    if (!isAllowedAssignmentTargetType(body.target_type)) {
+      return invalidRequest(c, 'target_type is invalid');
+    }
+    if (!isAllowedFlowKind(body.flow_kind)) {
+      return invalidRequest(c, 'flow_kind is invalid');
+    }
+
+    const rawTargetId =
+      typeof body.target_id === 'string' ? body.target_id.trim() : (body.target_id ?? null);
+    const targetId = body.target_type === 'tenant' ? null : rawTargetId;
+    if (body.target_type !== 'tenant' && (typeof targetId !== 'string' || targetId.length === 0)) {
+      return invalidRequest(c, 'target_id is required for Client/SP Flow assignments');
+    }
+
+    await db.execute(
+      body.target_type === 'tenant'
+        ? `DELETE FROM flow_assignments
+           WHERE tenant_id = ? AND target_type = ? AND target_id IS NULL AND flow_kind = ?`
+        : `DELETE FROM flow_assignments
+           WHERE tenant_id = ? AND target_type = ? AND target_id = ? AND flow_kind = ?`,
+      body.target_type === 'tenant'
+        ? [tenantId, body.target_type, body.flow_kind]
+        : [tenantId, body.target_type, targetId, body.flow_kind]
+    );
+
+    await createAuditLogFromContext(
+      asBaseContext(c),
+      'flow_assignment_delete',
+      'flow_assignment',
+      `${body.target_type}:${targetId ?? 'tenant'}:${body.flow_kind}`,
+      {
+        target_type: body.target_type,
+        target_id: targetId,
+        flow_kind: body.flow_kind,
+      }
+    );
+
+    return c.json({ success: true });
+  } catch (error) {
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to delete flow assignment', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to delete flow assignment' },
+      500
+    );
+  }
+}
+
+export async function adminFlowNodeTypesHandler(c: BaseContext) {
+  return c.json({
+    node_types: FLOW_NODE_DEFINITIONS,
+  });
+}
+
 export async function adminFlowCopyHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = getCoreAdapter(asBaseContext(c), tenantId);
-    const flowId = c.req.param('id')!;
-
-    // Get source flow
-    const source = await db.queryOne<FlowRow>(
-      'SELECT * FROM flows WHERE tenant_id = ? AND id = ?',
-      [tenantId, flowId]
-    );
-
-    if (!source) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Flow not found',
-        },
-        404
-      );
+    const flowId = getPathId(c);
+    if (!flowId) {
+      return invalidRequest(c, 'id is required');
     }
-
-    const body = await c.req.json<{
-      name?: string;
-      client_id?: string | null;
-      profile_id?: ProfileId;
-    }>();
-
-    const newFlowId = generateId();
-    const now = Math.floor(Date.now() / 1000);
-    const adminUserId = getAdminUserId(c);
-    const newName = body.name || `${source.name} (Copy)`;
-    const newClientId = body.client_id !== undefined ? body.client_id : source.client_id;
-    const newProfileId = body.profile_id || source.profile_id;
-
-    // Check for duplicate
-    const existing = await db.queryOne<{ id: string }>(
-      'SELECT id FROM flows WHERE tenant_id = ? AND client_id IS ? AND profile_id = ?',
-      [tenantId, newClientId, newProfileId]
-    );
-
-    if (existing) {
+    const row = await getFlowRow(db, tenantId, flowId);
+    if (!row) {
+      return c.json({ error: 'not_found', error_description: 'Flow not found' }, 404);
+    }
+    const body = await c.req
+      .json<{ display_name?: string; slug?: string }>()
+      .catch((): { display_name?: string; slug?: string } => ({}));
+    const source = rowToFlow(row);
+    const kind = source.kind;
+    const displayName = normalizeDisplayName(body.display_name) ?? `${source.display_name} Copy`;
+    const explicitSlug = typeof body.slug === 'string' && body.slug.trim().length > 0;
+    const slug =
+      explicitSlug && typeof body.slug === 'string'
+        ? normalizeSlug(body.slug)
+        : await makeUniqueSlug(db, tenantId, `${source.slug}-copy`);
+    if (!slug) {
+      return invalidRequest(c, 'slug is invalid');
+    }
+    if (explicitSlug && (await slugExists(db, tenantId, slug))) {
       return c.json(
-        {
-          error: 'conflict',
-          error_description: 'A flow already exists for this tenant/client/profile combination',
-        },
+        { error: 'conflict', error_description: 'A Flow with this slug already exists' },
         409
       );
     }
 
-    // Parse and update graph definition with new ID
-    const graphDef = parseGraphDefinition(source.graph_definition);
-    if (graphDef) {
-      graphDef.id = newFlowId;
-      graphDef.name = newName;
-    }
+    const newFlowId = generateId();
+    const now = nowSeconds();
+    const adminUserId = getAdminUserId(c);
+    const editor = source.editor ?? defaultEditorState(kind);
+    const runtime = normalizeRuntime(newFlowId, kind, editor, source.runtime);
+    const validation = splitIssues(validateDraft(editor, false));
 
     await db.execute(
       `INSERT INTO flows (
-        id, tenant_id, client_id, profile_id, name, description,
-        graph_definition, version, is_active, is_builtin,
-        created_by, created_at, updated_by, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, tenant_id, client_id, profile_id, name, description, graph_definition,
+        compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newFlowId,
         tenantId,
-        newClientId,
-        newProfileId,
-        newName,
+        null,
+        'human-basic',
+        displayName,
         source.description,
-        graphDef ? JSON.stringify(graphDef) : source.graph_definition,
-        '1.0.0', // Reset version for copy
-        1, // Active by default
-        0, // Copies are not builtin
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        '1.0.0',
+        1,
+        0,
         adminUserId,
         now,
         adminUserId,
         now,
+        slug,
+        displayName,
+        kind,
+        'draft',
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        source.template_id,
       ]
     );
 
     await createAuditLogFromContext(asBaseContext(c), 'flow_copy', 'flow', newFlowId, {
       source_flow_id: flowId,
-      name: newName,
+      slug,
+      kind,
     });
 
-    return c.json(
-      {
-        success: true,
-        flow_id: newFlowId,
-      },
-      201
-    );
+    const copied = await getFlowRow(db, tenantId, newFlowId);
+    return c.json({ flow: copied ? rowToFlow(copied) : null, validation }, 201);
   } catch (error) {
-    const log = getLogger(asBaseContext(c)).module('ADMIN-FLOWS');
-    log.error('Failed to copy flow', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to copy flow',
-      },
-      500
-    );
+    getLogger(asBaseContext(c))
+      .module('ADMIN-FLOWS')
+      .error('Failed to copy flow', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to copy flow' }, 500);
   }
 }
 
-/**
- * Validate a flow definition
- */
-export async function adminFlowValidateHandler(c: AdminContext) {
-  try {
-    const body = await c.req.json<{
-      graph_definition: unknown;
-    }>();
-
-    if (!body.graph_definition) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Graph definition is required',
-        },
-        400
-      );
-    }
-
-    const validation = validateGraphDefinition(body.graph_definition);
-
-    if (validation.valid) {
-      return c.json({
-        valid: true,
-        errors: [],
-      });
-    }
-
-    return c.json({
-      valid: false,
-      errors: validation.errors,
-    });
-  } catch (error) {
-    const log = getLogger(asBaseContext(c)).module('ADMIN-FLOWS');
-    log.error('Failed to validate flow', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to validate flow',
-      },
-      500
-    );
-  }
-}
-
-/**
- * Serialize CompiledPlan to JSON-safe object
- * Converts Map to Record for JSON serialization
- */
-function serializeCompiledPlan(plan: CompiledPlan): Record<string, unknown> {
-  // Convert nodes Map to Record
-  const nodesRecord: Record<string, CompiledNode> = {};
-  plan.nodes.forEach((node, id) => {
-    nodesRecord[id] = node;
-  });
-
-  // Convert transitions Map to Record
-  const transitionsRecord: Record<string, CompiledTransition[]> = {};
-  plan.transitions.forEach((transitions, id) => {
-    transitionsRecord[id] = transitions;
-  });
-
-  return {
-    id: plan.id,
-    version: plan.version,
-    sourceVersion: plan.sourceVersion,
-    profileId: plan.profileId,
-    entryNodeId: plan.entryNodeId,
-    nodes: nodesRecord,
-    transitions: transitionsRecord,
-    compiledAt: plan.compiledAt,
-  };
-}
-
-/**
- * Compile a flow definition to CompiledPlan
- */
 export async function adminFlowCompileHandler(c: AdminContext) {
-  try {
-    const flowId = c.req.param('id')!;
-    if (!flowId) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Flow ID is required',
-        },
-        400
-      );
-    }
-
-    // Get tenantId from context
-    const tenantId = getTenantIdFromContext(asBaseContext(c));
-
-    // Get flow from database
-    const db = getCoreAdapter(asBaseContext(c), tenantId);
-    const row = await db.queryOne<FlowRow>('SELECT * FROM flows WHERE id = ? AND tenant_id = ?', [
-      flowId,
-      tenantId,
-    ]);
-
-    if (!row) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Flow not found',
-        },
-        404
-      );
-    }
-
-    // Parse graph definition
-    const graphDef = parseGraphDefinition(row.graph_definition);
-    if (!graphDef) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Invalid graph definition',
-        },
-        400
-      );
-    }
-
-    // Compile the flow
-    const compiler = createFlowCompiler();
-    const compiledPlan = compiler.compile(graphDef);
-
-    // Serialize for JSON response
-    const serialized = serializeCompiledPlan(compiledPlan);
-
-    return c.json({
-      success: true,
-      compiled_plan: serialized,
-    });
-  } catch (error) {
-    const log = getLogger(asBaseContext(c)).module('ADMIN-FLOWS');
-    log.error('Failed to compile flow', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: error instanceof Error ? error.message : 'Failed to compile flow',
-      },
-      500
-    );
-  }
-}
-
-/**
- * Get node type metadata for Flow Designer UI
- */
-export async function adminFlowNodeTypesHandler(c: Context<{ Bindings: Env }>) {
-  const categories = [
-    { id: 'control', label: 'Control Flow', icon: 'git-branch' },
-    { id: 'input', label: 'User Input', icon: 'edit' },
-    { id: 'auth', label: 'Authentication', icon: 'key' },
-    { id: 'consent', label: 'Consent', icon: 'check-circle' },
-  ];
-
-  const edgeTypes = [
-    { type: 'success', label: 'Success', color: '#22c55e' },
-    { type: 'error', label: 'Error', color: '#ef4444' },
-    { type: 'conditional', label: 'Conditional', color: '#f59e0b' },
-  ];
-
-  return c.json({
-    node_types: NODE_TYPE_METADATA,
-    categories,
-    edge_types: edgeTypes,
-  });
+  return adminFlowPublishHandler(c);
 }

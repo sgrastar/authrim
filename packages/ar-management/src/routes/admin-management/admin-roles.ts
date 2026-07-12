@@ -1100,6 +1100,22 @@ adminRolesRouter.get('/permissions/list', async (c) => {
       key: ADMIN_PERMISSIONS.TENANT_DOMAINS_ALL,
       description: 'Full tenant vanity domain management',
     },
+    {
+      key: ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
+      description: 'View Directory Authentication and Wordwarden connector state',
+    },
+    {
+      key: ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE,
+      description: 'Update Directory Authentication retention and support settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE,
+      description: 'Create and update Directory Authentication migration campaigns',
+    },
+    {
+      key: ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
+      description: 'Create and manage Directory Authentication evidence exports',
+    },
     { key: ADMIN_PERMISSIONS.SECURITY_READ, description: 'View security settings' },
     { key: ADMIN_PERMISSIONS.SECURITY_WRITE, description: 'Update security settings' },
     { key: ADMIN_PERMISSIONS.AUDIT_READ, description: 'View end user audit logs' },

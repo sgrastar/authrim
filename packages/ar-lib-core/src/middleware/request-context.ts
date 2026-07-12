@@ -29,7 +29,10 @@ import {
   resolveTenantFromVanityHost,
 } from '../services/tenant-vanity-domain-resolver';
 import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
-import { resolveUserStoreRuntimeSourcesFromEnv } from '../services/user-store-runtime-sources';
+import {
+  resolveUserStoreRuntimeSourcesFromEnv,
+  type ResolvedUserStoreRuntimeSources,
+} from '../services/user-store-runtime-sources';
 import { TenantDatabaseResolverError } from '../services/tenant-database-resolver';
 
 /**
@@ -74,6 +77,99 @@ export interface RequestContextMiddlewareOptions {
    * If false, continues with default tenant (useful for health checks).
    */
   requireTenant?: boolean;
+}
+
+interface DiagnosticTimingSpan {
+  name: string;
+  durationMs: number;
+}
+
+interface RequestContextCacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+const REQUEST_CONTEXT_CACHE_DEFAULT_TTL_MS = 180_000;
+const REQUEST_CONTEXT_CACHE_MIN_TTL_MS = 10_000;
+const REQUEST_CONTEXT_CACHE_MAX_TTL_MS = 600_000;
+const REQUEST_CONTEXT_CACHE_MAX_ENTRIES = 256;
+const tenantExistsCache = new WeakMap<object, Map<string, RequestContextCacheEntry<true>>>();
+const runtimeUserStoreSourcesCache = new WeakMap<
+  object,
+  Map<string, RequestContextCacheEntry<ResolvedUserStoreRuntimeSources>>
+>();
+
+function isFlowRuntimeTimingEnabled(env: Env, path: string): boolean {
+  if (path !== '/api/v1/login/interactions/start') {
+    return false;
+  }
+  const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function getRequestContextCacheTtlMs(env: Env): number {
+  const ttlSeconds = Number.parseInt(env.CONFIG_CACHE_TTL ?? '', 10);
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    return REQUEST_CONTEXT_CACHE_DEFAULT_TTL_MS;
+  }
+  return Math.min(
+    REQUEST_CONTEXT_CACHE_MAX_TTL_MS,
+    Math.max(REQUEST_CONTEXT_CACHE_MIN_TTL_MS, ttlSeconds * 1000)
+  );
+}
+
+function getEnvScopedCache<T>(cache: WeakMap<object, Map<string, T>>, env: Env): Map<string, T> {
+  const envKey = env as object;
+  let scoped = cache.get(envKey);
+  if (!scoped) {
+    scoped = new Map<string, T>();
+    cache.set(envKey, scoped);
+  }
+  return scoped;
+}
+
+function setBoundedCacheEntry<T>(cache: Map<string, T>, key: string, value: T): void {
+  if (cache.size >= REQUEST_CONTEXT_CACHE_MAX_ENTRIES && !cache.has(key)) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey) {
+      cache.delete(oldestKey);
+    }
+  }
+  cache.set(key, value);
+}
+
+function roundDiagnosticDurationMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+async function timeDiagnosticSpan<T>(
+  spans: DiagnosticTimingSpan[] | null,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!spans) {
+    return operation();
+  }
+
+  const startedAtMs = Date.now();
+  try {
+    return await operation();
+  } finally {
+    spans.push({
+      name,
+      durationMs: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+    });
+  }
+}
+
+function appendServerTiming(c: Context<{ Bindings: Env }>, spans: DiagnosticTimingSpan[]): void {
+  if (spans.length === 0) {
+    return;
+  }
+
+  const value = spans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ');
+  const existing = c.res.headers.get('Server-Timing');
+  c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
 }
 
 function shouldAttemptVanityHostResolution(
@@ -128,6 +224,52 @@ function shouldResolveRuntimeUserStoreSources(
   return requestClass === 'tenant_scoped_admin' || requestClass === 'public_protocol_or_rest';
 }
 
+async function validateTenantExistsWithIsolateCache(
+  env: Env,
+  db: Parameters<typeof validateTenantExistsAsync>[0],
+  tenantId: string
+): Promise<boolean> {
+  const cache = getEnvScopedCache(tenantExistsCache, env);
+  const cacheKey = `tenant:${tenantId}`;
+  const now = Date.now();
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return true;
+  }
+
+  const exists = await validateTenantExistsAsync(db, env.AUTHRIM_CONFIG, tenantId);
+  if (exists) {
+    setBoundedCacheEntry(cache, cacheKey, {
+      value: true,
+      expiresAt: now + getRequestContextCacheTtlMs(env),
+    });
+  } else {
+    cache.delete(cacheKey);
+  }
+  return exists;
+}
+
+async function resolveRuntimeUserStoreSourcesWithIsolateCache(
+  env: Env,
+  tenantId: string,
+  requestPath: string
+): Promise<ResolvedUserStoreRuntimeSources> {
+  const cache = getEnvScopedCache(runtimeUserStoreSourcesCache, env);
+  const cacheKey = `tenant:${tenantId}:path:${requestPath}`;
+  const now = Date.now();
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const value = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId, { requestPath });
+  setBoundedCacheEntry(cache, cacheKey, {
+    value,
+    expiresAt: now + getRequestContextCacheTtlMs(env),
+  });
+  return value;
+}
+
 function getConfiguredUrlHostname(value: string | undefined): string | null {
   if (!value) {
     return null;
@@ -140,6 +282,20 @@ function getConfiguredUrlHostname(value: string | undefined): string | null {
   }
 }
 
+function getPrimaryTenantIssuerHostname(env: Partial<Env>): string | null {
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (!baseDomain) {
+    return null;
+  }
+
+  if (env.NAKED_DOMAIN_AS_ISSUER === 'true') {
+    return baseDomain;
+  }
+
+  const tenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+  return `${tenantId.toLowerCase()}.${baseDomain}`;
+}
+
 function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): boolean {
   if (!requestHost) {
     return false;
@@ -150,9 +306,16 @@ function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): b
     return false;
   }
 
-  return [getConfiguredUrlHostname(env.ADMIN_UI_URL), getConfiguredUrlHostname(env.UI_URL)].some(
-    (hostname) => hostname === requestHost
-  );
+  if (getConfiguredUrlHostname(env.ADMIN_UI_URL) === requestHost) {
+    return true;
+  }
+
+  const loginUiHost = getConfiguredUrlHostname(env.UI_URL);
+  if (loginUiHost !== requestHost) {
+    return false;
+  }
+
+  return loginUiHost !== getPrimaryTenantIssuerHostname(env);
 }
 
 export function requestContextMiddleware(options: RequestContextMiddlewareOptions = {}) {
@@ -161,6 +324,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const requestId = crypto.randomUUID();
     const startTime = Date.now();
+    const timingEnabled = isFlowRuntimeTimingEnabled(c.env, c.req.path);
+    const timingSpans: DiagnosticTimingSpan[] | null = timingEnabled ? [] : null;
     const requestClass = classifyTenantRequestPath(c.req.path);
     const requestedTenantId = isAdminTenantHeaderRequired(c.req.path)
       ? c.req.header('X-Tenant-Id')?.trim()
@@ -203,8 +368,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
-    const authCoreSource = await resolveAuthCorePersistenceSourceFromEnv(c.env).catch(
-      () => c.env.DB
+    const authCoreSource = await timeDiagnosticSpan(timingSpans, 'rc_auth_source', () =>
+      resolveAuthCorePersistenceSourceFromEnv(c.env).catch(() => c.env.DB)
     );
     let tenantId = tenantResult.tenantId;
     const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
@@ -291,7 +456,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     }
 
     // In multi-tenant mode, validate that the resolved tenant actually exists in D1.
-    // Uses positive-only KV cache (300s TTL) to avoid per-request D1 queries.
+    // Uses positive-only isolate/KV caches to avoid per-request storage lookups.
     // Fail-open on D1 errors to prevent outages from blocking all requests.
     const shouldValidateTenantExists =
       isMultiTenantEnabled(c.env) &&
@@ -299,10 +464,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       (requestClass === 'tenant_scoped_admin' || tenantResult.success);
 
     if (shouldValidateTenantExists) {
-      const exists = await validateTenantExistsAsync(
-        authCoreSource,
-        c.env.AUTHRIM_CONFIG,
-        tenantId
+      const exists = await timeDiagnosticSpan(timingSpans, 'rc_tenant_exists', () =>
+        validateTenantExistsWithIsolateCache(c.env, authCoreSource, tenantId)
       );
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
@@ -351,11 +514,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       tenantResult.success;
 
     if (shouldValidateTenantBinding) {
-      const bindingAllowed = await validateTenantRequestBinding(
-        c.req.raw,
-        c.env.AUTHRIM_CONFIG,
-        c.env,
-        tenantId
+      const bindingAllowed = await timeDiagnosticSpan(timingSpans, 'rc_binding', () =>
+        validateTenantRequestBinding(c.req.raw, c.env.AUTHRIM_CONFIG, c.env, tenantId)
       );
       if (!bindingAllowed) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
@@ -386,7 +546,9 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       try {
         ctx.set(
           'runtimeUserStoreSources',
-          await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId, { requestPath: c.req.path })
+          await timeDiagnosticSpan(timingSpans, 'rc_user_sources', () =>
+            resolveRuntimeUserStoreSourcesWithIsolateCache(c.env, tenantId, c.req.path)
+          )
         );
       } catch (error) {
         if (error instanceof TenantDatabaseResolverError) {
@@ -423,6 +585,19 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     } finally {
       // Log request completion
       const duration = Date.now() - startTime;
+      if (timingSpans) {
+        timingSpans.push({
+          name: 'rc_total',
+          durationMs: roundDiagnosticDurationMs(duration),
+        });
+        appendServerTiming(c, timingSpans);
+        logger.info('Request context timing', {
+          path: c.req.path,
+          request_class: requestClass,
+          duration_ms: roundDiagnosticDurationMs(duration),
+          spans_ms: Object.fromEntries(timingSpans.map((span) => [span.name, span.durationMs])),
+        });
+      }
       logger.debug('Request completed', {
         method: c.req.method,
         path: c.req.path,

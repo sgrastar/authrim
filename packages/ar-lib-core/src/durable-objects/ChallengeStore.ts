@@ -61,7 +61,10 @@ export type ChallengeType =
   | 'direct_passkey_signup_map' // Challenge ID to userId mapping for signup
   | 'direct_passkey_register' // Direct Auth passkey register (authenticated user)
   | 'direct_passkey_register_map' // Challenge ID to userId mapping for register
-  | 'direct_email_code'; // Direct Auth email code challenge
+  | 'direct_email_code' // Direct Auth email code challenge
+  | 'email_verification_protocol' // Browser/provider email ownership verification nonce
+  | 'passkey_reauth' // Account Page passkey re-authentication challenge
+  | 'account_email_reauth'; // Account Page email code re-authentication challenge
 
 /**
  * Challenge metadata

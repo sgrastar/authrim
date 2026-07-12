@@ -1,8 +1,15 @@
 <script lang="ts">
 	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
 	import type { Locales } from '$i18n/i18n-types';
-	import { themeStore } from '$lib/stores/theme.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { buildDiagnosticHeaders } from '$lib/api/client';
+
+	const { themeStore } = useLoginUIStores();
+
+	let {
+		showThemeToggle = true,
+		showLanguageSelect = true
+	}: { showThemeToggle?: boolean; showLanguageSelect?: boolean } = $props();
 
 	const availableLocales: Locales[] = ['en', 'ja'];
 	let currentLang = $state<Locales>(getLocale());
@@ -37,33 +44,36 @@
 
 <div class="auth-topbar">
 	<!-- Theme Toggle -->
-	<button
-		type="button"
-		class="theme-toggle"
-		onclick={() => themeStore.toggleMode()}
-		aria-label={themeStore.isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-	>
-		{#if themeStore.isDark}
-			<div class="i-heroicons-sun h-4.5 w-4.5"></div>
-		{:else}
-			<div class="i-heroicons-moon h-4.5 w-4.5"></div>
-		{/if}
-	</button>
+	{#if showThemeToggle}
+		<button
+			type="button"
+			class="theme-toggle"
+			onclick={() => themeStore.toggleMode()}
+			aria-label={themeStore.isDark ? $LL.theme_switchToLightMode() : $LL.theme_switchToDarkMode()}
+		>
+			{#if themeStore.isDark}
+				<div class="i-heroicons-sun h-4.5 w-4.5"></div>
+			{:else}
+				<div class="i-heroicons-moon h-4.5 w-4.5"></div>
+			{/if}
+		</button>
+	{/if}
 
 	<!-- Language Selector -->
-	<div class="flex items-center gap-1.5">
-		<div class="i-heroicons-globe-alt h-4 w-4" style="color: var(--text-muted);"></div>
-		<select
-			value={currentLang}
-			onchange={(e) => switchLanguage(e.currentTarget.value)}
-			aria-label="Language"
-			class="auth-lang-select"
-		>
-			{#each availableLocales as lang (lang)}
-				<option value={lang}>
-					{lang === 'en' ? $LL.language_english() : $LL.language_japanese()}
-				</option>
-			{/each}
-		</select>
-	</div>
+	{#if showLanguageSelect}
+		<div class="flex items-center gap-1.5">
+			<select
+				value={currentLang}
+				onchange={(e) => switchLanguage(e.currentTarget.value)}
+				aria-label={$LL.language_switch()}
+				class="auth-lang-select"
+			>
+				{#each availableLocales as lang (lang)}
+					<option value={lang}>
+						{lang === 'en' ? $LL.language_english() : $LL.language_japanese()}
+					</option>
+				{/each}
+			</select>
+		</div>
+	{/if}
 </div>

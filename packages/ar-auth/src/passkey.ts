@@ -40,9 +40,11 @@ import {
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { resolveSessionTtl } from './session-ttl';
 
 // ===== Module-level Logger for Helper Functions =====
 const moduleLogger = createLogger().module('PASSKEY');
@@ -90,6 +92,7 @@ interface RegistrationInfoCompat {
   credentialID?: Uint8Array;
   credentialPublicKey?: Uint8Array;
   counter?: number;
+  aaguid?: string;
   credential?: {
     id: Uint8Array;
     publicKey: Uint8Array;
@@ -249,7 +252,12 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
-      custom_fields
+      {
+        ...(custom_fields ?? {}),
+        email,
+        'field.canonical.email': email,
+        ...(name ? { name, 'field.canonical.name': name } : {}),
+      }
     );
     if (!customFieldValidation.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -265,6 +273,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
           : undefined,
       });
     }
+    const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+      ...(custom_fields ?? {}),
+      ...customFieldValidation.values,
+    });
 
     // Check if user exists in the canonical runtime user store.
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -292,6 +304,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
           emailVerified: false,
           userType: 'end_user',
           sourceRef: 'passkey',
+          piiFields: canonicalProfileFields.piiFields,
+          sensitiveValues: canonicalProfileFields.sensitiveValues,
           customAttributesJson: JSON.stringify({
             preferred_username: preferredUsername,
           }),
@@ -463,7 +477,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         action: 'register_verify',
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
+        extensions: {
+          webauthn_signal: {
+            unknown_credential: true,
+          },
+        },
+      });
     }
 
     const { verified, registrationInfo } = verification;
@@ -488,25 +508,24 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
+    const tenantId = getTenantIdFromContext(c);
+    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'passkey_registration');
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
-      c.env,
-      getTenantIdFromContext(c)
-    );
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
 
     let sessionData: { id: string };
     try {
       const createdSession = (await sessionStore.createSessionRpc(
         sessionId,
         userId,
-        30 * 24 * 60 * 60, // 30 days in seconds
+        sessionTtl.seconds,
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
-        getTenantIdFromContext(c)
+        tenantId
       )) as Session;
       sessionData = { id: createdSession.id };
     } catch (error) {
@@ -519,7 +538,6 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     }
 
     // Step 2: Store passkey via Repository
-    const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
@@ -531,7 +549,11 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       counter,
       transports: (credential.response.transports || []) as AuthenticatorTransport[],
       device_name: deviceName || 'Unknown Device',
+      aaguid: regInfo.aaguid ?? null,
     });
+
+    // Registration creates an authenticated session, so retain it as the user's first login.
+    await runtimeUsers.touchLastLogin(userId, now);
 
     // Registering a passkey proves possession of the authenticator, not the email address.
     // Keep email verification tied to email-code or explicit verification flows.
@@ -586,12 +608,6 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PASSKEY');
   try {
-    const body = await c.req.json<{
-      email?: string;
-    }>();
-
-    const { email } = body;
-
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
     const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
@@ -605,46 +621,12 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     const originUrl = new URL(originHeader);
     const rpID = originUrl.hostname;
 
-    let allowCredentials: Array<{
-      id: string;
-      type: 'public-key';
-      transports?: AuthenticatorTransport[];
-    }> = [];
-
-    // If email provided, get user's passkeys via canonical runtime user lookup.
-    if (email) {
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-      const runtimeUser = await runtimeUsers.findByEmail(email);
-      const user = runtimeUser ? { id: runtimeUser.id } : null;
-
-      if (user) {
-        const userPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
-
-        allowCredentials = userPasskeys
-          .map((pk) => {
-            const normalizedId = normalizeStoredCredentialId(pk.credential_id);
-            if (!normalizedId) {
-              return null;
-            }
-
-            return {
-              id: normalizedId,
-              type: 'public-key' as const,
-              transports: pk.transports.length > 0 ? pk.transports : undefined,
-            };
-          })
-          .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
-      }
-    }
-
     // Generate authentication options
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: 'required',
-      // Always include allowCredentials, even if empty (required by @simplewebauthn/browser v11+)
-      allowCredentials: allowCredentials.length > 0 ? allowCredentials : [],
+      // Always use discoverable credentials. Email collection belongs to OTP or profile flows.
+      allowCredentials: [],
     });
 
     // WebAuthn Level 3: Add hints to influence browser UI
@@ -670,7 +652,6 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       userId: 'unknown', // Will be determined during verification
       challenge: options.challenge,
       ttl: 300, // 5 minutes
-      metadata: { email: email || null },
     });
 
     return c.json({
@@ -880,25 +861,30 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const now = Date.now();
+    const referer = c.req.header('Referer') || '';
+    const isAdminContext = referer.includes('/admin');
+    const isAdminSessionContext = isAdminContext && runtimeUser.account_type === 'admin';
+    const sessionTtl = await resolveSessionTtl(
+      c.env,
+      tenantId,
+      isAdminSessionContext ? 'admin_passkey' : 'passkey'
+    );
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't update the database
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
-      c.env,
-      getTenantIdFromContext(c)
-    );
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
 
     let sessionData: { id: string };
     try {
       const createdSession = (await sessionStore.createSessionRpc(
         sessionId,
         passkey.user_id as string,
-        7 * 24 * 60 * 60, // 7 days in seconds (shorter for admin sessions)
+        sessionTtl.seconds,
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
-        getTenantIdFromContext(c)
+        tenantId
       )) as Session;
       sessionData = { id: createdSession.id };
     } catch (error) {
@@ -937,7 +923,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           admin_user_id: passkey.user_id,
           ip_address: clientIp || undefined,
           user_agent: userAgent || undefined,
-          expires_at: now + 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+          expires_at: now + sessionTtl.milliseconds,
           mfa_verified: true, // Passkey is MFA
         });
 
@@ -982,7 +968,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       data: {
         sessionId: sessionData.id,
         userId: passkey.user_id,
-        ttlSeconds: 7 * 24 * 60 * 60, // 7 days (Admin session is shorter)
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err) => {
       log.error('Failed to publish session.user.created event', {
@@ -1018,17 +1004,15 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     });
     c.executionCtx?.waitUntil(auditPromise);
 
-    // Set session cookie based on login context (NOT user type)
-    // - Admin UI login (Referer contains /admin): 'authrim_admin_session'
+    // Set session cookie based on validated login context.
+    // - Admin UI login by an admin user: 'authrim_admin_session'
     // - Login UI / End-user login: 'authrim_session' for OIDC SSO
     // This allows admin users to also have end-user sessions for SSO testing
     // SameSite is determined dynamically based on origin configuration:
     // - Same origin: 'Lax' (more secure)
     // - Cross origin: 'None' (required for cross-origin)
-    const referer = c.req.header('Referer') || '';
-    const isAdminContext = referer.includes('/admin');
-    const cookieName = isAdminContext ? 'authrim_admin_session' : 'authrim_session';
-    const sameSiteFn = isAdminContext ? getAdminCookieSameSite : getSessionCookieSameSite;
+    const cookieName = isAdminSessionContext ? 'authrim_admin_session' : 'authrim_session';
+    const sameSiteFn = isAdminSessionContext ? getAdminCookieSameSite : getSessionCookieSameSite;
     const sameSiteValue = sameSiteFn(c.env);
 
     // Debug: Log session cookie creation for SSO troubleshooting
@@ -1037,7 +1021,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       cookieName,
       sessionIdPrefix: sessionData.id.substring(0, 30),
       sameSite: sameSiteValue,
-      isAdminContext,
+      isAdminContext: isAdminSessionContext,
     });
 
     setCookie(c, cookieName, sessionData.id, {
@@ -1045,7 +1029,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       httpOnly: true,
       secure: true,
       sameSite: sameSiteValue,
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge: sessionTtl.seconds,
     });
 
     return c.json({

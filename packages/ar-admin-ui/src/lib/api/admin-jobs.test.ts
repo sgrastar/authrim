@@ -65,7 +65,7 @@ describe('adminJobsAPI partial failure handling', () => {
 
 	it('exposes a dedicated label and color for partial_failure', () => {
 		expect(getJobStatusDisplayName('partial_failure')).toBe('Partial Failure');
-		expect(getJobStatusColor('partial_failure')).toBe('#f59e0b');
+		expect(getJobStatusColor('partial_failure')).toBe('var(--color-warning)');
 	});
 
 	it('lists job type discovery metadata', async () => {

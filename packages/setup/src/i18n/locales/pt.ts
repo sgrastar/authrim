@@ -118,7 +118,7 @@ const pt: Translations = {
   'env.customDesc': 'Digite um nome de ambiente personalizado',
   'env.customPrompt': 'Digite nome de ambiente personalizado',
   'env.customValidation':
-    'Apenas letras minúsculas, números e hífens são permitidos (ex: prod, staging, dev)',
+    'Apenas letras minúsculas, números e hífens são permitidos (ex: prod, main, tokyo, acme-dev)',
   'env.detected': 'Ambientes Detectados:',
   'env.selectExisting': 'Selecionar ambiente existente',
   'env.createNew': 'Criar novo ambiente',
@@ -708,7 +708,7 @@ const pt: Translations = {
   'web.systemMode': 'Sistema',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Pré-requisitos',
+  'web.prereq.title': 'Preparar',
   'web.prereq.checking': 'Verificando...',
   'web.prereq.checkingRequirements': 'Verificando requisitos do sistema...',
   'web.prereq.ready': 'Pronto',
@@ -837,12 +837,10 @@ const pt: Translations = {
   'web.complete.issuerUrl': 'URL do Emissor',
   'web.complete.loginUrl': 'URL de Login',
   'web.complete.adminUrl': 'URL de Admin',
-  'web.complete.nextSteps': 'Próximos Passos:',
-  'web.complete.step1': 'Complete a configuração inicial do admin usando o botão acima',
-  'web.complete.step2': 'Configure seu primeiro cliente OAuth na UI de Admin',
-  'web.complete.step3': 'Integre com sua aplicação',
   'web.complete.saveConfig': 'Salvar Configuração',
   'web.complete.backToMain': 'Voltar ao Início',
+  'web.config.saveToFileTitle': 'Salvar configuração em arquivo',
+  'web.complete.backToMainTitle': 'Voltar à tela principal',
   'web.complete.canClose':
     'A configuração está completa. Você pode fechar esta janela com segurança.',
   'web.complete.adminAccountTitle': 'Configuração da conta de administrador',
@@ -918,7 +916,7 @@ const pt: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': 'Nome do Ambiente',
-  'web.form.envNamePlaceholder': 'ex: prod, staging, dev',
+  'web.form.envNamePlaceholder': 'ex: prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Apenas letras minúsculas, números e hífens',
   'web.form.envNameError':
     'Apenas letras minúsculas, números e hífens são permitidos (deve começar com uma letra)',
@@ -1097,6 +1095,42 @@ const pt: Translations = {
   'web.envDetail.queues': 'Filas',
   'web.envDetail.r2Buckets': 'Buckets R2',
   'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Configurações de email',
+  'web.envDetail.emailDesc': 'Ative o Cloudflare Email Service depois para este ambiente.',
+  'web.envDetail.emailCurrentProvider': 'Provedor atual',
+  'web.envDetail.emailCurrentStatus': 'Status',
+  'web.envDetail.emailCurrentFrom': 'Endereço From',
+  'web.envDetail.emailConfigured': 'Configurado',
+  'web.envDetail.emailNotConfigured': 'Não configurado',
+  'web.envDetail.emailProviderNone': 'Não configurado',
+  'web.envDetail.emailCloudflareRequirements': 'Requisitos',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan é necessário',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'DNS da Cloudflare e onboarding do domínio são necessários',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'A configuração do domínio no Cloudflare Dashboard ainda é manual',
+  'web.envDetail.emailCloudflareFromHint':
+    'Ao usar o Cloudflare Email Service, o endereço deve pertencer a um domínio integrado à Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Configurações do Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'Ao usar o Resend, o domínio deve ser adicionado e verificado no Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Domínios do Resend',
+  'web.envDetail.emailFromAddress': 'Endereço de email From',
+  'web.envDetail.emailFromName': 'Nome exibido do remetente (opcional)',
+  'web.envDetail.emailEnableCloudflare': 'Ativar Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Aplicando...',
+  'web.envDetail.emailProgress': 'Progresso da configuração de email:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email ativado.',
+  'web.envDetail.emailUpdateFailed': 'Falha ao ativar Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Informe um endereço de email From.',
+  'web.envDetail.emailFromInvalid': 'Informe um endereço de email válido.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'Este ambiente já tem outro provedor de email configurado. Alternar para Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Iniciando configuração do Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'Este ambiente já tem outro provedor de email configurado. Alternar para Resend?',
+  'web.envDetail.emailResendStarting': 'Salvando configuração de email do Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Configuração de email do Resend salva.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Atualizar todos os Workers',
@@ -1108,6 +1142,7 @@ const pt: Translations = {
   'web.envDetail.upToDate': 'Atual',
   'web.envDetail.notDeployed': 'Não implantado',
   'web.envDetail.updateOnlyChanged': 'Atualizar apenas versões alteradas',
+  'web.envDetail.updateIncludeUiWorkers': 'Atualizar Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Atualizar todos os Workers',
   'web.envDetail.refreshVersions': 'Atualizar',
   'web.envDetail.updateProgress': 'Progresso da atualização:',
@@ -1151,7 +1186,7 @@ const pt: Translations = {
   'web.error.notLoggedIn': 'Não conectado ao Cloudflare',
   'web.error.runCommand': 'Por favor, execute este comando no seu terminal:',
   'web.error.thenRefresh': 'Depois atualize esta página.',
-  'web.error.checkingPrereq': 'Erro ao verificar pré-requisitos:',
+  'web.error.checkingPrereq': 'Erro ao verificar preparação:',
   'web.error.invalidJson': 'JSON inválido:',
   'web.error.validationFailed': 'Requisição de validação falhou:',
 

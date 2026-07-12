@@ -24,6 +24,14 @@ export interface DirectoryPasswordSubject {
   username: string;
 }
 
+export interface DirectoryPasswordGroupFact {
+  id: string;
+  dn: string;
+  display: string;
+  source: string;
+  depth: number;
+}
+
 export interface DirectoryPasswordSuccess {
   result: 'success';
   request_id: string;
@@ -31,6 +39,7 @@ export interface DirectoryPasswordSuccess {
   connector_id: string;
   subject: DirectoryPasswordSubject;
   attributes?: Record<string, string[]>;
+  group_facts?: DirectoryPasswordGroupFact[];
   directory_status: 'ok';
 }
 
@@ -326,7 +335,7 @@ async function safeParseJson(response: Response): Promise<unknown> {
   }
 }
 
-function validateDirectoryPasswordVerifyResult(
+export function validateDirectoryPasswordVerifyResult(
   value: unknown,
   config: DirectoryPasswordConnectorConfig,
   requestId: string
@@ -372,6 +381,7 @@ function validateDirectoryPasswordVerifyResult(
         username,
       },
       attributes: normalizeAttributes(value.attributes),
+      group_facts: normalizeGroupFacts(value.group_facts),
       directory_status: directoryStatus,
     };
   }
@@ -418,6 +428,39 @@ function normalizeAttributes(value: unknown): Record<string, string[]> | undefin
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function normalizeGroupFacts(value: unknown): DirectoryPasswordGroupFact[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const facts: DirectoryPasswordGroupFact[] = [];
+  for (const item of value.slice(0, 1000)) {
+    if (!isRecord(item)) continue;
+    const id = stringField(item, 'id');
+    const dn = stringField(item, 'dn');
+    const display = stringField(item, 'display');
+    const source = stringField(item, 'source');
+    const depth = numberField(item, 'depth');
+    if (
+      !id ||
+      !dn ||
+      !display ||
+      !source ||
+      typeof depth !== 'number' ||
+      !Number.isInteger(depth) ||
+      depth < 0 ||
+      depth > 20
+    ) {
+      continue;
+    }
+    facts.push({
+      id: id.slice(0, 512),
+      dn: dn.slice(0, 2048),
+      display: display.slice(0, 512),
+      source: source.slice(0, 128),
+      depth,
+    });
+  }
+  return facts.length > 0 ? facts : undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -425,4 +468,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stringField(value: Record<string, unknown>, key: string): string | undefined {
   const field = value[key];
   return typeof field === 'string' && field.length > 0 ? field : undefined;
+}
+
+function numberField(value: Record<string, unknown>, key: string): number | undefined {
+  const field = value[key];
+  return typeof field === 'number' && Number.isFinite(field) ? field : undefined;
 }

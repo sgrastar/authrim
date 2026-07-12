@@ -584,6 +584,13 @@ export const ADMIN_PERMISSIONS = {
   SAML_ATTRIBUTE_PRESETS_WRITE: 'admin:saml_attribute_presets:write',
   SAML_ATTRIBUTE_PRESETS_DELETE: 'admin:saml_attribute_presets:delete',
 
+  // Directory Authentication / Authrim Wordwarden
+  DIRECTORY_AUTH_READ: 'admin:directory_auth:read',
+  DIRECTORY_AUTH_WRITE: 'admin:directory_auth:write',
+  DIRECTORY_AUTH_MIGRATION_WRITE: 'admin:directory_auth:migration:write',
+  DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE: 'admin:directory_auth:evidence_export:create',
+  DIRECTORY_AUTH_ALL: 'admin:directory_auth:*',
+
   // Admin jobs / artifacts
   JOBS_READ: 'admin:jobs:read',
   JOBS_WRITE: 'admin:jobs:write',
@@ -697,6 +704,11 @@ export const ADMIN_PERMISSIONS = {
   SECURITY_READ: 'admin:security:read',
   SECURITY_WRITE: 'admin:security:write',
   SECURITY_ALL: 'admin:security:*',
+
+  // Policy control plane
+  POLICY_SIMULATE: 'admin:policy:simulate',
+  POLICY_REBAC_WRITE: 'admin:policy:rebac:write',
+  POLICY_ALL: 'admin:policy:*',
 
   // IP allowlist
   IP_ALLOWLIST_READ: 'admin:ip_allowlist:read',

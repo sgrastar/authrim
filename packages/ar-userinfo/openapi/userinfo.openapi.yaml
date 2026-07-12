@@ -1,0 +1,405 @@
+openapi: 3.2.0
+info:
+  title: Authrim UserInfo API
+  version: 0.3.3
+  summary: OIDC UserInfo and protected customer profile APIs.
+  description: Initial OpenAPI contract for `@authrim/ar-userinfo`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: UserInfo
+  - name: Customer Profiles
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      security: []
+      summary: Return UserInfo Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/UserInfoHealth"
+  /health/live:
+    get:
+      tags:
+        - Health
+      security: []
+      summary: Return liveness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/ProbeHealth"
+  /health/ready:
+    get:
+      tags:
+        - Health
+      security: []
+      summary: Return readiness probe status.
+      responses:
+        "200":
+          $ref: "#/components/responses/ProbeHealth"
+  /userinfo:
+    get:
+      tags:
+        - UserInfo
+      summary: Return OIDC claims for the bearer access token.
+      responses:
+        "200":
+          $ref: "#/components/responses/UserInfo"
+        "401":
+          $ref: "#/components/responses/Error"
+      security:
+        - bearerAuth: []
+    post:
+      tags:
+        - UserInfo
+      summary: Return OIDC claims for the bearer access token.
+      responses:
+        "200":
+          $ref: "#/components/responses/UserInfo"
+        "401":
+          $ref: "#/components/responses/Error"
+      security:
+        - bearerAuth: []
+  /api/protected/customer-profiles/{userId}:
+    get:
+      tags:
+        - Customer Profiles
+      summary: Return a protected customer profile.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/CustomerProfileRead"
+        "401":
+          $ref: "#/components/responses/Error"
+      security:
+        - bearerAuth: []
+  /api/protected/customer-profiles/users/{userId}:
+    patch:
+      tags:
+        - Customer Profiles
+      operationId: patchApiProtectedCustomerProfilesUsersByUserId
+      summary: Update a protected customer profile through delegated write access.
+      description: Applies an approved delegated customer-profile update. The request requires an
+        Idempotency-Key header and an Authrim step-up receipt for the operation hash before the
+        profile is mutated.
+      responses:
+        "200":
+          $ref: "#/components/responses/CustomerProfileWrite"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Subject user id whose customer profile is updated.
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Idempotency key used for delegated write replay protection.
+        - name: Authrim-Step-Up-Receipt
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Step-up receipt bound to the profile update operation. When omitted, the API returns
+            step_up_required.
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+            example: actor,subject,audit
+          description: Optional comma-separated response expansions.
+      requestBody:
+        $ref: "#/components/requestBodies/CustomerProfileUpdate"
+      security:
+        - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    UserInfoHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UserInfoHealth"
+          example:
+            status: ok
+            service: op-userinfo
+            timestamp: 2026-06-19T00:00:00.000Z
+    ProbeHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProbeHealth"
+          example:
+            status: ok
+            service: op-userinfo
+            version: 0.1.0
+            timestamp: 2026-06-19T00:00:00.000Z
+    UserInfo:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UserInfoClaims"
+          example:
+            sub: user_123
+            name: Example User
+            email: user@example.com
+            email_verified: true
+            updated_at: 1770000000
+    CustomerProfileRead:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CustomerProfileReadResponse"
+          example:
+            profile:
+              sub: user_123
+              tenant_id: tenant_123
+              name: Example User
+              email: user@example.com
+              email_verified: true
+              phone_number_verified: false
+              updated_at: 1770000000000
+            correlation_id: corr_123
+            redaction_level: masked
+            requires_online_check: false
+            fail_closed: true
+    CustomerProfileWrite:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CustomerProfileWriteResponse"
+          example:
+            customer_profile:
+              sub: user_123
+              tenant_id: tenant_123
+              name: Example User
+              email: user@example.com
+              email_verified: true
+              phone_number_verified: false
+              updated_at: 1770000000000
+  requestBodies:
+    GeneratedJsonObject:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    CustomerProfileUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DelegatedWriteEnvelope"
+          example:
+            input:
+              name: Example User
+              email: user@example.com
+            audit:
+              reason: user_requested_update
+  schemas:
+    UserInfoHealth:
+      type: object
+      required:
+        - status
+        - service
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+        service:
+          type: string
+          enum:
+            - op-userinfo
+        timestamp:
+          type: string
+          format: date-time
+    ProbeHealth:
+      type: object
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: true
+    UserInfoClaims:
+      type: object
+      required:
+        - sub
+      additionalProperties: true
+      properties:
+        sub:
+          type: string
+        name:
+          type: string
+        given_name:
+          type: string
+        family_name:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        phone_number:
+          type: string
+        phone_number_verified:
+          type: boolean
+        address:
+          type: object
+          additionalProperties: true
+        updated_at:
+          type: integer
+    CustomerProfile:
+      type: object
+      required:
+        - sub
+        - tenant_id
+        - email_verified
+        - phone_number_verified
+        - updated_at
+      additionalProperties: true
+      properties:
+        sub:
+          type: string
+        tenant_id:
+          type: string
+        name:
+          type:
+            - string
+            - "null"
+        given_name:
+          type:
+            - string
+            - "null"
+        family_name:
+          type:
+            - string
+            - "null"
+        email:
+          type:
+            - string
+            - "null"
+          format: email
+        email_verified:
+          type: boolean
+        phone_number:
+          type:
+            - string
+            - "null"
+        phone_number_verified:
+          type: boolean
+        address:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        updated_at:
+          type: integer
+    CustomerProfileReadResponse:
+      type: object
+      required:
+        - profile
+        - correlation_id
+        - redaction_level
+        - requires_online_check
+        - fail_closed
+      properties:
+        profile:
+          $ref: "#/components/schemas/CustomerProfile"
+        correlation_id:
+          type: string
+        redaction_level:
+          type: string
+          enum:
+            - summary
+            - masked
+            - raw
+        requires_online_check:
+          type: boolean
+        fail_closed:
+          type: boolean
+    DelegatedWriteEnvelope:
+      type: object
+      required:
+        - input
+      properties:
+        input:
+          type: object
+          additionalProperties: true
+        audit:
+          type: object
+          additionalProperties: true
+    CustomerProfileWriteResponse:
+      type: object
+      required:
+        - customer_profile
+      properties:
+        customer_profile:
+          $ref: "#/components/schemas/CustomerProfile"
+        actor:
+          type: object
+          properties:
+            id:
+              type: string
+        subject:
+          type: object
+          properties:
+            id:
+              type: string
+        audit:
+          type: object
+          additionalProperties: true

@@ -17,8 +17,7 @@ import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
-import { createCompatibilityError, OIDCError } from './errors';
-import { getCacheTTL } from './cache-config';
+import { createCompatibilityError } from './errors';
 import { getDefaultTenantId } from './issuer';
 import { readResponseTextWithLimit } from './url-security';
 import {
@@ -925,32 +924,8 @@ export async function getClient(
   clientId: string,
   coreDbSource: DatabaseSource
 ): Promise<ClientMetadata | null> {
-  const cacheKey = buildKVKey('client', clientId, tenantId);
-
-  // Get cache TTL based on cache mode (client-specific > platform > default)
-  const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientId);
-
-  // Step 1: Try CLIENTS_CACHE only when explicitly configured with a positive TTL.
-  const cached = cacheTtl > 0 ? await env.CLIENTS_CACHE.get(cacheKey, { cacheTtl }) : null;
-
-  if (cached) {
-    try {
-      return normalizeClientMetadata(JSON.parse(cached) as ClientMetadata);
-    } catch (error) {
-      if (error instanceof OIDCError && error.error === 'legacy_app_suite_not_supported') {
-        throw error;
-      }
-
-      // Cache is corrupted - delete it and fetch from D1
-      // PII Protection: Don't log full error (may contain cached data)
-      log.error('Failed to parse cached client data', {}, error as Error);
-      await env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
-        log.warn('Failed to delete corrupted cache');
-      });
-    }
-  }
-
-  // Step 2: Cache miss - fetch from D1 (source of truth)
+  // Client metadata is a security boundary for redirect URIs, secrets, and
+  // revocation. Always read it from D1 so admin changes take effect immediately.
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'client-cache');
   const result = await coreAdapter.queryOne<{
     client_id: string;
@@ -1180,51 +1155,23 @@ export async function getClient(
 
   const normalizedClientData = normalizeClientMetadata(clientData);
 
-  // Step 4: Populate CLIENTS_CACHE (TTL based on cache mode)
-  try {
-    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(normalizedClientData), {
-      expirationTtl: cacheTtl,
-    });
-  } catch (error) {
-    // Cache write failure should not block the response
-    // D1 is the source of truth
-    // PII Protection: Don't log clientId
-    log.warn('Failed to cache client data');
-  }
-
   return normalizedClientData;
 }
 
 /**
- * Write client metadata to KV (Write-Through)
+ * Preserve the legacy client metadata cache API without caching.
  *
- * Call this after D1 write operations (create/update) to keep KV in sync.
- * This enables efficient reads from KV cache without D1 fallback.
+ * Client metadata is security-sensitive. getClient intentionally reads from
+ * D1 every time, so this function validates the tenant and otherwise no-ops.
  *
  * @param env - Cloudflare environment bindings
- * @param clientData - Full client metadata to cache
+ * @param clientData - Full client metadata
  * @returns Promise<void>
  */
-export async function putClient(env: Env, clientData: ClientMetadata): Promise<void> {
-  const tenantId = requireTenantId(clientData.tenant_id, 'Client cache write');
-  const cacheKey = buildKVKey('client', clientData.client_id, tenantId);
-  const cacheTtl = await getCacheTTL(env, 'clientMetadata', clientData.client_id);
-  const normalizedClientData = normalizeClientMetadata(clientData);
-
-  if (cacheTtl <= 0) {
-    return;
-  }
-
-  try {
-    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(normalizedClientData), {
-      expirationTtl: cacheTtl,
-    });
-    log.debug('Client data cached to KV (Write-Through)');
-  } catch (error) {
-    // Log error but don't throw - D1 is source of truth
-    // Next read will repopulate from D1 via Read-Through
-    log.warn('Failed to cache client data (Write-Through)');
-  }
+export async function putClient(_env: Env, clientData: ClientMetadata): Promise<void> {
+  requireTenantId(clientData.tenant_id, 'Client cache write');
+  // No-op by design: getClient always reads client metadata from D1 so client
+  // revocation, redirect URI changes, and secret changes are reflected at once.
 }
 
 /**

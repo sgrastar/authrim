@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { LL } from '$i18n/i18n-svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminAuditLogsAPI,
@@ -10,6 +10,12 @@
 		type AuditLogListParams,
 		AUDIT_ACTION_TYPES
 	} from '$lib/api/admin-audit-logs';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let entries: AuditLogEntry[] = $state([]);
 	let pagination: Pagination | null = $state(null);
@@ -121,7 +127,18 @@
 	}
 
 	function formatAction(action: string): string {
+		const ja = getLocale() === 'ja';
 		switch (action) {
+			case 'account.profile.name_updated':
+				return ja ? 'アカウントページ: 名前変更' : 'Account Page: Name changed';
+			case 'account.passkey.created':
+				return ja ? 'アカウントページ: Passkey追加' : 'Account Page: Passkey added';
+			case 'account.passkey.updated':
+				return ja ? 'アカウントページ: Passkey名変更' : 'Account Page: Passkey renamed';
+			case 'account.passkey.deleted':
+				return ja ? 'アカウントページ: Passkey削除' : 'Account Page: Passkey deleted';
+			case 'account.session.revoked':
+				return ja ? 'アカウントページ: セッションログアウト' : 'Account Page: Session logged out';
 			case 'user.login':
 				return $LL.admin_audit_logs_action_user_login();
 			case 'user.logout':
@@ -263,42 +280,43 @@
 	<title>{$LL.admin_audit_logs_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_audit_logs_title()}</h1>
-			<p class="page-description">{$LL.admin_audit_logs_description()}</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
-				<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
-				{showFilters ? $LL.admin_audit_logs_hide_filters() : $LL.admin_audit_logs_show_filters()}
-			</button>
-		</div>
-	</div>
+{#snippet headerActions()}
+	<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
+		<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
+		{showFilters ? $LL.admin_audit_logs_hide_filters() : $LL.admin_audit_logs_show_filters()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_audit_logs_title()}
+		description={$LL.admin_audit_logs_description()}
+		actions={headerActions}
+	/>
 
 	<!-- Filters -->
 	{#if showFilters}
-		<div class="panel">
-			<div class="filter-row">
-				<div class="form-group">
-					<label for="user_id" class="form-label">{$LL.admin_audit_logs_actor_user_id()}</label>
+		<AdminSection>
+			<AdminToolbar>
+				<div class="admin-field admin-field--search">
+					<label for="user_id" class="admin-field__label">
+						{$LL.admin_audit_logs_actor_user_id()}
+					</label>
 					<input
 						id="user_id"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						placeholder={$LL.admin_audit_logs_user_id_placeholder()}
 						bind:value={userIdFilter}
 						oninput={handleUserIdSearch}
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="action" class="form-label">{$LL.admin_audit_logs_action()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="action" class="admin-field__label">{$LL.admin_audit_logs_action()}</label>
 					<select
 						id="action"
-						class="form-select"
+						class="admin-select"
 						bind:value={actionFilter}
 						onchange={handleFilterChange}
 					>
@@ -308,71 +326,69 @@
 						{/each}
 					</select>
 				</div>
-			</div>
 
-			<div class="filter-row">
-				<div class="form-group">
-					<label for="start_date" class="form-label">{$LL.admin_audit_logs_start_date()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="start_date" class="admin-field__label">
+						{$LL.admin_audit_logs_start_date()}
+					</label>
 					<input
 						id="start_date"
 						type="date"
-						class="form-input"
+						class="admin-input"
 						bind:value={startDate}
 						onchange={handleFilterChange}
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="end_date" class="form-label">{$LL.admin_audit_logs_end_date()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="end_date" class="admin-field__label">{$LL.admin_audit_logs_end_date()}</label>
 					<input
 						id="end_date"
 						type="date"
-						class="form-input"
+						class="admin-input"
 						bind:value={endDate}
 						onchange={handleFilterChange}
 					/>
 				</div>
 
-				<div class="form-group form-group-action">
-					<button class="btn btn-secondary" onclick={clearFilters}>
-						<i class="i-ph-x"></i>
-						{$LL.admin_audit_logs_clear_filters()}
-					</button>
-				</div>
-			</div>
-
-			<div class="filter-row">
-				<div class="form-group">
-					<label for="resource_type" class="form-label"
+				<div class="admin-field admin-field--compact">
+					<label for="resource_type" class="admin-field__label"
 						>{$LL.admin_audit_logs_resource_type()}</label
 					>
 					<input
 						id="resource_type"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						placeholder={$LL.admin_audit_logs_resource_type_placeholder()}
 						bind:value={resourceTypeFilter}
 						oninput={handleUserIdSearch}
 					/>
 				</div>
 
-				<div class="form-group">
-					<label for="resource_id" class="form-label">{$LL.admin_audit_logs_resource_id()}</label>
+				<div class="admin-field admin-field--compact">
+					<label for="resource_id" class="admin-field__label">
+						{$LL.admin_audit_logs_resource_id()}
+					</label>
 					<input
 						id="resource_id"
 						type="text"
-						class="form-input"
+						class="admin-input"
 						placeholder={$LL.admin_audit_logs_resource_id_placeholder()}
 						bind:value={resourceIdFilter}
 						oninput={handleUserIdSearch}
 					/>
 				</div>
-			</div>
+
+				<button class="btn btn-secondary" onclick={clearFilters}>
+					<i class="i-ph-x"></i>
+					{$LL.admin_audit_logs_clear_filters()}
+				</button>
+			</AdminToolbar>
 
 			<p class="filter-hint">
 				{$LL.admin_audit_logs_filter_hint()}
 			</p>
-		</div>
+		</AdminSection>
 	{/if}
 
 	{#if loading}
@@ -383,15 +399,15 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if entries.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_audit_logs_empty()}</p>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
 		<!-- Audit Logs Table -->
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="wide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_audit_logs_date_time()}</th>
@@ -430,36 +446,31 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
 		<!-- Pagination -->
 		{#if pagination && pagination.totalPages > 1}
-			<div class="pagination">
-				<p class="pagination-info">
-					{$LL.admin_audit_logs_pagination({
-						from: (pagination.page - 1) * pagination.limit + 1,
-						to: Math.min(pagination.page * pagination.limit, pagination.total),
-						total: pagination.total
-					})}
-				</p>
-				<div class="pagination-buttons">
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage - 1)}
-						disabled={currentPage <= 1}
-					>
-						{$LL.admin_audit_logs_previous()}
-					</button>
-					<button
-						class="btn btn-secondary btn-sm"
-						onclick={() => goToPage(currentPage + 1)}
-						disabled={currentPage >= pagination.totalPages}
-					>
-						{$LL.admin_audit_logs_next()}
-					</button>
-				</div>
-			</div>
+			<AdminPagination
+				label={$LL.admin_audit_logs_title()}
+				info={$LL.admin_audit_logs_pagination({
+					from: (pagination.page - 1) * pagination.limit + 1,
+					to: Math.min(pagination.page * pagination.limit, pagination.total),
+					total: pagination.total
+				})}
+				previousLabel={$LL.admin_audit_logs_previous()}
+				nextLabel={$LL.admin_audit_logs_next()}
+				hasPrevious={currentPage > 1}
+				hasNext={currentPage < pagination.totalPages}
+				onPrevious={() => goToPage(currentPage - 1)}
+				onNext={() => goToPage(currentPage + 1)}
+			/>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
+
+<style>
+	:global(.admin-data-table-wrap tr[role='button']) {
+		cursor: pointer;
+	}
+</style>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { mockGetPluginContext } = vi.hoisted(() => ({
-  mockGetPluginContext: vi.fn(),
+const { mockGetRequiredPluginContext } = vi.hoisted(() => ({
+  mockGetRequiredPluginContext: vi.fn(),
 }));
 
 const { mockIssueApprovalCompletionArtifact } = vi.hoisted(() => ({
@@ -16,7 +16,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    getPluginContext: mockGetPluginContext,
+    getRequiredPluginContext: mockGetRequiredPluginContext,
   };
 });
 
@@ -33,7 +33,7 @@ import { dispatchApprovalNotification } from '../approval-notification-dispatch'
 describe('approval notification dispatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetPluginContext.mockReturnValue({
+    mockGetRequiredPluginContext.mockReturnValue({
       registry: {
         getNotifier: vi.fn().mockReturnValue(undefined),
       },
@@ -151,7 +151,7 @@ describe('approval notification dispatch', () => {
       success: true,
       messageId: 'email-msg-1',
     });
-    mockGetPluginContext.mockReturnValue({
+    mockGetRequiredPluginContext.mockReturnValue({
       registry: {
         getNotifier: vi.fn().mockImplementation((channel: string) =>
           channel === 'email'

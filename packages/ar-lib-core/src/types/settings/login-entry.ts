@@ -30,6 +30,12 @@ export interface LoginEntrySettings {
   'login-entry.require_common_discovery_before_login': boolean;
   'login-entry.skip_discovery_if_only_one_tenant': boolean;
   'login-entry.redirect_tenant_discover_to_common_entry': boolean;
+  'login-entry.post_login_behavior': 'home' | 'account' | 'custom_url' | 'app_login';
+  'login-entry.post_login_redirect_url': string;
+  'login-entry.app_login_client_id': string;
+  'login-entry.app_login_redirect_uri': string;
+  'login-entry.app_login_final_return_to': string;
+  'login-entry.app_login_scope': string;
 }
 
 /**
@@ -57,7 +63,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
   'login-entry.discovery_methods': {
     key: 'login-entry.discovery_methods',
     type: 'string',
-    default: '["email_domain","tenant_code","tenant_slug"]',
+    default: '["email_domain","tenant_code","tenant_slug","wayf"]',
     label: 'Discovery Methods',
     description:
       'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug","wayf"]',
@@ -119,7 +125,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
   'login-entry.skip_discovery_if_only_one_tenant': {
     key: 'login-entry.skip_discovery_if_only_one_tenant',
     type: 'boolean',
-    default: false,
+    default: true,
     label: 'Skip Discovery If Only One Tenant',
     description:
       'When enabled on the shared entry host, automatically continue to the tenant login page when exactly one active tenant exists.',
@@ -132,6 +138,59 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     label: 'Redirect Tenant Discover To Common Entry',
     description:
       'Redirect tenant-host /discover requests to the shared common-entry /discover page.',
+    visibility: 'admin',
+  },
+  'login-entry.post_login_behavior': {
+    key: 'login-entry.post_login_behavior',
+    type: 'enum',
+    default: 'account',
+    label: 'Post Login Behavior',
+    description:
+      'Controls where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
+    enum: ['home', 'account', 'custom_url', 'app_login'],
+    visibility: 'admin',
+  },
+  'login-entry.post_login_redirect_url': {
+    key: 'login-entry.post_login_redirect_url',
+    type: 'string',
+    default: '/',
+    label: 'Post Login Redirect URL',
+    description:
+      'Relative path or trusted HTTPS URL used when post-login behavior is set to custom_url.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_client_id': {
+    key: 'login-entry.app_login_client_id',
+    type: 'string',
+    default: '',
+    label: 'App Login Client ID',
+    description:
+      'OIDC client started after direct Login UI sign-in when post-login behavior is app_login.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_redirect_uri': {
+    key: 'login-entry.app_login_redirect_uri',
+    type: 'string',
+    default: '',
+    label: 'App Login Redirect URI',
+    description: 'Registered redirect_uri for the App Login target OIDC client.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_final_return_to': {
+    key: 'login-entry.app_login_final_return_to',
+    type: 'string',
+    default: '',
+    label: 'App Login Final Return To',
+    description:
+      'Optional relative path or trusted HTTPS URL passed in state for service-side post-callback routing.',
+    visibility: 'admin',
+  },
+  'login-entry.app_login_scope': {
+    key: 'login-entry.app_login_scope',
+    type: 'string',
+    default: 'openid profile email',
+    label: 'App Login Scope',
+    description: 'OIDC scope used when Login UI starts the App Login client.',
     visibility: 'admin',
   },
 };
@@ -152,13 +211,19 @@ export const LOGIN_ENTRY_CATEGORY_META: CategoryMeta = {
 export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.override_enabled': false,
   'login-entry.mode': 'discovery_optional',
-  'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+  'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","wayf"]',
   'login-entry.email_resolution_policy': 'exact_email_then_domain',
   'login-entry.selection_policy': 'select_if_multiple',
   'login-entry.allow_manual_tenant_entry': true,
   'login-entry.remember_last_tenant': true,
   'login-entry.redirect_default_login_to_discovery': true,
   'login-entry.require_common_discovery_before_login': true,
-  'login-entry.skip_discovery_if_only_one_tenant': false,
+  'login-entry.skip_discovery_if_only_one_tenant': true,
   'login-entry.redirect_tenant_discover_to_common_entry': true,
+  'login-entry.post_login_behavior': 'account',
+  'login-entry.post_login_redirect_url': '/',
+  'login-entry.app_login_client_id': '',
+  'login-entry.app_login_redirect_uri': '',
+  'login-entry.app_login_final_return_to': '',
+  'login-entry.app_login_scope': 'openid profile email',
 };

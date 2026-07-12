@@ -32,7 +32,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_title: 'Field Mapping Set Editor',
 	admin_identity_mapping_editor_description:
 		'Edit source mappings and destination release projections against registered source and destination profiles.',
-	admin_identity_mapping_editor_save_draft: 'Save draft',
+	admin_identity_mapping_editor_save_draft: 'Save',
 	admin_identity_mapping_editor_saving: 'Saving...',
 	admin_identity_mapping_editor_compile_draft: 'Compile draft',
 	admin_identity_mapping_editor_compiling: 'Compiling...',
@@ -56,8 +56,8 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_delete: 'Delete',
 	admin_identity_mapping_editor_confirm_delete: 'Confirm Delete',
 	admin_identity_mapping_editor_side_not_selected: 'side not selected',
-	admin_identity_mapping_editor_snapshot_ready: 'snapshot ready',
-	admin_identity_mapping_editor_no_snapshot: 'no snapshot',
+	admin_identity_mapping_editor_snapshot_ready: 'saved',
+	admin_identity_mapping_editor_no_snapshot: 'not saved',
 	admin_identity_mapping_editor_loading_control_plane: 'Loading control plane',
 	admin_identity_mapping_editor_preview_fallback: 'Preview fallback',
 	admin_identity_mapping_editor_control_plane_ready: 'Control plane ready',
@@ -68,14 +68,14 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_default_name: 'Field Mapping UI Draft',
 	admin_identity_mapping_editor_destination_profile_fallback: 'Destination profile',
 	admin_identity_mapping_editor_policy_default_suffix: 'Field Mapping Set',
-	admin_identity_mapping_editor_policy_published: 'Published field mapping set version',
-	admin_identity_mapping_editor_policy_activated: 'Activated field mapping set version',
-	admin_identity_mapping_editor_policy_deactivated: 'Deactivated field mapping set version',
+	admin_identity_mapping_editor_policy_published: 'Saved field mapping set',
+	admin_identity_mapping_editor_policy_activated: 'Activated field mapping set',
+	admin_identity_mapping_editor_policy_deactivated: 'Deactivated field mapping set',
 	admin_identity_mapping_editor_no_active_catalog:
 		'No active catalog version is available to prepare this field mapping set',
-	admin_identity_mapping_editor_publish_before_activation: 'Publish this version before activation',
-	admin_identity_mapping_editor_select_policy_version_first:
-		'Select a Field Mapping Set version first',
+	admin_identity_mapping_editor_publish_before_activation:
+		'Save this field mapping set before activation',
+	admin_identity_mapping_editor_select_policy_version_first: 'Select a Field Mapping Set first',
 	admin_identity_mapping_editor_confirm_rollback_status: 'Confirm rollback to continue',
 	admin_identity_mapping_editor_rollback_requested: 'Rollback requested',
 	admin_identity_mapping_editor_rollback_failed: 'Rollback failed',
@@ -84,13 +84,13 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_delete_failed: 'Field mapping set delete failed',
 	admin_identity_mapping_editor_policy_operation_failed: 'Field mapping set operation failed',
 	admin_identity_mapping_editor_unsaved_confirm:
-		'You have unsaved mapping draft changes. Discard them and switch view?',
+		'You have unsaved mapping changes. Discard them and switch view?',
 	admin_identity_mapping_editor_policy_conflict:
 		'A field mapping set named "{name:string}" already exists. Choose a different field mapping set name.',
 	admin_identity_mapping_editor_no_canonical_catalog:
 		'No canonical catalog version is available for compile.',
 	admin_identity_mapping_editor_created_description:
-		'Draft field mapping set created from the Admin UI Flow Editor.',
+		'Field mapping set created from the Admin UI Flow Editor.',
 	admin_identity_mapping_editor_load_failed: 'Failed to load field mapping state',
 
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
@@ -105,6 +105,38 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_create_destination: 'Create destination profile',
 	admin_identity_mapping_profiles_no_source: 'No source profiles.',
 	admin_identity_mapping_profiles_no_destination: 'No destination profiles.',
+	admin_identity_mapping_persistent_head_title: 'Persistent Identifiers - Authrim Admin',
+	admin_identity_mapping_persistent_title: 'Persistent Identifiers',
+	admin_identity_mapping_persistent_description:
+		'Manage identifier generation profiles shared by SAML eduPersonTargetedID, SAML persistent NameID, and OIDC pairwise sub.',
+	admin_identity_mapping_persistent_inventory: 'Profile inventory',
+	admin_identity_mapping_persistent_loading: 'Loading persistent identifier profiles.',
+	admin_identity_mapping_persistent_empty:
+		'No persistent identifier profiles have been registered yet.',
+	admin_identity_mapping_persistent_load_failed: 'Failed to load persistent identifier profiles',
+	admin_identity_mapping_persistent_create: 'Create Persistent Identifier',
+	admin_identity_mapping_persistent_usage_empty: 'No usages configured',
+	admin_identity_mapping_persistent_algorithm: 'Algorithm',
+	admin_identity_mapping_persistent_scope: 'Scope',
+	admin_identity_mapping_persistent_audience: 'Audience',
+	admin_identity_mapping_persistent_secret: 'Secret',
+	admin_identity_mapping_persistent_create_title: 'Create Persistent Identifier',
+	admin_identity_mapping_persistent_edit_title: 'Edit Persistent Identifier',
+	admin_identity_mapping_persistent_display_name: 'Display name',
+	admin_identity_mapping_persistent_profile_key: 'Profile key',
+	admin_identity_mapping_persistent_description_label: 'Description',
+	admin_identity_mapping_persistent_mode: 'Mode',
+	admin_identity_mapping_persistent_protocol_scope: 'Protocol scope',
+	admin_identity_mapping_persistent_usage: 'Usage',
+	admin_identity_mapping_persistent_issuer: 'Issuer entity ID',
+	admin_identity_mapping_persistent_secret_ref: 'Secret ref',
+	admin_identity_mapping_persistent_save: 'Save',
+	admin_identity_mapping_persistent_saving: 'Saving...',
+	admin_identity_mapping_persistent_delete: 'Delete',
+	admin_identity_mapping_persistent_saved: 'Persistent identifier profile saved.',
+	admin_identity_mapping_persistent_save_failed: 'Failed to save persistent identifier profile',
+	admin_identity_mapping_persistent_delete_failed: 'Failed to delete persistent identifier profile',
+	admin_identity_mapping_persistent_delete_confirm: 'Delete this persistent identifier profile?',
 
 	admin_identity_mapping_profile_edit_head_title: 'Edit Profile - Authrim Admin',
 	admin_identity_mapping_policies_head_title: 'Field Mapping Sets - Authrim Admin',
@@ -296,6 +328,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_examples_placeholder: 'sample1,sample2',
 	admin_identity_mapping_profile_edit_note_placeholder: 'Field note',
 	admin_identity_mapping_profile_edit_remove: 'Remove',
+	admin_identity_mapping_profile_edit_cancel: 'Cancel',
 	admin_identity_mapping_profile_edit_add_column: 'Add column',
 	admin_identity_mapping_profile_edit_confirm_csv_warnings:
 		'Confirm PII and regulated candidates for this CSV profile version',
@@ -310,6 +343,12 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_destination_method_aria: 'Destination create method',
 	admin_identity_mapping_profile_edit_create_from_existing: 'Create from existing',
 	admin_identity_mapping_profile_edit_create_from_template: 'Create from template',
+	admin_identity_mapping_scope_select_placeholder: 'Select scopes',
+	admin_identity_mapping_scope_create_inline: 'New scope...',
+	admin_identity_mapping_scope_create: 'Create scope',
+	admin_identity_mapping_scope_create_failed: 'Failed to create scope',
+	admin_identity_mapping_scope_name: 'Scope name',
+	admin_identity_mapping_scope_display_name: 'Display name',
 	admin_identity_mapping_profile_edit_existing_destination: 'Existing {kind:string} destination',
 	admin_identity_mapping_profile_edit_choose_destination_profile: 'Choose destination profile',
 	admin_identity_mapping_profile_edit_copy: 'Copy',
@@ -470,7 +509,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_json_object_required: '{label:string} must be a JSON object',
 
 	admin_identity_mapping_flow_graph_aria: 'Mapping graph',
-	admin_identity_mapping_flow_policy_draft: 'Policy draft',
+	admin_identity_mapping_flow_policy_draft: 'Field Mapping Set',
 	admin_identity_mapping_flow_no_profiles: 'No profiles',
 	admin_identity_mapping_flow_view_mode_aria: 'Flow view mode',
 	admin_identity_mapping_flow_overview: 'Overview',
@@ -491,12 +530,16 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_select_active_policy: 'Select an active field mapping set',
 	admin_identity_mapping_flow_no_profiles_registered:
 		'No source or destination profiles registered',
+	admin_identity_mapping_flow_schema_not_configured: 'Profile schema is not configured',
 	admin_identity_mapping_flow_no_active_policies_desc:
-		'Save, publish, compile, and activate a field mapping set before using this overview.',
+		'Save and activate a field mapping set before using this overview.',
 	admin_identity_mapping_flow_select_active_policy_desc:
 		'Choose a Source Field Mapping Set and/or Destination Field Mapping Set to render its nodes and edges.',
 	admin_identity_mapping_flow_no_profiles_registered_desc:
 		'Register source and destination profiles, or add a field catalog, to populate this graph.',
+	admin_identity_mapping_flow_schema_not_configured_desc:
+		'Profiles are registered, but no schema is available for the Field Mapping Set editor yet. Configure the schema in Source/Destination Profiles first.',
+	admin_identity_mapping_flow_schema_not_configured_action: 'Open Source/Destination Profiles',
 	admin_identity_mapping_flow_source_policy: 'Source Field Mapping Set',
 	admin_identity_mapping_flow_destination_policy: 'Destination Field Mapping Set',
 	admin_identity_mapping_flow_select_source_policy: 'Select Source Field Mapping Set',
@@ -561,6 +604,26 @@ const adminIdentityMapping = {
 		'Auto-mapped {count:number} connections. Review and compile the draft when ready.',
 	admin_identity_mapping_flow_transform_copy_label: 'Copy',
 	admin_identity_mapping_flow_transform_copy_desc: 'Pass the first input value through unchanged.',
+	admin_identity_mapping_flow_transform_as_array_label: 'As array',
+	admin_identity_mapping_flow_transform_as_array_desc:
+		'Wrap one input value as a multi-value array.',
+	admin_identity_mapping_flow_transform_split_label: 'Split',
+	admin_identity_mapping_flow_transform_split_desc:
+		'Split one text value into a multi-value array.',
+	admin_identity_mapping_flow_transform_join_label: 'Join',
+	admin_identity_mapping_flow_transform_join_desc: 'Join a multi-value array into one text value.',
+	admin_identity_mapping_flow_transform_first_label: 'First value',
+	admin_identity_mapping_flow_transform_first_desc: 'Use the first value from a multi-value array.',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: 'OIDC pairwise sub',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc:
+		'Use the current OIDC client pairwise subject identifier.',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label:
+		'SAML eduPersonTargetedID',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc:
+		'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
+	admin_identity_mapping_flow_transform_affix_text_label: 'Add prefix/suffix',
+	admin_identity_mapping_flow_transform_affix_text_desc:
+		'Add fixed text before or after the input value.',
 	admin_identity_mapping_flow_transform_trim_label: 'Trim',
 	admin_identity_mapping_flow_transform_trim_desc:
 		'Remove leading and trailing whitespace from the first input value.',
@@ -572,7 +635,7 @@ const adminIdentityMapping = {
 		'Convert string case before writing to the target.',
 	admin_identity_mapping_flow_transform_concat_label: 'Concat',
 	admin_identity_mapping_flow_transform_concat_desc:
-		'Join all connected input values into one string.',
+		'Join all connected input values into one string. Use the delimiter field to choose space, comma, no separator, or custom text.',
 	admin_identity_mapping_flow_transform_fallback_label: 'Fallback',
 	admin_identity_mapping_flow_transform_fallback_desc:
 		'Use the first non-empty connected input value.',
@@ -592,6 +655,14 @@ const adminIdentityMapping = {
 		'Read a JSON path and output an integer or null.',
 	admin_identity_mapping_flow_transform_param_mode: 'Mode',
 	admin_identity_mapping_flow_transform_param_delimiter: 'Delimiter',
+	admin_identity_mapping_flow_transform_param_trim_items: 'Trim items',
+	admin_identity_mapping_flow_transform_param_omit_empty: 'Omit empty values',
+	admin_identity_mapping_flow_transform_param_unique: 'Remove duplicates',
+	admin_identity_mapping_flow_transform_param_persistent_identifier_profile:
+		'Persistent Identifier Profile',
+	admin_identity_mapping_flow_transform_param_prefix: 'Prefix',
+	admin_identity_mapping_flow_transform_param_suffix: 'Suffix',
+	admin_identity_mapping_flow_transform_tenant_default_profile: 'Tenant default',
 	admin_identity_mapping_flow_transform_param_true_values: 'True values',
 	admin_identity_mapping_flow_transform_param_false_values: 'False values',
 	admin_identity_mapping_flow_transform_param_null_values: 'Null values',
@@ -617,25 +688,25 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_inserted_edge_source: 'Inserted on selected mapping edge',
 	admin_identity_mapping_flow_transform_node: 'Transform node',
 	admin_identity_mapping_flow_continues_original_target: 'Continues to the original edge target',
-	admin_identity_mapping_flow_transform_inserted_validation: 'draft transform node inserted',
+	admin_identity_mapping_flow_transform_inserted_validation: 'transform node inserted',
 	admin_identity_mapping_flow_transform_inserted_trace:
 		'This transform node was inserted into an existing mapping edge.',
 	admin_identity_mapping_flow_custom_graph_edge: 'Custom graph edge',
 	admin_identity_mapping_flow_not_connected_yet: 'Not connected yet',
 	admin_identity_mapping_flow_custom_node_trace:
-		'Custom draft node added. Drag a connection handle to attach it to the identity schema.',
+		'Custom node added. Drag a connection handle to attach it to the identity schema.',
 	admin_identity_mapping_flow_transform_configured_validation:
-		'draft transform configured; compile validation pending',
+		'transform configured; validation pending',
 	admin_identity_mapping_flow_transform_output_pending:
 		'Transform output preview pending for {summary:string}.',
 	admin_identity_mapping_flow_transform_config_trace:
-		'Transform configuration is stored on the draft node and will be persisted as a mapping transform step.',
+		'Transform configuration is stored on the node and will be persisted as a mapping transform step.',
 	admin_identity_mapping_flow_connect_edge_before_compile:
-		'Connect at least one mapping edge before compiling a draft.',
-	admin_identity_mapping_flow_compile_not_connected: 'Compile draft is not connected on this page.',
-	admin_identity_mapping_flow_saving_draft_policy: 'Saving draft policy version...',
-	admin_identity_mapping_flow_draft_saved_compiled: 'Draft policy version saved and compiled.',
-	admin_identity_mapping_flow_compile_failed: 'Failed to compile mapping draft.',
+		'Connect at least one mapping edge before saving.',
+	admin_identity_mapping_flow_compile_not_connected: 'Save is not connected on this page.',
+	admin_identity_mapping_flow_saving_draft_policy: 'Saving field mapping set...',
+	admin_identity_mapping_flow_draft_saved_compiled: 'Field mapping set saved.',
+	admin_identity_mapping_flow_compile_failed: 'Failed to save field mapping set.',
 	admin_identity_mapping_flow_not_connected: 'Not connected',
 	admin_identity_mapping_flow_configured: 'configured',
 	admin_identity_mapping_flow_loaded_from: 'loaded from {ruleKey:string}',

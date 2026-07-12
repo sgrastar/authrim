@@ -167,7 +167,8 @@ export type SAMLAttributeValueType =
   | 'xs:boolean'
   | 'xs:integer'
   | 'xs:dateTime'
-  | 'xs:anyURI';
+  | 'xs:anyURI'
+  | 'saml:persistent-nameid';
 
 /**
  * SAML attribute release policy.
@@ -543,12 +544,16 @@ export interface SAMLSPConfig {
   samlProfile?: SAMLSPProfile;
   /** NameID format preference */
   nameIdFormat: NameIDFormat;
+  /** NameID formats explicitly advertised by imported SP metadata */
+  metadataNameIdFormats?: NameIDFormat[];
   /** OIDC claim to SAML attribute mapping */
   attributeMapping: Record<string, string>;
   /** Policy-based SAML attribute release rules */
   attributeReleasePolicy?: SAMLAttributeReleasePolicy;
   /** User-facing attribute release consent policy. Protocol-neutral shape for OIDC reuse. */
   attributeReleaseConsent?: AttributeReleaseConsentPolicy;
+  /** User-facing presentation settings for SAML attribute release confirmation screens. */
+  attributeReleaseConfirmation?: SAMLAttributeReleaseConfirmationSettings;
   /** Runtime identity mapping policy selector for SAML attribute release */
   identityMapping?: SAMLIdentityMappingFieldMappingSelector;
   /** Built-in attribute preset used as the clone/edit source for the current release policy */
@@ -585,6 +590,19 @@ export interface SAMLSPConfig {
   metadataLastFetched?: number;
   /** Aggregate metadata import/verification snapshot when imported from federation metadata */
   aggregateImport?: SAMLMetadataAggregateImportSnapshot;
+}
+
+export type SAMLAttributeReleaseConfirmationCompatibility = 'uapprove' | 'custom';
+export type SAMLAttributeReleaseConfirmationValueDisplay =
+  | 'names'
+  | 'masked_values'
+  | 'full_values';
+
+export interface SAMLAttributeReleaseConfirmationSettings {
+  compatibilityMode?: SAMLAttributeReleaseConfirmationCompatibility;
+  valueDisplay?: SAMLAttributeReleaseConfirmationValueDisplay;
+  templateStatementId?: string;
+  buttonLabel?: string;
 }
 
 export interface SAMLIdentityMappingAttributeDescriptor {
@@ -673,6 +691,8 @@ export interface SAMLIdPConfig {
    * - custom_fields.<field_key>
    */
   attributeMapping: Record<string, string>;
+  /** Runtime identity mapping policy selector for inbound SAML assertion processing */
+  identityMapping?: SAMLIdentityMappingFieldMappingSelector;
   /** Allowed bindings */
   allowedBindings: SAMLBinding[];
   /** IdP metadata XML (cached) */

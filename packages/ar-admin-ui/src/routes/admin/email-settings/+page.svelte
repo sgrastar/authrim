@@ -6,6 +6,7 @@
 		type EmailProviderEntry,
 		type TenantEmailSettings
 	} from '$lib/api/admin-email-settings';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
@@ -104,50 +105,54 @@
 	<title>{$LL.admin_email_settings_head_title()}</title>
 </svelte:head>
 
-<div class="page">
-	<div class="page-header">
-		<div>
-			<h1>{$LL.admin_email_settings_title()}</h1>
-			<p>{$LL.admin_email_settings_description()}</p>
-		</div>
-		<button class="save-button" onclick={saveSettings} disabled={saving || loading || !tenantId}>
-			{saving ? $LL.admin_email_settings_saving() : $LL.admin_email_settings_save_order()}
-		</button>
-	</div>
+{#snippet headerActions()}
+	<button class="btn btn-primary" onclick={saveSettings} disabled={saving || loading || !tenantId}>
+		{saving ? $LL.admin_email_settings_saving() : $LL.admin_email_settings_save_order()}
+	</button>
+{/snippet}
+
+{#snippet providerActions()}
+	<a class="admin-link" href="/admin/plugins">{$LL.admin_email_settings_open_plugins()}</a>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_email_settings_title()}
+		description={$LL.admin_email_settings_description()}
+		actions={headerActions}
+	/>
 
 	{#if loading}
-		<div class="panel">
-			<p>{$LL.admin_email_settings_loading()}</p>
-		</div>
+		<AdminSection>
+			<p class="state-text">{$LL.admin_email_settings_loading()}</p>
+		</AdminSection>
 	{:else}
 		{#if error}
-			<div class="alert error">{error}</div>
+			<div class="alert alert-error">{error}</div>
 		{/if}
 
 		{#if successMessage}
-			<div class="alert success">{successMessage}</div>
+			<div class="alert alert-success">{successMessage}</div>
 		{/if}
 
-		<div class="panel summary">
-			<div>
-				<h2>{$LL.admin_email_settings_delivery_mode()}</h2>
-				<p>{$LL.admin_email_settings_strategy_priority_failover()}</p>
-			</div>
-			<div>
-				<h2>{$LL.admin_email_settings_tenant()}</h2>
-				<p>{tenantId || $LL.admin_email_settings_not_selected()}</p>
-			</div>
-		</div>
-
-		<div class="panel">
-			<div class="panel-header">
+		<AdminSection>
+			<div class="settings-summary">
 				<div>
-					<h2>{$LL.admin_email_settings_provider_priority()}</h2>
-					<p>{$LL.admin_email_settings_provider_priority_description()}</p>
+					<h2>{$LL.admin_email_settings_delivery_mode()}</h2>
+					<p>{$LL.admin_email_settings_strategy_priority_failover()}</p>
 				</div>
-				<a class="plugin-link" href="/admin/plugins">{$LL.admin_email_settings_open_plugins()}</a>
+				<div>
+					<h2>{$LL.admin_email_settings_tenant()}</h2>
+					<p>{tenantId || $LL.admin_email_settings_not_selected()}</p>
+				</div>
 			</div>
+		</AdminSection>
 
+		<AdminSection
+			title={$LL.admin_email_settings_provider_priority()}
+			description={$LL.admin_email_settings_provider_priority_description()}
+			actions={providerActions}
+		>
 			{#if providers.length === 0}
 				<div class="empty-state">
 					<p>{$LL.admin_email_settings_empty()}</p>
@@ -164,7 +169,10 @@
 										<h3>{provider.name}</h3>
 										<p>{provider.description}</p>
 									</div>
-									<a href={`/admin/plugins?plugin=${encodeURIComponent(provider.id)}`}>
+									<a
+										class="admin-link"
+										href={`/admin/plugins?plugin=${encodeURIComponent(provider.id)}`}
+									>
 										{$LL.admin_email_settings_provider_settings()}
 									</a>
 								</div>
@@ -185,10 +193,15 @@
 								</div>
 							</div>
 							<div class="provider-actions">
-								<button onclick={() => moveProvider(index, -1)} disabled={index === 0}>
+								<button
+									class="btn btn-secondary"
+									onclick={() => moveProvider(index, -1)}
+									disabled={index === 0}
+								>
 									{$LL.admin_email_settings_move_up()}
 								</button>
 								<button
+									class="btn btn-secondary"
 									onclick={() => moveProvider(index, 1)}
 									disabled={index === providers.length - 1}
 								>
@@ -199,50 +212,31 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		gap: 1.5rem;
-	}
-
-	.page-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: 1rem;
-	}
-
-	h1,
 	h2,
 	h3,
 	p {
 		margin: 0;
 	}
 
-	.panel {
-		border: 1px solid var(--border-subtle, #d7dce3);
-		border-radius: 16px;
-		padding: 1.25rem;
-		background: var(--surface-primary, #fff);
+	.state-text {
+		color: var(--color-text-muted);
+		font-size: 0.9rem;
 	}
 
-	.summary {
+	.settings-summary {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-		gap: 1rem;
-	}
-
-	.panel-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: 1rem;
-		margin-bottom: 1rem;
+		gap: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-panel);
+		padding: 18px;
 	}
 
 	.provider-list {
@@ -254,12 +248,12 @@
 	.provider-card {
 		display: grid;
 		grid-template-columns: auto 1fr auto;
-		gap: 1rem;
+		gap: 16px;
 		align-items: center;
-		padding: 1rem;
-		border-radius: 14px;
-		border: 1px solid var(--border-subtle, #d7dce3);
-		background: var(--surface-secondary, #f8fafc);
+		padding: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-card);
+		background: var(--color-surface-muted);
 	}
 
 	.provider-rank {
@@ -270,8 +264,8 @@
 		align-items: center;
 		justify-content: center;
 		font-weight: 700;
-		background: #dbeafe;
-		color: #1d4ed8;
+		background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+		color: var(--color-accent);
 	}
 
 	.provider-title-row {
@@ -282,17 +276,17 @@
 	}
 
 	.provider-title-row a,
-	.plugin-link {
-		color: #2563eb;
+	.admin-link {
+		color: var(--color-accent);
 		text-decoration: none;
 		font-weight: 600;
 	}
 
 	.provider-id {
 		margin-top: 0.5rem;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-family: var(--font-mono);
 		font-size: 0.875rem;
-		color: #475569;
+		color: var(--color-text-muted);
 	}
 
 	.provider-meta {
@@ -301,7 +295,7 @@
 		gap: 0.5rem 0.75rem;
 		margin-top: 0.625rem;
 		font-size: 0.875rem;
-		color: var(--text-secondary, #4b5563);
+		color: var(--color-text-muted);
 	}
 
 	.provider-meta-badge {
@@ -309,8 +303,8 @@
 		align-items: center;
 		border-radius: 999px;
 		padding: 0.2rem 0.65rem;
-		background: #e2e8f0;
-		color: #1e293b;
+		background: color-mix(in srgb, var(--color-text) 10%, transparent);
+		color: var(--color-text);
 		font-weight: 600;
 	}
 
@@ -325,40 +319,9 @@
 	}
 
 	button,
-	.save-button {
-		border: none;
-		border-radius: 10px;
-		padding: 0.7rem 1rem;
-		font: inherit;
-		cursor: pointer;
-		background: #0f172a;
-		color: #fff;
-	}
-
-	button[disabled],
-	.save-button[disabled] {
+	.btn[disabled] {
 		opacity: 0.55;
 		cursor: not-allowed;
-	}
-
-	.provider-actions button {
-		background: #e2e8f0;
-		color: #0f172a;
-	}
-
-	.alert {
-		padding: 0.875rem 1rem;
-		border-radius: 12px;
-	}
-
-	.alert.error {
-		background: #fef2f2;
-		color: #b91c1c;
-	}
-
-	.alert.success {
-		background: #f0fdf4;
-		color: #166534;
 	}
 
 	.empty-state {
@@ -366,12 +329,10 @@
 		flex-direction: column;
 		gap: 0.5rem;
 		padding: 1rem 0;
-		color: #475569;
+		color: var(--color-text-muted);
 	}
 
 	@media (max-width: 768px) {
-		.page-header,
-		.panel-header,
 		.provider-title-row,
 		.provider-card {
 			grid-template-columns: 1fr;

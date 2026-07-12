@@ -1,7 +1,7 @@
 {
 	"name": "@authrim/ar-admin-ui",
 	"private": true,
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"type": "module",
 	"engines": {
 		"node": ">=22.0.0"
@@ -26,8 +26,8 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"typecheck": "svelte-check --tsconfig ./tsconfig.json",
-		"deploy:preview": "pnpm build && wrangler deploy",
-		"deploy:production": "pnpm build && wrangler deploy",
+		"deploy:preview": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-ui.ts --env=\"$DEPLOY_ENV\" --package=ar-admin-ui --phase=final",
+		"deploy:production": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-ui.ts --env=\"$DEPLOY_ENV\" --package=ar-admin-ui --phase=final",
 		"typesafe-i18n": "typesafe-i18n"
 	},
 	"devDependencies": {
@@ -44,6 +44,7 @@
 		"@testing-library/svelte": "5.2.0-next.3",
 		"@testing-library/user-event": "^14.6.1",
 		"@types/d3": "^7.4.3",
+		"@types/geojson": "^7946.0.16",
 		"@unocss/reset": "^66.5.9",
 		"@vitest/ui": "^4.1.8",
 		"eslint": "^9.39.1",
@@ -63,8 +64,10 @@
 		"yaml": "2.8.3"
 	},
 	"dependencies": {
+		"@simplewebauthn/browser": "^13.2.2",
 		"@xyflow/svelte": "^1.5.0",
 		"d3": "^7.9.0",
+		"monaco-editor": "^0.55.1",
 		"qrcode": "^1.5.4"
 	}
 }

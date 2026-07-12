@@ -1,0 +1,5496 @@
+openapi: 3.2.0
+info:
+  title: Authrim Authentication API
+  version: 0.3.3
+  summary: Browser and API authentication endpoints.
+  description: >
+    Initial OpenAPI contract for endpoints owned by `@authrim/ar-auth`. This document intentionally
+    contains route contracts only; do not add secrets, private test credentials, or vulnerability
+    notes.
+  x-authrim-coverage: initial route inventory
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: OAuth
+  - name: Passkeys
+  - name: Email Codes
+  - name: TOTP
+  - name: Directory Password
+  - name: DID
+  - name: Anonymous Login
+  - name: Upgrade
+  - name: Consent
+  - name: Sessions
+  - name: Logout
+  - name: DID Auth
+  - name: Login Challenges
+  - name: Login Runtime
+  - name: Direct Auth
+  - name: Invitations
+  - name: Registration
+  - name: Auth
+paths:
+  /api/auth/health:
+    get:
+      tags:
+        - Health
+      summary: Return authentication Worker health.
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthHealth'
+  /authorize:
+    get:
+      tags:
+        - OAuth
+      summary: Start or continue an OAuth/OIDC authorization request.
+      parameters:
+        - $ref: '#/components/parameters/ClientIdQuery'
+        - name: redirect_uri
+          in: query
+          schema:
+            type: string
+        - name: response_type
+          in: query
+          schema:
+            type: string
+        - name: scope
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '302':
+          description: Redirect response.
+    post:
+      tags:
+        - OAuth
+      summary: Submit an OAuth/OIDC authorization request.
+      requestBody:
+        $ref: '#/components/requestBodies/FormOrJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '302':
+          description: Redirect response.
+  /par:
+    post:
+      tags:
+        - OAuth
+      summary: Create a pushed authorization request.
+      requestBody:
+        $ref: '#/components/requestBodies/PushedAuthorization'
+      responses:
+        '201':
+          $ref: '#/components/responses/PushedAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+      description: Stores OAuth/OIDC authorization parameters and returns a request_uri per RFC 9126.
+    get:
+      tags:
+        - Auth
+      operationId: getPar
+      summary: Reject non-POST PAR requests.
+      description: The pushed authorization request endpoint only supports POST. GET returns a
+        method-not-allowed OAuth-style error.
+      responses:
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /flow/login:
+    get:
+      tags:
+        - OAuth
+      summary: Render a built-in login flow page when enabled.
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+    post:
+      tags:
+        - OAuth
+      summary: Submit a built-in login flow step when enabled.
+      requestBody:
+        $ref: '#/components/requestBodies/FormOrJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+  /flow/confirm:
+    get:
+      tags:
+        - OAuth
+      summary: Render a built-in confirmation step when enabled.
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+    post:
+      tags:
+        - OAuth
+      summary: Submit a built-in confirmation step when enabled.
+      requestBody:
+        $ref: '#/components/requestBodies/FormOrJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+  /api/auth/passkeys/register/options:
+    post:
+      tags:
+        - Passkeys
+      summary: Create WebAuthn registration options.
+      requestBody:
+        $ref: '#/components/requestBodies/PasskeyRegisterOptions'
+      responses:
+        '200':
+          $ref: '#/components/responses/PasskeyRegisterOptions'
+  /api/auth/passkeys/register/verify:
+    post:
+      tags:
+        - Passkeys
+      summary: Verify WebAuthn registration and create a session.
+      requestBody:
+        $ref: '#/components/requestBodies/PasskeyRegisterVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/PasskeyRegisterVerify'
+  /api/auth/passkeys/login/options:
+    post:
+      tags:
+        - Passkeys
+      summary: Create discoverable WebAuthn login options.
+      requestBody:
+        $ref: '#/components/requestBodies/PasskeyLoginOptions'
+      responses:
+        '200':
+          $ref: '#/components/responses/PasskeyLoginOptions'
+  /api/auth/passkeys/login/verify:
+    post:
+      tags:
+        - Passkeys
+      summary: Verify WebAuthn login and create a session.
+      requestBody:
+        $ref: '#/components/requestBodies/PasskeyLoginVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/PasskeyLoginVerify'
+  /api/auth/email-codes/send:
+    post:
+      tags:
+        - Email Codes
+      summary: Send an email verification code.
+      requestBody:
+        $ref: '#/components/requestBodies/EmailCodeSend'
+      responses:
+        '200':
+          $ref: '#/components/responses/EmailCodeSend'
+  /api/auth/email-codes/verify:
+    post:
+      tags:
+        - Email Codes
+      summary: Verify an email code and create a session.
+      requestBody:
+        $ref: '#/components/requestBodies/EmailCodeVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/EmailCodeVerify'
+  /api/auth/totp/login/start:
+    post:
+      tags:
+        - TOTP
+      summary: Start TOTP login.
+      description: Creates a short-lived TOTP login challenge for an email or username identifier.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpLoginStart'
+      responses:
+        '200':
+          $ref: '#/components/responses/TotpLoginStart'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/totp/login/verify:
+    post:
+      tags:
+        - TOTP
+      summary: Verify TOTP login.
+      description: Verifies a TOTP code, creates an Authrim browser session, and optionally continues an OIDC authorization challenge.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpLoginVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/TotpSession'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/totp/signup/options:
+    post:
+      tags:
+        - TOTP
+      summary: Start TOTP signup.
+      description: Creates a short-lived TOTP enrollment challenge, synthetic pending credential metadata, secret, and otpauth URI for first-code activation. The user and stored credential are created when activation succeeds.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpSignupOptions'
+      responses:
+        '201':
+          $ref: '#/components/responses/TotpSignupOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/totp/signup/activate:
+    post:
+      tags:
+        - TOTP
+      summary: Activate TOTP signup.
+      description: Verifies the first TOTP code, creates and activates the stored credential, generates backup codes, and creates a browser session.
+      requestBody:
+        $ref: '#/components/requestBodies/TotpSignupActivate'
+      responses:
+        '200':
+          $ref: '#/components/responses/TotpSignupActivate'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/auth/directory-password/login:
+    post:
+      tags:
+        - Directory Password
+      summary: Authenticate with a directory password and create a managed browser session.
+      requestBody:
+        $ref: '#/components/requestBodies/DirectoryPasswordLogin'
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectoryPasswordLogin'
+  /api/auth/directory-password/migration/passkey/options:
+    post:
+      tags:
+        - Directory Password
+      summary: Create WebAuthn registration options for a directory password migration transaction.
+      requestBody:
+        $ref: '#/components/requestBodies/DirectoryMigrationPasskeyOptions'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
+  /api/auth/directory-password/migration/passkey/verify:
+    post:
+      tags:
+        - Directory Password
+      summary: Verify WebAuthn registration for a directory password migration transaction and create a session.
+      requestBody:
+        $ref: '#/components/requestBodies/DirectoryMigrationPasskeyVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectoryPasswordLogin'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
+  /api/auth/directory-password/migration/email-code/send:
+    post:
+      tags:
+        - Directory Password
+      summary: Send an email code for a directory password migration fallback or recovery transaction.
+      requestBody:
+        $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeSend'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
+        '429':
+          $ref: '#/components/responses/Any'
+  /api/auth/directory-password/migration/email-code/verify:
+    post:
+      tags:
+        - Directory Password
+      summary: Verify an email code for a directory password migration fallback or recovery transaction and create a session.
+      requestBody:
+        $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectoryPasswordLogin'
+        '400':
+          $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Any'
+  /api/auth/directory-connectors/heartbeat/{tenantId}/{connectorId}:
+    post:
+      tags:
+        - Directory Password
+      summary: Record a Wordwarden connector instance heartbeat.
+      description: >
+        Accepts a small HMAC-signed heartbeat from Authrim Wordwarden direct or tunnel transports.
+        The heartbeat key is separate from the password verification key. The payload must not
+        contain user PII, LDAP secrets, or raw LDAP internal values.
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+        - name: X-Authrim-Heartbeat-Key-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: X-Authrim-Heartbeat-Timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Unix epoch milliseconds or ISO-8601 timestamp within the accepted clock skew.
+        - name: X-Authrim-Heartbeat-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^(sha256=)?[a-fA-F0-9]{64}$'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectoryConnectorHeartbeat'
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectoryConnectorHeartbeat'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+  /api/auth/directory-relay/connect/{tenantId}/{connectorId}:
+    get:
+      tags:
+        - Directory Password
+      summary: Register a Wordwarden outbound relay WebSocket connection.
+      description: >
+        Upgrades to a WebSocket used by Authrim Wordwarden for outbound directory password
+        verification relay. The connector authenticates inside the WebSocket protocol with a
+        short-lived HMAC challenge response.
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
+      responses:
+        '101':
+          description: WebSocket connection accepted.
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '426':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /api/auth/dids/challenge:
+    post:
+      tags:
+        - DID
+      summary: Create a DID authentication challenge.
+      requestBody:
+        $ref: '#/components/requestBodies/DIDChallenge'
+      responses:
+        '200':
+          $ref: '#/components/responses/DIDChallenge'
+  /api/auth/dids/verify:
+    post:
+      tags:
+        - DID
+      summary: Verify a DID authentication proof and create a session.
+      requestBody:
+        $ref: '#/components/requestBodies/DIDVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/DIDVerify'
+  /api/auth/dids:
+    get:
+      tags:
+        - DID
+      summary: List linked DIDs for the current session.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          $ref: '#/components/responses/DIDList'
+  /api/auth/dids/{did}:
+    delete:
+      tags:
+        - DID
+      summary: Unlink a DID from the current session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: did
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/DIDUnlink'
+  /api/auth/anon-login/challenge:
+    post:
+      tags:
+        - Anonymous Login
+      summary: Create an anonymous-login challenge.
+      requestBody:
+        $ref: '#/components/requestBodies/AnonLoginChallenge'
+      responses:
+        '200':
+          $ref: '#/components/responses/AnonLoginChallenge'
+  /api/auth/anon-login/verify:
+    post:
+      tags:
+        - Anonymous Login
+      summary: Verify anonymous-login challenge and create or resume an anonymous session.
+      requestBody:
+        $ref: '#/components/requestBodies/AnonLoginVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/AnonLoginVerify'
+  /api/auth/upgrade:
+    post:
+      tags:
+        - Upgrade
+      summary: Start an anonymous-user upgrade.
+      requestBody:
+        $ref: '#/components/requestBodies/UpgradeStart'
+      responses:
+        '200':
+          $ref: '#/components/responses/UpgradeStart'
+  /api/auth/upgrade/complete:
+    post:
+      tags:
+        - Upgrade
+      summary: Complete an anonymous-user upgrade.
+      requestBody:
+        $ref: '#/components/requestBodies/UpgradeComplete'
+      responses:
+        '200':
+          $ref: '#/components/responses/UpgradeComplete'
+  /api/auth/upgrade/status:
+    get:
+      tags:
+        - Upgrade
+      summary: Return anonymous-user upgrade eligibility and history.
+      responses:
+        '200':
+          $ref: '#/components/responses/UpgradeStatus'
+  /api/auth/consents:
+    get:
+      tags:
+        - Consent
+      summary: Return consent request state for a consent challenge.
+      responses:
+        '200':
+          $ref: '#/components/responses/ConsentGet'
+    post:
+      tags:
+        - Consent
+      summary: Submit a consent decision.
+      requestBody:
+        $ref: '#/components/requestBodies/FormOrJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+  /auth/consent:
+    get:
+      tags:
+        - Consent
+      summary: Render built-in consent page when enabled.
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+    post:
+      tags:
+        - Consent
+      summary: Submit built-in consent page decision when enabled.
+      requestBody:
+        $ref: '#/components/requestBodies/FormOrJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+  /api/sessions:
+    post:
+      tags:
+        - Sessions
+      summary: Issue a short-lived session handoff token.
+      requestBody:
+        $ref: '#/components/requestBodies/SessionIssue'
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionIssue'
+  /api/sessions/verify:
+    post:
+      tags:
+        - Sessions
+      summary: Verify a session handoff token and create an RP session.
+      requestBody:
+        $ref: '#/components/requestBodies/SessionVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionVerify'
+  /api/sessions/status:
+    get:
+      tags:
+        - Sessions
+      summary: Return current browser session status.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionStatus'
+  /api/sessions/refresh:
+    post:
+      tags:
+        - Sessions
+      summary: Refresh current browser session expiration.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionRefresh'
+  /session/check:
+    get:
+      tags:
+        - Sessions
+      summary: OIDC Session Management check-session iframe endpoint.
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+  /logout:
+    get:
+      tags:
+        - Logout
+      summary: Start front-channel logout.
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '302':
+          description: Redirect response.
+  /logout/backchannel:
+    post:
+      tags:
+        - Logout
+      summary: Receive OIDC back-channel logout token.
+      requestBody:
+        $ref: '#/components/requestBodies/FormOrJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+  /api/auth/dids/register/challenge:
+    post:
+      tags:
+        - DID Auth
+      operationId: postApiAuthDidsRegisterChallenge
+      summary: Create a DID registration challenge for the current session.
+      description:
+        Creates a DID proof challenge for an authenticated browser session so the DID can be
+        linked to the current user.
+      responses:
+        '200':
+          $ref: '#/components/responses/DIDRegisterChallenge'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DIDRegisterChallenge'
+      security:
+        - sessionCookie: []
+  /api/auth/dids/register/verify:
+    post:
+      tags:
+        - DID Auth
+      operationId: postApiAuthDidsRegisterVerify
+      summary: Verify and link a DID registration proof.
+      description:
+        Verifies the DID proof for a prior registration challenge and links the DID to the
+        current authenticated session user.
+      responses:
+        '200':
+          $ref: '#/components/responses/DIDRegisterVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DIDRegisterVerify'
+      security:
+        - sessionCookie: []
+  /api/auth/login-challenges:
+    get:
+      tags:
+        - Login Challenges
+      operationId: getApiAuthLoginChallenges
+      summary: Read login challenge metadata.
+      description:
+        Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
+        and web-origin policy for a login or re-auth challenge.
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginChallenge'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: challenge_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Challenge id returned by the authorization flow.
+  /api/v1/login/interactions/start:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsStart
+      summary: Start or resume a LoginUI runtime Flow interaction.
+      description: >
+        Creates a LoginUI runtime Flow interaction for login, registration, approve, or account flows,
+        or resumes an existing interaction when a signed resume request is supplied. The endpoint is
+        feature-flagged and returns a signed runtime contract without AdminUI editor state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                flow_kind:
+                  type: string
+                  example: login
+                target_type:
+                  type: string
+                  enum:
+                    - tenant
+                    - oidc_client
+                    - saml_sp
+                target_id:
+                  type:
+                    - string
+                    - 'null'
+                client_id:
+                  type: string
+                saml_sp_id:
+                  type: string
+                scope:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                  description: Requested scopes used to filter Flow consent policy bindings.
+                requested_scope:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                  description: Requested scopes used to filter Flow consent policy bindings.
+                locale:
+                  type: string
+                  description: Preferred language for runtime Flow content.
+                requested_locale:
+                  type: string
+                  description: Preferred language for runtime Flow content.
+                authorization_challenge_id:
+                  type: string
+                  description: >
+                    OIDC authorization login challenge to continue when the Flow completes without
+                    a direct authentication endpoint returning the continuation URL.
+                saml_request_id:
+                  type: string
+                  description: SAML IdP request identifier to continue after the Flow completes.
+                saml_sp_entity_id:
+                  type: string
+                  description: SAML service provider entity ID for Flow protocol continuation.
+                return_to:
+                  type: string
+                  description: LoginUI return mode associated with the protocol request.
+                resume_interaction_id:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: Runtime interaction state and signed contract.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - schema_version
+                  - interaction
+                  - contract
+                  - contract_hash
+                  - signature
+                  - expires_in
+                  - resumed
+                properties:
+                  schema_version:
+                    type: string
+                  interaction:
+                    type: object
+                    additionalProperties: true
+                  assignment:
+                    type: object
+                    additionalProperties: true
+                  contract:
+                    type: object
+                    additionalProperties: true
+                  contract_hash:
+                    type: string
+                  signature:
+                    type: string
+                  expires_in:
+                    type: integer
+                  resumed:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /api/v1/login/interactions/{interaction_id}/email-verification/challenge:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsInteractionIdEmailVerificationChallenge
+      summary: Create an Email Verification Protocol nonce for the active runtime Flow step.
+      description: >
+        Returns a short-lived nonce only when mail OTP is enabled and the active Flow step is an
+        explicit email-verification step, or its mail-OTP branch leads directly to one. A response
+        with available=false means the client must use the normal mail-OTP path.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - step_id
+                - contract_hash
+                - signature
+              properties:
+                step_id:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: Email Verification Protocol availability and, when available, its nonce.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Set to no-store when a nonce is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - available
+                properties:
+                  available:
+                    type: boolean
+                  challenge_id:
+                    type: string
+                  nonce:
+                    type: string
+                  expires_in:
+                    type: integer
+                  interaction_id:
+                    type: string
+                  step_id:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /api/v1/login/interactions/{interaction_id}/submit:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsInteractionIdSubmit
+      summary: Submit the active LoginUI runtime Flow step.
+      description: >
+        Advances the active runtime Flow step after verifying CSRF, interaction state, expiry,
+        contract hash, HMAC signature, and current step identity. Step input is interpreted by the
+        active runtime component; consent-policy input records consent item decisions for the
+        authenticated user.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - step_id
+                - contract_hash
+                - signature
+              properties:
+                step_id:
+                  type: string
+                node_id:
+                  type: string
+                selected_handle:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+                input:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Updated runtime interaction state and next step.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - schema_version
+                  - interaction
+                  - step
+                  - completed
+                  - output
+                properties:
+                  schema_version:
+                    type: string
+                  interaction:
+                    type: object
+                    additionalProperties: true
+                  step:
+                    type:
+                      - object
+                      - 'null'
+                    additionalProperties: true
+                  completed:
+                    type: boolean
+                  output:
+                    type:
+                      - object
+                      - 'null'
+                    additionalProperties: true
+                    properties:
+                      action:
+                        type: string
+                        description: Runtime completion action, such as complete or continue_protocol.
+                      redirect_url:
+                        type: string
+                        description: URL that LoginUI should navigate to after Flow completion.
+                      protocol_continuation:
+                        type: object
+                        additionalProperties: true
+                        description: Protocol-specific continuation metadata for OIDC, SAML, or direct flows.
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /api/v1/auth/direct/email-code/send:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectEmailCodeSend
+      summary: Send a Direct Auth email code.
+      description:
+        Creates an email-code challenge for Direct Auth after validating the client, channel,
+        origin, and requested email identifier. For an eligible explicit email-verification Flow,
+        a valid Email Verification Protocol presentation completes verification without sending a
+        code; missing, unsupported, or invalid presentations use the normal mail-OTP response.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectEmailCodeSend'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectEmailCodeSend'
+  /api/v1/auth/direct/email-code/verify:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectEmailCodeVerify
+      summary: Verify a Direct Auth email code.
+      description:
+        Verifies the email code and returns a short-lived Direct Auth artifact bound to client,
+        channel, provider, and PKCE metadata.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectAuthArtifact'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectEmailCodeVerify'
+  /api/v1/auth/direct/logout:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectLogout
+      summary: End a Direct Auth managed browser session.
+      description:
+        Invalidates the current Direct Auth session when present, optionally revokes associated
+        device secrets according to logout_scope, and clears Direct Auth cookies.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectLogout'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectLogout'
+  /api/v1/auth/direct/passkey/login/finish:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyLoginFinish
+      summary: Finish Direct Auth passkey login.
+      description:
+        Verifies the passkey authentication response and returns a short-lived Direct Auth
+        artifact for session redemption or token exchange.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectAuthArtifact'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectPasskeyLoginFinish'
+  /api/v1/auth/direct/passkey/login/start:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyLoginStart
+      summary: Start Direct Auth passkey login.
+      description:
+        Creates WebAuthn authentication options for a Direct Auth passkey login request after
+        validating client, channel, origin, and login hints.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectPasskeyStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectPasskeyLoginStart'
+  /api/v1/auth/direct/passkey/register/finish:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyRegisterFinish
+      summary: Finish authenticated-user Direct Auth passkey registration.
+      description:
+        Verifies a passkey registration response for the currently authenticated Direct Auth
+        session and stores the new passkey.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectPasskeyRegisterFinish'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectPasskeyRegisterFinish'
+  /api/v1/auth/direct/passkey/register/start:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeyRegisterStart
+      summary: Start authenticated-user Direct Auth passkey registration.
+      description:
+        Creates WebAuthn registration options for adding a passkey to the current Direct Auth
+        session user.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectPasskeyStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectPasskeyRegisterStart'
+  /api/v1/auth/direct/passkey/signup/finish:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeySignupFinish
+      summary: Finish Direct Auth passkey signup.
+      description:
+        Verifies a signup passkey registration response, creates the user when needed, and
+        returns a Direct Auth artifact.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectAuthArtifact'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectPasskeySignupFinish'
+  /api/v1/auth/direct/passkey/signup/start:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectPasskeySignupStart
+      summary: Start Direct Auth passkey signup.
+      description:
+        Creates WebAuthn registration options for Direct Auth signup after validating client,
+        channel, origin, and email policy.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectPasskeyStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectPasskeySignupStart'
+  /api/v1/auth/direct/session:
+    get:
+      tags:
+        - Direct Auth
+      operationId: getApiV1AuthDirectSession
+      summary: Read the current Direct Auth managed browser session.
+      description:
+        Returns the current managed browser session and user profile when a valid Direct Auth
+        session cookie or bearer session id is present.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectSessionStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectSession
+      summary: Redeem a Direct Auth artifact into a managed browser session.
+      description:
+        Consumes a short-lived Direct Auth artifact, verifies its client/channel/provider/PKCE
+        bindings, creates an HttpOnly managed browser session, and returns session and user
+        metadata.
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectSessionCreate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectSessionCreate'
+  /api/v1/auth/direct/token:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthDirectToken
+      summary: Return the legacy Direct Auth token compatibility error.
+      description:
+        This legacy endpoint never issues tokens. Use the canonical OAuth token endpoint with
+        the Direct Auth finish grant instead.
+      responses:
+        '400':
+          $ref: '#/components/responses/DirectTokenCompatibility'
+      requestBody:
+        $ref: '#/components/requestBodies/DirectToken'
+  /api/v1/invitations/use:
+    post:
+      tags:
+        - Invitations
+      operationId: postApiV1InvitationsUse
+      summary: Consume an invitation after signup.
+      description:
+        Marks an invitation token as used for a verified user in the invited tenant and applies
+        configured role or organization assignments.
+      responses:
+        '200':
+          $ref: '#/components/responses/InvitationUse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/InvitationUse'
+      security: []
+  /api/v1/invitations/validate:
+    get:
+      tags:
+        - Invitations
+      operationId: getApiV1InvitationsValidate
+      summary: Validate an invitation token.
+      description:
+        Validates a public invitation token and returns tenant and invited-email metadata used
+        by the invitation landing page.
+      responses:
+        '200':
+          $ref: '#/components/responses/InvitationValidate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+  /api/v1/registration-fields:
+    get:
+      tags:
+        - Registration
+      operationId: getApiV1RegistrationFields
+      summary: List registration-visible custom fields.
+      description:
+        Returns custom claim schema definitions marked as visible on the registration screen for
+        the resolved tenant.
+      responses:
+        '200':
+          $ref: '#/components/responses/RegistrationFields'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      security: []
+  /auth/login-challenge:
+    get:
+      tags:
+        - Login Challenges
+      operationId: getAuthLoginChallenge
+      summary: Read login challenge metadata.
+      description:
+        Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
+        and web-origin policy for a login or re-auth challenge.
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginChallenge'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: challenge_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Challenge id returned by the authorization flow.
+  /admin-init-setup:
+    get:
+      tags:
+        - Auth
+      operationId: getAdminInitSetup
+      summary: Render the initial admin setup page.
+      description:
+        Returns the browser setup HTML page when a valid setup token is supplied, or an HTML
+        error/completed page when setup is unavailable.
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Initial setup token generated by deployment tooling.
+  /api/admin-init-setup/complete:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminInitSetupComplete
+      summary: Complete router-side initial setup.
+      description:
+        Validates the temporary setup session, permanently disables router-side setup, cleans
+        up setup CSRF state, and returns Admin UI passkey setup handoff details.
+      responses:
+        '200':
+          $ref: '#/components/responses/SetupComplete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/SetupComplete'
+  /api/admin-init-setup/initialize:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminInitSetupInitialize
+      summary: Initialize the first administrator.
+      description:
+        Validates the one-time setup token and CSRF token, creates the initial administrator,
+        assigns the system admin role, and returns a temporary setup session plus Admin UI setup
+        token.
+      responses:
+        '200':
+          $ref: '#/components/responses/SetupInitialize'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/SetupInitialize'
+  /api/admin-init-setup/status:
+    get:
+      tags:
+        - Auth
+      operationId: getApiAdminInitSetupStatus
+      summary: Read initial setup status.
+      description:
+        Returns whether the system has an administrator, whether setup is disabled, and whether
+        a setup token is currently present.
+      responses:
+        '200':
+          $ref: '#/components/responses/SetupStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/auth/passkey/options:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminAuthPasskeyOptions
+      summary: Create Admin passkey login options.
+      description:
+        Creates discoverable WebAuthn authentication options for Admin UI passkey login and
+        stores a short-lived challenge.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminPasskeyOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminPasskeyOptions'
+  /api/admin/auth/passkey/verify:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminAuthPasskeyVerify
+      summary: Verify Admin passkey login.
+      description:
+        Verifies an Admin UI passkey authentication response, updates the passkey counter, and
+        returns the authenticated admin identity.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminPasskeyVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminPasskeyVerify'
+  /api/admin/setup-token/generate:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenGenerate
+      summary: Generate a replacement Admin UI setup token.
+      description:
+        Uses the recovery key to revoke pending setup tokens for an admin user and issue a new
+        Admin UI setup token for passkey registration.
+      responses:
+        '200':
+          $ref: '#/components/responses/SetupTokenGenerate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/SetupTokenGenerate'
+  /api/admin/setup-token/passkey/complete:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenPasskeyComplete
+      summary: Complete Admin UI setup passkey registration.
+      description:
+        Verifies the setup-token passkey registration response, stores the admin passkey, and
+        marks the setup token as used.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminPasskeyVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminPasskeyVerify'
+  /api/admin/setup-token/passkey/options:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenPasskeyOptions
+      summary: Create setup-token WebAuthn registration options.
+      description:
+        Validates an Admin UI setup token and returns WebAuthn registration options plus a
+        challenge identifier.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminPasskeyOptions'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/AdminPasskeyOptions'
+  /api/admin/setup-token/verify:
+    post:
+      tags:
+        - Auth
+      operationId: postApiAdminSetupTokenVerify
+      summary: Verify an Admin UI setup token.
+      description:
+        Checks whether a setup token is pending and unexpired and returns the associated admin
+        user identity.
+      responses:
+        '200':
+          $ref: '#/components/responses/SetupTokenVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/SetupTokenVerify'
+  /api/flow/cancel:
+    post:
+      tags:
+        - Auth
+      operationId: postApiFlowCancel
+      summary: Cancel a Flow Engine session.
+      description:
+        Cancels a server-driven Flow Engine session for the current tenant context and returns
+        the cancellation status.
+      responses:
+        '200':
+          $ref: '#/components/responses/FlowCancel'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/FlowCancel'
+  /api/flow/init:
+    post:
+      tags:
+        - Auth
+      operationId: postApiFlowInit
+      summary: Initialize a Flow Engine session.
+      description:
+        Creates a Flow Engine runtime session for login, authorization, consent, or logout and
+        returns the initial UI contract.
+      responses:
+        '200':
+          $ref: '#/components/responses/FlowInit'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/FlowInit'
+  /api/flow/state/{sessionId}:
+    get:
+      tags:
+        - Auth
+      operationId: getApiFlowStateBySessionId
+      summary: Read current Flow Engine state.
+      description: Returns the current public Flow Engine state and UI contract for an existing session.
+      responses:
+        '200':
+          $ref: '#/components/responses/FlowState'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+  /api/flow/submit:
+    post:
+      tags:
+        - Auth
+      operationId: postApiFlowSubmit
+      summary: Submit a Flow Engine capability response.
+      description: Submits a capability-specific response and returns the next UI contract, redirect
+        instruction, or flow error.
+      responses:
+        '200':
+          $ref: '#/components/responses/FlowSubmit'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        $ref: '#/components/requestBodies/FlowSubmit'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_session
+  parameters:
+    ClientIdQuery:
+      name: client_id
+      in: query
+      required: false
+      schema:
+        type: string
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonObject'
+    FormOrJson:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonObject'
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            additionalProperties: true
+    PushedAuthorization:
+      required: false
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/PushedAuthorizationRequest'
+          example:
+            client_id: client_123
+            redirect_uri: https://app.example.com/callback
+            response_type: code
+            scope: openid profile email
+            code_challenge: rfc7636-code-challenge
+            code_challenge_method: S256
+    PasskeyRegisterOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyRegisterOptionsRequest'
+          example:
+            email: user@example.com
+            name: Example User
+    PasskeyRegisterVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyRegisterVerifyRequest'
+          example:
+            userId: user_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+            deviceName: MacBook Pro
+    PasskeyLoginOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyLoginOptionsRequest'
+          example: {}
+    PasskeyLoginVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyLoginVerifyRequest'
+          example:
+            challengeId: challenge_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+    EmailCodeSend:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EmailCodeSendRequest'
+          example:
+            email: user@example.com
+    EmailCodeVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EmailCodeVerifyRequest'
+          example:
+            email: user@example.com
+            code: '123456'
+    TotpLoginStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpLoginStartRequest'
+          example:
+            identifier: user@example.com
+    TotpLoginVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpLoginVerifyRequest'
+          example:
+            challenge_id: 2c2f1c47-9f40-4bc1-a5e3-a19f1cb1a44e
+            code: '123456'
+            authorization_challenge_id: ach_123
+            defer_authorization_continuation: false
+    TotpSignupOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupOptionsRequest'
+          example:
+            email: user@example.com
+            name: Example User
+            label: Authenticator app
+            custom_fields: {}
+    TotpSignupActivate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupActivateRequest'
+          example:
+            challenge_id: 2c2f1c47-9f40-4bc1-a5e3-a19f1cb1a44e
+            code: '123456'
+    DirectoryPasswordLogin:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryPasswordLoginRequest'
+          example:
+            username: alice
+            password: correct-horse-battery-staple
+            invite_token: invite-token-if-admin-invitation-fallback-is-required
+    DirectoryMigrationPasskeyOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryMigrationPasskeyOptionsRequest'
+          example:
+            transaction_id: damt_123
+            transaction_token: migration-transaction-token
+            display_name: Example User
+    DirectoryMigrationPasskeyVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryMigrationPasskeyVerifyRequest'
+          example:
+            transaction_id: damt_123
+            transaction_token: migration-transaction-token
+            challenge_id: challenge_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+            device_name: Work laptop
+    DirectoryMigrationEmailCodeSend:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryMigrationEmailCodeSendRequest'
+          example:
+            transaction_id: damt_email_123
+            transaction_token: migration-email-token
+    DirectoryMigrationEmailCodeVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryMigrationEmailCodeVerifyRequest'
+          example:
+            transaction_id: damt_email_123
+            transaction_token: migration-email-token
+            challenge_id: challenge_123
+            code: '123456'
+    DirectoryConnectorHeartbeat:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryConnectorHeartbeatRequest'
+          example:
+            instance_id: wwi_1234567890123456789012
+            display_name: campus-a
+            transport: direct
+            version: 0.13.0
+            release_channel: stable
+            started_at: '2026-06-24T00:00:00.000Z'
+            health_status: healthy
+            health_summary:
+              ldap: ok
+            config_fingerprint: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            config_categories:
+              - ldap
+            drift_severity: none
+    DIDChallenge:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDChallengeRequest'
+          example:
+            did: did:web:example.com
+    DIDVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDVerifyRequest'
+          example:
+            challenge_id: challenge_123
+            proof: eyJhbGciOiJFZERTQSJ9...
+    DIDRegisterChallenge:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDRegisterChallengeRequest'
+          example:
+            did: did:web:example.com
+    DIDRegisterVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDVerifyRequest'
+          example:
+            challenge_id: challenge_123
+            proof: eyJhbGciOiJFZERTQSJ9...
+    AnonLoginChallenge:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnonLoginChallengeRequest'
+          example:
+            client_id: client_123
+            device_signature: device_sig_123
+            platform: web
+    AnonLoginVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnonLoginVerifyRequest'
+          example:
+            challenge_id: challenge_123
+            device_signature: device_sig_123
+            proof: signed_challenge
+    UpgradeStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpgradeStartRequest'
+          example:
+            method: email
+    UpgradeComplete:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpgradeCompleteRequest'
+          example:
+            upgrade_token: upgrade_123
+            method: email
+            preserve_sub: true
+    SessionIssue:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionIssueRequest'
+          example:
+            session_id: sess_123
+            rp_origin: https://app.example.com
+    SessionVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionVerifyRequest'
+          example:
+            token: session_token_123
+            rp_origin: https://app.example.com
+    DirectEmailCodeSend:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectEmailCodeSendRequest'
+          example:
+            client_id: client_123
+            email: user@example.com
+            code_challenge: rfc7636-code-challenge
+            code_challenge_method: S256
+            channel: browser
+    DirectEmailCodeVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectEmailCodeVerifyRequest'
+          example:
+            attempt_id: attempt_123
+            code: '123456'
+            code_verifier: rfc7636-code-verifier
+            channel: browser
+    DirectLogout:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectLogoutRequest'
+          example:
+            client_id: client_123
+            revoke_tokens: false
+    DirectPasskeyLoginStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyLoginStartRequest'
+          example:
+            client_id: client_123
+            code_challenge: rfc7636-code-challenge
+            code_challenge_method: S256
+            channel: browser
+    DirectPasskeyLoginFinish:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyFinishRequest'
+          example:
+            challenge_id: challenge_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+            code_verifier: rfc7636-code-verifier
+            channel: browser
+    DirectPasskeySignupStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeySignupStartRequest'
+          example:
+            client_id: client_123
+            email: user@example.com
+            display_name: Example User
+            code_challenge: rfc7636-code-challenge
+            code_challenge_method: S256
+            channel: browser
+    DirectPasskeySignupFinish:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyFinishRequest'
+          example:
+            challenge_id: challenge_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+            code_verifier: rfc7636-code-verifier
+            channel: browser
+    DirectPasskeyRegisterStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyRegisterStartRequest'
+          example:
+            display_name: MacBook Pro
+            authenticator_type: platform
+    DirectPasskeyRegisterFinish:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyRegisterFinishRequest'
+          example:
+            challenge_id: challenge_123
+            credential:
+              id: credential-id
+              type: public-key
+              response: {}
+            device_name: MacBook Pro
+    DirectSessionCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectSessionCreateRequest'
+          example:
+            direct_auth_artifact: direct_auth_code_123
+            client_id: client_123
+            code_verifier: rfc7636-code-verifier
+            channel: browser
+    DirectToken:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectTokenRequest'
+          example:
+            direct_auth_artifact: direct_auth_code_123
+            client_id: client_123
+            code_verifier: rfc7636-code-verifier
+    InvitationUse:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/InvitationUseRequest'
+          example:
+            token: invite_123
+            user_id: user_123
+    SetupInitialize:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupInitializeRequest'
+          example:
+            setup_token: setup_123
+            email: admin@example.com
+            name: Admin User
+            csrf_token: csrf_123
+    SetupComplete:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupCompleteRequest'
+          example: {}
+    AdminPasskeyOptions:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPasskeyOptionsRequest'
+          example:
+            token: admin_setup_token_123
+            rp_id: admin.example.com
+    AdminPasskeyVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPasskeyVerifyRequest'
+          example:
+            token: admin_setup_token_123
+            challenge_id: challenge_123
+            passkey_response:
+              id: credential-id
+              type: public-key
+              response: {}
+            origin: https://admin.example.com
+    SetupTokenGenerate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupTokenGenerateRequest'
+          example:
+            admin_user_id: admin_123
+            recovery_key: recovery_key
+    SetupTokenVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupTokenVerifyRequest'
+          example:
+            token: setup_token_123
+    FlowCancel:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowCancelRequest'
+          example:
+            sessionId: flow_sess_123
+    FlowInit:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowInitRequest'
+          example:
+            flowType: authorization
+            clientId: client_123
+            oauthParams:
+              responseType: code
+              redirectUri: https://app.example.com/callback
+              scope: openid profile
+              codeChallenge: rfc7636-code-challenge
+              codeChallengeMethod: S256
+    FlowSubmit:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowSubmitRequest'
+          example:
+            sessionId: flow_sess_123
+            requestId: req_123
+            capabilityId: email_code.verify
+            response:
+              code: '123456'
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonObject'
+    Any:
+      description: Successful response. The representation can be JSON, HTML, or a redirect.
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    AuthHealth:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthHealthResponse'
+          example:
+            status: ok
+            service: ar-auth
+            version: 0.1.0
+            codeVersion: a1b2c3d4
+            deployTime: 2026-06-20T00:00:00Z
+            timestamp: 2026-06-20T00:00:00.000Z
+    PushedAuthorization:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PushedAuthorizationResponse'
+          example:
+            request_uri: urn:ietf:params:oauth:request_uri:par_123
+            expires_in: 90
+    PasskeyRegisterOptions:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyRegisterOptionsResponse'
+          example:
+            options:
+              challenge: challenge
+              rp:
+                name: Authrim
+                id: auth.example.com
+              user:
+                id: user_123
+                name: user@example.com
+                displayName: Example User
+              pubKeyCredParams: []
+            userId: user_123
+    PasskeyRegisterVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyRegisterVerifyResponse'
+          example:
+            verified: true
+            passkeyId: passkey_123
+            sessionId: sess_123
+            message: Passkey registered successfully
+            userId: user_123
+            user:
+              id: user_123
+              email: user@example.com
+              name: Example User
+              email_verified: true
+    PasskeyLoginOptions:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyLoginOptionsResponse'
+          example:
+            options:
+              challenge: challenge
+              rpId: auth.example.com
+              allowCredentials: []
+              userVerification: required
+            challengeId: challenge_123
+    PasskeyLoginVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyLoginVerifyResponse'
+          example:
+            verified: true
+            sessionId: sess_123
+            userId: user_123
+            user:
+              id: user_123
+              email: user@example.com
+              name: Example User
+              email_verified: true
+    EmailCodeSend:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EmailCodeSendResponse'
+          example:
+            success: true
+            message: Verification code sent to your email
+            messageId: msg_123
+    EmailCodeVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EmailCodeVerifyResponse'
+          example:
+            success: true
+            sessionId: sess_123
+            userId: user_123
+            user:
+              id: user_123
+              email: user@example.com
+              name: Example User
+              email_verified: 1
+    TotpLoginStart:
+      description: TOTP login challenge response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpLoginStartResponse'
+    TotpSession:
+      description: TOTP login session response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSessionResponse'
+    TotpSignupOptions:
+      description: TOTP signup enrollment options response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupOptionsResponse'
+    TotpSignupActivate:
+      description: TOTP signup activation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TotpSignupActivateResponse'
+    DirectoryPasswordLogin:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryPasswordLoginResponse'
+          example:
+            ok: true
+            expires_in: 86400
+            session:
+              userId: user_123
+              createdAt: 1770000000000
+              expiresAt: 1770086400000
+              authTime: 1770000000
+              acr: urn:mace:incommon:iap:bronze
+              amr:
+                - pwd
+                - directory
+            user:
+              id: user_123
+              email: user@example.com
+              name: Example User
+    DirectoryConnectorHeartbeat:
+      description: Heartbeat accepted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryConnectorHeartbeatResponse'
+          example:
+            ok: true
+            status: connected
+            instance_id: wwi_1234567890123456789012
+            connector_id: wwcon_8K4M2Q9F7D3H6P1X
+    DIDChallenge:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDChallengeResponse'
+          example:
+            challenge_id: challenge_123
+            challenge: Sign this challenge
+            nonce: nonce_123
+            allowed_verification_methods:
+              - id: did:web:example.com#key-1
+                type: JsonWebKey2020
+                controller: did:web:example.com
+                publicKeyJwk:
+                  kty: OKP
+                  crv: Ed25519
+                  x: ...
+            expires_in: 300
+    DIDVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDVerifyResponse'
+          example:
+            session_id: sess_123
+            user_id: user_123
+            expires_in: 86400
+    DIDRegisterChallenge:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDChallengeResponse'
+          example:
+            challenge_id: challenge_123
+            challenge: Sign this challenge
+            nonce: nonce_123
+            allowed_verification_methods:
+              - id: did:web:example.com#key-1
+                type: JsonWebKey2020
+                controller: did:web:example.com
+                publicKeyJwk:
+                  kty: OKP
+                  crv: Ed25519
+                  x: ...
+            expires_in: 300
+    DIDRegisterVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDRegisterVerifyResponse'
+          example:
+            success: true
+            did: did:web:example.com
+            message: DID successfully linked to your account
+    DIDList:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDListResponse'
+          example:
+            dids:
+              - did: did:web:example.com
+                linked_at: 1770000000000
+                last_used_at: 1770000000000
+                raw_attributes: null
+            count: 1
+    DIDUnlink:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DIDUnlinkResponse'
+          example:
+            success: true
+            did: did:web:example.com
+            message: DID unlinked successfully
+    AnonLoginChallenge:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnonLoginChallengeResponse'
+          example:
+            challenge_id: challenge_123
+            challenge: anon_challenge_123
+            expires_at: 1770000300000
+    AnonLoginVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AnonLoginVerifyResponse'
+          example:
+            success: true
+            session_id: sess_123
+            user_id: anon_123
+            is_new_user: true
+            upgrade_eligible: true
+            user:
+              id: anon_123
+              user_type: anonymous
+    UpgradeStart:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpgradeStartResponse'
+          example:
+            success: true
+            user_id: anon_123
+            upgrade_token: upgrade_123
+            instructions:
+              method: email
+              endpoint: /api/auth/email-codes/send
+              description: Verify email with OTP
+              next_step: Call /api/auth/upgrade/complete after verification
+    UpgradeComplete:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpgradeCompleteResponse'
+          example:
+            success: true
+            user_id: user_123
+            preserve_sub: true
+            method: email
+            upgraded_at: 1770000000000
+            profile_completion_required: false
+            missing_required_custom_claims: []
+            account_lifecycle_state: active
+    UpgradeStatus:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpgradeStatusResponse'
+          example:
+            user_id: user_123
+            is_anonymous: false
+            upgrade_eligible: false
+            profile_completion_required: false
+            missing_required_custom_claims: []
+            account_lifecycle_state: active
+            upgrade_history:
+              - id: upgrade_123
+                method: email
+                upgraded_at: 1770000000000
+                preserve_sub: true
+    ConsentGet:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ConsentGetResponse'
+          example:
+            challenge_id: consent_123
+            client:
+              client_id: client_123
+              client_name: Example App
+              is_trusted: false
+            scopes:
+              - scope: openid
+                required: true
+            user:
+              id: user_123
+            organizations: []
+            primary_org: null
+            roles: []
+            features:
+              org_selector_enabled: false
+            granular_scopes_enabled: false
+            consent_management_enabled: false
+            consent_language: en
+    SessionIssue:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionIssueResponse'
+          example:
+            token: session_token_123
+            expires_in: 300
+            session_id: sess_123
+    SessionVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionVerifyResponse'
+          example:
+            session_id: sess_456
+            user_id: user_123
+            expires_at: 1770086400000
+            verified: true
+    SessionStatus:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionStatusResponse'
+          example:
+            active: true
+            session_id: sess_123
+            user_id: user_123
+            email: user@example.com
+            name: Example User
+            expires_at: 1770086400000
+            created_at: 1770000000000
+            auth_time: 1770000000
+            acr: urn:mace:incommon:iap:bronze
+            amr:
+              - pwd
+    SessionRefresh:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SessionRefreshResponse'
+          example:
+            session_id: sess_123
+            user_id: user_123
+            expires_at: 1770086400000
+            extended_by: 3600
+            message: Session extended successfully
+    DirectPasskeyStart:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyStartResponse'
+          example:
+            challenge_id: challenge_123
+            options:
+              challenge: challenge
+              rpId: auth.example.com
+              allowCredentials: []
+              userVerification: required
+    DirectAuthArtifact:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectAuthArtifactResponse'
+          example:
+            direct_auth_artifact: direct_auth_code_123
+            expires_in: 60
+            is_new_user: true
+    DirectEmailCodeSend:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectEmailCodeSendResponse'
+          example:
+            attempt_id: attempt_123
+            expires_in: 300
+            masked_email: u***r@example.com
+    DirectLogout:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectLogoutResponse'
+          example:
+            success: true
+            message: Logged out successfully
+    DirectPasskeyRegisterFinish:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectPasskeyRegisterFinishResponse'
+          example:
+            credential_id: cred_123
+            public_key: base64-public-key
+            authenticator_type: platform
+            transports:
+              - internal
+            created_at: 2026-06-20T00:00:00.000Z
+    DirectSessionCreate:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrowserSessionResponse'
+          example:
+            ok: true
+            expires_in: 86400
+            session:
+              userId: user_123
+              createdAt: 1770000000000
+              expiresAt: 1770086400000
+              authTime: 1770000000
+              acr: urn:mace:incommon:iap:bronze
+              amr:
+                - pwd
+                - directory
+            user:
+              id: user_123
+              email: user@example.com
+              name: Example User
+    DirectTokenCompatibility:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CompatibilityErrorResponse'
+          example:
+            error: legacy_endpoint_not_supported
+            error_description: This endpoint is no longer supported.
+    InvitationUse:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/InvitationUseResponse'
+          example:
+            success: true
+            invitation_id: inv_123
+            tenant_id: tenant_123
+            role_assigned: true
+            organization_assigned: false
+    SetupInitialize:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupInitializeResponse'
+          example:
+            success: true
+            user_id: admin_123
+            temp_session_token: temp_sess_123
+            setup_token: admin_setup_token_123
+            admin_ui_url: https://admin.example.com
+            admin_ui_setup_url: https://admin.example.com/setup/complete?token=admin_setup_token_123
+    SetupComplete:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupCompleteResponse'
+          example:
+            success: true
+            user:
+              id: admin_123
+              email: admin@example.com
+              name: Admin User
+              role: system_admin
+            message: Administrator account created. Please complete passkey registration on Admin UI.
+            admin_ui_url: https://admin.example.com
+            admin_ui_setup_url: https://admin.example.com/setup/complete?token=admin_setup_token_123
+            setup_token: admin_setup_token_123
+            cli_fallback:
+              'If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env
+              <env>'
+    AdminPasskeyOptions:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPasskeyOptionsResponse'
+          example:
+            options:
+              challenge: challenge
+              rp:
+                name: Authrim
+                id: admin.example.com
+              user:
+                id: admin_123
+                name: admin@example.com
+                displayName: Admin User
+            challenge_id: challenge_123
+    AdminPasskeyVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPasskeyVerifyResponse'
+          example:
+            success: true
+            user:
+              id: admin_123
+              email: admin@example.com
+              name: Admin User
+    SetupTokenGenerate:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupTokenGenerateResponse'
+          example:
+            token: admin_setup_token_123
+            expires_at: 1770086400000
+            admin_user:
+              id: admin_123
+              email: admin@example.com
+    SetupTokenVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupTokenVerifyResponse'
+          example:
+            valid: true
+            user:
+              id: admin_user_123
+              email: admin@example.com
+              name: Admin User
+    FlowCancel:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowCancelResponse'
+          example:
+            success: true
+            sessionId: flow_sess_123
+    FlowInit:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowInitResponse'
+          example:
+            sessionId: flow_sess_123
+            uiContractVersion: '0.1'
+            uiContract:
+              version: '0.1'
+              sessionId: flow_sess_123
+              nodeId: start
+              capabilities: []
+    FlowSubmit:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowSubmitResponse'
+          example:
+            type: continue
+            uiContract:
+              version: '0.1'
+              sessionId: flow_sess_123
+              nodeId: email_code
+              capabilities: []
+    MethodNotAllowed:
+      description: Method not allowed error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MethodNotAllowedError'
+    LoginChallenge:
+      description: Login challenge metadata for Login UI rendering.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LoginChallengeResponse'
+    DirectSessionStatus:
+      description: Current Direct Auth managed browser session.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectSessionStatusResponse'
+    InvitationValidate:
+      description: Invitation validation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/InvitationValidateResponse'
+    RegistrationFields:
+      description: Registration fields visible to the signup form.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RegistrationFieldsResponse'
+    SetupStatus:
+      description: Initial setup status response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SetupStatusResponse'
+    FlowState:
+      description: Current Flow Engine state and UI contract.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowStateResponse'
+  schemas:
+    JsonObject:
+      type: object
+      additionalProperties: true
+    Error:
+      type: object
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+        message:
+          type: string
+        webauthn_signal:
+          $ref: '#/components/schemas/WebAuthnSignalHint'
+    WebAuthnSignalHint:
+      type: object
+      description:
+        Optional browser-side WebAuthn Signal API hint. When unknown_credential is true, clients
+        that just received a WebAuthn credential assertion may call
+        PublicKeyCredential.signalUnknownCredential() for that credential ID.
+      properties:
+        unknown_credential:
+          type: boolean
+    AuthHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: ar-auth
+        version:
+          type: string
+          example: 0.1.0
+        codeVersion:
+          type: string
+          example: a1b2c3d4
+        deployTime:
+          type: string
+          example: 2026-06-20T00:00:00Z
+        timestamp:
+          type: string
+          format: date-time
+          example: 2026-06-20T00:00:00.000Z
+      required:
+        - status
+        - service
+        - version
+        - codeVersion
+        - deployTime
+        - timestamp
+    PushedAuthorizationRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        redirect_uri:
+          type: string
+          format: uri
+          example: https://app.example.com/callback
+        response_type:
+          type: string
+          example: code
+        scope:
+          type: string
+          example: openid profile email
+        state:
+          type: string
+          example: state_123
+        code_challenge:
+          type: string
+          example: rfc7636-code-challenge
+        code_challenge_method:
+          type: string
+          example: S256
+        nonce:
+          type: string
+          example: nonce_123
+        request:
+          type: string
+          description: Signed request object JWT.
+      required:
+        - client_id
+        - redirect_uri
+        - response_type
+    PushedAuthorizationResponse:
+      type: object
+      properties:
+        request_uri:
+          type: string
+          example: urn:ietf:params:oauth:request_uri:par_123
+        expires_in:
+          type: integer
+          example: 90
+      required:
+        - request_uri
+        - expires_in
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: string
+          example: user_123
+        email:
+          anyOf:
+            - type: string
+              format: email
+              example: user@example.com
+            - type: 'null'
+        name:
+          anyOf:
+            - type: string
+              example: Example User
+            - type: 'null'
+        email_verified:
+          oneOf:
+            - type: boolean
+              example: true
+            - type: integer
+              example: 1
+        created_at:
+          type: string
+          example: 2026-06-20T00:00:00.000Z
+        updated_at:
+          type: string
+          example: 2026-06-20T00:00:00.000Z
+        last_login_at:
+          anyOf:
+            - type: string
+              example: 2026-06-20T00:00:00.000Z
+            - type: 'null'
+        user_type:
+          type: string
+          example: anonymous
+    WebAuthnOptions:
+      type: object
+      additionalProperties: true
+      description: WebAuthn options generated by @simplewebauthn/server.
+    WebAuthnCredential:
+      type: object
+      additionalProperties: true
+      description: WebAuthn credential response from the browser.
+    PasskeyRegisterOptionsRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        name:
+          type: string
+          example: Example User
+        custom_fields:
+          type: object
+          additionalProperties: true
+      required:
+        - email
+    PasskeyRegisterOptionsResponse:
+      type: object
+      properties:
+        options:
+          $ref: '#/components/schemas/WebAuthnOptions'
+        userId:
+          type: string
+          example: user_123
+      required:
+        - options
+        - userId
+    PasskeyRegisterVerifyRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: user_123
+        credential:
+          $ref: '#/components/schemas/WebAuthnCredential'
+        deviceName:
+          type: string
+          example: MacBook Pro
+      required:
+        - userId
+        - credential
+    PasskeyRegisterVerifyResponse:
+      type: object
+      properties:
+        verified:
+          type: boolean
+          example: true
+        passkeyId:
+          type: string
+          example: passkey_123
+        sessionId:
+          type: string
+          example: sess_123
+        message:
+          type: string
+          example: Passkey registered successfully
+        userId:
+          type: string
+          example: user_123
+        user:
+          $ref: '#/components/schemas/AuthUser'
+      required:
+        - verified
+        - passkeyId
+        - sessionId
+        - message
+        - userId
+        - user
+    PasskeyLoginOptionsRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: Accepted by older clients but discoverable passkey login does not require it.
+          example: user@example.com
+    PasskeyLoginOptionsResponse:
+      type: object
+      properties:
+        options:
+          $ref: '#/components/schemas/WebAuthnOptions'
+        challengeId:
+          type: string
+          example: challenge_123
+      required:
+        - options
+        - challengeId
+    PasskeyLoginVerifyRequest:
+      type: object
+      properties:
+        challengeId:
+          type: string
+          example: challenge_123
+        credential:
+          $ref: '#/components/schemas/WebAuthnCredential'
+      required:
+        - challengeId
+        - credential
+    PasskeyLoginVerifyResponse:
+      type: object
+      properties:
+        verified:
+          type: boolean
+          example: true
+        sessionId:
+          type: string
+          example: sess_123
+        userId:
+          type: string
+          example: user_123
+        user:
+          $ref: '#/components/schemas/AuthUser'
+      required:
+        - verified
+        - sessionId
+        - userId
+        - user
+    EmailCodeSendRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        name:
+          type: string
+          example: Example User
+        custom_fields:
+          type: object
+          additionalProperties: true
+      required:
+        - email
+    EmailCodeSendResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Verification code sent to your email
+        messageId:
+          type: string
+          example: msg_123
+      required:
+        - success
+        - message
+    EmailCodeVerifyRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        code:
+          type: string
+          example: '123456'
+      required:
+        - email
+        - code
+    EmailCodeVerifyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        sessionId:
+          type: string
+          example: sess_123
+        userId:
+          type: string
+          example: user_123
+        user:
+          $ref: '#/components/schemas/AuthUser'
+      required:
+        - success
+        - sessionId
+        - userId
+        - user
+    TotpLoginStartRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - identifier
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          description: Email address or username/user identifier.
+    TotpLoginStartResponse:
+      type: object
+      required:
+        - challenge_id
+        - expires_in
+      properties:
+        challenge_id:
+          type: string
+        expires_in:
+          type: integer
+          minimum: 1
+    TotpLoginVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - challenge_id
+        - code
+      properties:
+        challenge_id:
+          type: string
+        code:
+          type: string
+          pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+        authorization_challenge_id:
+          type: string
+        defer_authorization_continuation:
+          type: boolean
+          default: false
+    TotpSignupOptionsRequest:
+      type: object
+      additionalProperties: true
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        label:
+          type: string
+          maxLength: 100
+        custom_fields:
+          type: object
+          additionalProperties: true
+        human_verification_response:
+          type: string
+        cf_turnstile_response:
+          type: string
+        authorization_challenge_id:
+          type: string
+    TotpSignupActivateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - challenge_id
+        - code
+      properties:
+        challenge_id:
+          type: string
+        code:
+          type: string
+          pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+        defer_authorization_continuation:
+          type: boolean
+          default: false
+    TotpCredential:
+      type: object
+      required:
+        - id
+        - label
+        - algorithm
+        - digits
+        - period
+        - window
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        algorithm:
+          type: string
+          enum:
+            - SHA1
+            - SHA256
+            - SHA512
+        digits:
+          type: integer
+          enum:
+            - 6
+            - 8
+        period:
+          type: integer
+        window:
+          type: integer
+        status:
+          type: string
+          enum:
+            - pending
+            - active
+            - disabled
+        created_at:
+          type: integer
+          format: int64
+        activated_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+    TotpProfile:
+      type: object
+      required:
+        - algorithm
+        - digits
+        - period
+        - window
+      properties:
+        algorithm:
+          type: string
+        digits:
+          type: integer
+        period:
+          type: integer
+        window:
+          type: integer
+    TotpSignupOptionsResponse:
+      type: object
+      required:
+        - challenge_id
+        - expires_in
+        - credential
+        - secret
+        - otpauth_uri
+        - profile
+      properties:
+        challenge_id:
+          type: string
+        expires_in:
+          type: integer
+        credential:
+          $ref: '#/components/schemas/TotpCredential'
+        secret:
+          type: string
+          description: Base32 TOTP secret shown once during enrollment.
+        otpauth_uri:
+          type: string
+          format: uri
+        profile:
+          $ref: '#/components/schemas/TotpProfile'
+    TotpSession:
+      type: object
+      required:
+        - userId
+        - createdAt
+        - expiresAt
+        - authTime
+        - acr
+        - amr
+      properties:
+        userId:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        expiresAt:
+          type: integer
+          format: int64
+        authTime:
+          type: integer
+          format: int64
+        acr:
+          type: string
+          example: urn:authrim:aal:2
+        amr:
+          type: array
+          items:
+            type: string
+          example:
+            - otp
+            - totp
+    TotpSessionResponse:
+      type: object
+      required:
+        - success
+        - sessionId
+        - expires_in
+        - session
+        - user
+        - redirect_url
+      properties:
+        success:
+          type: boolean
+        sessionId:
+          type: string
+        expires_in:
+          type: integer
+        session:
+          $ref: '#/components/schemas/TotpSession'
+        user:
+          $ref: '#/components/schemas/AuthUser'
+        authorization:
+          type: object
+          additionalProperties: true
+        redirect_url:
+          type: string
+    TotpSignupActivateResponse:
+      allOf:
+        - $ref: '#/components/schemas/TotpSessionResponse'
+        - type: object
+          required:
+            - ok
+            - credential
+            - backup_codes
+          properties:
+            ok:
+              type: boolean
+            credential:
+              $ref: '#/components/schemas/TotpCredential'
+            backup_codes:
+              type: array
+              items:
+                type: string
+    DirectoryPasswordLoginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 1
+          example: alice
+        password:
+          type: string
+          format: password
+          example: correct-horse-battery-staple
+        invite_token:
+          type: string
+          minLength: 1
+          description: Optional tenant invitation token used only to authorize admin-invitation-only migration fallback.
+          example: invite-token-if-admin-invitation-fallback-is-required
+        authorization_challenge_id:
+          type: string
+          minLength: 1
+          example: auth_chal_123
+        human_verification_response:
+          type: string
+          minLength: 1
+          example: turnstile-response-token
+      required:
+        - username
+        - password
+    DirectoryMigrationPasskeyOptionsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-transaction-token
+        display_name:
+          type: string
+          maxLength: 160
+          example: Example User
+      required:
+        - transaction_id
+        - transaction_token
+    DirectoryMigrationPasskeyVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-transaction-token
+        challenge_id:
+          type: string
+          minLength: 1
+          example: challenge_123
+        credential:
+          type: object
+          additionalProperties: true
+        device_name:
+          type: string
+          maxLength: 160
+          example: Work laptop
+      required:
+        - transaction_id
+        - transaction_token
+        - challenge_id
+        - credential
+    DirectoryMigrationEmailCodeSendRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_email_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-email-token
+      required:
+        - transaction_id
+        - transaction_token
+    DirectoryMigrationEmailCodeVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          minLength: 1
+          example: damt_email_123
+        transaction_token:
+          type: string
+          minLength: 1
+          example: migration-email-token
+        challenge_id:
+          type: string
+          minLength: 1
+          example: challenge_123
+        code:
+          type: string
+          pattern: "^\\d{6}$"
+          example: '123456'
+      required:
+        - transaction_id
+        - transaction_token
+        - challenge_id
+        - code
+    DirectoryConnectorHeartbeatRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - instance_id
+        - transport
+        - version
+        - started_at
+        - health_status
+        - config_fingerprint
+      properties:
+        instance_id:
+          type: string
+          maxLength: 128
+          pattern: '^[a-zA-Z0-9._:-]+$'
+          description: Immutable Wordwarden instance identifier persisted in the connector state directory.
+        display_name:
+          type: string
+          maxLength: 128
+          description: Human-readable operational display name. Not an identity boundary.
+        transport:
+          type: string
+          enum:
+            - relay
+            - direct
+            - tunnel
+        version:
+          type: string
+          maxLength: 64
+        release_channel:
+          type: string
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9_.-]{1,32}$'
+          default: stable
+        started_at:
+          type: string
+          format: date-time
+        health_status:
+          type: string
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
+        health_summary:
+          type: object
+          additionalProperties: true
+          description: Redacted operational health summary. Must not include PII, LDAP secrets, or LDAP internal values.
+        config_fingerprint:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+        config_categories:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            maxLength: 64
+        drift_severity:
+          type: string
+          enum:
+            - none
+            - warning
+            - critical
+          default: none
+    DirectoryConnectorHeartbeatResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - status
+        - instance_id
+        - connector_id
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+        status:
+          type: string
+          enum:
+            - connected
+            - unhealthy
+        instance_id:
+          type: string
+        connector_id:
+          type: string
+          pattern: '^wwcon_[a-zA-Z0-9]{16}$'
+    BrowserSessionResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        expires_in:
+          type: integer
+          example: 86400
+        session:
+          type: object
+          properties:
+            userId:
+              type: string
+              example: user_123
+            createdAt:
+              type: integer
+              example: 1770000000000
+            expiresAt:
+              type: integer
+              example: 1770086400000
+            authTime:
+              type: integer
+              example: 1770000000
+            acr:
+              type: string
+              example: urn:mace:incommon:iap:bronze
+            amr:
+              type: array
+              items:
+                type: string
+              example:
+                - pwd
+                - directory
+          additionalProperties: true
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              example: user_123
+            email:
+              type: string
+              format: email
+              example: user@example.com
+            name:
+              anyOf:
+                - type: string
+                  example: Example User
+                - type: 'null'
+        authorization:
+          type: object
+          additionalProperties: true
+        redirect_url:
+          type: string
+          format: uri
+          example: https://app.example.com/callback?code=abc
+      required:
+        - ok
+        - expires_in
+        - session
+        - user
+    DirectoryPasswordLoginResponse:
+      oneOf:
+        - $ref: '#/components/schemas/BrowserSessionResponse'
+        - $ref: '#/components/schemas/DirectoryPasswordMigrationRequiredResponse'
+        - $ref: '#/components/schemas/DirectoryPasswordRecoveryRequiredResponse'
+    DirectoryPasswordMigrationRequiredResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - false
+        migration:
+          type: object
+          additionalProperties: false
+          properties:
+            required:
+              type: boolean
+              enum:
+                - true
+            action:
+              type: string
+              enum:
+                - require_passkey
+            transaction_id:
+              type: string
+              example: damt_123
+            transaction_token:
+              type: string
+              example: migration-transaction-token
+            expires_at:
+              type: integer
+              example: 1770000600000
+            campaign_id:
+              type: string
+              example: damc_123
+            state:
+              type: string
+              example: passkey_required
+            reason:
+              anyOf:
+                - type: string
+                  example: immediate
+                - type: 'null'
+            passkey_required_at:
+              anyOf:
+                - type: integer
+                  example: 1770000000000
+                - type: 'null'
+            email_code_fallback_mode:
+              type: string
+              enum:
+                - migration_recovery
+                - directory_unavailable_recovery
+                - admin_invitation_only
+                - login_method
+                - disabled
+            email_code_fallback_available:
+              type: boolean
+            email_code_fallback:
+              anyOf:
+                - $ref: '#/components/schemas/DirectoryPasswordEmailCodeTransaction'
+                - type: 'null'
+          required:
+            - required
+            - action
+            - transaction_id
+            - transaction_token
+            - expires_at
+            - campaign_id
+            - state
+            - email_code_fallback_mode
+            - email_code_fallback_available
+        user:
+          $ref: '#/components/schemas/AuthUser'
+      required:
+        - ok
+        - migration
+        - user
+    DirectoryPasswordRecoveryRequiredResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - false
+        recovery:
+          type: object
+          additionalProperties: false
+          properties:
+            required:
+              type: boolean
+              enum:
+                - true
+            reason:
+              type: string
+              enum:
+                - directory_unavailable
+            transaction_id:
+              type: string
+              example: damt_recovery_123
+            transaction_token:
+              type: string
+              example: recovery-transaction-token
+            expires_at:
+              type: integer
+              example: 1770000600000
+            masked_email:
+              type: string
+              example: al***@example.com
+          required:
+            - required
+            - reason
+            - transaction_id
+            - transaction_token
+            - expires_at
+            - masked_email
+        user:
+          $ref: '#/components/schemas/AuthUser'
+      required:
+        - ok
+        - recovery
+        - user
+    DirectoryPasswordEmailCodeTransaction:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          example: damt_email_123
+        transaction_token:
+          type: string
+          example: migration-email-token
+        expires_at:
+          type: integer
+          example: 1770000600000
+        masked_email:
+          type: string
+          example: al***@example.com
+      required:
+        - transaction_id
+        - transaction_token
+        - expires_at
+        - masked_email
+    DIDChallengeRequest:
+      type: object
+      properties:
+        did:
+          type: string
+          example: did:web:example.com
+        nonce:
+          type: string
+          example: nonce_123
+      required:
+        - did
+    DIDVerificationMethod:
+      type: object
+      properties:
+        id:
+          type: string
+          example: did:web:example.com#key-1
+        type:
+          type: string
+          example: JsonWebKey2020
+        controller:
+          type: string
+          example: did:web:example.com
+        publicKeyJwk:
+          type: object
+          additionalProperties: true
+    DIDChallengeResponse:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        challenge:
+          type: string
+          example: Sign this challenge
+        nonce:
+          type: string
+          example: nonce_123
+        allowed_verification_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/DIDVerificationMethod'
+        expires_in:
+          type: integer
+          example: 300
+      required:
+        - challenge_id
+        - challenge
+        - nonce
+        - allowed_verification_methods
+        - expires_in
+    DIDVerifyRequest:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        proof:
+          type: string
+          example: eyJhbGciOiJFZERTQSJ9...
+      required:
+        - challenge_id
+        - proof
+    DIDVerifyResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          example: sess_123
+        user_id:
+          type: string
+          example: user_123
+        expires_in:
+          type: integer
+          example: 86400
+      required:
+        - session_id
+        - user_id
+        - expires_in
+    DIDRegisterVerifyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        did:
+          type: string
+          example: did:web:example.com
+        message:
+          type: string
+          example: DID successfully linked to your account
+      required:
+        - success
+        - did
+        - message
+    DIDListResponse:
+      type: object
+      properties:
+        dids:
+          type: array
+          items:
+            type: object
+            properties:
+              did:
+                type: string
+                example: did:web:example.com
+              linked_at:
+                type: integer
+                example: 1770000000000
+              last_used_at:
+                anyOf:
+                  - type: integer
+                    example: 1770000000000
+                  - type: 'null'
+              raw_attributes:
+                anyOf:
+                  - type: object
+                    additionalProperties: true
+                  - type: 'null'
+        count:
+          type: integer
+          example: 1
+      required:
+        - dids
+        - count
+    DIDUnlinkResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        did:
+          type: string
+          example: did:web:example.com
+        message:
+          type: string
+          example: DID unlinked successfully
+      required:
+        - success
+        - did
+        - message
+    AnonLoginChallengeRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        device_signature:
+          type: string
+          example: device_sig_123
+        device_stability:
+          type: string
+          example: stable
+        platform:
+          type: string
+          example: web
+      required:
+        - client_id
+    AnonLoginChallengeResponse:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        challenge:
+          type: string
+          example: anon_challenge_123
+        expires_at:
+          type: integer
+          example: 1770000300000
+      required:
+        - challenge_id
+        - challenge
+        - expires_at
+    AnonLoginVerifyRequest:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        device_signature:
+          type: string
+          example: device_sig_123
+        proof:
+          type: string
+          example: signed_challenge
+      required:
+        - challenge_id
+        - device_signature
+    AnonLoginVerifyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        session_id:
+          type: string
+          example: sess_123
+        user_id:
+          type: string
+          example: anon_123
+        is_new_user:
+          type: boolean
+          example: true
+        upgrade_eligible:
+          type: boolean
+          example: true
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              example: anon_123
+            user_type:
+              type: string
+              example: anonymous
+      required:
+        - success
+        - session_id
+        - user_id
+        - is_new_user
+        - upgrade_eligible
+        - user
+    UpgradeStartRequest:
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+            - email
+            - social
+            - phone
+          example: email
+      required:
+        - method
+    UpgradeStartResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        user_id:
+          type: string
+          example: anon_123
+        upgrade_token:
+          type: string
+          example: upgrade_123
+        instructions:
+          type: object
+          properties:
+            method:
+              type: string
+              example: email
+            endpoint:
+              type: string
+              example: /api/auth/email-codes/send
+            description:
+              type: string
+              example: Verify email with OTP
+            next_step:
+              type: string
+              example: Call /api/auth/upgrade/complete after verification
+      required:
+        - success
+        - user_id
+        - upgrade_token
+        - instructions
+    UpgradeCompleteRequest:
+      type: object
+      properties:
+        upgrade_token:
+          type: string
+          example: upgrade_123
+        method:
+          type: string
+          example: email
+        preserve_sub:
+          type: boolean
+          example: true
+      required:
+        - upgrade_token
+        - method
+    UpgradeCompleteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        user_id:
+          type: string
+          example: user_123
+        previous_user_id:
+          type: string
+          example: anon_123
+        preserve_sub:
+          type: boolean
+          example: true
+        method:
+          type: string
+          example: email
+        upgraded_at:
+          type: integer
+          example: 1770000000000
+        profile_completion_required:
+          type: boolean
+          example: false
+        missing_required_custom_claims:
+          type: array
+          items:
+            $ref: '#/components/schemas/MissingRequiredField'
+        account_lifecycle_state:
+          type: string
+          example: active
+      required:
+        - success
+        - user_id
+        - preserve_sub
+        - method
+        - upgraded_at
+        - profile_completion_required
+        - missing_required_custom_claims
+        - account_lifecycle_state
+    MissingRequiredField:
+      type: object
+      properties:
+        field_key:
+          type: string
+          example: department
+        label:
+          type: string
+          example: Department
+        field_type:
+          type: string
+          example: text
+    UpgradeStatusResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          example: user_123
+        is_anonymous:
+          type: boolean
+          example: false
+        upgrade_eligible:
+          type: boolean
+          example: false
+        profile_completion_required:
+          type: boolean
+          example: false
+        missing_required_custom_claims:
+          type: array
+          items:
+            $ref: '#/components/schemas/MissingRequiredField'
+        account_lifecycle_state:
+          type: string
+          example: active
+        upgrade_history:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                example: upgrade_123
+              method:
+                type: string
+                example: email
+              upgraded_at:
+                type: integer
+                example: 1770000000000
+              preserve_sub:
+                type: boolean
+                example: true
+      required:
+        - user_id
+        - is_anonymous
+        - upgrade_eligible
+        - profile_completion_required
+        - missing_required_custom_claims
+        - account_lifecycle_state
+        - upgrade_history
+    ConsentGetResponse:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: consent_123
+        client:
+          type: object
+          properties:
+            client_id:
+              type: string
+              example: client_123
+            client_name:
+              type: string
+              example: Example App
+            logo_uri:
+              type: string
+              example: https://example.com/logo.png
+            client_uri:
+              type: string
+              example: https://example.com
+            policy_uri:
+              type: string
+              example: https://example.com/privacy
+            tos_uri:
+              type: string
+              example: https://example.com/terms
+            is_trusted:
+              type: boolean
+              example: false
+        scopes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        user:
+          type: object
+          additionalProperties: true
+        organizations:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        primary_org:
+          anyOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+        roles:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        features:
+          type: object
+          additionalProperties: true
+        granular_scopes_enabled:
+          type: boolean
+          example: false
+        consent_management_enabled:
+          type: boolean
+          example: false
+        consent_language:
+          type: string
+          example: en
+      required:
+        - challenge_id
+        - client
+        - scopes
+        - user
+    SessionIssueRequest:
+      type: object
+      properties:
+        session_id:
+          type: string
+          example: sess_123
+        rp_origin:
+          type: string
+          format: uri
+          example: https://app.example.com
+      required:
+        - session_id
+    SessionIssueResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: session_token_123
+        expires_in:
+          type: integer
+          example: 300
+        session_id:
+          type: string
+          example: sess_123
+      required:
+        - token
+        - expires_in
+        - session_id
+    SessionVerifyRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          example: session_token_123
+        rp_origin:
+          type: string
+          format: uri
+          example: https://app.example.com
+      required:
+        - token
+    SessionVerifyResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          example: sess_456
+        user_id:
+          type: string
+          example: user_123
+        expires_at:
+          type: integer
+          example: 1770086400000
+        verified:
+          type: boolean
+          example: true
+      required:
+        - session_id
+        - user_id
+        - expires_at
+        - verified
+    SessionStatusResponse:
+      type: object
+      properties:
+        active:
+          type: boolean
+          example: true
+        session_id:
+          type: string
+          example: sess_123
+        user_id:
+          type: string
+          example: user_123
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        name:
+          type: string
+          example: Example User
+        expires_at:
+          type: integer
+          example: 1770086400000
+        created_at:
+          type: integer
+          example: 1770000000000
+        auth_time:
+          type: integer
+          example: 1770000000
+        acr:
+          type: string
+          example: urn:mace:incommon:iap:bronze
+        amr:
+          type: array
+          items:
+            type: string
+          example:
+            - pwd
+        error:
+          type: string
+          example: no_session
+      required:
+        - active
+    SessionRefreshResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          example: sess_123
+        user_id:
+          type: string
+          example: user_123
+        expires_at:
+          type: integer
+          example: 1770086400000
+        extended_by:
+          type: integer
+          example: 3600
+        message:
+          type: string
+          example: Session extended successfully
+      required:
+        - session_id
+        - user_id
+        - expires_at
+        - extended_by
+        - message
+    DIDRegisterChallengeRequest:
+      type: object
+      properties:
+        did:
+          type: string
+          example: did:web:example.com
+      required:
+        - did
+    DirectAuthChannel:
+      type: string
+      enum:
+        - browser
+        - native
+      example: browser
+    DirectPasskeyLoginStartRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        code_challenge:
+          type: string
+          example: rfc7636-code-challenge
+        code_challenge_method:
+          type: string
+          enum:
+            - S256
+          example: S256
+        channel:
+          $ref: '#/components/schemas/DirectAuthChannel'
+        scope:
+          type: string
+          example: openid profile email
+        authorization_challenge_id:
+          type: string
+          example: auth_chal_123
+        human_verification_response:
+          type: string
+          example: turnstile_token
+      required:
+        - client_id
+        - code_challenge
+        - code_challenge_method
+        - channel
+    DirectPasskeyStartResponse:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        options:
+          $ref: '#/components/schemas/WebAuthnOptions'
+      required:
+        - challenge_id
+        - options
+    DirectPasskeyFinishRequest:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        credential:
+          $ref: '#/components/schemas/WebAuthnCredential'
+        code_verifier:
+          type: string
+          example: rfc7636-code-verifier
+        channel:
+          $ref: '#/components/schemas/DirectAuthChannel'
+      required:
+        - challenge_id
+        - credential
+        - code_verifier
+        - channel
+    DirectAuthArtifactResponse:
+      type: object
+      properties:
+        direct_auth_artifact:
+          type: string
+          example: direct_auth_code_123
+        expires_in:
+          type: integer
+          example: 60
+        is_new_user:
+          type: boolean
+          example: true
+      required:
+        - direct_auth_artifact
+        - expires_in
+    DirectPasskeySignupStartRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        display_name:
+          type: string
+          example: Example User
+        code_challenge:
+          type: string
+          example: rfc7636-code-challenge
+        code_challenge_method:
+          type: string
+          enum:
+            - S256
+          example: S256
+        channel:
+          $ref: '#/components/schemas/DirectAuthChannel'
+        scope:
+          type: string
+          example: openid profile email
+        authenticator_type:
+          type: string
+          enum:
+            - platform
+            - cross-platform
+            - any
+          example: any
+        resident_key:
+          type: string
+          enum:
+            - required
+            - preferred
+            - discouraged
+          example: required
+        user_verification:
+          type: string
+          enum:
+            - required
+            - preferred
+            - discouraged
+          example: required
+        custom_fields:
+          type: object
+          additionalProperties: true
+      required:
+        - client_id
+        - code_challenge
+        - code_challenge_method
+        - channel
+    DirectEmailCodeSendRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        code_challenge:
+          type: string
+          example: rfc7636-code-challenge
+        code_challenge_method:
+          type: string
+          enum:
+            - S256
+          example: S256
+        channel:
+          $ref: '#/components/schemas/DirectAuthChannel'
+        scope:
+          type: string
+          example: openid profile email
+        locale:
+          type: string
+          example: en
+        invite_token:
+          type: string
+          example: invite_123
+        authorization_challenge_id:
+          type: string
+          example: auth_chal_123
+        display_name:
+          type: string
+          example: Example User
+        custom_fields:
+          type: object
+          additionalProperties: true
+        human_verification_response:
+          type: string
+          example: turnstile_token
+        email_verification_token:
+          type: string
+          description: >
+            Browser-provided Email Verification Protocol SD-JWT presentation. It is accepted only
+            with the matching challenge and runtime interaction.
+        email_verification_challenge_id:
+          type: string
+          description: Challenge identifier returned by the runtime email-verification endpoint.
+        runtime_interaction_id:
+          type: string
+          description: Runtime Flow interaction to bind to either OTP or protocol verification.
+      required:
+        - client_id
+        - email
+        - code_challenge
+        - code_challenge_method
+        - channel
+    DirectEmailCodeSendResponse:
+      oneOf:
+        - type: object
+          properties:
+            attempt_id:
+              type: string
+              example: attempt_123
+            expires_in:
+              type: integer
+              example: 300
+            masked_email:
+              type: string
+              example: u***r@example.com
+          required:
+            - attempt_id
+            - expires_in
+            - masked_email
+        - $ref: '#/components/schemas/DirectAuthArtifactResponse'
+    DirectEmailCodeVerifyRequest:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+          example: attempt_123
+        code:
+          type: string
+          example: '123456'
+        code_verifier:
+          type: string
+          example: rfc7636-code-verifier
+        channel:
+          $ref: '#/components/schemas/DirectAuthChannel'
+      required:
+        - attempt_id
+        - code
+        - code_verifier
+        - channel
+    DirectLogoutRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        revoke_tokens:
+          type: boolean
+          example: false
+        logout_scope:
+          type: string
+          example: local
+    DirectLogoutResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Logged out successfully
+      required:
+        - success
+        - message
+    DirectPasskeyRegisterStartRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        display_name:
+          type: string
+          example: MacBook Pro
+        authenticator_type:
+          type: string
+          enum:
+            - platform
+            - cross-platform
+            - any
+          example: platform
+        resident_key:
+          type: string
+          enum:
+            - required
+            - preferred
+            - discouraged
+          example: required
+        user_verification:
+          type: string
+          enum:
+            - required
+            - preferred
+            - discouraged
+          example: required
+    DirectPasskeyRegisterFinishRequest:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: challenge_123
+        credential:
+          $ref: '#/components/schemas/WebAuthnCredential'
+        device_name:
+          type: string
+          example: MacBook Pro
+      required:
+        - challenge_id
+        - credential
+    DirectPasskeyRegisterFinishResponse:
+      type: object
+      properties:
+        credential_id:
+          type: string
+          example: cred_123
+        public_key:
+          type: string
+          example: base64-public-key
+        authenticator_type:
+          type: string
+          enum:
+            - platform
+            - cross-platform
+          example: platform
+        transports:
+          type: array
+          items:
+            type: string
+          example:
+            - internal
+        created_at:
+          type: string
+          format: date-time
+          example: 2026-06-20T00:00:00.000Z
+      required:
+        - credential_id
+        - public_key
+        - authenticator_type
+        - created_at
+    DirectSessionCreateRequest:
+      type: object
+      properties:
+        direct_auth_artifact:
+          type: string
+          example: direct_auth_code_123
+        client_id:
+          type: string
+          example: client_123
+        code_verifier:
+          type: string
+          example: rfc7636-code-verifier
+        channel:
+          type: string
+          enum:
+            - browser
+          example: browser
+        provider_id:
+          type: string
+          example: passkey
+        authorization_challenge_id:
+          type: string
+          example: auth_chal_123
+        defer_authorization_continuation:
+          type: boolean
+          default: false
+          description: >
+            Creates the managed browser session without consuming an authorization challenge so a
+            runtime Flow can complete its remaining steps first.
+      required:
+        - direct_auth_artifact
+        - client_id
+        - code_verifier
+        - channel
+    DirectTokenRequest:
+      type: object
+      properties:
+        direct_auth_artifact:
+          type: string
+          example: direct_auth_code_123
+        client_id:
+          type: string
+          example: client_123
+        code_verifier:
+          type: string
+          example: rfc7636-code-verifier
+    InvitationUseRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          example: invite_123
+        user_id:
+          type: string
+          example: user_123
+      required:
+        - token
+        - user_id
+    InvitationUseResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        invitation_id:
+          type: string
+          example: inv_123
+        tenant_id:
+          type: string
+          example: tenant_123
+        role_assigned:
+          type: boolean
+          example: true
+        organization_assigned:
+          type: boolean
+          example: false
+      required:
+        - success
+    SetupInitializeRequest:
+      type: object
+      properties:
+        setup_token:
+          type: string
+          example: setup_123
+        email:
+          type: string
+          format: email
+          example: admin@example.com
+        name:
+          type: string
+          example: Admin User
+        csrf_token:
+          type: string
+          example: csrf_123
+      required:
+        - setup_token
+        - email
+        - csrf_token
+    SetupInitializeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        user_id:
+          type: string
+          example: admin_123
+        temp_session_token:
+          type: string
+          example: temp_sess_123
+        setup_token:
+          type: string
+          example: admin_setup_token_123
+        admin_ui_url:
+          anyOf:
+            - type: string
+              format: uri
+              example: https://admin.example.com
+            - type: 'null'
+        admin_ui_setup_url:
+          anyOf:
+            - type: string
+              format: uri
+              example: https://admin.example.com/setup/complete?token=admin_setup_token_123
+            - type: 'null'
+      required:
+        - success
+        - user_id
+        - temp_session_token
+        - setup_token
+    SetupCompleteRequest:
+      type: object
+      properties: {}
+      additionalProperties: false
+      description: Requires X-Setup-Session header; JSON body is ignored.
+    SetupCompleteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              example: admin_123
+            email:
+              type: string
+              format: email
+              example: admin@example.com
+            name:
+              anyOf:
+                - type: string
+                  example: Admin User
+                - type: 'null'
+            role:
+              type: string
+              example: system_admin
+        message:
+          type: string
+          example: Administrator account created. Please complete passkey registration on Admin UI.
+        admin_ui_url:
+          anyOf:
+            - type: string
+              format: uri
+              example: https://admin.example.com
+            - type: 'null'
+        admin_ui_setup_url:
+          anyOf:
+            - type: string
+              format: uri
+              example: https://admin.example.com/setup/complete?token=admin_setup_token_123
+            - type: 'null'
+        setup_token:
+          type: string
+          example: admin_setup_token_123
+        cli_fallback:
+          type: string
+          example:
+            'If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env
+            <env>'
+      required:
+        - success
+        - user
+        - message
+        - setup_token
+        - cli_fallback
+    AdminPasskeyOptionsRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          example: admin_setup_token_123
+        rp_id:
+          type: string
+          example: admin.example.com
+      required:
+        - token
+        - rp_id
+    AdminPasskeyOptionsResponse:
+      type: object
+      properties:
+        options:
+          $ref: '#/components/schemas/WebAuthnOptions'
+        challenge_id:
+          type: string
+          example: challenge_123
+      required:
+        - options
+        - challenge_id
+    AdminPasskeyVerifyRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          example: admin_setup_token_123
+        challenge_id:
+          type: string
+          example: challenge_123
+        passkey_response:
+          $ref: '#/components/schemas/WebAuthnCredential'
+        origin:
+          type: string
+          format: uri
+          example: https://admin.example.com
+      required:
+        - token
+        - challenge_id
+        - passkey_response
+        - origin
+    AdminPasskeyVerifyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              example: admin_123
+            email:
+              type: string
+              format: email
+              example: admin@example.com
+            name:
+              anyOf:
+                - type: string
+                  example: Admin User
+                - type: 'null'
+      required:
+        - success
+        - user
+    SetupTokenGenerateRequest:
+      type: object
+      properties:
+        admin_user_id:
+          type: string
+          example: admin_123
+        recovery_key:
+          type: string
+          example: recovery_key
+      required:
+        - admin_user_id
+    SetupTokenGenerateResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: admin_setup_token_123
+        expires_at:
+          type: integer
+          example: 1770086400000
+        admin_user:
+          type: object
+          properties:
+            id:
+              type: string
+              example: admin_123
+            email:
+              type: string
+              format: email
+              example: admin@example.com
+      required:
+        - token
+        - expires_at
+        - admin_user
+    CompatibilityErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: legacy_endpoint_not_supported
+        error_description:
+          type: string
+          example: This endpoint is no longer supported.
+      required:
+        - error
+    SetupTokenVerifyRequest:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+    SetupTokenVerifyResponse:
+      type: object
+      required:
+        - valid
+        - user
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - true
+        user:
+          type: object
+          required:
+            - id
+            - email
+          properties:
+            id:
+              type: string
+            email:
+              type: string
+              format: email
+            name:
+              type:
+                - string
+                - 'null'
+    FlowCancelRequest:
+      type: object
+      required:
+        - sessionId
+      properties:
+        sessionId:
+          type: string
+    FlowCancelResponse:
+      oneOf:
+        - type: object
+          required:
+            - success
+            - sessionId
+          properties:
+            success:
+              type: boolean
+              enum:
+                - true
+            sessionId:
+              type: string
+        - type: object
+          required:
+            - success
+            - error
+          properties:
+            success:
+              type: boolean
+              enum:
+                - false
+            error:
+              $ref: '#/components/schemas/FlowError'
+    FlowInitRequest:
+      type: object
+      required:
+        - flowType
+        - clientId
+      properties:
+        flowType:
+          type: string
+          enum:
+            - login
+            - authorization
+            - consent
+            - logout
+        clientId:
+          type: string
+        tenantId:
+          type: string
+        oauthParams:
+          $ref: '#/components/schemas/OAuthFlowParams'
+    OAuthFlowParams:
+      type: object
+      properties:
+        responseType:
+          type: string
+        redirectUri:
+          type: string
+          format: uri
+        scope:
+          type: string
+        state:
+          type: string
+        nonce:
+          type: string
+        codeChallenge:
+          type: string
+        codeChallengeMethod:
+          type: string
+        acrValues:
+          type: string
+        loginHint:
+          type: string
+        prompt:
+          type: string
+        maxAge:
+          type: integer
+      additionalProperties: false
+    FlowInitResponse:
+      type: object
+      required:
+        - sessionId
+        - uiContractVersion
+        - uiContract
+      properties:
+        sessionId:
+          type: string
+        uiContractVersion:
+          type: string
+          enum:
+            - '0.1'
+        uiContract:
+          $ref: '#/components/schemas/UIContract'
+    UIContract:
+      type: object
+      description: Server-driven Flow Engine UI contract for the current node.
+      additionalProperties: true
+      properties:
+        version:
+          type: string
+        sessionId:
+          type: string
+        nodeId:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    FlowSubmitRequest:
+      type: object
+      required:
+        - sessionId
+        - requestId
+        - capabilityId
+        - response
+      properties:
+        sessionId:
+          type: string
+        requestId:
+          type: string
+        capabilityId:
+          type: string
+        response:
+          description: Capability-specific response payload.
+        tenantId:
+          type: string
+        clientId:
+          type: string
+    FlowSubmitResponse:
+      oneOf:
+        - type: object
+          required:
+            - type
+            - uiContract
+          properties:
+            type:
+              type: string
+              enum:
+                - continue
+            uiContract:
+              $ref: '#/components/schemas/UIContract'
+        - type: object
+          required:
+            - type
+            - redirect
+          properties:
+            type:
+              type: string
+              enum:
+                - redirect
+            redirect:
+              $ref: '#/components/schemas/FlowRedirect'
+        - type: object
+          required:
+            - type
+            - error
+          properties:
+            type:
+              type: string
+              enum:
+                - error
+            error:
+              $ref: '#/components/schemas/FlowError'
+    FlowRedirect:
+      type: object
+      required:
+        - url
+        - method
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum:
+            - GET
+            - POST
+        params:
+          type: object
+          additionalProperties:
+            type: string
+    FlowError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    MethodNotAllowedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+      example:
+        error: invalid_request
+        error_description: Method not allowed
+    LoginChallengeResponse:
+      type: object
+      required:
+        - challenge_id
+        - client
+        - session_mode
+        - handoff_methods
+        - web_origin_registry
+      properties:
+        challenge_id:
+          type: string
+          example: chal_123
+        client:
+          type: object
+          required:
+            - client_id
+            - client_name
+          properties:
+            client_id:
+              type: string
+              example: client_123
+            client_name:
+              type: string
+              example: Example App
+            logo_uri:
+              type: string
+              format: uri
+              example: https://app.example.com/logo.png
+            client_uri:
+              type: string
+              format: uri
+              example: https://app.example.com/
+            policy_uri:
+              type: string
+              format: uri
+              example: https://app.example.com/privacy
+            tos_uri:
+              type: string
+              format: uri
+              example: https://app.example.com/terms
+        scope:
+          type: string
+          example: openid profile email
+        login_hint:
+          type: string
+          example: user@example.com
+        oidc:
+          type: object
+          properties:
+            prompt:
+              type: string
+              example: login
+            max_age:
+              type: integer
+              example: 3600
+            acr_values:
+              type: array
+              items:
+                type: string
+              example:
+                - urn:mace:incommon:iap:bronze
+            nonce_present:
+              type: boolean
+              example: true
+            claims_present:
+              type: boolean
+              example: false
+        session_mode:
+          type: string
+          enum:
+            - managed_browser_session
+            - cookie_session
+            - token_session
+          example: managed_browser_session
+        handoff_methods:
+          type: array
+          items:
+            type: string
+            enum:
+              - cookie_session_finalize
+              - dpop_token_verify
+          example:
+            - cookie_session_finalize
+        web_origin_registry:
+          type: object
+          required:
+            - origins
+          properties:
+            origins:
+              type: array
+              items:
+                type: object
+                required:
+                  - origin
+                  - client_ids
+                  - cors
+                  - csp
+                  - handoff_allowed
+                  - iframe_allowed
+                properties:
+                  origin:
+                    type: string
+                    format: uri
+                    example: https://app.example.com
+                  client_ids:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - client_123
+                  cors:
+                    type: object
+                    properties:
+                      allowed:
+                        type: boolean
+                        example: true
+                  csp:
+                    type: object
+                    properties:
+                      frame_ancestors:
+                        type: array
+                        items:
+                          type: string
+                        example:
+                          - https://app.example.com
+                  handoff_allowed:
+                    type: boolean
+                    example: true
+                  iframe_allowed:
+                    type: boolean
+                    example: false
+                  environment:
+                    type: string
+                    example: production
+    DirectSessionStatusResponse:
+      type: object
+      required:
+        - session
+        - user
+      properties:
+        session:
+          type: object
+          required:
+            - id
+            - userId
+            - createdAt
+            - expiresAt
+          properties:
+            id:
+              type: string
+              example: g1:apac:3:sess_123
+            userId:
+              type: string
+              example: user_123
+            createdAt:
+              type: integer
+              example: 1770000000000
+            expiresAt:
+              type: integer
+              example: 1770086400000
+            data:
+              type: object
+              additionalProperties: true
+        user:
+          type: object
+          required:
+            - id
+            - emailVerified
+          properties:
+            id:
+              type: string
+              example: user_123
+            email:
+              type:
+                - string
+                - 'null'
+              format: email
+              example: user@example.com
+            name:
+              type:
+                - string
+                - 'null'
+              example: Example User
+            emailVerified:
+              type: boolean
+              example: true
+            createdAt:
+              type: integer
+              example: 1770000000000
+            updatedAt:
+              type: integer
+              example: 1770000000000
+            lastLoginAt:
+              type:
+                - integer
+                - 'null'
+              example: 1770000000000
+    InvitationValidateResponse:
+      type: object
+      required:
+        - valid
+        - invitation_id
+        - tenant_id
+        - tenant_name
+        - expires_at
+      properties:
+        valid:
+          type: boolean
+          enum:
+            - true
+        invitation_id:
+          type: string
+          example: inv_123
+        tenant_id:
+          type: string
+          example: tenant_123
+        tenant_name:
+          type: string
+          example: Example Tenant
+        invited_email:
+          type:
+            - string
+            - 'null'
+          format: email
+          example: user@example.com
+        expires_at:
+          type: integer
+          example: 1770000000
+    RegistrationFieldsResponse:
+      type: object
+      required:
+        - fields
+      properties:
+        fields:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+                example: claim_email
+              name:
+                type: string
+                example: email
+              display_name:
+                type: string
+                example: Email address
+              data_type:
+                type: string
+                example: string
+              required:
+                type: boolean
+                example: true
+    SetupStatusResponse:
+      type: object
+      required:
+        - initialized
+        - setup_disabled
+        - setup_token_valid
+      properties:
+        initialized:
+          type: boolean
+          example: false
+        setup_disabled:
+          type: boolean
+          example: false
+        setup_token_valid:
+          type: boolean
+          example: true
+    FlowStateResponse:
+      type: object
+      required:
+        - state
+        - uiContract
+      properties:
+        state:
+          type: object
+          required:
+            - currentNodeId
+            - visitedNodeIds
+            - completedCapabilities
+          properties:
+            currentNodeId:
+              type: string
+              example: email-code
+            visitedNodeIds:
+              type: array
+              items:
+                type: string
+              example:
+                - start
+                - email-code
+            completedCapabilities:
+              type: array
+              items:
+                type: string
+              example:
+                - identifier
+        uiContract:
+          $ref: '#/components/schemas/UIContract'

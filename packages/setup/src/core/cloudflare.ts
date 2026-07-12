@@ -6,10 +6,11 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { createHash } from 'node:crypto';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { basename, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
@@ -84,6 +85,39 @@ export interface R2BucketProvisioningStatus extends R2BucketInfo {
   state: R2BucketProvisioningState;
 }
 
+export type D1MigrationDatabaseRole = 'core' | 'pii' | 'admin';
+export type D1MigrationFileStatus = 'applied' | 'pending' | 'changed' | 'orphaned';
+
+export interface D1MigrationFileState {
+  filename: string;
+  status: D1MigrationFileStatus;
+  checksum?: string;
+  appliedChecksum?: string | null;
+  appliedAt?: number | null;
+  executionTimeMs?: number | null;
+}
+
+export interface D1MigrationDatabaseStatus {
+  role: D1MigrationDatabaseRole;
+  dbName: string;
+  success: boolean;
+  error?: string;
+  counts: {
+    total: number;
+    applied: number;
+    pending: number;
+    changed: number;
+    orphaned: number;
+  };
+  migrations: D1MigrationFileState[];
+}
+
+export interface D1MigrationEnvironmentStatus {
+  env: string;
+  success: boolean;
+  databases: D1MigrationDatabaseStatus[];
+}
+
 export interface ProvisionedResources {
   d1: D1DatabaseInfo[];
   kv: KVNamespaceInfo[];
@@ -130,6 +164,7 @@ export interface MigrationProfileConfig {
 }
 
 export const R2_BUCKETS = [
+  { binding: 'PUBLIC_ASSETS', suffix: 'public-assets' },
   { binding: 'AVATARS', suffix: 'authrim-avatars' },
   { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
   { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
@@ -1663,11 +1698,218 @@ export async function verifyWildcardDnsPublicResolution(baseDomain: string): Pro
 // D1 Database Operations
 // =============================================================================
 
+type D1DatabaseListRow = { name: string; uuid: string };
+
+function stripAnsiSequences(value: string): string {
+  const escape = String.fromCharCode(27);
+  return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, 'g'), '');
+}
+
+function findJsonContainerCandidates(
+  value: string,
+  openingCharacter: '[' | '{',
+  closingCharacter: ']' | '}'
+): string[] {
+  const candidates: string[] = [];
+  const normalized = stripAnsiSequences(value);
+
+  for (let start = 0; start < normalized.length; start++) {
+    if (normalized[start] !== openingCharacter) continue;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < normalized.length; index++) {
+      const character = normalized[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === '\\') {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (character === '"') {
+        inString = true;
+      } else if (character === openingCharacter) {
+        depth++;
+      } else if (character === closingCharacter) {
+        depth--;
+        if (depth === 0) {
+          candidates.push(normalized.slice(start, index + 1));
+          break;
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function parseValidatedJsonOutput<T>(
+  stdout: string,
+  normalizeRows: (rows: unknown) => T[],
+  invalidOutputMessage: string
+): T[] {
+  const normalized = stripAnsiSequences(stdout).trim();
+  const candidates = Array.from(
+    new Set([
+      normalized,
+      ...findJsonContainerCandidates(normalized, '[', ']'),
+      ...findJsonContainerCandidates(normalized, '{', '}'),
+    ])
+  ).sort((left, right) => right.length - left.length);
+
+  for (const candidate of candidates) {
+    try {
+      return normalizeRows(JSON.parse(candidate));
+    } catch {
+      // Try the next complete JSON container found in noisy Wrangler output.
+    }
+  }
+
+  throw new SyntaxError(invalidOutputMessage);
+}
+
+function describeInventoryError(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return fallback;
+}
+
+async function resolveCloudflareInventoryCredentials(): Promise<{
+  accountId: string;
+  token: string;
+} | null> {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+  ) {
+    return null;
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  const tokenInfo = envToken
+    ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
+    : await getCloudflareApiToken();
+  if (!accountId || !tokenInfo?.token) {
+    return null;
+  }
+
+  return { accountId, token: tokenInfo.token };
+}
+
+async function listCloudflarePaginatedResourcesViaApi<T>(input: {
+  path: string;
+  label: string;
+  normalizeRows: (rows: unknown) => T[];
+}): Promise<T[] | null> {
+  const credentials = await resolveCloudflareInventoryCredentials();
+  if (!credentials) return null;
+
+  const resources: T[] = [];
+  const perPage = 1000;
+  let page = 1;
+
+  while (true) {
+    const url = new URL(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/${input.path}`
+    );
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('per_page', String(perPage));
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Cloudflare ${input.label} failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as {
+      success?: boolean;
+      result?: unknown;
+      result_info?: { total_count?: unknown };
+    };
+    if (payload.success === false) {
+      throw new Error(`Cloudflare ${input.label} returned an unsuccessful response`);
+    }
+
+    const rows = input.normalizeRows(payload.result);
+    resources.push(...rows);
+
+    const totalCount = payload.result_info?.total_count;
+    if (
+      rows.length < perPage ||
+      (typeof totalCount === 'number' && resources.length >= totalCount)
+    ) {
+      return resources;
+    }
+    page++;
+  }
+}
+
+function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('D1 database list was not an array');
+  }
+
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`D1 database list row ${index} was not an object`);
+    }
+
+    const { name, uuid } = row as { name?: unknown; uuid?: unknown };
+    if (
+      typeof name !== 'string' ||
+      name.trim().length === 0 ||
+      typeof uuid !== 'string' ||
+      uuid.trim().length === 0
+    ) {
+      throw new TypeError(`D1 database list row ${index} did not contain a name and UUID`);
+    }
+
+    return { name: name.trim(), uuid: uuid.trim() };
+  });
+}
+
+export function parseD1DatabaseListOutput(stdout: string): D1DatabaseListRow[] {
+  return parseValidatedJsonOutput(
+    stdout,
+    normalizeD1DatabaseRows,
+    'Wrangler output did not contain a valid D1 database list'
+  );
+}
+
+async function listD1DatabasesViaApi(): Promise<D1DatabaseListRow[] | null> {
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'd1/database',
+    label: 'D1 database list',
+    normalizeRows: normalizeD1DatabaseRows,
+  });
+}
+
 /**
  * List all D1 databases
  * @throws Error if wrangler command fails (caller should handle)
  */
 export async function listD1Databases(): Promise<Array<{ name: string; uuid: string }>> {
+  let apiError: unknown;
+  try {
+    const apiDatabases = await listD1DatabasesViaApi();
+    if (apiDatabases) {
+      return apiDatabases;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout, stderr } = await wrangler(['d1', 'list', '--json']);
 
@@ -1676,13 +1918,15 @@ export async function listD1Databases(): Promise<Array<{ name: string; uuid: str
       throw new Error('Not logged in to Cloudflare. Run: wrangler login');
     }
 
-    const databases = JSON.parse(stdout);
-    return databases.map((db: { name: string; uuid: string }) => ({
-      name: db.name,
-      uuid: db.uuid,
-    }));
+    return parseD1DatabaseListOutput(stdout);
   } catch (error) {
-    // Re-throw with context
+    if (apiError) {
+      const apiMessage = describeInventoryError(apiError, 'unknown API error');
+      const wranglerMessage = describeInventoryError(error, 'unknown Wrangler error');
+      throw new Error(
+        `Failed to list D1 databases via the Cloudflare API (${apiMessage}) and Wrangler (${wranglerMessage})`
+      );
+    }
     if (error instanceof SyntaxError) {
       throw new Error('Failed to parse D1 database list - wrangler output was not valid JSON');
     }
@@ -1945,31 +2189,128 @@ export async function executeD1Command(
   );
 }
 
-export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
-  stdout: string
-): T[] {
-  const payload = JSON.parse(stdout) as Array<{ results?: T[] }> | { results?: T[] };
-  if (Array.isArray(payload)) {
-    return payload.flatMap((entry) => entry.results ?? []);
+function normalizeD1QueryRows<T extends Record<string, unknown>>(payload: unknown): T[] {
+  let queryResults = payload;
+  if (!Array.isArray(payload) && payload && typeof payload === 'object' && 'result' in payload) {
+    const envelope = payload as { success?: unknown; result?: unknown };
+    if (envelope.success !== true) {
+      throw new TypeError('Cloudflare D1 query response was not successful');
+    }
+    queryResults = envelope.result;
   }
-  return payload.results ?? [];
+
+  const entries = Array.isArray(queryResults) ? queryResults : [queryResults];
+  return entries.flatMap((entry, entryIndex) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new TypeError(`D1 result entry ${entryIndex} was not an object`);
+    }
+    if ((entry as { success?: unknown }).success === false) {
+      throw new TypeError(`D1 result entry ${entryIndex} was not successful`);
+    }
+    const results = (entry as { results?: unknown }).results;
+    if (!Array.isArray(results)) {
+      throw new TypeError(`D1 result entry ${entryIndex} did not contain a results array`);
+    }
+    return results.map((row, rowIndex) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new TypeError(`D1 result row ${rowIndex} was not an object`);
+      }
+      return row as T;
+    });
+  });
+}
+
+export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
+  output: string
+): T[] {
+  return parseValidatedJsonOutput(
+    output,
+    normalizeD1QueryRows<T>,
+    'Wrangler output did not contain a valid D1 query result'
+  );
+}
+
+function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
+  result: D1ExecuteCommandResult
+): T[] {
+  const candidates = Array.from(
+    new Set(
+      [result.stdout, result.stderr, [result.stdout, result.stderr].filter(Boolean).join('\n')]
+        .map((output) => output.trim())
+        .filter(Boolean)
+    )
+  );
+
+  for (const candidate of candidates) {
+    try {
+      return parseD1RowsFromWranglerJson<T>(candidate);
+    } catch {
+      // Wrangler has emitted JSON on both stdout and stderr across released versions.
+    }
+  }
+
+  throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
 }
 
 export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
   sql: string
 ): Promise<T[]> {
-  const { stdout } = await executeD1Command(dbName, sql, { json: true });
-  return parseD1RowsFromWranglerJson<T>(stdout);
+  const result = await executeD1Command(dbName, sql, { json: true });
+  return parseD1RowsFromWranglerResult<T>(result);
+}
+
+async function queryD1RowsViaApi<T extends Record<string, unknown>>(
+  dbName: string,
+  sql: string
+): Promise<T[] | null> {
+  const credentials = await resolveCloudflareInventoryCredentials();
+  if (!credentials) return null;
+
+  const databases = await listD1DatabasesViaApi();
+  const database = databases?.find((candidate) => candidate.name === dbName);
+  if (!database) {
+    throw new Error(`Cloudflare D1 database ${dbName} was not found`);
+  }
+
+  const response = await fetch(
+    new URL(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${database.uuid}/query`
+    ),
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sql }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Cloudflare D1 query failed (${response.status})`);
+  }
+
+  return normalizeD1QueryRows<T>(await response.json());
 }
 
 /** SQL to create the migration tracking table (idempotent) */
 const CREATE_MIGRATIONS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS authrim_migrations (
   filename TEXT PRIMARY KEY,
-  applied_at INTEGER NOT NULL
+  checksum TEXT NOT NULL,
+  applied_at INTEGER NOT NULL,
+  execution_time_ms INTEGER,
+  setup_version TEXT,
+  tool_version TEXT
 );
 `.trim();
+
+const MIGRATION_TABLE_COLUMN_ALTERS = [
+  'ALTER TABLE authrim_migrations ADD COLUMN checksum TEXT;',
+  'ALTER TABLE authrim_migrations ADD COLUMN execution_time_ms INTEGER;',
+  'ALTER TABLE authrim_migrations ADD COLUMN setup_version TEXT;',
+  'ALTER TABLE authrim_migrations ADD COLUMN tool_version TEXT;',
+];
 
 /**
  * Ensure the authrim_migrations tracking table exists in the target database.
@@ -1989,6 +2330,13 @@ async function ensureMigrationsTable(
       '--command',
       CREATE_MIGRATIONS_TABLE_SQL,
     ]);
+    for (const sql of MIGRATION_TABLE_COLUMN_ALTERS) {
+      try {
+        await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+      } catch {
+        // Existing columns are expected for databases created with the current schema.
+      }
+    }
     return true;
   } catch (error) {
     onProgress?.(
@@ -2000,25 +2348,62 @@ async function ensureMigrationsTable(
 
 /**
  * Return the set of migration filenames already recorded in authrim_migrations.
- * Falls back to an empty set on error so we never skip migrations when unsure.
+ * Errors propagate so callers never mistake an unreadable history for a new database.
  */
 async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
+  const rows = await getAppliedMigrationRows(dbName);
+  return new Set(rows.map((r) => r.filename));
+}
+
+interface AppliedMigrationRow extends Record<string, unknown> {
+  filename: string;
+  checksum?: string | null;
+  applied_at?: number | null;
+  execution_time_ms?: number | null;
+}
+
+const APPLIED_MIGRATIONS_SQL =
+  'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;';
+
+function validateAppliedMigrationRows(rows: AppliedMigrationRow[]): AppliedMigrationRow[] {
+  return rows.map((row, index) => {
+    if (typeof row.filename !== 'string' || row.filename.trim().length === 0) {
+      throw new TypeError(`Migration history row ${index} did not contain a filename`);
+    }
+    if (row.checksum !== undefined && row.checksum !== null && typeof row.checksum !== 'string') {
+      throw new TypeError(`Migration history row ${index} contained an invalid checksum`);
+    }
+    return { ...row, filename: row.filename.trim() };
+  });
+}
+
+async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
+  if (!(await ensureMigrationsTable(dbName))) {
+    throw new Error(`Could not prepare migration tracking table for ${dbName}`);
+  }
+
+  let apiError: unknown;
   try {
-    const { stdout } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      'SELECT filename FROM authrim_migrations;',
-      '--json',
-    ]);
-    const rows = JSON.parse(stdout);
-    const results: Array<{ filename: string }> = rows?.[0]?.results ?? [];
-    return new Set(results.map((r) => r.filename));
-  } catch {
-    return new Set();
+    const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(dbName, APPLIED_MIGRATIONS_SQL);
+    if (apiRows) {
+      return validateAppliedMigrationRows(apiRows);
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
+  try {
+    const result = await executeD1Command(dbName, APPLIED_MIGRATIONS_SQL, { json: true });
+    return validateAppliedMigrationRows(parseD1RowsFromWranglerResult<AppliedMigrationRow>(result));
+  } catch (error) {
+    if (apiError) {
+      const apiMessage = describeInventoryError(apiError, 'unknown API error');
+      const wranglerMessage = describeInventoryError(error, 'unknown Wrangler error');
+      throw new Error(
+        `Could not query migration history via the Cloudflare API (${apiMessage}) or Wrangler (${wranglerMessage})`
+      );
+    }
+    throw error;
   }
 }
 
@@ -2056,13 +2441,45 @@ export async function validateD1MigrationVersion(
  */
 export function buildRecordMigrationSql(filename: string, appliedAt = Date.now()): string {
   const escapedFilename = filename.replace(/'/g, "''");
-  return `INSERT INTO authrim_migrations (filename, applied_at)
-SELECT '${escapedFilename}', ${appliedAt}
+  return `INSERT INTO authrim_migrations (filename, checksum, applied_at, execution_time_ms, setup_version, tool_version)
+SELECT '${escapedFilename}', '', ${appliedAt}, NULL, NULL, NULL
 WHERE NOT EXISTS (
   SELECT 1
   FROM authrim_migrations
   WHERE filename = '${escapedFilename}'
 );`;
+}
+
+function escapeSqlString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function buildRecordMigrationWithChecksumSql(input: {
+  filename: string;
+  checksum: string;
+  appliedAt?: number;
+  executionTimeMs?: number | null;
+  setupVersion?: string | null;
+  toolVersion?: string | null;
+}): string {
+  const appliedAt = input.appliedAt ?? Date.now();
+  const executionTimeMs = Number.isFinite(input.executionTimeMs ?? Number.NaN)
+    ? String(Math.max(0, Math.round(input.executionTimeMs ?? 0)))
+    : 'NULL';
+  const setupVersion = input.setupVersion ? `'${escapeSqlString(input.setupVersion)}'` : 'NULL';
+  const toolVersion = input.toolVersion ? `'${escapeSqlString(input.toolVersion)}'` : 'NULL';
+  return `INSERT INTO authrim_migrations (filename, checksum, applied_at, execution_time_ms, setup_version, tool_version)
+SELECT '${escapeSqlString(input.filename)}', '${escapeSqlString(input.checksum)}', ${appliedAt}, ${executionTimeMs}, ${setupVersion}, ${toolVersion}
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM authrim_migrations
+  WHERE filename = '${escapeSqlString(input.filename)}'
+);`;
+}
+
+export function calculateD1MigrationChecksum(sqlFilePath: string): string {
+  const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+  return createHash('sha256').update(renderedSql).digest('hex');
 }
 
 const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
@@ -2073,6 +2490,7 @@ interface ListD1MigrationOptions {
 
 interface RunD1MigrationOptions extends ListD1MigrationOptions {
   logSummaryLimit?: number;
+  onlyFiles?: ReadonlySet<string>;
 }
 
 export function listD1MigrationSqlFiles(
@@ -2117,12 +2535,119 @@ function formatMigrationFileSummary(files: string[], limit = 8): string {
   return remaining > 0 ? `${visible}, +${remaining} more` : visible;
 }
 
-async function recordMigration(dbName: string, filename: string): Promise<void> {
-  const sql = buildRecordMigrationSql(filename);
+export function getBlockingChangedMigrationFiles(
+  migrations: D1MigrationFileState[],
+  onlyFiles?: ReadonlySet<string>
+): string[] {
+  return migrations
+    .filter((item) => item.status === 'changed')
+    .filter((item) => !onlyFiles || onlyFiles.has(item.filename))
+    .map((item) => item.filename);
+}
+
+async function recordMigration(
+  dbName: string,
+  input: { filename: string; checksum: string; executionTimeMs?: number | null }
+): Promise<void> {
+  const sql = buildRecordMigrationWithChecksumSql(input);
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
   } catch {
     // Non-fatal: tracking failure should not abort the migration run
+  }
+}
+
+function countMigrationStates(
+  migrations: D1MigrationFileState[]
+): D1MigrationDatabaseStatus['counts'] {
+  return {
+    total: migrations.length,
+    applied: migrations.filter((item) => item.status === 'applied').length,
+    pending: migrations.filter((item) => item.status === 'pending').length,
+    changed: migrations.filter((item) => item.status === 'changed').length,
+    orphaned: migrations.filter((item) => item.status === 'orphaned').length,
+  };
+}
+
+export async function getD1MigrationStatus(
+  dbName: string,
+  migrationsDir: string,
+  role: D1MigrationDatabaseRole,
+  options: ListD1MigrationOptions = {}
+): Promise<D1MigrationDatabaseStatus> {
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  if (!existsSync(migrationsDir)) {
+    return {
+      role,
+      dbName,
+      success: false,
+      error: `Migrations directory not found: ${migrationsDir}`,
+      counts: { total: 0, applied: 0, pending: 0, changed: 0, orphaned: 0 },
+      migrations: [],
+    };
+  }
+
+  try {
+    const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+    const appliedRows = await getAppliedMigrationRows(dbName);
+    const appliedByFilename = new Map(appliedRows.map((row) => [row.filename, row]));
+    const localFilenames = new Set(sqlFiles);
+    const migrations: D1MigrationFileState[] = [];
+
+    for (const filename of sqlFiles) {
+      const checksum = calculateD1MigrationChecksum(join(migrationsDir, filename));
+      const applied = appliedByFilename.get(filename);
+      const appliedChecksum = applied?.checksum ?? null;
+      const status: D1MigrationFileStatus = !applied
+        ? 'pending'
+        : appliedChecksum === checksum
+          ? 'applied'
+          : 'changed';
+      migrations.push({
+        filename,
+        status,
+        checksum,
+        appliedChecksum,
+        appliedAt: applied?.applied_at ?? null,
+        executionTimeMs: applied?.execution_time_ms ?? null,
+      });
+    }
+
+    for (const applied of appliedRows) {
+      if (!localFilenames.has(applied.filename)) {
+        migrations.push({
+          filename: applied.filename,
+          status: 'orphaned',
+          appliedChecksum: applied.checksum ?? null,
+          appliedAt: applied.applied_at ?? null,
+          executionTimeMs: applied.execution_time_ms ?? null,
+        });
+      }
+    }
+
+    migrations.sort((a, b) => a.filename.localeCompare(b.filename));
+
+    return {
+      role,
+      dbName,
+      success: true,
+      counts: countMigrationStates(migrations),
+      migrations,
+    };
+  } catch (error) {
+    return {
+      role,
+      dbName,
+      success: false,
+      error: `Could not read migration history for ${dbName}: ${describeInventoryError(
+        error,
+        'unknown error'
+      )}`,
+      counts: { total: 0, applied: 0, pending: 0, changed: 0, orphaned: 0 },
+      migrations: [],
+    };
   }
 }
 
@@ -2150,18 +2675,43 @@ export async function runD1Migrations(
     };
   }
 
-  const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const sqlFiles = options.onlyFiles
+    ? allSqlFiles.filter((file) => options.onlyFiles?.has(file))
+    : allSqlFiles;
 
-  if (sqlFiles.length === 0) {
+  if (allSqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
     return { success: true, appliedCount: 0, skippedCount: 0 };
   }
 
-  onProgress?.(`  Found ${sqlFiles.length} migration files`);
+  onProgress?.(`  Found ${allSqlFiles.length} migration files`);
 
-  // Ensure tracking table exists; if it fails we continue without tracking
-  await ensureMigrationsTable(dbName, onProgress);
-  const applied = await getAppliedMigrations(dbName);
+  const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', options);
+  if (!status.success) {
+    return {
+      success: false,
+      appliedCount: 0,
+      skippedCount: 0,
+      error:
+        `${status.error ?? `Could not read migration history for ${dbName}`}. ` +
+        'Refusing to run migrations without a trustworthy applied-migration history.',
+    };
+  }
+  const changedFiles = getBlockingChangedMigrationFiles(status.migrations, options.onlyFiles);
+  if (changedFiles.length > 0) {
+    return {
+      success: false,
+      appliedCount: 0,
+      skippedCount: status.counts.applied,
+      error:
+        'Applied migration file checksum mismatch. Create a new migration instead of modifying applied files: ' +
+        formatMigrationFileSummary(changedFiles),
+    };
+  }
+  const applied = new Set(
+    status.migrations.filter((item) => item.status === 'applied').map((item) => item.filename)
+  );
   onProgress?.(`  ${applied.size} migration(s) already recorded as applied`);
 
   let appliedCount = 0;
@@ -2176,7 +2726,10 @@ export async function runD1Migrations(
       continue;
     }
 
-    const result = await executeD1Migration(dbName, join(migrationsDir, sqlFile), onProgress);
+    const sqlFilePath = join(migrationsDir, sqlFile);
+    const checksum = calculateD1MigrationChecksum(sqlFilePath);
+    const startedAt = Date.now();
+    const result = await executeD1Migration(dbName, sqlFilePath, onProgress);
     if (!result.success) {
       return {
         success: false,
@@ -2186,7 +2739,11 @@ export async function runD1Migrations(
       };
     }
 
-    await recordMigration(dbName, sqlFile);
+    await recordMigration(dbName, {
+      filename: sqlFile,
+      checksum,
+      executionTimeMs: Date.now() - startedAt,
+    });
     appliedCount++;
   }
 
@@ -2239,6 +2796,49 @@ WHERE id = 'default'
   AND ${tenantIdSql} <> 'default'
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
   AND (SELECT COUNT(*) FROM tenants) = 1;
+
+UPDATE flows
+SET tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE flow_versions
+SET tenant_id = ${tenantIdSql}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE flow_assignments
+SET tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+DELETE FROM screens
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND EXISTS (
+    SELECT 1
+    FROM screens target
+    WHERE target.tenant_id = ${tenantIdSql}
+      AND target.screen_key = screens.screen_key
+  );
+
+UPDATE screens
+SET tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
 
 INSERT INTO tenants (
   id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
@@ -3381,15 +3981,168 @@ export async function runMigrationsForEnvironment(
   };
 }
 
+async function resolveMigrationRootOrError(
+  rootDir: string,
+  onProgress?: (message: string) => void
+): Promise<{ success: true; migrationsRoot: string } | { success: false; error: string }> {
+  const migrationSearch = await findMigrationsRoot(rootDir, onProgress);
+  if (!migrationSearch.path) {
+    return {
+      success: false,
+      error: `Migrations directory not found. Searched:\n${migrationSearch.searchPaths.map((p) => `    - ${p}`).join('\n')}`,
+    };
+  }
+  return { success: true, migrationsRoot: migrationSearch.path };
+}
+
+export async function getD1MigrationStatusForEnvironment(
+  env: string,
+  rootDir: string,
+  onProgress?: (message: string) => void
+): Promise<D1MigrationEnvironmentStatus> {
+  const { join } = await import('node:path');
+  const root = await resolveMigrationRootOrError(rootDir, onProgress);
+  if (!root.success) {
+    return { env, success: false, databases: [] };
+  }
+
+  const databases = await Promise.all([
+    getD1MigrationStatus(getD1DatabaseName(env, 'core-db'), root.migrationsRoot, 'core', {
+      excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+    }),
+    getD1MigrationStatus(getD1DatabaseName(env, 'pii-db'), join(root.migrationsRoot, 'pii'), 'pii'),
+    getD1MigrationStatus(
+      getD1DatabaseName(env, 'admin-db'),
+      join(root.migrationsRoot, 'admin'),
+      'admin'
+    ),
+  ]);
+
+  return {
+    env,
+    success: databases.every((database) => database.success),
+    databases,
+  };
+}
+
+export async function runD1MigrationsForEnvironmentSelection(input: {
+  env: string;
+  rootDir: string;
+  role?: D1MigrationDatabaseRole;
+  filenames?: string[];
+  onProgress?: (message: string) => void;
+  config?: MigrationProfileConfig;
+}): Promise<{
+  success: boolean;
+  core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  pii?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  admin?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  error?: string;
+}> {
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const onlyFiles = input.filenames?.length ? new Set(input.filenames) : undefined;
+
+  if (!input.role && !onlyFiles) {
+    return runMigrationsForEnvironment(input.env, input.rootDir, input.onProgress, input.config);
+  }
+
+  const root = await resolveMigrationRootOrError(input.rootDir, input.onProgress);
+  if (!root.success) {
+    return { success: false, error: root.error };
+  }
+
+  const roles: D1MigrationDatabaseRole[] = input.role ? [input.role] : ['core', 'pii', 'admin'];
+  const results: {
+    core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+    pii?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+    admin?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  } = {};
+
+  for (const role of roles) {
+    const dbName = getD1DatabaseName(input.env, `${role}-db`);
+    const migrationsDir = role === 'core' ? root.migrationsRoot : join(root.migrationsRoot, role);
+    const options: RunD1MigrationOptions = {
+      onlyFiles,
+      ...(role === 'core' ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS } : {}),
+    };
+
+    if (!existsSync(migrationsDir)) {
+      results[role] = { success: true, appliedCount: 0, skippedCount: 0 };
+      continue;
+    }
+
+    input.onProgress?.(`📜 Running ${role} migrations for ${dbName}...`);
+    results[role] = await runD1Migrations(dbName, migrationsDir, input.onProgress, options);
+  }
+
+  return {
+    success: Object.values(results).every((result) => result?.success),
+    ...results,
+  };
+}
+
 // =============================================================================
 // KV Namespace Operations
 // =============================================================================
+
+type KVNamespaceListRow = { title: string; id: string };
+
+function normalizeKVNamespaceRows(rows: unknown): KVNamespaceListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('KV namespace list was not an array');
+  }
+
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`KV namespace list row ${index} was not an object`);
+    }
+
+    const { title, id } = row as { title?: unknown; id?: unknown };
+    if (
+      typeof title !== 'string' ||
+      title.trim().length === 0 ||
+      typeof id !== 'string' ||
+      id.trim().length === 0
+    ) {
+      throw new TypeError(`KV namespace list row ${index} did not contain a title and ID`);
+    }
+
+    return { title: title.trim(), id: id.trim() };
+  });
+}
+
+export function parseKVNamespaceListOutput(stdout: string): KVNamespaceListRow[] {
+  return parseValidatedJsonOutput(
+    stdout,
+    normalizeKVNamespaceRows,
+    'Wrangler output did not contain a valid KV namespace list'
+  );
+}
+
+async function listKVNamespacesViaApi(): Promise<KVNamespaceListRow[] | null> {
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'storage/kv/namespaces',
+    label: 'KV namespace list',
+    normalizeRows: normalizeKVNamespaceRows,
+  });
+}
 
 /**
  * List all KV namespaces
  * @throws Error if wrangler command fails (caller should handle)
  */
 export async function listKVNamespaces(): Promise<Array<{ title: string; id: string }>> {
+  let apiError: unknown;
+  try {
+    const apiNamespaces = await listKVNamespacesViaApi();
+    if (apiNamespaces) {
+      return apiNamespaces;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout, stderr } = await wrangler(['kv', 'namespace', 'list']);
 
@@ -3398,14 +4151,15 @@ export async function listKVNamespaces(): Promise<Array<{ title: string; id: str
       throw new Error('Not logged in to Cloudflare. Run: wrangler login');
     }
 
-    // wrangler kv namespace list outputs JSON
-    const namespaces = JSON.parse(stdout);
-    return namespaces.map((ns: { title: string; id: string }) => ({
-      title: ns.title,
-      id: ns.id,
-    }));
+    return parseKVNamespaceListOutput(stdout);
   } catch (error) {
-    // Re-throw with context
+    if (apiError) {
+      const apiMessage = describeInventoryError(apiError, 'unknown API error');
+      const wranglerMessage = describeInventoryError(error, 'unknown Wrangler error');
+      throw new Error(
+        `Failed to list KV namespaces via the Cloudflare API (${apiMessage}) and Wrangler (${wranglerMessage})`
+      );
+    }
     if (error instanceof SyntaxError) {
       throw new Error('Failed to parse KV namespace list - wrangler output was not valid JSON');
     }
@@ -3715,6 +4469,67 @@ export function parseR2BucketRows(stdout: string): Array<{ name: string }> {
       }
       return [];
     });
+}
+
+function normalizeR2BucketRows(rows: unknown): Array<{ name: string }> {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows
+    .map((row) => {
+      if (row && typeof row === 'object' && 'name' in row) {
+        const name = (row as { name?: unknown }).name;
+        return typeof name === 'string' ? name.trim() : '';
+      }
+      return '';
+    })
+    .filter((name) => name.length > 0)
+    .map((name) => ({ name }));
+}
+
+function extractR2BucketRowsFromApiPayload(payload: unknown): Array<{ name: string }> {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const data = payload as {
+    result?: unknown;
+    buckets?: unknown;
+  };
+  if (data.result && typeof data.result === 'object' && !Array.isArray(data.result)) {
+    const result = data.result as { buckets?: unknown };
+    return normalizeR2BucketRows(result.buckets);
+  }
+  return normalizeR2BucketRows(data.result ?? data.buckets);
+}
+
+async function listR2BucketsViaApi(): Promise<Array<{ name: string }> | null> {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+  ) {
+    return null;
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  const tokenInfo = await getCloudflareApiToken();
+  if (!accountId || !tokenInfo?.token) {
+    return null;
+  }
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets?per_page=1000`,
+    {
+      headers: {
+        Authorization: `Bearer ${tokenInfo.token}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Cloudflare R2 bucket list failed (${response.status})`);
+  }
+
+  return extractR2BucketRowsFromApiPayload(await response.json());
 }
 
 async function listR2BucketNamesStrict(): Promise<Set<string>> {
@@ -4056,7 +4871,7 @@ const AUTHRIM_PATTERNS = {
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
-  r2: /^([a-z][a-z0-9-]*)-(authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
@@ -4140,12 +4955,22 @@ export async function listWorkers(): Promise<Array<{ name: string; id?: string }
 export async function listR2Buckets(
   options: { throwOnError?: boolean } = {}
 ): Promise<Array<{ name: string }>> {
+  let apiError: unknown;
+  try {
+    const apiBuckets = await listR2BucketsViaApi();
+    if (apiBuckets) {
+      return apiBuckets;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout } = await wrangler(['r2', 'bucket', 'list']);
     return parseR2BucketRows(stdout);
   } catch (error) {
     if (options.throwOnError) {
-      throw error;
+      throw error ?? apiError;
     }
     return [];
   }

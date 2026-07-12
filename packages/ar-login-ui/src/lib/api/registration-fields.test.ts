@@ -52,7 +52,7 @@ describe('registration-fields API', () => {
 		]);
 	});
 
-	it('filters signup base fields from custom registration fields', async () => {
+	it('keeps signup base fields from registration configuration', async () => {
 		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
 			ok: true,
 			json: async () => ({
@@ -88,6 +88,22 @@ describe('registration-fields API', () => {
 		const result = await fetchRegistrationFields(fetchMock, 'https://auth.example.com');
 
 		expect(result).toEqual([
+			{
+				field_key: 'name',
+				display_label: 'Full Name',
+				field_type: 'string',
+				required: true,
+				placeholder: null,
+				validation_rules: null
+			},
+			{
+				field_key: 'field.canonical.email',
+				display_label: 'Email',
+				field_type: 'email',
+				required: true,
+				placeholder: null,
+				validation_rules: null
+			},
 			{
 				field_key: 'locale',
 				display_label: 'Locale',

@@ -33,15 +33,22 @@ describe('transform registry', () => {
 
   it('contains the PR1 operation set', () => {
     expect(TRANSFORM_OPERATION_SCHEMAS.map((schema) => schema.operation).sort()).toEqual([
+      'affix_text',
+      'as_array',
       'case',
       'concat',
       'copy',
       'fallback',
+      'first',
+      'join',
       'json_build',
       'json_extract_boolean',
       'json_extract_integer',
       'json_extract_text',
       'normalize',
+      'oidc_pairwise_sub',
+      'saml_edu_person_targeted_id',
+      'split',
       'text_to_boolean',
       'trim',
     ]);
@@ -79,6 +86,71 @@ describe('transform registry', () => {
         edgeValues,
       }).value?.value
     ).toBe(' user@example.test ');
+
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.email.affix',
+          inputEdgeIds: [mappingEdge.id],
+          operation: 'affix_text',
+          parameters: { prefix: 'mailto:', suffix: '' },
+          outputTargetRef: targetRef,
+        },
+        edgeValues,
+      }).value?.value
+    ).toBe('mailto:USER@EXAMPLE.TEST');
+  });
+
+  it('builds persistent identifier transform outputs from runtime context', () => {
+    const sourceRef = fieldRef('csv', 'subject');
+    const oidcTargetRef = { side: 'destination' as const, namespace: 'oidc.claim', path: 'sub' };
+    const oidcEdge = edge(sourceRef, oidcTargetRef);
+    const oidcStep: MappingTransformStep = {
+      id: 'transform.oidc.pairwise',
+      inputEdgeIds: [oidcEdge.id],
+      operation: 'oidc_pairwise_sub',
+      parameters: { persistentIdentifierProfileId: 'profile-a' },
+      outputTargetRef: oidcTargetRef,
+    };
+
+    expect(
+      executeTransformStep({
+        step: oidcStep,
+        edgeValues: new Map([[oidcEdge.id, sourceValue('csv', 'subject', 'ignored')]]),
+        runtimeContext: {
+          oidc: {
+            persistentIdentifiers: {
+              'profile-a': 'pairwise-sub-123',
+            },
+          },
+        },
+      }).value?.value
+    ).toBe('pairwise-sub-123');
+
+    const samlTargetRef = {
+      side: 'destination' as const,
+      namespace: 'saml.attribute',
+      path: 'eduPersonTargetedID',
+    };
+    const samlEdge = edge(sourceRef, samlTargetRef);
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.saml.targeted-id',
+          inputEdgeIds: [samlEdge.id],
+          operation: 'saml_edu_person_targeted_id',
+          outputTargetRef: samlTargetRef,
+        },
+        edgeValues: new Map([[samlEdge.id, sourceValue('csv', 'subject', 'ignored')]]),
+        runtimeContext: {
+          saml: {
+            localEntityId: 'https://idp.example.test',
+            partnerEntityId: 'https://sp.example.test',
+            eduPersonTargetedIdOpaque: 'opaque-123',
+          },
+        },
+      }).value?.value
+    ).toBe('https://idp.example.test!https://sp.example.test!opaque-123');
   });
 
   it('converts configured text tokens to nullable booleans', () => {
@@ -115,6 +187,78 @@ describe('transform registry', () => {
         edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'active', '未確認')]]),
       }).value?.value
     ).toBeNull();
+  });
+
+  it('converts between single and multi values with array cleanup options', () => {
+    const sourceRef = fieldRef('csv', 'affiliation');
+    const targetRef = {
+      side: 'destination' as const,
+      namespace: 'saml.attribute',
+      path: 'eduPersonAffiliation',
+    };
+    const mappingEdge = edge(sourceRef, targetRef);
+    const edgeValues = new Map([
+      [mappingEdge.id, sourceValue('csv', 'affiliation', ' student, faculty,student, ')],
+    ]);
+
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.affiliation.split',
+          inputEdgeIds: [mappingEdge.id],
+          operation: 'split',
+          parameters: { delimiter: ',', trimItems: true, omitEmpty: true, unique: true },
+          outputTargetRef: targetRef,
+        },
+        edgeValues,
+      }).value?.value
+    ).toEqual(['student', 'faculty']);
+
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.affiliation.join',
+          inputEdgeIds: [mappingEdge.id],
+          operation: 'join',
+          parameters: { delimiter: ';', trimItems: true, omitEmpty: true, unique: true },
+          outputTargetRef: targetRef,
+        },
+        edgeValues: new Map([
+          [
+            mappingEdge.id,
+            sourceValue('csv', 'affiliation', [' student ', '', 'faculty', 'student']),
+          ],
+        ]),
+      }).value?.value
+    ).toBe('student;faculty');
+
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.affiliation.first',
+          inputEdgeIds: [mappingEdge.id],
+          operation: 'first',
+          parameters: { trimItems: true, omitEmpty: true },
+          outputTargetRef: targetRef,
+        },
+        edgeValues: new Map([
+          [mappingEdge.id, sourceValue('csv', 'affiliation', ['', ' primary@example.test '])],
+        ]),
+      }).value?.value
+    ).toBe('primary@example.test');
+
+    expect(
+      executeTransformStep({
+        step: {
+          id: 'transform.affiliation.as-array',
+          inputEdgeIds: [mappingEdge.id],
+          operation: 'as_array',
+          parameters: { trimItems: true, omitEmpty: true },
+          outputTargetRef: targetRef,
+        },
+        edgeValues: new Map([[mappingEdge.id, sourceValue('csv', 'affiliation', ' staff ')]]),
+      }).value?.value
+    ).toEqual(['staff']);
   });
 
   it('builds JSON from multiple source values and parses single JSON text inputs', () => {

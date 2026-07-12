@@ -8,6 +8,8 @@ export { default as Dialog } from './Dialog.svelte';
 export { default as LanguageSwitcher } from './LanguageSwitcher.svelte';
 export { default as TestDialog } from './TestDialog.svelte';
 export { default as ToggleSwitch } from './ToggleSwitch.svelte';
+export { default as TurnstileWidget } from './TurnstileWidget.svelte';
 export { default as StatusBadge } from './StatusBadge.svelte';
 export { default as CountdownTimer } from './CountdownTimer.svelte';
 export { default as AuthenticationMethodSelector } from './AuthenticationMethodSelector.svelte';
+export { default as SanitizedHtml } from './SanitizedHtml.svelte';

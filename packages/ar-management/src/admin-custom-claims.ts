@@ -156,6 +156,29 @@ const EXAMPLES_JSON_MAX_ARRAY_ITEMS = 100;
 const EXAMPLES_JSON_MAX_OBJECT_KEYS = 100;
 const EXAMPLES_JSON_MAX_STRING_CHARS = 512;
 
+type FieldUsageProtection = 'none' | 'warn' | 'delete_blocked';
+
+interface FieldUsageBindingView {
+  id: string;
+  field_key: string;
+  binding_type: string;
+  binding_id: string;
+  protection: FieldUsageProtection;
+  reason: string | null;
+  source: string;
+  metadata: Record<string, unknown> | null;
+  is_active: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface AuthenticationMethodsSettingsView {
+  passkeyLoginEnabled: boolean;
+  passkeySignupEnabled: boolean;
+  emailOtpLoginEnabled: boolean;
+  emailOtpSignupEnabled: boolean;
+}
+
 // =============================================================================
 // Validation Helpers
 // =============================================================================
@@ -273,6 +296,245 @@ function validateValidationRules(
     default:
       return { valid: false, error: `Unknown field type: ${fieldType}` };
   }
+}
+
+function normalizeSettingBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return fallback;
+}
+
+async function resolveAuthenticationMethodsSettings(
+  env: Env,
+  tenantId: string
+): Promise<AuthenticationMethodsSettingsView> {
+  const defaults: AuthenticationMethodsSettingsView = {
+    passkeyLoginEnabled: true,
+    passkeySignupEnabled: true,
+    emailOtpLoginEnabled: false,
+    emailOtpSignupEnabled: false,
+  };
+
+  try {
+    const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    if (!raw) return defaults;
+    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const legacyPasskeyEnabled = settings['authentication-methods.passkey.enabled'];
+    const legacyEmailOtpEnabled = settings['authentication-methods.email_otp.enabled'];
+    return {
+      passkeyLoginEnabled: normalizeSettingBoolean(
+        settings['authentication-methods.passkey.login_enabled'],
+        normalizeSettingBoolean(legacyPasskeyEnabled, defaults.passkeyLoginEnabled)
+      ),
+      passkeySignupEnabled: normalizeSettingBoolean(
+        settings['authentication-methods.passkey.signup_enabled'],
+        normalizeSettingBoolean(legacyPasskeyEnabled, defaults.passkeySignupEnabled)
+      ),
+      emailOtpLoginEnabled: normalizeSettingBoolean(
+        settings['authentication-methods.email_otp.login_enabled'],
+        normalizeSettingBoolean(legacyEmailOtpEnabled, defaults.emailOtpLoginEnabled)
+      ),
+      emailOtpSignupEnabled: normalizeSettingBoolean(
+        settings['authentication-methods.email_otp.signup_enabled'],
+        normalizeSettingBoolean(legacyEmailOtpEnabled, defaults.emailOtpSignupEnabled)
+      ),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function createDerivedFieldUsageBinding(
+  fieldKey: string,
+  bindingId: string,
+  reason: string,
+  metadata: Record<string, unknown> = {}
+): FieldUsageBindingView {
+  return {
+    id: `derived:${bindingId}:${fieldKey}`,
+    field_key: fieldKey,
+    binding_type: 'authentication_method',
+    binding_id: bindingId,
+    protection: 'delete_blocked',
+    reason,
+    source: 'derived',
+    metadata,
+    is_active: 1,
+    created_at: 0,
+    updated_at: 0,
+  };
+}
+
+async function resolveDerivedFieldUsageBindings(
+  env: Env,
+  tenantId: string
+): Promise<FieldUsageBindingView[]> {
+  const settings = await resolveAuthenticationMethodsSettings(env, tenantId);
+  const bindings: FieldUsageBindingView[] = [];
+
+  if (settings.passkeySignupEnabled) {
+    bindings.push(
+      createDerivedFieldUsageBinding(
+        'name',
+        'passkey.signup',
+        'Passkey signup collects the user display name.',
+        { method: 'passkey', flow: 'signup' }
+      ),
+      createDerivedFieldUsageBinding(
+        'email',
+        'passkey.signup',
+        'Passkey signup collects the user email address.',
+        { method: 'passkey', flow: 'signup' }
+      )
+    );
+  }
+
+  if (settings.emailOtpLoginEnabled) {
+    bindings.push(
+      createDerivedFieldUsageBinding(
+        'email',
+        'email_otp.login',
+        'Email OTP login resolves users by email address.',
+        { method: 'email_otp', flow: 'login' }
+      ),
+      createDerivedFieldUsageBinding(
+        'email_verified',
+        'email_otp.login',
+        'Email OTP login depends on verified email state.',
+        { method: 'email_otp', flow: 'login' }
+      )
+    );
+  }
+
+  if (settings.emailOtpSignupEnabled) {
+    bindings.push(
+      createDerivedFieldUsageBinding(
+        'name',
+        'email_otp.signup',
+        'Email OTP signup collects the user display name.',
+        { method: 'email_otp', flow: 'signup' }
+      ),
+      createDerivedFieldUsageBinding(
+        'email',
+        'email_otp.signup',
+        'Email OTP signup collects and verifies the user email address.',
+        { method: 'email_otp', flow: 'signup' }
+      ),
+      createDerivedFieldUsageBinding(
+        'email_verified',
+        'email_otp.signup',
+        'Email OTP signup writes verified email state.',
+        { method: 'email_otp', flow: 'signup' }
+      )
+    );
+  }
+
+  return bindings;
+}
+
+function parseUsageMetadata(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore malformed metadata accepted before stricter validation existed.
+  }
+  return null;
+}
+
+async function listStoredFieldUsageBindings(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  fieldKeys?: string[]
+): Promise<FieldUsageBindingView[]> {
+  try {
+    const params: unknown[] = [tenantId];
+    let fieldFilter = '';
+    if (fieldKeys && fieldKeys.length > 0) {
+      fieldFilter = ` AND field_key IN (${fieldKeys.map(() => '?').join(', ')})`;
+      params.push(...fieldKeys);
+    }
+    const rows = await adapter.query<{
+      id: string;
+      field_key: string;
+      binding_type: string;
+      binding_id: string;
+      protection: FieldUsageProtection;
+      reason: string | null;
+      source: string;
+      metadata_json: string | null;
+      is_active: number;
+      created_at: number;
+      updated_at: number;
+    }>(
+      `SELECT id, field_key, binding_type, binding_id, protection, reason, source,
+              metadata_json, is_active, created_at, updated_at
+         FROM field_usage_bindings
+        WHERE tenant_id = ? AND is_active = 1${fieldFilter}
+        ORDER BY binding_type ASC, binding_id ASC`,
+      params
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      field_key: row.field_key,
+      binding_type: row.binding_type,
+      binding_id: row.binding_id,
+      protection: row.protection,
+      reason: row.reason,
+      source: row.source,
+      metadata: parseUsageMetadata(row.metadata_json),
+      is_active: row.is_active,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function resolveFieldUsageBindings(
+  env: Env,
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  fieldKeys?: string[]
+): Promise<FieldUsageBindingView[]> {
+  const fieldKeySet = fieldKeys && fieldKeys.length > 0 ? new Set(fieldKeys) : null;
+  const [stored, derived] = await Promise.all([
+    listStoredFieldUsageBindings(adapter, tenantId, fieldKeys),
+    resolveDerivedFieldUsageBindings(env, tenantId),
+  ]);
+
+  return [...stored, ...derived].filter(
+    (binding) => !fieldKeySet || fieldKeySet.has(binding.field_key)
+  );
+}
+
+function attachFieldUsageBindings<T extends Record<string, unknown>>(
+  schemas: T[],
+  bindings: FieldUsageBindingView[]
+): Array<T & { usage_bindings: FieldUsageBindingView[]; is_system_used: boolean }> {
+  const bindingsByField = new Map<string, FieldUsageBindingView[]>();
+  for (const binding of bindings) {
+    const list = bindingsByField.get(binding.field_key) ?? [];
+    list.push(binding);
+    bindingsByField.set(binding.field_key, list);
+  }
+
+  return schemas.map((schema) => {
+    const fieldBindings = bindingsByField.get(String(schema.field_key)) ?? [];
+    return {
+      ...schema,
+      usage_bindings: fieldBindings,
+      is_system_used: fieldBindings.some((binding) => binding.protection === 'delete_blocked'),
+    };
+  });
 }
 
 /**
@@ -576,8 +838,15 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
       offset,
     });
 
+    const bindings = await resolveFieldUsageBindings(
+      c.env,
+      adapter,
+      tenantId,
+      schemas.map((schema) => String(schema.field_key))
+    );
+
     return c.json({
-      schemas,
+      schemas: attachFieldUsageBindings(schemas, bindings),
       pagination: {
         page,
         limit,
@@ -713,7 +982,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const body = await c.req.json();
     const showOnRegistration = !!body.show_on_registration;
-    const registrationRequired = showOnRegistration && !!body.registration_required;
+    const registrationRequired = !!body.registration_required;
 
     // Validate required fields
     const { field_key, display_label, field_type = 'string' } = body;
@@ -1198,8 +1467,12 @@ export async function adminCustomClaimGetHandler(c: AdminContext) {
       );
     }
 
+    const bindings = await resolveFieldUsageBindings(c.env, adapter, tenantId, [
+      schema.field_key as string,
+    ]);
+
     return c.json({
-      schema,
+      schema: attachFieldUsageBindings([schema], bindings)[0],
       user_count: userCount,
       user_count_approximate: !!schema.is_pii,
     });
@@ -1378,17 +1651,6 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       });
     }
 
-    const effectiveShowOnRegistration =
-      body.show_on_registration !== undefined
-        ? !!body.show_on_registration
-        : schema.show_on_registration === 1;
-    if (
-      (body.show_on_registration !== undefined || body.registration_required !== undefined) &&
-      !effectiveShowOnRegistration
-    ) {
-      body.registration_required = false;
-    }
-
     if (
       body.ui_group_key !== undefined &&
       body.ui_group_key !== null &&
@@ -1443,7 +1705,7 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       is_vc_claim: (v) => (v ? 1 : 0),
       description: (v) => v || null,
       display_order: (v) => v,
-      // Registration form fields (migration 060)
+      // Registration screen fields (migration 060)
       show_on_registration: (v) => (v ? 1 : 0),
       registration_required: (v) => (v ? 1 : 0),
       registration_order: (v) => v,
@@ -1575,6 +1837,23 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
 
     const fieldKey = schema.field_key as string;
     const isPii = schema.is_pii as number;
+    const fieldUsageBindings = await resolveFieldUsageBindings(c.env, adapter, tenantId, [
+      fieldKey,
+    ]);
+    const blockingUsages = fieldUsageBindings.filter(
+      (binding) => binding.protection === 'delete_blocked'
+    );
+    if (blockingUsages.length > 0) {
+      return c.json(
+        {
+          error: 'field_in_use',
+          error_description:
+            'This schema field is currently used by Authrim features and cannot be deleted.',
+          usage_bindings: blockingUsages,
+        },
+        409
+      );
+    }
 
     // Phase 1: Mark as deleting (CAS: only if still active/error)
     const casRows = await updateCustomClaimSchemaFields({

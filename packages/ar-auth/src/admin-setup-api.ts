@@ -40,6 +40,7 @@ import {
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/server';
+import { resolveSessionTtl } from './session-ttl';
 
 const logger = createLogger().module('ADMIN_SETUP_API');
 const RP_NAME = 'Authrim Admin';
@@ -240,8 +241,8 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/options', async (c) => {
       userID: encoder.encode(adminUser.id),
       attestationType: 'none',
       authenticatorSelection: {
-        residentKey: 'preferred',
-        userVerification: 'preferred',
+        residentKey: 'required',
+        userVerification: 'required',
         // Allow both platform and cross-platform authenticators
       },
       timeout: 60000,
@@ -374,7 +375,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
         expectedChallenge: challenge,
         expectedOrigin: storedOrigin,
         expectedRPID: rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
     } catch (error) {
       logger.error('Passkey verification failed', { action: 'verify_passkey' }, error as Error);
@@ -729,13 +730,15 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
     // Admin sessions use D1 (not SessionStore DO) for simpler management
     const sessionId = generateId();
     const now = Date.now();
-    const expiresAt = now + 7 * 24 * 60 * 60 * 1000; // 7 days
+    const tenantId = getDefaultTenantId(c.env);
+    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'admin_passkey');
+    const expiresAt = now + sessionTtl.milliseconds;
     const adminSessionRepo = new AdminSessionRepository(adminAdapter);
 
     try {
       await adminSessionRepo.createSession({
         id: sessionId,
-        tenant_id: getDefaultTenantId(c.env),
+        tenant_id: tenantId,
         admin_user_id: adminUser.id,
         ip_address:
           c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
@@ -758,7 +761,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
       httpOnly: true,
       secure: true,
       sameSite: getAdminCookieSameSite(c.env),
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge: sessionTtl.seconds,
     });
 
     logger.info('Admin login successful', {

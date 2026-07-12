@@ -6,7 +6,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -58,6 +58,125 @@ function invalidPublicLinkUrlResponse(c: Context, fieldName: string): Response {
   );
 }
 
+function isMissingLocalizationUserFacingColumnError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const referencesOptionalColumn =
+    message.includes('processing_purpose') || message.includes('withdrawal_impact');
+  return (
+    referencesOptionalColumn &&
+    (message.includes('no such column') ||
+      message.includes('no column named') ||
+      message.includes('does not exist'))
+  );
+}
+
+async function executeLocalizationUpsert(params: {
+  adapter: DatabaseAdapter;
+  existing: boolean;
+  id: string;
+  tenantId: string;
+  versionId: string;
+  language: string;
+  title: string;
+  description: string;
+  processingPurpose: string | null;
+  withdrawalImpact: string | null;
+  documentUrl: string | null;
+  inlineContent: string | null;
+  now: number;
+}) {
+  try {
+    if (params.existing) {
+      await params.adapter.execute(
+        `UPDATE consent_statement_localizations
+         SET title = ?, description = ?, processing_purpose = ?, withdrawal_impact = ?,
+             document_url = ?, inline_content = ?, updated_at = ?
+         WHERE version_id = ? AND language = ?`,
+        [
+          params.title,
+          params.description,
+          params.processingPurpose,
+          params.withdrawalImpact,
+          params.documentUrl,
+          params.inlineContent,
+          params.now,
+          params.versionId,
+          params.language,
+        ]
+      );
+      return;
+    }
+
+    await params.adapter.execute(
+      `INSERT INTO consent_statement_localizations
+       (id, tenant_id, version_id, language, title, description, processing_purpose,
+        withdrawal_impact, document_url, inline_content, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.id,
+        params.tenantId,
+        params.versionId,
+        params.language,
+        params.title,
+        params.description,
+        params.processingPurpose,
+        params.withdrawalImpact,
+        params.documentUrl,
+        params.inlineContent,
+        params.now,
+        params.now,
+      ]
+    );
+  } catch (error) {
+    if (!isMissingLocalizationUserFacingColumnError(error)) {
+      throw error;
+    }
+    if (params.existing) {
+      await params.adapter.execute(
+        `UPDATE consent_statement_localizations
+         SET title = ?, description = ?, document_url = ?, inline_content = ?, updated_at = ?
+         WHERE version_id = ? AND language = ?`,
+        [
+          params.title,
+          params.description,
+          params.documentUrl,
+          params.inlineContent,
+          params.now,
+          params.versionId,
+          params.language,
+        ]
+      );
+      return;
+    }
+    await params.adapter.execute(
+      `INSERT INTO consent_statement_localizations
+       (id, tenant_id, version_id, language, title, description,
+        document_url, inline_content, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.id,
+        params.tenantId,
+        params.versionId,
+        params.language,
+        params.title,
+        params.description,
+        params.documentUrl,
+        params.inlineContent,
+        params.now,
+        params.now,
+      ]
+    );
+  }
+}
+
+function optionalNonNegativeInteger(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return undefined;
+  return value;
+}
+
 // =============================================================================
 // Consent Statements CRUD
 // =============================================================================
@@ -93,6 +212,11 @@ export async function adminConsentStatementCreateHandler(c: Context<{ Bindings: 
       legal_basis?: string;
       processing_purpose?: string;
       display_order?: number;
+      record_retention_days?: number | null;
+      withdrawal_allowed?: boolean;
+      withdrawal_impact?: string | null;
+      reconsent_on_version_change?: boolean;
+      reconsent_interval_days?: number | null;
     }>();
 
     if (!body.slug || typeof body.slug !== 'string') {
@@ -113,11 +237,27 @@ export async function adminConsentStatementCreateHandler(c: Context<{ Bindings: 
 
     const id = crypto.randomUUID();
     const now = Date.now();
+    const recordRetentionDays = optionalNonNegativeInteger(body.record_retention_days);
+    if (recordRetentionDays === undefined && body.record_retention_days !== undefined) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'record_retention_days must be >= 0' },
+        400
+      );
+    }
+    const reconsentIntervalDays = optionalNonNegativeInteger(body.reconsent_interval_days);
+    if (reconsentIntervalDays === undefined && body.reconsent_interval_days !== undefined) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'reconsent_interval_days must be >= 0' },
+        400
+      );
+    }
 
     await authCtx.coreAdapter.execute(
       `INSERT INTO consent_statements
-       (id, tenant_id, slug, category, legal_basis, processing_purpose, display_order, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+       (id, tenant_id, slug, category, legal_basis, processing_purpose, display_order, is_active,
+        record_retention_days, withdrawal_allowed, withdrawal_impact,
+        reconsent_on_version_change, reconsent_interval_days, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         tenantId,
@@ -126,6 +266,13 @@ export async function adminConsentStatementCreateHandler(c: Context<{ Bindings: 
         body.legal_basis ?? 'consent',
         body.processing_purpose ?? null,
         body.display_order ?? 0,
+        recordRetentionDays ?? null,
+        body.withdrawal_allowed === false ? 0 : 1,
+        typeof body.withdrawal_impact === 'string' && body.withdrawal_impact.trim()
+          ? body.withdrawal_impact.trim()
+          : null,
+        body.reconsent_on_version_change === false ? 0 : 1,
+        reconsentIntervalDays ?? null,
         now,
         now,
       ]
@@ -182,6 +329,11 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       processing_purpose?: string;
       display_order?: number;
       is_active?: boolean;
+      record_retention_days?: number | null;
+      withdrawal_allowed?: boolean;
+      withdrawal_impact?: string | null;
+      reconsent_on_version_change?: boolean;
+      reconsent_interval_days?: number | null;
     }>();
 
     const existing = await authCtx.coreAdapter.query(
@@ -220,6 +372,44 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       sets.push('is_active = ?');
       params.push(body.is_active ? 1 : 0);
     }
+    if (body.record_retention_days !== undefined) {
+      const value = optionalNonNegativeInteger(body.record_retention_days);
+      if (value === undefined) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'record_retention_days must be >= 0' },
+          400
+        );
+      }
+      sets.push('record_retention_days = ?');
+      params.push(value);
+    }
+    if (body.withdrawal_allowed !== undefined) {
+      sets.push('withdrawal_allowed = ?');
+      params.push(body.withdrawal_allowed ? 1 : 0);
+    }
+    if (body.withdrawal_impact !== undefined) {
+      sets.push('withdrawal_impact = ?');
+      params.push(
+        typeof body.withdrawal_impact === 'string' && body.withdrawal_impact.trim()
+          ? body.withdrawal_impact.trim()
+          : null
+      );
+    }
+    if (body.reconsent_on_version_change !== undefined) {
+      sets.push('reconsent_on_version_change = ?');
+      params.push(body.reconsent_on_version_change ? 1 : 0);
+    }
+    if (body.reconsent_interval_days !== undefined) {
+      const value = optionalNonNegativeInteger(body.reconsent_interval_days);
+      if (value === undefined) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'reconsent_interval_days must be >= 0' },
+          400
+        );
+      }
+      sets.push('reconsent_interval_days = ?');
+      params.push(value);
+    }
 
     if (sets.length === 0) {
       return c.json({ error: 'invalid_request', error_description: 'No fields to update' }, 400);
@@ -247,7 +437,7 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
   }
 }
 
-/** DELETE /api/admin/consent-statements/:id (soft delete) */
+/** DELETE /api/admin/consent-statements/:id */
 export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
@@ -255,12 +445,53 @@ export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const id = c.req.param('id')!;
 
+    const existing = await authCtx.coreAdapter.query(
+      `SELECT id FROM consent_statements WHERE id = ? AND tenant_id = ?`,
+      [id, tenantId]
+    );
+    if (existing.length === 0) {
+      return c.json({ error: 'not_found', error_description: 'Statement not found' }, 404);
+    }
+
     await authCtx.coreAdapter.execute(
-      `UPDATE consent_statements SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?`,
-      [Date.now(), id, tenantId]
+      `DELETE FROM client_consent_overrides WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_policy_items WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_item_history WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM user_consent_records WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_statement_localizations
+        WHERE tenant_id = ?
+          AND version_id IN (
+            SELECT id FROM consent_statement_versions
+             WHERE tenant_id = ? AND statement_id = ?
+          )`,
+      [tenantId, tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_statement_versions WHERE tenant_id = ? AND statement_id = ?`,
+      [tenantId, id]
+    );
+    await authCtx.coreAdapter.execute(
+      `DELETE FROM consent_statements WHERE id = ? AND tenant_id = ?`,
+      [id, tenantId]
     );
 
-    log.info('Soft-deleted consent statement', { action: 'delete', statementId: id });
+    log.info('Deleted consent statement', { action: 'delete', statementId: id });
     return c.json({ success: true });
   } catch (error) {
     log.error('Failed to delete consent statement', { action: 'delete' }, error as Error);
@@ -303,6 +534,7 @@ export async function adminConsentVersionCreateHandler(c: Context<{ Bindings: En
       version: string;
       content_type?: string;
       effective_at: number;
+      effective_until?: number | null;
     }>();
 
     if (!body.version || !validateVersionFormat(body.version)) {
@@ -318,6 +550,19 @@ export async function adminConsentVersionCreateHandler(c: Context<{ Bindings: En
     if (!body.effective_at) {
       return c.json(
         { error: 'invalid_request', error_description: 'effective_at is required' },
+        400
+      );
+    }
+    if (
+      body.effective_until !== undefined &&
+      body.effective_until !== null &&
+      body.effective_until <= body.effective_at
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'effective_until must be after effective_at',
+        },
         400
       );
     }
@@ -339,9 +584,19 @@ export async function adminConsentVersionCreateHandler(c: Context<{ Bindings: En
 
     await authCtx.coreAdapter.execute(
       `INSERT INTO consent_statement_versions
-       (id, tenant_id, statement_id, version, content_type, effective_at, is_current, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, 'draft', ?, ?)`,
-      [id, tenantId, sid, body.version, body.content_type ?? 'url', body.effective_at, now, now]
+       (id, tenant_id, statement_id, version, content_type, effective_at, effective_until, is_current, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'draft', ?, ?)`,
+      [
+        id,
+        tenantId,
+        sid,
+        body.version,
+        body.content_type ?? 'url',
+        body.effective_at,
+        body.effective_until ?? null,
+        now,
+        now,
+      ]
     );
 
     const created = await authCtx.coreAdapter.query(
@@ -393,13 +648,15 @@ export async function adminConsentVersionUpdateHandler(c: Context<{ Bindings: En
     const authCtx = createAuthContextFromHono(c, tenantId);
     const vid = c.req.param('vid')!;
     const body = await c.req.json<{
+      version?: string;
       content_type?: string;
       effective_at?: number;
+      effective_until?: number | null;
     }>();
 
     // Only allow editing draft versions
-    const existing = await authCtx.coreAdapter.query<{ status: string }>(
-      `SELECT status FROM consent_statement_versions WHERE id = ? AND tenant_id = ?`,
+    const existing = await authCtx.coreAdapter.query<{ status: string; effective_at: number }>(
+      `SELECT status, effective_at FROM consent_statement_versions WHERE id = ? AND tenant_id = ?`,
       [vid, tenantId]
     );
     if (existing.length === 0) {
@@ -415,6 +672,19 @@ export async function adminConsentVersionUpdateHandler(c: Context<{ Bindings: En
     const sets: string[] = [];
     const params: unknown[] = [];
 
+    if (body.version !== undefined) {
+      if (!validateVersionFormat(body.version)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'version must be YYYYMMDD format (8 digits, valid date)',
+          },
+          400
+        );
+      }
+      sets.push('version = ?');
+      params.push(body.version);
+    }
     if (body.content_type !== undefined) {
       sets.push('content_type = ?');
       params.push(body.content_type);
@@ -422,6 +692,20 @@ export async function adminConsentVersionUpdateHandler(c: Context<{ Bindings: En
     if (body.effective_at !== undefined) {
       sets.push('effective_at = ?');
       params.push(body.effective_at);
+    }
+    if (body.effective_until !== undefined) {
+      const effectiveAt = body.effective_at ?? existing[0].effective_at;
+      if (body.effective_until !== null && body.effective_until <= effectiveAt) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'effective_until must be after effective_at',
+          },
+          400
+        );
+      }
+      sets.push('effective_until = ?');
+      params.push(body.effective_until);
     }
 
     if (sets.length === 0) {
@@ -553,6 +837,8 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
     const body = await c.req.json<{
       title: string;
       description: string;
+      processing_purpose?: string | null;
+      withdrawal_impact?: string | null;
       document_url?: string;
       inline_content?: string;
     }>();
@@ -577,41 +863,21 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
       [vid, lang]
     );
 
-    if (existing.length > 0) {
-      await authCtx.coreAdapter.execute(
-        `UPDATE consent_statement_localizations
-         SET title = ?, description = ?, document_url = ?, inline_content = ?, updated_at = ?
-         WHERE version_id = ? AND language = ?`,
-        [
-          body.title,
-          body.description,
-          documentUrl.value,
-          body.inline_content ?? null,
-          now,
-          vid,
-          lang,
-        ]
-      );
-    } else {
-      const id = crypto.randomUUID();
-      await authCtx.coreAdapter.execute(
-        `INSERT INTO consent_statement_localizations
-         (id, tenant_id, version_id, language, title, description, document_url, inline_content, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          vid,
-          lang,
-          body.title,
-          body.description,
-          documentUrl.value,
-          body.inline_content ?? null,
-          now,
-          now,
-        ]
-      );
-    }
+    await executeLocalizationUpsert({
+      adapter: authCtx.coreAdapter,
+      existing: existing.length > 0,
+      id: crypto.randomUUID(),
+      tenantId,
+      versionId: vid,
+      language: lang,
+      title: body.title,
+      description: body.description,
+      processingPurpose: body.processing_purpose ?? null,
+      withdrawalImpact: body.withdrawal_impact ?? null,
+      documentUrl: documentUrl.value,
+      inlineContent: body.inline_content ?? null,
+      now,
+    });
 
     const result = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND language = ?`,
@@ -1002,9 +1268,18 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
     // Verify the record exists and is granted
     const existing = await authCtx.coreAdapter.query<{
       status: string;
+      version_id: string;
       version: string;
+      expires_at: number | null;
+      withdrawal_allowed: number | null;
+      record_retention_days: number | null;
+      reconsent_interval_days: number | null;
     }>(
-      `SELECT status, version FROM user_consent_records WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
+      `SELECT r.status, r.version_id, r.version, r.expires_at, s.withdrawal_allowed,
+              s.record_retention_days, s.reconsent_interval_days
+         FROM user_consent_records r
+         JOIN consent_statements s ON s.id = r.statement_id AND s.tenant_id = r.tenant_id
+        WHERE r.tenant_id = ? AND r.user_id = ? AND r.statement_id = ?`,
       [tenantId, userId, statementId]
     );
 
@@ -1018,28 +1293,92 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
         400
       );
     }
+    if (existing[0].withdrawal_allowed === 0) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'This consent statement does not allow withdrawal',
+        },
+        400
+      );
+    }
+
+    const recordRetentionDays =
+      existing[0].record_retention_days !== null ? Number(existing[0].record_retention_days) : null;
+    const reconsentIntervalDays =
+      existing[0].reconsent_interval_days !== null
+        ? Number(existing[0].reconsent_interval_days)
+        : null;
+    const retainUntil =
+      recordRetentionDays !== null && recordRetentionDays >= 0
+        ? now + recordRetentionDays * 24 * 60 * 60 * 1000
+        : null;
 
     await authCtx.coreAdapter.execute(
       `UPDATE user_consent_records
-       SET status = 'withdrawn', withdrawn_at = ?, updated_at = ?
+       SET status = 'withdrawn', withdrawn_at = ?, retain_until = ?,
+           consent_settings_snapshot_at = ?, record_retention_days_snapshot = ?,
+           reconsent_interval_days_snapshot = ?, updated_at = ?
        WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
-      [now, now, tenantId, userId, statementId]
+      [
+        now,
+        retainUntil,
+        now,
+        recordRetentionDays,
+        reconsentIntervalDays,
+        now,
+        tenantId,
+        userId,
+        statementId,
+      ]
+    );
+    await authCtx.coreAdapter.execute(
+      `UPDATE consent_item_history
+          SET retain_until = ?,
+              consent_settings_snapshot_at = ?,
+              record_retention_days_snapshot = ?,
+              reconsent_interval_days_snapshot = ?
+        WHERE tenant_id = ?
+          AND user_id = ?
+          AND statement_id = ?
+          AND (retain_until IS NULL OR retain_until < ?)`,
+      [
+        retainUntil,
+        now,
+        recordRetentionDays,
+        reconsentIntervalDays,
+        tenantId,
+        userId,
+        statementId,
+        retainUntil,
+      ]
     );
 
     // Record in history
     await authCtx.coreAdapter.execute(
       `INSERT INTO consent_item_history
        (id, tenant_id, user_id, statement_id, action,
-        version_before, version_after, status_before, status_after,
+        version_id_before, version_id_after, version_before, version_after,
+        status_before, status_after, withdrawn_at, expires_at, retain_until,
+        consent_settings_snapshot_at, record_retention_days_snapshot,
+        reconsent_interval_days_snapshot,
         metadata_json, created_at)
-       VALUES (?, ?, ?, ?, 'withdrawn', ?, ?, 'granted', 'withdrawn', ?, ?)`,
+       VALUES (?, ?, ?, ?, 'withdrawn', ?, ?, ?, ?, 'granted', 'withdrawn', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         crypto.randomUUID(),
         tenantId,
         userId,
         statementId,
+        existing[0].version_id,
+        existing[0].version_id,
         existing[0].version,
         existing[0].version,
+        now,
+        existing[0].expires_at,
+        retainUntil,
+        now,
+        recordRetentionDays,
+        reconsentIntervalDays,
         JSON.stringify({ initiated_by: 'admin' }),
         now,
       ]

@@ -118,7 +118,7 @@ const id: Translations = {
   'env.customDesc': 'Masukkan nama environment kustom',
   'env.customPrompt': 'Masukkan nama environment kustom',
   'env.customValidation':
-    'Hanya huruf kecil, angka, dan tanda hubung yang diizinkan (contoh: prod, staging, dev)',
+    'Hanya huruf kecil, angka, dan tanda hubung yang diizinkan (contoh: prod, main, tokyo, acme-dev)',
   'env.detected': 'Environment yang Terdeteksi:',
   'env.selectExisting': 'Pilih environment yang ada',
   'env.createNew': 'Buat environment baru',
@@ -702,7 +702,7 @@ const id: Translations = {
   'web.systemMode': 'Sistem',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Prasyarat',
+  'web.prereq.title': 'Siap',
   'web.prereq.checking': 'Memeriksa...',
   'web.prereq.checkingRequirements': 'Memeriksa persyaratan sistem...',
   'web.prereq.ready': 'Siap',
@@ -830,12 +830,10 @@ const id: Translations = {
   'web.complete.issuerUrl': 'URL Issuer',
   'web.complete.loginUrl': 'URL Login',
   'web.complete.adminUrl': 'URL Admin',
-  'web.complete.nextSteps': 'Langkah Selanjutnya:',
-  'web.complete.step1': 'Selesaikan pengaturan admin awal menggunakan tombol di atas',
-  'web.complete.step2': 'Konfigurasikan klien OAuth pertama Anda di UI Admin',
-  'web.complete.step3': 'Integrasikan dengan aplikasi Anda',
   'web.complete.saveConfig': 'Simpan Konfigurasi',
   'web.complete.backToMain': 'Kembali ke Utama',
+  'web.config.saveToFileTitle': 'Simpan konfigurasi ke file',
+  'web.complete.backToMainTitle': 'Kembali ke layar utama',
   'web.complete.canClose': 'Pengaturan selesai. Anda dapat menutup jendela ini dengan aman.',
   'web.complete.adminAccountTitle': 'Pengaturan Akun Admin',
   'web.complete.adminAccountImportant': 'PENTING',
@@ -910,7 +908,7 @@ const id: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': 'Nama Environment',
-  'web.form.envNamePlaceholder': 'contoh: prod, staging, dev',
+  'web.form.envNamePlaceholder': 'contoh: prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Hanya huruf kecil, angka, dan tanda hubung',
   'web.form.envNameError':
     'Hanya huruf kecil, angka, dan tanda hubung yang diperbolehkan (harus dimulai dengan huruf)',
@@ -1089,6 +1087,41 @@ const id: Translations = {
   'web.envDetail.queues': 'Queue',
   'web.envDetail.r2Buckets': 'Bucket R2',
   'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Pengaturan email',
+  'web.envDetail.emailDesc': 'Aktifkan Cloudflare Email Service nanti untuk environment ini.',
+  'web.envDetail.emailCurrentProvider': 'Provider saat ini',
+  'web.envDetail.emailCurrentStatus': 'Status',
+  'web.envDetail.emailCurrentFrom': 'Alamat From',
+  'web.envDetail.emailConfigured': 'Terkonfigurasi',
+  'web.envDetail.emailNotConfigured': 'Belum dikonfigurasi',
+  'web.envDetail.emailProviderNone': 'Belum dikonfigurasi',
+  'web.envDetail.emailCloudflareRequirements': 'Persyaratan',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan diperlukan',
+  'web.envDetail.emailCloudflareRequirementDns': 'Cloudflare DNS dan onboarding domain diperlukan',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Pengaturan domain di Cloudflare Dashboard masih manual',
+  'web.envDetail.emailCloudflareFromHint':
+    'Jika menggunakan Cloudflare Email Service, alamat harus berasal dari domain yang sudah di-onboard di Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Pengaturan Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'Jika menggunakan Resend, domain harus ditambahkan dan diverifikasi di Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Domain Resend',
+  'web.envDetail.emailFromAddress': 'Alamat email From',
+  'web.envDetail.emailFromName': 'Nama tampilan pengirim (opsional)',
+  'web.envDetail.emailEnableCloudflare': 'Aktifkan Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Menerapkan...',
+  'web.envDetail.emailProgress': 'Progres pengaturan email:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email diaktifkan.',
+  'web.envDetail.emailUpdateFailed': 'Gagal mengaktifkan Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Masukkan alamat email From.',
+  'web.envDetail.emailFromInvalid': 'Masukkan alamat email yang valid.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'Environment ini sudah memiliki provider email lain. Beralih ke Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Memulai pengaturan Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'Environment ini sudah memiliki provider email lain. Beralih ke Resend?',
+  'web.envDetail.emailResendStarting': 'Menyimpan konfigurasi email Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Konfigurasi email Resend disimpan.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Perbarui semua Workers',
@@ -1100,6 +1133,7 @@ const id: Translations = {
   'web.envDetail.upToDate': 'Terkini',
   'web.envDetail.notDeployed': 'Belum terdeploy',
   'web.envDetail.updateOnlyChanged': 'Perbarui hanya versi yang berubah',
+  'web.envDetail.updateIncludeUiWorkers': 'Perbarui Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Perbarui semua Workers',
   'web.envDetail.refreshVersions': 'Segarkan',
   'web.envDetail.updateProgress': 'Progres pembaruan:',
@@ -1143,7 +1177,7 @@ const id: Translations = {
   'web.error.notLoggedIn': 'Belum masuk ke Cloudflare',
   'web.error.runCommand': 'Silakan jalankan perintah ini di terminal Anda:',
   'web.error.thenRefresh': 'Kemudian segarkan halaman ini.',
-  'web.error.checkingPrereq': 'Error memeriksa prasyarat:',
+  'web.error.checkingPrereq': 'Error memeriksa kesiapan:',
   'web.error.invalidJson': 'JSON tidak valid:',
   'web.error.validationFailed': 'Permintaan validasi gagal:',
 

@@ -41,7 +41,6 @@ import {
   CanonicalSensitiveValueResolver,
   generateId,
   generateUserIdFromSettings,
-  hashPassword,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
   syncUserLifecycleState,
@@ -115,7 +114,7 @@ async function maybeCreateCanonicalRuntimeUser(
     zoneinfo: internalUser.zoneinfo ?? null,
     sourceRef: 'scim:/Users',
     externalId: internalUser.external_id ?? null,
-    passwordHash: internalUser.password_hash ?? null,
+    passwordHash: null,
     addressJson: internalUser.address_json ?? null,
     customAttributesJson: internalUser.custom_attributes_json ?? null,
     piiFields: {
@@ -179,7 +178,7 @@ async function maybeSyncCanonicalRuntimeUser(
     zoneinfo: internalUser.zoneinfo ?? null,
     sourceRef: 'scim:/Users',
     externalId: internalUser.external_id ?? null,
-    passwordHash: internalUser.password_hash ?? null,
+    passwordHash: null,
     addressJson: internalUser.address_json ?? null,
     customAttributesJson: internalUser.custom_attributes_json ?? null,
     piiFields: {
@@ -667,6 +666,34 @@ function scimError(
   return c.json(error, status);
 }
 
+const SCIM_PASSWORD_UNSUPPORTED_DETAIL =
+  'SCIM password provisioning is not supported; use Passkey, Email Code, Directory Connector, or External IdP authentication';
+
+function hasScimPasswordCredential(scimUser: Partial<ScimUser>): boolean {
+  return Object.prototype.hasOwnProperty.call(scimUser, 'password');
+}
+
+function scimPasswordUnsupportedError(c: ScimContext): Response {
+  return scimError(c, 400, SCIM_PASSWORD_UNSUPPORTED_DETAIL, 'invalidValue');
+}
+
+function scimPasswordUnsupportedBulkResponse(
+  method: ScimBulkMethod,
+  bulkId?: string
+): ScimBulkOperationResponse {
+  return {
+    method,
+    bulkId,
+    status: '400',
+    response: {
+      schemas: [SCIM_SCHEMAS.ERROR],
+      status: '400',
+      detail: SCIM_PASSWORD_UNSUPPORTED_DETAIL,
+      scimType: 'invalidValue',
+    },
+  };
+}
+
 function toCustomClaimErrorExtensions(validation: {
   missingRequiredFields?: Array<{ fieldKey: string; label: string; fieldType: string }>;
 }): Record<string, unknown> | undefined {
@@ -784,7 +811,7 @@ app.get('/ServiceProviderConfig', (c) => {
       maxResults: 1000,
     },
     changePassword: {
-      supported: true,
+      supported: false,
     },
     sort: {
       supported: true,
@@ -1396,6 +1423,9 @@ app.post('/Users', async (c) => {
     if (!validation.valid) {
       return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
     }
+    if (hasScimPasswordCredential(scimUser)) {
+      return scimPasswordUnsupportedError(c);
+    }
 
     // Check for duplicate userName or email in PII DB via Adapter
     const primaryEmail =
@@ -1434,11 +1464,6 @@ app.post('/Users', async (c) => {
 
     // Generate ID
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
-
-    // Hash password if provided
-    if (scimUser.password) {
-      internalUser.password_hash = await hashPassword(scimUser.password);
-    }
 
     // Set defaults
     if (!internalUser.email_verified) internalUser.email_verified = 0;
@@ -1536,6 +1561,9 @@ app.put('/Users/:id', async (c) => {
     if (!validation.valid) {
       return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
     }
+    if (hasScimPasswordCredential(scimUser)) {
+      return scimPasswordUnsupportedError(c);
+    }
 
     // Check if user exists - fetch from both DBs
     const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
@@ -1571,11 +1599,6 @@ app.put('/Users/:id', async (c) => {
       );
     }
     internalUser.updated_at = new Date().toISOString();
-
-    // Hash password if changed
-    if (scimUser.password) {
-      internalUser.password_hash = await hashPassword(scimUser.password);
-    }
 
     await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
     await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
@@ -1660,6 +1683,9 @@ app.patch('/Users/:id', async (c) => {
     if (!validation.valid) {
       return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
     }
+    if (hasScimPasswordCredential(scimUser)) {
+      return scimPasswordUnsupportedError(c);
+    }
 
     // Convert back to internal format
     const internalUser = scimToUser(scimUser);
@@ -1677,11 +1703,6 @@ app.patch('/Users/:id', async (c) => {
       );
     }
     internalUser.updated_at = new Date().toISOString();
-
-    // Hash password if changed
-    if (scimUser.password) {
-      internalUser.password_hash = await hashPassword(scimUser.password);
-    }
 
     await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
     await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
@@ -2700,6 +2721,9 @@ async function processUserOperation(
           },
         };
       }
+      if (hasScimPasswordCredential(scimUser)) {
+        return scimPasswordUnsupportedBulkResponse('POST', bulkId);
+      }
 
       // Check for duplicate email
       const primaryEmail =
@@ -2754,11 +2778,6 @@ async function processUserOperation(
       internalUser.updated_at = now;
       if (!internalUser.email_verified) internalUser.email_verified = 0;
       if (internalUser.active === undefined) internalUser.active = 1;
-
-      // Hash password if provided
-      if (scimUser.password) {
-        internalUser.password_hash = await hashPassword(scimUser.password);
-      }
 
       await maybeCreateCanonicalRuntimeUser(
         c,
@@ -2840,6 +2859,9 @@ async function processUserOperation(
           },
         };
       }
+      if (hasScimPasswordCredential(scimUser)) {
+        return scimPasswordUnsupportedBulkResponse('PUT');
+      }
 
       const internalUser = scimToUser(scimUser);
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
@@ -2861,10 +2883,6 @@ async function processUserOperation(
         };
       }
       internalUser.updated_at = new Date().toISOString();
-
-      if (scimUser.password) {
-        internalUser.password_hash = await hashPassword(scimUser.password);
-      }
 
       await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
       await maybeSyncCanonicalRuntimeUser(
@@ -2944,6 +2962,9 @@ async function processUserOperation(
           },
         };
       }
+      if (hasScimPasswordCredential(scimUser)) {
+        return scimPasswordUnsupportedBulkResponse('PATCH');
+      }
 
       const internalUser = scimToUser(scimUser);
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
@@ -2964,10 +2985,6 @@ async function processUserOperation(
         };
       }
       internalUser.updated_at = new Date().toISOString();
-
-      if (scimUser.password) {
-        internalUser.password_hash = await hashPassword(scimUser.password);
-      }
 
       await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
       await maybeSyncCanonicalRuntimeUser(

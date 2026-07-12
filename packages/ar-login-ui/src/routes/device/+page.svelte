@@ -3,10 +3,12 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { deviceFlowAPI } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+
+	const { brandingStore } = useLoginUIStores();
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -68,14 +70,14 @@
 		try {
 			const { data, error: apiError } = await deviceFlowAPI.verify(cleanCode);
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Invalid or expired code');
+				throw new Error(apiError.error_description || $LL.device_errorInvalidOrExpiredCode());
 			}
 			if (data) {
 				deviceInfo = data as DeviceInfo;
 				step = 'verified';
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to verify device code';
+			error = err instanceof Error ? err.message : $LL.device_errorVerifyFailed();
 		} finally {
 			verifying = false;
 		}
@@ -90,12 +92,12 @@
 			const cleanCode = userCode.replace(/-/g, '');
 			const { data, error: apiError } = await deviceFlowAPI.approve(cleanCode);
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to approve device');
+				throw new Error(apiError.error_description || $LL.device_errorApproveFailed());
 			}
 			if (!data?.redirect_url) {
 				success = $LL.device_success();
 			} else if (!isValidRedirectUrl(data.redirect_url)) {
-				error = 'Invalid redirect URL received from server';
+				error = $LL.device_errorInvalidRedirect();
 			} else {
 				success = $LL.device_success();
 				const url = data.redirect_url;
@@ -104,7 +106,7 @@
 				}, 2000);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to approve device';
+			error = err instanceof Error ? err.message : $LL.device_errorApproveFailed();
 		} finally {
 			loading = false;
 		}
@@ -119,11 +121,11 @@
 			const cleanCode = userCode.replace(/-/g, '');
 			const { error: apiError } = await deviceFlowAPI.deny(cleanCode);
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to deny device');
+				throw new Error(apiError.error_description || $LL.device_errorDenyFailed());
 			}
 			window.location.href = '/';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to deny device';
+			error = err instanceof Error ? err.message : $LL.device_errorDenyFailed();
 		} finally {
 			loading = false;
 		}
@@ -189,7 +191,7 @@
 						id="user-code"
 						type="text"
 						class="auth-code-input"
-						placeholder="XXXX-XXXX"
+						placeholder={$LL.device_codePlaceholder()}
 						maxlength="9"
 						value={userCode}
 						oninput={handleCodeInput}

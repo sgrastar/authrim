@@ -4,10 +4,12 @@ import { z } from 'zod';
 import type { Env } from '../../types/env';
 import {
   createPluginLoader,
+  getRequiredPluginContext,
   getTenantEmailSettings,
   invalidatePluginRuntimeCaches,
   pluginContextMiddleware,
   resetPluginRegistryCache,
+  type PluginCapabilityRegistry,
 } from '../plugin-context';
 
 function createMockKV(values: Record<string, string | null> = {}): KVNamespace {
@@ -26,6 +28,15 @@ function createMockKV(values: Record<string, string | null> = {}): KVNamespace {
     list: vi.fn(async () => ({ keys: [] })),
     getWithMetadata: vi.fn(async () => ({ value: null, metadata: null })),
   } as unknown as KVNamespace;
+}
+
+function createTestRegistry(capability: string): PluginCapabilityRegistry {
+  return {
+    getNotifier: () => undefined,
+    getIdP: () => undefined,
+    getAuthenticator: () => undefined,
+    listCapabilities: () => [capability],
+  };
 }
 
 describe('createPluginLoader', () => {
@@ -126,6 +137,44 @@ describe('createPluginLoader', () => {
     );
 
     expect(initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a plugin when the resolved config predicate requests skip', async () => {
+    const register = vi.fn((registry, config) => {
+      registry.registerNotifier(
+        'email',
+        {
+          send: vi.fn(async () => ({
+            success: true,
+            messageId: config.apiKey,
+          })),
+        },
+        'notifier-requires-key'
+      );
+    });
+
+    const loadPlugins = createPluginLoader([
+      {
+        plugin: {
+          id: 'notifier-requires-key',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+          configSchema: z.object({
+            apiKey: z.string(),
+            defaultFrom: z.string().email(),
+          }),
+          register,
+        },
+        envConfigResolver: () => ({ defaultFrom: 'noreply@example.com' }),
+        skipIfConfigEmpty: true,
+        skipIfConfig: (config) => typeof config.apiKey !== 'string',
+      },
+    ]);
+
+    const registry = await loadPlugins({} as Env, 'tenant-a');
+
+    expect(register).not.toHaveBeenCalled();
+    expect(registry.getNotifier('email')).toBeUndefined();
   });
 
   it('keeps tenant-specific plugin config isolated', async () => {
@@ -331,6 +380,166 @@ describe('createPluginLoader', () => {
     vi.advanceTimersByTime(60_001);
     await request('tenant-b');
     expect(loadPlugins).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not share a never-settling plugin initialization promise across requests', async () => {
+    let callCount = 0;
+    let resolveFirst: ((registry: PluginCapabilityRegistry) => void) | undefined;
+    const loadPlugins = vi.fn((_env: Env, tenantId: string) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Promise<PluginCapabilityRegistry>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+
+      return Promise.resolve(createTestRegistry(`tenant:${tenantId}:fresh`));
+    });
+
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c as any).set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use('*', pluginContextMiddleware({ loadPlugins }));
+    app.get('/', (c) =>
+      c.json({
+        capabilities: getRequiredPluginContext(c).registry.listCapabilities(),
+      })
+    );
+
+    const env = { SETTINGS_CACHE_TTL: '60' } as unknown as Env;
+    const firstRequest = app.request('/', {}, env);
+    await Promise.resolve();
+
+    const secondRequest = app.request('/', {}, env);
+    const secondResult = await Promise.race([
+      secondRequest,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+    ]);
+
+    resolveFirst?.(createTestRegistry('tenant:tenant-a:first'));
+    await firstRequest;
+
+    if (secondResult === 'timeout') {
+      await secondRequest;
+      throw new Error('second request waited on the first pending plugin initialization');
+    }
+
+    await expect(secondResult.json()).resolves.toEqual({
+      capabilities: ['tenant:tenant-a:fresh'],
+    });
+    expect(loadPlugins).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps scoped plugin registries isolated for the same tenant', async () => {
+    const loadAuthBootstrapPlugins = vi.fn(async () => ({
+      getNotifier: () => undefined,
+      getIdP: () => undefined,
+      getAuthenticator: () => undefined,
+      listCapabilities: () => ['scope:auth-bootstrap'],
+    }));
+    const loadNotificationPlugins = vi.fn(async () => ({
+      getNotifier: () => undefined,
+      getIdP: () => undefined,
+      getAuthenticator: () => undefined,
+      listCapabilities: () => ['scope:notification'],
+    }));
+
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c as any).set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use(
+      '/bootstrap',
+      pluginContextMiddleware({
+        scope: 'auth-bootstrap',
+        loadPlugins: loadAuthBootstrapPlugins,
+      })
+    );
+    app.use(
+      '/notification',
+      pluginContextMiddleware({
+        scope: 'notification',
+        loadPlugins: loadNotificationPlugins,
+      })
+    );
+    app.get('/bootstrap', (c) =>
+      c.json({
+        capabilities: getRequiredPluginContext(c, 'auth-bootstrap').registry.listCapabilities(),
+      })
+    );
+    app.get('/notification', (c) =>
+      c.json({
+        capabilities: getRequiredPluginContext(c, 'notification').registry.listCapabilities(),
+      })
+    );
+
+    const env = { SETTINGS_CACHE_TTL: '60' } as unknown as Env;
+
+    await expect((await app.request('/bootstrap', {}, env)).json()).resolves.toEqual({
+      capabilities: ['scope:auth-bootstrap'],
+    });
+    await expect((await app.request('/notification', {}, env)).json()).resolves.toEqual({
+      capabilities: ['scope:notification'],
+    });
+    await app.request('/bootstrap', {}, env);
+    await app.request('/notification', {}, env);
+
+    expect(loadAuthBootstrapPlugins).toHaveBeenCalledTimes(1);
+    expect(loadNotificationPlugins).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws from required plugin context when middleware was not applied', async () => {
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c as any).set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.get('/', (c) => {
+      try {
+        getRequiredPluginContext(c, 'notification');
+        return c.json({ ok: true });
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+      }
+    });
+
+    const response = await app.request('/', {}, {} as Env);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(500);
+    expect(body.error).toContain('Plugin context middleware is required');
+  });
+
+  it('applies fail-closed plugin initialization policy for required capability scopes', async () => {
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c as any).set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use(
+      '*',
+      pluginContextMiddleware({
+        scope: 'notification',
+        failurePolicy: 'fail_closed',
+        loadPlugins: vi.fn(async () => {
+          throw new Error('loader failed');
+        }),
+      })
+    );
+    app.get('/', (c) => c.json({ ok: true }));
+
+    const response = await app.request('/', {}, {} as Env);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(500);
+    expect(body.error).toBe('server_error');
   });
 
   it('rejects plugin context initialization without tenant context', async () => {

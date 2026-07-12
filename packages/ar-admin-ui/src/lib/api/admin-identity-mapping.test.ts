@@ -216,6 +216,33 @@ describe('adminIdentityMappingAPI', () => {
 		}
 	});
 
+	it('returns the compiled snapshot from the mutation result envelope', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					result: {
+						id: 'snapshot_1',
+						tenantId: 'tenant_a',
+						fieldMappingVersionId: 'version_1',
+						catalogVersionId: 'catalog_version_1',
+						snapshotHash: 'snapshot_hash_1',
+						dependencyGraphId: 'dependency_graph_1',
+						lifecycleState: 'draft'
+					}
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+
+		const response = await adminIdentityMappingAPI.compileFieldMappingVersion(
+			'field_mapping_set_1',
+			'version_1',
+			{ catalogVersionId: 'catalog_version_1' }
+		);
+
+		expect(response.result.id).toBe('snapshot_1');
+	});
+
 	it('surfaces API error descriptions', async () => {
 		fetchMock.mockResolvedValueOnce(
 			new Response(JSON.stringify({ error_description: 'schema-readiness gate failed' }), {

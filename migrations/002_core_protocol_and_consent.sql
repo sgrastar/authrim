@@ -142,6 +142,26 @@ CREATE TABLE audit_log (
   created_at INTEGER NOT NULL
 , tenant_id TEXT NOT NULL DEFAULT 'default', severity TEXT DEFAULT 'info');
 
+CREATE TABLE event_log (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  event_type TEXT NOT NULL,
+  event_category TEXT NOT NULL,
+  result TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'info',
+  error_code TEXT,
+  error_message TEXT,
+  anonymized_user_id TEXT,
+  client_id TEXT,
+  session_id TEXT,
+  request_id TEXT,
+  duration_ms INTEGER,
+  details_r2_key TEXT,
+  details_json TEXT,
+  retention_until INTEGER,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE branding_settings (
   id TEXT PRIMARY KEY DEFAULT 'default',
   custom_css TEXT,
@@ -373,11 +393,6 @@ CREATE TABLE credential_offers (
     issued_credential_id TEXT,
     issued_credential_internal_id TEXT,
     FOREIGN KEY (issued_credential_internal_id) REFERENCES issued_credentials(internal_id)
-);
-
-CREATE TABLE d1_migrations(
-		name       TEXT PRIMARY KEY,
-		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE TABLE data_export_requests (
@@ -710,22 +725,6 @@ CREATE TABLE "linked_identities" (
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
   FOREIGN KEY (provider_id) REFERENCES upstream_providers(id) ON DELETE CASCADE
 );
-
-CREATE TABLE migration_metadata (
-  id TEXT PRIMARY KEY DEFAULT 'global',
-
-  -- Current schema version (highest applied migration version)
-  current_version INTEGER NOT NULL DEFAULT 0,
-
-  -- Last migration applied timestamp
-  last_migration_at INTEGER,
-
-  -- Environment (development, staging, production)
-  environment TEXT DEFAULT 'development',
-
-  -- Additional metadata as JSON
-  metadata_json TEXT
-, tenant_id TEXT NOT NULL DEFAULT 'default');
 
 CREATE TABLE "oauth_client_consents" (
   id TEXT PRIMARY KEY,

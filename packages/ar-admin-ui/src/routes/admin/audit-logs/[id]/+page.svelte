@@ -4,6 +4,9 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let entry: AuditLogEntry | null = $state(null);
 	let loading = $state(true);
@@ -180,9 +183,27 @@
 	<title>{$LL.admin_audit_logs_detail_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Back Button -->
-	<a href="/admin/audit-logs" class="back-link">← {$LL.admin_audit_logs_back()}</a>
+{#snippet entryBadge()}
+	{#if entry}
+		<span class={getActionBadgeClass(entry.action)}>
+			{formatAction(entry.action)}
+		</span>
+	{/if}
+{/snippet}
+
+{#snippet headerActions()}
+	<a href="/admin/audit-logs" class="btn btn-secondary">
+		<i class="i-ph-arrow-left" aria-hidden="true"></i>
+		<span>{$LL.admin_audit_logs_back()}</span>
+	</a>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_audit_logs_entry_title()}
+		titleAccessory={entryBadge}
+		actions={headerActions}
+	/>
 
 	{#if loading}
 		<div class="loading-state">
@@ -192,20 +213,9 @@
 	{:else if error}
 		<div class="alert alert-error">{error}</div>
 	{:else if entry}
-		<div class="page-header">
-			<div class="flow-title-row">
-				<h1 class="page-title">{$LL.admin_audit_logs_entry_title()}</h1>
-				<span class={getActionBadgeClass(entry.action)}>
-					{formatAction(entry.action)}
-				</span>
-			</div>
-		</div>
-
 		<!-- Basic Information -->
-		<div class="panel">
-			<h2 class="section-title-border">{$LL.admin_audit_logs_basic_information()}</h2>
-
-			<div class="info-grid">
+		<AdminSection title={$LL.admin_audit_logs_basic_information()}>
+			<dl class="info-grid">
 				<div class="info-item">
 					<dt class="info-label">{$LL.admin_audit_logs_entry_id()}</dt>
 					<dd class="info-value mono">{entry.id}</dd>
@@ -220,14 +230,12 @@
 					<dt class="info-label">{$LL.admin_audit_logs_date_time()}</dt>
 					<dd class="info-value">{formatDateTime(entry.createdAt)}</dd>
 				</div>
-			</div>
-		</div>
+			</dl>
+		</AdminSection>
 
 		<!-- Actor Information -->
-		<div class="panel">
-			<h2 class="section-title-border">{$LL.admin_audit_logs_actor_information()}</h2>
-
-			<div class="info-grid">
+		<AdminSection title={$LL.admin_audit_logs_actor_information()}>
+			<dl class="info-grid">
 				<div class="info-item">
 					<dt class="info-label">{$LL.admin_audit_logs_user_id()}</dt>
 					<dd class="info-value">
@@ -260,26 +268,23 @@
 						</dd>
 					</div>
 				{/if}
-			</div>
+			</dl>
 
 			{#if entry.userAgent}
-				<div class="info-item" style="margin-top: 16px;">
-					<dt class="info-label">{$LL.admin_audit_logs_full_user_agent()}</dt>
-					<dd
-						class="info-value mono text-secondary"
-						style="word-break: break-all; font-size: 0.75rem;"
-					>
-						{entry.userAgent}
-					</dd>
-				</div>
+				<dl class="info-grid info-grid--wide">
+					<div class="info-item">
+						<dt class="info-label">{$LL.admin_audit_logs_full_user_agent()}</dt>
+						<dd class="info-value mono text-secondary user-agent-value">
+							{entry.userAgent}
+						</dd>
+					</div>
+				</dl>
 			{/if}
-		</div>
+		</AdminSection>
 
 		<!-- Resource Information -->
-		<div class="panel">
-			<h2 class="section-title-border">{$LL.admin_audit_logs_resource_information()}</h2>
-
-			<div class="info-grid">
+		<AdminSection title={$LL.admin_audit_logs_resource_information()}>
+			<dl class="info-grid">
 				<div class="info-item">
 					<dt class="info-label">{$LL.admin_audit_logs_resource_type()}</dt>
 					<dd class="info-value">{entry.resourceType || '-'}</dd>
@@ -305,20 +310,67 @@
 						{/if}
 					</dd>
 				</div>
-			</div>
-		</div>
+			</dl>
+		</AdminSection>
 
 		<!-- Metadata -->
-		<div class="panel">
-			<h2 class="section-title-border">{$LL.admin_audit_logs_metadata()}</h2>
-
+		<AdminSection title={$LL.admin_audit_logs_metadata()}>
 			{#if entry.metadata && Object.keys(entry.metadata).length > 0}
 				<pre class="code-block"><code>{formatMetadata(entry.metadata)}</code></pre>
 			{:else}
-				<p class="text-muted" style="font-style: italic; margin: 0;">
+				<p class="empty-note">
 					{$LL.admin_audit_logs_no_additional_metadata()}
 				</p>
 			{/if}
-		</div>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
+
+<style>
+	.info-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 14px;
+		margin: 0;
+	}
+
+	.info-item {
+		min-width: 0;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface-raised);
+	}
+
+	.info-grid--wide {
+		margin-top: 14px;
+	}
+
+	.info-label {
+		margin: 0 0 6px;
+		color: var(--color-text-subtle);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+	}
+
+	.info-value {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.9rem;
+		line-height: 1.5;
+	}
+
+	.user-agent-value {
+		word-break: break-all;
+		font-size: 0.75rem;
+	}
+
+	.empty-note {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+</style>

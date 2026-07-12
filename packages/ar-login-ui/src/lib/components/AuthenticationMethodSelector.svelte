@@ -57,6 +57,9 @@
 	);
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+	const visibleExternalProviders = $derived(
+		externalProviders.filter((provider) => provider.loginEnabled ?? provider.enabled !== false)
+	);
 
 	function getProviderIcon(provider: ExternalProvider): string {
 		return getExternalProviderIconClass(provider);
@@ -205,7 +208,7 @@
 {/if}
 
 <!-- External Login Section -->
-{#if externalEnabled && externalProviders.length > 0}
+{#if externalEnabled && visibleExternalProviders.length > 0}
 	<div class="auth-divider" style="margin: 24px 0;">
 		<div class="auth-divider__line"></div>
 		<span class="auth-divider__text">{$LL.login_orContinueWith()}</span>
@@ -213,7 +216,7 @@
 	</div>
 
 	<div class="space-y-3">
-		{#each externalProviders as provider (provider.id)}
+		{#each visibleExternalProviders as provider (provider.id)}
 			{@const safeColor = sanitizeColor(provider.buttonColor)}
 			<Button
 				variant="secondary"

@@ -56,7 +56,7 @@ describe('generateRoutes', () => {
     );
   });
 
-  it('adds Cloudflare Email Service bindings only to ar-auth and ar-management', () => {
+  it('adds auth and management service bindings for email and external IdP flows', () => {
     const config = {
       version: '1.0.0',
       createdAt: '2026-03-10T00:00:00.000Z',
@@ -141,6 +141,7 @@ describe('generateRoutes', () => {
     };
 
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const libCoreConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
 
@@ -150,9 +151,34 @@ describe('generateRoutes', () => {
         expect.objectContaining({ name: 'CIBA_REQUEST_STORE' }),
       ])
     );
+    expect(authConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'DIRECTORY_CONNECTOR_RELAY',
+          class_name: 'DirectoryConnectorRelay',
+        }),
+      ])
+    );
+    expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
+    expect(managementConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'DIRECTORY_CONNECTOR_RELAY',
+          class_name: 'DirectoryConnectorRelay',
+          script_name: 'emailtest-ar-auth',
+        }),
+      ])
+    );
     expect(authConfig.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(managementConfig.send_email).toEqual([{ name: 'EMAIL' }]);
+    expect(authConfig.services).toEqual([
+      { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
+    ]);
+    expect(managementConfig.services).toEqual([
+      { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
+    ]);
     expect(tokenConfig.send_email).toBeUndefined();
+    expect(libCoreConfig.vars.AUTH_CODE_EXPIRY).toBe('600');
     expect(authConfig.vars.EMAIL_FROM).toBe('noreply@example.com');
     expect(authConfig.vars.EMAIL_FROM_NAME).toBe('Authrim');
   });
@@ -243,6 +269,76 @@ describe('generateRoutes', () => {
     );
     expect(updateConfig.migrations).toBeUndefined();
     expect(toToml(updateConfig, 'existing')).not.toContain('new_sqlite_classes');
+  });
+
+  it('keeps ar-auth local Durable Object migration during worker updates', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'existing' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://existing-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://existing-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://existing-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+        storageType: 'external',
+      },
+      cloudflare: {},
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      components: {
+        loginUi: true,
+        adminUi: true,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const updateConfig = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} }, undefined, {
+      includeDurableObjectMigrations: false,
+    });
+
+    expect(updateConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
   });
 
   it('serializes send_email bindings in env-scoped wrangler.toml output', () => {
@@ -874,6 +970,11 @@ id = "kv-id"
       { pattern: 'conformance.authrim.com/*', zone_name: 'authrim.com' },
     ]);
     expect(authConfig.routes).toBeUndefined();
+    expect(authConfig.vars.ENABLE_LOGIN_RUNTIME_FLOW).toBe('true');
+    expect(authConfig.vars.FLOW_RUNTIME_HMAC_SECRET).toBe('');
+    expect(authConfig.vars.AUTHRIM_TRUST_FORWARDED_HOST).toBe('true');
+    expect(managementConfig.vars.AUTHRIM_TRUST_FORWARDED_HOST).toBe('true');
+    expect(routerConfig.vars.AUTHRIM_TRUST_FORWARDED_HOST).toBeUndefined();
     expect(managementConfig.routes).toBeUndefined();
   });
 
@@ -1225,6 +1326,111 @@ id = "kv-id"
     );
   });
 
+  it('adds service site binding to ar-router when configured', () => {
+    const config = {
+      version: '1.0.0',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      updatedAt: '2026-03-10T00:00:00.000Z',
+      environment: { prefix: 'test' },
+      urls: {
+        api: {
+          custom: null,
+          auto: 'https://test-ar-router.example.workers.dev',
+        },
+        loginUi: {
+          custom: null,
+          auto: 'https://test-ar-login-ui.workers.dev',
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: 'https://test-ar-admin-ui.workers.dev',
+          sameAsApi: false,
+        },
+      },
+      tenant: {
+        name: 'default',
+        displayName: 'Default Tenant',
+        multiTenant: false,
+        userIdFormat: 'nanoid',
+      },
+      components: {
+        api: true,
+        loginUi: true,
+        adminUi: true,
+        saml: false,
+        async: false,
+        vc: false,
+        bridge: false,
+        policy: false,
+      },
+      oidc: {
+        accessTokenTtl: 3600,
+        refreshTokenTtl: 604800,
+        authCodeTtl: 600,
+        pkceRequired: true,
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+      sharding: {
+        authCodeShards: 4,
+        refreshTokenShards: 4,
+        sessionShards: 4,
+        challengeShards: 4,
+      },
+      features: {
+        queue: { enabled: false },
+        r2: { enabled: false },
+        email: { provider: 'none', configured: false },
+      },
+      keys: {
+        secretsPath: './keys/',
+        includeSecrets: false,
+        storageType: 'external',
+      },
+      cloudflare: {},
+      database: {
+        core: { location: 'auto', jurisdiction: 'none' },
+        pii: { location: 'auto', jurisdiction: 'none' },
+      },
+      security: {
+        piiEncryptionEnabled: true,
+        domainHashEnabled: true,
+      },
+      serviceSite: {
+        enabled: true,
+        binding: 'SERVICE_SITE',
+        workerName: 'customer-service-site',
+        fallbackMode: 'worker_service_binding',
+      },
+      profile: 'basic-op',
+    } satisfies AuthrimConfig;
+
+    const resourceIds = {
+      d1: {},
+      kv: {
+        SETTINGS: { id: 'kv-settings', name: 'TEST-SETTINGS' },
+        AUTHRIM_CONFIG: { id: 'kv-authrim-config', name: 'TEST-AUTHRIM_CONFIG' },
+      },
+    };
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    expect(routerConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        { binding: 'SETTINGS', id: 'kv-settings' },
+        { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
+      ])
+    );
+    expect(routerConfig.services).toEqual(
+      expect.arrayContaining([
+        { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },
+        { binding: 'ADMIN_UI_WORKER', service: 'test-ar-admin-ui' },
+        { binding: 'SERVICE_SITE', service: 'customer-service-site' },
+      ])
+    );
+    expect(routerConfig.vars.SERVICE_SITE_BINDING).toBe('SERVICE_SITE');
+  });
+
   it('binds import artifacts R2 only to ar-management', () => {
     const config = {
       version: '1.0.0',
@@ -1300,6 +1506,7 @@ id = "kv-id"
       d1: {},
       kv: {},
       r2: {
+        PUBLIC_ASSETS: { name: 'imports-public-assets' },
         AVATARS: { name: 'imports-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'imports-diagnostic-logs' },
         IMPORT_ARTIFACTS: { name: 'imports-import-artifacts' },

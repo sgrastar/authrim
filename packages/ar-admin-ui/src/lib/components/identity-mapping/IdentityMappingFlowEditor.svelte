@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount, tick } from 'svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import {
+		adminIdentityMappingAPI,
+		type PersistentIdentifierProfileSummary
+	} from '$lib/api/admin-identity-mapping';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		type MappingAdapter,
@@ -62,12 +66,30 @@
 				kind: 'string';
 				required: boolean;
 				placeholder: string;
+		  }
+		| {
+				name: string;
+				label: string;
+				kind: 'boolean';
+				required: boolean;
 		  };
 	type TransformOperationSchema = {
 		operation: TransformOperation;
 		label: string;
 		description: string;
 		parameters: TransformParameterSchema[];
+	};
+	type TransformOperationCategoryId = 'basic' | 'array' | 'text' | 'identifier' | 'json';
+	type TransformOperationCategory = {
+		id: TransformOperationCategoryId;
+		operations: TransformOperation[];
+	};
+	type TransformParameterValue = string | boolean;
+	type DryRunValue = {
+		ok: boolean;
+		value: string;
+		input?: string;
+		trace?: string;
 	};
 
 	const transformOperationSchemas: TransformOperationSchema[] = [
@@ -76,6 +98,108 @@
 			label: 'Copy',
 			description: 'Pass the first input value through unchanged.',
 			parameters: []
+		},
+		{
+			operation: 'as_array',
+			label: 'As array',
+			description: 'Wrap one input value as a multi-value array.',
+			parameters: [
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false },
+				{ name: 'unique', label: 'Remove duplicates', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'split',
+			label: 'Split',
+			description: 'Split one text value into a multi-value array.',
+			parameters: [
+				{
+					name: 'delimiter',
+					label: 'Delimiter',
+					kind: 'string',
+					required: false,
+					placeholder: 'comma, space, or custom text'
+				},
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false },
+				{ name: 'unique', label: 'Remove duplicates', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'join',
+			label: 'Join',
+			description: 'Join a multi-value array into one text value.',
+			parameters: [
+				{
+					name: 'delimiter',
+					label: 'Delimiter',
+					kind: 'string',
+					required: false,
+					placeholder: 'comma, space, or custom text'
+				},
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false },
+				{ name: 'unique', label: 'Remove duplicates', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'first',
+			label: 'First',
+			description: 'Use the first value from a multi-value array.',
+			parameters: [
+				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
+				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false }
+			]
+		},
+		{
+			operation: 'oidc_pairwise_sub',
+			label: 'OIDC pairwise sub',
+			description: 'Use the current OIDC client pairwise subject identifier.',
+			parameters: [
+				{
+					name: 'persistentIdentifierProfileId',
+					label: 'Persistent Identifier Profile',
+					kind: 'string',
+					required: false,
+					placeholder: 'profile id'
+				}
+			]
+		},
+		{
+			operation: 'saml_edu_person_targeted_id',
+			label: 'SAML eduPersonTargetedID',
+			description: 'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
+			parameters: [
+				{
+					name: 'persistentIdentifierProfileId',
+					label: 'Persistent Identifier Profile',
+					kind: 'string',
+					required: false,
+					placeholder: 'profile id'
+				}
+			]
+		},
+		{
+			operation: 'affix_text',
+			label: 'Add prefix/suffix',
+			description: 'Add fixed text before or after the input value.',
+			parameters: [
+				{
+					name: 'prefix',
+					label: 'Prefix',
+					kind: 'string',
+					required: false,
+					placeholder: 'prefix'
+				},
+				{
+					name: 'suffix',
+					label: 'Suffix',
+					kind: 'string',
+					required: false,
+					placeholder: 'suffix'
+				}
+			]
 		},
 		{
 			operation: 'trim',
@@ -128,7 +252,7 @@
 					label: 'Delimiter',
 					kind: 'string',
 					required: false,
-					placeholder: 'space, comma, or custom text'
+					placeholder: 'space, comma, blank, or custom text'
 				}
 			]
 		},
@@ -235,6 +359,24 @@
 			]
 		}
 	];
+	const transformOperationCategories: TransformOperationCategory[] = [
+		{ id: 'basic', operations: ['copy', 'fallback'] },
+		{ id: 'array', operations: ['as_array', 'split', 'join', 'first'] },
+		{
+			id: 'text',
+			operations: ['trim', 'normalize', 'case', 'affix_text', 'concat', 'text_to_boolean']
+		},
+		{ id: 'identifier', operations: ['oidc_pairwise_sub', 'saml_edu_person_targeted_id'] },
+		{
+			id: 'json',
+			operations: [
+				'json_build',
+				'json_extract_text',
+				'json_extract_boolean',
+				'json_extract_integer'
+			]
+		}
+	];
 
 	const {
 		samples = [],
@@ -257,6 +399,10 @@
 		initialPolicyOptionId = null,
 		selectedViewMode = null,
 		selectedProfileId = null,
+		emptyStateTitle = null,
+		emptyStateDescription = null,
+		emptyStateActionHref = null,
+		emptyStateActionLabel = null,
 		draftResetKey = 0,
 		onDraftDirtyChange = null,
 		onCompileDraft = null
@@ -281,6 +427,10 @@
 		initialPolicyOptionId?: string | null;
 		selectedViewMode?: ViewMode | null;
 		selectedProfileId?: string | null;
+		emptyStateTitle?: string | null;
+		emptyStateDescription?: string | null;
+		emptyStateActionHref?: string | null;
+		emptyStateActionLabel?: string | null;
 		draftResetKey?: number;
 		onDraftDirtyChange?: ((dirty: boolean) => void) | null;
 		onCompileDraft?: ((draft: MappingDraftPayload) => Promise<void> | void) | null;
@@ -342,6 +492,10 @@
 	let activeDraftResetKey = $state<number | null>(null);
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
 	let draftSubmitMessage = $state<string | null>(null);
+	let persistentIdentifierProfiles = $state<PersistentIdentifierProfileSummary[]>([]);
+	let dryRunResults = $state<
+		Record<string, Pick<RuleDetail, 'dryrunStatus' | 'dryrunTone' | 'input' | 'output' | 'trace'>>
+	>({});
 	let swappingNodeIds = $state<string[]>([]);
 	let nodeSwapAnimationTimer: ReturnType<typeof setTimeout> | null = null;
 	let animateNextSampleSourceNodes = false;
@@ -363,6 +517,7 @@
 	let connectionDragPointer: Point | null = null;
 	let connectionAutoScrollFrame: number | null = null;
 	let suppressNextNodeClickId: string | null = null;
+	let suppressNextCanvasClear = false;
 
 	interface Point {
 		x: number;
@@ -492,6 +647,8 @@
 				: $LL.admin_identity_mapping_flow_select_active_policy_desc()
 			: $LL.admin_identity_mapping_flow_no_profiles_registered_desc()
 	);
+	const resolvedEmptyGraphTitle = $derived(emptyStateTitle ?? emptyGraphTitle);
+	const resolvedEmptyGraphDescription = $derived(emptyStateDescription ?? emptyGraphDescription);
 	const hasControlPlaneData = $derived(
 		samples.length > 0 && (laneSelectorMode !== 'policy' || policySelectorOptions.length > 0)
 	);
@@ -507,7 +664,7 @@
 		})
 	);
 	const selectedEdge = $derived(
-		selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) : null
+		selectedEdgeId ? graphEdges.find((edge) => edge.id === selectedEdgeId) : null
 	);
 	const selectedEdges = $derived(
 		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
@@ -535,9 +692,22 @@
 	const enabledViewModes = $derived(
 		allowedViewModes.length > 0 ? allowedViewModes : (['overview'] satisfies ViewMode[])
 	);
-	const rule = $derived(
+	const inspectorRuleKey = $derived(selectedEdge ? `edge:${selectedEdge.id}` : activeRuleId);
+	const baseRule = $derived(
 		selectedEdge ? edgeInspectorRule(selectedEdge) : (sample.rules[activeRuleId] ?? fallbackRule())
 	);
+	const liveDryRunResult = $derived.by(() => {
+		if (activeTab !== 'dryrun') return null;
+		const edge = selectedDryRunEdge();
+		return dryRunRulePatch(
+			edge ? evaluateDryRunEdge(edge) : evaluateDryRunNode(selectedInspectorNode())
+		);
+	});
+	const rule = $derived({
+		...baseRule,
+		...(dryRunResults[inspectorRuleKey] ?? {}),
+		...(liveDryRunResult ?? {})
+	});
 	const selectedTransformNode = $derived.by(() => {
 		const selected = selectedNodeId ? nodeById(selectedNodeId) : undefined;
 		return selected?.role === 'transform' ? selected : null;
@@ -651,6 +821,7 @@
 	});
 
 	onMount(() => {
+		void loadPersistentIdentifierProfiles();
 		const resize = () => {
 			const rect = canvas?.getBoundingClientRect();
 			if (!rect) return;
@@ -674,6 +845,17 @@
 			window.removeEventListener('beforeunload', beforeUnload);
 		};
 	});
+
+	async function loadPersistentIdentifierProfiles() {
+		try {
+			const response = await adminIdentityMappingAPI.listPersistentIdentifierProfiles();
+			persistentIdentifierProfiles = response.profiles.filter(
+				(profile) => profile.lifecycleState === 'active'
+			);
+		} catch {
+			persistentIdentifierProfiles = [];
+		}
+	}
 
 	function activateSample(next: MappingSample) {
 		activeSampleRef = next;
@@ -731,6 +913,15 @@
 		return nodes.find((node) => node.id === id);
 	}
 
+	function firstNodeExample(node: MappingNode | undefined): string {
+		const example = node?.examples?.[0];
+		if (example !== undefined && example !== null && String(example).trim().length > 0) {
+			return formatNodeInfoValue(example);
+		}
+		if (node?.caption) return node.caption;
+		return node?.label ?? $LL.admin_identity_mapping_flow_not_connected();
+	}
+
 	function nodeForRule(ruleId: string): MappingNode | undefined {
 		return nodes.find((node) => node.ruleId === ruleId);
 	}
@@ -747,11 +938,13 @@
 		activeRuleId = ruleId;
 		selectedEdgeId = null;
 		selectedNodeId = nodeForRule(ruleId)?.id ?? null;
+		dryRunResults = {};
 	}
 
 	function selectEdge(edge: MappingEdge) {
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		dryRunResults = {};
 	}
 
 	function clearSelection() {
@@ -760,6 +953,22 @@
 		hoverNodeId = null;
 		hoverEdgeId = null;
 		hoverTargetGroupKey = null;
+		dryRunResults = {};
+	}
+
+	function clearCanvasSelection() {
+		if (suppressNextCanvasClear) {
+			suppressNextCanvasClear = false;
+			return;
+		}
+		clearSelection();
+	}
+
+	function suppressCanvasClearOnce() {
+		suppressNextCanvasClear = true;
+		window.setTimeout(() => {
+			suppressNextCanvasClear = false;
+		}, 0);
 	}
 
 	function markDraftDirty() {
@@ -813,6 +1022,13 @@
 				custom: true
 			});
 		}
+		logDebug('[IdentityMappingAutoMap]', {
+			viewMode,
+			fromNodes: visibleAutoMapFromNodes().map(debugNode),
+			toNodes: visibleAutoMapToNodes().map(debugNode),
+			candidates,
+			newEdges
+		});
 
 		if (newEdges.length === 0) {
 			draftSubmitStatus = 'info';
@@ -1256,10 +1472,12 @@
 		return typeof value === 'string' && value.trim().length > 0 ? value : null;
 	}
 
-	function stringParameters(value: Record<string, unknown> | undefined): Record<string, string> {
+	function stringParameters(
+		value: Record<string, unknown> | undefined
+	): Record<string, TransformParameterValue> {
 		return Object.fromEntries(
 			Object.entries(value ?? {}).flatMap(([key, entry]) =>
-				typeof entry === 'string' ? [[key, entry]] : []
+				typeof entry === 'string' || typeof entry === 'boolean' ? [[key, entry]] : []
 			)
 		);
 	}
@@ -1560,6 +1778,11 @@
 			`--stack-shadow-x:${22 + node.stackIndex * 8}px`,
 			`--stack-shadow-y:${14 + node.stackIndex * 6}px`
 		].join(';');
+	}
+
+	function nodeInfoPlacement(node: LayoutNode): 'above' | 'below' {
+		const minimumReadableSpaceAbove = 96;
+		return node.top < minimumReadableSpaceAbove ? 'below' : 'above';
 	}
 
 	function transformDeleteStyle(node: LayoutNode): string {
@@ -1903,6 +2126,37 @@
 		return fromAllowed.some((value) => !toAllowedValues.has(value.toLowerCase()));
 	}
 
+	function requiredTransformOperationForNode(node: MappingNode): TransformOperation | null {
+		const fieldRef = node.fieldRef;
+		if (!fieldRef) return null;
+		const namespace = fieldRef.namespace.toLowerCase();
+		const identifiers = [
+			fieldRef.path,
+			fieldRef.catalogEntryId,
+			node.label,
+			node.caption,
+			node.storageTarget
+		]
+			.filter(Boolean)
+			.map((value) => String(value).toLowerCase());
+		if (
+			namespace === 'oidc.claim' &&
+			identifiers.some((value) => value === 'sub' || value.endsWith('.sub'))
+		) {
+			return 'oidc_pairwise_sub';
+		}
+		if (
+			(namespace === 'saml.attribute' || node.adapter === 'SAML') &&
+			identifiers.some(
+				(value) =>
+					value.includes('edupersontargetedid') || value.includes('1.3.6.1.4.1.5923.1.1.1.10')
+			)
+		) {
+			return 'saml_edu_person_targeted_id';
+		}
+		return null;
+	}
+
 	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
 		const toNode = nodeById(edge.to);
 		if (!toNode) return false;
@@ -1944,9 +2198,18 @@
 		const fromType = effectiveNodeOutputType(fromNode);
 		if (!fromType) return true;
 		const operation = activeTransformOperation(transformNode);
+		if (operation === 'join' || operation === 'first') return fromType === 'multi-value';
+		if (operation === 'split' || operation === 'as_array') return fromType !== 'multi-value';
 		if (operation === 'json_extract_text') return fromType === 'json';
 		if (operation === 'json_extract_boolean') return fromType === 'json';
 		if (operation === 'json_extract_integer') return fromType === 'json';
+		if (operation === 'affix_text') {
+			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'number'].includes(
+				fromType
+			);
+		}
+		if (operation === 'oidc_pairwise_sub') return true;
+		if (operation === 'saml_edu_person_targeted_id') return true;
 		if (operation === 'text_to_boolean') {
 			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'boolean'].includes(
 				fromType
@@ -2015,8 +2278,18 @@
 		const operation = activeTransformOperation(node);
 		if (operation === 'text_to_boolean' || operation === 'json_extract_boolean') return 'boolean';
 		if (operation === 'json_extract_integer') return 'number';
-		if (operation === 'json_extract_text' || operation === 'concat') return 'text';
+		if (operation === 'split' || operation === 'as_array') return 'multi-value';
+		if (
+			operation === 'json_extract_text' ||
+			operation === 'concat' ||
+			operation === 'join' ||
+			operation === 'affix_text' ||
+			operation === 'oidc_pairwise_sub' ||
+			operation === 'saml_edu_person_targeted_id'
+		)
+			return 'text';
 		if (operation === 'json_build') return 'json';
+		if (operation === 'first') return 'text';
 		return firstTransformInputType(node);
 	}
 
@@ -2292,8 +2565,10 @@
 		const toNode = connectionTargetForPointer(event);
 		if (reconnectState.reconnectEdgeId && reconnectState.reconnectSide && toNode) {
 			reconnectEdge(reconnectState.reconnectEdgeId, reconnectState.reconnectSide, toNode.id);
+			suppressCanvasClearOnce();
 		} else if (isValidConnection(fromNode, toNode) && toNode) {
 			addEdge(dragState.fromNodeId, toNode.id);
+			suppressCanvasClearOnce();
 		}
 		dragState = null;
 		stopConnectionAutoScroll();
@@ -2316,6 +2591,7 @@
 		edges = [...edges, edge];
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2328,6 +2604,7 @@
 		event.stopPropagation();
 		selectedEdgeId = edge.id;
 		selectedNodeId = null;
+		dryRunResults = {};
 		pendingConnectionStart = null;
 		dragState = {
 			fromNodeId: edge.from,
@@ -2366,6 +2643,7 @@
 		);
 		selectedEdgeId = edgeId;
 		selectedNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2378,7 +2656,7 @@
 		const insertPoint = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
 		const nodeId = `transform-node-${customCounter}`;
 		const ruleId = `transform-rule-${customCounter}`;
-		const operation: TransformOperation = 'copy';
+		const operation: TransformOperation = requiredTransformOperationForNode(toNode) ?? 'copy';
 		const parameters = defaultTransformParameters(operation);
 		const transformNode: MappingNode = {
 			id: nodeId,
@@ -2425,6 +2703,7 @@
 		activeRuleId = ruleId;
 		selectedNodeId = nodeId;
 		selectedEdgeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2456,6 +2735,7 @@
 
 		edges = edges.filter((candidate) => candidate.id !== edgeId);
 		selectedEdgeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2470,6 +2750,7 @@
 		}
 		selectedEdgeId = null;
 		hoverNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2523,6 +2804,7 @@
 		}
 		selectedEdgeId = null;
 		hoverNodeId = null;
+		dryRunResults = {};
 		markDraftDirty();
 	}
 
@@ -2684,10 +2966,63 @@
 		return transformSchema(activeTransformOperation(node));
 	}
 
+	function transformOperationCategoryForOperation(
+		operation: TransformOperation
+	): TransformOperationCategory {
+		return (
+			transformOperationCategories.find((category) => category.operations.includes(operation)) ??
+			transformOperationCategories[0]
+		);
+	}
+
+	function activeTransformOperationCategory(node: MappingNode): TransformOperationCategory {
+		return transformOperationCategoryForOperation(activeTransformOperation(node));
+	}
+
+	function transformOperationCategoryLabel(categoryId: TransformOperationCategoryId): string {
+		const ja = getLocale() === 'ja';
+		switch (categoryId) {
+			case 'basic':
+				return ja ? '基本' : 'Basic';
+			case 'array':
+				return ja ? '配列' : 'Array';
+			case 'text':
+				return ja ? 'テキスト' : 'Text';
+			case 'identifier':
+				return ja ? '識別子' : 'Identifier';
+			case 'json':
+				return 'JSON';
+		}
+	}
+
+	function transformOperationCategoryFieldLabel(): string {
+		return getLocale() === 'ja' ? 'カテゴリ' : 'Category';
+	}
+
+	function transformOperationOptionsForCategory(
+		category: TransformOperationCategory
+	): TransformOperationSchema[] {
+		return category.operations.map(transformSchema);
+	}
+
 	function transformOperationLabel(operation: TransformOperation): string {
 		switch (operation) {
 			case 'copy':
 				return $LL.admin_identity_mapping_flow_transform_copy_label();
+			case 'as_array':
+				return $LL.admin_identity_mapping_flow_transform_as_array_label();
+			case 'split':
+				return $LL.admin_identity_mapping_flow_transform_split_label();
+			case 'join':
+				return $LL.admin_identity_mapping_flow_transform_join_label();
+			case 'first':
+				return $LL.admin_identity_mapping_flow_transform_first_label();
+			case 'oidc_pairwise_sub':
+				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_label();
+			case 'saml_edu_person_targeted_id':
+				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label();
+			case 'affix_text':
+				return $LL.admin_identity_mapping_flow_transform_affix_text_label();
 			case 'trim':
 				return $LL.admin_identity_mapping_flow_transform_trim_label();
 			case 'normalize':
@@ -2715,6 +3050,20 @@
 		switch (operation) {
 			case 'copy':
 				return $LL.admin_identity_mapping_flow_transform_copy_desc();
+			case 'as_array':
+				return $LL.admin_identity_mapping_flow_transform_as_array_desc();
+			case 'split':
+				return $LL.admin_identity_mapping_flow_transform_split_desc();
+			case 'join':
+				return $LL.admin_identity_mapping_flow_transform_join_desc();
+			case 'first':
+				return $LL.admin_identity_mapping_flow_transform_first_desc();
+			case 'oidc_pairwise_sub':
+				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc();
+			case 'saml_edu_person_targeted_id':
+				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc();
+			case 'affix_text':
+				return $LL.admin_identity_mapping_flow_transform_affix_text_desc();
 			case 'trim':
 				return $LL.admin_identity_mapping_flow_transform_trim_desc();
 			case 'normalize':
@@ -2744,6 +3093,18 @@
 				return $LL.admin_identity_mapping_flow_transform_param_mode();
 			case 'delimiter':
 				return $LL.admin_identity_mapping_flow_transform_param_delimiter();
+			case 'trimItems':
+				return $LL.admin_identity_mapping_flow_transform_param_trim_items();
+			case 'omitEmpty':
+				return $LL.admin_identity_mapping_flow_transform_param_omit_empty();
+			case 'unique':
+				return $LL.admin_identity_mapping_flow_transform_param_unique();
+			case 'persistentIdentifierProfileId':
+				return $LL.admin_identity_mapping_flow_transform_param_persistent_identifier_profile();
+			case 'prefix':
+				return $LL.admin_identity_mapping_flow_transform_param_prefix();
+			case 'suffix':
+				return $LL.admin_identity_mapping_flow_transform_param_suffix();
 			case 'trueValues':
 				return $LL.admin_identity_mapping_flow_transform_param_true_values();
 			case 'falseValues':
@@ -2759,6 +3120,27 @@
 			default:
 				return parameter.label;
 		}
+	}
+
+	function persistentIdentifierProfileOptions(operation: TransformOperation) {
+		const usage =
+			operation === 'oidc_pairwise_sub'
+				? 'oidc_pairwise_sub'
+				: operation === 'saml_edu_person_targeted_id'
+					? 'saml_edu_person_targeted_id'
+					: null;
+		const protocol =
+			operation === 'oidc_pairwise_sub'
+				? 'oidc'
+				: operation === 'saml_edu_person_targeted_id'
+					? 'saml'
+					: null;
+		return persistentIdentifierProfiles.filter((profile) => {
+			const usageMatches = !usage || profile.usage.length === 0 || profile.usage.includes(usage);
+			const protocolMatches =
+				!protocol || profile.protocolScope === 'any' || profile.protocolScope === protocol;
+			return usageMatches && protocolMatches;
+		});
 	}
 
 	function transformOptionLabel(parameterName: string, value: string, fallback: string): string {
@@ -2779,10 +3161,22 @@
 		return fallback;
 	}
 
-	function defaultTransformParameters(operation: TransformOperation): Record<string, string> {
+	function defaultTransformParameters(
+		operation: TransformOperation
+	): Record<string, TransformParameterValue> {
+		if (operation === 'as_array') return { trimItems: true, omitEmpty: true, unique: false };
+		if (operation === 'split')
+			return { delimiter: ',', trimItems: true, omitEmpty: true, unique: false };
+		if (operation === 'join')
+			return { delimiter: ',', trimItems: true, omitEmpty: true, unique: false };
+		if (operation === 'first') return { trimItems: true, omitEmpty: true };
+		if (operation === 'oidc_pairwise_sub' || operation === 'saml_edu_person_targeted_id') {
+			return { persistentIdentifierProfileId: '' };
+		}
+		if (operation === 'affix_text') return { prefix: '', suffix: '' };
 		if (operation === 'normalize') return { mode: 'whitespace' };
 		if (operation === 'case') return { mode: 'lower' };
-		if (operation === 'concat') return { delimiter: ' ' };
+		if (operation === 'concat') return { delimiter: 'space' };
 		if (operation === 'text_to_boolean') {
 			return {
 				trueValues: 'true,1,yes,y,on,active,enabled',
@@ -2803,33 +3197,45 @@
 
 	function sanitizeTransformParameters(
 		operation: TransformOperation,
-		parameters: Record<string, string> = {}
-	): Record<string, string> {
+		parameters: Record<string, TransformParameterValue> = {}
+	): Record<string, TransformParameterValue> {
 		const schema = transformSchema(operation);
 		const defaults = defaultTransformParameters(operation);
-		const sanitized: Record<string, string> = {};
+		const sanitized: Record<string, TransformParameterValue> = {};
 		for (const parameter of schema.parameters) {
 			const value = parameters[parameter.name] ?? defaults[parameter.name] ?? '';
 			if (parameter.kind === 'enum') {
 				sanitized[parameter.name] = parameter.options.some((option) => option.value === value)
 					? value
 					: (parameter.options[0]?.value ?? '');
+			} else if (parameter.kind === 'boolean') {
+				sanitized[parameter.name] = value === true || value === 'true';
 			} else {
-				sanitized[parameter.name] = value;
+				sanitized[parameter.name] = typeof value === 'string' ? value : String(value);
 			}
 		}
 		return sanitized;
 	}
 
+	function transformParameterTextValue(node: MappingNode, parameterName: string): string {
+		const value = sanitizeTransformParameters(
+			activeTransformOperation(node),
+			node.transformParameters
+		)[parameterName];
+		return typeof value === 'string' ? value : String(value ?? '');
+	}
+
 	function transformSummary(
 		operation: TransformOperation,
-		parameters: Record<string, string> = {}
+		parameters: Record<string, TransformParameterValue> = {}
 	): string {
 		const schema = transformSchema(operation);
 		const entries = schema.parameters
 			.map((parameter) => {
 				const value = parameters[parameter.name];
-				return value ? `${parameter.name}=${JSON.stringify(value)}` : null;
+				return value !== undefined && value !== ''
+					? `${parameter.name}=${JSON.stringify(value)}`
+					: null;
 			})
 			.filter(Boolean);
 		return entries.length > 0 ? `${operation}(${entries.join(', ')})` : operation;
@@ -2837,14 +3243,15 @@
 
 	function transformCaption(
 		operation: TransformOperation,
-		parameters: Record<string, string> = {}
+		parameters: Record<string, TransformParameterValue> = {}
 	): string {
 		const schema = transformSchema(operation);
 		const label = transformOperationLabel(operation).toLowerCase();
 		if (schema.parameters.length === 0) return label;
 		const values = schema.parameters
 			.map((parameter) => parameters[parameter.name])
-			.filter((value) => value && value.length > 0);
+			.filter((value) => value !== undefined && value !== '' && value !== false)
+			.map((value) => String(value));
 		return [label, ...values].join(' / ');
 	}
 
@@ -2864,7 +3271,7 @@
 	function updateTransformNode(
 		nodeId: string,
 		operation: TransformOperation,
-		parameters: Record<string, string>
+		parameters: Record<string, TransformParameterValue>
 	) {
 		if (!editable) return;
 		const sanitized = sanitizeTransformParameters(operation, parameters);
@@ -2896,7 +3303,20 @@
 		updateTransformNode(node.id, operation, defaultTransformParameters(operation));
 	}
 
-	function updateTransformParameter(node: MappingNode, parameterName: string, value: string) {
+	function updateTransformOperationCategory(node: MappingNode, value: string) {
+		const category =
+			transformOperationCategories.find((candidate) => candidate.id === value) ??
+			transformOperationCategories[0];
+		const activeOperation = activeTransformOperation(node);
+		if (category.operations.includes(activeOperation)) return;
+		updateTransformOperation(node, category.operations[0]);
+	}
+
+	function updateTransformParameter(
+		node: MappingNode,
+		parameterName: string,
+		value: TransformParameterValue
+	) {
 		const operation = activeTransformOperation(node);
 		updateTransformNode(node.id, operation, {
 			...sanitizeTransformParameters(operation, node.transformParameters),
@@ -2938,6 +3358,8 @@
 				return 'saml.attribute';
 			case 'SCIM':
 				return 'scim.attribute';
+			case 'DIRECTORY':
+				return 'directory';
 			case 'CSV':
 				return 'csv.column';
 			default:
@@ -3103,6 +3525,440 @@
 		};
 	}
 
+	function inspectorConnectionDirection(): 'source_to_schema' | 'schema_to_destination' | 'other' {
+		if (selectedEdge) {
+			const fromNode = nodeById(selectedEdge.from);
+			const toNode = nodeById(selectedEdge.to);
+			if (toNode?.role === 'target') return 'source_to_schema';
+			if (fromNode?.role === 'target' || toNode?.role === 'destination') {
+				return 'schema_to_destination';
+			}
+		}
+		const selectedNode = nodes.find((node) => node.id === selectedNodeId);
+		if (selectedNode?.role === 'source') return 'source_to_schema';
+		if (selectedNode?.role === 'destination') return 'schema_to_destination';
+		if (selectedNode?.role === 'target') {
+			return viewMode === 'destination' ? 'schema_to_destination' : 'source_to_schema';
+		}
+		return 'other';
+	}
+
+	function runInspectorDryRun() {
+		const edge = selectedDryRunEdge();
+		const result = edge ? evaluateDryRunEdge(edge) : evaluateDryRunNode(selectedInspectorNode());
+		logDryRunDebug('manual', result);
+		dryRunResults = {
+			...dryRunResults,
+			[inspectorRuleKey]: dryRunRulePatch(result)
+		};
+	}
+
+	function logDryRunDebug(
+		mode: 'manual' | 'live',
+		result: { ok: boolean; input: string; output: string; trace: string }
+	) {
+		logDebug('[IdentityMappingDryRun]', {
+			mode,
+			activeTab,
+			inspectorRuleKey,
+			activeRuleId,
+			selectedNodeId,
+			selectedEdgeId,
+			selectedEdge,
+			selectedNode: selectedInspectorNode() ? debugNode(selectedInspectorNode()) : null,
+			graphEdgeCount: graphEdges.length,
+			graphEdges,
+			editableEdgeCount: edges.length,
+			editableEdges: edges,
+			result
+		});
+	}
+
+	function logDebug(label: string, payload: unknown) {
+		try {
+			console.log(label, JSON.stringify(payload, null, 2));
+		} catch {
+			console.log(label, payload);
+		}
+	}
+
+	function debugNode(node: MappingNode | undefined) {
+		if (!node) return null;
+		return {
+			id: node.id,
+			role: node.role,
+			label: node.label,
+			caption: node.caption,
+			type: node.type,
+			adapter: node.adapter,
+			profileId: node.profileId,
+			fieldRef: node.fieldRef
+		};
+	}
+
+	function selectedInspectorNode(): MappingNode | undefined {
+		return selectedNodeId ? nodeById(selectedNodeId) : nodeForRule(activeRuleId);
+	}
+
+	function selectedDryRunEdge(): MappingEdge | null {
+		if (selectedEdge) return selectedEdge;
+		if (selectedEdgeId) {
+			return graphEdges.find((edge) => edge.id === selectedEdgeId) ?? null;
+		}
+		if (selectedNodeId) return null;
+		return graphEdges.length === 1 ? graphEdges[0] : null;
+	}
+
+	function dryRunRulePatch(result: {
+		ok: boolean;
+		input: string;
+		output: string;
+		trace: string;
+	}): Pick<RuleDetail, 'dryrunStatus' | 'dryrunTone' | 'input' | 'output' | 'trace'> {
+		return {
+			dryrunStatus: result.ok
+				? $LL.admin_identity_mapping_flow_configured()
+				: $LL.admin_identity_mapping_flow_not_configured(),
+			dryrunTone: result.ok ? 'ok' : 'warn',
+			input: result.input,
+			output: result.output,
+			trace: result.trace
+		};
+	}
+
+	function evaluateDryRunEdge(edge: MappingEdge): {
+		ok: boolean;
+		input: string;
+		output: string;
+		trace: string;
+	} {
+		const fromNode = nodeById(edge.from);
+		const toNode = nodeById(edge.to);
+		logDebug('[IdentityMappingDryRun:evaluateEdge]', {
+			edge,
+			fromNode: debugNode(fromNode),
+			toNode: debugNode(toNode)
+		});
+		if (!fromNode || !toNode) {
+			return disconnectedDryRunResult();
+		}
+		const inputValue = evaluateNodeOutput(fromNode);
+		if (!inputValue.ok) {
+			return disconnectedDryRunResult(inputValue.trace);
+		}
+		if (toNode.role === 'transform') {
+			const outputValue = evaluateNodeOutput(toNode);
+			return {
+				ok: outputValue.ok,
+				input: outputValue.input ?? inputValue.value,
+				output: outputValue.value,
+				trace: outputValue.trace ?? $LL.admin_identity_mapping_flow_selected_edge_trace()
+			};
+		}
+		return {
+			ok: true,
+			input: inputValue.value,
+			output: inputValue.value,
+			trace: $LL.admin_identity_mapping_flow_selected_edge_trace()
+		};
+	}
+
+	function evaluateDryRunNode(node: MappingNode | undefined): {
+		ok: boolean;
+		input: string;
+		output: string;
+		trace: string;
+	} {
+		logDebug('[IdentityMappingDryRun:evaluateNode]', {
+			node: debugNode(node),
+			incoming: node ? graphEdges.filter((edge) => edge.to === node.id) : [],
+			outgoing: node ? graphEdges.filter((edge) => edge.from === node.id) : []
+		});
+		if (!node) {
+			return disconnectedDryRunResult();
+		}
+		if (node.role === 'source' || (node.role === 'target' && viewMode === 'destination')) {
+			if (!graphEdges.some((edge) => edge.from === node.id)) {
+				return disconnectedDryRunResult();
+			}
+			const value = evaluateNodeOutput(node);
+			return {
+				ok: value.ok,
+				input: value.value,
+				output: value.value,
+				trace: $LL.admin_identity_mapping_flow_select_node_trace()
+			};
+		}
+		const value = evaluateNodeOutput(node);
+		if (!value.ok) {
+			return disconnectedDryRunResult(value.trace);
+		}
+		return {
+			ok: true,
+			input: value.input ?? value.value,
+			output: value.value,
+			trace: value.trace ?? $LL.admin_identity_mapping_flow_select_node_trace()
+		};
+	}
+
+	function disconnectedDryRunResult(
+		trace = String($LL.admin_identity_mapping_flow_select_node_trace())
+	) {
+		return {
+			ok: false,
+			input: $LL.admin_identity_mapping_flow_no_runtime_input(),
+			output: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+			trace
+		};
+	}
+
+	function evaluateNodeOutput(node: MappingNode, seen: readonly string[] = []): DryRunValue {
+		if (seen.includes(node.id)) {
+			return {
+				ok: false,
+				value: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+				trace: $LL.admin_identity_mapping_flow_no_mapping_edge()
+			};
+		}
+		const nextSeen = [...seen, node.id];
+		if (node.role === 'source' || (node.role === 'target' && viewMode === 'destination')) {
+			return { ok: true, value: firstNodeExample(node) };
+		}
+		const incoming = graphEdges.filter((edge) => edge.to === node.id);
+		if (incoming.length === 0) {
+			return {
+				ok: false,
+				value: $LL.admin_identity_mapping_flow_no_mapping_edge(),
+				trace: $LL.admin_identity_mapping_flow_no_mapping_edge()
+			};
+		}
+		const inputs = incoming
+			.map((edge) => {
+				const fromNode = nodeById(edge.from);
+				return fromNode ? evaluateNodeOutput(fromNode, nextSeen) : null;
+			})
+			.filter((value): value is DryRunValue => Boolean(value?.ok));
+		if (inputs.length === 0) {
+			return {
+				ok: false,
+				value: $LL.admin_identity_mapping_flow_no_runtime_input(),
+				trace: $LL.admin_identity_mapping_flow_no_runtime_input()
+			};
+		}
+		const inputValues = inputs.map((inputValue) => inputValue.value);
+		if (node.role === 'transform') {
+			const input = formatDryRunValues(inputValues);
+			return {
+				ok: true,
+				input,
+				value: transformDryRunOutput(node, inputValues),
+				trace: transformSummary(
+					activeTransformOperation(node),
+					sanitizeTransformParameters(activeTransformOperation(node), node.transformParameters)
+				)
+			};
+		}
+		return {
+			ok: true,
+			input: formatDryRunValues(inputValues),
+			value: inputValues[0],
+			trace: $LL.admin_identity_mapping_flow_select_node_trace()
+		};
+	}
+
+	function formatDryRunValues(values: string[]): string {
+		return values.length === 1 ? values[0] : JSON.stringify(values);
+	}
+
+	function transformDryRunOutput(node: MappingNode, inputs: string[]): string {
+		const input = inputs[0] ?? '';
+		const params = sanitizeTransformParameters(
+			activeTransformOperation(node),
+			node.transformParameters
+		);
+		switch (activeTransformOperation(node)) {
+			case 'copy':
+				return input;
+			case 'trim':
+				return input.trim();
+			case 'normalize':
+				return String(params.mode) === 'unicode'
+					? input.normalize('NFKC')
+					: input.trim().replace(/\s+/g, ' ');
+			case 'case':
+				return params.mode === 'upper'
+					? input.toUpperCase()
+					: params.mode === 'lower'
+						? input.toLowerCase()
+						: titleCase(input);
+			case 'split':
+				return JSON.stringify(
+					normalizeDryRunList(
+						input.split(delimiterFromParameter(params.delimiter)),
+						params.trimItems === true,
+						params.omitEmpty === true,
+						params.unique === true
+					)
+				);
+			case 'join':
+				return normalizeDryRunList(
+					inputs,
+					params.trimItems === true,
+					params.omitEmpty === true,
+					false
+				).join(delimiterTextFromParameter(params.delimiter, ','));
+			case 'first':
+				return (
+					normalizeDryRunList(
+						inputs,
+						params.trimItems === true,
+						params.omitEmpty === true,
+						false
+					)[0] ?? ''
+				);
+			case 'affix_text':
+				return `${String(params.prefix ?? '')}${input}${String(params.suffix ?? '')}`;
+			case 'concat':
+				return inputs.join(delimiterTextFromParameter(params.delimiter, ' '));
+			case 'fallback':
+				return inputs.find((value) => value.trim().length > 0) ?? '';
+			case 'as_array':
+				return JSON.stringify(
+					normalizeDryRunList(
+						inputs,
+						params.trimItems === true,
+						params.omitEmpty === true,
+						params.unique === true
+					)
+				);
+			case 'text_to_boolean':
+				return textToBooleanDryRun(input, params);
+			case 'json_build':
+				return jsonBuildDryRun(inputs, params);
+			case 'json_extract_text':
+			case 'json_extract_boolean':
+			case 'json_extract_integer':
+				return jsonExtractDryRun(input, String(params.path ?? ''), activeTransformOperation(node));
+			case 'oidc_pairwise_sub':
+				return `pairwise:${input}`;
+			case 'saml_edu_person_targeted_id':
+				return `https://idp.example.edu/idp/shibboleth!https://sp.example.org!${input}`;
+			default:
+				return input;
+		}
+	}
+
+	function delimiterFromParameter(value: TransformParameterValue | undefined): string | RegExp {
+		const delimiter = String(value || ',');
+		if (delimiter === 'space') return /\s+/;
+		if (delimiter === 'comma') return ',';
+		if (delimiter === 'tab') return '\t';
+		if (delimiter === 'newline') return /\r?\n/;
+		return delimiter;
+	}
+
+	function delimiterTextFromParameter(
+		value: TransformParameterValue | undefined,
+		fallback: string
+	): string {
+		if (value === undefined) return fallback;
+		const delimiter = String(value);
+		if (delimiter === 'space') return ' ';
+		if (delimiter === 'comma') return ',';
+		if (delimiter === 'tab') return '\t';
+		if (delimiter === 'newline') return '\n';
+		return delimiter;
+	}
+
+	function normalizeDryRunList(
+		values: string[],
+		trimItems: boolean,
+		omitEmpty: boolean,
+		unique: boolean
+	): string[] {
+		const normalized = values
+			.map((value) => (trimItems ? value.trim() : value))
+			.filter((value) => !omitEmpty || value.length > 0);
+		return unique ? [...new Set(normalized)] : normalized;
+	}
+
+	function titleCase(value: string): string {
+		return value.replace(
+			/\S+/g,
+			(word) => `${word[0]?.toUpperCase() ?? ''}${word.slice(1).toLowerCase()}`
+		);
+	}
+
+	function textToBooleanDryRun(
+		value: string,
+		params: Record<string, TransformParameterValue>
+	): string {
+		const normalized = value.trim().toLowerCase();
+		const trueValues = commaList(params.trueValues);
+		const falseValues = commaList(params.falseValues);
+		const nullValues = commaList(params.nullValues);
+		if (trueValues.includes(normalized)) return 'true';
+		if (falseValues.includes(normalized)) return 'false';
+		if (nullValues.includes(normalized) || normalized === '') return 'null';
+		return 'null';
+	}
+
+	function commaList(value: TransformParameterValue | undefined): string[] {
+		return String(value ?? '')
+			.split(',')
+			.map((item) => item.trim().toLowerCase())
+			.filter(Boolean);
+	}
+
+	function jsonBuildDryRun(
+		inputs: string[],
+		params: Record<string, TransformParameterValue>
+	): string {
+		const keyMap = parseKeyMap(String(params.keyMap ?? ''));
+		const nullHandling = params.nullHandling;
+		const object = Object.fromEntries(
+			inputs
+				.map((value, index) => [keyMap[index] ?? `value${index + 1}`, value] as const)
+				.filter(([, value]) => nullHandling === 'include_null' || value.trim().length > 0)
+		);
+		return JSON.stringify(object);
+	}
+
+	function parseKeyMap(value: string): Record<number, string> {
+		if (!value.trim()) return {};
+		try {
+			const parsed = JSON.parse(value) as Record<string, string>;
+			return Object.fromEntries(Object.values(parsed).map((key, index) => [index, key]));
+		} catch {
+			return {};
+		}
+	}
+
+	function jsonExtractDryRun(input: string, path: string, operation: TransformOperation): string {
+		try {
+			const parsed = JSON.parse(input) as unknown;
+			const value = readJsonPath(parsed, path);
+			if (operation === 'json_extract_boolean') return String(Boolean(value));
+			if (operation === 'json_extract_integer') return String(Number.parseInt(String(value), 10));
+			return value === undefined || value === null ? '' : String(value);
+		} catch {
+			return '';
+		}
+	}
+
+	function readJsonPath(value: unknown, path: string): unknown {
+		return path
+			.replace(/\[(\d+)\]/g, '.$1')
+			.split('.')
+			.filter(Boolean)
+			.reduce<unknown>((current, key) => {
+				if (current && typeof current === 'object') {
+					return (current as Record<string, unknown>)[key];
+				}
+				return undefined;
+			}, value);
+	}
+
 	function fallbackRule() {
 		return {
 			title: $LL.admin_identity_mapping_flow_mapping_node(),
@@ -3254,15 +4110,20 @@
 								? $LL.admin_identity_mapping_flow_loading_schemas()
 								: loadError
 									? $LL.admin_identity_mapping_flow_schema_load_failed()
-									: emptyGraphTitle}</strong
+									: resolvedEmptyGraphTitle}</strong
 						>
 						<span
 							>{loading
 								? $LL.admin_identity_mapping_flow_loading_schemas_desc()
 								: loadError
 									? loadError
-									: emptyGraphDescription}</span
+									: resolvedEmptyGraphDescription}</span
 						>
+						{#if !loading && !loadError && emptyStateActionHref && emptyStateActionLabel}
+							<a class="graph-empty-action" href={emptyStateActionHref}>
+								{emptyStateActionLabel}
+							</a>
+						{/if}
 					</div>
 				{/if}
 				{#if viewMode !== 'destination'}
@@ -3384,7 +4245,7 @@
 						role="button"
 						tabindex="0"
 						aria-label={$LL.admin_identity_mapping_flow_clear_selection_aria()}
-						onclick={clearSelection}
+						onclick={clearCanvasSelection}
 						onkeydown={handleClearSelectionKeyDown}
 					/>
 					{#each graphEdges as edge (edge.id)}
@@ -3543,6 +4404,7 @@
 							{#if node.role !== 'transform' && !node.hidden}
 								<span
 									class="node-info"
+									data-tooltip-placement={nodeInfoPlacement(node)}
 									aria-hidden="true"
 									onpointerenter={() => (infoOverlayNodeId = node.id)}
 									onpointerleave={() => {
@@ -3682,6 +4544,8 @@
 				{#if activeTab === 'rule'}
 					{#if selectedTransformNode}
 						{@const schema = activeTransformSchema(selectedTransformNode)}
+						{@const activeTransformCategory =
+							activeTransformOperationCategory(selectedTransformNode)}
 						<section
 							class="transform-config-card"
 							aria-label={$LL.admin_identity_mapping_flow_transform_config_aria()}
@@ -3691,10 +4555,29 @@
 									<p class="section-kicker">{$LL.admin_identity_mapping_flow_transform_step()}</p>
 									<h3>{transformOperationLabel(schema.operation)}</h3>
 								</div>
-								<span class="transform-operation-pill"
-									>{activeTransformOperation(selectedTransformNode)}</span
-								>
 							</div>
+							<label
+								class="inspector-field"
+								for={`transform-operation-category-${selectedTransformNode.id}`}
+							>
+								<span>{transformOperationCategoryFieldLabel()}</span>
+								<select
+									id={`transform-operation-category-${selectedTransformNode.id}`}
+									value={activeTransformCategory.id}
+									disabled={!editable}
+									onchange={(event) =>
+										updateTransformOperationCategory(
+											selectedTransformNode,
+											(event.currentTarget as HTMLSelectElement).value
+										)}
+								>
+									{#each transformOperationCategories as category (category.id)}
+										<option value={category.id}
+											>{transformOperationCategoryLabel(category.id)}</option
+										>
+									{/each}
+								</select>
+							</label>
 							<label
 								class="inspector-field"
 								for={`transform-operation-${selectedTransformNode.id}`}
@@ -3710,7 +4593,7 @@
 											(event.currentTarget as HTMLSelectElement).value
 										)}
 								>
-									{#each transformOperationSchemas as option (option.operation)}
+									{#each transformOperationOptionsForCategory(activeTransformCategory) as option (option.operation)}
 										<option value={option.operation}
 											>{transformOperationLabel(option.operation)}</option
 										>
@@ -3756,13 +4639,50 @@
 												>
 											{/each}
 										</select>
+									{:else if parameter.kind === 'boolean'}
+										<span class="inline-check">
+											<input
+												id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+												type="checkbox"
+												checked={Boolean(
+													sanitizeTransformParameters(
+														activeTransformOperation(selectedTransformNode),
+														selectedTransformNode.transformParameters
+													)[parameter.name]
+												)}
+												disabled={!editable}
+												onchange={(event) =>
+													updateTransformParameter(
+														selectedTransformNode,
+														parameter.name,
+														(event.currentTarget as HTMLInputElement).checked
+													)}
+											/>
+											<span>{transformParameterLabel(parameter)}</span>
+										</span>
+									{:else if parameter.name === 'persistentIdentifierProfileId'}
+										<select
+											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
+											value={transformParameterTextValue(selectedTransformNode, parameter.name)}
+											disabled={!editable}
+											onchange={(event) =>
+												updateTransformParameter(
+													selectedTransformNode,
+													parameter.name,
+													(event.currentTarget as HTMLSelectElement).value
+												)}
+										>
+											<option value="">
+												{$LL.admin_identity_mapping_flow_transform_tenant_default_profile()}
+											</option>
+											{#each persistentIdentifierProfileOptions(activeTransformOperation(selectedTransformNode)) as profile (profile.id)}
+												<option value={profile.id}>{profile.displayName}</option>
+											{/each}
+										</select>
 									{:else}
 										<input
 											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
-											value={sanitizeTransformParameters(
-												activeTransformOperation(selectedTransformNode),
-												selectedTransformNode.transformParameters
-											)[parameter.name]}
+											value={transformParameterTextValue(selectedTransformNode, parameter.name)}
 											placeholder={parameter.placeholder}
 											disabled={!editable}
 											oninput={(event) =>
@@ -3778,18 +4698,22 @@
 						</section>
 					{/if}
 					<dl class="detail-list">
-						<div>
-							<dt>{$LL.admin_identity_mapping_source()}</dt>
-							<dd>{rule.source}</dd>
-						</div>
+						{#if inspectorConnectionDirection() !== 'schema_to_destination'}
+							<div>
+								<dt>{$LL.admin_identity_mapping_source()}</dt>
+								<dd>{rule.source}</dd>
+							</div>
+						{/if}
 						<div>
 							<dt>{$LL.admin_identity_mapping_flow_schema_field()}</dt>
 							<dd>{rule.target}</dd>
 						</div>
-						<div>
-							<dt>{$LL.admin_identity_mapping_destination()}</dt>
-							<dd>{rule.destination}</dd>
-						</div>
+						{#if inspectorConnectionDirection() !== 'source_to_schema'}
+							<div>
+								<dt>{$LL.admin_identity_mapping_destination()}</dt>
+								<dd>{rule.destination}</dd>
+							</div>
+						{/if}
 						<div>
 							<dt>{$LL.admin_identity_mapping_flow_transform()}</dt>
 							<dd>{rule.transform}</dd>
@@ -3813,6 +4737,9 @@
 							<h3>{$LL.admin_identity_mapping_flow_sample_evaluation()}</h3>
 							<span class={`dryrun-status ${rule.dryrunTone}`}>{rule.dryrunStatus}</span>
 						</div>
+						<button type="button" class="dryrun-action" onclick={runInspectorDryRun}>
+							{$LL.admin_identity_mapping_flow_tab_dryrun()}
+						</button>
 						<div class="value-pair">
 							<span>{$LL.admin_identity_mapping_flow_input()}</span>
 							<code>{rule.input}</code>
@@ -3836,60 +4763,6 @@
 						</ul>
 					</section>
 				{/if}
-
-				<div class="control-block">
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_consent_status()}</span>
-						<strong>{rule.consentStatus.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_legal_basis()}</span>
-						<strong>{rule.legalBasis.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_purpose()}</span>
-						<strong>{rule.purpose}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_attribute_set()}</span>
-						<strong>{rule.attributeSetHash}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_challenge_mode()}</span>
-						<strong>{rule.consentMode.replaceAll('_', ' ')}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_release_policy()}</span>
-						<strong>{rule.releaseFieldMappingVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_terms()}</span>
-						<strong>{rule.termsVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_privacy_policy()}</span>
-						<strong>{rule.privacyFieldMappingVersion}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_deny_reason()}</span>
-						<strong>{rule.denyReason}</strong>
-					</div>
-				</div>
-
-				<div class="control-block">
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_runtime_exposure()}</span>
-						<strong>{rule.runtime}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_conflict_policy()}</span>
-						<strong>{rule.conflict}</strong>
-					</div>
-					<div class="control-row">
-						<span>{$LL.admin_identity_mapping_flow_trace_disclosure()}</span>
-						<strong>{rule.disclosure}</strong>
-					</div>
-				</div>
 			</aside>
 		{/if}
 	</div>
@@ -3897,19 +4770,19 @@
 
 <style>
 	.mapping-shell {
-		--map-bg: var(--bg-card);
-		--map-surface: var(--bg-card);
-		--map-surface-muted: var(--bg-subtle);
-		--map-canvas: color-mix(in srgb, var(--bg-card) 78%, var(--bg-page));
-		--map-line: var(--border-color);
-		--map-line-strong: color-mix(in srgb, var(--border-color) 70%, var(--text-muted));
-		--map-text: var(--text-primary);
-		--map-muted: var(--text-secondary);
-		--map-brand: var(--primary);
+		--map-bg: var(--color-surface);
+		--map-surface: var(--color-surface);
+		--map-surface-muted: var(--color-surface-muted);
+		--map-canvas: color-mix(in srgb, var(--color-surface) 78%, var(--color-bg-page));
+		--map-line: var(--color-border);
+		--map-line-strong: color-mix(in srgb, var(--color-border) 70%, var(--color-text-muted));
+		--map-text: var(--color-text);
+		--map-muted: var(--color-text-muted);
+		--map-brand: var(--color-accent);
 		--map-teal: #0f766e;
 		--map-green: #15803d;
 		--map-amber: #b45309;
-		--map-red: #b91c1c;
+		--map-red: var(--color-danger);
 		--map-violet: #6d28d9;
 		--map-radius: 4px;
 		--map-target-surface: color-mix(in srgb, var(--map-brand) 2%, var(--map-surface));
@@ -3933,11 +4806,11 @@
 	}
 
 	:global([data-theme='dark']) .mapping-shell {
-		--map-bg: color-mix(in srgb, var(--bg-card) 76%, #030712);
-		--map-surface: color-mix(in srgb, var(--bg-card) 84%, #05070d);
-		--map-surface-muted: color-mix(in srgb, var(--bg-subtle) 70%, #060914);
-		--map-canvas: color-mix(in srgb, var(--bg-page) 34%, #05070d);
-		--map-line: color-mix(in srgb, var(--border-color) 60%, #344156);
+		--map-bg: color-mix(in srgb, var(--color-surface) 76%, #030712);
+		--map-surface: color-mix(in srgb, var(--color-surface) 84%, #05070d);
+		--map-surface-muted: color-mix(in srgb, var(--color-surface-muted) 70%, #060914);
+		--map-canvas: color-mix(in srgb, var(--color-bg-page) 34%, #05070d);
+		--map-line: color-mix(in srgb, var(--color-border) 60%, #344156);
 		--map-line-strong: #344156;
 		--map-text: #e5edf6;
 		--map-muted: #8ea0b7;
@@ -4202,7 +5075,7 @@
 
 	.graph-canvas {
 		position: relative;
-		overflow: hidden;
+		overflow: visible;
 		background: var(--map-canvas);
 	}
 
@@ -4228,6 +5101,28 @@
 		color: var(--map-muted);
 		font-size: 12px;
 		line-height: 1.45;
+	}
+
+	.graph-empty-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: fit-content;
+		margin-top: 6px;
+		padding: var(--button-sm-padding, 8px 14px);
+		border: var(--button-secondary-border, 1px solid var(--color-border));
+		border-radius: var(--button-radius, var(--radius-sm));
+		background: var(--button-secondary-bg, var(--color-surface));
+		color: var(--button-secondary-text, var(--color-accent));
+		font-size: var(--button-sm-font-size, 0.82rem);
+		font-weight: var(--button-font-weight, 700);
+		text-decoration: none;
+	}
+
+	.graph-empty-action:hover {
+		border-color: var(--button-secondary-hover-border, var(--color-accent));
+		background: var(--button-secondary-hover-bg, var(--color-surface-muted));
+		color: var(--button-secondary-hover-text, var(--color-accent));
 	}
 
 	.lane-label {
@@ -4974,12 +5869,13 @@
 
 	.node-info-overlay {
 		position: absolute;
-		top: 16px;
-		right: -6px;
+		right: -8px;
+		bottom: 12px;
 		z-index: 20;
 		display: none;
+		width: max-content;
 		min-width: 190px;
-		max-width: 260px;
+		max-width: min(280px, calc(100vw - 40px));
 		padding: 9px 10px;
 		border: 1px solid color-mix(in srgb, var(--node-accent) 48%, var(--map-line));
 		border-radius: 6px;
@@ -4987,6 +5883,11 @@
 		background: color-mix(in srgb, var(--map-surface) 96%, var(--map-canvas));
 		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
 		text-align: left;
+	}
+
+	.node-info[data-tooltip-placement='below'] .node-info-overlay {
+		top: 12px;
+		bottom: auto;
 	}
 
 	.node-info:hover .node-info-overlay {
@@ -5199,19 +6100,14 @@
 		gap: 10px;
 	}
 
+	.transform-config-header > div {
+		min-width: 0;
+	}
+
 	.transform-config-header h3 {
 		margin: 2px 0 0;
 		font-size: 14px;
-	}
-
-	.transform-operation-pill {
-		padding: 3px 8px;
-		border: 1px solid color-mix(in srgb, var(--map-green) 50%, transparent);
-		border-radius: 999px;
-		color: var(--map-green);
-		background: color-mix(in srgb, var(--map-green) 11%, transparent);
-		font-size: 11px;
-		font-weight: 900;
+		overflow-wrap: anywhere;
 	}
 
 	.transform-description {
@@ -5224,6 +6120,13 @@
 	.inspector-field {
 		display: grid;
 		gap: 6px;
+		min-width: 0;
+	}
+
+	.inspector-field select,
+	.inspector-field input {
+		width: 100%;
+		min-width: 0;
 	}
 
 	.inspector-field > span {
@@ -5244,6 +6147,24 @@
 		font-size: 10px;
 		letter-spacing: 0;
 		text-transform: none;
+	}
+
+	.inline-check {
+		display: inline-flex;
+		align-items: center;
+		justify-content: flex-start;
+		gap: 8px;
+		color: var(--map-text);
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+
+	.inline-check input {
+		width: 15px;
+		height: 15px;
+		accent-color: var(--map-brand);
 	}
 
 	.detail-list div,
@@ -5287,16 +6208,36 @@
 		margin-bottom: 10px;
 	}
 
+	.dryrun-action {
+		width: fit-content;
+		min-height: 32px;
+		margin-bottom: 12px;
+		padding: 0 12px;
+		border: 1px solid var(--map-brand);
+		border-radius: var(--map-radius);
+		color: var(--map-brand);
+		background: color-mix(in srgb, var(--map-brand) 8%, var(--map-surface));
+		font-size: 12px;
+		font-weight: 800;
+	}
+
+	.dryrun-action:hover,
+	.dryrun-action:focus-visible {
+		background: color-mix(in srgb, var(--map-brand) 14%, var(--map-surface));
+	}
+
 	code {
 		display: block;
 		padding: 10px;
 		border: 1px solid var(--map-line);
 		border-radius: 4px;
 		background: #0b1220;
-		color: var(--map-text);
+		color: #f8fafc;
 		font-family: SFMono-Regular, Consolas, monospace;
 		font-size: 12px;
-		white-space: normal;
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
 	}
 
 	.trace-box {

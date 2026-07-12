@@ -8,6 +8,10 @@
 		PROVIDER_TEMPLATES
 	} from '$lib/api/admin-external-providers';
 	import { Modal } from '$lib/components';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let providers: ExternalIdPProvider[] = $state([]);
 	let loading = $state(true);
@@ -88,23 +92,19 @@
 	<title>{$LL.admin_external_idp_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_external_idp_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_external_idp_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={navigateToNew}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_external_idp_add_provider()}
-			</button>
-		</div>
-	</div>
+{#snippet headerActions()}
+	<button class="btn btn-primary" onclick={navigateToNew}>
+		<i class="i-ph-plus"></i>
+		{$LL.admin_external_idp_add_provider()}
+	</button>
+{/snippet}
 
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_external_idp_title()}
+		description={$LL.admin_external_idp_description()}
+		actions={headerActions}
+	/>
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
@@ -115,7 +115,7 @@
 			<p>{$LL.admin_external_idp_loading()}</p>
 		</div>
 	{:else if providers.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_external_idp_empty()}</p>
 				<p class="empty-state-hint">
@@ -125,10 +125,10 @@
 					>{$LL.admin_external_idp_add_first()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="wide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_external_idp_name()}</th>
@@ -177,7 +177,7 @@
 								</span>
 							</td>
 							<td>{provider.priority}</td>
-							<td class="mono truncate" style="max-width: 200px;">
+							<td class="mono truncate client-id-cell">
 								{provider.clientId}
 							</td>
 							<td class="text-right" onclick={(e) => e.stopPropagation()}>
@@ -191,10 +191,10 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Delete Confirmation Dialog -->
 <Modal
@@ -237,3 +237,13 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	:global(.admin-data-table-wrap tr[role='button']) {
+		cursor: pointer;
+	}
+
+	.client-id-cell {
+		max-width: 220px;
+	}
+</style>

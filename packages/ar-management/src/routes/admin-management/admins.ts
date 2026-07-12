@@ -27,6 +27,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
 } from '@authrim/ar-lib-core';
+import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { writeAdminAuditLog } from '../../admin-shared';
 
 // Create router
@@ -327,13 +328,21 @@ adminUsersRouter.get('/:id', async (c) => {
       assigned_by: ra.assigned_by,
     }));
 
-    // Get passkey count
-    const passkeyCount = await passkeyRepo.countByUser(id);
+    // Get passkeys
+    const passkeys = await passkeyRepo.getPasskeysByUser(id);
 
     return c.json({
       ...sanitizeAdminUser(user),
       roles,
-      passkey_count: passkeyCount,
+      passkey_count: passkeys.length,
+      passkeys: passkeys.map((passkey) => ({
+        id: passkey.id,
+        device_name: passkey.device_name,
+        aaguid: passkey.aaguid,
+        provider: resolveAaguidAuthenticator(passkey.aaguid),
+        created_at: passkey.created_at,
+        last_used_at: passkey.last_used_at,
+      })),
     });
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

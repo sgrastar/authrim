@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { getWorkersSubdomain } from './cloudflare.js';
-import { deployWorker, uploadSecrets, type DeployOptions, type DeployResult } from './deploy.js';
+import { deployWorker, type DeployOptions, type DeployResult } from './deploy.js';
 import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
@@ -163,32 +163,14 @@ export async function configureDownstreamIntrospectionDeployment(
       };
     }
 
-    onProgress?.('Uploading downstream introspection secrets...');
-    const secretResult = await uploadSecrets(
-      introspectionSecrets,
-      {
-        env,
-        rootDir,
-        dryRun,
-        onProgress,
-      },
-      ['ar-userinfo']
-    );
-
-    if (!secretResult.success) {
-      return {
-        success: false,
-        error: 'Failed to upload downstream introspection secrets',
-        clientId: introspectionClientResult.clientId,
-        secretUploadErrors: secretResult.errors,
-      };
-    }
-
-    onProgress?.('Redeploying ar-userinfo after downstream introspection setup...');
+    onProgress?.('Deploying ar-userinfo with downstream introspection secrets...');
     const redeployResult = await deployWorker('ar-userinfo', {
       env,
       rootDir,
       dryRun,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-userinfo'],
+      secrets: introspectionSecrets,
       onProgress,
     } satisfies DeployOptions);
 

@@ -182,12 +182,25 @@ program
 
     const { isWranglerInstalled, checkAuth } = await import('./core/cloudflare.js');
     const { WORKER_COMPONENTS } = await import('./core/naming.js');
-    const { deployWorker, deployUiWorkerComponent, buildApiPackages, UI_WORKER_COMPONENTS } =
-      await import('./core/deploy.js');
+    const {
+      deployAll,
+      deployUiWorkerComponent,
+      deployUiWorkerBindingTargets,
+      resolveMissingUiWorkerBindingTargets,
+      resolveExistingWorkerComponents,
+      buildApiPackages,
+      loadDeploySecretsFromKeys,
+      updateLockWithDeployments,
+      UI_WORKER_COMPONENTS,
+    } = await import('./core/deploy.js');
     const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
       await import('./core/paths.js');
     const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
+    const { mergeAndSaveUiEnv } = await import('./core/ui-env.js');
+    const { getPackageVersion } = await import('./core/version.js');
+    const { ensureSupplementalKeyFiles } = await import('./core/keys.js');
+    const { prepareAdminUiBffDeployment } = await import('./core/admin-ui-bff-deployment.js');
 
     console.log(chalk.bold('\n🔧 Authrim Component Upgrade\n'));
 
@@ -231,6 +244,7 @@ program
 
     const baseDir = findAuthrimBaseDir(process.cwd());
     const componentType = isUiWorkerComponent ? 'UI Worker' : 'Worker';
+    const { lock: upgradeLock, path: upgradeLockPath } = await loadLockFileAuto(baseDir, env);
 
     console.log(chalk.cyan(`\nComponent:   ${componentName}`));
     console.log(chalk.cyan(`Type:        ${componentType}`));
@@ -269,8 +283,8 @@ program
 
     if (isUiWorkerComponent) {
       // Deploy UI Worker component.
-      if (!skipBuild && !dryRun) {
-        const buildSpinner = ora(`Building ${componentName}...`).start();
+      if (!dryRun) {
+        const buildSpinner = ora(`Preparing ${componentName}...`).start();
         const uiDir = join(baseDir, 'packages', componentName);
 
         if (!existsSync(uiDir)) {
@@ -279,7 +293,20 @@ program
         }
 
         // Get API base URL
+        if (!cfg) {
+          buildSpinner.fail('Environment config is required for UI deployment');
+          process.exit(1);
+        }
         const apiBaseUrl = resolveIssuerUrl(cfg, { env });
+        const foundUiKeys = findKeysDirectory({
+          env,
+          sourceDir: baseDir,
+          keysBaseDir: process.cwd(),
+        });
+        const uiKeysDir = foundUiKeys
+          ? foundUiKeys.path
+          : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keys;
+        await ensureSupplementalKeyFiles(uiKeysDir);
 
         let loginUiClientId: string | undefined;
         if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
@@ -289,18 +316,8 @@ program
             (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
               ?.auto ||
             `https://${env}-ar-login-ui.workers.dev`;
-          const foundKeys = findKeysDirectory({
-            env,
-            sourceDir: baseDir,
-            keysBaseDir: process.cwd(),
-          });
-          const adminApiSecretPath = foundKeys
-            ? join(foundKeys.path, 'admin_api_secret.txt')
-            : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keyFiles
-                .adminApiSecret;
-          const keysDir = foundKeys
-            ? foundKeys.path
-            : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keys;
+          const adminApiSecretPath = join(uiKeysDir, 'admin_api_secret.txt');
+          const keysDir = uiKeysDir;
 
           const { waitForRouterWorkerReady } = await import('./core/worker-readiness.js');
           const readinessResult = await waitForRouterWorkerReady({
@@ -374,6 +391,21 @@ program
           apiBaseUrl,
           loginUiClientId,
         });
+        if (componentName === 'ar-login-ui' && resolved.type === 'new' && loginUiClientId) {
+          await mergeAndSaveUiEnv((resolved.paths as { uiEnv: string }).uiEnv, uiSettings.uiEnv);
+        }
+
+        const adminUiBffSecrets =
+          componentName === 'ar-admin-ui'
+            ? await prepareAdminUiBffDeployment({
+                env,
+                config: cfg,
+                keysDir: uiKeysDir,
+                onProgress: (message) => {
+                  buildSpinner.text = message;
+                },
+              })
+            : undefined;
 
         const result = await deployUiWorkerComponent(
           componentName as 'ar-admin-ui' | 'ar-login-ui',
@@ -387,14 +419,59 @@ program
             serviceBindingName: uiSettings.serviceBindingName,
             workersDev: uiSettings.workersDev,
             routes: uiSettings.routes,
+            adminUiBffSecrets,
+            skipBuild,
             onProgress: (msg) => {
               deploySpinner.text = msg;
             },
           }
         );
 
+        if (
+          !dryRun &&
+          result.trafficCommitted &&
+          result.deployedAt &&
+          upgradeLock &&
+          upgradeLockPath
+        ) {
+          await saveLockFile(
+            {
+              ...upgradeLock,
+              workers: {
+                ...upgradeLock.workers,
+                [componentName]: {
+                  name: result.projectName,
+                  deployedAt: result.deployedAt,
+                  version:
+                    (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
+                    undefined,
+                },
+              },
+              updatedAt: new Date().toISOString(),
+            },
+            upgradeLockPath
+          );
+        }
+
         if (result.success) {
           deploySpinner.succeed(`${componentName} deployed successfully`);
+          if (!dryRun && upgradeLock && upgradeLockPath && result.deployedAt) {
+            const updatedLock = {
+              ...upgradeLock,
+              workers: {
+                ...upgradeLock.workers,
+                [componentName]: {
+                  name: result.projectName,
+                  deployedAt: result.deployedAt,
+                  version:
+                    (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
+                    undefined,
+                },
+              },
+              updatedAt: new Date().toISOString(),
+            };
+            await saveLockFile(updatedLock, upgradeLockPath);
+          }
           console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
           console.log(chalk.gray(`  Project: ${result.projectName}`));
           console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
@@ -431,42 +508,84 @@ program
 
       if (!dryRun) {
         const deploySpinner = ora(`Deploying ${componentName}...`).start();
-
-        const result = await deployWorker(componentName as Parameters<typeof deployWorker>[0], {
+        const workerComponent = componentName as (typeof WORKER_COMPONENTS)[number];
+        const keysDirectory = findKeysDirectory({
+          env,
+          sourceDir: baseDir,
+          keysBaseDir: process.cwd(),
+        });
+        if (keysDirectory) {
+          await ensureSupplementalKeyFiles(keysDirectory.path);
+        }
+        const secrets = keysDirectory
+          ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent])
+          : {};
+        const deployOptions = {
           env,
           rootDir: resolve(baseDir),
-          dryRun: dryRun || false,
-          onProgress: (msg) => {
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => upgradeLock?.workers?.[component] !== undefined
+          ),
+          secrets,
+          concurrency: 2,
+          onProgress: (msg: string) => {
             deploySpinner.text = msg;
           },
-        });
+        };
+        deployOptions.existingComponents = await resolveExistingWorkerComponents(
+          deployOptions,
+          WORKER_COMPONENTS
+        );
 
-        if (result.success) {
-          deploySpinner.succeed(`${componentName} deployed successfully`);
+        if (workerComponent === 'ar-router') {
+          const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
+            {
+              ...deployOptions,
+            },
+            {
+              loginUi: (cfg as AuthrimConfig | null)?.components?.loginUi ?? true,
+              adminUi: (cfg as AuthrimConfig | null)?.components?.adminUi ?? true,
+            }
+          );
+          if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
+            const placeholder = await deployUiWorkerBindingTargets(
+              {
+                env,
+                rootDir: resolve(baseDir),
+                apiBaseUrl: resolveIssuerUrl(cfg, { env }),
+                onProgress: (msg) => {
+                  deploySpinner.text = msg;
+                },
+              },
+              missingUiBindingTargets
+            );
+            if (placeholder.failedCount > 0) {
+              deploySpinner.fail('UI Worker binding-target deployment failed');
+              process.exit(1);
+            }
+          }
+        }
 
-          // Update lock file
+        const summary = await deployAll(deployOptions, [workerComponent]);
+        const result = summary.results.find((candidate) => candidate.component === workerComponent);
+
+        if (summary.results.some((candidate) => candidate.success || candidate.trafficCommitted)) {
           try {
-            const { lock: currentLock, path: lockPath } = await loadLockFileAuto(baseDir, env);
-            if (currentLock && lockPath) {
-              const workers = { ...currentLock.workers };
-              workers[componentName] = {
-                name: result.workerName,
-                deployedAt: result.deployedAt,
-                version: result.version,
-              };
-
-              const updatedLock = {
-                ...currentLock,
-                workers,
-                updatedAt: new Date().toISOString(),
-              };
-
-              await saveLockFile(updatedLock, lockPath);
+            if (upgradeLock && upgradeLockPath) {
+              await saveLockFile(
+                updateLockWithDeployments(upgradeLock, summary.results),
+                upgradeLockPath
+              );
               console.log(chalk.gray(`  Lock file updated`));
             }
           } catch {
             console.log(chalk.yellow('  Warning: Could not update lock file'));
           }
+        }
+
+        if (summary.failedCount === 0 && result?.success) {
+          deploySpinner.succeed(`${componentName} deployed successfully`);
 
           console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
           console.log(chalk.gray(`  Worker: ${result.workerName}`));
@@ -474,7 +593,7 @@ program
           console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
         } else {
           deploySpinner.fail(`${componentName} deployment failed`);
-          console.error(chalk.red(`\nError: ${result.error}`));
+          console.error(chalk.red(`\nError: ${result?.error || 'dependency deployment failed'}`));
           process.exit(1);
         }
       } else {

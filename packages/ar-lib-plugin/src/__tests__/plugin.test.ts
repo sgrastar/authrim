@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
 import { CapabilityRegistry, globalRegistry } from '../core/registry';
 import { zodToJSONSchema, validatePluginConfig, extractFormFieldHints } from '../core/schema';
+import { resolveBuiltinPluginBootstrapConfig } from '../core/builtin-registry';
 import { consoleNotifierPlugin } from '../builtin/notifier/console';
 import { resendEmailPlugin } from '../builtin/notifier/resend';
 import { renderTemplate, NOTIFIER_SECURITY_DEFAULTS } from '../builtin/notifier/types';
@@ -149,6 +150,39 @@ describe('Schema Utilities', () => {
       expect(hints.find((h) => h.name === 'email')?.type).toBe('email');
       expect(hints.find((h) => h.name === 'count')?.type).toBe('integer');
       expect(hints.find((h) => h.name === 'enabled')?.type).toBe('boolean');
+    });
+  });
+});
+
+// =============================================================================
+// Builtin Plugin Bootstrap Config Tests
+// =============================================================================
+
+describe('Builtin plugin bootstrap config', () => {
+  it('does not enable Resend bootstrap config from shared email sender settings alone', () => {
+    expect(
+      resolveBuiltinPluginBootstrapConfig(
+        {
+          EMAIL_FROM: 'noreply@example.com',
+          EMAIL_FROM_NAME: 'Authrim',
+        },
+        'notifier-resend'
+      )
+    ).toEqual({});
+  });
+
+  it('resolves Resend bootstrap config when the Resend API key is configured', () => {
+    expect(
+      resolveBuiltinPluginBootstrapConfig(
+        {
+          EMAIL_FROM: 'noreply@example.com',
+          RESEND_API_KEY: 're_test_key',
+        },
+        'notifier-resend'
+      )
+    ).toEqual({
+      apiKey: 're_test_key',
+      defaultFrom: 'noreply@example.com',
     });
   });
 });

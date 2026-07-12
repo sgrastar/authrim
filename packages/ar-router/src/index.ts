@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
@@ -9,6 +9,8 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  SELF_SERVICE_DEFAULTS,
+  validateAccountPagePath,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -32,6 +34,7 @@ interface Env {
   // KV Namespace for configuration (optional)
   // Used for dynamic configuration from Admin UI without redeployment
   AUTHRIM_CONFIG?: KVNamespace;
+  SETTINGS?: KVNamespace;
   // CORS configuration (optional, fallback if KV not set)
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
@@ -51,15 +54,27 @@ interface Env {
   ADMIN_UI_URL?: string;
   /** Public Login UI URL (e.g., https://login.example.com) */
   LOGIN_UI_URL?: string;
+  /** Whether LOGIN_UI_URL is a dedicated UI host or shared with API/tenant protocol routes */
+  LOGIN_UI_HOST_MODE?: 'dedicated' | 'shared';
   /** Login UI Worker service binding */
   LOGIN_UI_WORKER?: Fetcher;
   /** Admin UI Worker service binding */
   ADMIN_UI_WORKER?: Fetcher;
+  /** User-owned service site Worker service binding */
+  SERVICE_SITE?: Fetcher;
+  /** Name of the user-owned service site Worker binding */
+  SERVICE_SITE_BINDING?: string;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
   ENABLE_ADMIN_UI_PROXY?: string;
 }
+
+const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
+const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
+const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
+const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
+const SERVICE_SITE_SETTINGS_CACHE_TTL_MS = 5_000;
 
 // Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
 const LOGIN_UI_PATHS = [
@@ -78,6 +93,12 @@ const LOGIN_UI_PATHS = [
 ];
 
 const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
+
+const accountPageSettingsCache = new Map<
+  string,
+  { enabled: boolean; path: string; expiresAt: number }
+>();
+const serviceSiteSettingsCache = new Map<string, { enabled: boolean; expiresAt: number }>();
 
 const BEARER_TOKEN_CANONICAL_PATHS = [
   '/authorize',
@@ -104,6 +125,27 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/vp',
   '/scim/v2',
 ];
+
+function isLoginUiBackendProxyRequest(request: Request): boolean {
+  return request.headers.get('X-Authrim-Ui-Proxy') === 'login-ui';
+}
+
+function isDedicatedLoginUiHostMode(env: Env): boolean {
+  return env.LOGIN_UI_HOST_MODE !== 'shared';
+}
+
+function normalizeForwardedHostHeader(value: string | null): string | null {
+  const candidate = value?.split(',')[0]?.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    return new URL(`https://${candidate}`).host;
+  } catch {
+    return null;
+  }
+}
 
 function isBearerTokenCanonicalPath(path: string): boolean {
   return BEARER_TOKEN_CANONICAL_PATHS.some(
@@ -145,14 +187,25 @@ function bearerTokenTransportError(): Response {
 }
 
 function createServiceBindingRequest(request: Request): Request {
+  const targetUrl = new URL(request.url);
   const forwarded = new Request(request.url, request);
   const headers = new Headers(forwarded.headers);
   const originalHost = new URL(request.url).host;
+  const forwardedHost = isLoginUiBackendProxyRequest(request)
+    ? normalizeForwardedHostHeader(headers.get('X-Authrim-Forwarded-Host')) ||
+      normalizeForwardedHostHeader(headers.get('X-Authrim-Original-Host')) ||
+      originalHost
+    : originalHost;
 
-  headers.set('X-Authrim-Forwarded-Host', originalHost);
-  headers.set('X-Forwarded-Host', originalHost);
+  if (forwardedHost !== originalHost) {
+    targetUrl.host = forwardedHost;
+    targetUrl.protocol = 'https:';
+  }
+  headers.set('X-Authrim-Forwarded-Host', forwardedHost);
+  headers.set('X-Forwarded-Host', forwardedHost);
+  headers.set('Host', forwardedHost);
 
-  return new Request(forwarded, { headers });
+  return new Request(new Request(targetUrl.toString(), forwarded), { headers });
 }
 
 async function requestHasFormBearerToken(request: Request): Promise<boolean> {
@@ -184,6 +237,108 @@ function getConfiguredUrlHostname(value: string | undefined): string | null {
   }
 }
 
+function getRequestTenantId(c: Context<{ Bindings: Env }>): string {
+  const hostResult = validateHostHeader(c.req.header('Host'), c.env);
+  return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
+}
+
+function hasCookie(request: Request, cookieName: string): boolean {
+  const cookie = request.headers.get('Cookie');
+  if (!cookie) {
+    return false;
+  }
+  return cookie
+    .split(';')
+    .some((part) => part.trim().toLowerCase().startsWith(`${cookieName.toLowerCase()}=`));
+}
+
+function isBaseDomainTenantHost(env: Env, requestHost: string): boolean {
+  const baseDomain = env.BASE_DOMAIN?.toLowerCase();
+  if (!baseDomain) {
+    return false;
+  }
+  return requestHost.endsWith(`.${baseDomain}`) && requestHost !== baseDomain;
+}
+
+function getServiceSiteBinding(env: Env): Fetcher | undefined {
+  const bindingName = env.SERVICE_SITE_BINDING?.trim() || 'SERVICE_SITE';
+  const candidate = (env as unknown as Record<string, unknown>)[bindingName];
+  return candidate && typeof (candidate as { fetch?: unknown }).fetch === 'function'
+    ? (candidate as Fetcher)
+    : undefined;
+}
+
+function parseSettingsRecord(raw: string | null): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
+  const tenantId = getRequestTenantId(c);
+  const cached = accountPageSettingsCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+  const raw = kv
+    ? await kv.get(`settings:tenant:${tenantId}:self-service`).catch(() => null)
+    : null;
+  const record = parseSettingsRecord(raw);
+  const configuredPath = record['self-service.account_page_path'];
+  const accountPath = validateAccountPagePath(configuredPath)
+    ? configuredPath
+    : SELF_SERVICE_DEFAULTS['self-service.account_page_path'];
+  const settings = {
+    enabled:
+      typeof record['self-service.account_page_enabled'] === 'boolean'
+        ? record['self-service.account_page_enabled']
+        : SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
+    path: accountPath,
+    expiresAt: Date.now() + ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS,
+  };
+  accountPageSettingsCache.set(tenantId, settings);
+  return settings;
+}
+
+async function resolveServiceSiteFallbackSettings(c: Context<{ Bindings: Env }>) {
+  const tenantId = getRequestTenantId(c);
+  const cached = serviceSiteSettingsCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const kv = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+  const raw = kv
+    ? await kv.get(`settings:tenant:${tenantId}:service-site`).catch(() => null)
+    : null;
+  const record = parseSettingsRecord(raw);
+  const settings = {
+    enabled: record['service-site.fallback_enabled'] === true,
+    expiresAt: Date.now() + SERVICE_SITE_SETTINGS_CACHE_TTL_MS,
+  };
+  serviceSiteSettingsCache.set(tenantId, settings);
+  return settings;
+}
+
+function getAccountPageInternalPath(requestPath: string, accountPagePath: string): string | null {
+  if (requestPath !== accountPagePath && !requestPath.startsWith(`${accountPagePath}/`)) {
+    return null;
+  }
+  const suffix = requestPath.slice(accountPagePath.length);
+  return `${ACCOUNT_PAGE_INTERNAL_PATH}${suffix}`;
+}
+
 /**
  * Proxy request to a UI Worker.
  * Maintains all headers, query params, and body.
@@ -197,7 +352,19 @@ async function proxyToUiWorker(
   path: string,
   serviceBinding?: Fetcher
 ): Promise<Response> {
-  const targetUrl = new URL(path, baseUrl);
+  if (!/^\/(?!\/)[a-zA-Z0-9._~!$&'()*+,;=:@%/-]*$/u.test(path)) {
+    return Response.json(
+      {
+        error: 'invalid_request',
+        message: 'Invalid UI proxy path',
+      },
+      { status: 400 }
+    );
+  }
+
+  const targetUrl = new URL(baseUrl);
+  // Treat the validated request path strictly as a pathname so the configured UI host is fixed.
+  targetUrl.pathname = path;
   targetUrl.search = new URL(request.url).search;
 
   const headers = new Headers(request.headers);
@@ -235,6 +402,29 @@ async function proxyToUiWorker(
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
 
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function requestUsesHttp(c: Context<{ Bindings: Env }>): boolean {
+  const requestUrl = new URL(c.req.url);
+  if (requestUrl.protocol === 'http:') {
+    return true;
+  }
+
+  return (c.req.header('x-forwarded-proto') ?? '').toLowerCase() === 'http';
+}
+
+async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: Next) {
+  const requestUrl = new URL(c.req.url);
+  if (!requestUsesHttp(c) || isLoopbackHost(requestUrl.hostname)) {
+    return next();
+  }
+
+  requestUrl.protocol = 'https:';
+  return c.redirect(requestUrl.toString(), 308);
+}
+
 function notFoundResponse(): Response {
   return Response.json(
     {
@@ -246,7 +436,25 @@ function notFoundResponse(): Response {
 }
 
 // Middleware
+app.use('*', redirectExternalHttpToHttps);
 app.use('*', logger());
+
+app.use('*', async (c, next) => {
+  const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
+  const requestHost = new URL(c.req.url).hostname.toLowerCase();
+  if (
+    c.env.ENABLE_LOGIN_UI_PROXY === 'true' &&
+    c.env.AR_LOGIN_UI_URL &&
+    isDedicatedLoginUiHostMode(c.env) &&
+    loginUiHost &&
+    requestHost === loginUiHost &&
+    !isLoginUiBackendProxyRequest(c.req.raw)
+  ) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+  }
+
+  return next();
+});
 
 // Enhanced security headers
 // Skip for /authorize endpoint to allow form_post response mode with nonce-based CSP
@@ -288,10 +496,21 @@ app.use('*', async (c, next) => {
     path.startsWith('/error') ||
     path.startsWith('/api/set-language') ||
     path.startsWith('/callback') ||
-    path.startsWith('/_app') || // SvelteKit static assets
+    path.startsWith(`${LOGIN_UI_ASSET_PREFIX}/`) || // Login UI SvelteKit static assets
+    path.startsWith(`${ADMIN_UI_ASSET_PREFIX}/`) || // Admin UI SvelteKit static assets
     path === '/' // Root path for Login UI (external auth callbacks)
   ) {
     return next();
+  }
+
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    const accountPageSettings = await resolveAccountPageSettings(c);
+    if (
+      accountPageSettings.enabled &&
+      getAccountPageInternalPath(path, accountPageSettings.path) !== null
+    ) {
+      return next();
+    }
   }
 
   return secureHeaders({
@@ -610,6 +829,11 @@ app.all('/api/v1/auth/direct/*', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+app.all('/api/v1/login/interactions/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 app.get('/api/v1/registration-fields', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
@@ -889,7 +1113,17 @@ app.all('/me/devices/*', async (c) => {
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
+app.all('/api/account/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
 app.get('/api/avatars/*', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.get('/api/assets/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
@@ -1102,7 +1336,6 @@ for (const uiPath of LOGIN_UI_PATHS) {
   });
 }
 
-// Static assets proxy for UI (when either proxy is enabled)
 // This handles /geo/* paths for WorldMap GeoJSON data (Admin UI only)
 app.get('/geo/*', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
@@ -1111,52 +1344,32 @@ app.get('/geo/*', async (c) => {
   return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
-// This handles /_app/* paths for SvelteKit static assets
-app.all('/_app/*', async (c) => {
-  // Determine which UI to serve static assets from based on Referer
-  // Each UI has different chunk names, so we need to route to the correct one
-  const referer = c.req.header('Referer');
-  let isAdminRequest = false;
-
-  try {
-    if (referer) {
-      const refererUrl = new URL(referer);
-      isAdminRequest = refererUrl.pathname.startsWith('/admin');
-    }
-  } catch {
-    // Invalid referer URL, will try both UIs
+// Login UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
+app.all(`${LOGIN_UI_ASSET_PREFIX}/*`, async (c) => {
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
   }
+  return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
+});
 
-  // Try primary UI first (based on referer), then fallback to the other
-  const adminEnabled = c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL;
-  const loginEnabled = c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL;
-
-  // Determine order to try UIs
-  const uisToTry: Array<{ url: string; name: string }> = [];
-  if (isAdminRequest && adminEnabled) {
-    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
-    if (loginEnabled) uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
-  } else if (loginEnabled) {
-    uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
-    if (adminEnabled) uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
-  } else if (adminEnabled) {
-    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
+// Admin UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
+app.all(`${ADMIN_UI_ASSET_PREFIX}/*`, async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path, c.env.ADMIN_UI_WORKER);
   }
-
-  // Try each UI in order, return first successful response
-  for (const ui of uisToTry) {
-    const serviceBinding = ui.name === 'admin' ? c.env.ADMIN_UI_WORKER : c.env.LOGIN_UI_WORKER;
-    const response = await proxyToUiWorker(c.req.raw.clone(), ui.url, c.req.path, serviceBinding);
-    if (response.ok) {
-      return response;
-    }
-  }
-
-  return c.json({ error: 'not_found', message: 'Static asset not found in any UI' }, 404);
+  return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
 // Root Admin UI custom domains are covered by the wildcard host route without a path suffix.
 app.get('/', async (c) => {
+  const serviceSite = getServiceSiteBinding(c.env);
+  if (serviceSite) {
+    const serviceSiteFallback = await resolveServiceSiteFallbackSettings(c);
+    if (serviceSiteFallback.enabled) {
+      return serviceSite.fetch(c.req.raw);
+    }
+  }
+
   const requestHost = new URL(c.req.url).hostname.toLowerCase();
   const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);
   const adminUiHost =
@@ -1175,6 +1388,14 @@ app.get('/', async (c) => {
   }
 
   if (loginEnabled) {
+    const requestUrl = new URL(c.req.url);
+    if (
+      requestUrl.search === '' &&
+      isBaseDomainTenantHost(c.env, requestHost) &&
+      !hasCookie(c.req.raw, 'authrim_session')
+    ) {
+      return c.redirect('/login', 303);
+    }
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL!, '/', c.env.LOGIN_UI_WORKER);
   }
 
@@ -1189,6 +1410,38 @@ app.get('/', async (c) => {
       userinfo: '/userinfo',
     },
   });
+});
+
+// Configured Account Page prefixes are public URLs but served by Login UI's /account route.
+app.all('*', async (c, next) => {
+  const settings = await resolveAccountPageSettings(c);
+  if (!settings.enabled) {
+    return next();
+  }
+
+  const internalPath = getAccountPageInternalPath(c.req.path, settings.path);
+  if (!internalPath) {
+    return next();
+  }
+
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
+  }
+  return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
+});
+
+// Optional service-site fallback. Authrim-owned routes are registered above, so only unknown
+// non-reserved paths reach this point.
+app.all('*', async (c, next) => {
+  const serviceSite = getServiceSiteBinding(c.env);
+  if (!serviceSite) {
+    return next();
+  }
+  const settings = await resolveServiceSiteFallbackSettings(c);
+  if (!settings.enabled) {
+    return next();
+  }
+  return serviceSite.fetch(c.req.raw);
 });
 
 // 404 handler

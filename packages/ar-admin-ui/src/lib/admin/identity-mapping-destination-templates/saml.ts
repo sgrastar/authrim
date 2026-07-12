@@ -265,7 +265,7 @@ const attr = {
 			uriAttribute(
 				'1.3.6.1.4.1.5923.1.1.1.10',
 				'eduPersonTargetedID',
-				'string',
+				'saml:persistent-nameid',
 				'internal',
 				required
 			),

@@ -31,7 +31,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_title: 'Field Mapping Setエディター',
 	admin_identity_mapping_editor_description:
 		'登録済みsource profileとdestination profileに対して、source mappingとdestination release projectionを編集します。',
-	admin_identity_mapping_editor_save_draft: '下書きを保存',
+	admin_identity_mapping_editor_save_draft: '保存',
 	admin_identity_mapping_editor_saving: '保存中...',
 	admin_identity_mapping_editor_compile_draft: '下書きをコンパイル',
 	admin_identity_mapping_editor_compiling: 'コンパイル中...',
@@ -55,8 +55,8 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_delete: '削除',
 	admin_identity_mapping_editor_confirm_delete: '削除を確認',
 	admin_identity_mapping_editor_side_not_selected: 'side未選択',
-	admin_identity_mapping_editor_snapshot_ready: 'snapshot準備済み',
-	admin_identity_mapping_editor_no_snapshot: 'snapshotなし',
+	admin_identity_mapping_editor_snapshot_ready: '保存済み',
+	admin_identity_mapping_editor_no_snapshot: '未保存',
 	admin_identity_mapping_editor_loading_control_plane: 'control planeを読み込み中',
 	admin_identity_mapping_editor_preview_fallback: 'プレビューfallback',
 	admin_identity_mapping_editor_control_plane_ready: 'control plane準備完了',
@@ -67,15 +67,15 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_default_name: 'Field Mapping UI Draft',
 	admin_identity_mapping_editor_destination_profile_fallback: 'Destination profile',
 	admin_identity_mapping_editor_policy_default_suffix: 'Field Mapping Set',
-	admin_identity_mapping_editor_policy_published: 'Field Mapping Setバージョンを公開しました',
-	admin_identity_mapping_editor_policy_activated: 'Field Mapping Setバージョンを有効化しました',
-	admin_identity_mapping_editor_policy_deactivated: 'Field Mapping Setバージョンを無効化しました',
+	admin_identity_mapping_editor_policy_published: 'Field Mapping Setを保存しました',
+	admin_identity_mapping_editor_policy_activated: 'Field Mapping Setを有効化しました',
+	admin_identity_mapping_editor_policy_deactivated: 'Field Mapping Setを無効化しました',
 	admin_identity_mapping_editor_no_active_catalog:
 		'このField Mapping Setを準備するためのactive catalog versionがありません',
 	admin_identity_mapping_editor_publish_before_activation:
-		'有効化する前にこのバージョンを公開してください',
+		'有効化する前にこのField Mapping Setを保存してください',
 	admin_identity_mapping_editor_select_policy_version_first:
-		'先にField Mapping Setバージョンを選択してください',
+		'先にField Mapping Setを選択してください',
 	admin_identity_mapping_editor_confirm_rollback_status:
 		'続行するにはロールバックを確認してください',
 	admin_identity_mapping_editor_rollback_requested: 'ロールバックを要求しました',
@@ -85,13 +85,13 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_delete_failed: 'Field Mapping Setの削除に失敗しました',
 	admin_identity_mapping_editor_policy_operation_failed: 'Field Mapping Set操作に失敗しました',
 	admin_identity_mapping_editor_unsaved_confirm:
-		'未保存のマッピング下書きがあります。破棄して表示を切り替えますか？',
+		'未保存のマッピング変更があります。破棄して表示を切り替えますか？',
 	admin_identity_mapping_editor_policy_conflict:
 		'「{name}」というField Mapping Setはすでに存在します。別のField Mapping Set名を選択してください。',
 	admin_identity_mapping_editor_no_canonical_catalog:
 		'コンパイルに使えるcanonical catalog versionがありません。',
 	admin_identity_mapping_editor_created_description:
-		'Admin UI Flow Editorから作成された下書きField Mapping Setです。',
+		'Admin UI Flow Editorから作成されたField Mapping Setです。',
 	admin_identity_mapping_editor_load_failed: 'Field Mapping状態の読み込みに失敗しました',
 
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
@@ -106,6 +106,42 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_create_destination: 'Destination profileを作成',
 	admin_identity_mapping_profiles_no_source: 'Source profileはありません。',
 	admin_identity_mapping_profiles_no_destination: 'Destination profileはありません。',
+	admin_identity_mapping_persistent_head_title: 'Persistent Identifiers - Authrim Admin',
+	admin_identity_mapping_persistent_title: 'Persistent Identifiers',
+	admin_identity_mapping_persistent_description:
+		'SAML eduPersonTargetedID、SAML persistent NameID、OIDC pairwise subで共有する識別子生成profileを管理します。',
+	admin_identity_mapping_persistent_inventory: 'Profile inventory',
+	admin_identity_mapping_persistent_loading: 'persistent identifier profileを読み込み中です。',
+	admin_identity_mapping_persistent_empty:
+		'Persistent Identifier Profileはまだ登録されていません。',
+	admin_identity_mapping_persistent_load_failed:
+		'persistent identifier profileの読み込みに失敗しました',
+	admin_identity_mapping_persistent_create: 'Persistent Identifierを作成',
+	admin_identity_mapping_persistent_usage_empty: 'usageは未設定です',
+	admin_identity_mapping_persistent_algorithm: 'Algorithm',
+	admin_identity_mapping_persistent_scope: 'Scope',
+	admin_identity_mapping_persistent_audience: 'Audience',
+	admin_identity_mapping_persistent_secret: 'Secret',
+	admin_identity_mapping_persistent_create_title: 'Persistent Identifierを作成',
+	admin_identity_mapping_persistent_edit_title: 'Persistent Identifierを編集',
+	admin_identity_mapping_persistent_display_name: '表示名',
+	admin_identity_mapping_persistent_profile_key: 'Profile key',
+	admin_identity_mapping_persistent_description_label: '説明',
+	admin_identity_mapping_persistent_mode: 'Mode',
+	admin_identity_mapping_persistent_protocol_scope: 'Protocol scope',
+	admin_identity_mapping_persistent_usage: 'Usage',
+	admin_identity_mapping_persistent_issuer: 'Issuer entity ID',
+	admin_identity_mapping_persistent_secret_ref: 'Secret ref',
+	admin_identity_mapping_persistent_save: '保存',
+	admin_identity_mapping_persistent_saving: '保存中...',
+	admin_identity_mapping_persistent_delete: '削除',
+	admin_identity_mapping_persistent_saved: 'Persistent identifier profileを保存しました。',
+	admin_identity_mapping_persistent_save_failed:
+		'persistent identifier profileの保存に失敗しました',
+	admin_identity_mapping_persistent_delete_failed:
+		'persistent identifier profileの削除に失敗しました',
+	admin_identity_mapping_persistent_delete_confirm:
+		'このpersistent identifier profileを削除しますか？',
 
 	admin_identity_mapping_profile_edit_head_title: 'Profile編集 - Authrim Admin',
 	admin_identity_mapping_policies_head_title: 'Field Mapping Sets - Authrim Admin',
@@ -298,6 +334,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_examples_placeholder: 'sample1,sample2',
 	admin_identity_mapping_profile_edit_note_placeholder: 'フィールドメモ',
 	admin_identity_mapping_profile_edit_remove: '削除',
+	admin_identity_mapping_profile_edit_cancel: 'キャンセル',
 	admin_identity_mapping_profile_edit_add_column: 'カラムを追加',
 	admin_identity_mapping_profile_edit_confirm_csv_warnings:
 		'このCSV profile versionのPII候補とregulated候補を確認しました',
@@ -312,6 +349,12 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_destination_method_aria: 'Destination作成方法',
 	admin_identity_mapping_profile_edit_create_from_existing: '既存から作成',
 	admin_identity_mapping_profile_edit_create_from_template: 'テンプレートから作成',
+	admin_identity_mapping_scope_select_placeholder: 'scopeを選択',
+	admin_identity_mapping_scope_create_inline: '新規 scope...',
+	admin_identity_mapping_scope_create: 'scopeを作成',
+	admin_identity_mapping_scope_create_failed: 'scopeの作成に失敗しました',
+	admin_identity_mapping_scope_name: 'Scope名',
+	admin_identity_mapping_scope_display_name: '表示名',
 	admin_identity_mapping_profile_edit_existing_destination: '既存の{kind} destination',
 	admin_identity_mapping_profile_edit_choose_destination_profile: 'destination profileを選択',
 	admin_identity_mapping_profile_edit_copy: 'コピー',
@@ -474,7 +517,7 @@ const adminIdentityMapping = {
 		'{label}はJSON objectである必要があります',
 
 	admin_identity_mapping_flow_graph_aria: 'マッピンググラフ',
-	admin_identity_mapping_flow_policy_draft: 'Field Mapping Set下書き',
+	admin_identity_mapping_flow_policy_draft: 'Field Mapping Set',
 	admin_identity_mapping_flow_no_profiles: 'プロファイルなし',
 	admin_identity_mapping_flow_view_mode_aria: 'Flow view mode',
 	admin_identity_mapping_flow_overview: '概要',
@@ -494,12 +537,16 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_no_active_policies: 'activeなField Mapping Setがありません',
 	admin_identity_mapping_flow_select_active_policy: 'activeなField Mapping Setを選択',
 	admin_identity_mapping_flow_no_profiles_registered: 'source/destination profileが未登録です',
+	admin_identity_mapping_flow_schema_not_configured: 'profile schemaが未設定です',
 	admin_identity_mapping_flow_no_active_policies_desc:
-		'この概要を使う前に、Field Mapping Setを保存、公開、コンパイル、有効化してください。',
+		'この概要を使う前に、Field Mapping Setを保存して有効化してください。',
 	admin_identity_mapping_flow_select_active_policy_desc:
 		'ノードとエッジを表示するSource Field Mapping SetまたはDestination Field Mapping Setを選択してください。',
 	admin_identity_mapping_flow_no_profiles_registered_desc:
 		'グラフを表示するには、source/destination profileを登録するかfield catalogを追加してください。',
+	admin_identity_mapping_flow_schema_not_configured_desc:
+		'profileは登録されていますが、Field Mapping Setエディターで表示できるschemaがまだ設定されていません。先にSource/Destination Profilesでschemaを設定してください。',
+	admin_identity_mapping_flow_schema_not_configured_action: 'Source/Destination Profilesへ',
 	admin_identity_mapping_flow_source_policy: 'Source Field Mapping Set',
 	admin_identity_mapping_flow_destination_policy: 'Destination Field Mapping Set',
 	admin_identity_mapping_flow_select_source_policy: 'Source Field Mapping Setを選択',
@@ -564,6 +611,25 @@ const adminIdentityMapping = {
 		'{count}件の接続を自動マッピングしました。準備ができたら下書きを確認してコンパイルしてください。',
 	admin_identity_mapping_flow_transform_copy_label: 'コピー',
 	admin_identity_mapping_flow_transform_copy_desc: '最初の入力値をそのまま通します。',
+	admin_identity_mapping_flow_transform_as_array_label: '配列化',
+	admin_identity_mapping_flow_transform_as_array_desc:
+		'1つの入力値をmulti-value配列として扱います。',
+	admin_identity_mapping_flow_transform_split_label: '分割',
+	admin_identity_mapping_flow_transform_split_desc:
+		'1つのテキスト値を区切り文字でmulti-value配列に分割します。',
+	admin_identity_mapping_flow_transform_join_label: '配列を結合',
+	admin_identity_mapping_flow_transform_join_desc: 'multi-value配列を1つのテキスト値に結合します。',
+	admin_identity_mapping_flow_transform_first_label: '先頭値',
+	admin_identity_mapping_flow_transform_first_desc: 'multi-value配列から先頭の値を使います。',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: 'OIDC pairwise sub',
+	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc:
+		'現在のOIDC client向けpairwise subject identifierを使います。',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label:
+		'SAML eduPersonTargetedID',
+	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc:
+		'現在のSAML SP contextからIdP!SP!opaque形式のtargeted IDを構築します。',
+	admin_identity_mapping_flow_transform_affix_text_label: 'prefix/suffixを追加',
+	admin_identity_mapping_flow_transform_affix_text_desc: '入力値の前後に固定テキストを追加します。',
 	admin_identity_mapping_flow_transform_trim_label: 'トリム',
 	admin_identity_mapping_flow_transform_trim_desc: '最初の入力値の前後の空白を削除します。',
 	admin_identity_mapping_flow_transform_normalize_label: '正規化',
@@ -572,7 +638,8 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_case_label: '大文字/小文字',
 	admin_identity_mapping_flow_transform_case_desc: 'targetへ書き込む前に文字種を変換します。',
 	admin_identity_mapping_flow_transform_concat_label: '結合',
-	admin_identity_mapping_flow_transform_concat_desc: '接続された入力値を1つの文字列に結合します。',
+	admin_identity_mapping_flow_transform_concat_desc:
+		'接続された入力値を1つの文字列に結合します。区切り文字でspace、comma、区切りなし、任意の文字列を指定できます。',
 	admin_identity_mapping_flow_transform_fallback_label: 'フォールバック',
 	admin_identity_mapping_flow_transform_fallback_desc:
 		'接続された入力値のうち最初の非空値を使います。',
@@ -593,6 +660,14 @@ const adminIdentityMapping = {
 		'JSON pathを読み取り、integerまたはnullとして出力します。',
 	admin_identity_mapping_flow_transform_param_mode: 'モード',
 	admin_identity_mapping_flow_transform_param_delimiter: '区切り文字',
+	admin_identity_mapping_flow_transform_param_trim_items: '各値をトリム',
+	admin_identity_mapping_flow_transform_param_omit_empty: '空値を除去',
+	admin_identity_mapping_flow_transform_param_unique: '重複を除去',
+	admin_identity_mapping_flow_transform_param_persistent_identifier_profile:
+		'Persistent Identifier Profile',
+	admin_identity_mapping_flow_transform_param_prefix: 'Prefix',
+	admin_identity_mapping_flow_transform_param_suffix: 'Suffix',
+	admin_identity_mapping_flow_transform_tenant_default_profile: 'Tenant default',
 	admin_identity_mapping_flow_transform_param_true_values: 'true値',
 	admin_identity_mapping_flow_transform_param_false_values: 'false値',
 	admin_identity_mapping_flow_transform_param_null_values: 'null値',
@@ -618,27 +693,25 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_inserted_edge_source: '選択中のマッピングエッジに挿入',
 	admin_identity_mapping_flow_transform_node: 'Transform node',
 	admin_identity_mapping_flow_continues_original_target: '元のedge targetへ継続',
-	admin_identity_mapping_flow_transform_inserted_validation: '下書きtransform nodeを挿入しました',
+	admin_identity_mapping_flow_transform_inserted_validation: 'transform nodeを挿入しました',
 	admin_identity_mapping_flow_transform_inserted_trace:
 		'このtransform nodeは既存のマッピングエッジに挿入されました。',
 	admin_identity_mapping_flow_custom_graph_edge: 'カスタムグラフエッジ',
 	admin_identity_mapping_flow_not_connected_yet: '未接続',
 	admin_identity_mapping_flow_custom_node_trace:
-		'カスタム下書きnodeを追加しました。接続handleをドラッグしてidentity schemaへ接続してください。',
+		'カスタムnodeを追加しました。接続handleをドラッグしてidentity schemaへ接続してください。',
 	admin_identity_mapping_flow_transform_configured_validation:
-		'下書きtransformを設定しました。compile validationは未実行です',
+		'transformを設定しました。validationは未実行です',
 	admin_identity_mapping_flow_transform_output_pending:
 		'{summary}のtransform出力previewは未実行です。',
 	admin_identity_mapping_flow_transform_config_trace:
-		'Transform設定は下書きnodeに保存され、mapping transform stepとして永続化されます。',
+		'Transform設定はnodeに保存され、mapping transform stepとして永続化されます。',
 	admin_identity_mapping_flow_connect_edge_before_compile:
-		'下書きをコンパイルする前に、少なくとも1つのマッピングエッジを接続してください。',
-	admin_identity_mapping_flow_compile_not_connected:
-		'このページにはcompile draftが接続されていません。',
-	admin_identity_mapping_flow_saving_draft_policy: '下書きField Mapping Set versionを保存中...',
-	admin_identity_mapping_flow_draft_saved_compiled:
-		'下書きField Mapping Set versionを保存してコンパイルしました。',
-	admin_identity_mapping_flow_compile_failed: 'マッピング下書きのコンパイルに失敗しました。',
+		'保存する前に、少なくとも1つのマッピングエッジを接続してください。',
+	admin_identity_mapping_flow_compile_not_connected: 'このページには保存処理が接続されていません。',
+	admin_identity_mapping_flow_saving_draft_policy: 'Field Mapping Setを保存中...',
+	admin_identity_mapping_flow_draft_saved_compiled: 'Field Mapping Setを保存しました。',
+	admin_identity_mapping_flow_compile_failed: 'Field Mapping Setの保存に失敗しました。',
 	admin_identity_mapping_flow_not_connected: '未接続',
 	admin_identity_mapping_flow_configured: '設定済み',
 	admin_identity_mapping_flow_loaded_from: '{ruleKey}から読み込み',

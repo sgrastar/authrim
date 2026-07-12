@@ -7,6 +7,10 @@
 	} from '$lib/api/admin-scim-tokens';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let tokens: ScimToken[] = $state([]);
 	let loading = $state(true);
@@ -139,22 +143,19 @@
 	<title>{$LL.admin_scim_tokens_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_scim_tokens_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_scim_tokens_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={openCreateDialog}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_scim_tokens_create_token()}
-			</button>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus" aria-hidden="true"></i>
+		{$LL.admin_scim_tokens_create_token()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_scim_tokens_title()}
+		description={$LL.admin_scim_tokens_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -166,7 +167,7 @@
 			<p>{$LL.admin_scim_tokens_loading()}</p>
 		</div>
 	{:else if tokens.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_scim_tokens_empty()}</p>
 				<p class="empty-state-hint">
@@ -176,10 +177,10 @@
 					>{$LL.admin_scim_tokens_create_token()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection title={$LL.admin_scim_tokens_title()}>
+			<AdminDataTable>
 				<thead>
 					<tr>
 						<th>{$LL.admin_scim_tokens_token_hash()}</th>
@@ -210,10 +211,10 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Token Dialog -->
 <Modal
@@ -226,27 +227,29 @@
 		<div class="alert alert-error">{createError}</div>
 	{/if}
 
-	<div class="form-group">
-		<label for="description" class="form-label"
+	<div class="admin-field dialog-field">
+		<label for="description" class="admin-field__label"
 			>{$LL.admin_scim_tokens_description_optional()}</label
 		>
 		<input
 			id="description"
 			type="text"
-			class="form-input"
+			class="admin-input"
 			bind:value={newTokenDescription}
 			placeholder="e.g., Okta SCIM Integration"
 		/>
 	</div>
 
-	<div class="form-group">
-		<label for="expiresInDays" class="form-label">{$LL.admin_scim_tokens_expires_in_days()}</label>
+	<div class="admin-field dialog-field">
+		<label for="expiresInDays" class="admin-field__label"
+			>{$LL.admin_scim_tokens_expires_in_days()}</label
+		>
 		<input
 			id="expiresInDays"
 			type="number"
 			min="1"
 			max="3650"
-			class="form-input"
+			class="admin-input"
 			bind:value={newTokenExpiresInDays}
 		/>
 		<p class="form-hint">{$LL.admin_scim_tokens_valid_range()}</p>
@@ -275,9 +278,9 @@
 		<span>{$LL.admin_scim_tokens_save_now_warning()}</span>
 	</div>
 
-	<div class="form-group">
+	<div class="admin-field dialog-field">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">{$LL.admin_scim_tokens_scim_token()}</label>
+		<label class="admin-field__label">{$LL.admin_scim_tokens_scim_token()}</label>
 		<div class="token-display">
 			<code class="token-value">{createdToken?.token}</code>
 			<button
@@ -344,3 +347,62 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	.dialog-field {
+		display: grid;
+		gap: 6px;
+		margin-bottom: 16px;
+	}
+
+	.dialog-field :global(.admin-field__label) {
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+		color: var(--color-text-subtle);
+	}
+
+	.dialog-field :global(.admin-input) {
+		width: 100%;
+		min-height: var(--control-height, 38px);
+		padding: var(--control-padding, 8px 12px);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		outline: none;
+	}
+
+	.dialog-field :global(.admin-input:focus) {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px var(--color-accent-muted);
+	}
+
+	.token-display {
+		display: flex;
+		align-items: stretch;
+		gap: 10px;
+	}
+
+	.token-value {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		padding: 10px 12px;
+		background: var(--color-surface-raised);
+		color: var(--color-text);
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+	}
+
+	@media (max-width: 640px) {
+		.token-display {
+			flex-direction: column;
+		}
+	}
+</style>

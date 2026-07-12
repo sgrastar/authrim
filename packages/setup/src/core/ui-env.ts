@@ -11,7 +11,7 @@
  * 4. deploy command cleans up .env after build
  */
 
-import { writeFile, copyFile, unlink, access, mkdir } from 'node:fs/promises';
+import { writeFile, readFile, copyFile, unlink, access, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { constants } from 'node:fs';
 import type { AuthrimConfig } from './config.js';
@@ -46,6 +46,16 @@ export interface UiEnvConfig {
    * Auto-created during deployment via ensureLoginUiClient()
    */
   PUBLIC_LOGIN_UI_CLIENT_ID?: string;
+  /**
+   * Chrome Email Verification Protocol Origin Trial token for a single Login UI origin.
+   * Public, origin-bound deployment metadata; not a secret.
+   */
+  EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN?: string;
+  /**
+   * JSON object mapping exact Login UI browser origins to their Origin Trial tokens.
+   * Public, origin-bound deployment metadata; not a secret.
+   */
+  EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS?: string;
   /**
    * Enable Diagnostic Logging in the Login UI.
    * When 'true', DiagnosticLogger is initialized and logs are sent to the ingest endpoint.
@@ -95,6 +105,66 @@ export function generateUiEnvContent(config: UiEnvConfig): string {
   }
 
   return lines.join('\n') + '\n';
+}
+
+function unescapeEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    let result = '';
+    const inner = trimmed.slice(1, -1);
+    for (let i = 0; i < inner.length; i++) {
+      const current = inner[i];
+      const next = inner[i + 1];
+      if (current === '\\' && next !== undefined) {
+        result += next;
+        i += 1;
+      } else {
+        result += current;
+      }
+    }
+    return result;
+  }
+  return trimmed;
+}
+
+export function parseUiEnvContent(content: string): Partial<UiEnvConfig> {
+  const parsed: Partial<UiEnvConfig> = {};
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex <= 0) continue;
+
+    const key = trimmed.slice(0, separatorIndex).trim() as keyof UiEnvConfig;
+    const value = unescapeEnvValue(trimmed.slice(separatorIndex + 1));
+    parsed[key] = value;
+  }
+
+  return parsed;
+}
+
+async function readUiEnvConfig(envPath: string): Promise<Partial<UiEnvConfig>> {
+  try {
+    return parseUiEnvContent(await readFile(envPath, 'utf-8'));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return {};
+    }
+    throw error;
+  }
+}
+
+export async function mergeAndSaveUiEnv(
+  envPath: string,
+  config: Partial<UiEnvConfig>
+): Promise<void> {
+  const existing = await readUiEnvConfig(envPath);
+  await saveUiEnv(envPath, {
+    ...existing,
+    ...config,
+  } as UiEnvConfig);
 }
 
 /**

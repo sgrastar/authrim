@@ -73,11 +73,14 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		});
 		const { passkeyAPI } = await loadClient();
 
-		const options = await passkeyAPI.getLoginOptions({});
+		const options = await passkeyAPI.getLoginOptions({
+			authorizationChallengeId: 'oauth_login_challenge'
+		});
 		const verified = await passkeyAPI.verifyLogin({
 			challengeId: options.data!.challengeId,
 			credential: { id: 'credential' },
-			authorizationChallengeId: 'oauth_login_challenge'
+			authorizationChallengeId: 'oauth_login_challenge',
+			deferAuthorizationContinuation: true
 		});
 
 		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
@@ -87,6 +90,9 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			'/api/v1/auth/direct/passkey/login/finish'
 		);
 		expect(fetchMock.mock.calls[2]?.[0].toString()).toContain('/api/v1/auth/direct/session');
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			authorization_challenge_id: 'oauth_login_challenge'
+		});
 		for (const [url] of fetchMock.mock.calls) {
 			expect(url.toString()).not.toContain('/api/auth/passkeys');
 			expect(url.toString()).not.toContain('/api/auth/email-codes');
@@ -104,7 +110,8 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			}
 		});
 		expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
-			authorization_challenge_id: 'oauth_login_challenge'
+			authorization_challenge_id: 'oauth_login_challenge',
+			defer_authorization_continuation: true
 		});
 	});
 
@@ -164,7 +171,9 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		const send = await emailCodeAPI.send({
 			email: 'User@Example.com',
 			invite_token: 'invite_123',
-			custom_fields: { team: 'platform' }
+			authorizationChallengeId: 'oauth_email_challenge',
+			custom_fields: { team: 'platform' },
+			runtimeInteractionId: 'runtime_email_1'
 		});
 		const verified = await emailCodeAPI.verify({
 			email: 'user@example.com',
@@ -191,6 +200,8 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 			client_id: 'login-ui',
 			channel: 'browser',
 			invite_token: 'invite_123',
+			authorization_challenge_id: 'oauth_email_challenge',
+			runtime_interaction_id: 'runtime_email_1',
 			custom_fields: { team: 'platform' }
 		});
 		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
@@ -213,6 +224,137 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 				acr: 'urn:mace:incommon:iap:bronze',
 				amr: ['email_code']
 			}
+		});
+	});
+
+	it('redeems a valid Email Verification Protocol artifact without entering the OTP state', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ direct_auth_artifact: 'artifact_evp', expires_in: 60 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						redirect_url: '/account',
+						session: {
+							userId: 'user_email',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000456,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['email_verification_protocol']
+						},
+						user: {
+							id: 'user_email',
+							email: 'user@example.com',
+							name: null
+						}
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { emailCodeAPI } = await loadClient();
+
+		const result = await emailCodeAPI.send({
+			email: 'user@example.com',
+			deferAuthorizationContinuation: true,
+			runtimeInteractionId: 'runtime_email_1',
+			emailVerification: {
+				token: 'evt-presentation',
+				challengeId: 'evp_challenge_1',
+				interactionId: 'runtime_email_1'
+			}
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			email_verification_token: 'evt-presentation',
+			email_verification_challenge_id: 'evp_challenge_1',
+			runtime_interaction_id: 'runtime_email_1'
+		});
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			direct_auth_artifact: 'artifact_evp',
+			defer_authorization_continuation: true
+		});
+		expect(result.data).toMatchObject({
+			success: true,
+			verified: true,
+			userId: 'user_email',
+			redirect_url: '/account',
+			session: { amr: ['email_verification_protocol'] }
+		});
+	});
+
+	it('retains Email Code PKCE state after an invalid code so the attempt can be retried', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						attempt_id: 'attempt_retry',
+						expires_in: 300,
+						masked_email: 'u***@example.com'
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ error: 'invalid_code', error_description: 'Invalid code' }), {
+					status: 400,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ direct_auth_artifact: 'artifact_retry', expires_in: 60 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						session: { userId: 'user_email', createdAt: 1, expiresAt: 2 },
+						user: { id: 'user_email', email: 'user@example.com', name: null }
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { emailCodeAPI } = await loadClient();
+
+		await emailCodeAPI.send({ email: 'user@example.com' });
+		const invalid = await emailCodeAPI.verify({
+			email: 'user@example.com',
+			code: '000000'
+		});
+		const valid = await emailCodeAPI.verify({
+			email: 'user@example.com',
+			code: '123456'
+		});
+
+		expect(invalid.error).toMatchObject({ error: 'invalid_code' });
+		expect(valid.data).toMatchObject({ success: true, userId: 'user_email' });
+		expect(fetchMock).toHaveBeenCalledTimes(4);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			attempt_id: 'attempt_retry',
+			code: '000000'
+		});
+		expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+			attempt_id: 'attempt_retry',
+			code: '123456'
 		});
 	});
 
@@ -251,6 +393,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		const verified = await directoryPasswordAPI.login({
 			username: 'alice',
 			password: 'correct',
+			inviteToken: 'invite-token',
 			authorizationChallengeId: 'oauth_directory_challenge'
 		});
 
@@ -258,6 +401,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
 			username: 'alice',
 			password: 'correct',
+			invite_token: 'invite-token',
 			authorization_challenge_id: 'oauth_directory_challenge'
 		});
 		expect(verified.data).toMatchObject({
@@ -268,6 +412,288 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 				authTime: 1700000789,
 				acr: 'urn:mace:incommon:iap:bronze',
 				amr: ['pwd', 'directory']
+			}
+		});
+	});
+
+	it('returns Directory Password migration transactions without converting them to sessions', async () => {
+		const fetchMock = vi.fn(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						ok: false,
+						migration: {
+							required: true,
+							action: 'require_passkey',
+							transaction_id: 'damt_1',
+							transaction_token: 'migration-token',
+							expires_at: 1700001000,
+							campaign_id: 'damc_1',
+							state: 'passkey_required',
+							reason: 'immediate',
+							passkey_required_at: 1700000000,
+							email_code_fallback_mode: 'migration_recovery'
+						},
+						user: {
+							id: 'user_directory',
+							email: 'alice@example.com',
+							name: 'Alice Example'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const verified = await directoryPasswordAPI.login({
+			username: 'alice',
+			password: 'correct'
+		});
+
+		expect(verified.data).toMatchObject({
+			success: false,
+			migration: {
+				required: true,
+				action: 'require_passkey',
+				transaction_id: 'damt_1',
+				transaction_token: 'migration-token',
+				campaign_id: 'damc_1'
+			}
+		});
+		expect(verified.data).not.toHaveProperty('session');
+	});
+
+	it('keeps optional Directory Password migration prompts attached to successful sessions', async () => {
+		const fetchMock = vi.fn(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						expires_in: 3600,
+						session: {
+							userId: 'user_directory',
+							createdAt: 1700000000,
+							expiresAt: 1700003600,
+							authTime: 1700000000,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['pwd', 'directory']
+						},
+						user: {
+							id: 'user_directory',
+							email: 'alice@example.com',
+							name: 'Alice Example'
+						},
+						migration: {
+							required: false,
+							action: 'prompt_passkey',
+							campaign_id: 'damc_1',
+							state: 'prompted',
+							passkey_required_at: null,
+							transaction_ttl_seconds: 600
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const verified = await directoryPasswordAPI.login({
+			username: 'alice',
+			password: 'correct'
+		});
+
+		expect(verified.data).toMatchObject({
+			success: true,
+			userId: 'user_directory',
+			migration: {
+				required: false,
+				action: 'prompt_passkey',
+				campaign_id: 'damc_1'
+			}
+		});
+	});
+
+	it('starts and verifies Directory Password migration passkey registration', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						challenge_id: 'challenge_migration',
+						options: { challenge: 'webauthn-challenge' }
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+						session: {
+							userId: 'user_directory',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000456,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['pwd', 'directory', 'passkey']
+						},
+						user: {
+							id: 'user_directory',
+							email: 'directory@example.com',
+							name: 'Directory User'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const options = await directoryPasswordAPI.migrationPasskeyOptions({
+			transactionId: 'damt_1',
+			transactionToken: 'migration-token',
+			displayName: 'Directory User'
+		});
+		const verified = await directoryPasswordAPI.migrationPasskeyVerify({
+			transactionId: 'damt_1',
+			transactionToken: 'migration-token',
+			challengeId: options.data!.challenge_id,
+			credential: { id: 'credential' },
+			deviceName: 'Work laptop'
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/passkey/options'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_1',
+			transaction_token: 'migration-token',
+			display_name: 'Directory User'
+		});
+		expect(fetchMock.mock.calls[1]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/passkey/verify'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_1',
+			transaction_token: 'migration-token',
+			challenge_id: 'challenge_migration',
+			device_name: 'Work laptop'
+		});
+		expect(verified.data).toMatchObject({
+			userId: 'user_directory',
+			redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+			session: {
+				amr: ['pwd', 'directory', 'passkey']
+			}
+		});
+	});
+
+	it('sends and verifies Directory Password migration email-code fallback', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						success: true,
+						challenge_id: 'email_challenge_1',
+						expires_in: 300,
+						masked_email: 'al***@example.com'
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+						session: {
+							userId: 'user_directory',
+							createdAt: 1,
+							expiresAt: 2,
+							authTime: 1700000456,
+							acr: 'urn:mace:incommon:iap:bronze',
+							amr: ['pwd', 'directory', 'otp']
+						},
+						user: {
+							id: 'user_directory',
+							email: 'directory@example.com',
+							name: 'Directory User'
+						}
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { directoryPasswordAPI } = await loadClient();
+
+		const sent = await directoryPasswordAPI.migrationEmailCodeSend({
+			transactionId: 'damt_email_1',
+			transactionToken: 'migration-email-token'
+		});
+		const verified = await directoryPasswordAPI.migrationEmailCodeVerify({
+			transactionId: 'damt_email_1',
+			transactionToken: 'migration-email-token',
+			challengeId: sent.data!.challenge_id,
+			code: '123456'
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/email-code/send'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_email_1',
+			transaction_token: 'migration-email-token'
+		});
+		expect(fetchMock.mock.calls[1]?.[0].toString()).toContain(
+			'/api/auth/directory-password/migration/email-code/verify'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+			transaction_id: 'damt_email_1',
+			transaction_token: 'migration-email-token',
+			challenge_id: 'email_challenge_1',
+			code: '123456'
+		});
+		expect(verified.data).toMatchObject({
+			userId: 'user_directory',
+			redirect_url: '/authorize?client_id=rp_directory&_confirmed=true',
+			session: {
+				amr: ['pwd', 'directory', 'otp']
 			}
 		});
 	});
@@ -400,20 +826,20 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(url.searchParams.has('code_challenge')).toBe(false);
 	});
 
-	it('returns direct external provider start URLs without adding OAuth parameters', async () => {
+	it('adds human verification responses only to Authrim-managed external start URLs', async () => {
 		const { externalIdpAPI } = await loadClient();
 
 		const result = await externalIdpAPI.startLogin(
-			'wallet-vp',
+			'github',
 			'https://login.example.com/callback',
-			'/vp/login?profile=employee',
-			'direct'
+			undefined,
+			'oauth_redirect',
+			{ token: 'human-token' }
 		);
 		const url = new URL(result.url);
 
-		expect(url.pathname).toBe('/vp/login');
-		expect(url.searchParams.get('profile')).toBe('employee');
-		expect(url.searchParams.has('redirect_uri')).toBe(false);
-		expect(url.searchParams.has('code_challenge')).toBe(false);
+		expect(url.pathname).toBe('/api/external/github/start');
+		expect(url.searchParams.get('human_verification_response')).toBe('human-token');
+		expect(url.searchParams.has('cf_turnstile_response')).toBe(false);
 	});
 });

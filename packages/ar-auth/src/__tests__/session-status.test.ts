@@ -54,15 +54,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-function createContext(options: { headers?: Record<string, string> } = {}) {
+function createContext(options: { headers?: Record<string, string>; url?: string } = {}) {
   const headers = Object.fromEntries(
     Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
   );
+  const url = options.url ?? 'https://issuer.example.com/session/status';
 
   return {
     req: {
       path: '/session/status',
-      raw: new Request('https://issuer.example.com/session/status'),
+      raw: new Request(url),
       header: vi.fn((name: string) => headers[name.toLowerCase()]),
       json: vi.fn(async () => ({})),
     },
@@ -121,6 +122,36 @@ describe('session status OIDC assurance metadata', () => {
       acr: 'urn:mace:incommon:iap:bronze',
       amr: ['passkey'],
     });
+  }, 15_000);
+
+  it('skips user profile lookup when the caller requests the basic session shape', async () => {
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: Date.now() + 60_000,
+      data: {
+        authTime: 1700000123,
+      },
+    });
+    const { sessionStatusHandler } = await import('../session-management');
+
+    const response = await sessionStatusHandler(
+      createContext({ url: 'https://issuer.example.com/session/status?include=basic' }) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      active: true,
+      session_id: '0_session_123',
+      user_id: 'user_123',
+      auth_time: 1700000123,
+    });
+    expect(body).not.toHaveProperty('email');
+    expect(body).not.toHaveProperty('name');
+    expect(mocks.createPIIContextFromHono).not.toHaveBeenCalled();
+    expect(mocks.warn).not.toHaveBeenCalled();
   });
 
   it('returns inactive no_session without touching the session store when the cookie is absent', async () => {

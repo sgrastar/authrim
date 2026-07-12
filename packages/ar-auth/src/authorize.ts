@@ -55,6 +55,8 @@ import {
   resolveConsentRequirements,
   checkUserConsentSatisfaction,
   getUserClaimsForRules,
+  resolveClientTrustPolicy,
+  resolveSignInConfirmationPolicy,
   // Settings Manager
   createSettingsManager,
   CLIENT_CATEGORY_META,
@@ -116,6 +118,15 @@ function splitScopes(scope: string | undefined | null): string[] {
     .filter((value) => value.length > 0);
 }
 
+function collectRequestedClaimNames(
+  request: ReturnType<typeof parseClaimsRequest>['request']
+): string[] {
+  if (!request) return [];
+  return Array.from(
+    new Set([...Object.keys(request.userinfo ?? {}), ...Object.keys(request.id_token ?? {})])
+  );
+}
+
 function getClientAllowedScopes(clientMetadata: {
   allowed_scopes?: string[] | null;
   requestable_scopes?: string[] | null;
@@ -141,6 +152,27 @@ function isClientPublic(clientMetadata: {
   return (
     clientMetadata.token_endpoint_auth_method === 'none' ||
     (!clientMetadata.client_secret_hash && !clientMetadata.client_secret)
+  );
+}
+
+function isOidcCertificationRedirectUri(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return host === 'certification.openid.net' || host.endsWith('.certification.openid.net');
+  } catch {
+    return false;
+  }
+}
+
+function isOidcCertificationClient(clientMetadata?: { redirect_uris?: unknown } | null): boolean {
+  return (
+    Array.isArray(clientMetadata?.redirect_uris) &&
+    clientMetadata.redirect_uris.some(isOidcCertificationRedirectUri)
   );
 }
 
@@ -313,10 +345,13 @@ async function getUIRedirectTarget(
     | 'register',
   queryParams?: Record<string, string>,
   tenantHint?: string,
-  clientLoginUiUrl?: string | null
+  clientLoginUiUrl?: string | null,
+  issuerUiBaseUrl?: string | null,
+  forceBuiltinForms = false
 ): Promise<UIRedirectResult> {
-  // Check conformance mode first
-  if (await shouldUseBuiltinForms(env)) {
+  // Check conformance mode first. Certification clients may opt into the same
+  // local forms without enabling global conformance mode for the tenant.
+  if (forceBuiltinForms || (await shouldUseBuiltinForms(env))) {
     // Builtin forms - determine fallback path
     const fallbackPaths: Record<string, string> = {
       login: '/flow/login',
@@ -348,9 +383,45 @@ async function getUIRedirectTarget(
     return { type: 'config_error', reason: 'ui_not_configured' };
   }
 
+  const baseUrl = shouldUseIssuerHostedUi(env, issuerUiBaseUrl)
+    ? issuerUiBaseUrl!
+    : uiConfig.baseUrl;
+  const effectiveUiConfig: UIConfig = {
+    ...uiConfig,
+    baseUrl,
+  };
+
   // Build UI URL with optional query params and tenant hint
-  const url = buildUIUrl(uiConfig, path, queryParams, tenantHint);
+  const url = buildUIUrl(effectiveUiConfig, path, queryParams, tenantHint);
   return { type: 'redirect', url };
+}
+
+function shouldUseIssuerHostedUi(env: Env, issuerUiBaseUrl?: string | null): boolean {
+  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false' || !env.BASE_DOMAIN) {
+    return false;
+  }
+
+  try {
+    const issuerOrigin = new URL(issuerUiBaseUrl).origin;
+    return issuerOrigin === issuerUiBaseUrl.replace(/\/$/, '');
+  } catch {
+    return false;
+  }
+}
+
+function getTenantAwareUiQueryParams(
+  c: Context<{ Bindings: Env }>,
+  queryParams: Record<string, string>
+): Record<string, string> {
+  const issuer = getRequestIssuer(c);
+  try {
+    return {
+      ...queryParams,
+      tenant_host: new URL(issuer).host,
+    };
+  } catch {
+    return queryParams;
+  }
 }
 
 function createLocalUiUnavailableResponse(
@@ -1680,6 +1751,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       'Invalid Client'
     );
   }
+  const useCertificationBuiltinForms = isOidcCertificationClient(clientMetadata);
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
@@ -2524,6 +2596,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ssoEnabled = false;
   }
 
+  if (useCertificationBuiltinForms && !ssoEnabled) {
+    log.info('OIDC certification client using local SSO for conformance flow', {
+      action: 'certification_sso_enabled',
+      clientId: validClientId,
+    });
+    ssoEnabled = true;
+  }
+
   // Handle id_token_hint parameter (fallback if no session cookie)
   if (id_token_hint && !sessionUserId) {
     try {
@@ -2649,7 +2729,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // 3. SSO Setting: Session sharing control (Authrim-specific feature)
   //    → Applied after prompt=login and max_age
-  if (!ssoEnabled && sessionUserId) {
+  if (!ssoEnabled && sessionUserId && _confirmed !== 'true' && _consent_confirmed !== 'true') {
     // Log if id_token_hint was provided but ignored due to SSO disabled
     if (id_token_hint) {
       log.warn('SSO disabled - ignoring id_token_hint', {
@@ -2826,11 +2906,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const reauthTarget = await getUIRedirectTarget(
       c.env,
       'reauth',
-      {
+      getTenantAwareUiQueryParams(c, {
         challenge_id: challengeId,
-      },
-      undefined,
-      clientMetadata?.login_ui_url
+      }),
+      tenantId,
+      clientMetadata?.login_ui_url,
+      getRequestIssuer(c),
+      useCertificationBuiltinForms
     );
     if (reauthTarget.type === 'redirect') {
       return c.redirect(reauthTarget.url, 302);
@@ -2915,11 +2997,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const loginTarget = await getUIRedirectTarget(
       c.env,
       'login',
-      {
+      getTenantAwareUiQueryParams(c, {
         challenge_id: challengeId,
-      },
-      undefined,
-      clientMetadata?.login_ui_url
+      }),
+      tenantId,
+      clientMetadata?.login_ui_url,
+      getRequestIssuer(c),
+      useCertificationBuiltinForms
     );
     if (loginTarget.type === 'redirect') {
       return c.redirect(loginTarget.url, 302);
@@ -2951,10 +3035,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (_consent_confirmed !== 'true') {
     // Get client metadata for logging (request-level cached)
     const clientMetadata = await getClientCached(c, c.env, validClientId);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Get client settings from KV (replaces legacy D1 is_trusted/skip_consent fields)
     let consentRequired = true; // Default: require consent (security-first)
     let firstParty = false;
+    let clientTrustPolicySource: string | null = null;
+    let signInConfirmationMode: string | null = null;
+    let signInConfirmationRememberDurationDays: number | null = null;
+    let requiresFirstTimeSignInConfirmation = false;
 
     try {
       // Use cached SettingsManager for better performance
@@ -2984,12 +3073,48 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       consentRequired = true; // fail-safe: require consent
     }
 
+    try {
+      const clientTrustPolicy = await resolveClientTrustPolicy(
+        authCtx.coreAdapter,
+        tenantId,
+        'oidc_client',
+        validClientId
+      );
+      if (clientTrustPolicy) {
+        firstParty = clientTrustPolicy.first_party;
+        consentRequired = !(
+          clientTrustPolicy.trusted || clientTrustPolicy.skip_authorization_consent
+        );
+        clientTrustPolicySource = 'client';
+      }
+
+      const signInConfirmationPolicy = await resolveSignInConfirmationPolicy(
+        authCtx.coreAdapter,
+        tenantId
+      );
+      signInConfirmationMode = signInConfirmationPolicy?.mode ?? null;
+      signInConfirmationRememberDurationDays =
+        signInConfirmationPolicy?.remember_duration_days ?? null;
+      if (signInConfirmationPolicy?.mode === 'every_time') {
+        consentRequired = true;
+      } else if (signInConfirmationPolicy?.mode === 'first_time') {
+        requiresFirstTimeSignInConfirmation = true;
+      }
+    } catch (error) {
+      log.warn('Failed to apply consent policy settings', {
+        action: 'consent_policy_settings',
+        clientId: validClientId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     const attributeReleaseConsentPolicy = normalizeAttributeReleaseConsentPolicy(
       clientMetadata?.attribute_release_consent
     );
     const requiresPerAuthorizationAttributeReleaseConsent =
       attributeReleaseConsentPolicy?.enabled === true &&
       attributeReleaseConsentPolicy.mode === 'every_time';
+    const requiresEveryTimeSignInConfirmation = signInConfirmationMode === 'every_time';
 
     // Debug: Log consent decision factors
     log.info('Consent check - settings', {
@@ -2997,6 +3122,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       clientId: validClientId,
       consentRequired,
       firstParty,
+      clientTrustPolicySource,
+      signInConfirmationMode,
       attributeReleaseConsentMode: attributeReleaseConsentPolicy?.mode ?? null,
       requiresPerAuthorizationAttributeReleaseConsent,
       // Legacy D1 fields (for migration tracking)
@@ -3016,16 +3143,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       willSkipConsent:
         isTrustedClient &&
         !prompt?.includes('consent') &&
-        !requiresPerAuthorizationAttributeReleaseConsent,
+        !requiresPerAuthorizationAttributeReleaseConsent &&
+        !requiresFirstTimeSignInConfirmation &&
+        !requiresEveryTimeSignInConfirmation,
     });
-
-    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (
       isTrustedClient &&
       !prompt?.includes('consent') &&
-      !requiresPerAuthorizationAttributeReleaseConsent
+      !requiresPerAuthorizationAttributeReleaseConsent &&
+      !requiresFirstTimeSignInConfirmation &&
+      !requiresEveryTimeSignInConfirmation
     ) {
       // Check if consent already exists (using cache)
       const existingConsent = await getCachedConsent(
@@ -3131,6 +3260,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requiresPerAuthorizationAttributeReleaseConsent) {
           consentRequired = true;
         }
+        if (requiresEveryTimeSignInConfirmation) {
+          consentRequired = true;
+        }
+        if (requiresFirstTimeSignInConfirmation && signInConfirmationRememberDurationDays === 0) {
+          consentRequired = true;
+        }
+        if (
+          requiresFirstTimeSignInConfirmation &&
+          existingConsent &&
+          signInConfirmationRememberDurationDays !== null &&
+          signInConfirmationRememberDurationDays > 0
+        ) {
+          const rememberMs = signInConfirmationRememberDurationDays * 24 * 60 * 60 * 1000;
+          if (existingConsent.granted_at + rememberMs < Date.now()) {
+            consentRequired = true;
+          }
+        }
       } catch (error) {
         log.error('Failed to check consent', { action: 'consent_check' }, error as Error);
         // On error, assume consent is required for safety
@@ -3177,6 +3323,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             display,
             ui_locales,
             login_hint,
+            authorization_details,
             sessionUserId: sub,
             authTime, // Preserve auth_time
             // Phase 2-B RBAC extensions
@@ -3196,11 +3343,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const consentTarget = await getUIRedirectTarget(
           c.env,
           'consent',
-          {
+          getTenantAwareUiQueryParams(c, {
             challenge_id: challengeId,
-          },
-          undefined,
-          clientMetadata?.login_ui_url
+          }),
+          tenantId,
+          clientMetadata?.login_ui_url,
+          getRequestIssuer(c),
+          useCertificationBuiltinForms
         );
         if (consentTarget.type === 'redirect') {
           return c.redirect(consentTarget.url, 302);
@@ -3246,16 +3395,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         consentMgmtEnabled = envVal === 'true' || envVal === '1';
       }
 
-      if (consentMgmtEnabled) {
-        const authCtx = createAuthContextFromHono(c, tenantId);
-        const userClaims = await getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub);
-        const requirements = await resolveConsentRequirements(
-          authCtx.coreAdapter,
-          tenantId,
-          validClientId,
-          userClaims
-        );
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const userClaims = await getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub);
+      const requirements = await resolveConsentRequirements(
+        authCtx.coreAdapter,
+        tenantId,
+        validClientId,
+        userClaims,
+        {
+          target_type: 'oidc_client',
+          target_id: validClientId,
+          requested_scopes: splitScopes(scope),
+          requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
+        }
+      );
 
+      if (consentMgmtEnabled || requirements.length > 0) {
         if (requirements.length > 0) {
           const { satisfied, unsatisfied } = await checkUserConsentSatisfaction(
             authCtx.coreAdapter,
@@ -3312,6 +3467,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 display,
                 ui_locales,
                 login_hint,
+                authorization_details,
                 sessionUserId: sub,
                 authTime,
                 org_id,
@@ -3328,9 +3484,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             const consentTarget = await getUIRedirectTarget(
               c.env,
               'consent',
-              { challenge_id: challengeId },
-              undefined,
-              clientMetadata?.login_ui_url
+              getTenantAwareUiQueryParams(c, { challenge_id: challengeId }),
+              tenantId,
+              clientMetadata?.login_ui_url,
+              getRequestIssuer(c),
+              isOidcCertificationClient(clientMetadata)
             );
             if (consentTarget.type === 'redirect') {
               return c.redirect(consentTarget.url, 302);
@@ -3541,21 +3699,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // This collocates Session and AuthCode on the same DO shard for locality,
     // reducing cross-POD latency by ~700-1500ms per request
     let authCodeStoreId: DurableObjectId;
+    let authCodeStoreInstanceName: string;
+    let authCodeShardIndex: number | null = null;
     if (shardCount > 0) {
       // Prefer session-based shard routing for locality
       const parsedSession = sessionId ? parseShardedSessionId(sessionId) : null;
       const shardIndex = parsedSession
         ? parsedSession.shardIndex % shardCount // Session Sticky: same shard as session
         : getAuthCodeShardIndex(sub, validClientId, shardCount); // Fallback: hash-based
+      authCodeShardIndex = shardIndex;
       code = createShardedAuthCode(shardIndex, randomCode);
-      const instanceName = buildAuthCodeShardInstanceName(shardIndex, getTenantIdFromContext(c));
-      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
+      authCodeStoreInstanceName = buildAuthCodeShardInstanceName(
+        shardIndex,
+        getTenantIdFromContext(c)
+      );
+      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(authCodeStoreInstanceName);
     } else {
       // Sharding disabled - use tenant-scoped legacy instance
       code = randomCode;
-      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(
-        buildDOInstanceName('auth-code', getTenantIdFromContext(c))
-      );
+      authCodeStoreInstanceName = buildDOInstanceName('auth-code', getTenantIdFromContext(c));
+      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(authCodeStoreInstanceName);
     }
 
     // Store authorization code using AuthorizationCodeStore Durable Object (RPC)
@@ -3581,6 +3744,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
         sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
         authorizationDetails: authorization_details, // RFC 9396 RAR
+      });
+      log.info('Stored authorization code', {
+        action: 'auth_code_store',
+        tenantId: getTenantIdFromContext(c),
+        clientId: validClientId,
+        shardCount,
+        shardIndex: authCodeShardIndex,
+        instanceName: authCodeStoreInstanceName,
+        codePrefix: code.includes('_') ? code.split('_', 1)[0] : 'legacy',
       });
     } catch (error) {
       log.error('AuthCodeStore DO error', { action: 'auth_code_store' }, error as Error);
@@ -4682,18 +4854,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   if (client_id) {
     const clientMetadata = await getClientCached(c, c.env, client_id);
-    if (clientMetadata?.redirect_uris && Array.isArray(clientMetadata.redirect_uris)) {
-      isCertificationTest = (clientMetadata.redirect_uris as string[]).some((uri: string) => {
-        try {
-          const parsed = new URL(uri);
-          const host = parsed.hostname.toLowerCase();
-          // Check for exact match or subdomain of certification.openid.net
-          return host === 'certification.openid.net' || host.endsWith('.certification.openid.net');
-        } catch {
-          return false;
-        }
-      });
-    }
+    isCertificationTest = isOidcCertificationClient(clientMetadata);
   }
 
   // Create a new user and session (stub - in production, verify credentials first)

@@ -39,11 +39,23 @@ import {
   hashClientSecret,
   // DCR Configuration
   getDCRSetting,
+  createSettingsManager,
+  CLIENT_CATEGORY_META,
   // Write-Through cache for client metadata
   putClient,
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+
+type ClientRegistrationRequestWithPkce = ClientRegistrationRequest & {
+  require_pkce?: boolean;
+  default_audience?: string | null;
+  default_resource?: string | null;
+};
+
+type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
+  require_pkce: boolean;
+};
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
@@ -148,7 +160,9 @@ interface RegistrationValidationOptions {
 function validateRegistrationRequest(
   body: unknown,
   options: RegistrationValidationOptions = {}
-): { valid: true; data: ClientRegistrationRequest } | { valid: false; error: OAuthErrorResponse } {
+):
+  | { valid: true; data: ClientRegistrationRequestWithPkce }
+  | { valid: false; error: OAuthErrorResponse } {
   if (!body || typeof body !== 'object') {
     return {
       valid: false,
@@ -159,7 +173,7 @@ function validateRegistrationRequest(
     };
   }
 
-  const data = body as Partial<ClientRegistrationRequest>;
+  const data = body as Partial<ClientRegistrationRequestWithPkce>;
   const rawData = body as Record<string, unknown>;
 
   // Public runtime registration does not accept internal trust_group fields.
@@ -254,7 +268,7 @@ function validateRegistrationRequest(
   // Validate optional URI fields
   const uriFields = ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri'];
   for (const field of uriFields) {
-    const value = data[field as keyof ClientRegistrationRequest];
+    const value = data[field as keyof ClientRegistrationRequestWithPkce];
     if (value !== undefined) {
       if (typeof value !== 'string') {
         return {
@@ -386,6 +400,33 @@ function validateRegistrationRequest(
         };
       }
     }
+  }
+
+  if (data.require_pkce !== undefined && typeof data.require_pkce !== 'boolean') {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'require_pkce must be a boolean',
+      },
+    };
+  }
+
+  const effectiveTokenEndpointAuthMethod = data.token_endpoint_auth_method || 'client_secret_basic';
+  const effectiveGrantTypes = data.grant_types || ['authorization_code'];
+  if (
+    effectiveTokenEndpointAuthMethod === 'none' &&
+    effectiveGrantTypes.includes('authorization_code') &&
+    data.require_pkce === false
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'require_pkce must be true for public clients using the authorization_code grant',
+      },
+    };
   }
 
   // Validate response_types
@@ -796,7 +837,7 @@ function validateRegistrationRequest(
 
   return {
     valid: true,
-    data: data as ClientRegistrationRequest,
+    data: data as ClientRegistrationRequestWithPkce,
   };
 }
 
@@ -820,6 +861,56 @@ function generateClientSecret(): string {
   // Convert to base64url
   const base64 = btoa(String.fromCharCode(...array));
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+async function resolveDefaultAccessTokenTarget(
+  env: Env,
+  tenantId: string,
+  issuerUrl: string,
+  request: ClientRegistrationRequestWithPkce,
+  grantTypes: string[]
+): Promise<{ defaultAudience?: string; defaultResource?: string }> {
+  const requestedDefaultResource = normalizeOptionalString(request.default_resource);
+  const requestedDefaultAudience = normalizeOptionalString(request.default_audience);
+
+  if (requestedDefaultResource || requestedDefaultAudience) {
+    return {
+      defaultResource: requestedDefaultResource,
+      defaultAudience: requestedDefaultAudience,
+    };
+  }
+
+  const settingsManager = createSettingsManager({
+    env: env as unknown as Record<string, string | undefined>,
+    kv: env.SETTINGS ?? null,
+    cacheTTL: 30000,
+  });
+  settingsManager.registerCategory(CLIENT_CATEGORY_META);
+
+  const [configuredDefaultResource, configuredDefaultAudience] = await Promise.all([
+    settingsManager
+      .get('client.default_resource', { type: 'tenant', id: tenantId })
+      .catch(() => ''),
+    settingsManager
+      .get('client.default_audience', { type: 'tenant', id: tenantId })
+      .catch(() => ''),
+  ]);
+
+  const defaultResource = normalizeOptionalString(configuredDefaultResource);
+  const defaultAudience = normalizeOptionalString(configuredDefaultAudience);
+  if (defaultResource || defaultAudience) {
+    return { defaultResource, defaultAudience };
+  }
+
+  if (grantTypes.includes('authorization_code')) {
+    return { defaultResource: issuerUrl };
+  }
+
+  return {};
 }
 
 /**
@@ -863,8 +954,10 @@ async function storeClient(
       logout_webhook_uri, logout_webhook_secret_encrypted,
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
+      default_audience, default_resource,
+      require_pkce,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -929,6 +1022,9 @@ async function storeClient(
       metadata.software_id || null,
       metadata.software_version || null,
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
+      metadata.default_audience || null,
+      metadata.default_resource || null,
+      metadata.require_pkce ? 1 : 0,
       // Tenant ID
       metadataTenantId,
       metadata.created_at || now,
@@ -1074,6 +1170,16 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const grantTypes = request.grant_types || ['authorization_code'];
     const responseTypes = request.response_types || ['code'];
     const applicationType = request.application_type || 'web';
+    const requirePkce =
+      request.require_pkce ??
+      (tokenEndpointAuthMethod === 'none' && grantTypes.includes('authorization_code'));
+    const defaultTarget = await resolveDefaultAccessTokenTarget(
+      c.env,
+      tenantId,
+      issuerUrl,
+      request,
+      grantTypes
+    );
 
     // Determine if client is trusted based on redirect_uri domain
     // Trusted clients can skip consent screens (First-Party clients)
@@ -1091,7 +1197,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     });
 
     // Build response
-    const response: ClientRegistrationResponse = {
+    const response: ClientRegistrationResponseWithPkce = {
       client_id: clientId,
       client_secret: clientSecret,
       client_id_issued_at: issuedAt,
@@ -1100,6 +1206,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       token_endpoint_auth_method: tokenEndpointAuthMethod,
       grant_types: grantTypes,
       response_types: responseTypes,
+      require_pkce: requirePkce,
       application_type: applicationType,
     };
 
@@ -1259,6 +1366,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       asc_allowed_transformed_claims: request.asc_allowed_transformed_claims,
       // Store hashed client secret, not plaintext
       client_secret_hash: clientSecretHash,
+      default_audience: defaultTarget.defaultAudience,
+      default_resource: defaultTarget.defaultResource,
     };
 
     // Remove plaintext client_secret from metadata (only hash is stored)

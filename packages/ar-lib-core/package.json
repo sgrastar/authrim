@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-core",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,6 +13,10 @@
     "./utils/*": {
       "import": "./dist/utils/*.js",
       "default": "./src/utils/*.ts"
+    },
+    "./webauthn/*": {
+      "import": "./dist/webauthn/*.js",
+      "default": "./src/webauthn/*.ts"
     },
     "./types/*": {
       "import": "./dist/types/*.js",
@@ -47,7 +51,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-lib-core --mode=auto --concurrency=1",
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'Shared package: lint skipped'",
@@ -61,7 +65,7 @@
   "dependencies": {
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
-    "hono": "4.12.21",
+    "hono": "4.12.29",
     "jose": "^6.1.2",
     "mysql2": "^3.15.3",
     "pg": "^8.16.3"

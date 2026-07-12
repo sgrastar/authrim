@@ -21,9 +21,15 @@
 		shouldRenderRuntimeFeatureFlag,
 		splitRuntimeFeatureFlagPatches
 	} from '$lib/admin/runtime-feature-flags';
-	import { InheritanceIndicator } from '$lib/components/admin';
+	import {
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection,
+		InheritanceIndicator
+	} from '$lib/components/admin';
 	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface PageData {
 		category: CategoryName;
@@ -231,141 +237,167 @@
 				return 'text';
 		}
 	}
+
+	function getCurrentScopeLabel(): string {
+		const labels = {
+			platform: $LL.admin_settings_scope_platform(),
+			tenant: $LL.admin_settings_scope_tenant(),
+			client: $LL.admin_settings_scope_client()
+		};
+		return labels[currentLevel];
+	}
+
+	function getCurrentScopeIcon(): string {
+		const icons = {
+			platform: 'i-ph-stack',
+			tenant: 'i-ph-buildings',
+			client: 'i-ph-app-window'
+		};
+		return icons[currentLevel];
+	}
 </script>
 
-<div class="settings-detail-page">
-	<!-- Back link and header -->
-	<div class="settings-detail-header">
-		<a href="/admin/settings" class="back-link">&larr; Back to Settings</a>
-		{#if meta}
-			<div class="settings-header-row">
-				<h1 class="page-title">{meta.label}</h1>
-				<!-- Scope Badge -->
-				<span class="scope-badge {currentLevel}">
-					{currentLevel === 'platform' ? '🏗️' : currentLevel === 'tenant' ? '🏢' : '📦'}
-					{currentLevel.charAt(0).toUpperCase() + currentLevel.slice(1)}
-				</span>
-				{#if !canEdit}
-					<span class="readonly-badge">🔒 Read-only</span>
-				{/if}
-			</div>
-			<p class="page-description">{meta.description}</p>
+{#snippet titleAccessory()}
+	{#if meta}
+		<span class="scope-badge {currentLevel}">
+			<i class={getCurrentScopeIcon()} aria-hidden="true"></i>
+			{getCurrentScopeLabel()}
+		</span>
+		{#if !canEdit}
+			<span class="readonly-badge">
+				<i class="i-ph-lock-key" aria-hidden="true"></i>
+				{$LL.admin_settings_readonly()}
+			</span>
 		{/if}
-	</div>
+	{/if}
+{/snippet}
 
-	<!-- Error message -->
+<AdminPageShell>
+	<AdminPageHeader
+		title={meta?.label ?? data.category}
+		description={meta?.description}
+		{titleAccessory}
+	/>
+
 	{#if error}
 		<div class="alert alert-error">
 			{error}
 			{#if error.includes('another user')}
-				<button onclick={loadData} class="btn btn-sm btn-danger" style="margin-left: 12px;">
-					Reload
-				</button>
+				<button onclick={loadData} class="btn btn-sm btn-danger reload-button"> Reload </button>
 			{/if}
 		</div>
 	{/if}
 
-	<!-- Success message -->
 	{#if successMessage}
 		<div class="alert alert-success">{successMessage}</div>
 	{/if}
 
 	{#if loading}
-		<div class="loading-state">
-			<p class="text-secondary">Loading settings...</p>
-		</div>
+		<AdminSection>
+			<div class="loading-state">
+				<p class="text-secondary">Loading settings...</p>
+			</div>
+		</AdminSection>
 	{:else if meta && settings}
-		<!-- Settings form -->
-		<div class="settings-form-card">
-			{#each Object.entries(meta.settings).filter(([key, s]) => !isPageManagedSetting(s) && shouldRenderRuntimeFeatureFlag(key, currentLevel)) as [key, settingMeta] (key)}
-				{@const value = getCurrentValue(key)}
-				{@const locked = isSettingLocked(key, settingMeta)}
-				{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
-				<div class="setting-item" class:modified={hasPendingChange}>
-					<div class="setting-item-content">
-						<div class="setting-info">
-							<div class="setting-label-row">
-								<label for={key} class="setting-label">{settingMeta.label}</label>
-								<InheritanceIndicator
-									source={(settings?.sources[key] as SettingSource) || 'default'}
-									currentScope={currentLevel}
-									{canEdit}
-									compact={true}
-								/>
-								{#if settingMeta.status === 'in_development'}
-									<span class="setting-in-development">In Development</span>
-								{/if}
-								{#if locked && !isLockedByEnv(key)}
-									<span class="setting-locked">🔒 Locked</span>
-								{/if}
-								{#if hasPendingChange}
-									<span class="setting-modified">● Modified</span>
-								{/if}
-							</div>
-							<p class="setting-description">
-								{settingMeta.description}
-								{#if settingMeta.unit}
-									<span class="setting-unit">({settingMeta.unit})</span>
-								{/if}
-							</p>
-						</div>
-
-						<div class="setting-control">
-							{#if settingMeta.type === 'boolean'}
-								<ToggleSwitch
-									checked={Boolean(value)}
-									disabled={locked}
-									id={key}
-									onchange={(newValue) => handleChange(key, newValue)}
-								/>
-							{:else if settingMeta.type === 'enum' && settingMeta.enum}
-								<select
-									id={key}
-									value={String(value)}
-									disabled={locked}
-									onchange={(e) => handleChange(key, e.currentTarget.value)}
-									class="settings-select"
-								>
-									{#each settingMeta.enum as option (option)}
-										<option value={option}>{option}</option>
-									{/each}
-								</select>
-							{:else}
-								<input
-									type={getInputType(settingMeta)}
-									id={key}
-									value={String(value ?? '')}
-									disabled={locked}
-									min={settingMeta.min}
-									max={settingMeta.max}
-									oninput={(e) => {
-										const inputValue =
-											settingMeta.type === 'number' || settingMeta.type === 'duration'
-												? Number(e.currentTarget.value)
-												: e.currentTarget.value;
-										handleChange(key, inputValue);
-									}}
-									class="settings-input"
-								/>
-							{/if}
-							{#if settingMeta.min !== undefined || settingMeta.max !== undefined}
-								<p class="settings-range-hint">
-									{#if settingMeta.min !== undefined && settingMeta.max !== undefined}
-										Range: {settingMeta.min} - {settingMeta.max}
-									{:else if settingMeta.min !== undefined}
-										Min: {settingMeta.min}
-									{:else if settingMeta.max !== undefined}
-										Max: {settingMeta.max}
+		<AdminSection>
+			<div class="settings-form-card">
+				{#each Object.entries(meta.settings).filter(([key, s]) => !isPageManagedSetting(s) && shouldRenderRuntimeFeatureFlag(key, currentLevel)) as [key, settingMeta] (key)}
+					{@const value = getCurrentValue(key)}
+					{@const locked = isSettingLocked(key, settingMeta)}
+					{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
+					<div class="setting-item" class:modified={hasPendingChange}>
+						<div class="setting-item-content">
+							<div class="setting-info">
+								<div class="setting-label-row">
+									<label for={key} class="setting-label">{settingMeta.label}</label>
+									<InheritanceIndicator
+										source={(settings?.sources[key] as SettingSource) || 'default'}
+										currentScope={currentLevel}
+										{canEdit}
+										compact={true}
+									/>
+									{#if settingMeta.status === 'in_development'}
+										<span class="setting-in-development">
+											{$LL.admin_settings_in_development()}
+										</span>
+									{/if}
+									{#if locked && !isLockedByEnv(key)}
+										<span class="setting-locked">
+											<i class="i-ph-lock-key" aria-hidden="true"></i>
+											{$LL.admin_settings_locked()}
+										</span>
+									{/if}
+									{#if hasPendingChange}
+										<span class="setting-modified">
+											<i class="i-ph-circle-fill" aria-hidden="true"></i>
+											{$LL.admin_settings_modified()}
+										</span>
+									{/if}
+								</div>
+								<p class="setting-description">
+									{settingMeta.description}
+									{#if settingMeta.unit}
+										<span class="setting-unit">({settingMeta.unit})</span>
 									{/if}
 								</p>
-							{/if}
+							</div>
+
+							<div class="setting-control">
+								{#if settingMeta.type === 'boolean'}
+									<ToggleSwitch
+										checked={Boolean(value)}
+										disabled={locked}
+										id={key}
+										onchange={(newValue) => handleChange(key, newValue)}
+									/>
+								{:else if settingMeta.type === 'enum' && settingMeta.enum}
+									<select
+										id={key}
+										value={String(value)}
+										disabled={locked}
+										onchange={(e) => handleChange(key, e.currentTarget.value)}
+										class="settings-select"
+									>
+										{#each settingMeta.enum as option (option)}
+											<option value={option}>{option}</option>
+										{/each}
+									</select>
+								{:else}
+									<input
+										type={getInputType(settingMeta)}
+										id={key}
+										value={String(value ?? '')}
+										disabled={locked}
+										min={settingMeta.min}
+										max={settingMeta.max}
+										oninput={(e) => {
+											const inputValue =
+												settingMeta.type === 'number' || settingMeta.type === 'duration'
+													? Number(e.currentTarget.value)
+													: e.currentTarget.value;
+											handleChange(key, inputValue);
+										}}
+										class="settings-input"
+									/>
+								{/if}
+								{#if settingMeta.min !== undefined || settingMeta.max !== undefined}
+									<p class="settings-range-hint">
+										{#if settingMeta.min !== undefined && settingMeta.max !== undefined}
+											Range: {settingMeta.min} - {settingMeta.max}
+										{:else if settingMeta.min !== undefined}
+											Min: {settingMeta.min}
+										{:else if settingMeta.max !== undefined}
+											Max: {settingMeta.max}
+										{/if}
+									</p>
+								{/if}
+							</div>
 						</div>
 					</div>
-				</div>
-			{/each}
-		</div>
+				{/each}
+			</div>
+		</AdminSection>
 
-		<!-- Action buttons -->
 		<div class="settings-actions">
 			<button onclick={discardChanges} disabled={!hasChanges || saving} class="btn btn-secondary">
 				Discard Changes
@@ -375,4 +407,10 @@
 			</button>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
+
+<style>
+	.reload-button {
+		margin-left: 12px;
+	}
+</style>

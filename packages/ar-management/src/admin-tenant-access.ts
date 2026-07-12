@@ -61,6 +61,13 @@ export function getTenantInventoryScope(adminAuth: AdminAuthContext | undefined)
   return [...scopedTenantIds];
 }
 
+export function isTenantScopedAdminPath(pathname: string): boolean {
+  return (
+    /^\/api\/admin\/tenants\/[^/]+\/directory-(?:auth|connectors)(?:\/|$)/.test(pathname) ||
+    /^\/api\/admin\/tenants\/[^/]+\/settings(?:\/|$)/.test(pathname)
+  );
+}
+
 export async function requireTenantResourceAccess(
   c: Context<{ Bindings: Env }>,
   tenantId: string

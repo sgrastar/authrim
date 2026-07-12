@@ -8,8 +8,12 @@
 		type PluginHealthResponse,
 		PLUGIN_CATEGORIES
 	} from '$lib/api/admin-plugins';
-	import { Modal } from '$lib/components';
+	import { Modal, ToggleSwitch } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let plugins: PluginWithStatus[] = $state([]);
 	let loading = $state(true);
@@ -19,7 +23,7 @@
 
 	// Filter state
 	let filterCategory = $state('');
-	let filterEnabled = $state<boolean | undefined>(undefined);
+	let filterStatus = $state<'all' | 'enabled' | 'disabled'>('all');
 
 	// Detail dialog state
 	let showDetailDialog = $state(false);
@@ -37,6 +41,26 @@
 	// Health check state
 	let healthStatus: Record<string, PluginHealthResponse> = $state({});
 	let checkingHealth: Record<string, boolean> = $state({});
+	let togglingPlugins: Record<string, boolean> = $state({});
+
+	const pluginIconClasses: Record<string, string> = {
+		mail: 'i-ph-envelope-simple',
+		cloud: 'i-ph-cloud',
+		'shield-check': 'i-ph-shield-check',
+		security: 'i-ph-shield-check',
+		notification: 'i-ph-bell',
+		authentication: 'i-ph-key',
+		integration: 'i-ph-plugs',
+		plugin: 'i-ph-puzzle-piece'
+	};
+	const filteredPlugins = $derived(
+		plugins.filter((plugin) => {
+			if (filterCategory && plugin.meta?.category !== filterCategory) return false;
+			if (filterStatus === 'enabled' && !plugin.enabled) return false;
+			if (filterStatus === 'disabled' && plugin.enabled) return false;
+			return true;
+		})
+	);
 
 	function getSelectedTenantId(): string | undefined {
 		return settingsContext.tenantId || undefined;
@@ -78,13 +102,7 @@
 		lastLoadedTenantId = getSelectedTenantId() ?? '';
 
 		try {
-			const params: { category?: string; enabled?: boolean; tenantId?: string } = {
-				tenantId: getSelectedTenantId()
-			};
-			if (filterCategory) params.category = filterCategory;
-			if (filterEnabled !== undefined) params.enabled = filterEnabled;
-
-			const response = await adminPluginsAPI.list(params);
+			const response = await adminPluginsAPI.list({ tenantId: getSelectedTenantId() });
 			plugins = response.plugins;
 
 			const pluginId = $page.url.searchParams.get('plugin');
@@ -113,17 +131,85 @@
 		}
 	});
 
-	async function toggleEnabled(plugin: PluginWithStatus, event: Event) {
-		event.stopPropagation();
+	function pluginDisplayName(plugin: PluginWithStatus): string {
+		return plugin.meta?.name || plugin.id;
+	}
+
+	function getPluginIconClass(plugin: PluginWithStatus | null | undefined): string | null {
+		const icon = plugin?.meta?.icon?.trim();
+		if (!icon) return 'i-ph-puzzle-piece';
+		if (icon.startsWith('i-')) return icon;
+		if (pluginIconClasses[icon]) return pluginIconClasses[icon];
+		if (/^[a-z0-9-]+$/i.test(icon)) return 'i-ph-puzzle-piece';
+		return null;
+	}
+
+	function getPluginIconText(plugin: PluginWithStatus | null | undefined): string | null {
+		const icon = plugin?.meta?.icon?.trim();
+		if (!icon) return null;
+		return getPluginIconClass(plugin) ? null : icon;
+	}
+
+	function pluginToggleAriaLabel(plugin: PluginWithStatus): string {
+		return `${pluginDisplayName(plugin)}: ${
+			plugin.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()
+		}`;
+	}
+
+	function applyPluginStatus(
+		pluginId: string,
+		status: {
+			enabled: boolean;
+			configSource: PluginWithStatus['configSource'];
+			configured: boolean;
+			missingRequiredFields: string[];
+			loadedAt?: number;
+			lastHealthCheck?: PluginWithStatus['lastHealthCheck'];
+		}
+	) {
+		plugins = plugins.map((plugin) =>
+			plugin.id === pluginId
+				? {
+						...plugin,
+						enabled: status.enabled,
+						configSource: status.configSource,
+						configured: status.configured,
+						missingRequiredFields: status.missingRequiredFields,
+						loadedAt: status.loadedAt,
+						lastHealthCheck: status.lastHealthCheck ?? plugin.lastHealthCheck
+					}
+				: plugin
+		);
+
+		if (selectedPlugin?.id === pluginId) {
+			selectedPlugin = {
+				...selectedPlugin,
+				enabled: status.enabled,
+				configSource: status.configSource,
+				configured: status.configured,
+				missingRequiredFields: status.missingRequiredFields,
+				loadedAt: status.loadedAt,
+				lastHealthCheck: status.lastHealthCheck ?? selectedPlugin.lastHealthCheck
+			};
+		}
+	}
+
+	async function toggleEnabled(plugin: PluginWithStatus, enabled: boolean) {
+		if (plugin.enabled === enabled || togglingPlugins[plugin.id]) return;
+
+		togglingPlugins = { ...togglingPlugins, [plugin.id]: true };
+		error = '';
+		successMessage = '';
 		try {
-			if (plugin.enabled) {
-				await adminPluginsAPI.disable(plugin.id, getSelectedTenantId());
-			} else {
-				await adminPluginsAPI.enable(plugin.id, getSelectedTenantId());
-			}
-			await loadPlugins();
+			const status = enabled
+				? await adminPluginsAPI.enable(plugin.id, getSelectedTenantId())
+				: await adminPluginsAPI.disable(plugin.id, getSelectedTenantId());
+			applyPluginStatus(plugin.id, status);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_plugins_update_failed();
+			await loadPlugins();
+		} finally {
+			togglingPlugins = { ...togglingPlugins, [plugin.id]: false };
 		}
 	}
 
@@ -302,14 +388,9 @@
 		return pluginSchema?.required?.includes(key) ?? false;
 	}
 
-	function applyFilters() {
-		loadPlugins();
-	}
-
 	function clearFilters() {
 		filterCategory = '';
-		filterEnabled = undefined;
-		loadPlugins();
+		filterStatus = 'all';
 	}
 
 	function formatCategory(id: string): string {
@@ -420,38 +501,43 @@
 	}
 </script>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div class="page-header-info">
-			<h1 class="page-title">{$LL.admin_plugins_page_title()}</h1>
-			<p class="modal-description">
-				{$LL.admin_plugins_description()}
-			</p>
-		</div>
-	</div>
+<svelte:head>
+	<title>{$LL.admin_plugins_page_title()}</title>
+</svelte:head>
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_plugins_page_title()}
+		description={$LL.admin_plugins_description()}
+	/>
 
 	<!-- Filters -->
-	<div class="filter-bar">
-		<div class="form-group">
-			<label for="filter-category" class="form-label">{$LL.admin_plugins_category()}</label>
-			<select id="filter-category" class="form-select" bind:value={filterCategory}>
-				<option value="">{$LL.admin_plugins_all_categories()}</option>
-				{#each PLUGIN_CATEGORIES as category (category.id)}
-					<option value={category.id}>{formatCategory(category.id)}</option>
-				{/each}
-			</select>
-		</div>
-		<div class="form-group">
-			<label for="filter-status" class="form-label">{$LL.admin_plugins_status()}</label>
-			<select id="filter-status" class="form-select" bind:value={filterEnabled}>
-				<option value={undefined}>{$LL.admin_plugins_all()}</option>
-				<option value={true}>{$LL.admin_plugins_enabled()}</option>
-				<option value={false}>{$LL.admin_plugins_disabled()}</option>
-			</select>
-		</div>
-		<button class="btn-filter" onclick={applyFilters}>{$LL.admin_plugins_apply()}</button>
-		<button class="btn-clear" onclick={clearFilters}>{$LL.admin_plugins_clear()}</button>
-	</div>
+	<AdminSection>
+		<AdminToolbar>
+			<div class="admin-field admin-field--compact">
+				<label for="filter-category" class="admin-field__label">
+					{$LL.admin_plugins_category()}
+				</label>
+				<select id="filter-category" class="admin-select" bind:value={filterCategory}>
+					<option value="">{$LL.admin_plugins_all_categories()}</option>
+					{#each PLUGIN_CATEGORIES as category (category.id)}
+						<option value={category.id}>{formatCategory(category.id)}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="admin-field admin-field--compact">
+				<label for="filter-status" class="admin-field__label">
+					{$LL.admin_plugins_status()}
+				</label>
+				<select id="filter-status" class="admin-select" bind:value={filterStatus}>
+					<option value="all">{$LL.admin_plugins_all()}</option>
+					<option value="enabled">{$LL.admin_plugins_enabled()}</option>
+					<option value="disabled">{$LL.admin_plugins_disabled()}</option>
+				</select>
+			</div>
+			<button class="btn btn-secondary" onclick={clearFilters}>{$LL.admin_plugins_clear()}</button>
+		</AdminToolbar>
+	</AdminSection>
 
 	{#if error && !showDetailDialog}
 		<div class="alert alert-error">{error}</div>
@@ -459,18 +545,18 @@
 
 	{#if loading}
 		<div class="loading-state">{$LL.admin_plugins_loading()}</div>
-	{:else if plugins.length === 0}
+	{:else if filteredPlugins.length === 0}
 		<div class="empty-state">
 			<p>{$LL.admin_plugins_empty()}</p>
 			<p class="text-muted">
-				{filterCategory || filterEnabled !== undefined
+				{filterCategory || filterStatus !== 'all'
 					? $LL.admin_plugins_adjust_filters()
 					: $LL.admin_plugins_empty_hint()}
 			</p>
 		</div>
 	{:else}
 		<div class="plugin-grid">
-			{#each plugins as plugin (plugin.id)}
+			{#each filteredPlugins as plugin (plugin.id)}
 				<div
 					class="plugin-card"
 					onclick={() => openDetailDialog(plugin)}
@@ -481,7 +567,13 @@
 					<!-- Header -->
 					<div class="plugin-card-header">
 						<div class="plugin-card-info">
-							<span class="plugin-icon">{plugin.meta?.icon || '🧩'}</span>
+							<span class="plugin-icon" aria-hidden="true">
+								{#if getPluginIconText(plugin)}
+									{getPluginIconText(plugin)}
+								{:else}
+									<i class={getPluginIconClass(plugin) ?? 'i-ph-puzzle-piece'}></i>
+								{/if}
+							</span>
 							<div>
 								<h3 class="plugin-name">{plugin.meta?.name || plugin.id}</h3>
 								<div class="plugin-badges">
@@ -496,12 +588,23 @@
 								</div>
 							</div>
 						</div>
-						<button
-							class="plugin-status-btn {plugin.enabled ? 'enabled' : 'disabled'}"
-							onclick={(e) => toggleEnabled(plugin, e)}
+						<div
+							class="plugin-status-toggle"
+							role="presentation"
+							onclick={(event) => event.stopPropagation()}
+							onkeydown={(event) => event.stopPropagation()}
 						>
-							{plugin.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()}
-						</button>
+							<span class="plugin-status-label" class:enabled={plugin.enabled}>
+								{plugin.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()}
+							</span>
+							<ToggleSwitch
+								checked={plugin.enabled}
+								disabled={togglingPlugins[plugin.id] || !plugin.configured}
+								size="sm"
+								ariaLabel={pluginToggleAriaLabel(plugin)}
+								onchange={(enabled) => toggleEnabled(plugin, enabled)}
+							/>
+						</div>
 					</div>
 
 					<!-- Description -->
@@ -564,7 +667,7 @@
 			{/each}
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Detail Dialog -->
 <Modal
@@ -576,7 +679,13 @@
 	{#snippet header()}
 		<div class="plugin-dialog-header">
 			<div class="plugin-dialog-info">
-				<span class="plugin-dialog-icon">{selectedPlugin?.meta?.icon || '🧩'}</span>
+				<span class="plugin-dialog-icon" aria-hidden="true">
+					{#if getPluginIconText(selectedPlugin)}
+						{getPluginIconText(selectedPlugin)}
+					{:else}
+						<i class={getPluginIconClass(selectedPlugin) ?? 'i-ph-puzzle-piece'}></i>
+					{/if}
+				</span>
 				<div>
 					<h2 class="plugin-dialog-title">
 						{selectedPlugin?.meta?.name || selectedPlugin?.id}
@@ -612,7 +721,21 @@
 		<div class="plugin-info-item">
 			<div class="plugin-info-label">{$LL.admin_plugins_status()}</div>
 			<div class="plugin-info-value">
-				{selectedPlugin?.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()}
+				{#if selectedPlugin}
+					{@const detailPlugin = selectedPlugin}
+					<div class="plugin-status-toggle plugin-status-toggle--detail">
+						<span class="plugin-status-label" class:enabled={detailPlugin.enabled}>
+							{detailPlugin.enabled ? $LL.admin_plugins_enabled() : $LL.admin_plugins_disabled()}
+						</span>
+						<ToggleSwitch
+							checked={detailPlugin.enabled}
+							disabled={togglingPlugins[detailPlugin.id] || !detailPlugin.configured}
+							size="sm"
+							ariaLabel={pluginToggleAriaLabel(detailPlugin)}
+							onchange={(enabled) => toggleEnabled(detailPlugin, enabled)}
+						/>
+					</div>
+				{/if}
 				<div class="plugin-info-subvalue">
 					{selectedPlugin?.configured
 						? formatConfigured(selectedPlugin.configSource)

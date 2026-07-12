@@ -10,6 +10,7 @@
 		type AdminMachineTenantScope,
 		type AdminMachineTenantScopeMode
 	} from '$lib/api/admin-machine-access';
+	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const PRINCIPAL_TYPES: AdminMachinePrincipalType[] = [
@@ -383,16 +384,17 @@
 	<title>{$LL.admin_machine_access_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_machine_access_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_machine_access_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<select class="form-select" bind:value={statusFilter} onchange={() => void loadPrincipals()}>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_machine_access_title()}
+		description={$LL.admin_machine_access_description()}
+	>
+		{#snippet actions()}
+			<select
+				class="form-select action-select"
+				bind:value={statusFilter}
+				onchange={() => void loadPrincipals()}
+			>
 				<option value="">{$LL.admin_machine_access_all_statuses()}</option>
 				<option value="active">{$LL.admin_machine_access_status_active()}</option>
 				<option value="disabled">{$LL.admin_machine_access_status_disabled()}</option>
@@ -402,8 +404,8 @@
 				<i class="i-ph-arrow-clockwise"></i>
 				{$LL.admin_machine_access_refresh()}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -721,35 +723,15 @@
 			</section>
 		</div>
 	{/if}
-</div>
+</AdminPageShell>
 
 <style>
-	.admin-page {
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
-		padding: 1.5rem;
-	}
-
-	.page-header,
 	.panel-header,
-	.button-row,
-	.page-actions {
+	.button-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.75rem;
-	}
-
-	.page-title {
-		margin: 0;
-		font-size: 1.875rem;
-		font-weight: 700;
-	}
-
-	.page-description {
-		margin: 0.25rem 0 0;
-		color: var(--color-text-secondary, #64748b);
 	}
 
 	.summary-grid,
@@ -768,13 +750,15 @@
 
 	.summary-tile,
 	.panel {
-		border: 1px solid var(--color-border, #e2e8f0);
-		border-radius: 8px;
-		background: var(--color-surface, #fff);
+		border: var(--settings-panel-border, 1px solid var(--color-border));
+		border-radius: var(--settings-panel-radius, var(--radius-panel));
+		background: var(--settings-panel-bg, var(--color-surface));
+		box-shadow: var(--settings-panel-shadow, var(--card-shadow, none));
+		min-width: 0;
 	}
 
 	.summary-tile {
-		padding: 1rem;
+		padding: var(--settings-panel-padding, 1rem);
 	}
 
 	.summary-tile span,
@@ -782,7 +766,7 @@
 	label,
 	small,
 	dt {
-		color: var(--color-text-secondary, #64748b);
+		color: var(--color-text-muted);
 	}
 
 	.summary-tile strong {
@@ -792,7 +776,7 @@
 	}
 
 	.panel {
-		padding: 1rem;
+		padding: var(--settings-panel-padding, 1rem);
 	}
 
 	.panel-header {
@@ -818,18 +802,27 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.75rem;
-		border: 1px solid var(--color-border, #e2e8f0);
-		border-radius: 6px;
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
 		background: transparent;
 		padding: 0.75rem;
 		text-align: left;
 		cursor: pointer;
+		color: var(--color-text);
+		transition:
+			background var(--transition-fast),
+			border-color var(--transition-fast);
+	}
+
+	.principal-row:hover,
+	.credential-row:hover {
+		background: var(--table-row-hover-bg, var(--color-surface-muted));
 	}
 
 	.principal-row.selected,
 	.credential-row.selected {
-		border-color: var(--color-primary, #2563eb);
-		background: color-mix(in srgb, var(--color-primary, #2563eb) 8%, transparent);
+		border-color: var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 9%, transparent);
 	}
 
 	.principal-row span,
@@ -852,28 +845,28 @@
 	}
 
 	.status {
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		padding: 0.125rem 0.5rem;
 		font-size: 0.75rem;
 		text-transform: capitalize;
 	}
 
 	.status.active {
-		background: #dcfce7;
-		color: #166534;
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.status.disabled,
 	.status.rotating {
-		background: #fef3c7;
-		color: #92400e;
+		background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+		color: var(--color-warning);
 	}
 
 	.status.deleted,
 	.status.revoked,
 	.status.expired {
-		background: #fee2e2;
-		color: #991b1b;
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+		color: var(--color-danger);
 	}
 
 	.form-grid {
@@ -898,12 +891,25 @@
 	.form-select,
 	.form-textarea {
 		width: 100%;
-		border: 1px solid var(--color-border, #cbd5e1);
-		border-radius: 6px;
-		background: var(--color-surface, #fff);
-		padding: 0.55rem 0.65rem;
-		color: inherit;
+		min-height: var(--control-height, 38px);
+		border: 1px solid var(--control-border, var(--color-border));
+		border-radius: var(--control-radius, var(--radius-control));
+		background: var(--control-bg, var(--color-surface));
+		padding: var(--control-padding, 0.55rem 0.65rem);
+		color: var(--color-text);
 		font: inherit;
+	}
+
+	.action-select {
+		width: auto;
+		min-width: 14rem;
+	}
+
+	.form-input:focus,
+	.form-select:focus,
+	.form-textarea:focus {
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+		outline-offset: 1px;
 	}
 
 	.form-textarea {
@@ -914,7 +920,7 @@
 	.form-textarea.tall,
 	.form-textarea.jwk {
 		min-height: 9rem;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 	}
 
@@ -927,11 +933,15 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0.4rem;
-		border: 1px solid transparent;
-		border-radius: 6px;
-		padding: 0.55rem 0.8rem;
+		border: 1px solid var(--control-border, transparent);
+		border-radius: var(--control-radius, var(--radius-control));
+		padding: var(--button-padding, 0.55rem 0.8rem);
 		font-weight: 600;
 		cursor: pointer;
+		transition:
+			background var(--transition-fast),
+			border-color var(--transition-fast),
+			color var(--transition-fast);
 	}
 
 	.btn:disabled {
@@ -940,43 +950,49 @@
 	}
 
 	.btn-primary {
-		background: var(--color-primary, #2563eb);
-		color: #fff;
+		border-color: var(--color-accent);
+		background: var(--color-accent);
+		color: var(--color-accent-contrast);
 	}
 
 	.btn-secondary {
-		border-color: var(--color-border, #cbd5e1);
-		background: transparent;
+		border-color: var(--color-border);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.btn-warning {
-		background: #f59e0b;
-		color: #111827;
+		border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 16%, var(--color-surface));
+		color: var(--color-warning);
 	}
 
 	.btn-danger {
-		background: #dc2626;
-		color: #fff;
+		border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 14%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.alert {
-		border-radius: 8px;
+		border-radius: var(--radius-control);
 		padding: 0.75rem 1rem;
 	}
 
 	.alert-error {
-		background: #fee2e2;
-		color: #991b1b;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
+		color: var(--color-danger);
 	}
 
 	.alert-success {
-		background: #dcfce7;
-		color: #166534;
+		border: 1px solid color-mix(in srgb, var(--color-success) 32%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 10%, var(--color-surface));
+		color: var(--color-success);
 	}
 
 	.credential-detail {
 		margin-top: 1rem;
-		border-top: 1px solid var(--color-border, #e2e8f0);
+		border-top: var(--settings-row-border-bottom, 1px solid var(--color-border));
 		padding-top: 1rem;
 	}
 
@@ -995,7 +1011,7 @@
 
 	.empty-state {
 		margin: 0;
-		color: var(--color-text-secondary, #64748b);
+		color: var(--color-text-muted);
 	}
 
 	@media (max-width: 960px) {
@@ -1007,10 +1023,8 @@
 			grid-template-columns: 1fr;
 		}
 
-		.page-header,
 		.panel-header,
-		.button-row,
-		.page-actions {
+		.button-row {
 			align-items: stretch;
 			flex-direction: column;
 		}

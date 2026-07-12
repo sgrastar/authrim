@@ -33,10 +33,10 @@ const adminSessions = {
 	admin_sessions_just_now: 'Just now',
 	admin_sessions_minutes_ago: '{count:number} min ago',
 	admin_sessions_hours_ago: '{count:number} hr ago',
-	admin_sessions_days_ago: '{count:number} day ago',
+	admin_sessions_days_ago: '{count:number} d ago',
 	admin_sessions_minutes: '{count:number} min',
 	admin_sessions_hours: '{count:number} hr',
-	admin_sessions_days: '{count:number} day',
+	admin_sessions_days: '{count:number} d',
 	admin_sessions_unknown: 'Unknown'
 } as const;
 

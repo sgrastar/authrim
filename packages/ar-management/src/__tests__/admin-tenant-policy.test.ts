@@ -7,6 +7,7 @@ import {
   requireSystemAdmin,
 } from '@authrim/ar-lib-core';
 import { adminTenantPolicyMiddleware } from '../admin-tenant-policy';
+import { isTenantScopedAdminPath } from '../admin-tenant-access';
 
 function createMockDB(options: { tenantRow?: { id: string } | null } = {}) {
   const { tenantRow = null } = options;
@@ -101,6 +102,16 @@ function buildPlatformGuardApp(roles: string[]) {
 }
 
 describe('adminTenantPolicyMiddleware', () => {
+  it('identifies tenant-scoped admin subresources that are managed by tenant admins', () => {
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/directory-auth/overview')).toBe(
+      true
+    );
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/directory-connectors')).toBe(true);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/settings/login-ui')).toBe(true);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a')).toBe(false);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/email-settings')).toBe(false);
+  });
+
   it('allows platform admin endpoints without X-Tenant-Id', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',

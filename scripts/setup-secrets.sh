@@ -201,6 +201,38 @@ if [ -f "$KEYS_DIR/rp_token_encryption_key.txt" ]; then
     echo ""
 fi
 
+if [ -f "$KEYS_DIR/pii_encryption_key.txt" ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔐 PII Encryption Key"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    PII_WORKERS=("ar-auth" "ar-management")
+    for pkg in "${PII_WORKERS[@]}"; do
+        local_worker="${DEPLOY_ENV}-authrim-${pkg}"
+        echo "📦 Uploading PII_ENCRYPTION_KEY to ${local_worker}..."
+        cat "$KEYS_DIR/pii_encryption_key.txt" | wrangler secret put PII_ENCRYPTION_KEY --name="${local_worker}"
+        echo "✅ ${local_worker} PII key uploaded"
+    done
+    echo ""
+fi
+
+if [ -f "$KEYS_DIR/otp_hmac_secret.txt" ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔐 OTP HMAC Secret"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    OTP_WORKERS=("ar-auth" "ar-management")
+    for pkg in "${OTP_WORKERS[@]}"; do
+        local_worker="${DEPLOY_ENV}-authrim-${pkg}"
+        echo "📦 Uploading OTP_HMAC_SECRET to ${local_worker}..."
+        cat "$KEYS_DIR/otp_hmac_secret.txt" | wrangler secret put OTP_HMAC_SECRET --name="${local_worker}"
+        echo "✅ ${local_worker} OTP HMAC secret uploaded"
+    done
+    echo ""
+fi
+
 # Email configuration for ar-auth (Magic Link support)
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📧 Email Configuration for Magic Links"

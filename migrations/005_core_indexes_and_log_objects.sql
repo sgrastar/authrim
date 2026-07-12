@@ -71,6 +71,24 @@ CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
 
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
 
+CREATE INDEX idx_event_log_tenant_created
+    ON event_log(tenant_id, created_at);
+
+CREATE INDEX idx_event_log_tenant_type_created
+    ON event_log(tenant_id, event_type, created_at);
+
+CREATE INDEX idx_event_log_tenant_category_created
+    ON event_log(tenant_id, event_category, created_at);
+
+CREATE INDEX idx_event_log_tenant_anon_created
+    ON event_log(tenant_id, anonymized_user_id, created_at);
+
+CREATE INDEX idx_event_log_tenant_client_created
+    ON event_log(tenant_id, client_id, created_at);
+
+CREATE INDEX idx_event_log_tenant_retention
+    ON event_log(tenant_id, retention_until, created_at, id);
+
 CREATE INDEX idx_check_api_keys_client
     ON check_api_keys(client_id);
 
@@ -499,10 +517,6 @@ CREATE INDEX idx_rtsc_generation
 
 CREATE INDEX idx_rtsc_tenant_client
   ON refresh_token_shard_configs(tenant_id, client_id);
-
-CREATE INDEX idx_schema_migrations_applied_at ON schema_migrations(applied_at DESC);
-
-CREATE INDEX idx_schema_migrations_checksum ON schema_migrations(checksum);
 
 CREATE INDEX idx_scope_mappings_scope ON scope_mappings(tenant_id, scope);
 

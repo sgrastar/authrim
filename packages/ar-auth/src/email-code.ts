@@ -28,7 +28,7 @@ import {
   createPIIContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
-  getPluginContext,
+  getRequiredPluginContext,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
   // Event System
@@ -55,9 +55,11 @@ import {
   hashEmail,
 } from './utils/email-code-utils';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { resolveSessionTtl } from './session-ttl';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -170,32 +172,11 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
-        c.env,
-        tenantId,
-        custom_fields
-      );
-      if (!customFieldValidation.ok) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-          variables: { field: 'custom_fields', reason: customFieldValidation.error },
-          extensions: customFieldValidation.missingRequiredFields
-            ? {
-                missing_required_fields: customFieldValidation.missingRequiredFields.map(
-                  (field) => ({
-                    field_key: field.fieldKey,
-                    label: field.label,
-                    field_type: field.fieldType,
-                  })
-                ),
-              }
-            : undefined,
-        });
-      }
-
       // Check if user exists, if not create a new canonical runtime user.
       let user: { id: string; email: string; name: string | null } | null = null;
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
       const normalizedEmail = email.toLowerCase();
+      let customFieldValues: Record<string, string> = {};
 
       const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
       if (existingUser) {
@@ -207,9 +188,41 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!user) {
+        const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
+          c.env,
+          tenantId,
+          {
+            ...(custom_fields ?? {}),
+            email: normalizedEmail,
+            'field.canonical.email': normalizedEmail,
+            ...(name ? { name, 'field.canonical.name': name } : {}),
+          }
+        );
+        if (!customFieldValidation.ok) {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+            variables: { field: 'custom_fields', reason: customFieldValidation.error },
+            extensions: customFieldValidation.missingRequiredFields
+              ? {
+                  missing_required_fields: customFieldValidation.missingRequiredFields.map(
+                    (field) => ({
+                      field_key: field.fieldKey,
+                      label: field.label,
+                      field_type: field.fieldType,
+                    })
+                  ),
+                }
+              : undefined,
+          });
+        }
+        customFieldValues = customFieldValidation.values;
+        const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
+          ...(custom_fields ?? {}),
+          ...customFieldValues,
+        });
+
         const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
         const defaultName = name || null;
-        const preferredUsername = email.split('@')[0];
+        const preferredUsername = normalizedEmail.split('@')[0];
 
         try {
           await runtimeUsers.syncUser({
@@ -220,6 +233,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             emailVerified: false,
             userType: 'end_user',
             sourceRef: 'email_code',
+            piiFields: canonicalProfileFields.piiFields,
+            sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: JSON.stringify({
               preferred_username: preferredUsername,
             }),
@@ -272,8 +287,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           otp_session_id: otpSessionId,
           issued_at: issuedAt,
           purpose: 'login',
-          ...(Object.keys(customFieldValidation.values).length > 0
-            ? { custom_fields: customFieldValidation.values }
+          ...(Object.keys(customFieldValues).length > 0
+            ? { custom_fields: customFieldValues }
             : {}),
         },
       });
@@ -288,7 +303,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       });
 
       // Send email via Notifier Plugin
-      const pluginCtx = getPluginContext(c);
+      const pluginCtx = getRequiredPluginContext(c, 'notification');
       const emailNotifier = pluginCtx.registry.getNotifier('email');
 
       if (!emailNotifier) {
@@ -604,6 +619,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Create new session if not an anonymous upgrade
+      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'email_code');
       if (!isAnonymousUpgrade) {
         try {
           const { stub: sessionStore, sessionId: newSessionId } =
@@ -613,7 +629,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           await sessionStore.createSessionRpc(
             newSessionId,
             user.id as string,
-            24 * 60 * 60, // 24 hours in seconds
+            sessionTtl.seconds,
             {
               email: user.email,
               name: user.name,
@@ -665,7 +681,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           httpOnly: true,
           secure: true,
           sameSite: getSessionCookieSameSite(c.env),
-          maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
+          maxAge: sessionTtl.seconds,
         });
 
         // Set browser state cookie for OIDC Session Management (NOT HttpOnly so JS can read it)
@@ -674,7 +690,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           path: '/',
           secure: true,
           sameSite: getBrowserStateCookieSameSite(c.env),
-          maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
+          maxAge: sessionTtl.seconds,
         });
       }
 
@@ -703,7 +719,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         data: {
           sessionId,
           userId: user.id as string,
-          ttlSeconds: 24 * 60 * 60, // 24 hours
+          ttlSeconds: sessionTtl.seconds,
         } satisfies SessionEventData,
       }).catch((err) => {
         log.error(

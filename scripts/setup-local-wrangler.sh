@@ -61,6 +61,7 @@ generate_wrangler_toml() {
     local port=$2
     local kv_namespaces=$3
     local do_bindings=$4
+    local service_bindings=${5:-}
 
     local file="packages/$package/wrangler.${DEPLOY_ENV}.toml"
 
@@ -93,6 +94,9 @@ $kv_namespaces
 
 # Durable Objects Bindings
 $do_bindings
+
+# Service Bindings
+$service_bindings
 
 # Environment variables
 [vars]
@@ -355,7 +359,9 @@ script_name = "${DEPLOY_ENV}-ar-lib-core"
 [[durable_objects.bindings]]
 name = "FLOW_STATE_STORE"
 class_name = "FlowStateStore"
-script_name = "${DEPLOY_ENV}-ar-lib-core"'
+script_name = "${DEPLOY_ENV}-ar-lib-core"' '[[services]]
+binding = "EXTERNAL_IDP"
+service = "${DEPLOY_ENV}-ar-bridge"'
 
 # Generate wrangler.toml for ar-token
 generate_wrangler_toml "ar-token" 8789 '[[kv_namespaces]]
@@ -517,7 +523,9 @@ script_name = "${DEPLOY_ENV}-ar-lib-core"
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "${DEPLOY_ENV}-ar-lib-core"'
+script_name = "${DEPLOY_ENV}-ar-lib-core"' '[[services]]
+binding = "EXTERNAL_IDP"
+service = "${DEPLOY_ENV}-ar-bridge"'
 
 # Generate wrangler.toml for ar-policy (ReBAC)
 generate_wrangler_toml "ar-policy" 8792 '[[kv_namespaces]]

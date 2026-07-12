@@ -181,6 +181,7 @@ export interface ConsentChallengeMetadata {
   code_challenge?: string;
   code_challenge_method?: string;
   claims?: string;
+  authorization_details?: string;
   response_mode?: string;
   max_age?: string;
   prompt?: string;

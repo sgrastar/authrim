@@ -55,6 +55,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
+      aaguid
+        ? {
+            aaguid,
+            name: 'Windows Hello',
+            icon_dark: null,
+            icon_light: 'data:image/svg+xml;base64,light',
+            known: true,
+          }
+        : null
+    ),
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',
@@ -1125,6 +1136,80 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('returns normalized creation and last-login timestamps from the canonical projection', async () => {
+      const userId = 'user-with-login';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+      const lastLoginAt = createdAt + 90_000;
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'user@example.com',
+        name: 'User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+        last_login_at: lastLoginAt,
+      });
+      const c = createMockContext({
+        query: { page: '1', limit: '20' },
+        db: createMockDB({ allResults: [{ legacy_user_id: userId }] }),
+      });
+
+      const response = await adminUsersListHandler(c);
+      const body = (await response.json()) as {
+        users: Array<{ created_at: number; last_login_at: number | null }>;
+      };
+
+      expect(body.users).toEqual([
+        expect.objectContaining({
+          created_at: createdAt,
+          last_login_at: lastLoginAt,
+        }),
+      ]);
+    });
+
+    it('uses the latest persisted session when a legacy user has no login timestamp', async () => {
+      const userId = 'user-with-session-only';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+      const lastLoginAt = createdAt + 90_000;
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'user@example.com',
+        name: 'User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+        last_login_at: null,
+      });
+      const c = createMockContext({
+        query: { page: '1', limit: '20' },
+        db: createSqlAwareMockDB((sql, _params, operation) => {
+          if (operation !== 'all') return null;
+          if (sql.includes('FROM identity_accounts')) {
+            return [{ legacy_user_id: userId }];
+          }
+          if (sql.includes('FROM sessions')) {
+            return [{ user_id: userId, last_login_at: Math.floor(lastLoginAt / 1000) }];
+          }
+          return [];
+        }),
+      });
+
+      const response = await adminUsersListHandler(c);
+      const body = (await response.json()) as {
+        users: Array<{ last_login_at: number | null }>;
+      };
+
+      expect(body.users[0]?.last_login_at).toBe(lastLoginAt);
+    });
+
     it('should support search filtering by email or name', async () => {
       // PII/Non-PII DB Separation:
       // 1. Search queries PII DB first to get matching user IDs
@@ -1434,22 +1519,12 @@ describe('Admin API Handlers', () => {
         },
         allResults: [],
       });
-      let allCallCount = 0;
       (mockDB as any)._mockStatement.all.mockImplementation(() => {
-        allCallCount++;
-        if (allCallCount === 1) {
-          return Promise.resolve({ results: [] });
-        }
-        if (allCallCount === 2) {
-          return Promise.resolve({ results: [] });
-        }
-        if (allCallCount === 3) {
+        const preparedSql = String((mockDB.prepare as any).mock.calls.at(-1)?.[0] ?? '');
+        if (preparedSql.includes('FROM custom_claim_schemas')) {
           return Promise.resolve({
             results: [createCustomClaimSchemaRow()],
           });
-        }
-        if (allCallCount === 4) {
-          return Promise.resolve({ results: [] });
         }
         return Promise.resolve({ results: [] });
       });
@@ -1508,6 +1583,27 @@ describe('Admin API Handlers', () => {
         }),
         400
       );
+    });
+
+    it('should reject invalid email syntax before persistence', async () => {
+      const mockDB = createMockDB({});
+
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'not-an-email', name: 'Invalid Email User' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Email must be a valid email address',
+        }),
+        400
+      );
+      expect(mockDB.prepare).not.toHaveBeenCalled();
     });
 
     it('should reject create when required custom field is missing', async () => {
@@ -1839,6 +1935,7 @@ describe('Admin API Handlers', () => {
         method: 'PUT',
         params: { id: userId },
         body: {
+          email: 'old@example.com',
           name: 'Updated Name',
           email_verified: true,
         },
@@ -2839,6 +2936,92 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should reject non-HTTPS non-loopback redirect_uris', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Insecure Redirect Client',
+          redirect_uris: ['http://example.com/callback'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'redirect_uris must use HTTPS except for loopback development callbacks',
+        }),
+        400
+      );
+    });
+
+    it('should reject fragment redirect_uris', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Fragment Redirect Client',
+          redirect_uris: ['https://example.com/callback#token'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'redirect_uris must not contain fragment identifiers',
+        }),
+        400
+      );
+    });
+
+    it('should reject unsupported grant_types during create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Unsupported Grant Client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code', 'password'],
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Unsupported grant_type: password',
+        }),
+        400
+      );
+    });
+
+    it('should require PKCE for public authorization-code clients during create', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Public Code Client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          token_endpoint_auth_method: 'none',
+          require_pkce: false,
+        },
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'require_pkce must be true for public clients using the authorization_code grant',
+        }),
+        400
+      );
+    });
+
     it('should reject invalid allowed_redirect_origins', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -3377,7 +3560,114 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: 'invalid_request',
-          error_description: 'redirect_uris must contain valid URI strings',
+          error_description: 'Invalid redirect_uri: still-not-a-uri',
+        }),
+        400
+      );
+    });
+
+    it('should reject non-HTTPS non-loopback redirect_uris during update', async () => {
+      const clientId = 'client-insecure-redirect-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          redirect_uris: ['http://example.com/callback'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'redirect_uris must use HTTPS except for loopback development callbacks',
+        }),
+        400
+      );
+    });
+
+    it('should reject unsupported grant_types during update', async () => {
+      const clientId = 'client-unsupported-grant-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          grant_types: ['authorization_code', 'password'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'Unsupported grant_type: password',
+        }),
+        400
+      );
+    });
+
+    it('should require PKCE for public authorization-code clients during update', async () => {
+      const clientId = 'client-public-pkce-update';
+      const mockDB = createMockDB({
+        runResult: { success: true },
+      });
+
+      (mockDB as any)._mockStatement.first.mockResolvedValue({
+        client_id: clientId,
+        client_name: 'Existing Client',
+        redirect_uris: '["https://example.com/callback"]',
+        grant_types: '["authorization_code"]',
+        response_types: '["code"]',
+        token_endpoint_auth_method: 'client_secret_basic',
+        require_pkce: 1,
+      });
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          token_endpoint_auth_method: 'none',
+          require_pkce: false,
+        },
+        db: mockDB,
+      });
+
+      await adminClientUpdateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description:
+            'require_pkce must be true for public clients using the authorization_code grant',
         }),
         400
       );

@@ -2,10 +2,9 @@
 
 # Deployment script for Cloudflare Workers
 #
-# This script deploys workers SEQUENTIALLY with delays to avoid:
-# - Cloudflare API rate limits (1,200 requests per 5 minutes)
-# - Service unavailable errors (code 7010) from concurrent deployments
-# - API overload from parallel deployments
+# Standard deployments use the shared dependency-aware TypeScript engine with
+# bounded concurrency and adaptive rate-limit retries. Gradual rollout remains
+# intentionally serial because each traffic stage requires a health decision.
 #
 # Gradual Rollout:
 # This script supports Cloudflare Versions Deploy for gradual rollouts.
@@ -30,12 +29,12 @@ fi
 # Trap Ctrl+C and other signals to ensure clean exit
 trap 'echo ""; echo "⚠️  Deployment cancelled by user"; exit 130' INT TERM
 
-INTER_DEPLOY_DELAY=5     # Delay between deployments to avoid rate limits
 DEPLOY_ENV=""
 API_ONLY=false
 GRADUAL_ROLLOUT=false
 GRADUAL_STAGES="10,50,100"    # Default gradual rollout stages (percentage)
 GRADUAL_WAIT=3                 # Wait time between stages in minutes
+KEYS_DIR_OVERRIDE=""
 VERSIONED_WORKERS=(
     "ar-auth"
     "ar-token"
@@ -60,6 +59,18 @@ while [[ $# -gt 0 ]]; do
             API_ONLY=true
             shift
             ;;
+        --keys-dir=*)
+            KEYS_DIR_OVERRIDE="${1#*=}"
+            shift
+            ;;
+        --keys-dir)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "❌ --keys-dir requires a directory path"
+                exit 1
+            fi
+            KEYS_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
         --gradual)
             GRADUAL_ROLLOUT=true
             shift
@@ -81,6 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --env=<name>           Environment name (required, e.g., dev, staging, prod)"
             echo "  --api-only             Deploy API packages only (exclude UI)"
+            echo "  --keys-dir=<path>      Override the environment key archive directory"
             echo "  --gradual              Enable gradual rollout (default: 10% → 50% → 100%)"
             echo "  --gradual-stages=N,N   Custom rollout stages (comma-separated percentages)"
             echo "  --gradual-wait=N       Wait time between stages in minutes (default: 3)"
@@ -108,6 +120,37 @@ if [ -z "$DEPLOY_ENV" ]; then
     echo "  $0 --env=staging"
     echo "  $0 --env=prod"
     exit 1
+fi
+if [[ ! "$DEPLOY_ENV" =~ ^[a-z][a-z0-9-]*$ ]]; then
+    echo "❌ Invalid environment name: $DEPLOY_ENV"
+    exit 1
+fi
+if [[ ! "$GRADUAL_WAIT" =~ ^[0-9]+$ ]]; then
+    echo "❌ --gradual-wait must be a non-negative integer"
+    exit 1
+fi
+if [[ ! "$GRADUAL_STAGES" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    echo "❌ --gradual-stages must be a comma-separated list of integers"
+    exit 1
+fi
+
+IFS=',' read -r -a GRADUAL_STAGE_VALUES <<< "$GRADUAL_STAGES"
+previous_stage=0
+for stage in "${GRADUAL_STAGE_VALUES[@]}"; do
+    if [ "$stage" -lt 1 ] || [ "$stage" -gt 100 ] || [ "$stage" -le "$previous_stage" ]; then
+        echo "❌ --gradual-stages must be strictly increasing integers from 1 to 100"
+        exit 1
+    fi
+    previous_stage=$stage
+done
+if [ "$previous_stage" -ne 100 ]; then
+    echo "❌ --gradual-stages must end at 100"
+    exit 1
+fi
+
+KEYS_DIR_ARGS=()
+if [ -n "$KEYS_DIR_OVERRIDE" ]; then
+    KEYS_DIR_ARGS+=("--keys-dir=${KEYS_DIR_OVERRIDE}")
 fi
 
 # Export environment variable for package scripts
@@ -162,186 +205,52 @@ validate_url() {
     return 0
 }
 
-# Health check function for gradual rollout
-# Checks OIDC Discovery endpoint and optionally API version header
-perform_health_check() {
-    local issuer_url=$1
-    local expected_version=$2
-    local max_retries=3
-    local retry_delay=10
-
-    echo "   🔎 Performing health check..."
-
-    local attempt=1
-    while [ $attempt -le $max_retries ]; do
-        # Check OIDC Discovery endpoint
-        local response=$(curl -s -w "\n%{http_code}" \
-            "${issuer_url}/.well-known/openid-configuration" \
-            --connect-timeout 10 \
-            --max-time 30 2>/dev/null)
-
-        local http_code=$(echo "$response" | tail -n1)
-        local body=$(echo "$response" | sed '$d')
-
-        if [ "$http_code" = "200" ]; then
-            # Verify issuer matches
-            local issuer=$(echo "$body" | jq -r '.issuer // empty')
-            if [ -n "$issuer" ]; then
-                echo "   ✅ OIDC Discovery: OK (issuer: $issuer)"
-
-                # Optionally check API version header
-                local version_response=$(curl -s -I \
-                    "${issuer_url}/api/admin/health" \
-                    -H "Authrim-Version: ${expected_version}" \
-                    --connect-timeout 10 \
-                    --max-time 30 2>/dev/null)
-
-                local api_version=$(echo "$version_response" | grep -i "X-Authrim-Version:" | awk '{print $2}' | tr -d '\r')
-                if [ -n "$api_version" ]; then
-                    echo "   ✅ API Version: ${api_version}"
-                fi
-
-                return 0
-            fi
-        fi
-
-        if [ $attempt -lt $max_retries ]; then
-            echo "   ⏳ Health check failed (attempt $attempt/$max_retries), retrying in ${retry_delay}s..."
-            sleep $retry_delay
-        fi
-        ((attempt++))
-    done
-
-    echo "   ❌ Health check failed after $max_retries attempts"
-    return 1
-}
-
-# Rollback function for gradual rollout
-perform_rollback() {
-    local worker_name=$1
-    local package_path=$2
-
-    echo "   🔄 Rolling back ${worker_name}..."
-
-    # Use --env to target the [env.xxx] section in wrangler.toml
-    if (cd "$package_path" && pnpm exec wrangler rollback --env "${DEPLOY_ENV}" 2>/dev/null); then
-        echo "   ✅ Rollback successful for ${worker_name}"
-        return 0
-    else
-        echo "   ❌ Rollback failed for ${worker_name}"
-        return 1
-    fi
-}
-
-# Gradual deploy function - deploys to a percentage of traffic
-deploy_gradual_stage() {
-    local package_name=$1
-    local package_path=$2
-    local percentage=$3
-    local worker_name="${DEPLOY_ENV}-${package_name}"
-
-    echo "   📊 Deploying to ${percentage}% of traffic..."
-
-    # Build the deploy command - use --env to target [env.xxx] section
-    local deploy_cmd="pnpm exec wrangler deploy --env ${DEPLOY_ENV}"
-
-    # Add version vars for non-shared packages
-    if [ "$package_name" != "ar-lib-core" ] && [ "$package_name" != "ar-router" ]; then
-        deploy_cmd="$deploy_cmd --var CODE_VERSION_UUID:${VERSION_UUID} --var DEPLOY_TIME_UTC:${DEPLOY_TIME}"
-    fi
-
-    # First deployment creates a new version
-    if (cd "$package_path" && eval "$deploy_cmd"); then
-        if [ "$percentage" -lt 100 ]; then
-            # Use wrangler versions deploy to set percentage
-            # Note: This requires the version to be created first
-            echo "   📈 Setting traffic split to ${percentage}%..."
-            if (cd "$package_path" && pnpm exec wrangler versions deploy --percentage "${percentage}" --env "${DEPLOY_ENV}" 2>/dev/null); then
-                echo "   ✅ Traffic split set to ${percentage}%"
-                return 0
-            else
-                # Fallback: Cloudflare may not support percentage for all worker types
-                echo "   ⚠️  Traffic split not available, deployed to 100%"
-                return 0
-            fi
-        else
-            echo "   ✅ Deployed to 100%"
-            return 0
-        fi
-    else
-        local exit_code=$?
-        echo "   ❌ Deploy failed (exit code: $exit_code)"
-        return $exit_code
-    fi
-}
-
-# Deploy package with gradual rollout stages
+# Deploy one package with exact old/new Cloudflare Version IDs. The shared
+# TypeScript engine uploads secrets with the version, applies triggers, checks
+# health, and rolls traffic back to the exact baseline Version ID on failure.
 deploy_package_gradual() {
     local package_name=$1
-    local package_path=$2
+    local _package_path=$2
     local issuer_url=$3
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📦 Deploying (Gradual): $package_name"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Parse stages from comma-separated list
-    IFS=',' read -ra STAGES <<< "$GRADUAL_STAGES"
+    local gradual_args=(
+        "--env=${DEPLOY_ENV}"
+        "--component=${package_name}"
+        "--mode=auto"
+        "--concurrency=1"
+        "--gradual-stages=${GRADUAL_STAGES}"
+        "--gradual-wait-seconds=$((GRADUAL_WAIT * 60))"
+        "${KEYS_DIR_ARGS[@]}"
+    )
+    if [ -n "$issuer_url" ]; then
+        gradual_args+=("--health-url=${issuer_url}")
+    fi
 
-    for stage in "${STAGES[@]}"; do
-        echo ""
-        echo "   ▶ Stage: ${stage}%"
-
-        # Deploy to this percentage
-        if ! deploy_gradual_stage "$package_name" "$package_path" "$stage"; then
-            echo "   ❌ Deployment failed at ${stage}%"
-            perform_rollback "$package_name" "$package_path"
-            return 1
-        fi
-
-        # Skip health check and wait for 100% stage (final)
-        if [ "$stage" -lt 100 ]; then
-            # Wait before health check
-            echo "   ⏳ Waiting 30s for deployment to stabilize..."
-            sleep 30
-
-            # Perform health check if issuer_url is available
-            if [ -n "$issuer_url" ]; then
-                if ! perform_health_check "$issuer_url" ""; then
-                    echo "   ⚠️  Health check failed at ${stage}%, initiating rollback..."
-                    perform_rollback "$package_name" "$package_path"
-                    return 1
-                fi
-            fi
-
-            # Wait between stages
-            echo "   ⏳ Waiting ${GRADUAL_WAIT} minutes before next stage..."
-            sleep $((GRADUAL_WAIT * 60))
-        fi
-    done
-
-    echo "✅ Successfully deployed: $package_name (gradual rollout complete)"
-    return 0
+    AUTHRIM_DEPLOY_UUID="$VERSION_UUID" \
+    AUTHRIM_DEPLOY_TIME="$DEPLOY_TIME" \
+        pnpm exec tsx scripts/deploy-api.ts "${gradual_args[@]}"
 }
 
 deploy_package() {
     local package_name=$1
-    local package_path=$2
+    local _package_path=$2
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📦 Deploying: $package_name"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Build the pnpm exec wrangler deploy command with version vars
-    # Use --env to target [env.xxx] section in wrangler.toml
-    local deploy_cmd="pnpm exec wrangler deploy --env ${DEPLOY_ENV}"
-
-    # Add version vars for non-shared packages (workers that use version check)
-    if [ "$package_name" != "ar-lib-core" ] && [ "$package_name" != "ar-router" ]; then
-        deploy_cmd="$deploy_cmd --var CODE_VERSION_UUID:${VERSION_UUID} --var DEPLOY_TIME_UTC:${DEPLOY_TIME}"
-    fi
-
-    if (cd "$package_path" && eval "$deploy_cmd"); then
+    if AUTHRIM_DEPLOY_UUID="$VERSION_UUID" \
+       AUTHRIM_DEPLOY_TIME="$DEPLOY_TIME" \
+       pnpm exec tsx scripts/deploy-api.ts \
+         --env="$DEPLOY_ENV" \
+         --component="$package_name" \
+         --mode=direct \
+         --concurrency=1 \
+         "${KEYS_DIR_ARGS[@]}"; then
         echo "✅ Successfully deployed: $package_name"
         return 0
     else
@@ -593,6 +502,17 @@ fi
 echo "  ✅ Configuration validated"
 echo ""
 
+# Fail before creating UI binding targets or changing Worker traffic. This
+# probes remote existence and verifies all secrets required by fresh Workers.
+echo "🔎 Running deployment preflight..."
+pnpm exec tsx scripts/deploy-api.ts \
+    --env="$DEPLOY_ENV" \
+    --mode=auto \
+    --concurrency=2 \
+    --preflight \
+    "${KEYS_DIR_ARGS[@]}"
+echo ""
+
 # Build first (always clear cache to ensure fresh builds)
 echo "🔨 Building packages..."
 echo "   Clearing turbo cache to ensure fresh build..."
@@ -612,16 +532,16 @@ echo ""
 # 3. Router must be deployed LAST as it depends on all other workers via Service Bindings
 PACKAGES=(
     "ar-lib-core:packages/ar-lib-core"
+    "ar-bridge:packages/ar-bridge"
     "ar-discovery:packages/ar-discovery"
-    "ar-management:packages/ar-management"
-    "ar-auth:packages/ar-auth"
     "ar-token:packages/ar-token"
     "ar-userinfo:packages/ar-userinfo"
     "ar-async:packages/ar-async"
     "ar-policy:packages/ar-policy"
     "ar-saml:packages/ar-saml"
-    "ar-bridge:packages/ar-bridge"
     "ar-vc:packages/ar-vc"
+    "ar-auth:packages/ar-auth"
+    "ar-management:packages/ar-management"
     "ar-router:packages/ar-router"
 )
 
@@ -657,49 +577,49 @@ if [ "$GRADUAL_ROLLOUT" = true ]; then
 fi
 
 FAILED_PACKAGES=()
-FIRST_DEPLOY=true
 
-for pkg in "${PACKAGES[@]}"; do
-    IFS=':' read -r name path <<< "$pkg"
+# ar-router may bind UI Workers while the final UI Workers bind back to the
+# router. Create only missing binding targets to break that first-deploy cycle.
+if ! pnpm exec tsx scripts/deploy-ui.ts \
+    --env="$DEPLOY_ENV" \
+    "${KEYS_DIR_ARGS[@]}" \
+    --phase=binding-targets-if-missing; then
+    echo "❌ Failed to prepare UI Worker binding targets"
+    FAILED_PACKAGES+=("UI Worker binding targets")
+fi
 
-    # Router is part of the API deployment. Do not silently skip it; missing config
-    # usually means setup did not generate a complete deploy surface.
-    if [ "$name" = "ar-router" ]; then
-        if [ ! -f "$path/wrangler.toml" ] || ! grep -q "\\[env\\.${DEPLOY_ENV}\\]" "$path/wrangler.toml" 2>/dev/null; then
-            echo "❌ ar-router is missing wrangler.toml or [env.${DEPLOY_ENV}] section"
-            echo ""
-            FAILED_PACKAGES+=("$name")
-            break
-        fi
+if [ ${#FAILED_PACKAGES[@]} -eq 0 ] && [ "$GRADUAL_ROLLOUT" = false ]; then
+    export AUTHRIM_DEPLOY_UUID="$VERSION_UUID"
+    export AUTHRIM_DEPLOY_TIME="$DEPLOY_TIME"
+    if ! pnpm exec tsx scripts/deploy-api.ts --env="$DEPLOY_ENV" --mode=auto --concurrency=2 "${KEYS_DIR_ARGS[@]}"; then
+        FAILED_PACKAGES+=("dependency-aware API deployment")
     fi
+elif [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
+    for pkg in "${PACKAGES[@]}"; do
+        IFS=':' read -r name path <<< "$pkg"
 
-    # Add delay between deployments to avoid rate limits (except for first deployment)
-    if [ "$FIRST_DEPLOY" = true ]; then
-        FIRST_DEPLOY=false
-    else
-        echo "⏸️  Waiting ${INTER_DEPLOY_DELAY}s before next deployment to avoid rate limits..."
-        sleep $INTER_DEPLOY_DELAY
+        if [ "$name" = "ar-router" ]; then
+            if [ ! -f "$path/wrangler.toml" ] || ! grep -q "\\[env\\.${DEPLOY_ENV}\\]" "$path/wrangler.toml" 2>/dev/null; then
+                echo "❌ ar-router is missing wrangler.toml or [env.${DEPLOY_ENV}] section"
+                FAILED_PACKAGES+=("$name")
+                break
+            fi
+        fi
+
+        if [ "$name" != "ar-lib-core" ] && [ "$name" != "ar-router" ]; then
+            if ! deploy_package_gradual "$name" "$path" "$ISSUER_URL"; then
+                FAILED_PACKAGES+=("$name")
+                echo ""
+                echo "❌ Gradual rollout failed for $name. Stopping deployment."
+                echo "   Previous packages may have been deployed."
+                break
+            fi
+        elif ! deploy_package "$name" "$path"; then
+            FAILED_PACKAGES+=("$name")
+        fi
         echo ""
-    fi
-
-    # Use gradual rollout for user-facing workers (not for shared/router packages)
-    if [ "$GRADUAL_ROLLOUT" = true ] && [ "$name" != "ar-lib-core" ] && [ "$name" != "ar-router" ]; then
-        if ! deploy_package_gradual "$name" "$path" "$ISSUER_URL"; then
-            FAILED_PACKAGES+=("$name")
-            # On gradual rollout failure, stop deployment
-            echo ""
-            echo "❌ Gradual rollout failed for $name. Stopping deployment."
-            echo "   Previous packages may have been deployed."
-            echo "   Run ./scripts/rollback-all.sh --env=$DEPLOY_ENV to rollback all."
-            break
-        fi
-    else
-        if ! deploy_package "$name" "$path"; then
-            FAILED_PACKAGES+=("$name")
-        fi
-    fi
-    echo ""
-done
+    done
+fi
 
 # Summary
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -735,11 +655,13 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     fi
 
     # Get ADMIN_API_SECRET (from keys directory or wrangler.toml)
-    if type find_keys_dir &>/dev/null; then
+    if [ -n "$KEYS_DIR_OVERRIDE" ]; then
+        KEYS_DIR="$KEYS_DIR_OVERRIDE"
+    elif type find_keys_dir &>/dev/null; then
         KEYS_DIR=$(find_keys_dir "$DEPLOY_ENV" 2>/dev/null)
-        if [ -n "$KEYS_DIR" ] && [ -f "${KEYS_DIR}/admin_api_secret.txt" ]; then
-            ADMIN_API_SECRET=$(cat "${KEYS_DIR}/admin_api_secret.txt" 2>/dev/null)
-        fi
+    fi
+    if [ -n "${KEYS_DIR:-}" ] && [ -f "${KEYS_DIR}/admin_api_secret.txt" ]; then
+        ADMIN_API_SECRET=$(cat "${KEYS_DIR}/admin_api_secret.txt" 2>/dev/null)
     fi
     # Fallback to wrangler.toml
     if [ -z "$ADMIN_API_SECRET" ] && [ -f "packages/ar-management/wrangler.toml" ]; then
@@ -779,19 +701,32 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
                 ACTIVE_KID=$(echo "$ACTIVE_KEY" | jq -r '.kid')
                 echo "   Active key: $ACTIVE_KID"
 
-                # Workers that need PUBLIC_JWK_JSON
-                WORKERS_NEEDING_JWK=("ar-token" "ar-management" "ar-userinfo" "ar-auth")
+                LOCAL_KID=""
+                if [ -n "${KEYS_DIR:-}" ] && [ -f "${KEYS_DIR}/public.jwk.json" ]; then
+                    LOCAL_KID=$(jq -r '.kid // empty' "${KEYS_DIR}/public.jwk.json" 2>/dev/null)
+                fi
 
-                for worker in "${WORKERS_NEEDING_JWK[@]}"; do
-                    WORKER_NAME="${DEPLOY_ENV}-${worker}"
-                    echo "   Setting PUBLIC_JWK_JSON for ${worker}..."
-                    # Use printf with pipe to avoid interactive input issues
-                    if printf '%s' "$ACTIVE_KEY" | wrangler secret put PUBLIC_JWK_JSON --name "$WORKER_NAME" 2>/dev/null; then
-                        echo "   ✅ ${worker}: Updated"
-                    else
-                        echo "   ⚠️  ${worker}: Skipped (may not exist or already set)"
-                    fi
-                done
+                if [ -n "$LOCAL_KID" ] && [ "$LOCAL_KID" = "$ACTIVE_KID" ]; then
+                    echo "   ✅ Active key already shipped with the Worker versions; no extra secret deployment needed."
+                else
+                    JWK_SECRET_FILE=$(mktemp)
+                    jq -n --arg value "$ACTIVE_KEY" '{PUBLIC_JWK_JSON: $value}' > "$JWK_SECRET_FILE"
+
+                    # Workers that need PUBLIC_JWK_JSON. secret bulk performs one
+                    # mutation per Worker instead of an interactive secret put.
+                    WORKERS_NEEDING_JWK=("ar-discovery" "ar-auth" "ar-token" "ar-userinfo" "ar-management" "ar-vc")
+
+                    for worker in "${WORKERS_NEEDING_JWK[@]}"; do
+                        WORKER_NAME="${DEPLOY_ENV}-${worker}"
+                        echo "   Setting PUBLIC_JWK_JSON for ${worker}..."
+                        if pnpm exec wrangler secret bulk "$JWK_SECRET_FILE" --name "$WORKER_NAME" 2>/dev/null; then
+                            echo "   ✅ ${worker}: Updated"
+                        else
+                            echo "   ⚠️  ${worker}: Skipped (may not exist or already set)"
+                        fi
+                    done
+                    rm -f "$JWK_SECRET_FILE"
+                fi
             else
                 echo "   ⚠️  Could not extract active key from JWKS"
             fi

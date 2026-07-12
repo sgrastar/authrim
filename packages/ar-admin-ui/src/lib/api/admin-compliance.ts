@@ -685,15 +685,15 @@ export const adminComplianceAPI = {
 export function getComplianceStatusColor(status: ComplianceCheckStatus): string {
 	switch (status) {
 		case 'compliant':
-			return '#22c55e';
+			return 'var(--color-success)';
 		case 'non_compliant':
-			return '#ef4444';
+			return 'var(--color-danger)';
 		case 'partial':
-			return '#f59e0b';
+			return 'var(--color-warning)';
 		case 'not_applicable':
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 		default:
-			return '#6b7280';
+			return 'var(--color-text-muted)';
 	}
 }
 

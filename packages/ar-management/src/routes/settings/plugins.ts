@@ -367,8 +367,8 @@ async function isPluginEnabled(
     return globalValue === 'true';
   }
 
-  // Default: enabled
-  return true;
+  // Default: disabled. Plugins must be explicitly enabled after configuration.
+  return false;
 }
 
 /**
@@ -386,15 +386,16 @@ async function decryptConfigIfNeeded(
 
   try {
     const key = await getPluginEncryptionKey(
-      env as { PLUGIN_ENCRYPTION_KEY?: string; KEY_MANAGER_SECRET?: string }
+      env as { PLUGIN_ENCRYPTION_KEY?: string; PLUGIN_ENCRYPTION_SALT?: string }
     );
     return await decryptSecretFields(encryptedConfig, key);
   } catch {
-    // If decryption fails, return config as-is (may be unencrypted legacy data)
-    // Note: Caller should handle logging if needed
-    // Remove _encrypted marker to avoid confusion
-    const { _encrypted, ...rest } = config as EncryptedConfig;
-    return rest;
+    const encryptedFields = new Set(encryptedConfig._encrypted);
+    return Object.fromEntries(
+      Object.entries(config).filter(
+        ([field]) => field !== '_encrypted' && !encryptedFields.has(field)
+      )
+    );
   }
 }
 
@@ -818,7 +819,7 @@ export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
  * Security:
  * - Secret fields (apiKey, password, token, etc.) are automatically encrypted
  * - Encrypted data is stored with enc:v1: prefix in KV
- * - Requires PLUGIN_ENCRYPTION_KEY or KEY_MANAGER_SECRET environment variable
+ * - Requires PLUGIN_ENCRYPTION_KEY environment variable
  */
 export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PluginAdminAPI');
@@ -863,18 +864,21 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   // Identify secret fields to encrypt
   const secretFields = body.secret_fields ?? identifySecretFields(newConfig);
 
-  // Encrypt secret fields if any exist and encryption key is available
+  // Encrypt secret fields. Plugin secrets must never be stored unencrypted.
   let configToStore: Record<string, unknown> = newConfig;
   if (secretFields.length > 0) {
     try {
       const encryptionKey = await getPluginEncryptionKey(
-        c.env as { PLUGIN_ENCRYPTION_KEY?: string; KEY_MANAGER_SECRET?: string }
+        c.env as { PLUGIN_ENCRYPTION_KEY?: string; PLUGIN_ENCRYPTION_SALT?: string }
       );
       configToStore = await encryptSecretFields(newConfig, secretFields, encryptionKey);
     } catch (error) {
-      // If encryption fails due to missing key, store unencrypted with warning
-      log.warn('Encryption key not available, storing config unencrypted', {}, error as Error);
-      // Continue with unencrypted config
+      log.error(
+        'Plugin encryption key not available; refusing to store plugin secrets',
+        {},
+        error as Error
+      );
+      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
     }
   }
 
@@ -929,6 +933,22 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
     tenantId = getRequestTenantId(c, body.tenant_id);
   } catch {
     tenantId = getRequestTenantId(c);
+  }
+
+  const { configured, missingRequiredFields } = await getResolvedPluginConfigState(
+    kv,
+    c.env,
+    pluginId,
+    tenantId
+  );
+  if (!configured) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'plugin configuration' },
+      extensions: {
+        plugin_id: pluginId,
+        missing_required_fields: missingRequiredFields,
+      },
+    });
   }
 
   const enableKey = tenantId

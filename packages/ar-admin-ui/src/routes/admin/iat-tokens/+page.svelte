@@ -7,6 +7,10 @@
 	} from '$lib/api/admin-iat-tokens';
 	import { ToggleSwitch, Modal } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let tokens: IatToken[] = $state([]);
 	let loading = $state(true);
@@ -152,23 +156,19 @@
 	<title>{$LL.admin_iat_tokens_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_iat_tokens_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_iat_tokens_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={openCreateDialog}>
-				<i class="i-ph-plus"></i>
-				{$LL.admin_iat_tokens_create_token()}
-			</button>
-		</div>
-	</div>
+{#snippet headerActions()}
+	<button class="btn btn-primary" onclick={openCreateDialog}>
+		<i class="i-ph-plus"></i>
+		{$LL.admin_iat_tokens_create_token()}
+	</button>
+{/snippet}
 
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_iat_tokens_title()}
+		description={$LL.admin_iat_tokens_description()}
+		actions={headerActions}
+	/>
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
@@ -179,7 +179,7 @@
 			<p>{$LL.admin_iat_tokens_loading()}</p>
 		</div>
 	{:else if tokens.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_iat_tokens_empty()}</p>
 				<p class="empty-state-hint">
@@ -189,10 +189,10 @@
 					>{$LL.admin_iat_tokens_create_token()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
+		<AdminSection>
+			<AdminDataTable width="wide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_iat_tokens_token_hash()}</th>
@@ -234,10 +234,10 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create Token Dialog -->
 <Modal

@@ -448,6 +448,15 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(body.presets[0].id).toBe('oidc_standard');
+      expect(body.presets[0].fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field_key: 'gender',
+            display_label: 'Gender',
+            field_type: 'string',
+          }),
+        ])
+      );
       expect(body.existing_field_keys).toEqual(['email']);
     });
   });
@@ -819,7 +828,7 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(400);
     });
 
-    it('should clear registration_required when signup visibility is disabled on create', async () => {
+    it('should preserve registration_required when signup visibility is disabled on create', async () => {
       mockDbQuery
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([createSchemaRow({ id: 'test-id-123' })]);
@@ -848,7 +857,7 @@ describe('Custom Claims Admin API', () => {
         .split(',')
         .map((column) => column.trim());
       expect(insertParams[columns.indexOf('show_on_registration')]).toBe(0);
-      expect(insertParams[columns.indexOf('registration_required')]).toBe(0);
+      expect(insertParams[columns.indexOf('registration_required')]).toBe(1);
       expect(insertParams[columns.indexOf('registration_order')]).toBe(0);
       expect(insertParams[columns.indexOf('registration_placeholder')]).toBeNull();
     });
@@ -1171,7 +1180,7 @@ describe('Custom Claims Admin API', () => {
       expect(mockDbExecute).not.toHaveBeenCalled();
     });
 
-    it('should clear registration_required when signup visibility is disabled on update', async () => {
+    it('should preserve registration_required when signup visibility is disabled on update', async () => {
       mockDbQuery
         .mockResolvedValueOnce([
           createSchemaRow({ show_on_registration: 1, registration_required: 1 }),
@@ -1195,7 +1204,7 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(mockDbExecute.mock.calls[0][0]).toContain('registration_required = ?');
-      expect(mockDbExecute.mock.calls[0][1]).toContain(0);
+      expect(mockDbExecute.mock.calls[0][1]).toContain(1);
     });
   });
 

@@ -21,6 +21,29 @@ export function formatDate(dateStr: string): string {
 }
 
 /**
+ * Normalize Authrim API timestamps to milliseconds.
+ * Account page APIs currently expose both repository timestamps in milliseconds
+ * and compatibility fields in Unix seconds.
+ */
+export function normalizeTimestampToMillis(value: number | null | undefined): number | null {
+	if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+		return null;
+	}
+	return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+/**
+ * Format a numeric timestamp that may be Unix seconds or milliseconds.
+ */
+export function formatTimestamp(value: number | null | undefined): string {
+	const millis = normalizeTimestampToMillis(value);
+	if (millis === null) return '-';
+	const date = new Date(millis);
+	if (!isValidDate(date)) return '-';
+	return date.toLocaleString();
+}
+
+/**
  * Format a date string to relative time (e.g., "2 hours ago")
  * Returns fallback string for invalid dates
  */

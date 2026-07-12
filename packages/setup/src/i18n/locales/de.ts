@@ -119,7 +119,7 @@ const de: Translations = {
   'env.customDesc': 'Benutzerdefinierten Umgebungsnamen eingeben',
   'env.customPrompt': 'Benutzerdefinierten Umgebungsnamen eingeben',
   'env.customValidation':
-    'Nur Kleinbuchstaben, Zahlen und Bindestriche erlaubt (z.B. prod, staging, dev)',
+    'Nur Kleinbuchstaben, Zahlen und Bindestriche erlaubt (z.B. prod, main, tokyo, acme-dev)',
   'env.detected': 'Erkannte Umgebungen:',
   'env.selectExisting': 'Vorhandene Umgebung auswählen',
   'env.createNew': 'Neue Umgebung erstellen',
@@ -709,7 +709,7 @@ const de: Translations = {
   'web.systemMode': 'System',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Voraussetzungen',
+  'web.prereq.title': 'Start',
   'web.prereq.checking': 'Überprüfe...',
   'web.prereq.checkingRequirements': 'Überprüfe Systemanforderungen...',
   'web.prereq.ready': 'Bereit',
@@ -837,12 +837,10 @@ const de: Translations = {
   'web.complete.issuerUrl': 'Aussteller-URL',
   'web.complete.loginUrl': 'Login-URL',
   'web.complete.adminUrl': 'Admin-URL',
-  'web.complete.nextSteps': 'Nächste Schritte:',
-  'web.complete.step1': 'Schließen Sie die erste Admin-Einrichtung mit der Schaltfläche oben ab',
-  'web.complete.step2': 'Konfigurieren Sie Ihren ersten OAuth-Client in der Admin-UI',
-  'web.complete.step3': 'Integrieren Sie mit Ihrer Anwendung',
   'web.complete.saveConfig': 'Konfiguration speichern',
   'web.complete.backToMain': 'Zurück zur Startseite',
+  'web.config.saveToFileTitle': 'Konfiguration in Datei speichern',
+  'web.complete.backToMainTitle': 'Zur Hauptansicht zurückkehren',
   'web.complete.canClose': 'Einrichtung abgeschlossen. Sie können dieses Fenster sicher schließen.',
   'web.complete.adminAccountTitle': 'Admin-Konto einrichten',
   'web.complete.adminAccountImportant': 'WICHTIG',
@@ -918,7 +916,7 @@ const de: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': 'Umgebungsname',
-  'web.form.envNamePlaceholder': 'z.B. prod, staging, dev',
+  'web.form.envNamePlaceholder': 'z.B. prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Nur Kleinbuchstaben, Zahlen und Bindestriche',
   'web.form.envNameError':
     'Nur Kleinbuchstaben, Zahlen und Bindestriche erlaubt (muss mit einem Buchstaben beginnen)',
@@ -1099,6 +1097,42 @@ const de: Translations = {
   'web.envDetail.queues': 'Warteschlangen',
   'web.envDetail.r2Buckets': 'R2-Buckets',
   'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'E-Mail-Einstellungen',
+  'web.envDetail.emailDesc': 'Cloudflare Email Service später für diese Umgebung aktivieren.',
+  'web.envDetail.emailCurrentProvider': 'Aktueller Anbieter',
+  'web.envDetail.emailCurrentStatus': 'Status',
+  'web.envDetail.emailCurrentFrom': 'From-Adresse',
+  'web.envDetail.emailConfigured': 'Konfiguriert',
+  'web.envDetail.emailNotConfigured': 'Nicht konfiguriert',
+  'web.envDetail.emailProviderNone': 'Nicht konfiguriert',
+  'web.envDetail.emailCloudflareRequirements': 'Voraussetzungen',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan ist erforderlich',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'Cloudflare DNS und Domain-Onboarding sind erforderlich',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Die Domain-Einrichtung im Cloudflare Dashboard bleibt manuell',
+  'web.envDetail.emailCloudflareFromHint':
+    'Bei Verwendung von Cloudflare Email Service muss die Adresse zu einer in Cloudflare eingebundenen Domain gehören.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Cloudflare Email Routing-Einstellungen',
+  'web.envDetail.emailResendFromHint':
+    'Bei Verwendung von Resend muss die Domain in Resend hinzugefügt und verifiziert werden.',
+  'web.envDetail.emailResendDomainsLink': 'Resend Domains',
+  'web.envDetail.emailFromAddress': 'From-E-Mail-Adresse',
+  'web.envDetail.emailFromName': 'Anzeigename des Absenders (optional)',
+  'web.envDetail.emailEnableCloudflare': 'Cloudflare Email Service aktivieren',
+  'web.envDetail.emailDeploying': 'Wird angewendet...',
+  'web.envDetail.emailProgress': 'Fortschritt der E-Mail-Einrichtung:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email aktiviert.',
+  'web.envDetail.emailUpdateFailed': 'Cloudflare Email konnte nicht aktiviert werden.',
+  'web.envDetail.emailFromMissing': 'Geben Sie eine From-E-Mail-Adresse ein.',
+  'web.envDetail.emailFromInvalid': 'Geben Sie eine gültige E-Mail-Adresse ein.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'Diese Umgebung hat bereits einen anderen E-Mail-Anbieter konfiguriert. Zu Cloudflare Email Service wechseln?',
+  'web.envDetail.emailStarting': 'Cloudflare Email-Einrichtung wird gestartet...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'Diese Umgebung hat bereits einen anderen E-Mail-Anbieter konfiguriert. Zu Resend wechseln?',
+  'web.envDetail.emailResendStarting': 'Resend-E-Mail-Konfiguration wird gespeichert...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Resend-E-Mail-Konfiguration gespeichert.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Alle Workers aktualisieren',
@@ -1110,6 +1144,7 @@ const de: Translations = {
   'web.envDetail.upToDate': 'Aktuell',
   'web.envDetail.notDeployed': 'Nicht bereitgestellt',
   'web.envDetail.updateOnlyChanged': 'Nur geänderte Versionen aktualisieren',
+  'web.envDetail.updateIncludeUiWorkers': 'Admin UI / Login UI aktualisieren',
   'web.envDetail.updateAllWorkers': 'Alle Workers aktualisieren',
   'web.envDetail.refreshVersions': 'Aktualisieren',
   'web.envDetail.updateProgress': 'Aktualisierungsfortschritt:',
@@ -1153,7 +1188,7 @@ const de: Translations = {
   'web.error.notLoggedIn': 'Nicht bei Cloudflare angemeldet',
   'web.error.runCommand': 'Bitte führen Sie diesen Befehl in Ihrem Terminal aus:',
   'web.error.thenRefresh': 'Aktualisieren Sie dann diese Seite.',
-  'web.error.checkingPrereq': 'Fehler beim Überprüfen der Voraussetzungen:',
+  'web.error.checkingPrereq': 'Fehler beim Start-Check:',
   'web.error.invalidJson': 'Ungültiges JSON:',
   'web.error.validationFailed': 'Validierungsanfrage fehlgeschlagen:',
 

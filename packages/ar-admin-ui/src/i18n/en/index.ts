@@ -7,6 +7,7 @@ import adminAccount from './admin-account';
 import adminUsers from './admin-users';
 import adminClients from './admin-clients';
 import adminExternalIdp from './admin-external-idp';
+import adminDirectoryAuthentication from './admin-directory-authentication';
 import adminSaml from './admin-saml';
 import adminDrBackup from './admin-dr-backup';
 import adminScale from './admin-scale';
@@ -50,6 +51,9 @@ import adminExternalTokenRefresh from './admin-external-token-refresh';
 import adminIatTokens from './admin-iat-tokens';
 import adminPlugins from './admin-plugins';
 import adminIdentityMapping from './admin-identity-mapping';
+import adminConsentPolicies from './admin-consent-policies';
+import adminFlows from './admin-flows';
+import adminScreens from './admin-screens';
 import adminOther from './admin-other';
 
 const en: BaseTranslation = {
@@ -61,6 +65,7 @@ const en: BaseTranslation = {
 	...adminUsers,
 	...adminClients,
 	...adminExternalIdp,
+	...adminDirectoryAuthentication,
 	...adminSaml,
 	...adminDrBackup,
 	...adminScale,
@@ -104,6 +109,9 @@ const en: BaseTranslation = {
 	...adminIatTokens,
 	...adminPlugins,
 	...adminIdentityMapping,
+	...adminConsentPolicies,
+	...adminFlows,
+	...adminScreens,
 	...adminOther
 } satisfies BaseTranslation;
 

@@ -9,6 +9,7 @@
 		description?: string;
 		size?: 'sm' | 'md' | 'lg';
 		id?: string;
+		ariaLabel?: string;
 		onchange?: (checked: boolean) => void;
 	}
 
@@ -19,6 +20,7 @@
 		description,
 		size = 'md',
 		id,
+		ariaLabel,
 		onchange
 	}: Props = $props();
 
@@ -55,8 +57,8 @@
 		lg: 'toggle-switch-lg'
 	};
 
-	const ariaLabel = $derived(
-		label ?? ($switchChecked ? $LL.common_toggle_on() : $LL.common_toggle_off())
+	const resolvedAriaLabel = $derived(
+		ariaLabel ?? label ?? ($switchChecked ? $LL.common_toggle_on() : $LL.common_toggle_off())
 	);
 </script>
 
@@ -78,7 +80,7 @@
 		class:toggle-switch-checked={$switchChecked}
 		{disabled}
 		type="button"
-		aria-label={ariaLabel}
+		aria-label={resolvedAriaLabel}
 	>
 		<span class="toggle-switch-thumb"></span>
 	</button>
@@ -101,7 +103,7 @@
 	.toggle-switch-label {
 		display: block;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 0.125rem;
 		cursor: pointer;
 	}
@@ -109,7 +111,7 @@
 	.toggle-switch-description {
 		margin: 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		line-height: 1.4;
 	}
 
@@ -125,8 +127,8 @@
 		display: inline-flex;
 		flex-shrink: 0;
 		cursor: pointer;
-		border-radius: 9999px;
-		background-color: var(--toggle-bg, #d1d5db);
+		border-radius: var(--toggle-radius, 9999px);
+		background-color: var(--toggle-bg, var(--color-surface-muted));
 		transition:
 			background-color 0.2s ease,
 			box-shadow 0.2s ease;
@@ -135,7 +137,7 @@
 	}
 
 	.toggle-switch:focus-visible {
-		outline: 2px solid var(--primary);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -146,18 +148,19 @@
 
 	/* Checked state */
 	.toggle-switch-checked {
-		background-color: var(--success, #10b981);
+		background-color: var(--toggle-checked-bg, var(--color-success));
 	}
 
 	/* Thumb */
 	.toggle-switch-thumb {
 		position: absolute;
-		background-color: white;
-		border-radius: 50%;
+		background-color: var(--toggle-thumb-bg, var(--color-surface));
+		border-radius: var(--toggle-thumb-radius, 50%);
 		transition: transform 0.2s ease;
-		box-shadow:
-			0 1px 3px 0 rgba(0, 0, 0, 0.1),
-			0 1px 2px -1px rgba(0, 0, 0, 0.1);
+		box-shadow: var(
+			--toggle-thumb-shadow,
+			var(--shadow-xs, 0 1px 3px color-mix(in srgb, var(--color-scrim) 12%, transparent))
+		);
 	}
 
 	/* Size variants */
@@ -209,12 +212,7 @@
 		transform: translateX(26px);
 	}
 
-	/* Dark mode support */
 	:global(.dark) .toggle-switch {
-		--toggle-bg: #4b5563;
-	}
-
-	:global(.dark) .toggle-switch-checked {
-		background-color: var(--success, #10b981);
+		--toggle-bg: var(--color-surface-muted);
 	}
 </style>

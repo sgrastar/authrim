@@ -3,6 +3,7 @@ import {
   assertUserImportJobStorageKeys,
   buildUserImportResultKey,
   buildUserImportUploadKey,
+  normalizeImportRecord,
   parseUserImportCsv,
   sanitizeUserImportFilename,
 } from '../user-import-jobs';
@@ -72,5 +73,21 @@ describe('user-import-jobs helpers', () => {
       name: 'Alice',
       given_name: 'true',
     });
+  });
+
+  it('rejects password credential fields during import normalization', () => {
+    expect(() =>
+      normalizeImportRecord({
+        email: 'alice@example.com',
+        password_hash: 'hash-value',
+      })
+    ).toThrow('Unsupported credential field in user import: password_hash');
+
+    expect(() =>
+      normalizeImportRecord({
+        email: 'alice@example.com',
+        password_reset_secret: 'secret-value',
+      })
+    ).toThrow('Unsupported credential field in user import: password_reset_secret');
   });
 });

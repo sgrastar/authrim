@@ -33,13 +33,16 @@
 	.nav-item {
 		display: flex;
 		align-items: center;
-		gap: 14px;
-		padding: 4px 12px;
-		margin-bottom: 1px;
-		border-radius: var(--radius-md);
-		color: var(--nav-text, rgba(255, 255, 255, 0.6));
-		font-size: 0.9375rem;
-		font-weight: 500;
+		gap: var(--nav-item-gap, 10px);
+		min-height: var(--nav-item-min-height, 32px);
+		padding: var(--nav-item-padding, 7px 20px);
+		margin-bottom: var(--nav-item-gap-y, 1px);
+		border-left: var(--nav-active-border-width, 3px) solid transparent;
+		border-radius: var(--nav-item-radius, 0);
+		color: var(--nav-text, var(--color-text-muted));
+		font-size: var(--nav-item-font-size, 0.9rem);
+		font-weight: var(--nav-item-font-weight, 500);
+		line-height: var(--nav-item-line-height, 1.35);
 		transition: all var(--transition-fast);
 		position: relative;
 		text-decoration: none;
@@ -47,16 +50,14 @@
 	}
 
 	.nav-item :global(.nav-icon) {
-		width: 22px;
-		height: 22px;
-		font-size: 22px;
+		display: var(--nav-icon-display, inline-block);
+		width: var(--nav-icon-size, 18px);
+		height: var(--nav-icon-size, 18px);
+		font-size: var(--nav-icon-size, 18px);
 		flex-shrink: 0;
-		transition: transform var(--transition-fast);
 	}
 
 	.nav-item-text {
-		opacity: 0;
-		transition: opacity var(--transition-base);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -64,27 +65,23 @@
 		min-width: 0;
 	}
 
-	/* Expanded state - show text but keep it single line to avoid layout shift */
-	:global(.nav-floating.expanded) .nav-item-text,
-	:global(.nav-floating.open) .nav-item-text {
-		opacity: 1;
-	}
-
 	/* Hover state */
 	.nav-item:hover:not(.disabled) {
-		background: rgba(255, 255, 255, 0.08);
-		color: var(--nav-text-hover, var(--text-inverse));
-	}
-
-	.nav-item:hover:not(.disabled) :global(.nav-icon) {
-		transform: scale(1.1);
+		background: var(--nav-hover-bg, var(--color-surface-muted));
+		color: var(--nav-text-hover, var(--color-text));
 	}
 
 	/* Active state */
 	.nav-item.active {
 		background: var(--nav-active-bg, var(--gradient-primary));
-		color: var(--text-inverse);
-		box-shadow: 0 4px 16px rgba(51, 51, 51, 0.4);
+		color: var(--nav-active-text, var(--color-accent-contrast));
+		border-left-color: var(--nav-active-border, var(--color-accent));
+		box-shadow: var(--nav-active-shadow, none);
+	}
+
+	.nav-item:focus-visible {
+		outline: var(--nav-focus-outline, 2px solid var(--nav-active-border, var(--color-accent)));
+		outline-offset: var(--nav-focus-outline-offset, -2px);
 	}
 
 	/* Disabled state */
@@ -96,22 +93,17 @@
 
 	/* Badge */
 	.nav-item-badge {
-		position: absolute;
-		top: 8px;
-		right: 8px;
-		background: var(--accent);
-		color: white;
-		font-size: 0.625rem;
-		font-weight: 700;
-		padding: 2px 6px;
-		border-radius: var(--radius-full);
-		min-width: 18px;
+		position: var(--nav-item-badge-position, absolute);
+		top: var(--nav-item-badge-top, 8px);
+		right: var(--nav-item-badge-right, 8px);
+		margin-left: var(--nav-item-badge-margin-left, 0);
+		background: var(--nav-item-badge-bg, var(--color-accent));
+		color: var(--nav-item-badge-color, var(--color-accent-contrast));
+		font-size: var(--nav-item-badge-font-size, 0.625rem);
+		font-weight: var(--nav-item-badge-font-weight, 700);
+		padding: var(--nav-item-badge-padding, 2px 6px);
+		border-radius: var(--nav-item-badge-radius, var(--radius-full));
+		min-width: var(--nav-item-badge-min-width, 18px);
 		text-align: center;
-	}
-
-	:global(.nav-floating.expanded) .nav-item-badge,
-	:global(.nav-floating.open) .nav-item-badge {
-		position: static;
-		margin-left: auto;
 	}
 </style>

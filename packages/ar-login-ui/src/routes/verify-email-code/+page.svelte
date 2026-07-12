@@ -1,13 +1,19 @@
 <script lang="ts">
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
+	import {
+		flowRuntimeAPI,
+		type FlowRuntimeStartResponse,
+		type FlowRuntimeStep
+	} from '$lib/api/flow-runtime';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
-	import { brandingStore } from '$lib/stores/branding.svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { auth } from '$lib/stores/auth';
-	import { isValidRedirectUrl } from '$lib/utils/url-validation';
-	import { createPinInput, melt } from '@melt-ui/svelte';
+	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import {
@@ -17,6 +23,12 @@
 		getLoginUiSessionItem,
 		removeLoginUiSessionItems
 	} from '$lib/authrim/storage-keys';
+	import {
+		consumeFlowRuntimeState,
+		persistFlowRuntimeState
+	} from '$lib/authrim/flow-runtime-state';
+
+	const { brandingStore } = useLoginUIStores();
 
 	let email = $state('');
 	let inviteToken = $state('');
@@ -24,13 +36,18 @@
 	let samlRequestId = $state('');
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
+	let accountReturn = $state('');
+	let runtimeInteractionId = $state('');
+	let runtimeFlowKind = $state<'login' | 'registration'>('login');
 	let error = $state('');
 	let success = $state('');
+	let resendNotice = $state('');
 	let loading = $state(false);
 	let resendLoading = $state(false);
 	let countdown = $state(60);
 	let canResend = $state(false);
 	let intervalId: number | null = null;
+	let code = $state('');
 
 	function getApiErrorMessage(apiError: Parameters<typeof messageForApiError>[0]): string {
 		return messageForApiError(apiError, {
@@ -63,20 +80,9 @@
 		}
 	}
 
-	// Melt UI Pin Input - 6 digits
-	const {
-		elements: { root, input, hiddenInput },
-		states: { value }
-	} = createPinInput({
-		placeholder: '0',
-		type: 'text',
-		defaultValue: []
-	});
-
 	// Watch for PIN input value changes and auto-submit when complete
 	$effect(() => {
-		const code = $value.join('');
-		if (code.length === 6 && !loading && !success) {
+		if (code.length === 6 && !loading && !resendLoading && !success) {
 			handleVerify(code);
 		}
 	});
@@ -89,6 +95,10 @@
 		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
 		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = $page.url.searchParams.get('return_to') || '';
+		accountReturn = $page.url.searchParams.get('account_return') || '';
+		runtimeInteractionId = $page.url.searchParams.get('runtime_interaction_id') || '';
+		runtimeFlowKind =
+			$page.url.searchParams.get('runtime_flow_kind') === 'registration' ? 'registration' : 'login';
 
 		// If no email, redirect to login
 		if (!email) {
@@ -127,11 +137,11 @@
 		}, 1000);
 	}
 
-	async function handleVerify(code?: string) {
+	async function handleVerify(codeValue?: string) {
 		// Prevent concurrent submissions (race condition: auto-verify + button click)
 		if (loading) return;
 
-		const verifyCode = code || $value.join('');
+		const verifyCode = codeValue || code;
 
 		// Validate code is 6 digits
 		if (!/^\d{6}$/.test(verifyCode)) {
@@ -146,7 +156,8 @@
 			const { data: verifyData, error: apiError } = await emailCodeAPI.verify({
 				code: verifyCode,
 				email,
-				authorizationChallengeId: authorizationChallengeId || undefined
+				authorizationChallengeId: authorizationChallengeId || undefined,
+				deferAuthorizationContinuation: Boolean(runtimeInteractionId)
 			});
 
 			if (apiError) {
@@ -154,7 +165,7 @@
 				// leaking session state information (e.g., session_mismatch)
 				error = getApiErrorMessage(apiError);
 				// Clear the input on error
-				value.set([]);
+				code = '';
 				return;
 			}
 
@@ -172,19 +183,28 @@
 			// Restore authenticated state from the HttpOnly managed session cookie.
 			await auth.refreshFromSession();
 
+			const postVerifyRedirect = await resolveRuntimePostEmailRedirect(verifyData?.redirect_url);
+
 			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
-				window.location.href = buildPostAuthRedirect(verifyData?.redirect_url);
+				window.location.href = postVerifyRedirect;
 			}, 2000);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
-			value.set([]);
+			code = '';
 		} finally {
 			loading = false;
 		}
 	}
 
-	function buildPostAuthRedirect(redirectUrl?: string): string {
+	async function resolveAccountReturnRedirect(): Promise<string | null> {
+		if (!accountReturn) return null;
+		const result = await accountAPI.consumeAccountReturn(accountReturn);
+		const redirectUrl = result.data?.redirect_url;
+		return redirectUrl && isValidReturnUrl(redirectUrl) ? redirectUrl : null;
+	}
+
+	async function buildPostAuthRedirect(redirectUrl?: string): Promise<string> {
 		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
 			const params = new URLSearchParams({
 				saml_request_id: samlRequestId,
@@ -194,6 +214,15 @@
 			return `/saml/idp/sso?${params.toString()}`;
 		}
 
+		const accountReturnRedirect = await resolveAccountReturnRedirect();
+		if (accountReturnRedirect) {
+			return accountReturnRedirect;
+		}
+
+		if (returnTo && isValidReturnUrl(returnTo)) {
+			return returnTo;
+		}
+
 		if (redirectUrl && isValidRedirectUrl(redirectUrl)) {
 			return redirectUrl;
 		}
@@ -201,15 +230,105 @@
 		return '/';
 	}
 
+	function getRuntimeCurrentStep(flow: FlowRuntimeStartResponse): FlowRuntimeStep | null {
+		const currentStepId = flow.interaction.current_step_id;
+		if (!currentStepId) return null;
+		return flow.contract.ui.steps.find((step) => step.id === currentStepId) ?? null;
+	}
+
+	function getRuntimeResumePath(): string {
+		return runtimeFlowKind === 'registration' ? '/signup' : '/login';
+	}
+
+	async function resolveRuntimePostEmailRedirect(redirectUrl?: string): Promise<string> {
+		const postAuthRedirect = await buildPostAuthRedirect(redirectUrl);
+		if (!runtimeInteractionId) {
+			return postAuthRedirect;
+		}
+
+		const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+		if (!storedRuntime) {
+			throw new Error($LL.error_invalid_request());
+		}
+
+		const { data: resumedFlow, error: resumeError } = await flowRuntimeAPI.start({
+			resume_interaction_id: storedRuntime.interaction_id,
+			contract_hash: storedRuntime.contract_hash,
+			signature: storedRuntime.signature
+		});
+		if (resumeError || !resumedFlow) {
+			throw new Error(resumeError?.error_description || $LL.error_invalid_request());
+		}
+
+		let flow: FlowRuntimeStartResponse = resumedFlow;
+		let guard = 0;
+		while (guard < 10) {
+			guard += 1;
+			if (flow.interaction.state === 'completed') {
+				consumeFlowRuntimeState(flow.interaction.id);
+				return postAuthRedirect;
+			}
+
+			const step = getRuntimeCurrentStep(flow);
+			if (!step) {
+				throw new Error($LL.error_invalid_request());
+			}
+
+			if (step.render !== false && step.component !== 'email_verification') {
+				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
+					throw new Error($LL.error_invalid_request());
+				}
+				return `${getRuntimeResumePath()}?runtime_interaction_id=${encodeURIComponent(
+					flow.interaction.id
+				)}`;
+			}
+
+			const { data: submittedFlow, error: submitError } = await flowRuntimeAPI.submit(
+				flow.interaction.id,
+				{
+					step_id: step.id,
+					node_id: step.source_node_id,
+					selected_handle: step.component === 'email_verification' ? 'verified' : undefined,
+					contract_hash: flow.contract_hash,
+					signature: flow.signature
+				}
+			);
+			if (submitError || !submittedFlow) {
+				throw new Error(submitError?.error_description || $LL.error_invalid_request());
+			}
+
+			flow = {
+				...flow,
+				interaction: submittedFlow.interaction
+			};
+			if (submittedFlow.completed || flow.interaction.state === 'completed') {
+				consumeFlowRuntimeState(flow.interaction.id);
+				if (
+					submittedFlow.output?.redirect_url &&
+					isValidRedirectUrl(submittedFlow.output.redirect_url)
+				) {
+					return submittedFlow.output.redirect_url;
+				}
+				return postAuthRedirect;
+			}
+		}
+
+		throw new Error($LL.error_invalid_request());
+	}
+
 	async function handleResend() {
 		resendLoading = true;
 		error = '';
+		resendNotice = '';
 
 		try {
 			const { error: apiError } = await emailCodeAPI.send({
 				email,
 				invite_token: inviteToken || undefined,
-				custom_fields: getStoredCustomFields()
+				authorizationChallengeId: authorizationChallengeId || undefined,
+				custom_fields: getStoredCustomFields(),
+				deferAuthorizationContinuation: Boolean(runtimeInteractionId),
+				runtimeInteractionId: runtimeInteractionId || undefined
 			});
 
 			if (apiError) {
@@ -217,18 +336,18 @@
 			}
 
 			// Clear the input
-			value.set([]);
+			code = '';
 
 			// Show success message
-			success = $LL.emailCode_resendSuccess();
+			resendNotice = $LL.emailCode_resendSuccess();
 
 			// Restart countdown timer
 			startCountdown();
 
 			// Clear success message after delay
 			setTimeout(() => {
-				if (success === $LL.emailCode_resendSuccess()) {
-					success = '';
+				if (resendNotice === $LL.emailCode_resendSuccess()) {
+					resendNotice = '';
 				}
 			}, 3000);
 		} catch (err) {
@@ -296,6 +415,17 @@
 				</Alert>
 			{/if}
 
+			{#if resendNotice}
+				<Alert
+					variant="success"
+					dismissible={true}
+					onDismiss={() => (resendNotice = '')}
+					class="mb-4"
+				>
+					{resendNotice}
+				</Alert>
+			{/if}
+
 			<!-- Error Message -->
 			{#if error}
 				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
@@ -312,29 +442,21 @@
 					{$LL.emailCode_codeLabel()}
 				</div>
 
-				<div use:melt={$root} class="flex gap-2 items-center justify-center">
-					{#each Array.from({ length: 6 }, (_, i) => i) as i (i)}
-						<input
-							use:melt={$input()}
-							aria-label={$LL.emailCode_digitLabel({ position: i + 1 })}
-							autocomplete="one-time-code"
-							inputmode="numeric"
-							pattern="[0-9]*"
-							class="auth-pin-cell"
-							maxlength="1"
-							disabled={loading || !!success}
-						/>
-					{/each}
-				</div>
-
-				<input use:melt={$hiddenInput} />
+				<PinCodeInput
+					value={code}
+					length={6}
+					disabled={loading || resendLoading || !!success}
+					label={$LL.emailCode_codeLabel()}
+					digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
+					onValueChange={(nextValue) => (code = nextValue)}
+				/>
 			</div>
 
 			<!-- Verify Button -->
 			<Button
 				variant="primary"
 				class="w-full mb-4"
-				disabled={$value.join('').length !== 6 || loading || !!success}
+				disabled={code.length !== 6 || loading || resendLoading || !!success}
 				{loading}
 				onclick={() => handleVerify()}
 			>
@@ -359,7 +481,7 @@
 
 		<!-- Back to Login Link -->
 		<p class="auth-bottom-link">
-			<a href="/login" class="inline-flex items-center gap-2">
+			<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
 				<span class="i-heroicons-arrow-left h-4 w-4"></span>
 				{$LL.common_backToLogin()}
 			</a>

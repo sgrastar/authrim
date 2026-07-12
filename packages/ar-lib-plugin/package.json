@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-plugin",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,6 +24,11 @@
       "import": "./dist/builtin/index.js",
       "types": "./dist/builtin/index.d.ts",
       "default": "./src/builtin/index.ts"
+    },
+    "./builtin/security": {
+      "import": "./src/builtin/security/index.ts",
+      "types": "./src/builtin/security/index.ts",
+      "default": "./src/builtin/security/index.ts"
     }
   },
   "scripts": {
@@ -37,7 +42,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "4.12.21",
+    "hono": "4.12.29",
     "zod": "^3.24.4",
     "zod-to-json-schema": "^3.24.5"
   },

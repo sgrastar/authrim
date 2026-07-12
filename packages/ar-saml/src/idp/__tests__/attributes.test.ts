@@ -123,101 +123,61 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
-  it('uses attribute release policy when configured', () => {
-    const attributes = buildSAMLAttributesForSP(
-      {
-        id: 'user-123',
-        email: 'user@example.com',
-        name: 'Test User',
-        customClaims: {
-          affiliation: ['member@example.edu', 'staff@example.edu'],
+  it('fails closed when only legacy attribute release policy is configured', () => {
+    expect(() =>
+      buildSAMLAttributesForSP(
+        {
+          id: 'user-123',
+          email: 'user@example.com',
+          name: 'Test User',
         },
-      },
-      {
-        attributeMapping: {
-          email: 'legacy-mail',
-        },
-        attributeReleasePolicy: {
-          attributes: [
-            {
-              name: 'urn:oid:0.9.2342.19200300.100.1.3',
-              friendlyName: 'mail',
-              nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-              source: 'claim',
-              claim: 'email',
-            },
-            {
-              name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9',
-              friendlyName: 'eduPersonScopedAffiliation',
-              source: 'custom_claim',
-              claim: 'affiliation',
-            },
-            {
-              name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.7',
-              friendlyName: 'eduPersonEntitlement',
-              source: 'constant',
-              value: ['urn:mace:dir:entitlement:common-lib-terms'],
-            },
-          ],
-        },
-      }
-    );
-
-    expect(attributes).toEqual([
-      {
-        name: 'urn:oid:0.9.2342.19200300.100.1.3',
-        friendlyName: 'mail',
-        nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-        values: ['user@example.com'],
-      },
-      {
-        name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9',
-        friendlyName: 'eduPersonScopedAffiliation',
-        values: ['member@example.edu', 'staff@example.edu'],
-      },
-      {
-        name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.7',
-        friendlyName: 'eduPersonEntitlement',
-        values: ['urn:mace:dir:entitlement:common-lib-terms'],
-      },
-    ]);
+        {
+          attributeMapping: {
+            email: 'legacy-mail',
+          },
+          attributeReleasePolicy: {
+            attributes: [
+              {
+                name: 'urn:oid:0.9.2342.19200300.100.1.3',
+                friendlyName: 'mail',
+                source: 'claim',
+                claim: 'email',
+              },
+            ],
+          },
+        }
+      )
+    ).toThrow(SAMLIdentityMappingRuntimeError);
   });
 
-  it('carries AttributeValue XML Schema type from release policy rules', () => {
-    const attributes = buildSAMLAttributesForSP(
-      {
-        id: 'user-123',
-        claims: {
-          betaEligible: true,
+  it('does not use release policy value types without identity mapping', () => {
+    expect(() =>
+      buildSAMLAttributesForSP(
+        {
+          id: 'user-123',
+          claims: {
+            betaEligible: true,
+          },
         },
-      },
-      {
-        attributeMapping: {},
-        attributeReleasePolicy: {
-          attributes: [
-            {
-              name: 'https://authrim.example/attr/beta-eligible',
-              friendlyName: 'betaEligible',
-              valueType: 'xs:boolean',
-              source: 'claim',
-              claim: 'claims.betaEligible',
-            },
-          ],
-        },
-      }
-    );
-
-    expect(attributes).toEqual([
-      {
-        name: 'https://authrim.example/attr/beta-eligible',
-        friendlyName: 'betaEligible',
-        valueType: 'xs:boolean',
-        values: ['true'],
-      },
-    ]);
+        {
+          attributeMapping: {},
+          attributeReleasePolicy: {
+            attributes: [
+              {
+                name: 'https://authrim.example/attr/beta-eligible',
+                friendlyName: 'betaEligible',
+                valueType: 'xs:boolean',
+                source: 'claim',
+                claim: 'claims.betaEligible',
+              },
+            ],
+          },
+        }
+      )
+    ).toThrow(SAMLIdentityMappingRuntimeError);
   });
 
-  it('fails with structured details when required policy attributes are missing', () => {
+  it('fails with identity mapping details when required policy attributes are configured alone', () => {
     let error: unknown;
     try {
       buildSAMLAttributesForSP(
@@ -250,99 +210,66 @@ describe('buildSAMLAttributesFromMapping', () => {
       error = caught;
     }
 
-    expect(error).toBeInstanceOf(MissingRequiredSAMLAttributeError);
-    expect((error as MissingRequiredSAMLAttributeError).missingAttributes).toEqual([
+    expect(error).toBeInstanceOf(SAMLIdentityMappingRuntimeError);
+    expect((error as SAMLIdentityMappingRuntimeError).reasons).toEqual([
       {
-        name: 'urn:oid:0.9.2342.19200300.100.1.3',
-        friendlyName: 'mail',
-        source: 'claim',
-        claim: 'email',
-      },
-      {
-        name: 'urn:oid:2.16.840.1.113730.3.1.241',
-        friendlyName: 'displayName',
-        source: 'claim',
-        claim: 'name',
+        category: 'policy',
+        code: 'policy.missing_identity_mapping_binding',
+        severity: 'critical',
       },
     ]);
   });
 
-  it('reports optional missing policy attributes without failing', () => {
-    const result = buildSAMLAttributesForSPWithDiagnostics(
-      {
-        id: 'user-123',
-        email: 'user@example.com',
-      },
-      {
-        attributeMapping: {},
-        attributeReleasePolicy: {
-          attributes: [
-            {
-              name: 'urn:oid:0.9.2342.19200300.100.1.3',
-              friendlyName: 'mail',
-              source: 'claim',
-              claim: 'email',
-            },
-            {
-              name: 'urn:oid:2.16.840.1.113730.3.1.241',
-              friendlyName: 'displayName',
-              source: 'claim',
-              claim: 'name',
-            },
-          ],
+  it('does not report optional legacy policy attributes without identity mapping', () => {
+    expect(() =>
+      buildSAMLAttributesForSPWithDiagnostics(
+        {
+          id: 'user-123',
+          email: 'user@example.com',
         },
-      }
-    );
-
-    expect(result.attributes).toEqual([
-      {
-        name: 'urn:oid:0.9.2342.19200300.100.1.3',
-        friendlyName: 'mail',
-        values: ['user@example.com'],
-      },
-    ]);
-    expect(result.optionalMissingAttributes).toEqual([
-      {
-        name: 'urn:oid:2.16.840.1.113730.3.1.241',
-        friendlyName: 'displayName',
-        source: 'claim',
-        claim: 'name',
-      },
-    ]);
+        {
+          attributeMapping: {},
+          attributeReleasePolicy: {
+            attributes: [
+              {
+                name: 'urn:oid:0.9.2342.19200300.100.1.3',
+                friendlyName: 'mail',
+                source: 'claim',
+                claim: 'email',
+              },
+            ],
+          },
+        }
+      )
+    ).toThrow(SAMLIdentityMappingRuntimeError);
   });
 
-  it('computes eduPersonScopedAffiliation when the direct custom claim is missing', () => {
-    const attributes = buildSAMLAttributesForSP(
-      {
-        id: 'user-123',
-        customClaims: {
-          affiliation: ['member', 'staff'],
-          institutionScope: 'example.edu',
+  it('does not compute legacy policy attributes without identity mapping', () => {
+    expect(() =>
+      buildSAMLAttributesForSP(
+        {
+          id: 'user-123',
+          customClaims: {
+            affiliation: ['member', 'staff'],
+            institutionScope: 'example.edu',
+          },
         },
-      },
-      {
-        attributeMapping: {},
-        attributeReleasePolicy: {
-          attributes: [
-            {
-              name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9',
-              friendlyName: 'eduPersonScopedAffiliation',
-              source: 'computed',
-              computed: 'eduPersonScopedAffiliation',
-              claim: 'eduPersonScopedAffiliation',
-            },
-          ],
-        },
-      }
-    );
-
-    expect(attributes).toEqual([
-      {
-        name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9',
-        friendlyName: 'eduPersonScopedAffiliation',
-        values: ['member@example.edu', 'staff@example.edu'],
-      },
-    ]);
+        {
+          attributeMapping: {},
+          attributeReleasePolicy: {
+            attributes: [
+              {
+                name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9',
+                friendlyName: 'eduPersonScopedAffiliation',
+                source: 'computed',
+                computed: 'eduPersonScopedAffiliation',
+                claim: 'eduPersonScopedAffiliation',
+              },
+            ],
+          },
+        }
+      )
+    ).toThrow(SAMLIdentityMappingRuntimeError);
   });
 
   it('uses field mapping output before legacy SAML release paths', () => {
@@ -448,6 +375,42 @@ describe('buildSAMLAttributesFromMapping', () => {
         claim: 'urn:oid:0.9.2342.19200300.100.1.3',
       },
     ]);
+  });
+
+  it('omits optional mail attributes for users without an email address', () => {
+    const result = buildSAMLAttributesForSPWithDiagnostics(
+      {
+        id: 'user-without-email',
+      },
+      {
+        attributeMapping: {},
+        identityMapping: {
+          catalog: identityMappingSamlCatalog({ mailRequired: false }),
+          edges: [
+            {
+              id: 'edge.email.saml-mail',
+              sourceRef: {
+                side: 'source',
+                namespace: 'authrim.profile',
+                path: 'email',
+                catalogEntryId: 'field.profile.email',
+              },
+              targetRef: {
+                side: 'destination',
+                namespace: 'saml.attribute',
+                path: 'urn:oid:0.9.2342.19200300.100.1.3',
+                catalogEntryId: 'field.saml.mail',
+              },
+            },
+          ],
+        },
+      }
+    );
+
+    expect(result).toEqual({
+      attributes: [],
+      optionalMissingAttributes: [],
+    });
   });
 
   it('selects the SAML field mapping set binding by IdP role and SP entityID', () => {

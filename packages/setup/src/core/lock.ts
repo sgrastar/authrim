@@ -19,6 +19,8 @@ import {
   type EnvironmentPaths,
   type LegacyPaths,
 } from './paths.js';
+import { D1_DATABASES, KV_NAMESPACES, getD1DatabaseName, getKVNamespaceName } from './naming.js';
+import { isTenantDatabaseBinding } from './tenant-database.js';
 
 // =============================================================================
 // Schema
@@ -56,6 +58,18 @@ export type AuthrimLock = z.infer<typeof AuthrimLockSchema>;
 export type ResourceEntry = z.infer<typeof ResourceEntrySchema>;
 export type KVResourceEntry = z.infer<typeof KVResourceEntrySchema>;
 export type WorkerEntry = z.infer<typeof WorkerEntrySchema>;
+
+export interface SharedD1LockReconciliationResult {
+  lock: AuthrimLock;
+  updatedBindings: string[];
+  missingBindings: Array<{ binding: string; name: string }>;
+}
+
+export interface SharedKVLockReconciliationResult {
+  lock: AuthrimLock;
+  updatedBindings: string[];
+  missingBindings: Array<{ binding: string; name: string }>;
+}
 
 // =============================================================================
 // Lock File Operations
@@ -302,6 +316,110 @@ export async function loadLockFileAuto(
   const legacyPath = getLegacyPaths(baseDir, env).lock;
   const lock = await loadLockFile({ path: legacyPath });
   return { lock, path: legacyPath, type: 'legacy' };
+}
+
+/**
+ * Refresh shared and generated tenant D1 lock entries from Cloudflare's current database list.
+ *
+ * Restored or copied lock files can retain UUIDs for databases that were
+ * recreated under the same canonical name. Wrangler requires the live UUID,
+ * so deployment reconciles these three shared bindings before generating its
+ * worker configurations. Generated tenant bindings are reconciled by their
+ * recorded canonical database name because they are also emitted into Worker
+ * configuration by ID.
+ */
+export function reconcileSharedD1ResourcesInLock(
+  lock: AuthrimLock,
+  env: string,
+  databases: Array<{ name: string; uuid: string }>
+): SharedD1LockReconciliationResult {
+  const databasesByName = new Map(databases.map((database) => [database.name, database]));
+  const nextD1 = { ...lock.d1 };
+  const updatedBindings: string[] = [];
+  const missingBindings: Array<{ binding: string; name: string }> = [];
+  const sharedBindings = new Set<string>(D1_DATABASES.map((database) => database.binding));
+
+  for (const database of D1_DATABASES) {
+    const expectedName = getD1DatabaseName(env, database.dbType);
+    const liveDatabase = databasesByName.get(expectedName);
+    if (!liveDatabase) {
+      missingBindings.push({ binding: database.binding, name: expectedName });
+      continue;
+    }
+
+    const lockedDatabase = nextD1[database.binding];
+    if (lockedDatabase?.name === liveDatabase.name && lockedDatabase.id === liveDatabase.uuid) {
+      continue;
+    }
+
+    nextD1[database.binding] = {
+      name: liveDatabase.name,
+      id: liveDatabase.uuid,
+    };
+    updatedBindings.push(database.binding);
+  }
+
+  for (const [binding, lockedDatabase] of Object.entries(nextD1)) {
+    if (sharedBindings.has(binding)) continue;
+    if (!isTenantDatabaseBinding(binding)) continue;
+
+    const liveDatabase = databasesByName.get(lockedDatabase.name);
+    if (!liveDatabase) {
+      missingBindings.push({ binding, name: lockedDatabase.name });
+      continue;
+    }
+    if (lockedDatabase.id === liveDatabase.uuid) continue;
+
+    nextD1[binding] = {
+      name: liveDatabase.name,
+      id: liveDatabase.uuid,
+    };
+    updatedBindings.push(binding);
+  }
+
+  return {
+    lock: updatedBindings.length > 0 ? { ...lock, d1: nextD1 } : lock,
+    updatedBindings,
+    missingBindings,
+  };
+}
+
+/** Refresh every canonical KV binding from Cloudflare's current namespace list. */
+export function reconcileSharedKVResourcesInLock(
+  lock: AuthrimLock,
+  env: string,
+  namespaces: Array<{ title: string; id: string }>
+): SharedKVLockReconciliationResult {
+  const namespacesByTitle = new Map(namespaces.map((namespace) => [namespace.title, namespace]));
+  const nextKV = { ...lock.kv };
+  const updatedBindings: string[] = [];
+  const missingBindings: Array<{ binding: string; name: string }> = [];
+
+  for (const binding of KV_NAMESPACES) {
+    const expectedName = getKVNamespaceName(env, binding);
+    const liveNamespace = namespacesByTitle.get(expectedName);
+    if (!liveNamespace) {
+      missingBindings.push({ binding, name: expectedName });
+      continue;
+    }
+
+    const lockedNamespace = nextKV[binding];
+    if (lockedNamespace?.name === liveNamespace.title && lockedNamespace.id === liveNamespace.id) {
+      continue;
+    }
+
+    nextKV[binding] = {
+      name: liveNamespace.title,
+      id: liveNamespace.id,
+    };
+    updatedBindings.push(binding);
+  }
+
+  return {
+    lock: updatedBindings.length > 0 ? { ...lock, kv: nextKV } : lock,
+    updatedBindings,
+    missingBindings,
+  };
 }
 
 /**

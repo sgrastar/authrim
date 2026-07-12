@@ -21,6 +21,11 @@ export interface ConsentStatement {
 	processing_purpose?: string;
 	display_order: number;
 	is_active: number;
+	record_retention_days?: number | null;
+	withdrawal_allowed?: number | boolean;
+	withdrawal_impact?: string | null;
+	reconsent_on_version_change?: number | boolean;
+	reconsent_interval_days?: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -32,6 +37,7 @@ export interface ConsentStatementVersion {
 	version: string;
 	content_type: string;
 	effective_at: number;
+	effective_until?: number | null;
 	content_hash?: string;
 	is_current: number;
 	status: string;
@@ -46,6 +52,8 @@ export interface ConsentStatementLocalization {
 	language: string;
 	title: string;
 	description: string;
+	processing_purpose?: string | null;
+	withdrawal_impact?: string | null;
 	document_url?: string;
 	inline_content?: string;
 	created_at: number;
@@ -133,6 +141,13 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
 	return response.json();
 }
 
+function unwrapResource<T>(response: T | Record<string, unknown>, key: string): T {
+	if (response && typeof response === 'object' && key in response) {
+		return (response as Record<string, unknown>)[key] as T;
+	}
+	return response as T;
+}
+
 // ---------------------------------------------------------------------------
 // Consent Statements CRUD
 // ---------------------------------------------------------------------------
@@ -150,15 +165,27 @@ export const adminConsentStatementsAPI = {
 		legal_basis?: string;
 		processing_purpose?: string;
 		display_order?: number;
+		record_retention_days?: number | null;
+		withdrawal_allowed?: boolean;
+		withdrawal_impact?: string | null;
+		reconsent_on_version_change?: boolean;
+		reconsent_interval_days?: number | null;
 	}): Promise<{ statement: ConsentStatement }> {
-		return apiRequest('/api/admin/consent-statements', {
-			method: 'POST',
-			body: JSON.stringify(data)
-		});
+		const response = await apiRequest<ConsentStatement | { statement: ConsentStatement }>(
+			'/api/admin/consent-statements',
+			{
+				method: 'POST',
+				body: JSON.stringify(data)
+			}
+		);
+		return { statement: unwrapResource<ConsentStatement>(response, 'statement') };
 	},
 
 	async getStatement(id: string): Promise<{ statement: ConsentStatement }> {
-		return apiRequest(`/api/admin/consent-statements/${encodeURIComponent(id)}`);
+		const response = await apiRequest<ConsentStatement | { statement: ConsentStatement }>(
+			`/api/admin/consent-statements/${encodeURIComponent(id)}`
+		);
+		return { statement: unwrapResource<ConsentStatement>(response, 'statement') };
 	},
 
 	async updateStatement(
@@ -169,13 +196,22 @@ export const adminConsentStatementsAPI = {
 			legal_basis?: string;
 			processing_purpose?: string;
 			display_order?: number;
-			is_active?: number;
+			is_active?: number | boolean;
+			record_retention_days?: number | null;
+			withdrawal_allowed?: boolean;
+			withdrawal_impact?: string | null;
+			reconsent_on_version_change?: boolean;
+			reconsent_interval_days?: number | null;
 		}
 	): Promise<{ statement: ConsentStatement }> {
-		return apiRequest(`/api/admin/consent-statements/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			body: JSON.stringify(data)
-		});
+		const response = await apiRequest<ConsentStatement | { statement: ConsentStatement }>(
+			`/api/admin/consent-statements/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				body: JSON.stringify(data)
+			}
+		);
+		return { statement: unwrapResource<ConsentStatement>(response, 'statement') };
 	},
 
 	async deleteStatement(id: string): Promise<void> {
@@ -196,21 +232,28 @@ export const adminConsentStatementsAPI = {
 			version: string;
 			content_type?: string;
 			effective_at: number;
+			effective_until?: number | null;
 		}
 	): Promise<{ version: ConsentStatementVersion }> {
-		return apiRequest(`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions`, {
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions`, {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
+		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
 	},
 
 	async getVersion(
 		statementId: string,
 		versionId: string
 	): Promise<{ version: ConsentStatementVersion }> {
-		return apiRequest(
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}`
 		);
+		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
 	},
 
 	async updateVersion(
@@ -220,25 +263,32 @@ export const adminConsentStatementsAPI = {
 			version?: string;
 			content_type?: string;
 			effective_at?: number;
+			effective_until?: number | null;
 		}
 	): Promise<{ version: ConsentStatementVersion }> {
-		return apiRequest(
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}`,
 			{
 				method: 'PUT',
 				body: JSON.stringify(data)
 			}
 		);
+		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
 	},
 
 	async activateVersion(
 		statementId: string,
 		versionId: string
 	): Promise<{ version: ConsentStatementVersion }> {
-		return apiRequest(
+		const response = await apiRequest<
+			ConsentStatementVersion | { version: ConsentStatementVersion }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}/activate`,
 			{ method: 'POST' }
 		);
+		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
 	},
 
 	async deleteVersion(statementId: string, versionId: string): Promise<void> {
@@ -266,17 +316,22 @@ export const adminConsentStatementsAPI = {
 		data: {
 			title: string;
 			description: string;
+			processing_purpose?: string;
+			withdrawal_impact?: string;
 			document_url?: string;
 			inline_content?: string;
 		}
 	): Promise<{ localization: ConsentStatementLocalization }> {
-		return apiRequest(
+		const response = await apiRequest<
+			ConsentStatementLocalization | { localization: ConsentStatementLocalization }
+		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}/localizations/${encodeURIComponent(language)}`,
 			{
 				method: 'PUT',
 				body: JSON.stringify(data)
 			}
 		);
+		return { localization: unwrapResource<ConsentStatementLocalization>(response, 'localization') };
 	},
 
 	async deleteLocalization(
@@ -299,19 +354,37 @@ export const adminConsentStatementsAPI = {
 	async upsertRequirement(
 		statementId: string,
 		data: {
-			is_required?: number;
+			is_required?: number | boolean;
 			min_version?: string;
 			enforcement?: string;
-			show_deletion_link?: number;
+			show_deletion_link?: number | boolean;
 			deletion_url?: string;
+			conditional_rules?: unknown;
 			conditional_rules_json?: string;
 			display_order?: number;
 		}
 	): Promise<{ requirement: TenantConsentRequirement }> {
-		return apiRequest(`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`, {
+		const requestBody: Record<string, unknown> = {
+			...data,
+			is_required: data.is_required === undefined ? undefined : Boolean(data.is_required),
+			show_deletion_link:
+				data.show_deletion_link === undefined ? undefined : Boolean(data.show_deletion_link)
+		};
+		if (data.conditional_rules_json && data.conditional_rules === undefined) {
+			try {
+				requestBody.conditional_rules = JSON.parse(data.conditional_rules_json);
+			} catch {
+				requestBody.conditional_rules = undefined;
+			}
+		}
+		delete requestBody.conditional_rules_json;
+		const response = await apiRequest<
+			TenantConsentRequirement | { requirement: TenantConsentRequirement }
+		>(`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`, {
 			method: 'PUT',
-			body: JSON.stringify(data)
+			body: JSON.stringify(requestBody)
 		});
+		return { requirement: unwrapResource<TenantConsentRequirement>(response, 'requirement') };
 	},
 
 	async deleteRequirement(statementId: string): Promise<void> {
@@ -337,13 +410,14 @@ export const adminConsentStatementsAPI = {
 			display_order?: number;
 		}
 	): Promise<{ override: ClientConsentOverride }> {
-		return apiRequest(
+		const response = await apiRequest<ClientConsentOverride | { override: ClientConsentOverride }>(
 			`/api/admin/clients/${encodeURIComponent(clientId)}/consent-overrides/${encodeURIComponent(statementId)}`,
 			{
 				method: 'PUT',
 				body: JSON.stringify(data)
 			}
 		);
+		return { override: unwrapResource<ClientConsentOverride>(response, 'override') };
 	},
 
 	async deleteClientOverride(clientId: string, statementId: string): Promise<void> {

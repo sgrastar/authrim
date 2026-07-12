@@ -119,9 +119,13 @@ describe('generateAllSecrets', () => {
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.crv).toBe('Ed25519');
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.alg).toBe('EdDSA');
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.piiEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.otpHmacSecret).toBeDefined();
     expect(secrets.versionManagerSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
+    expect(secrets.flowRuntimeHmacSecret).toBeDefined();
+    expect(secrets.pluginEncryptionKey).toBeDefined();
     expect(secrets.adminApiSecret).toBeDefined();
     expect(secrets.keyManagerSecret).toBeDefined();
     expect(secrets.setupToken).toBeDefined();
@@ -189,9 +193,12 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'metadata.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'rp_token_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
@@ -292,10 +299,14 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(10);
+    expect(result.createdFiles).toHaveLength(14);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
@@ -370,10 +381,22 @@ describe('generateWranglerSecretCommands', () => {
       'echo -n "$(cat /tmp/keys/object_encryption_root_key.txt)" | wrangler secret put OBJECT_ENCRYPTION_ROOT_KEY --env dev'
     );
     expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/pii_encryption_key.txt)" | wrangler secret put PII_ENCRYPTION_KEY --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/otp_hmac_secret.txt)" | wrangler secret put OTP_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/version_manager_secret.txt)" | wrangler secret put VERSION_MANAGER_SECRET --env dev'
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/logging_cursor_hmac_secret.txt)" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/flow_runtime_hmac_secret.txt)" | wrangler secret put FLOW_RUNTIME_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/plugin_encryption_key.txt)" | wrangler secret put PLUGIN_ENCRYPTION_KEY --env dev'
     );
   });
 });

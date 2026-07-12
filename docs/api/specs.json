@@ -1,0 +1,119 @@
+[
+  {
+    "id": "admin",
+    "title": "Authrim Admin API",
+    "group": "Admin",
+    "description": "Authenticated tenant and platform administration API.",
+    "source": "../../packages/ar-management/openapi/admin.openapi.yaml",
+    "spec": "openapi/admin.openapi.yaml",
+    "html": "generated/admin.html"
+  },
+  {
+    "id": "management-oauth",
+    "title": "Authrim OAuth Management API",
+    "group": "Protocol and Public",
+    "description": "Dynamic client registration, token introspection, revocation, and self-service devices.",
+    "source": "../../packages/ar-management/openapi/oauth-management.openapi.yaml",
+    "spec": "openapi/oauth-management.openapi.yaml",
+    "html": "generated/management-oauth.html"
+  },
+  {
+    "id": "management-scim",
+    "title": "Authrim SCIM API",
+    "group": "Admin",
+    "description": "SCIM 2.0 provisioning endpoints owned by the management Worker.",
+    "source": "../../packages/ar-management/openapi/scim.openapi.yaml",
+    "spec": "openapi/scim.openapi.yaml",
+    "html": "generated/management-scim.html"
+  },
+  {
+    "id": "frontend-auth",
+    "title": "Authrim Frontend Auth Discovery API",
+    "group": "Protocol and Public",
+    "description": "Login UI discovery and grant bootstrap endpoints served by the management Worker.",
+    "source": "../../packages/ar-management/openapi/frontend-auth.openapi.yaml",
+    "spec": "openapi/frontend-auth.openapi.yaml",
+    "html": "generated/frontend-auth.html"
+  },
+  {
+    "id": "user-self-service",
+    "title": "Authrim User Self-Service API",
+    "group": "User and Self-Service",
+    "description": "Authenticated user consent and data export endpoints served by the management Worker.",
+    "source": "../../packages/ar-management/openapi/user-self-service.openapi.yaml",
+    "spec": "openapi/user-self-service.openapi.yaml",
+    "html": "generated/user-self-service.html"
+  },
+  {
+    "id": "auth",
+    "title": "Authrim Auth API",
+    "group": "Protocol and Public",
+    "description": "Authentication, passkey, consent, session, logout, PAR, setup, and flow endpoints.",
+    "source": "../../packages/ar-auth/openapi/auth.openapi.yaml",
+    "spec": "openapi/auth.openapi.yaml",
+    "html": "generated/auth.html"
+  },
+  {
+    "id": "token",
+    "title": "Authrim Token API",
+    "group": "Protocol and Public",
+    "description": "OAuth token endpoint and health probes.",
+    "source": "../../packages/ar-token/openapi/token.openapi.yaml",
+    "spec": "openapi/token.openapi.yaml",
+    "html": "generated/token.html"
+  },
+  {
+    "id": "discovery",
+    "title": "Authrim Discovery API",
+    "group": "Protocol and Public",
+    "description": "OIDC/OAuth discovery, WebFinger, JWKS, and health endpoints.",
+    "source": "../../packages/ar-discovery/openapi/discovery.openapi.yaml",
+    "spec": "openapi/discovery.openapi.yaml",
+    "html": "generated/discovery.html"
+  },
+  {
+    "id": "async",
+    "title": "Authrim Async Authorization API",
+    "group": "Protocol and Public",
+    "description": "Device Authorization Grant and CIBA endpoints.",
+    "source": "../../packages/ar-async/openapi/async.openapi.yaml",
+    "spec": "openapi/async.openapi.yaml",
+    "html": "generated/async.html"
+  },
+  {
+    "id": "userinfo",
+    "title": "Authrim UserInfo API",
+    "group": "User and Self-Service",
+    "description": "OIDC UserInfo and protected customer profile APIs.",
+    "source": "../../packages/ar-userinfo/openapi/userinfo.openapi.yaml",
+    "spec": "openapi/userinfo.openapi.yaml",
+    "html": "generated/userinfo.html"
+  },
+  {
+    "id": "vc",
+    "title": "Authrim Verifiable Credentials API",
+    "group": "Protocol and Public",
+    "description": "OpenID4VP, OpenID4VCI, status-list, and DID endpoints.",
+    "source": "../../packages/ar-vc/openapi/vc.openapi.yaml",
+    "spec": "openapi/vc.openapi.yaml",
+    "html": "generated/vc.html"
+  },
+  {
+    "id": "policy",
+    "title": "Authrim Policy API",
+    "group": "Operations",
+    "description": "Policy, ReBAC, and authorization check endpoints.",
+    "source": "../../packages/ar-policy/openapi/policy.openapi.yaml",
+    "spec": "openapi/policy.openapi.yaml",
+    "html": "generated/policy.html"
+  },
+  {
+    "id": "saml",
+    "title": "Authrim SAML API",
+    "group": "Protocol and Public",
+    "description": "SAML protocol endpoints and SAML Admin JSON endpoints.",
+    "source": "../../packages/ar-saml/openapi/saml.openapi.yaml",
+    "spec": "openapi/saml.openapi.yaml",
+    "html": "generated/saml.html"
+  }
+]

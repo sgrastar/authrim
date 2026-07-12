@@ -261,7 +261,7 @@ async function resolveLegacyAuditLogPolicy(
     }
 
     return {
-      writeLegacyD1: primary.type === 'd1',
+      writeLegacyD1: primary.type === 'd1' && primary.dataset !== 'event_log',
       backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
     };
   } catch (error) {

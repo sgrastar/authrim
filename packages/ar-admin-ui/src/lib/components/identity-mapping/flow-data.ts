@@ -7,6 +7,7 @@ import type {
 	IdentityMappingSchemaReadinessRow,
 	IdentityMappingSourceProfileSummary
 } from '$lib/api/admin-identity-mapping';
+import type { CustomClaimSchema } from '$lib/api/admin-custom-claims';
 import type {
 	MappingAdapter,
 	MappingEdge,
@@ -19,6 +20,7 @@ import type {
 interface IdentityMappingFlowInput {
 	policies: IdentityMappingFieldMappingSetSummary[];
 	catalogs: IdentityMappingCatalogSummary[];
+	identitySchemas?: CustomClaimSchema[];
 	sourceProfiles: IdentityMappingSourceProfileSummary[];
 	destinationProfiles: IdentityMappingDestinationProfileSummary[];
 	protocolSchemas: IdentityMappingProtocolSchemaSummary[];
@@ -51,58 +53,47 @@ interface ExtractedField {
 	nullable?: boolean | null;
 }
 
-const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM'];
-const defaultCanonicalTargetDefinitions = [
-	['field.canonical.subject_id', 'Subject Identifier', 'string', 'single', 'internal'],
-	['field.canonical.name', 'Full Name', 'string', 'single', 'pii'],
-	['field.canonical.given_name', 'First Name', 'string', 'single', 'pii'],
-	['field.canonical.family_name', 'Last Name', 'string', 'single', 'pii'],
-	['field.canonical.middle_name', 'Middle Name', 'string', 'single', 'pii'],
-	['field.canonical.nickname', 'Nickname', 'string', 'single', 'pii'],
-	['field.canonical.preferred_username', 'Preferred Username', 'string', 'single', 'internal'],
-	['field.canonical.profile', 'Profile URL', 'string', 'single', 'internal'],
-	['field.canonical.picture', 'Picture URL', 'string', 'single', 'pii'],
-	['field.canonical.website', 'Website', 'string', 'single', 'internal'],
-	['field.canonical.birthdate', 'Birthdate', 'date', 'single', 'pii'],
-	['field.canonical.zoneinfo', 'Time Zone', 'string', 'single', 'internal'],
-	['field.canonical.locale', 'Locale', 'string', 'single', 'internal'],
-	['field.canonical.updated_at', 'Last Updated', 'number', 'single', 'internal'],
-	['field.canonical.email', 'Email', 'string', 'single', 'pii'],
-	['field.canonical.email_verified', 'Email Verified', 'boolean', 'single', 'internal'],
-	['field.canonical.phone_number', 'Phone Number', 'string', 'single', 'pii'],
-	[
-		'field.canonical.phone_number_verified',
-		'Phone Number Verified',
-		'boolean',
-		'single',
-		'internal'
-	],
-	['field.canonical.address', 'Address', 'json', 'multi', 'pii'],
-	['field.canonical.address_formatted', 'Address (Formatted)', 'string', 'single', 'pii'],
-	['field.canonical.address_street_address', 'Street Address', 'string', 'single', 'pii'],
-	['field.canonical.address_locality', 'City / Locality', 'string', 'single', 'pii'],
-	['field.canonical.address_region', 'Region', 'string', 'single', 'pii'],
-	['field.canonical.address_postal_code', 'Postal Code', 'string', 'single', 'pii'],
-	['field.canonical.address_country', 'Country', 'string', 'single', 'pii'],
-	['field.canonical.group_membership', 'Group Membership', 'array', 'multi', 'internal'],
-	['field.canonical.entitlements', 'Entitlements', 'array', 'multi', 'internal'],
-	['field.canonical.linked_identity', 'Linked Identity', 'string', 'single', 'internal'],
-	['field.canonical.lifecycle_state', 'Lifecycle State', 'string', 'single', 'internal']
-] as const;
+const defaultAdapters: MappingAdapter[] = ['SAML', 'CSV', 'OIDC', 'SCIM', 'DIRECTORY'];
 
-const defaultCanonicalTargets: MappingNode[] = defaultCanonicalTargetDefinitions.map(
-	([stableFieldId, label, valueType, cardinality, classification]) =>
-		canonicalTargetNode({
-			id: stableFieldId,
-			stableFieldId,
-			path: stableFieldId.replace(/^field\.canonical\./, ''),
-			label,
-			valueType,
-			cardinality,
-			classification,
-			storageTarget: friendlyStorageTarget(stableFieldId, valueType)
-		})
-);
+const systemIdentityFields = [
+	{
+		id: 'system.identity.account_uuid',
+		path: 'account_id',
+		label: 'UUID',
+		valueType: 'identifier',
+		examples: ['018f4d65-6a49-7d3a-9b83-b2c3f4d5e6a7'],
+		note: 'Canonical identity account UUID.',
+		uiFieldOrder: 20
+	},
+	{
+		id: 'system.identity.lifecycle_state',
+		path: 'lifecycle_state',
+		label: 'Lifecycle State',
+		valueType: 'string',
+		allowedValues: ['active', 'suspended', 'deleted'],
+		examples: ['active'],
+		note: 'Current lifecycle state of the identity account.',
+		uiFieldOrder: 40
+	},
+	{
+		id: 'system.identity.created_at',
+		path: 'created_at',
+		label: 'Created At',
+		valueType: 'datetime',
+		examples: ['2026-01-15T09:30:00Z'],
+		note: 'Account creation timestamp.',
+		uiFieldOrder: 50
+	},
+	{
+		id: 'system.identity.updated_at',
+		path: 'updated_at',
+		label: 'Updated At',
+		valueType: 'datetime',
+		examples: ['2026-03-20T14:45:00Z'],
+		note: 'Account update timestamp.',
+		uiFieldOrder: 60
+	}
+] as const;
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
 	const sourceProfiles = [
@@ -116,7 +107,7 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		...input.destinationProfiles.map(destinationProfileToProfile),
 		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
 	];
-	const canonicalTargets = buildCanonicalTargets(input.catalogs);
+	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? []);
 
 	if (
 		sourceProfiles.length === 0 &&
@@ -124,6 +115,15 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 		destinationProfiles.length === 0
 	) {
 		return [];
+	}
+
+	if (sourceProfiles.length === 0) {
+		const destinationOnlySample = buildDestinationOnlySample(
+			destinationProfiles,
+			canonicalTargets,
+			input.policies.length
+		);
+		return destinationOnlySample ? [destinationOnlySample] : [];
 	}
 
 	return sourceProfiles.map((sourceProfile) =>
@@ -161,6 +161,48 @@ function buildSample(
 		metrics: [
 			`0 / ${sourceNodes.length}`,
 			`${Math.max(1, sourceNodes.length > 0 ? 2 : 1)} schemas`,
+			String(policyCount),
+			canonicalTargets.length > 0 ? `${canonicalTargets.length} targets` : 'no catalog'
+		],
+		nodes,
+		edges: [] satisfies MappingEdge[],
+		rules
+	};
+}
+
+function buildDestinationOnlySample(
+	destinationProfiles: ProfileSchema[],
+	canonicalTargets: MappingNode[],
+	policyCount: number
+): MappingSample | null {
+	const destinationNodes = destinationProfiles.flatMap((profile) =>
+		buildSchemaNodes(profile, 'destination')
+	);
+	if (destinationNodes.length === 0) return null;
+
+	const nodes = [...canonicalTargets, ...destinationNodes];
+	const rules = Object.fromEntries(nodes.map((node) => [node.ruleId, ruleForNode(node)]));
+	const activeDestinationProfile = destinationProfiles.find(
+		(profile) => profile.lifecycleState === 'active'
+	);
+	const displayProfile = activeDestinationProfile ?? destinationProfiles[0];
+	const destinationAdapter =
+		destinationProfiles.find((profile) => profile.adapter === 'OIDC')?.adapter ??
+		displayProfile?.adapter ??
+		'OIDC';
+
+	return {
+		id: 'destination-release-control-plane',
+		title: 'Destination release',
+		snapshot: displayProfile?.versionLabel ?? 'current',
+		status: displayProfile?.lifecycleState ?? 'active',
+		reviewGates: `${destinationNodes.length} destination fields`,
+		sourceAdapter: 'CSV',
+		destinationAdapter,
+		activeRuleId: nodes[0]?.ruleId ?? 'empty-flow',
+		metrics: [
+			`0 / ${destinationNodes.length}`,
+			`${Math.max(1, destinationProfiles.length)} schemas`,
 			String(policyCount),
 			canonicalTargets.length > 0 ? `${canonicalTargets.length} targets` : 'no catalog'
 		],
@@ -241,55 +283,99 @@ function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): 
 	};
 }
 
-function buildCanonicalTargets(catalogs: IdentityMappingCatalogSummary[]): MappingNode[] {
-	const activeCatalog =
-		catalogs.find((catalog) => catalog.lifecycleState === 'active') ?? catalogs[0];
-	const catalogEntries = activeCatalog?.entries ?? [];
-	if (catalogEntries.length > 0) {
-		return catalogEntries
-			.filter(
-				(entry) =>
-					entry.targetTaxonomy !== 'destination-only' && entry.targetTaxonomy !== 'review-only'
-			)
-			.sort(
-				(a, b) =>
-					canonicalTargetSortPriority(a.stableFieldId) -
-						canonicalTargetSortPriority(b.stableFieldId) ||
-					(a.uiGroupOrder ?? 0) - (b.uiGroupOrder ?? 0) ||
-					(a.uiFieldOrder ?? 0) - (b.uiFieldOrder ?? 0) ||
-					a.stableFieldId.localeCompare(b.stableFieldId)
-			)
-			.map((entry) =>
-				canonicalTargetNode({
-					id: entry.id,
-					stableFieldId: entry.stableFieldId,
-					path: entry.path,
-					label: labelForCatalogEntry(entry.path),
-					valueType: entry.valueType,
-					cardinality: entry.cardinality,
-					classification: entry.classification,
-					storageTarget: friendlyStorageTarget(entry.stableFieldId, entry.valueType),
-					uiGroupKey: entry.uiGroupKey,
-					uiGroupLabel: entry.uiGroupLabel,
-					uiGroupOrder: entry.uiGroupOrder,
-					uiFieldOrder: entry.uiFieldOrder,
-					examples: entry.examples,
-					note: entry.note,
-					allowedValues: entry.allowedValues,
-					valueMultiplicity: entry.valueMultiplicity,
-					nullable: entry.nullable,
-					required: entry.required
-				})
-			);
-	}
-
-	return defaultCanonicalTargets.map((target) => ({
-		...target
-	}));
+function buildIdentityTargets(identitySchemas: CustomClaimSchema[]): MappingNode[] {
+	const schemaTargets = buildCustomClaimTargets(identitySchemas);
+	if (schemaTargets.length === 0) return [];
+	return [...buildSystemIdentityTargets(), ...schemaTargets];
 }
 
-function canonicalTargetSortPriority(stableFieldId: string): number {
-	return stableFieldId === 'field.canonical.subject_id' ? -1 : 0;
+function buildSystemIdentityTargets(): MappingNode[] {
+	return systemIdentityFields.map((field) =>
+		canonicalTargetNode({
+			id: field.id,
+			stableFieldId: field.id,
+			path: field.path,
+			label: field.label,
+			valueType: field.valueType,
+			cardinality: 'single',
+			classification: 'internal',
+			storageTarget: 'System identity',
+			uiGroupKey: 'system',
+			uiGroupLabel: 'System',
+			uiGroupOrder: -100,
+			uiFieldOrder: field.uiFieldOrder,
+			examples: Array.from(field.examples),
+			note: field.note,
+			allowedValues: 'allowedValues' in field ? Array.from(field.allowedValues) : undefined,
+			valueMultiplicity: 'single',
+			nullable: false,
+			required: false
+		})
+	);
+}
+
+function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {
+	return schemas
+		.filter((schema) => schema.is_active !== 0 && schema.operation_status === 'active')
+		.sort(
+			(a, b) =>
+				(a.ui_group_order ?? 0) - (b.ui_group_order ?? 0) ||
+				(a.ui_field_order ?? a.display_order ?? 0) - (b.ui_field_order ?? b.display_order ?? 0) ||
+				a.field_key.localeCompare(b.field_key)
+		)
+		.map((schema) =>
+			canonicalTargetNode({
+				id: schema.id,
+				stableFieldId: `custom-claim.${schema.field_key}`,
+				path: schema.field_key,
+				label: schema.display_label || schema.field_key,
+				valueType: schema.field_type,
+				cardinality: 'single',
+				classification: schema.is_pii ? 'pii' : 'internal',
+				storageTarget: schema.is_pii ? 'PII attribute' : 'Profile attribute',
+				uiGroupKey: schema.ui_group_key ?? 'custom',
+				uiGroupLabel: schema.ui_group_label ?? 'Custom',
+				uiGroupOrder: schema.ui_group_order,
+				uiFieldOrder: schema.ui_field_order ?? schema.display_order,
+				examples: examplesFromCustomClaim(schema),
+				note: schema.description,
+				allowedValues: allowedValuesFromCustomClaim(schema),
+				valueMultiplicity: 'single',
+				nullable: schema.is_required ? false : null,
+				required: Boolean(schema.is_required)
+			})
+		);
+}
+
+function examplesFromCustomClaim(schema: CustomClaimSchema): unknown[] | undefined {
+	const parsed = parseJsonValue(schema.examples_json);
+	const explicit = examplesFromParsedValue(parsed);
+	if (explicit) return explicit;
+	return inferredExamplesForField({
+		key: schema.field_key,
+		label: schema.display_label,
+		type: schema.field_type,
+		allowedValues: allowedValuesFromCustomClaim(schema)
+	});
+}
+
+function allowedValuesFromCustomClaim(schema: CustomClaimSchema): string[] | undefined {
+	if (schema.field_type !== 'enum') return undefined;
+	const validationRules = parseJsonValue(schema.validation_rules);
+	const values = isRecord(validationRules) ? validationRules.enum_values : undefined;
+	if (!Array.isArray(values)) return undefined;
+	const allowedValues = values.map(String).filter(Boolean);
+	return allowedValues.length > 0 ? allowedValues : undefined;
+}
+
+function parseJsonValue(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	if (!value.trim()) return undefined;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return undefined;
+	}
 }
 
 function canonicalTargetNode(input: {
@@ -343,6 +429,7 @@ function canonicalTargetNode(input: {
 
 function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'): MappingNode[] {
 	const fields = extractSchemaFields(profile.schema, profile.source);
+	if (fields.length === 0 && !profile.schema) return [];
 	const extractedFields =
 		fields.length > 0
 			? fields
@@ -412,7 +499,15 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 	if (!Array.isArray(value)) return [];
 	return value.flatMap((item) => {
 		if (typeof item === 'string') {
-			return [{ key: item, label: item, caption: 'schema field', required: required.has(item) }];
+			return [
+				{
+					key: item,
+					label: item,
+					caption: 'schema field',
+					required: required.has(item),
+					examples: inferredExamplesForField({ key: item, label: item })
+				}
+			];
 		}
 		if (!isRecord(item)) return [];
 		const key =
@@ -425,6 +520,7 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 			stringValue(item.stableColumnId);
 		if (!key) return [];
 		const type = stringValue(item.type) ?? stringValue(item.valueType);
+		const allowedValues = allowedValuesFromRecord(item);
 		return [
 			{
 				key,
@@ -433,9 +529,16 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 				type,
 				required: required.has(key) || item.required === true,
 				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`),
-				examples: examplesFromRecord(item),
+				examples:
+					examplesFromRecord(item) ??
+					inferredExamplesForField({
+						key,
+						label: stringValue(item.label),
+						type,
+						allowedValues
+					}),
 				note: noteFromRecord(item),
-				allowedValues: allowedValuesFromRecord(item),
+				allowedValues,
 				valueMultiplicity: valueMultiplicityFromRecord(item),
 				nullable: nullableFromRecord(item)
 			}
@@ -446,36 +549,50 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 function fieldsFromClaims(value: unknown, required: Set<string>): ExtractedField[] {
 	if (Array.isArray(value)) return fieldsFromArray(value, required);
 	if (!isRecord(value)) return [];
-	return Object.entries(value).map(([key, claim]) => ({
-		key,
-		label: key,
-		caption: isRecord(claim) ? (stringValue(claim.description) ?? 'claim') : 'claim',
-		type: isRecord(claim) ? stringValue(claim.type) : undefined,
-		required: required.has(key),
-		privacy: privacyFrom(key),
-		examples: isRecord(claim) ? examplesFromRecord(claim) : undefined,
-		note: isRecord(claim) ? noteFromRecord(claim) : null,
-		allowedValues: isRecord(claim) ? allowedValuesFromRecord(claim) : undefined,
-		valueMultiplicity: isRecord(claim) ? valueMultiplicityFromRecord(claim) : null,
-		nullable: isRecord(claim) ? nullableFromRecord(claim) : null
-	}));
+	return Object.entries(value).map(([key, claim]) => {
+		const record = isRecord(claim) ? claim : null;
+		const type = record ? stringValue(record.type) : undefined;
+		const allowedValues = record ? allowedValuesFromRecord(record) : undefined;
+		return {
+			key,
+			label: key,
+			caption: record ? (stringValue(record.description) ?? 'claim') : 'claim',
+			type,
+			required: required.has(key),
+			privacy: privacyFrom(key),
+			examples:
+				(record ? examplesFromRecord(record) : undefined) ??
+				inferredExamplesForField({ key, type, allowedValues }),
+			note: record ? noteFromRecord(record) : null,
+			allowedValues,
+			valueMultiplicity: record ? valueMultiplicityFromRecord(record) : null,
+			nullable: record ? nullableFromRecord(record) : null
+		};
+	});
 }
 
 function fieldsFromProperties(value: unknown, required: Set<string>): ExtractedField[] {
 	if (!isRecord(value)) return [];
-	return Object.entries(value).map(([key, property]) => ({
-		key,
-		label: key,
-		caption: isRecord(property) ? (stringValue(property.description) ?? 'property') : 'property',
-		type: isRecord(property) ? stringValue(property.type) : undefined,
-		required: required.has(key),
-		privacy: privacyFrom(key),
-		examples: isRecord(property) ? examplesFromRecord(property) : undefined,
-		note: isRecord(property) ? noteFromRecord(property) : null,
-		allowedValues: isRecord(property) ? allowedValuesFromRecord(property) : undefined,
-		valueMultiplicity: isRecord(property) ? valueMultiplicityFromRecord(property) : null,
-		nullable: isRecord(property) ? nullableFromRecord(property) : null
-	}));
+	return Object.entries(value).map(([key, property]) => {
+		const record = isRecord(property) ? property : null;
+		const type = record ? stringValue(record.type) : undefined;
+		const allowedValues = record ? allowedValuesFromRecord(record) : undefined;
+		return {
+			key,
+			label: key,
+			caption: record ? (stringValue(record.description) ?? 'property') : 'property',
+			type,
+			required: required.has(key),
+			privacy: privacyFrom(key),
+			examples:
+				(record ? examplesFromRecord(record) : undefined) ??
+				inferredExamplesForField({ key, type, allowedValues }),
+			note: record ? noteFromRecord(record) : null,
+			allowedValues,
+			valueMultiplicity: record ? valueMultiplicityFromRecord(record) : null,
+			nullable: record ? nullableFromRecord(record) : null
+		};
+	});
 }
 
 function allowedValuesFromRecord(record: Record<string, unknown>): string[] | undefined {
@@ -512,13 +629,109 @@ function nullableFromRecord(record: Record<string, unknown>): boolean | null {
 }
 
 function examplesFromRecord(record: Record<string, unknown>): unknown[] | undefined {
-	for (const key of ['examples', 'sampleValues', 'sample_values', 'samples']) {
+	for (const key of [
+		'examples',
+		'exampleValues',
+		'example_values',
+		'sampleValues',
+		'sample_values',
+		'samples',
+		'values'
+	]) {
 		const value = record[key];
 		if (Array.isArray(value)) return value;
 	}
 	const sampleValue =
-		record.sampleValue ?? record.sample_value ?? record.example ?? record.defaultExample;
+		record.sampleValue ??
+		record.sample_value ??
+		record.example ??
+		record.defaultExample ??
+		record.default_example;
 	return sampleValue === undefined ? undefined : [sampleValue];
+}
+
+function examplesFromParsedValue(value: unknown): unknown[] | undefined {
+	if (Array.isArray(value)) return compactExamples(value);
+	if (isRecord(value)) return compactExamples(examplesFromRecord(value) ?? []);
+	if (value !== undefined && value !== null) return [value];
+	return undefined;
+}
+
+function compactExamples(values: unknown[]): unknown[] | undefined {
+	const compacted = values
+		.flatMap((value) => (Array.isArray(value) ? value : [value]))
+		.filter((value) => value !== undefined && value !== null && String(value).trim() !== '');
+	return compacted.length > 0 ? compacted : undefined;
+}
+
+function inferredExamplesForField(input: {
+	key: string;
+	label?: string | null;
+	type?: string | null;
+	allowedValues?: string[];
+}): unknown[] | undefined {
+	if (input.allowedValues && input.allowedValues.length > 0) {
+		return input.allowedValues.slice(0, 3);
+	}
+
+	const key = input.key.toLowerCase();
+	const label = (input.label ?? '').toLowerCase();
+	const haystack = `${key} ${label}`;
+	const type = displayValueType(input.type ?? undefined);
+
+	if (haystack.includes('email_verified')) return [true];
+	if (haystack.includes('phone_number_verified')) return [false];
+	if (haystack.includes('email') || haystack === 'mail') return ['taro.yamada@example.edu'];
+	if (haystack.includes('phone')) return ['+81-3-1234-5678'];
+	if (haystack.includes('given_name') || haystack.includes('first_name')) return ['Taro'];
+	if (haystack.includes('family_name') || haystack.includes('last_name') || key === 'sn') {
+		return ['Yamada'];
+	}
+	if (haystack.includes('middle_name')) return ['Quincy'];
+	if (haystack.includes('display_name') || haystack.includes('full_name') || key === 'name') {
+		return ['Taro Yamada'];
+	}
+	if (haystack.includes('nickname')) return ['taro', 'yamada_t'];
+	if (haystack.includes('preferred_username') || haystack.includes('username')) {
+		return ['taro.yamada'];
+	}
+	if (haystack.includes('picture') || haystack.includes('avatar')) {
+		return ['https://example.edu/users/taro.yamada/photo.jpg'];
+	}
+	if (haystack.includes('profile')) return ['https://example.edu/users/taro.yamada'];
+	if (haystack.includes('website')) return ['https://example.edu'];
+	if (haystack.includes('gender')) return ['female'];
+	if (haystack.includes('birthdate')) return ['1970-01-01'];
+	if (haystack.includes('zoneinfo') || haystack.includes('time_zone')) return ['Asia/Tokyo'];
+	if (haystack.includes('locale')) return ['ja-JP'];
+	if (haystack.includes('country')) return ['JP'];
+	if (haystack.includes('postal')) return ['100-0001'];
+	if (haystack.includes('locality') || haystack.includes('city')) return ['Tokyo'];
+	if (haystack.includes('region') || haystack.includes('prefecture')) return ['Tokyo'];
+	if (haystack.includes('street')) return ['1-1 Chiyoda'];
+	if (haystack.includes('address')) return ['1-1 Chiyoda, Tokyo, Japan'];
+	if (haystack.includes('organization') || key === 'o') return ['Example University'];
+	if (haystack.includes('department') || haystack.includes('organizational_unit') || key === 'ou') {
+		return ['Library Services'];
+	}
+	if (haystack.includes('group')) return [['students', 'library-users']];
+	if (haystack.includes('entitlement')) return [['urn:example:entitlement:library']];
+	if (haystack.includes('updated_at') || haystack.includes('created_at')) {
+		return ['2026-01-15T09:30:00Z'];
+	}
+	if (haystack.includes('uuid')) return ['018f4d65-6a49-7d3a-9b83-b2c3f4d5e6a7'];
+	if (haystack.includes('subject')) return ['sub_9f8e7d6c5b4a3210'];
+	if (haystack.endsWith(' id') || key === 'id' || key.endsWith('_id')) {
+		return ['usr_01J7Z4W2M8Q8Y9N6T3V2K1A0BC'];
+	}
+
+	if (type === 'Boolean') return [true];
+	if (type === 'Number') return [12345];
+	if (type === 'Date') return ['2026-01-15T09:30:00Z'];
+	if (type === 'Array') return [['value-1', 'value-2']];
+	if (type === 'JSON') return [{ value: 'example' }];
+	if (type === 'String') return ['example'];
+	return undefined;
 }
 
 function noteFromRecord(record: Record<string, unknown>): string | null {
@@ -592,42 +805,6 @@ function displayName(value: string | undefined, fallback: string): string {
 	return value?.trim() || fallback;
 }
 
-function labelForCatalogEntry(path: string): string {
-	const knownLabels: Record<string, string> = {
-		name: 'Full Name',
-		given_name: 'First Name',
-		family_name: 'Last Name',
-		middle_name: 'Middle Name',
-		nickname: 'Nickname',
-		preferred_username: 'Preferred Username',
-		profile: 'Profile URL',
-		picture: 'Picture URL',
-		website: 'Website',
-		birthdate: 'Birthdate',
-		zoneinfo: 'Time Zone',
-		locale: 'Locale',
-		updated_at: 'Last Updated',
-		email: 'Email',
-		email_verified: 'Email Verified',
-		phone_number: 'Phone Number',
-		phone_number_verified: 'Phone Number Verified',
-		address: 'Address',
-		address_formatted: 'Address (Formatted)',
-		address_street_address: 'Street Address',
-		address_locality: 'City / Locality',
-		address_region: 'Region',
-		address_postal_code: 'Postal Code',
-		address_country: 'Country',
-		group_membership: 'Group Membership',
-		entitlements: 'Entitlements',
-		linked_identity: 'Linked Identity',
-		lifecycle_state: 'Lifecycle State',
-		subject_id: 'Subject Identifier'
-	};
-	const key = path.split('.').at(-1) ?? path;
-	return knownLabels[key] ?? titleCase(key);
-}
-
 function displayValueType(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	const normalized = value.toLowerCase();
@@ -643,24 +820,6 @@ function displayValueType(value: string | undefined): string | undefined {
 	if (['array', 'list', 'multi-value', 'multivalue'].includes(normalized)) return 'Array';
 	if (normalized === 'enum') return 'String';
 	return titleCase(value);
-}
-
-function friendlyStorageTarget(stableFieldId: string, valueType: string): string {
-	const normalizedId = stableFieldId.toLowerCase();
-	if (normalizedId.includes('subject_id') || normalizedId.includes('lifecycle_state')) {
-		return 'Account identity';
-	}
-	if (
-		normalizedId.includes('email') ||
-		normalizedId.includes('phone') ||
-		normalizedId.includes('address')
-	) {
-		return 'Contact method';
-	}
-	if (normalizedId.includes('group')) return 'Group assignment';
-	if (normalizedId.includes('entitlement')) return 'Entitlement assignment';
-	if (displayValueType(valueType) === 'JSON') return 'Structured profile attribute';
-	return 'Profile attribute';
 }
 
 function isRequiredCanonicalTarget(stableFieldId: string): boolean {
@@ -687,13 +846,15 @@ function namespaceForProfile(adapter: MappingAdapter): string {
 			return 'saml.attribute';
 		case 'SCIM':
 			return 'scim.attribute';
+		case 'DIRECTORY':
+			return 'directory';
 		case 'CSV':
 			return 'csv.column';
 	}
 }
 
 function isSourceProtocol(protocol: string): boolean {
-	return ['csv', 'scim', 'saml', 'oidc'].includes(protocol.toLowerCase());
+	return ['csv', 'scim', 'saml', 'oidc', 'directory'].includes(protocol.toLowerCase());
 }
 
 function privacyFrom(value: string): MappingNode['privacy'] {

@@ -51,8 +51,32 @@ import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
+import { isTenantScopedAdminPath } from './admin-tenant-access';
 
 const VERSION_MANAGER_ERROR_BODY_MAX_BYTES = 64 * 1024;
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function requestUsesHttp(c: Context<{ Bindings: Env }>): boolean {
+  const requestUrl = new URL(c.req.url);
+  if (requestUrl.protocol === 'http:') {
+    return true;
+  }
+
+  return (c.req.header('x-forwarded-proto') ?? '').toLowerCase() === 'http';
+}
+
+async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: Next) {
+  const requestUrl = new URL(c.req.url);
+  if (!requestUsesHttp(c) || isLoopbackHost(requestUrl.hostname)) {
+    return next();
+  }
+
+  requestUrl.protocol = 'https:';
+  return c.redirect(requestUrl.toString(), 308);
+}
 
 // Import handlers
 import { registerHandler } from './register';
@@ -93,6 +117,18 @@ import {
   adminUserConsentHistoryHandler,
   adminUserConsentWithdrawHandler,
 } from './admin-consent-statements';
+import {
+  adminClientTrustPoliciesListHandler,
+  adminClientTrustPolicyUpsertHandler,
+  adminConsentPoliciesListHandler,
+  adminConsentPolicyCreateHandler,
+  adminConsentPolicyDeleteHandler,
+  adminConsentPolicyGetHandler,
+  adminConsentPolicyItemsReplaceHandler,
+  adminConsentPolicyUpdateHandler,
+  adminSignInConfirmationPoliciesListHandler,
+  adminSignInConfirmationPolicyUpsertHandler,
+} from './admin-consent-policies';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
   serveAvatarHandler,
@@ -102,6 +138,7 @@ import {
   adminUserCreateHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
   adminClientsListHandler,
@@ -184,6 +221,7 @@ import {
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
 import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
 import { registerDeclaredAdminRouteAccessMiddleware } from './admin-route-access';
+import { adminPublicAssetUploadHandler, servePublicAssetHandler } from './admin-public-assets';
 import {
   adminRelationDefinitionsListHandler,
   adminRelationDefinitionGetHandler,
@@ -243,7 +281,27 @@ import {
   adminFlowValidateHandler,
   adminFlowCompileHandler,
   adminFlowNodeTypesHandler,
+  adminFlowPublishHandler,
+  adminFlowVersionsHandler,
+  adminFlowExportHandler,
+  adminFlowImportHandler,
+  adminFlowAssignmentsListHandler,
+  adminFlowAssignmentUpsertHandler,
+  adminFlowAssignmentDeleteHandler,
 } from './admin-flows';
+import {
+  adminScreenCreateHandler,
+  adminScreenDeleteHandler,
+  adminScreenGetHandler,
+  adminScreensListHandler,
+  adminScreenUpdateHandler,
+} from './admin-screens';
+import {
+  adminOidcScopeCreateHandler,
+  adminOidcScopeDeleteHandler,
+  adminOidcScopesListHandler,
+  adminOidcScopeUpdateHandler,
+} from './admin-oidc-scopes';
 import {
   adminAccessTraceListHandler,
   adminAccessTraceGetHandler,
@@ -632,6 +690,36 @@ import {
   deleteMyDeviceHandler,
 } from './self-service-devices';
 import {
+  getAccountProfileHandler,
+  updateAccountProfileHandler,
+  getAccountReauthStatusHandler,
+} from './account-page';
+import { getAccountCapabilitiesHandler } from './account-capabilities';
+import { listAccountConsentsHandler } from './account-consents';
+import { listAccountOperationsHandler } from './account-operations';
+import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
+import {
+  completeAccountEmailCodeReauthHandler,
+  createAccountPasskeyReauthOptionsHandler,
+  createAccountPasskeyOptionsHandler,
+  completeAccountPasskeyReauthHandler,
+  completeAccountPasskeyRegistrationHandler,
+  sendAccountEmailCodeReauthHandler,
+  listAccountPasskeysHandler,
+  updateAccountPasskeyHandler,
+  deleteAccountPasskeyHandler,
+} from './account-passkeys';
+import {
+  activateAccountTotpCredentialHandler,
+  completeAccountTotpReauthHandler,
+  createAccountTotpOptionsHandler,
+  deleteAccountTotpCredentialHandler,
+  listAccountTotpCredentialsHandler,
+  regenerateAccountTotpBackupCodesHandler,
+  updateAccountTotpCredentialHandler,
+} from './account-totp';
+import { createAccountReturnHandler, consumeAccountReturnHandler } from './account-return';
+import {
   createWebhook,
   listWebhooks,
   getWebhook,
@@ -647,6 +735,14 @@ import {
   adminOidcReleasePreviewHandler,
   adminSamlReleasePreviewHandler,
 } from './identity-mapping-preview';
+import {
+  adminPersistentIdentifierProfileCreateHandler,
+  adminPersistentIdentifierProfileDeleteHandler,
+  adminPersistentIdentifierProfileGetHandler,
+  adminPersistentIdentifierProfilesListHandler,
+  adminPersistentIdentifierProfileUpdateHandler,
+  adminPersistentIdentifierPreviewHandler,
+} from './persistent-identifier-profiles';
 import {
   adminIdentityMappingCatalogCreateHandler,
   adminIdentityMappingCatalogsListHandler,
@@ -751,6 +847,40 @@ import {
   getTenantEmailSettingsHandler,
   updateTenantEmailSettingsHandler,
 } from './routes/email-settings';
+import {
+  checkDirectoryConnectorHealthHandler,
+  getDirectoryConnectorsHandler,
+  issueDirectoryConnectorSecretHandler,
+  listDirectoryConnectorFleetHandler,
+  listDirectoryConnectorRelayEventsHandler,
+  listDirectoryPendingUsersHandler,
+  rotateDirectoryConnectorSecretHandler,
+  updateDirectoryConnectorsHandler,
+  updateDirectoryConnectorFleetInstanceHandler,
+  updateDirectoryPendingUserHandler,
+} from './routes/directory-connectors';
+import {
+  createDirectoryAuthEvidenceExportHandler,
+  createDirectoryAuthMigrationCampaignHandler,
+  createDirectoryAuthSupportBundleHandler,
+  downloadDirectoryAuthEvidenceExportHandler,
+  downloadDirectoryAuthSupportBundleHandler,
+  getDirectoryAuthOverviewHandler,
+  getDirectoryAuthRetentionPolicyHandler,
+  getDirectoryAuthTenantPolicyHandler,
+  listDirectoryAuthAdvisoriesHandler,
+  listDirectoryAuthConfigHistoryHandler,
+  listDirectoryAuthEvidenceExportsHandler,
+  listDirectoryAuthManagedConnectorsHandler,
+  listDirectoryAuthMigrationCampaignsHandler,
+  listDirectoryAuthMigrationUserStatesHandler,
+  listDirectoryAuthSupportBundlesHandler,
+  resetDirectoryAuthMigrationUserStateHandler,
+  runDirectoryAuthMaintenanceCleanupHandler,
+  updateDirectoryAuthMigrationCampaignHandler,
+  updateDirectoryAuthRetentionPolicyHandler,
+  updateDirectoryAuthTenantPolicyHandler,
+} from './routes/directory-auth';
 
 const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
 
@@ -805,7 +935,9 @@ function requireClientManagementPermission() {
 // Create Hono app with Cloudflare Workers types
 export const app = new Hono<{ Bindings: Env }>();
 
-const loadPlugins = createPluginLoader([
+const loadAuthBootstrapPlugins = createPluginLoader([]);
+
+const loadNotificationPlugins = createPluginLoader([
   {
     plugin: cloudflareEmailPlugin,
     skipIfConfigEmpty: true,
@@ -814,14 +946,36 @@ const loadPlugins = createPluginLoader([
   {
     plugin: resendEmailPlugin,
     skipIfConfigEmpty: true,
+    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
     envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
   },
 ]);
 
+const authBootstrapPluginContextMiddleware = pluginContextMiddleware({
+  scope: 'auth-bootstrap',
+  failurePolicy: 'fail_open',
+  loadPlugins: loadAuthBootstrapPlugins,
+});
+
+const notificationPluginContextMiddleware = pluginContextMiddleware({
+  scope: 'notification',
+  failurePolicy: 'fail_open',
+  loadPlugins: loadNotificationPlugins,
+});
+
 // Middleware
+app.use('*', redirectExternalHttpToHttps);
 app.use('*', logger());
 app.use('*', requestContextMiddleware());
-app.use('*', pluginContextMiddleware({ loadPlugins }));
+app.use('/api/auth/authentication-methods', authBootstrapPluginContextMiddleware);
+app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
+app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
+app.use('/api/account/reauth/email-code/send', notificationPluginContextMiddleware);
+app.use('/api/admin/tenants/:id/invitations', notificationPluginContextMiddleware);
+app.use('/api/admin/tenants/:id/invitations/*', notificationPluginContextMiddleware);
+app.use('/api/admin/approvals', notificationPluginContextMiddleware);
+app.use('/api/admin/approvals/*', notificationPluginContextMiddleware);
+app.use('/api/approval-artifacts/*', notificationPluginContextMiddleware);
 
 // Enhanced security headers
 app.use(
@@ -1031,14 +1185,17 @@ app.use('/api/auth/authentication-methods', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/authentication-methods'],
+    nonBlockingRead: true,
   })(c, next);
 });
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
+app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
 app.use('/api/auth/discovery', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/discovery'],
+    nonBlockingRead: true,
   })(c, next);
 });
 app.use('/api/auth/discovery/grant', async (c, next) => {
@@ -1102,6 +1259,45 @@ app.get('/me/devices', listMyDevicesHandler);
 app.patch('/me/devices/:id', updateMyDeviceHandler);
 app.delete('/me/devices/:id', deleteMyDeviceHandler);
 
+// Account Page API
+app.use('/api/account/*', csrfProtectionMiddleware({ skipForBearerToken: false }));
+app.use('/api/account/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/account/*'],
+  })(c, next);
+});
+app.get('/api/account/profile', getAccountProfileHandler);
+app.patch('/api/account/profile', updateAccountProfileHandler);
+app.post('/api/account/return', createAccountReturnHandler);
+app.post('/api/account/return/:id/consume', consumeAccountReturnHandler);
+app.get('/api/account/capabilities', getAccountCapabilitiesHandler);
+app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
+app.post('/api/account/reauth/passkey/options', createAccountPasskeyReauthOptionsHandler);
+app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHandler);
+app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandler);
+app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
+app.post('/api/account/reauth/totp/complete', completeAccountTotpReauthHandler);
+app.get('/api/account/consents', listAccountConsentsHandler);
+app.get('/api/account/operations', listAccountOperationsHandler);
+app.get('/api/account/sessions', listAccountSessionsHandler);
+app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
+app.get('/api/account/passkeys', listAccountPasskeysHandler);
+app.post('/api/account/passkeys/options', createAccountPasskeyOptionsHandler);
+app.post('/api/account/passkeys/complete', completeAccountPasskeyRegistrationHandler);
+app.patch('/api/account/passkeys/:id', updateAccountPasskeyHandler);
+app.delete('/api/account/passkeys/:id', deleteAccountPasskeyHandler);
+app.get('/api/account/totp', listAccountTotpCredentialsHandler);
+app.post('/api/account/totp/options', createAccountTotpOptionsHandler);
+app.post('/api/account/totp/activate', activateAccountTotpCredentialHandler);
+app.post('/api/account/totp/backup-codes/regenerate', regenerateAccountTotpBackupCodesHandler);
+app.patch('/api/account/totp/:id', updateAccountTotpCredentialHandler);
+app.delete('/api/account/totp/:id', deleteAccountTotpCredentialHandler);
+app.get('/api/account/devices', listMyDevicesHandler);
+app.patch('/api/account/devices/:id', updateMyDeviceHandler);
+app.delete('/api/account/devices/:id', deleteMyDeviceHandler);
+
 // Removed Admin API endpoint compatibility surface
 app.get('/api/admin/sessions/me', () =>
   createCompatibilityErrorResponse('legacy_endpoint_not_supported', 404)
@@ -1121,8 +1317,13 @@ app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
 app.use('/api/admin/*', async (c, next) => {
   const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
-  const maxSize = isImportUpload ? USER_IMPORT_MAX_UPLOAD_BYTES : 100 * 1024;
-  const maxSizeLabel = isImportUpload ? '50MB' : '100KB';
+  const isPublicAssetUpload = c.req.path === '/api/admin/assets/login-ui';
+  const maxSize = isImportUpload
+    ? USER_IMPORT_MAX_UPLOAD_BYTES
+    : isPublicAssetUpload
+      ? 5 * 1024 * 1024
+      : 100 * 1024;
+  const maxSizeLabel = isImportUpload ? '50MB' : isPublicAssetUpload ? '5MB' : '100KB';
 
   return bodyLimit({
     maxSize,
@@ -1143,11 +1344,13 @@ registerDeclaredAdminRouteAccessMiddleware(app);
 registerAdminResourcePermissionMiddleware(app);
 
 app.get('/api/admin/stats', adminStatsHandler);
+app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
 app.post('/api/admin/users', adminUserCreateHandler);
 app.put('/api/admin/users/:id', adminUserUpdateHandler);
 app.delete('/api/admin/users/:id', adminUserDeleteHandler);
+app.post('/api/admin/users/:id/totp/reset', adminUserTotpResetHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/api/admin/avatars/:filename', serveAvatarHandler); // Avatar serving (protected by adminAuthMiddleware)
@@ -1299,8 +1502,16 @@ app.delete(
 // - POST   /api/admin/tenants/:id/set-default - Set as default tenant
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
-app.use('/api/admin/tenants', requireSystemAdmin());
-app.use('/api/admin/tenants/*', requireSystemAdmin());
+const tenantManagementSystemAdminGuard = requireSystemAdmin();
+app.use('/api/admin/tenants', tenantManagementSystemAdminGuard);
+app.use('/api/admin/tenants/*', async (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  if (isTenantScopedAdminPath(pathname)) {
+    await next();
+    return;
+  }
+  return tenantManagementSystemAdminGuard(c, next);
+});
 app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'));
@@ -1331,6 +1542,114 @@ app.get('/api/admin/tenants/:id/invitations', listTenantInvitationsHandler);
 app.delete('/api/admin/tenants/:id/invitations/:inv_id', cancelTenantInvitationHandler);
 app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHandler);
 app.patch('/api/admin/tenants/:tenantId/email-settings', updateTenantEmailSettingsHandler);
+app.get('/api/admin/tenants/:tenantId/directory-connectors', getDirectoryConnectorsHandler);
+app.put('/api/admin/tenants/:tenantId/directory-connectors', updateDirectoryConnectorsHandler);
+app.get('/api/admin/tenants/:tenantId/directory-auth/overview', getDirectoryAuthOverviewHandler);
+app.get('/api/admin/tenants/:tenantId/directory-auth/policy', getDirectoryAuthTenantPolicyHandler);
+app.put(
+  '/api/admin/tenants/:tenantId/directory-auth/policy',
+  updateDirectoryAuthTenantPolicyHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
+  listDirectoryAuthMigrationCampaignsHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns',
+  createDirectoryAuthMigrationCampaignHandler
+);
+app.patch(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/campaigns/:campaignId',
+  updateDirectoryAuthMigrationCampaignHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/user-states',
+  listDirectoryAuthMigrationUserStatesHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/migration/user-states/:stateId/reset',
+  resetDirectoryAuthMigrationUserStateHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/retention',
+  getDirectoryAuthRetentionPolicyHandler
+);
+app.put(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/retention',
+  updateDirectoryAuthRetentionPolicyHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/config-history',
+  listDirectoryAuthConfigHistoryHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports',
+  listDirectoryAuthEvidenceExportsHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports',
+  createDirectoryAuthEvidenceExportHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/compliance/evidence-exports/:exportId/download',
+  downloadDirectoryAuthEvidenceExportHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/support/bundles',
+  listDirectoryAuthSupportBundlesHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/support/bundles',
+  createDirectoryAuthSupportBundleHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/support/bundles/:bundleId/download',
+  downloadDirectoryAuthSupportBundleHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/managed/advisories',
+  listDirectoryAuthAdvisoriesHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-auth/maintenance/cleanup',
+  runDirectoryAuthMaintenanceCleanupHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-auth/managed/connectors',
+  listDirectoryAuthManagedConnectorsHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/pending-users',
+  listDirectoryPendingUsersHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/pending-users/:pendingId',
+  updateDirectoryPendingUserHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/fleet',
+  listDirectoryConnectorFleetHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/fleet/:instanceId',
+  updateDirectoryConnectorFleetInstanceHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret',
+  issueDirectoryConnectorSecretHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret/rotate',
+  rotateDirectoryConnectorSecretHandler
+);
+app.post(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/health',
+  checkDirectoryConnectorHealthHandler
+);
+app.get(
+  '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/events',
+  listDirectoryConnectorRelayEventsHandler
+);
 
 // Platform Tenant Domain Mappings API (system_admin only)
 // - GET    /api/admin/platform/tenant-domain-mappings        - List mappings
@@ -1907,17 +2226,56 @@ app.use(
   '/api/admin/flows/*',
   requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
 );
+app.use(
+  '/api/admin/flow-assignments',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
 
 // Flow CRUD endpoints
 app.get('/api/admin/flows', adminFlowsListHandler);
 app.post('/api/admin/flows', adminFlowCreateHandler);
 app.get('/api/admin/flows/node-types', adminFlowNodeTypesHandler);
+app.post('/api/admin/flows/import', adminFlowImportHandler);
 app.get('/api/admin/flows/:id', adminFlowGetHandler);
 app.put('/api/admin/flows/:id', adminFlowUpdateHandler);
+app.patch('/api/admin/flows/:id', adminFlowUpdateHandler);
 app.delete('/api/admin/flows/:id', adminFlowDeleteHandler);
 app.post('/api/admin/flows/:id/copy', adminFlowCopyHandler);
 app.post('/api/admin/flows/:id/validate', adminFlowValidateHandler);
 app.post('/api/admin/flows/:id/compile', adminFlowCompileHandler);
+app.post('/api/admin/flows/:id/publish', adminFlowPublishHandler);
+app.get('/api/admin/flows/:id/versions', adminFlowVersionsHandler);
+app.get('/api/admin/flows/:id/export', adminFlowExportHandler);
+app.get('/api/admin/flow-assignments', adminFlowAssignmentsListHandler);
+app.put('/api/admin/flow-assignments', adminFlowAssignmentUpsertHandler);
+app.delete('/api/admin/flow-assignments', adminFlowAssignmentDeleteHandler);
+
+// Screen profiles used by Flow form nodes.
+app.get(
+  '/api/admin/screens',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminScreensListHandler
+);
+app.post(
+  '/api/admin/screens',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminScreenCreateHandler
+);
+app.get(
+  '/api/admin/screens/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminScreenGetHandler
+);
+app.put(
+  '/api/admin/screens/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminScreenUpdateHandler
+);
+app.delete(
+  '/api/admin/screens/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminScreenDeleteHandler
+);
 
 // =============================================================================
 // Access Trace (Permission Check Audit Logs)
@@ -2271,6 +2629,56 @@ app.post(
   '/api/admin/field-mapping/preview/oidc',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcReleasePreviewHandler
+);
+app.get(
+  '/api/admin/field-mapping/oidc-scopes',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminOidcScopesListHandler
+);
+app.post(
+  '/api/admin/field-mapping/oidc-scopes',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminOidcScopeCreateHandler
+);
+app.put(
+  '/api/admin/field-mapping/oidc-scopes/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminOidcScopeUpdateHandler
+);
+app.delete(
+  '/api/admin/field-mapping/oidc-scopes/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminOidcScopeDeleteHandler
+);
+app.get(
+  '/api/admin/field-mapping/persistent-identifier-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierProfilesListHandler
+);
+app.get(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierProfileGetHandler
+);
+app.post(
+  '/api/admin/field-mapping/persistent-identifier-profiles',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileCreateHandler
+);
+app.put(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileUpdateHandler
+);
+app.delete(
+  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminPersistentIdentifierProfileDeleteHandler
+);
+app.post(
+  '/api/admin/field-mapping/persistent-identifier-profiles/preview',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPersistentIdentifierPreviewHandler
 );
 app.get(
   '/api/admin/field-mapping/catalogs',
@@ -2957,6 +3365,18 @@ app.use('/api/admin/consent-statements/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
+app.use('/api/admin/consent-policies/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
+app.use('/api/admin/client-trust-policies/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
+app.use('/api/admin/sign-in-confirmation-policies/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
 app.use('/api/admin/consent-requirements/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
@@ -2987,6 +3407,18 @@ app.post(
   adminConsentVersionActivateHandler
 );
 app.delete('/api/admin/consent-statements/:sid/versions/:vid', adminConsentVersionDeleteHandler);
+
+// Consent policies, client/SP trust, and sign-in confirmation
+app.get('/api/admin/consent-policies', adminConsentPoliciesListHandler);
+app.post('/api/admin/consent-policies', adminConsentPolicyCreateHandler);
+app.get('/api/admin/consent-policies/:id', adminConsentPolicyGetHandler);
+app.put('/api/admin/consent-policies/:id', adminConsentPolicyUpdateHandler);
+app.delete('/api/admin/consent-policies/:id', adminConsentPolicyDeleteHandler);
+app.put('/api/admin/consent-policies/:id/items', adminConsentPolicyItemsReplaceHandler);
+app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
+app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
+app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);
+app.put('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPolicyUpsertHandler);
 
 // Localizations
 app.get(
@@ -3390,6 +3822,45 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       });
     }
 
+    let flowInteractionsExpired = 0;
+    let flowInteractionStepsDeleted = 0;
+    try {
+      for (const tenantId of maintenanceTenantIds) {
+        const expiredResult = await coreAdapter.execute(
+          `UPDATE flow_interactions
+           SET state = 'expired', updated_at = ?
+           WHERE tenant_id = ?
+             AND state IN ('created', 'active')
+             AND expires_at <= ?`,
+          [now, tenantId, now]
+        );
+        flowInteractionsExpired += expiredResult.rowsAffected || 0;
+
+        const deletedStepsResult = await coreAdapter.execute(
+          `DELETE FROM flow_interaction_steps
+           WHERE tenant_id = ?
+             AND interaction_id IN (
+               SELECT id
+               FROM flow_interactions
+               WHERE tenant_id = ?
+                 AND state IN ('completed', 'expired', 'failed')
+                 AND updated_at <= ?
+             )`,
+          [tenantId, tenantId, now - 86400]
+        );
+        flowInteractionStepsDeleted += deletedStepsResult.rowsAffected || 0;
+      }
+      log.debug('Cleaned up Flow runtime interactions', {
+        expired: flowInteractionsExpired,
+        deletedSteps: flowInteractionStepsDeleted,
+        tenantCount: maintenanceTenantIds.length,
+      });
+    } catch (flowRuntimeCleanupError) {
+      log.warn('Flow runtime cleanup failed (table may not exist)', {
+        error: (flowRuntimeCleanupError as Error).message,
+      });
+    }
+
     let unifiedAuditCleanup = {
       tenantCount: 0,
       processedTenants: 0,
@@ -3418,6 +3889,8 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       deviceSecretsDeleted,
       operationalLogsDeleted,
       idempotencyKeysDeleted,
+      flowInteractionsExpired,
+      flowInteractionStepsDeleted,
       unifiedAuditCleanup,
     });
   } catch (error) {

@@ -16,6 +16,12 @@
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
 	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
@@ -1148,27 +1154,27 @@
 	</div>
 {/snippet}
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<button class="link-button" onclick={() => goto('/admin/saml')}>
-				<i class="i-ph-arrow-left"></i>
-				{$LL.admin_saml_local_back()}
-			</button>
-			<h1 class="page-title">{$LL.admin_saml_local_title()}</h1>
-			<p class="page-description">{$LL.admin_saml_local_description()}</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={() => goto('/admin/dr-backup')}>
-				<i class="i-ph-cloud-arrow-up"></i>
-				{$LL.admin_dr_backup_saml_bundle_title()}
-			</button>
-			<button class="btn btn-secondary" onclick={load} disabled={loading}>
-				<i class="i-ph-arrow-clockwise"></i>
-				{$LL.admin_saml_refresh()}
-			</button>
-		</div>
-	</div>
+{#snippet pageActions()}
+	<button class="btn btn-secondary" onclick={() => goto('/admin/saml')}>
+		<i class="i-ph-arrow-left"></i>
+		{$LL.admin_saml_local_back()}
+	</button>
+	<button class="btn btn-secondary" onclick={() => goto('/admin/dr-backup')}>
+		<i class="i-ph-cloud-arrow-up"></i>
+		{$LL.admin_dr_backup_saml_bundle_title()}
+	</button>
+	<button class="btn btn-secondary" onclick={load} disabled={loading}>
+		<i class="i-ph-arrow-clockwise"></i>
+		{$LL.admin_saml_refresh()}
+	</button>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_saml_local_title()}
+		description={$LL.admin_saml_local_description()}
+		actions={pageActions}
+	/>
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
@@ -1184,25 +1190,24 @@
 		</div>
 	{:else}
 		{#if !tenantInfo?.components.saml}
-			<div class="panel">
-				<div class="panel-header compact-panel-header">
-					<div>
-						<h2 class="panel-title">{$LL.admin_saml_local_metadata_title()}</h2>
-						<p class="form-hint">{$LL.admin_saml_local_metadata_desc()}</p>
-					</div>
+			<AdminSection
+				title={$LL.admin_saml_local_metadata_title()}
+				description={$LL.admin_saml_local_metadata_desc()}
+			>
+				<div class="section-status-row">
 					<span class="badge badge-neutral">{$LL.admin_saml_local_not_deployed()}</span>
 				</div>
 				<div class="empty-state compact-empty">{$LL.admin_saml_local_worker_not_deployed()}</div>
-			</div>
+			</AdminSection>
 		{/if}
 
 		{#if tenantInfo}
 			{#each metadataDocs as doc (doc.role)}
-				<div class="panel metadata-panel">
-					<div class="panel-header compact-panel-header">
+				<section class="metadata-document">
+					<div class="metadata-document__header">
 						<div>
-							<h2 class="panel-title">{doc.label}</h2>
-							<p class="form-hint">
+							<h2 class="metadata-document__title">{doc.label}</h2>
+							<p class="field-hint">
 								{doc.role === 'idp'
 									? $LL.admin_saml_local_idp_registration_hint()
 									: $LL.admin_saml_local_sp_registration_hint()}
@@ -1413,17 +1418,16 @@
 							</div>
 						{/if}
 					{/if}
-				</div>
+				</section>
 			{/each}
 		{/if}
 
 		{#if samlSettings}
-			<div class="panel">
-				<div class="panel-header compact-panel-header">
-					<div>
-						<h2 class="panel-title">{$LL.admin_saml_local_published_entity_ids()}</h2>
-						<p class="form-hint">{$LL.admin_saml_local_published_entity_ids_desc()}</p>
-					</div>
+			<AdminSection
+				title={$LL.admin_saml_local_published_entity_ids()}
+				description={$LL.admin_saml_local_published_entity_ids_desc()}
+			>
+				<div class="section-status-row">
 					<div class="metadata-badges">
 						<span class="badge badge-info">{entityIdStyleLabel(samlSettings.entityIdStyle)}</span>
 						<span class="badge badge-info">
@@ -1503,7 +1507,7 @@
 				<div class="login-policy">
 					<div class="section-copy">
 						<div class="section-heading">{$LL.admin_saml_local_interactive_login_redirect()}</div>
-						<p class="form-hint">{$LL.admin_saml_local_interactive_login_desc()}</p>
+						<p class="field-hint">{$LL.admin_saml_local_interactive_login_desc()}</p>
 					</div>
 
 					<div class="login-policy-layout">
@@ -1579,7 +1583,7 @@
 					<div class="metadata-summary-header">
 						<div>
 							<div class="preview-heading">{$LL.admin_saml_local_metadata_publication()}</div>
-							<p class="form-hint">{$LL.admin_saml_local_metadata_publication_desc()}</p>
+							<p class="field-hint">{$LL.admin_saml_local_metadata_publication_desc()}</p>
 						</div>
 						<div class="metadata-badges">
 							<span class={metadataSigningBadge(samlSettings)}>
@@ -1635,15 +1639,14 @@
 						{savingSettings ? $LL.admin_saml_local_saving() : $LL.admin_saml_local_save_settings()}
 					</button>
 				</div>
-			</div>
+			</AdminSection>
 
-			<div class="panel">
-				<div class="panel-header compact-panel-header">
-					<div>
-						<h2 class="panel-title">{$LL.admin_saml_local_signing_rollover()}</h2>
-						<p class="form-hint">{$LL.admin_saml_local_signing_rollover_desc()}</p>
-						<p class="form-hint">{$LL.admin_saml_local_signing_rollover_role_note()}</p>
-					</div>
+			<AdminSection
+				title={$LL.admin_saml_local_signing_rollover()}
+				description={$LL.admin_saml_local_signing_rollover_desc()}
+			>
+				<div class="section-copy">
+					<p class="field-hint">{$LL.admin_saml_local_signing_rollover_role_note()}</p>
 				</div>
 
 				<div class="local-signing-grid">
@@ -1655,94 +1658,92 @@
 									{$LL.admin_saml_local_rollover_saved_certificates({ role: roleLabel(role) })}
 								</div>
 							</div>
-							<div class="rollover-table-wrap">
-								<table class="rollover-table">
-									<thead>
+							<AdminDataTable compact>
+								<thead>
+									<tr>
+										<th>{$LL.admin_saml_local_rollover_select_certificate()}</th>
+										<th>{$LL.admin_saml_local_rollover_certificate()}</th>
+										<th>{$LL.admin_saml_local_rollover_status()}</th>
+										<th>{$LL.admin_saml_local_rollover_signing()}</th>
+										<th>{$LL.admin_saml_local_rollover_stored()}</th>
+										<th>{$LL.admin_saml_local_rollover_published()}</th>
+										<th>{$LL.admin_saml_local_rollover_created()}</th>
+										<th>{$LL.admin_saml_local_rollover_valid_from()}</th>
+										<th>{$LL.admin_saml_local_rollover_valid_to()}</th>
+										<th>{$LL.admin_saml_local_rollover_max_reference_until()}</th>
+										<th>{$LL.admin_saml_local_rollover_row_actions()}</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each rolloverCertificateRows(role, policy) as row (row.id)}
 										<tr>
-											<th>{$LL.admin_saml_local_rollover_select_certificate()}</th>
-											<th>{$LL.admin_saml_local_rollover_certificate()}</th>
-											<th>{$LL.admin_saml_local_rollover_status()}</th>
-											<th>{$LL.admin_saml_local_rollover_signing()}</th>
-											<th>{$LL.admin_saml_local_rollover_stored()}</th>
-											<th>{$LL.admin_saml_local_rollover_published()}</th>
-											<th>{$LL.admin_saml_local_rollover_created()}</th>
-											<th>{$LL.admin_saml_local_rollover_valid_from()}</th>
-											<th>{$LL.admin_saml_local_rollover_valid_to()}</th>
-											<th>{$LL.admin_saml_local_rollover_max_reference_until()}</th>
-											<th>{$LL.admin_saml_local_rollover_row_actions()}</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each rolloverCertificateRows(role, policy) as row (row.id)}
-											<tr>
-												<td>
-													<input
-														type="radio"
-														name={`saml-signing-slot-${role}`}
-														checked={selectedSigningRowId(role) === row.id}
-														aria-label={$LL.admin_saml_local_rollover_select_slot({
-															role: roleLabel(role),
-															slot: row.label
-														})}
-														onchange={() => selectSigningRow(role, row)}
-													/>
-												</td>
-												<td>
-													<strong>{row.label}</strong>
-													<span>{row.description}</span>
-													{#if row.reference?.kid}
-														<code>{row.reference.kid}</code>
-													{/if}
-												</td>
-												<td>
-													<span
-														class:status-active={row.isSigning}
-														class:status-published={!row.isSigning && row.isPublished}
-														class:status-muted={!row.isStored}
-														class="rollover-status"
+											<td class="rollover-select-cell">
+												<input
+													type="radio"
+													name={`saml-signing-slot-${role}`}
+													checked={selectedSigningRowId(role) === row.id}
+													aria-label={$LL.admin_saml_local_rollover_select_slot({
+														role: roleLabel(role),
+														slot: row.label
+													})}
+													onchange={() => selectSigningRow(role, row)}
+												/>
+											</td>
+											<td class="rollover-certificate-cell">
+												<strong>{row.label}</strong>
+												<span>{row.description}</span>
+												{#if row.reference?.kid}
+													<code>{row.reference.kid}</code>
+												{/if}
+											</td>
+											<td>
+												<span
+													class:status-active={row.isSigning}
+													class:status-published={!row.isSigning && row.isPublished}
+													class:status-muted={!row.isStored}
+													class="rollover-status"
+												>
+													{row.status}
+												</span>
+											</td>
+											<td>{yesNo(row.isSigning)}</td>
+											<td>{yesNo(row.isStored)}</td>
+											<td>{yesNo(row.isPublished)}</td>
+											<td>{formatDateTime(row.createdAt)}</td>
+											<td>{formatDateTime(row.validFrom)}</td>
+											<td>{formatDateTime(row.validTo)}</td>
+											<td>{formatDateTime(row.maxReferenceUntil)}</td>
+											<td>
+												<div class="rollover-row-actions">
+													<button
+														class="btn btn-secondary btn-xs"
+														onclick={() => openCertificateDetail(role, row)}
+														disabled={!row.reference?.certificate &&
+															!row.publishedCertificate?.certificate}
 													>
-														{row.status}
-													</span>
-												</td>
-												<td>{yesNo(row.isSigning)}</td>
-												<td>{yesNo(row.isStored)}</td>
-												<td>{yesNo(row.isPublished)}</td>
-												<td>{formatDateTime(row.createdAt)}</td>
-												<td>{formatDateTime(row.validFrom)}</td>
-												<td>{formatDateTime(row.validTo)}</td>
-												<td>{formatDateTime(row.maxReferenceUntil)}</td>
-												<td>
-													<div class="rollover-row-actions">
-														<button
-															class="btn btn-secondary btn-xs"
-															onclick={() => openCertificateDetail(role, row)}
-															disabled={!row.reference?.certificate &&
-																!row.publishedCertificate?.certificate}
-														>
-															{$LL.admin_saml_local_rollover_view_certificate()}
-														</button>
-														<button
-															class="btn btn-danger btn-xs"
-															onclick={() => {
-																selectSigningRow(role, row);
-																void deleteSigningCertificate(role, row);
-															}}
-															disabled={row.slot === 'active' ||
-																!!signingAction ||
-																(!row.reference?.kid && !row.reference?.certificate)}
-															title={row.slot === 'active'
-																? $LL.admin_saml_local_rollover_delete_active_disabled()
-																: undefined}
-														>
-															{$LL.admin_saml_local_rollover_delete_certificate()}
-														</button>
-													</div>
-												</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
+														{$LL.admin_saml_local_rollover_view_certificate()}
+													</button>
+													<button
+														class="btn btn-danger btn-xs"
+														onclick={() => {
+															selectSigningRow(role, row);
+															void deleteSigningCertificate(role, row);
+														}}
+														disabled={row.slot === 'active' ||
+															!!signingAction ||
+															(!row.reference?.kid && !row.reference?.certificate)}
+														title={row.slot === 'active'
+															? $LL.admin_saml_local_rollover_delete_active_disabled()
+															: undefined}
+													>
+														{$LL.admin_saml_local_rollover_delete_certificate()}
+													</button>
+												</div>
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</AdminDataTable>
 							<div class="selected-action-label">
 								{$LL.admin_saml_local_rollover_selected_actions()}
 							</div>
@@ -1796,21 +1797,17 @@
 						<span>{$LL.admin_saml_local_rollover_retire_backup_note()}</span>
 					</div>
 				</div>
-			</div>
+			</AdminSection>
 
-			<div class="panel">
-				<div class="panel-header compact-panel-header">
-					<div>
-						<h2 class="panel-title">{$LL.admin_saml_local_signing_subject()}</h2>
-						<p class="form-hint">{$LL.admin_saml_local_signing_subject_desc()}</p>
-					</div>
-				</div>
-
+			<AdminSection
+				title={$LL.admin_saml_local_signing_subject()}
+				description={$LL.admin_saml_local_signing_subject_desc()}
+			>
 				<div class="certificate-create-controls">
 					<label>
 						<span>{$LL.admin_saml_local_rollover_role()}</span>
 						<select
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateRole}
 							disabled={savingSettings || !!signingAction}
 						>
@@ -1831,7 +1828,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_country()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateSubject.countryName}
 							placeholder="JP"
 							disabled={savingSettings}
@@ -1840,7 +1837,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_state()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateSubject.stateOrProvinceName}
 							placeholder="Tokyo"
 							disabled={savingSettings}
@@ -1849,7 +1846,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_locality()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateSubject.localityName}
 							placeholder="Chiyoda"
 							disabled={savingSettings}
@@ -1858,7 +1855,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_organization()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateSubject.organizationName}
 							placeholder="Authrim"
 							disabled={savingSettings}
@@ -1867,7 +1864,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_org_unit()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateSubject.organizationalUnitName}
 							placeholder="Security"
 							disabled={savingSettings}
@@ -1876,7 +1873,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_common_name()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateSubject.commonName}
 							placeholder="Authrim SAML Signing"
 							disabled={savingSettings}
@@ -1888,7 +1885,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_certificate_valid_from()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							type="datetime-local"
 							bind:value={draftCertificateValidFrom}
 							disabled={savingSettings}
@@ -1897,7 +1894,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_certificate_valid_to()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							type="datetime-local"
 							bind:value={draftCertificateValidTo}
 							disabled={savingSettings}
@@ -1906,7 +1903,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_certificate_public_key_algorithm()}</span>
 						<select
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificatePublicKeyAlgorithm}
 							disabled={savingSettings}
 						>
@@ -1916,7 +1913,7 @@
 					<label>
 						<span>{$LL.admin_saml_local_certificate_public_key_bits()}</span>
 						<select
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificatePublicKeySizeBits}
 							disabled={savingSettings}
 						>
@@ -1953,7 +1950,7 @@
 					<label class="san-extra">
 						<span>{$LL.admin_saml_local_dns_san_additional()}</span>
 						<input
-							class="form-input"
+							class="admin-input"
 							bind:value={draftCertificateAdditionalDnsNames}
 							placeholder="authrim.com"
 							disabled={savingSettings}
@@ -1978,15 +1975,12 @@
 							: $LL.admin_saml_local_create_rollover_certificate()}
 					</button>
 				</div>
-			</div>
+			</AdminSection>
 
-			<div class="panel emergency-panel">
-				<div class="panel-header compact-panel-header">
-					<div>
-						<h2 class="panel-title">{$LL.admin_saml_local_emergency_operations()}</h2>
-						<p class="form-hint">{$LL.admin_saml_local_emergency_operations_desc()}</p>
-					</div>
-				</div>
+			<AdminSection
+				title={$LL.admin_saml_local_emergency_operations()}
+				description={$LL.admin_saml_local_emergency_operations_desc()}
+			>
 				<div class="local-signing-actions">
 					{#each signingRoles as role (role)}
 						<button
@@ -1998,10 +1992,10 @@
 						</button>
 					{/each}
 				</div>
-			</div>
+			</AdminSection>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 {#if selectedCertificateDetail}
 	<div class="modal-backdrop">
@@ -2141,28 +2135,44 @@
 {/if}
 
 <style>
-	.link-button {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		margin: 0 0 8px;
-		padding: 0;
-		border: none;
-		background: transparent;
-		color: var(--primary);
-		cursor: pointer;
-		font: inherit;
-		font-size: 0.875rem;
-	}
-
-	.compact-panel-header {
-		align-items: flex-start;
-	}
-
 	.fingerprint-grid {
 		display: grid;
 		gap: 10px;
 		margin-top: 16px;
+	}
+
+	.section-status-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 12px;
+	}
+
+	.metadata-document {
+		display: grid;
+		gap: 14px;
+		margin-block: var(--section-margin-block, 22px);
+		min-width: 0;
+		padding: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-panel);
+	}
+
+	.metadata-document__header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+		min-width: 0;
+	}
+
+	.metadata-document__title {
+		margin: 0;
+		color: var(--color-text);
+		font-family: var(--font-display);
+		font-size: 1rem;
+		line-height: 1.35;
 	}
 
 	.info-row-list {
@@ -2181,7 +2191,7 @@
 		gap: 12px;
 		align-items: center;
 		padding: 7px 0;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.reference-row:last-child {
@@ -2190,7 +2200,7 @@
 
 	.reference-label,
 	.preview-label {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		font-weight: 600;
 		white-space: nowrap;
@@ -2209,7 +2219,7 @@
 		gap: 4px;
 		min-width: 0;
 		flex: 1;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 		overflow: hidden;
@@ -2219,7 +2229,7 @@
 	}
 
 	a.reference-value {
-		color: var(--primary);
+		color: var(--color-accent);
 	}
 
 	a.reference-value:hover {
@@ -2232,22 +2242,22 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		background: transparent;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		flex: 0 0 auto;
 	}
 
 	.icon-btn:hover {
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 	}
 
 	.icon-btn.copied {
-		border-color: var(--success);
-		color: var(--success);
+		border-color: var(--color-success);
+		color: var(--color-success);
 	}
 
 	.form-field-row {
@@ -2257,7 +2267,7 @@
 		align-items: center;
 		min-width: 0;
 		padding: 10px 0;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.form-field-row:last-child {
@@ -2276,10 +2286,10 @@
 		width: 100%;
 		min-width: 0;
 		padding: 9px 10px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-sm);
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 		line-height: 1.45;
@@ -2290,7 +2300,7 @@
 	}
 
 	.copy-textarea:focus {
-		outline: 2px solid rgba(59, 130, 246, 0.45);
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
 		outline-offset: 1px;
 	}
 
@@ -2318,9 +2328,9 @@
 		gap: 10px;
 		align-items: flex-start;
 		padding: 10px 12px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 		cursor: pointer;
 	}
 
@@ -2334,13 +2344,13 @@
 	}
 
 	.entity-option strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.875rem;
 	}
 
 	.entity-option small {
 		margin-top: 2px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		line-height: 1.35;
 	}
@@ -2354,9 +2364,9 @@
 	.entity-preview-group,
 	.metadata-summary,
 	.certificate-card {
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 	}
 
 	.entity-preview-group {
@@ -2367,8 +2377,8 @@
 	}
 
 	.pending-preview {
-		border-color: rgba(245, 158, 11, 0.45);
-		background: rgba(245, 158, 11, 0.08);
+		border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
 	}
 
 	.login-policy {
@@ -2376,7 +2386,7 @@
 		gap: 14px;
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.section-copy {
@@ -2385,12 +2395,12 @@
 		min-width: 0;
 	}
 
-	.section-copy .form-hint {
-		white-space: nowrap;
+	.section-copy .field-hint {
+		white-space: normal;
 	}
 
 	.section-heading {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.9375rem;
 		font-weight: 700;
 	}
@@ -2412,20 +2422,20 @@
 		gap: 12px;
 		min-width: 0;
 		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 	}
 
 	.route-preview {
 		display: grid;
 		gap: 10px;
 		padding-top: 10px;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.preview-heading {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 		font-weight: 700;
 	}
@@ -2434,7 +2444,7 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 8px;
-		color: var(--warning);
+		color: var(--color-warning);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
@@ -2465,9 +2475,9 @@
 		justify-content: center;
 		width: 24px;
 		height: 24px;
-		border-radius: 999px;
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		border-radius: var(--radius-full);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 	}
@@ -2480,13 +2490,13 @@
 	}
 
 	.route-step strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 	}
 
 	.route-step-url {
 		margin-top: 2px;
-		color: var(--primary);
+		color: var(--color-accent);
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		overflow-wrap: anywhere;
@@ -2494,7 +2504,7 @@
 
 	.route-step small {
 		margin-top: 3px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		line-height: 1.4;
 	}
@@ -2542,9 +2552,15 @@
 
 	.certificate-create-controls {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: end;
 		gap: 10px;
 		margin-bottom: 14px;
+	}
+
+	.certificate-create-controls .btn {
+		max-width: 100%;
+		white-space: normal;
 	}
 
 	.certificate-create-controls label {
@@ -2554,7 +2570,7 @@
 	}
 
 	.certificate-create-controls span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 	}
@@ -2566,7 +2582,7 @@
 	}
 
 	.subject-grid span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 	}
@@ -2576,9 +2592,9 @@
 		gap: 10px;
 		margin: 12px 0;
 		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 	}
 
 	.san-toggle-row {
@@ -2595,13 +2611,13 @@
 	}
 
 	.san-toggle-copy strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 	}
 
 	.san-toggle-copy small,
 	.san-extra small {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		line-height: 1.4;
 	}
@@ -2613,7 +2629,7 @@
 
 	.san-preview > span,
 	.san-extra > span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 	}
@@ -2629,9 +2645,9 @@
 	.san-preview code {
 		flex: 0 0 auto;
 		padding: 3px 7px;
-		border-radius: 999px;
-		background: var(--bg-subtle);
-		color: var(--text-primary);
+		border-radius: var(--radius-full);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
 		font-size: 0.75rem;
 	}
 
@@ -2650,10 +2666,11 @@
 	.local-signing-card {
 		display: grid;
 		gap: 12px;
+		min-width: 0;
 		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 	}
 
 	.local-signing-actions {
@@ -2662,72 +2679,44 @@
 		gap: 8px;
 	}
 
-	.emergency-panel {
-		border-color: rgba(239, 68, 68, 0.3);
+	.local-signing-card :global(.admin-data-table-wrap) {
+		--admin-data-table-min-width: 1240px;
+		overscroll-behavior-x: contain;
+		contain: inline-size;
 	}
 
-	.rollover-table-wrap {
-		width: 100%;
-		overflow-x: auto;
-	}
-
-	.rollover-table {
-		width: 100%;
-		min-width: 1240px;
-		border-collapse: collapse;
-		font-size: 0.8125rem;
-	}
-
-	.rollover-table th,
-	.rollover-table td {
-		padding: 9px 10px;
-		border-bottom: 1px solid var(--border-color);
-		text-align: left;
-		vertical-align: top;
-		white-space: nowrap;
-	}
-
-	.rollover-table th {
-		color: var(--text-secondary);
-		font-size: 0.7rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-	}
-
-	.rollover-table th:first-child,
-	.rollover-table td:first-child {
+	.rollover-select-cell {
 		width: 54px;
 		text-align: center;
 	}
 
-	.rollover-table td:nth-child(2) {
+	.rollover-certificate-cell {
 		white-space: normal;
 		min-width: 260px;
 	}
 
-	.rollover-table td:nth-child(2) strong,
-	.rollover-table td:nth-child(2) span,
-	.rollover-table td:nth-child(2) code {
+	.rollover-certificate-cell strong,
+	.rollover-certificate-cell span,
+	.rollover-certificate-cell code {
 		display: block;
 	}
 
-	.rollover-table td:nth-child(2) span {
+	.rollover-certificate-cell span {
 		margin-top: 2px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		line-height: 1.35;
 	}
 
-	.rollover-table td:nth-child(2) code {
+	.rollover-certificate-cell code {
 		margin-top: 4px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.7rem;
 		overflow-wrap: anywhere;
 	}
 
 	.selected-action-label {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 		text-transform: uppercase;
@@ -2751,21 +2740,21 @@
 		align-items: center;
 		width: max-content;
 		padding: 3px 8px;
-		border-radius: 999px;
-		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		border-radius: var(--radius-full);
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 	}
 
 	.rollover-status.status-active {
-		background: rgba(34, 197, 94, 0.14);
-		color: var(--success);
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.rollover-status.status-published {
-		background: rgba(59, 130, 246, 0.14);
-		color: var(--primary);
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
 	}
 
 	.rollover-status.status-muted {
@@ -2777,9 +2766,9 @@
 		gap: 8px;
 		margin-top: 14px;
 		padding: 12px;
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-md);
-		background: var(--surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
 	}
 
 	.rollover-action-notes div {
@@ -2790,12 +2779,12 @@
 	}
 
 	.rollover-action-notes strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 	}
 
 	.rollover-action-notes span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
@@ -2807,7 +2796,7 @@
 		display: grid;
 		place-items: center;
 		padding: 24px;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--color-overlay-scrim);
 	}
 
 	.certificate-detail-modal {
@@ -2815,10 +2804,10 @@
 		grid-template-rows: auto minmax(0, 1fr) auto;
 		width: min(920px, 100%);
 		max-height: min(860px, calc(100vh - 48px));
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-lg);
-		background: var(--surface);
-		box-shadow: var(--shadow-lg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-panel);
 		overflow: hidden;
 	}
 
@@ -2829,18 +2818,18 @@
 		justify-content: space-between;
 		gap: 12px;
 		padding: 16px;
-		border-bottom: 1px solid var(--border-color);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.modal-header h2 {
 		margin: 0;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 1.125rem;
 	}
 
 	.modal-header p {
 		margin: 4px 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 	}
 
@@ -2852,7 +2841,7 @@
 
 	.modal-footer {
 		justify-content: flex-end;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--color-border);
 		border-bottom: 0;
 	}
 
@@ -2874,14 +2863,14 @@
 
 	.metadata-grid strong,
 	.certificate-info-grid strong {
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 0.8125rem;
 		font-weight: 600;
 		overflow-wrap: anywhere;
 	}
 
 	.certificate-info-grid span {
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
 		text-transform: uppercase;
@@ -2893,14 +2882,14 @@
 		gap: 8px;
 		align-items: flex-start;
 		margin-top: 12px;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
 
 	.entity-warning i {
 		margin-top: 2px;
-		color: var(--warning);
+		color: var(--color-warning);
 		flex: 0 0 auto;
 	}
 
@@ -2908,10 +2897,6 @@
 		display: flex;
 		gap: 8px;
 		justify-content: flex-end;
-		margin-top: 16px;
-	}
-
-	.metadata-panel {
 		margin-top: 16px;
 	}
 
@@ -2933,13 +2918,13 @@
 
 	.certificate-header h3 {
 		margin: 0;
-		color: var(--text-primary);
+		color: var(--color-text);
 		font-size: 1rem;
 	}
 
 	.certificate-header p {
 		margin: 3px 0 0;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 	}
 
@@ -2947,7 +2932,7 @@
 		display: grid;
 		gap: 6px;
 		margin-top: 12px;
-		color: var(--warning);
+		color: var(--color-warning);
 		font-size: 0.8125rem;
 	}
 
@@ -2968,7 +2953,7 @@
 		align-items: center;
 		gap: 6px;
 		width: fit-content;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		font-weight: 700;
 		cursor: pointer;
@@ -2998,6 +2983,16 @@
 	}
 
 	@media (max-width: 900px) {
+		.metadata-document__header,
+		.certificate-create-controls {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.san-toggle-row {
+			grid-template-columns: 1fr;
+		}
+
 		.reference-row,
 		.form-field-row,
 		.entity-layout,
@@ -3018,7 +3013,7 @@
 			justify-content: flex-start;
 		}
 
-		.section-copy .form-hint {
+		.section-copy .field-hint {
 			white-space: normal;
 		}
 	}

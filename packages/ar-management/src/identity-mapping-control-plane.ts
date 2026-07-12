@@ -1,6 +1,10 @@
 import type { Context } from 'hono';
 import type { Env, DatabaseAdapter } from '@authrim/ar-lib-core';
-import { getTenantIdFromContext, requireDedicatedAdminDatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  createAuthContextFromHono,
+  getTenantIdFromContext,
+  requireDedicatedAdminDatabaseAdapter,
+} from '@authrim/ar-lib-core';
 import type {
   LifecycleSignalType,
   ProvisioningAssignmentCondition,
@@ -49,12 +53,19 @@ const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
   'normalize',
   'case',
   'trim',
+  'affix_text',
+  'oidc_pairwise_sub',
+  'saml_edu_person_targeted_id',
   'text_to_boolean',
   'json_build',
   'json_extract_text',
   'json_extract_boolean',
   'json_extract_integer',
 ]);
+const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
+const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
+const DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME = 'Authrim Default Canonical Catalog';
+const DEFAULT_CANONICAL_NAMESPACE = 'authrim.canonical';
 
 const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   {
@@ -488,6 +499,59 @@ interface FieldCatalogListRow {
   note: string | null;
 }
 
+interface CustomClaimSchemaCatalogRow {
+  id: string;
+  field_key: string | null;
+  active_field_key: string | null;
+  display_label: string | null;
+  field_type: string | null;
+  is_pii: number | boolean | null;
+  is_required: number | boolean | null;
+  validation_rules: string | null;
+  description: string | null;
+  display_order: number | null;
+  ui_group_key: string | null;
+  ui_group_label: string | null;
+  ui_group_order: number | null;
+  ui_field_order: number | null;
+  examples_json: string | null;
+  schema_version: number | null;
+}
+
+interface FieldCatalogEntrySummary {
+  id: string;
+  stableFieldId: string;
+  namespace: string;
+  path: string;
+  targetTaxonomy: string;
+  valueType: string;
+  cardinality: string;
+  classification: string;
+  aliases: Array<{ namespace: string; path: string }>;
+  uiGroupKey: string | null;
+  uiGroupLabel: string | null;
+  uiGroupOrder: number;
+  uiFieldOrder: number;
+  examples: unknown[];
+  note: string | null;
+  allowedValues: string[];
+  valueMultiplicity: 'single' | 'multi' | null;
+  nullable: boolean | null;
+  required: boolean | null;
+}
+
+interface FieldCatalogSummary {
+  id: string;
+  tenantId: string;
+  catalogKey: string;
+  displayName: string;
+  lifecycleState: LifecycleState;
+  versionId: string | null;
+  versionLabel: string | null;
+  bundleHash: string | null;
+  entries: FieldCatalogEntrySummary[];
+}
+
 interface ProtocolSchemaCatalogRow {
   id: string;
   tenant_id: string;
@@ -700,7 +764,7 @@ interface ParseCsvSourceProfileRequest {
 }
 
 interface CreateSourceProfileRequest {
-  sourceType: 'csv';
+  sourceType: 'csv' | 'saml' | 'directory';
   profileKey: string;
   displayName: string;
   versionLabel?: string;
@@ -712,7 +776,7 @@ interface CreateSourceProfileRequest {
 }
 
 interface UpdateSourceProfileRequest {
-  sourceType?: 'csv';
+  sourceType?: 'csv' | 'saml' | 'directory';
   profileKey?: string;
   displayName?: string;
   versionLabel?: string;
@@ -1136,7 +1200,7 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
-const SOURCE_PROFILE_TYPES = new Set(['csv']);
+const SOURCE_PROFILE_TYPES = new Set(['csv', 'saml', 'directory']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml']);
 const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
@@ -1151,6 +1215,76 @@ const OIDC_STANDARD_SCOPES = new Set([
   'address',
   'offline_access',
 ]);
+const DIRECTORY_FACTS_EXTERNAL_SCHEMA_ID = 'builtin_directory_facts';
+const DIRECTORY_FACTS_SCHEMA = {
+  fields: [
+    {
+      key: 'directory.identity.subject',
+      label: 'Directory Subject',
+      type: 'string',
+      required: true,
+      classification: 'internal',
+      description: 'Stable subject resolved by the directory connector.',
+    },
+    {
+      key: 'directory.identity.canonical_username',
+      label: 'Canonical Username',
+      type: 'string',
+      required: true,
+      classification: 'pii',
+      description: 'Normalized username selected from directory facts.',
+    },
+    {
+      key: 'directory.identity.connector_id',
+      label: 'Connector ID',
+      type: 'string',
+      required: true,
+      classification: 'internal',
+      description: 'Immutable Wordwarden connector identifier.',
+    },
+    {
+      key: 'directory.attributes.mail',
+      label: 'Directory Mail',
+      type: 'string',
+      classification: 'pii',
+      description: 'Allowlisted directory mail attribute when requested.',
+    },
+    {
+      key: 'directory.attributes.displayName',
+      label: 'Directory Display Name',
+      type: 'string',
+      classification: 'pii',
+      description: 'Allowlisted directory displayName attribute when requested.',
+    },
+    {
+      key: 'directory.groups',
+      label: 'Directory Groups',
+      type: 'array',
+      classification: 'internal',
+      valueMultiplicity: 'multi',
+      description: 'Opt-in group facts returned by Wordwarden.',
+    },
+    {
+      key: 'directory.evidence.connector_id',
+      label: 'Evidence Connector ID',
+      type: 'string',
+      classification: 'internal',
+      description: 'Authrim connector config identifier for audit evidence.',
+    },
+    {
+      key: 'directory.evidence.request_id',
+      label: 'Wordwarden Request ID',
+      type: 'string',
+      classification: 'internal',
+      description: 'Wordwarden verification request correlation ID.',
+    },
+  ],
+  metadata: {
+    source: 'authrim_wordwarden',
+    attributesPolicy: 'allowlisted_only',
+    groupsPolicy: 'opt_in',
+  },
+} satisfies Record<string, unknown>;
 const OIDC_RESERVED_NON_PROFILE_CLAIMS = new Set([
   'iss',
   'aud',
@@ -1249,7 +1383,8 @@ class IdentityMappingControlPlaneError extends Error {
 export class IdentityMappingControlPlaneRepository {
   constructor(
     private readonly adapter: DatabaseAdapter,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly coreAdapter?: DatabaseAdapter
   ) {}
 
   async listSchemaReadiness() {
@@ -1435,40 +1570,7 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY c.updated_at DESC, e.ui_group_order ASC, e.ui_field_order ASC, e.stable_field_id ASC`,
       [tenantId]
     );
-    const catalogs = new Map<
-      string,
-      {
-        id: string;
-        tenantId: string;
-        catalogKey: string;
-        displayName: string;
-        lifecycleState: LifecycleState;
-        versionId: string | null;
-        versionLabel: string | null;
-        bundleHash: string | null;
-        entries: Array<{
-          id: string;
-          stableFieldId: string;
-          namespace: string;
-          path: string;
-          targetTaxonomy: string;
-          valueType: string;
-          cardinality: string;
-          classification: string;
-          aliases: Array<{ namespace: string; path: string }>;
-          uiGroupKey: string | null;
-          uiGroupLabel: string | null;
-          uiGroupOrder: number;
-          uiFieldOrder: number;
-          examples: unknown[];
-          note: string | null;
-          allowedValues: string[];
-          valueMultiplicity: 'single' | 'multi' | null;
-          nullable: boolean | null;
-          required: boolean | null;
-        }>;
-      }
-    >();
+    const catalogs = new Map<string, FieldCatalogSummary>();
 
     for (const row of rows) {
       const catalog = catalogs.get(row.id) ?? {
@@ -1512,7 +1614,80 @@ export class IdentityMappingControlPlaneRepository {
       catalogs.set(row.id, catalog);
     }
 
-    return Array.from(catalogs.values());
+    const storedCatalogs = Array.from(catalogs.values());
+    const configuredCanonicalCatalog = await this.loadConfiguredCanonicalCatalog(tenantId);
+    if (!configuredCanonicalCatalog) {
+      return storedCatalogs;
+    }
+
+    return [
+      configuredCanonicalCatalog,
+      ...storedCatalogs.filter(
+        (catalog) =>
+          catalog.id !== DEFAULT_CANONICAL_CATALOG_ID &&
+          catalog.catalogKey !== DEFAULT_CANONICAL_CATALOG_KEY
+      ),
+    ];
+  }
+
+  private async loadConfiguredCanonicalCatalog(
+    tenantId: string
+  ): Promise<FieldCatalogSummary | null> {
+    let rows: CustomClaimSchemaCatalogRow[];
+    try {
+      rows = await (this.coreAdapter ?? this.adapter).query<CustomClaimSchemaCatalogRow>(
+        `SELECT
+            id,
+            field_key,
+            active_field_key,
+            display_label,
+            field_type,
+            is_pii,
+            is_required,
+            validation_rules,
+            description,
+            display_order,
+            ui_group_key,
+            ui_group_label,
+            ui_group_order,
+            ui_field_order,
+            examples_json,
+            schema_version
+           FROM custom_claim_schemas
+          WHERE tenant_id = ?
+            AND is_active = 1
+            AND operation_status = 'active'
+          ORDER BY ui_group_order ASC, ui_field_order ASC, display_order ASC, field_key ASC`,
+        [tenantId]
+      );
+    } catch {
+      return null;
+    }
+
+    const entries = rows.flatMap((row) => customClaimSchemaToCatalogEntry(row));
+    if (entries.length === 0) {
+      return null;
+    }
+
+    const schemaVersion = rows.reduce(
+      (max, row) =>
+        typeof row.schema_version === 'number' && Number.isFinite(row.schema_version)
+          ? Math.max(max, row.schema_version)
+          : max,
+      1
+    );
+
+    return {
+      id: DEFAULT_CANONICAL_CATALOG_ID,
+      tenantId,
+      catalogKey: DEFAULT_CANONICAL_CATALOG_KEY,
+      displayName: DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME,
+      lifecycleState: 'active',
+      versionId: `${DEFAULT_CANONICAL_CATALOG_ID}_schema_v${schemaVersion}`,
+      versionLabel: `v${schemaVersion}`,
+      bundleHash: null,
+      entries,
+    };
   }
 
   async createProtocolSchema(tenantId: string, input: CreateProtocolSchemaRequest) {
@@ -1617,16 +1792,30 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY imported_at DESC`,
       [tenantId]
     );
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenant_id,
-      sourceType: row.source_type,
-      sourceId: row.source_id,
-      schemaKey: row.schema_key,
-      schema: JSON.parse(row.schema_json) as Record<string, unknown>,
-      lifecycleState: row.lifecycle_state,
-      importedAt: row.imported_at,
-    }));
+    return [
+      {
+        id: DIRECTORY_FACTS_EXTERNAL_SCHEMA_ID,
+        tenantId,
+        sourceType: 'directory',
+        sourceId: 'wordwarden',
+        sourceKey: 'directory-facts',
+        displayName: 'Directory Facts',
+        schemaKey: 'directory-facts',
+        schema: DIRECTORY_FACTS_SCHEMA,
+        lifecycleState: 'active',
+        importedAt: 0,
+      },
+      ...rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        sourceType: row.source_type,
+        sourceId: row.source_id,
+        schemaKey: row.schema_key,
+        schema: JSON.parse(row.schema_json) as Record<string, unknown>,
+        lifecycleState: row.lifecycle_state,
+        importedAt: row.imported_at,
+      })),
+    ];
   }
 
   async parseCsvSourceProfile(tenantId: string, input: ParseCsvSourceProfileRequest) {
@@ -1684,7 +1873,7 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
-      throw badRequest('sourceType must be csv');
+      throw badRequest('sourceType must be csv, saml, or directory');
     }
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -1860,9 +2049,9 @@ export class IdentityMappingControlPlaneRepository {
     if (!existing) {
       throw notFound('source profile not found');
     }
-    const sourceType = input.sourceType ?? (existing.source_type as 'csv');
+    const sourceType = input.sourceType ?? (existing.source_type as 'csv' | 'saml');
     if (!SOURCE_PROFILE_TYPES.has(sourceType)) {
-      throw badRequest('sourceType must be csv');
+      throw badRequest('sourceType must be csv, saml, or directory');
     }
     const profileKey = input.profileKey ?? existing.profile_key;
     const displayName = input.displayName ?? existing.display_name;
@@ -2754,6 +2943,8 @@ export class IdentityMappingControlPlaneRepository {
       displayName: input.displayName,
       description: input.description ?? null,
       lifecycleState: 'draft',
+      createdAt: now,
+      updatedAt: now,
     };
   }
 
@@ -2769,6 +2960,8 @@ export class IdentityMappingControlPlaneRepository {
       displayName: row.display_name,
       description: row.description,
       lifecycleState: row.lifecycle_state,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }));
   }
 
@@ -3113,6 +3306,14 @@ export class IdentityMappingControlPlaneRepository {
     const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
     if (!fieldMappingSet) {
       throw notFound('field mapping set not found');
+    }
+    const existingVersion = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id FROM field_mapping_versions
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND version_label = ?`,
+      [tenantId, fieldMappingSetId, input.versionLabel]
+    );
+    if (existingVersion) {
+      throw conflict('field mapping version label already exists');
     }
 
     const now = this.now();
@@ -5716,10 +5917,35 @@ export class IdentityMappingControlPlaneRepository {
   }
 
   private async getCatalogVersion(tenantId: string, catalogVersionId: string) {
-    return this.adapter.queryOne<FieldCatalogVersionRow>(
+    const storedCatalogVersion = await this.adapter.queryOne<FieldCatalogVersionRow>(
       `SELECT * FROM field_catalog_versions WHERE tenant_id = ? AND id = ?`,
       [tenantId, catalogVersionId]
     );
+    if (storedCatalogVersion) {
+      return storedCatalogVersion;
+    }
+
+    const configuredCanonicalCatalog = await this.loadConfiguredCanonicalCatalog(tenantId);
+    if (configuredCanonicalCatalog?.versionId !== catalogVersionId) {
+      return null;
+    }
+    const bundleHash = await hashStableJson({
+      catalogKey: configuredCanonicalCatalog.catalogKey,
+      versionLabel: configuredCanonicalCatalog.versionLabel,
+      entries: configuredCanonicalCatalog.entries ?? [],
+    });
+    const now = this.now();
+    return {
+      id: catalogVersionId,
+      tenant_id: tenantId,
+      catalog_id: configuredCanonicalCatalog.id,
+      version_label: configuredCanonicalCatalog.versionLabel ?? catalogVersionId,
+      bundle_hash: bundleHash,
+      compatibility_range: '*',
+      lifecycle_state: 'active' as LifecycleState,
+      created_at: now,
+      updated_at: now,
+    };
   }
 
   private async getSnapshot(tenantId: string, fieldMappingVersionId: string, snapshotId: string) {
@@ -5941,6 +6167,69 @@ function catalogEntryValidation(entry: FieldCatalogEntry): Record<string, unknow
   };
 }
 
+function customClaimSchemaToCatalogEntry(
+  row: CustomClaimSchemaCatalogRow
+): FieldCatalogEntrySummary[] {
+  const fieldKey = normalizeCatalogFieldKey(row.active_field_key ?? row.field_key);
+  if (!fieldKey) {
+    return [];
+  }
+
+  const validation = parseJsonObject(row.validation_rules ?? '{}', {});
+  const allowedValuesFromCatalog = parseStringArray(validation.allowedValues);
+  const enumValues = parseStringArray(validation.enum_values);
+  const required = readDatabaseBoolean(row.is_required);
+
+  return [
+    {
+      id: `custom_claim_schema:${row.id}`,
+      stableFieldId: `field.canonical.${fieldKey}`,
+      namespace: DEFAULT_CANONICAL_NAMESPACE,
+      path: fieldKey,
+      targetTaxonomy: 'canonical',
+      valueType: normalizeCatalogValueType(row.field_type),
+      cardinality: 'single',
+      classification: readDatabaseBoolean(row.is_pii) ? 'pii' : 'internal',
+      aliases: [{ namespace: 'oidc', path: fieldKey }],
+      uiGroupKey: row.ui_group_key,
+      uiGroupLabel: row.ui_group_label,
+      uiGroupOrder: row.ui_group_order ?? 90,
+      uiFieldOrder: row.ui_field_order ?? row.display_order ?? 100,
+      examples: parseJsonUnknownArray(row.examples_json),
+      note: row.description,
+      allowedValues: allowedValuesFromCatalog.length > 0 ? allowedValuesFromCatalog : enumValues,
+      valueMultiplicity:
+        validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
+          ? validation.valueMultiplicity
+          : null,
+      nullable: required ? false : null,
+      required,
+    },
+  ];
+}
+
+function normalizeCatalogFieldKey(value: string | null): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized ? normalized : null;
+}
+
+function normalizeCatalogValueType(value: string | null): string {
+  switch (value) {
+    case 'boolean':
+    case 'number':
+    case 'date':
+      return value;
+    case 'enum':
+    case 'string':
+    default:
+      return 'string';
+  }
+}
+
+function readDatabaseBoolean(value: number | boolean | null): boolean {
+  return value === true || value === 1;
+}
+
 export async function adminIdentityMappingCatalogsListHandler(c: AdminContext) {
   return handleControlPlane(c, async (repository, tenantId) => ({
     catalogs: await repository.listCatalogs(tenantId),
@@ -6154,13 +6443,16 @@ export async function adminIdentityFieldMappingSetDeleteHandler(c: AdminContext)
 }
 
 export async function adminIdentityFieldMappingVersionCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'field_mapping.version.create', async (repository, tenantId, body) =>
-    repository.createFieldMappingVersion(
-      tenantId,
-      requiredParam(c, 'fieldMappingSetId'),
-      body as CreateFieldMappingVersionRequest
-    )
-  );
+  return handleMutation(c, 'field_mapping.version.create', async (repository, tenantId, body) => {
+    const request = body as CreateFieldMappingVersionRequest;
+    const adminAuth = (
+      c as unknown as { get: (key: string) => { userId?: string } | undefined }
+    ).get('adminAuth');
+    return repository.createFieldMappingVersion(tenantId, requiredParam(c, 'fieldMappingSetId'), {
+      ...request,
+      authorId: request.authorId ?? adminAuth?.userId,
+    });
+  });
 }
 
 export async function adminIdentityFieldMappingVersionPublishHandler(c: AdminContext) {
@@ -6479,8 +6771,11 @@ async function handleMutation<T>(
 }
 
 function createRepository(c: AdminContext): IdentityMappingControlPlaneRepository {
+  const tenantId = getTenantIdFromContext(c);
   return new IdentityMappingControlPlaneRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'identity-mapping-control-plane')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'identity-mapping-control-plane'),
+    () => Date.now(),
+    createAuthContextFromHono(c, tenantId).coreAdapter
   );
 }
 
@@ -6517,7 +6812,11 @@ function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
 
 async function readJsonBody(c: AdminContext): Promise<unknown> {
   try {
-    const body = await c.req.json();
+    const text = await c.req.text();
+    if (!text.trim()) {
+      return {};
+    }
+    const body = JSON.parse(text) as unknown;
     if (!isRecord(body)) {
       throw badRequest('Request body must be an object');
     }
@@ -7175,7 +7474,14 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
   if (input.rules.length > POLICY_VERSION_MAX_RULES) {
     throw badRequest(`rules must contain at most ${POLICY_VERSION_MAX_RULES} items`);
   }
-  input.rules.forEach((rule, index) => assertFieldMappingRuleSafe(rule, `rules[${index}]`));
+  const ruleKeys = new Set<string>();
+  input.rules.forEach((rule, index) => {
+    assertFieldMappingRuleSafe(rule, `rules[${index}]`);
+    if (ruleKeys.has(rule.ruleKey)) {
+      throw badRequest(`rules[${index}].ruleKey must be unique`);
+    }
+    ruleKeys.add(rule.ruleKey);
+  });
 }
 
 function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: string): void {
@@ -7436,7 +7742,13 @@ function parseJsonUnknownArray(value: string | null): unknown[] {
   }
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (isRecord(parsed) && Array.isArray(parsed.values)) {
+      return parsed.values;
+    }
+    return [];
   } catch {
     return [];
   }

@@ -118,7 +118,7 @@ const ru: Translations = {
   'env.customDesc': 'Ввести своё название окружения',
   'env.customPrompt': 'Введите название окружения',
   'env.customValidation':
-    'Допускаются только строчные буквы, цифры и дефисы (например, prod, staging, dev)',
+    'Допускаются только строчные буквы, цифры и дефисы (например, prod, main, tokyo, acme-dev)',
   'env.detected': 'Обнаруженные окружения:',
   'env.selectExisting': 'Выбрать существующее окружение',
   'env.createNew': 'Создать новое окружение',
@@ -703,7 +703,7 @@ const ru: Translations = {
   'web.systemMode': 'Системная',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Предварительные требования',
+  'web.prereq.title': 'Подготовка',
   'web.prereq.checking': 'Проверка...',
   'web.prereq.checkingRequirements': 'Проверка системных требований...',
   'web.prereq.ready': 'Готово',
@@ -831,12 +831,10 @@ const ru: Translations = {
   'web.complete.issuerUrl': 'URL издателя',
   'web.complete.loginUrl': 'URL для входа',
   'web.complete.adminUrl': 'URL администратора',
-  'web.complete.nextSteps': 'Следующие шаги:',
-  'web.complete.step1': 'Завершите начальную настройку администратора, используя кнопку выше',
-  'web.complete.step2': 'Настройте первого OAuth-клиента в панели администратора',
-  'web.complete.step3': 'Интегрируйте с вашим приложением',
   'web.complete.saveConfig': 'Сохранить конфигурацию',
   'web.complete.backToMain': 'Вернуться на главную',
+  'web.config.saveToFileTitle': 'Сохранить конфигурацию в файл',
+  'web.complete.backToMainTitle': 'Вернуться на главный экран',
   'web.complete.canClose': 'Настройка завершена. Вы можете безопасно закрыть это окно.',
   'web.complete.adminAccountTitle': 'Настройка учётной записи администратора',
   'web.complete.adminAccountImportant': 'ВАЖНО',
@@ -912,7 +910,7 @@ const ru: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': 'Название окружения',
-  'web.form.envNamePlaceholder': 'например, prod, staging, dev',
+  'web.form.envNamePlaceholder': 'например, prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Только строчные буквы, цифры и дефисы',
   'web.form.envNameError':
     'Допустимы только строчные буквы, цифры и дефисы (должно начинаться с буквы)',
@@ -1091,6 +1089,41 @@ const ru: Translations = {
   'web.envDetail.queues': 'Очереди',
   'web.envDetail.r2Buckets': 'Бакеты R2',
   'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Настройки email',
+  'web.envDetail.emailDesc': 'Позже включите Cloudflare Email Service для этой среды.',
+  'web.envDetail.emailCurrentProvider': 'Текущий провайдер',
+  'web.envDetail.emailCurrentStatus': 'Статус',
+  'web.envDetail.emailCurrentFrom': 'Адрес From',
+  'web.envDetail.emailConfigured': 'Настроено',
+  'web.envDetail.emailNotConfigured': 'Не настроено',
+  'web.envDetail.emailProviderNone': 'Не настроено',
+  'web.envDetail.emailCloudflareRequirements': 'Требования',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Требуется Workers Paid Plan',
+  'web.envDetail.emailCloudflareRequirementDns': 'Требуются Cloudflare DNS и подключение домена',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'Настройка домена в Cloudflare Dashboard пока выполняется вручную',
+  'web.envDetail.emailCloudflareFromHint':
+    'При использовании Cloudflare Email Service адрес должен принадлежать домену, подключенному в Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Настройки Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'При использовании Resend домен должен быть добавлен и проверен в Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Домены Resend',
+  'web.envDetail.emailFromAddress': 'Email-адрес From',
+  'web.envDetail.emailFromName': 'Отображаемое имя отправителя (необязательно)',
+  'web.envDetail.emailEnableCloudflare': 'Включить Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Применение...',
+  'web.envDetail.emailProgress': 'Ход настройки email:',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email включен.',
+  'web.envDetail.emailUpdateFailed': 'Не удалось включить Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Введите email-адрес From.',
+  'web.envDetail.emailFromInvalid': 'Введите корректный email-адрес.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'В этой среде уже настроен другой email-провайдер. Переключиться на Cloudflare Email Service?',
+  'web.envDetail.emailStarting': 'Запуск настройки Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'В этой среде уже настроен другой email-провайдер. Переключиться на Resend?',
+  'web.envDetail.emailResendStarting': 'Сохранение настроек email Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Настройки email Resend сохранены.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Обновить все Workers',
@@ -1102,6 +1135,7 @@ const ru: Translations = {
   'web.envDetail.upToDate': 'Актуально',
   'web.envDetail.notDeployed': 'Не развёрнут',
   'web.envDetail.updateOnlyChanged': 'Обновить только изменённые версии',
+  'web.envDetail.updateIncludeUiWorkers': 'Обновить Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Обновить все Workers',
   'web.envDetail.refreshVersions': 'Обновить',
   'web.envDetail.updateProgress': 'Прогресс обновления:',
@@ -1144,7 +1178,7 @@ const ru: Translations = {
   'web.error.notLoggedIn': 'Не выполнен вход в Cloudflare',
   'web.error.runCommand': 'Выполните эту команду в терминале:',
   'web.error.thenRefresh': 'Затем обновите эту страницу.',
-  'web.error.checkingPrereq': 'Ошибка проверки предварительных требований:',
+  'web.error.checkingPrereq': 'Ошибка проверки подготовки:',
   'web.error.invalidJson': 'Некорректный JSON:',
   'web.error.validationFailed': 'Запрос валидации не удался:',
 

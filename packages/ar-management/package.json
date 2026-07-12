@@ -1,11 +1,11 @@
 {
   "name": "@authrim/ar-management",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
-    "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-management --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-management: lint skipped'",
@@ -20,14 +20,16 @@
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
     "@authrim/ar-lib-scim": "workspace:*",
-    "hono": "4.12.21",
-    "jose": "^6.1.2"
+    "@simplewebauthn/server": "^13.2.2",
+    "hono": "4.12.29",
+    "jose": "^6.1.2",
+    "zod": "^3.24.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   }
 }

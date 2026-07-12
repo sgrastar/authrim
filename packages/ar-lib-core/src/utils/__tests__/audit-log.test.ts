@@ -156,7 +156,45 @@ describe('createAuditLog', () => {
     vi.restoreAllMocks();
   });
 
-  it('should create an audit log entry successfully', async () => {
+  it('should create a unified audit event for the standard event_log profile', async () => {
+    await createAuditLog(mockEnv, {
+      tenantId: 'default',
+      userId: 'user-123',
+      action: 'signing_keys.rotate.normal',
+      resource: 'signing_keys',
+      resourceId: 'key-abc',
+      ipAddress: '192.168.1.1',
+      userAgent: 'Test Agent',
+      metadata: '{"reason": "scheduled rotation"}',
+      severity: 'warning',
+    });
+
+    expect(mockEnv.DB.prepare).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_log')
+    );
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({
+        eventType: 'signing_keys.rotate.normal',
+        eventCategory: 'security',
+        result: 'success',
+      })
+    );
+  });
+
+  it('should write legacy audit_log when the resolved D1 primary is not event_log', async () => {
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'legacy-d1-audit',
+        kind: 'audit',
+        builtin: false,
+        label: 'Legacy D1 Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
+
     await createAuditLog(mockEnv, {
       tenantId: 'default',
       userId: 'user-123',
@@ -183,6 +221,17 @@ describe('createAuditLog', () => {
   });
 
   it('should generate unique ID for each log entry', async () => {
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'legacy-d1-audit',
+        kind: 'audit',
+        builtin: false,
+        label: 'Legacy D1 Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
     const bindCalls: unknown[][] = [];
     const mockDB = {
       prepare: vi.fn().mockReturnValue({
@@ -675,6 +724,20 @@ describe('createAuditLog', () => {
   });
 
   describe('Error Handling (Non-blocking)', () => {
+    beforeEach(() => {
+      mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+        auditProfile: {
+          id: 'legacy-d1-audit',
+          kind: 'audit',
+          builtin: false,
+          label: 'Legacy D1 Audit',
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+          archive: null,
+          sinks: [],
+        },
+      });
+    });
+
     it('should not throw when fail-open DB write fails', async () => {
       const failingEnv = createMockEnv({ shouldFail: true });
 
@@ -758,6 +821,17 @@ describe('createAuditLog', () => {
 describe('createAuditLogFromContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'legacy-d1-audit',
+        kind: 'audit',
+        builtin: false,
+        label: 'Legacy D1 Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
   });
 
   afterEach(() => {

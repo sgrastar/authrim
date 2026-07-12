@@ -6,6 +6,7 @@
 	import ApprovalGrantGuideCard from '$lib/components/admin/ApprovalGrantGuideCard.svelte';
 	import ApprovalGrantIntegrationCard from '$lib/components/admin/ApprovalGrantIntegrationCard.svelte';
 	import ApprovalEvidenceTimeline from '$lib/components/admin/ApprovalEvidenceTimeline.svelte';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import ApprovalRequestPreviewPanel from '$lib/components/admin/ApprovalRequestPreviewPanel.svelte';
 	import ApprovalStepGuideCard from '$lib/components/admin/ApprovalStepGuideCard.svelte';
 	import {
@@ -900,23 +901,21 @@
 	<title>{$LL.admin_approvals_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_approvals_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_approvals_description()}
-			</p>
-		</div>
-		<div class="page-actions">
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_approvals_title()}
+		description={$LL.admin_approvals_description()}
+	>
+		{#snippet actions()}
 			<button class="btn btn-primary" onclick={openCreateModal}
-				>{$LL.admin_approvals_new_request()}</button
+				><i class="i-ph-plus"></i>{$LL.admin_approvals_new_request()}</button
 			>
 			<button class="btn btn-secondary" onclick={loadRequests} disabled={loading}>
+				<i class="i-ph-arrows-clockwise"></i>
 				{$LL.admin_approvals_refresh()}
 			</button>
-		</div>
-	</div>
+		{/snippet}
+	</AdminPageHeader>
 
 	<div class="panel filters-panel">
 		<div class="filter-row">
@@ -970,53 +969,51 @@
 		{:else if requests.length === 0}
 			<div class="empty-state">{$LL.admin_approvals_empty_requests()}</div>
 		{:else}
-			<div class="table-wrapper">
-				<table class="data-table">
-					<thead>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>{$LL.admin_approvals_status()}</th>
+						<th>{$LL.admin_approvals_reason()}</th>
+						<th>{$LL.admin_approvals_scope()}</th>
+						<th>{$LL.admin_approvals_target()}</th>
+						<th>{$LL.admin_approvals_created()}</th>
+						<th>{$LL.admin_approvals_approvals()}</th>
+						<th>{$LL.admin_approvals_grants()}</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each requests as request (request.public_request_id)}
 						<tr>
-							<th>{$LL.admin_approvals_status()}</th>
-							<th>{$LL.admin_approvals_reason()}</th>
-							<th>{$LL.admin_approvals_scope()}</th>
-							<th>{$LL.admin_approvals_target()}</th>
-							<th>{$LL.admin_approvals_created()}</th>
-							<th>{$LL.admin_approvals_approvals()}</th>
-							<th>{$LL.admin_approvals_grants()}</th>
-							<th></th>
+							<td>
+								<span class={getStatusBadgeClass(request.status)}
+									>{formatApprovalStatus(request.status)}</span
+								>
+							</td>
+							<td>
+								<div class="cell-primary">{request.reason_code}</div>
+								<div class="cell-secondary">{request.investigation_id}</div>
+							</td>
+							<td>{formatScopeSummary(request)}</td>
+							<td>
+								<div class="cell-primary">{request.target_subject_type}</div>
+								<div class="cell-secondary">{request.target_subject_id}</div>
+							</td>
+							<td>{formatDateTime(request.created_at)}</td>
+							<td>{request.approvals.length}</td>
+							<td>{request.grants?.length ?? 0}</td>
+							<td class="row-actions">
+								<button class="btn btn-sm btn-secondary" onclick={() => openDetail(request)}>
+									{$LL.admin_approvals_view()}
+								</button>
+							</td>
 						</tr>
-					</thead>
-					<tbody>
-						{#each requests as request (request.public_request_id)}
-							<tr>
-								<td>
-									<span class={getStatusBadgeClass(request.status)}
-										>{formatApprovalStatus(request.status)}</span
-									>
-								</td>
-								<td>
-									<div class="cell-primary">{request.reason_code}</div>
-									<div class="cell-secondary">{request.investigation_id}</div>
-								</td>
-								<td>{formatScopeSummary(request)}</td>
-								<td>
-									<div class="cell-primary">{request.target_subject_type}</div>
-									<div class="cell-secondary">{request.target_subject_id}</div>
-								</td>
-								<td>{formatDateTime(request.created_at)}</td>
-								<td>{request.approvals.length}</td>
-								<td>{request.grants?.length ?? 0}</td>
-								<td class="row-actions">
-									<button class="btn btn-sm btn-secondary" onclick={() => openDetail(request)}>
-										{$LL.admin_approvals_view()}
-									</button>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+					{/each}
+				</tbody>
+			</AdminDataTable>
 		{/if}
 	</div>
-</div>
+</AdminPageShell>
 
 <Modal
 	open={showDetailModal}
@@ -2012,6 +2009,17 @@
 </Modal>
 
 <style>
+	.detail-grid,
+	.detail-card,
+	.detail-panel,
+	.step-card,
+	.step-note,
+	.grant-issue-panel,
+	.json-block {
+		box-sizing: border-box;
+		min-width: 0;
+	}
+
 	.detail-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -2042,13 +2050,13 @@
 		font-size: 0.75rem;
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--color-text-secondary);
+		letter-spacing: var(--table-header-letter-spacing, 0.04em);
+		color: var(--color-text-muted);
 	}
 
 	.detail-list dd {
 		margin: 0;
-		color: var(--color-text-primary);
+		color: var(--color-text);
 	}
 
 	.filter-row {
@@ -2070,29 +2078,15 @@
 
 	.panel-meta,
 	.cell-secondary {
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
 	.cell-primary {
+		display: block;
 		font-weight: 600;
-	}
-
-	.table-wrapper {
-		overflow-x: auto;
-	}
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.data-table th,
-	.data-table td {
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--color-border-subtle);
-		text-align: left;
-		vertical-align: top;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 
 	.row-actions {
@@ -2103,36 +2097,36 @@
 		display: inline-flex;
 		align-items: center;
 		padding: 0.2rem 0.55rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-size: 0.8rem;
 		font-weight: 700;
 		text-transform: capitalize;
 	}
 
 	.status-pending {
-		background: rgba(234, 179, 8, 0.14);
-		color: #a16207;
+		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		color: var(--color-warning);
 	}
 
 	.status-partial {
-		background: rgba(59, 130, 246, 0.14);
-		color: #1d4ed8;
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
 	}
 
 	.status-approved {
-		background: rgba(34, 197, 94, 0.14);
-		color: #15803d;
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.status-denied,
 	.status-cancelled {
-		background: rgba(239, 68, 68, 0.14);
-		color: #b91c1c;
+		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+		color: var(--color-danger);
 	}
 
 	.status-expired {
-		background: rgba(107, 114, 128, 0.16);
-		color: #4b5563;
+		background: color-mix(in srgb, var(--color-text-muted) 16%, transparent);
+		color: var(--color-text-muted);
 	}
 
 	.steps-list {
@@ -2142,9 +2136,9 @@
 
 	.step-card {
 		padding: 1rem;
-		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.75rem;
-		background: var(--color-surface-subtle);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.step-header {
@@ -2159,22 +2153,21 @@
 		display: grid;
 		gap: 0.25rem;
 		font-size: 0.875rem;
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.step-note {
 		margin-top: 0.75rem;
 		padding: 0.75rem;
-		border-radius: 0.75rem;
-		background: color-mix(in srgb, var(--color-surface-subtle) 82%, transparent);
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 		font-size: 0.9rem;
-		color: var(--color-text-primary);
+		color: var(--color-text);
 		white-space: pre-wrap;
 	}
 
 	.step-actions,
-	.detail-actions,
-	.page-actions {
+	.detail-actions {
 		display: flex;
 		gap: 0.75rem;
 		align-items: center;
@@ -2185,7 +2178,7 @@
 	.empty-state {
 		padding: 2rem;
 		text-align: center;
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.compact-empty-state {
@@ -2195,8 +2188,10 @@
 	.json-block {
 		margin: 0;
 		padding: 1rem;
-		border-radius: 0.75rem;
-		background: var(--color-surface-subtle);
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		background: var(--settings-card-bg, var(--color-surface-muted));
+		color: var(--color-text);
 		overflow-x: auto;
 		font-size: 0.85rem;
 	}
@@ -2204,20 +2199,20 @@
 	.grant-details summary {
 		cursor: pointer;
 		font-weight: 600;
-		color: var(--color-text-primary);
+		color: var(--color-text);
 	}
 
 	.grant-issue-panel {
 		margin-top: 0.75rem;
 		padding: 1rem;
-		border-radius: 0.75rem;
-		border: 1px solid var(--color-border-subtle);
-		background: color-mix(in srgb, var(--color-surface-subtle) 88%, transparent);
+		border-radius: var(--settings-card-radius, var(--radius-control));
+		border: var(--settings-card-border, 1px solid var(--color-border));
+		background: var(--settings-card-bg, var(--color-surface-muted));
 	}
 
 	.monospace-textarea {
 		width: 100%;
-		font-family: 'SFMono-Regular', 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+		font-family: var(--font-mono);
 	}
 
 	.checkbox-group {

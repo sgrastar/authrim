@@ -1,0 +1,514 @@
+openapi: 3.2.0
+info:
+  title: Authrim Async Authorization API
+  version: 0.3.3
+  summary: Device Authorization and CIBA endpoints.
+  description: Initial OpenAPI contract for `@authrim/ar-async`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Device Authorization
+  - name: CIBA
+paths:
+  /device_authorization:
+    post:
+      tags:
+        - Device Authorization
+      summary: Start an OAuth Device Authorization Grant.
+      requestBody:
+        $ref: "#/components/requestBodies/DeviceAuthorization"
+      responses:
+        "200":
+          $ref: "#/components/responses/DeviceAuthorization"
+  /device:
+    get:
+      tags:
+        - Device Authorization
+      summary: Render the device verification page.
+      responses:
+        "200":
+          description: HTML device verification page.
+    post:
+      tags:
+        - Device Authorization
+      summary: Submit a device user code.
+      requestBody:
+        $ref: "#/components/requestBodies/FormOrJson"
+      responses:
+        "200":
+          $ref: "#/components/responses/Any"
+  /api/devices/verify:
+    post:
+      tags:
+        - Device Authorization
+      summary: Verify or approve a device authorization request.
+      requestBody:
+        $ref: "#/components/requestBodies/DeviceVerify"
+      responses:
+        "200":
+          $ref: "#/components/responses/DeviceVerify"
+  /bc-authorize:
+    post:
+      tags:
+        - CIBA
+      summary: Start a CIBA backchannel authentication request.
+      requestBody:
+        $ref: "#/components/requestBodies/CibaAuthorization"
+      responses:
+        "200":
+          $ref: "#/components/responses/CibaAuthorization"
+  /api/ciba/pending:
+    get:
+      tags:
+        - CIBA
+      summary: List pending CIBA requests for the current user/session.
+      responses:
+        "200":
+          $ref: "#/components/responses/CibaPending"
+  /api/ciba/requests/{auth_req_id}:
+    get:
+      tags:
+        - CIBA
+      summary: Get a pending CIBA request.
+      parameters:
+        - name: auth_req_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/CibaDetails"
+  /api/ciba/approve:
+    post:
+      tags:
+        - CIBA
+      summary: Approve a CIBA request.
+      requestBody:
+        $ref: "#/components/requestBodies/CibaDecision"
+      responses:
+        "200":
+          $ref: "#/components/responses/CibaDecision"
+  /api/ciba/deny:
+    post:
+      tags:
+        - CIBA
+      summary: Deny a CIBA request.
+      requestBody:
+        $ref: "#/components/requestBodies/CibaDecision"
+      responses:
+        "200":
+          $ref: "#/components/responses/CibaDecision"
+components:
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    FormOrJson:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            additionalProperties: true
+    DeviceAuthorization:
+      required: false
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: "#/components/schemas/DeviceAuthorizationRequest"
+          example:
+            client_id: client_123
+            scope: openid profile email
+    DeviceVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DeviceVerifyRequest"
+          example:
+            user_code: WDJB-MJHT
+            approve: true
+    CibaAuthorization:
+      required: false
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: "#/components/schemas/CibaAuthorizationRequest"
+          example:
+            scope: openid profile email
+            client_id: client_123
+            login_hint: user@example.com
+            binding_message: Approve sign-in
+    CibaDecision:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaDecisionRequest"
+          example:
+            auth_req_id: auth_req_123
+            user_id: user_123
+  responses:
+    Ok:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Any:
+      description: Successful JSON or HTML response.
+    DeviceAuthorization:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DeviceAuthorizationResponse"
+          example:
+            device_code: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
+            user_code: WDJB-MJHT
+            verification_uri: https://auth.example.com/device
+            verification_uri_complete: https://auth.example.com/device?user_code=WDJB-MJHT&tenant_hint=tenant_123
+            expires_in: 600
+            interval: 5
+    DeviceVerify:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DeviceVerifyResponse"
+          example:
+            success: true
+            message: Device authorized successfully
+    CibaAuthorization:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaAuthorizationResponse"
+          example:
+            auth_req_id: 1c266114-a1be-4252-8ad1-04986c5b9ac1
+            expires_in: 300
+            interval: 5
+    CibaPending:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaPendingResponse"
+          example:
+            requests:
+              - auth_req_id: auth_req_123
+                client_id: client_123
+                client_name: Example App
+                client_logo_uri: https://example.com/logo.png
+                scope: openid profile email
+                binding_message: Approve sign-in
+                user_code: "123456"
+                created_at: 1770000000000
+                expires_at: 1770000300000
+                status: pending
+    CibaDetails:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaDetailsResponse"
+          example:
+            auth_req_id: auth_req_123
+            client:
+              client_id: client_123
+              client_name: Example App
+              logo_uri: https://example.com/logo.png
+              is_trusted: false
+            scope: openid profile email
+            binding_message: Approve sign-in
+            user_code: "123456"
+            created_at: 1770000000000
+            expires_at: 1770000300000
+            time_remaining: 240
+            status: pending
+    CibaDecision:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaDecisionResponse"
+          example:
+            success: true
+            message: Authentication request approved
+  schemas:
+    DeviceAuthorizationRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        scope:
+          type: string
+          example: openid profile email
+      required:
+        - client_id
+    DeviceAuthorizationResponse:
+      type: object
+      properties:
+        device_code:
+          type: string
+          example: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
+        user_code:
+          type: string
+          example: WDJB-MJHT
+        verification_uri:
+          type: string
+          format: uri
+          example: https://auth.example.com/device
+        verification_uri_complete:
+          type: string
+          format: uri
+          example: https://auth.example.com/device?user_code=WDJB-MJHT&tenant_hint=tenant_123
+        expires_in:
+          type: integer
+          example: 600
+        interval:
+          type: integer
+          example: 5
+      required:
+        - device_code
+        - user_code
+        - verification_uri
+        - verification_uri_complete
+        - expires_in
+        - interval
+    DeviceVerifyRequest:
+      type: object
+      properties:
+        user_code:
+          type: string
+          example: WDJB-MJHT
+        approve:
+          type: boolean
+          default: true
+          example: true
+        user_id:
+          type: string
+          example: user_123
+        sub:
+          type: string
+          example: user@example.com
+      required:
+        - user_code
+    DeviceVerifyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Device authorized successfully
+        error:
+          type: string
+          example: invalid_code
+        error_description:
+          type: string
+          example: Invalid or expired user code
+      required:
+        - success
+    CibaAuthorizationRequest:
+      type: object
+      properties:
+        scope:
+          type: string
+          example: openid profile email
+        client_id:
+          type: string
+          example: client_123
+        client_secret:
+          type: string
+          example: client_secret
+        login_hint:
+          type: string
+          example: user@example.com
+        binding_message:
+          type: string
+          example: Approve sign-in to Example App
+        user_code:
+          type: string
+          example: "123456"
+        requested_expiry:
+          type: integer
+          example: 300
+      required:
+        - scope
+        - client_id
+    CibaAuthorizationResponse:
+      type: object
+      properties:
+        auth_req_id:
+          type: string
+          example: 1c266114-a1be-4252-8ad1-04986c5b9ac1
+        expires_in:
+          type: integer
+          example: 300
+        interval:
+          type: integer
+          example: 5
+      required:
+        - auth_req_id
+        - expires_in
+    CibaPendingResponse:
+      type: object
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/CibaPendingRequest"
+      required:
+        - requests
+    CibaPendingRequest:
+      type: object
+      properties:
+        auth_req_id:
+          type: string
+          example: auth_req_123
+        client_id:
+          type: string
+          example: client_123
+        client_name:
+          type: string
+          example: Example App
+        client_logo_uri:
+          type:
+            - string
+            - "null"
+          example: https://example.com/logo.png
+        scope:
+          type: string
+          example: openid profile email
+        binding_message:
+          type:
+            - string
+            - "null"
+          example: Approve sign-in
+        user_code:
+          type:
+            - string
+            - "null"
+          example: "123456"
+        created_at:
+          type: integer
+          example: 1770000000000
+        expires_at:
+          type: integer
+          example: 1770000300000
+        status:
+          type: string
+          example: pending
+    CibaDetailsResponse:
+      type: object
+      properties:
+        auth_req_id:
+          type: string
+          example: auth_req_123
+        client:
+          type: object
+          properties:
+            client_id:
+              type: string
+              example: client_123
+            client_name:
+              type: string
+              example: Example App
+            logo_uri:
+              type:
+                - string
+                - "null"
+              example: https://example.com/logo.png
+            is_trusted:
+              type: boolean
+              example: false
+        scope:
+          type: string
+          example: openid profile email
+        binding_message:
+          type:
+            - string
+            - "null"
+          example: Approve sign-in
+        user_code:
+          type:
+            - string
+            - "null"
+          example: "123456"
+        created_at:
+          type: integer
+          example: 1770000000000
+        expires_at:
+          type: integer
+          example: 1770000300000
+        time_remaining:
+          type: integer
+          example: 240
+        status:
+          type: string
+          example: pending
+      required:
+        - auth_req_id
+        - client
+        - scope
+        - created_at
+        - expires_at
+        - time_remaining
+        - status
+    CibaDecisionRequest:
+      type: object
+      properties:
+        auth_req_id:
+          type: string
+          example: auth_req_123
+        user_id:
+          type: string
+          example: user_123
+        sub:
+          type: string
+          example: user@example.com
+        nonce:
+          type: string
+          example: nonce_123
+        reason:
+          type: string
+          example: user_denied
+      required:
+        - auth_req_id
+    CibaDecisionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Authentication request approved
+        error:
+          type: string
+          example: invalid_request
+        error_description:
+          type: string
+          example: auth_req_id is required
+        retry_after:
+          type: integer
+          example: 60
+      required:
+        - success

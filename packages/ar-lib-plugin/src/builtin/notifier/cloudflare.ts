@@ -215,7 +215,7 @@ export const cloudflareEmailPlugin: AuthrimPlugin<CloudflareNotifierConfig> = {
       url: 'https://authrim.com',
     },
     license: 'MIT',
-    icon: 'cloud',
+    icon: 'mail',
     tags: ['email', 'cloudflare', 'workers', 'transactional', 'otp'],
     documentationUrl: 'https://developers.cloudflare.com/email-service/',
     repositoryUrl: 'https://github.com/sgrastar/authrim',

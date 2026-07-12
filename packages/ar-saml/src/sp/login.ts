@@ -8,6 +8,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig } from '@authrim/ar-lib-core';
+import { verifyHumanVerificationToken } from '@authrim/ar-lib-plugin/builtin/security';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -39,6 +40,32 @@ import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
 
+function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
+  return (
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    undefined
+  );
+}
+
+async function verifySPLoginHumanVerification(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<Response | null> {
+  const result = await verifyHumanVerificationToken({
+    env: c.env,
+    tenantId,
+    actions: ['login', 'signup'],
+    response: c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
+    remoteIp: remoteIp(c),
+  });
+  if (result.ok) return null;
+
+  return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+    variables: { field: 'human_verification_response' },
+  });
+}
+
 /**
  * Handle SP login initiation
  */
@@ -50,6 +77,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
     const tenantId = resolveSAMLTenantIdFromContext(c);
+    const turnstileError = await verifySPLoginHumanVerification(c, tenantId);
+    if (turnstileError) return turnstileError;
     const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
     // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.

@@ -12,6 +12,7 @@ import {
   createR2Bucket,
   deleteR2Bucket,
   getWorkerDeployments,
+  listR2Buckets,
   provisionR2Buckets,
 } from '../core/cloudflare.js';
 
@@ -59,6 +60,34 @@ describe('Cloudflare R2 helpers', () => {
     await expect(createR2Bucket('prod-authrim-avatars')).resolves.toEqual({
       name: 'prod-authrim-avatars',
     });
+  });
+
+  it('lists R2 buckets through the Cloudflare API when API credentials are available', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: {
+          buckets: [{ name: 'test-authrim-avatars' }, { name: 'test-sensitive-details' }],
+        },
+      }),
+    });
+
+    await expect(listR2Buckets({ throwOnError: true })).resolves.toEqual([
+      { name: 'test-authrim-avatars' },
+      { name: 'test-sensitive-details' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/r2/buckets?per_page=1000',
+      expect.objectContaining({
+        headers: { Authorization: expect.stringMatching(/^Bearer /) },
+      })
+    );
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
   it('refuses to record provisioned R2 buckets until Cloudflare lists them', async () => {
@@ -111,6 +140,7 @@ describe('Cloudflare R2 helpers', () => {
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
+        PUBLIC_ASSETS: { name: 'prod-public-assets' },
         AVATARS: { name: 'prod-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
         AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
@@ -119,6 +149,7 @@ describe('Cloudflare R2 helpers', () => {
         SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
       },
       [
+        'prod-public-assets',
         'prod-authrim-avatars',
         'prod-diagnostic-logs',
         'prod-audit-archive',
@@ -129,8 +160,8 @@ describe('Cloudflare R2 helpers', () => {
     );
 
     expect(status.enabled).toBe(true);
-    expect(status.required).toBe(6);
-    expect(status.configured).toBe(6);
+    expect(status.required).toBe(7);
+    expect(status.configured).toBe(7);
     expect(status.missing).toEqual([]);
     expect(status.buckets.every((bucket) => bucket.state === 'configured')).toBe(true);
   });

@@ -31,6 +31,8 @@ import {
   checkAdminSetupStatus,
   generateAndStoreSetupToken,
   runMigrationsForEnvironment,
+  getD1MigrationStatusForEnvironment,
+  runD1MigrationsForEnvironmentSelection,
   ensureInitialAdminRolesInD1,
   ensureAdminUiBffMachineAccessInD1,
   cleanupSetupMachineAccessInD1,
@@ -88,13 +90,14 @@ import {
 } from '../core/tenant-d1-bootstrap.js';
 import {
   deployAll,
-  uploadSecrets,
   buildApiPackages,
   deployAllUiWorkers,
   deployUiWorkerBindingTargets,
+  resolveMissingUiWorkerBindingTargets,
+  resolveExistingWorkerComponents,
   deployUiWorkerComponent,
   deployWorker,
-  DEFAULT_INTER_DEPLOY_DELAY_MS,
+  loadDeploySecretsFromKeys,
   UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
   type DeployResult,
@@ -108,13 +111,14 @@ import {
 } from '../core/naming.js';
 import {
   getLocalPackageVersions,
+  getPackageVersion,
   compareVersions,
   getComponentsToUpdate,
 } from '../core/version.js';
 import { completeInitialSetup } from '../core/admin.js';
-import { loadAdminUiBffWorkerSecrets } from '../core/admin-machine-access.js';
+import { prepareAdminUiBffDeployment } from '../core/admin-ui-bff-deployment.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
-import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
+import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
 import {
   buildWorkerHttpReadinessTargets,
@@ -280,7 +284,7 @@ function resolveProgressLogKeysDir(env: string): string {
 
 async function beginProgressLog(
   env: string,
-  operation: 'provision' | 'deploy' | 'delete'
+  operation: 'provision' | 'deploy' | 'delete' | 'update' | 'service-site'
 ): Promise<string | null> {
   await flushProgressLog();
   progressLogState = null;
@@ -447,6 +451,25 @@ async function ensureSupplementalKeysForWebDeploy(keysDir: string): Promise<void
   }
 }
 
+async function loadSupplementalSecretsForWorkers(options: {
+  env: string;
+  keysDir: string;
+  workers: WorkerComponent[];
+}): Promise<Record<string, string>> {
+  const { env, keysDir, workers } = options;
+  if (!existsSync(keysDir)) {
+    addProgress(`Warning: Keys directory not found at ${keysDir}`);
+    return {};
+  }
+
+  await ensureSupplementalKeysForWebDeploy(keysDir);
+  const secrets = await loadDeploySecretsFromKeys(keysDir, workers);
+  addProgress(
+    `Prepared ${Object.keys(secrets).length} secret value(s) for ${env} Worker deployment.`
+  );
+  return secrets;
+}
+
 async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
   env: string;
   rootDir: string;
@@ -602,6 +625,7 @@ export function createApiRoutes(): Hono {
   api.use('/config/*', validateSession);
   api.use('/keys/*', validateSession);
   api.use('/email/*', validateSession);
+  api.use('/service-site/*', validateSession);
   api.use('/provision', validateSession);
   api.use('/wrangler/*', validateSession);
   api.use('/deploy', validateSession);
@@ -969,6 +993,26 @@ export function createApiRoutes(): Hono {
     fromName: z.string().optional(),
   });
 
+  const ServiceSiteConfigSchema = z.object({
+    env: EnvNameSchema,
+    enabled: z.boolean(),
+    binding: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Z][A-Z0-9_]*$/, 'Binding must use uppercase letters, numbers, and underscores')
+      .default('SERVICE_SITE'),
+    workerName: z
+      .string()
+      .trim()
+      .max(63)
+      .regex(/^[a-z][a-z0-9-]*$/, 'Worker name must use lowercase letters, numbers, and hyphens')
+      .optional()
+      .or(z.literal('')),
+    deployRouter: z.boolean().optional().default(true),
+  });
+
   api.post('/email/configure', async (c) => {
     return withLock(async () => {
       try {
@@ -1037,7 +1081,10 @@ export function createApiRoutes(): Hono {
             updatedAt: new Date().toISOString(),
             features: {
               ...currentConfig.features,
-              email: emailConfig,
+              email: {
+                ...currentConfig.features.email,
+                ...emailConfig,
+              },
             },
           });
           await saveEnvironmentConfig(envPaths, updatedConfig);
@@ -1060,7 +1107,10 @@ export function createApiRoutes(): Hono {
             features: {
               queue: stateConfig.features?.queue ?? defaultFeatures.queue,
               r2: stateConfig.features?.r2 ?? defaultFeatures.r2,
-              email: emailConfig,
+              email: {
+                ...stateConfig.features?.email,
+                ...emailConfig,
+              },
             },
           };
         }
@@ -1084,6 +1134,252 @@ export function createApiRoutes(): Hono {
       } catch (error) {
         state.error = sanitizeError(error);
         return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
+  api.post('/service-site/configure', async (c) => {
+    return withLock(async () => {
+      try {
+        const body = await c.req.json();
+        const parseResult = ServiceSiteConfigSchema.safeParse(body);
+        if (!parseResult.success) {
+          return c.json(
+            {
+              success: false,
+              error:
+                'Invalid request: ' + parseResult.error.issues.map((i) => i.message).join(', '),
+            },
+            400
+          );
+        }
+
+        const { env, enabled, binding, workerName, deployRouter } = parseResult.data;
+        const normalizedWorkerName = String(workerName || '').trim();
+        if (enabled && !normalizedWorkerName) {
+          return c.json(
+            {
+              success: false,
+              error: 'Worker name is required when Service Site fallback is enabled.',
+            },
+            400
+          );
+        }
+
+        state.status = 'deploying';
+        state.error = null;
+        clearProgress();
+        state.logPath = await beginProgressLog(env, 'service-site');
+        addProgress(`Configuring Service Site binding for environment: ${env}`);
+
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const envPaths = getEnvironmentPaths({ baseDir, env });
+        if (!existsSync(envPaths.config)) {
+          state.status = 'error';
+          state.error = `Config file not found: ${envPaths.config}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            404
+          );
+        }
+
+        const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);
+        if (!lock || !lockPath) {
+          state.status = 'error';
+          state.error = `Lock file not found for ${env}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            404
+          );
+        }
+
+        const config = parseEnvironmentConfigForEnv(
+          JSON.parse(await readFile(envPaths.config, 'utf-8')),
+          env
+        );
+        const updatedConfig: AuthrimConfig = {
+          ...config,
+          serviceSite: {
+            enabled,
+            binding,
+            workerName: normalizedWorkerName || config.serviceSite?.workerName,
+            fallbackMode: 'worker_service_binding',
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        await writeFile(envPaths.config, `${JSON.stringify(updatedConfig, null, 2)}\n`, 'utf-8');
+        state.config = updatedConfig;
+        addProgress(
+          enabled
+            ? `Service Site binding configured: ${binding} -> ${normalizedWorkerName}`
+            : 'Service Site binding disabled'
+        );
+
+        const resourceIds = buildResourceIdsFromLock(lock);
+        addProgress('Refreshing ar-router wrangler config...');
+        const masterResult = await saveMasterWranglerConfigs(updatedConfig, resourceIds, {
+          baseDir,
+          env,
+          dryRun: false,
+          includeDurableObjectMigrations: false,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
+        if (!masterResult.success) {
+          state.status = 'error';
+          state.error = `Wrangler config generation failed: ${masterResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        addProgress('Syncing ar-router wrangler config...');
+        const syncResult = await syncWranglerConfigs({
+          baseDir,
+          env,
+          packagesDir: join(baseDir, 'packages'),
+          force: true,
+          dryRun: false,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
+        if (!syncResult.success && syncResult.errors.length > 0) {
+          state.status = 'error';
+          state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+        addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
+
+        if (!deployRouter) {
+          state.status = 'complete';
+          addProgress('Router deploy skipped by request.');
+          await flushProgressLog();
+          return c.json({
+            success: true,
+            env,
+            configPath: envPaths.config,
+            deployRequired: true,
+            progress: state.progress,
+            logPath: state.logPath,
+          });
+        }
+
+        addProgress('Building ar-router...');
+        const buildResult = await buildApiPackages({
+          rootDir: baseDir,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
+        if (!buildResult.success) {
+          state.status = 'error';
+          state.error = `Build failed: ${buildResult.error}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        addProgress('Deploying ar-router...');
+        const routerDeployOptions = {
+          env,
+          rootDir: baseDir,
+          dryRun: false,
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => lock.workers?.[component] !== undefined
+          ),
+          onProgress: addProgress,
+        };
+        routerDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+          routerDeployOptions,
+          WORKER_COMPONENTS
+        );
+        const deployResult = await deployWorker('ar-router', routerDeployOptions);
+        if (!deployResult.success) {
+          state.status = 'error';
+          state.error = deployResult.error || 'ar-router deployment failed';
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        const packageVersion = await getPackageVersion(join(baseDir, 'packages', 'ar-router'));
+        await saveLockFile(
+          {
+            ...lock,
+            workers: {
+              ...lock.workers,
+              'ar-router': {
+                name: deployResult.workerName,
+                deployedAt: deployResult.deployedAt,
+                version: packageVersion ?? deployResult.version,
+              },
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          lockPath
+        );
+        addProgress('Lock file updated');
+        state.status = 'complete';
+        addProgress('✓ Service Site binding configuration deployed');
+        await flushProgressLog();
+
+        return c.json({
+          success: true,
+          env,
+          configPath: envPaths.config,
+          workerName: deployResult.workerName,
+          deployedAt: deployResult.deployedAt,
+          serviceSite: updatedConfig.serviceSite,
+          progress: state.progress,
+          logPath: state.logPath,
+        });
+      } catch (error) {
+        state.status = 'error';
+        state.error = sanitizeError(error);
+        await flushProgressLog();
+        return c.json({ success: false, error: state.error, progress: state.progress }, 500);
       }
     });
   });
@@ -1137,6 +1433,7 @@ export function createApiRoutes(): Hono {
           features: {
             ...config.features,
             email: {
+              ...config.features.email,
               provider: 'cloudflare',
               fromAddress: fromAddress.trim(),
               fromName: fromName?.trim() || undefined,
@@ -1190,26 +1487,7 @@ export function createApiRoutes(): Hono {
 
         addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
 
-        addProgress('Uploading email bootstrap secrets...');
-        const secretResult = await uploadSecrets(
-          {
-            EMAIL_FROM: fromAddress.trim(),
-            EMAIL_FROM_NAME: fromName?.trim() || '',
-          },
-          {
-            env,
-            rootDir: resolve(rootDir),
-            onProgress: addProgress,
-          },
-          ['ar-auth', 'ar-management']
-        );
-
-        if (!secretResult.success) {
-          state.status = 'error';
-          state.error = `Secret upload failed: ${secretResult.errors.join(', ')}`;
-          await flushProgressLog();
-          return c.json({ success: false, error: state.error }, 500);
-        }
+        addProgress('Email sender values will be deployed as Worker vars.');
 
         addProgress('Building packages...');
         const buildResult = await buildApiPackages({
@@ -1224,30 +1502,42 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: state.error }, 500);
         }
 
-        const deployResults: DeployResult[] = [];
-        for (const component of ['ar-auth', 'ar-management'] as const) {
-          const result = await deployWorker(component, {
-            env,
-            rootDir: resolve(rootDir),
-            onProgress: addProgress,
-          });
-          deployResults.push(result);
-
-          if (!result.success) {
-            state.status = 'error';
-            state.error = `${component} deployment failed: ${result.error || 'Unknown error'}`;
-            await flushProgressLog();
-            return c.json(
-              {
-                success: false,
-                error: state.error,
-                progress: state.progress,
-              },
-              500
-            );
-          }
+        const emailDeployOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          concurrency: 2,
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => lock.workers?.[component] !== undefined
+          ),
+          onProgress: addProgress,
+        };
+        emailDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+          emailDeployOptions,
+          WORKER_COMPONENTS
+        );
+        const emailDeploySummary = await deployAll(emailDeployOptions, [
+          'ar-auth',
+          'ar-management',
+        ]);
+        if (emailDeploySummary.failedCount > 0) {
+          state.status = 'error';
+          state.error = `Email Worker deployment failed: ${emailDeploySummary.results
+            .filter((result) => !result.success)
+            .map((result) => `${result.component}: ${result.error || 'Unknown error'}`)
+            .join(', ')}`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+            },
+            500
+          );
         }
 
+        const deployResults: DeployResult[] = emailDeploySummary.results;
         const updatedLock = updateLockWithDeployments(lock, deployResults);
         await saveLock(updatedLock, lockPath);
         addProgress(`Lock file updated: ${lockPath}`);
@@ -1678,63 +1968,13 @@ export function createApiRoutes(): Hono {
         }
         cleanupKeysDir = keysDir;
 
+        let deploymentSecrets: Record<string, string> = {};
         if (!dryRun && existsSync(keysDir)) {
           await ensureSupplementalKeysForWebDeploy(keysDir);
-          addProgress(`Uploading secrets from ${keysDir}...`);
-
-          const secrets: Record<string, string> = {};
-          const secretFiles = [
-            { file: join(keysDir, 'private.pem'), name: 'PRIVATE_KEY_PEM' },
-            { file: join(keysDir, 'public.jwk.json'), name: 'PUBLIC_JWK_JSON' },
-            { file: join(keysDir, 'rp_token_encryption_key.txt'), name: 'RP_TOKEN_ENCRYPTION_KEY' },
-            {
-              file: join(keysDir, 'object_encryption_root_key.txt'),
-              name: 'OBJECT_ENCRYPTION_ROOT_KEY',
-            },
-            { file: join(keysDir, 'version_manager_secret.txt'), name: 'VERSION_MANAGER_SECRET' },
-            {
-              file: join(keysDir, 'logging_cursor_hmac_secret.txt'),
-              name: 'LOGGING_CURSOR_HMAC_SECRET',
-            },
-            {
-              file: join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'),
-              name: 'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
-            },
-            {
-              file: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
-              name: 'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
-            },
-            {
-              file: join(keysDir, 'tenant_runtime_registry_verify.jwks.json'),
-              name: 'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
-            },
-            { file: join(keysDir, 'admin_api_secret.txt'), name: 'ADMIN_API_SECRET' },
-            { file: join(keysDir, 'key_manager_secret.txt'), name: 'KEY_MANAGER_SECRET' },
-            { file: join(keysDir, 'cloudflare_api_token.txt'), name: 'CLOUDFLARE_API_TOKEN' },
-            // Email provider secrets (optional)
-            { file: join(keysDir, 'resend_api_key.txt'), name: 'RESEND_API_KEY' },
-            { file: join(keysDir, 'email_from.txt'), name: 'EMAIL_FROM' },
-            { file: join(keysDir, 'email_from_name.txt'), name: 'EMAIL_FROM_NAME' },
-          ];
-
-          for (const { file, name } of secretFiles) {
-            if (existsSync(file)) {
-              secrets[name] = await readFile(file, 'utf-8');
-            }
-          }
-
-          if (Object.keys(secrets).length > 0) {
-            await uploadSecrets(
-              secrets,
-              {
-                env,
-                rootDir: resolve(rootDir),
-                onProgress: addProgress,
-              },
-              enabledComponents
-            );
-            // Note: secrets object goes out of scope here and will be garbage collected
-          }
+          deploymentSecrets = await loadDeploySecretsFromKeys(keysDir, enabledComponents);
+          addProgress(
+            `Prepared ${Object.keys(deploymentSecrets).length} secret value(s) for Worker deployment.`
+          );
         } else if (!dryRun) {
           addProgress(`Warning: Keys directory not found at ${keysDir}`);
         }
@@ -1837,9 +2077,41 @@ export function createApiRoutes(): Hono {
           }
         }
 
+        const { lock: deploymentLock } = await loadLockFileAuto(rootDir, env);
+        let existingComponents = WORKER_COMPONENTS.filter(
+          (component) => deploymentLock?.workers?.[component] !== undefined
+        );
+        const remoteProbeOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          dryRun,
+          concurrency: 2,
+          existingComponents,
+          onProgress: addProgress,
+        };
+        if (!dryRun) {
+          existingComponents = await resolveExistingWorkerComponents(
+            remoteProbeOptions,
+            WORKER_COMPONENTS
+          );
+        }
+        const enabledUiBindingTargets = {
+          loginUi: cfg?.components?.loginUi ?? true,
+          adminUi: cfg?.components?.adminUi ?? true,
+        };
+        const routerSelected = enabledComponents?.includes('ar-router') === true;
+        const missingUiBindingTargets = routerSelected
+          ? dryRun
+            ? enabledUiBindingTargets
+            : await resolveMissingUiWorkerBindingTargets(
+                { env, rootDir: resolve(rootDir), onProgress: addProgress },
+                enabledUiBindingTargets
+              )
+          : { loginUi: false, adminUi: false };
+
         if (
-          (cfg?.components?.loginUi || cfg?.components?.adminUi) &&
-          enabledComponents?.includes('ar-router')
+          (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) &&
+          routerSelected
         ) {
           const placeholderSummary = await deployUiWorkerBindingTargets(
             {
@@ -1849,10 +2121,7 @@ export function createApiRoutes(): Hono {
               apiBaseUrl: resolveIssuerUrl(cfg, { env }),
               onProgress: addProgress,
             },
-            {
-              loginUi: cfg?.components?.loginUi ?? true,
-              adminUi: cfg?.components?.adminUi ?? true,
-            }
+            missingUiBindingTargets
           );
 
           if (placeholderSummary.failedCount > 0) {
@@ -1873,7 +2142,10 @@ export function createApiRoutes(): Hono {
             env,
             rootDir: resolve(rootDir),
             dryRun,
-            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
+            concurrency: 2,
+            deploymentStrategy: 'auto',
+            existingComponents,
+            secrets: deploymentSecrets,
             onProgress: addProgress,
             onError: (comp, error) => {
               addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -1902,7 +2174,10 @@ export function createApiRoutes(): Hono {
         };
 
         // Update lock file with deployed workers information
-        if (workersSuccess && !dryRun && summary.successCount > 0) {
+        if (
+          !dryRun &&
+          summary.results.some((result) => result.success || result.trafficCommitted)
+        ) {
           try {
             const {
               loadLockFileAuto,
@@ -2217,6 +2492,13 @@ export function createApiRoutes(): Hono {
             apiBaseUrl,
             loginUiClientId,
           });
+          if (loginUiClientId) {
+            await mergeAndSaveUiEnv(
+              getEnvironmentPaths({ baseDir: rootDir, env }).uiEnv,
+              loginUiSettings.uiEnv
+            );
+            addProgress('Login UI env updated with client_id');
+          }
           const adminUiSettings = resolveUiDeploymentSettings({
             component: 'ar-admin-ui',
             config: cfg as AuthrimConfig,
@@ -2224,7 +2506,12 @@ export function createApiRoutes(): Hono {
           });
           const adminUiBffSecrets =
             (cfg?.components?.adminUi ?? true) && !dryRun
-              ? await loadAdminUiBffWorkerSecrets(keysDir)
+              ? await prepareAdminUiBffDeployment({
+                  env,
+                  config: cfg as AuthrimConfig,
+                  keysDir,
+                  onProgress: addProgress,
+                })
               : undefined;
           if ((cfg?.components?.adminUi ?? true) && adminUiSettings.adminUiApiMode) {
             addProgress(
@@ -2266,6 +2553,35 @@ export function createApiRoutes(): Hono {
               adminUi: cfg?.components?.adminUi ?? true,
             }
           );
+
+          if (
+            !dryRun &&
+            uiWorkersSummary.results.some((result) => result.success || result.trafficCommitted)
+          ) {
+            const { lock: currentLock, path: currentLockPath } = await loadLockFileAuto(
+              rootDir,
+              env
+            );
+            if (currentLock && currentLockPath) {
+              const workers = { ...currentLock.workers };
+              for (const result of uiWorkersSummary.results) {
+                if ((!result.success && !result.trafficCommitted) || !result.deployedAt) {
+                  continue;
+                }
+                workers[result.component] = {
+                  name: result.projectName,
+                  deployedAt: result.deployedAt,
+                  version:
+                    (await getPackageVersion(join(rootDir, 'packages', result.component))) ??
+                    undefined,
+                };
+              }
+              await saveLockFile(
+                { ...currentLock, workers, updatedAt: new Date().toISOString() },
+                currentLockPath
+              );
+            }
+          }
 
           if (uiWorkersSummary.failedCount === 0) {
             addProgress('✓ All UI packages deployed to Workers');
@@ -3067,7 +3383,7 @@ export function createApiRoutes(): Hono {
     return withLock(async () => {
       try {
         const body = await c.req.json();
-        const { env: envParam, onlyChanged = true } = body;
+        const { env: envParam, onlyChanged = true, includeUiWorkers = true } = body;
         const rootDir = process.cwd();
 
         // Validate environment name to prevent path traversal
@@ -3078,7 +3394,10 @@ export function createApiRoutes(): Hono {
         const env = parseResult.data;
 
         state.status = 'deploying';
+        state.error = null;
+        state.deployResults = [];
         clearProgress();
+        state.logPath = await beginProgressLog(env, 'update');
         addProgress(`Starting worker update for environment: ${env}`);
 
         // Load lock file
@@ -3087,10 +3406,14 @@ export function createApiRoutes(): Hono {
 
         if (!lock) {
           state.status = 'error';
+          state.error = `Environment "${env}" not found.`;
+          await flushProgressLog();
           return c.json(
             {
               success: false,
-              error: `Environment "${env}" not found.`,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
             },
             404
           );
@@ -3117,10 +3440,13 @@ export function createApiRoutes(): Hono {
         if (componentsToUpdate.length === 0) {
           state.status = 'complete';
           addProgress('All workers are up to date. No updates needed.');
+          await flushProgressLog();
           return c.json({
             success: true,
             message: 'All workers are up to date',
             summary: { totalComponents: 0, successCount: 0, failedCount: 0 },
+            progress: state.progress,
+            logPath: state.logPath,
           });
         }
 
@@ -3132,7 +3458,16 @@ export function createApiRoutes(): Hono {
         if (!existsSync(envPaths.config)) {
           state.status = 'error';
           state.error = `Config file not found: ${envPaths.config}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         const configContent = await readFile(envPaths.config, 'utf-8');
@@ -3144,7 +3479,6 @@ export function createApiRoutes(): Hono {
           baseDir: rootDir,
           env,
           dryRun: false,
-          includeDurableObjectMigrations: false,
           components: componentsToUpdate,
           onProgress: addProgress,
         });
@@ -3152,7 +3486,16 @@ export function createApiRoutes(): Hono {
         if (!masterResult.success) {
           state.status = 'error';
           state.error = `Wrangler config generation failed: ${masterResult.errors.join(', ')}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         addProgress('Syncing wrangler configs...');
@@ -3169,10 +3512,33 @@ export function createApiRoutes(): Hono {
         if (!syncResult.success && syncResult.errors.length > 0) {
           state.status = 'error';
           state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
         addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
+
+        const workerComponentsToUpdate = componentsToUpdate.filter(
+          (component): component is WorkerComponent =>
+            (WORKER_COMPONENTS as readonly string[]).includes(component)
+        );
+        let deploymentSecrets: Record<string, string> = {};
+        if (workerComponentsToUpdate.length > 0) {
+          const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+          deploymentSecrets = await loadSupplementalSecretsForWorkers({
+            env,
+            keysDir,
+            workers: workerComponentsToUpdate,
+          });
+        }
 
         // Build packages
         addProgress('Building packages...');
@@ -3184,27 +3550,64 @@ export function createApiRoutes(): Hono {
         if (!buildResult.success) {
           state.status = 'error';
           state.error = `Build failed: ${buildResult.error}`;
-          return c.json({ success: false, error: state.error }, 500);
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
         }
 
+        const workerDeployOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          concurrency: 2,
+          deploymentStrategy: 'auto' as const,
+          existingComponents: WORKER_COMPONENTS.filter(
+            (component) => lock.workers?.[component] !== undefined
+          ),
+          secrets: deploymentSecrets,
+          onProgress: addProgress,
+          onError: (comp: string, error: Error) => {
+            addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+          },
+        };
+        workerDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+          workerDeployOptions,
+          WORKER_COMPONENTS
+        );
+
         if (
+          includeUiWorkers !== false &&
           (config.components.loginUi || config.components.adminUi) &&
           componentsToUpdate.includes('ar-router')
         ) {
-          const placeholderSummary = await deployUiWorkerBindingTargets(
-            {
-              env,
-              rootDir: resolve(rootDir),
-              apiBaseUrl: resolveIssuerUrl(config, { env }),
-              onProgress: addProgress,
-            },
+          const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
+            { env, rootDir: resolve(rootDir), onProgress: addProgress },
             {
               loginUi: config.components.loginUi ?? true,
               adminUi: config.components.adminUi ?? true,
             }
           );
 
-          if (placeholderSummary.failedCount > 0) {
+          const placeholderSummary =
+            missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi
+              ? await deployUiWorkerBindingTargets(
+                  {
+                    env,
+                    rootDir: resolve(rootDir),
+                    apiBaseUrl: resolveIssuerUrl(config, { env }),
+                    onProgress: addProgress,
+                  },
+                  missingUiBindingTargets
+                )
+              : undefined;
+
+          if (placeholderSummary && placeholderSummary.failedCount > 0) {
             addProgress(
               `⚠️ UI Worker pre-deploy failed: ${placeholderSummary.successCount}/${placeholderSummary.results.length} succeeded`
             );
@@ -3214,29 +3617,23 @@ export function createApiRoutes(): Hono {
               }
             }
             addProgress('  ar-router may fail if it references missing UI Worker bindings.');
+          } else if (!placeholderSummary) {
+            addProgress(
+              'UI Worker binding targets already exist; skipping placeholder pre-deploy.'
+            );
           }
         }
 
         // Deploy workers
         addProgress('Deploying workers...');
-        const summary = await deployAll(
-          {
-            env,
-            rootDir: resolve(rootDir),
-            interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
-            onProgress: addProgress,
-            onError: (comp, error) => {
-              addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
-            },
-          },
-          componentsToUpdate
-        );
+        const summary = await deployAll(workerDeployOptions, componentsToUpdate);
+        state.deployResults = summary.results;
 
         // Update lock file with new versions
-        if (summary.successCount > 0) {
+        if (summary.results.some((result) => result.success || result.trafficCommitted)) {
           const workers = { ...lock.workers };
           for (const result of summary.results) {
-            if (result.success && result.deployedAt) {
+            if ((result.success || result.trafficCommitted) && result.deployedAt) {
               workers[result.component] = {
                 name: result.workerName,
                 deployedAt: result.deployedAt,
@@ -3306,15 +3703,6 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        if (summary.failedCount === 0) {
-          await maybeConfigureDownstreamIntrospectionForWebDeploy({
-            env,
-            rootDir: resolve(rootDir),
-            config,
-            components: componentsToUpdate,
-          });
-        }
-
         state.status = summary.failedCount === 0 ? 'complete' : 'error';
 
         if (summary.failedCount === 0) {
@@ -3324,17 +3712,24 @@ export function createApiRoutes(): Hono {
             `Updated ${summary.successCount}/${summary.totalComponents}, ${summary.failedCount} failed`
           );
         }
+        await flushProgressLog();
 
         return c.json({
           success: summary.failedCount === 0,
           summary,
           updatedComponents: componentsToUpdate,
           progress: state.progress,
+          logPath: state.logPath,
         });
       } catch (error) {
         state.status = 'error';
         state.error = sanitizeError(error);
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        addProgress(`❌ Worker update failed: ${state.error}`);
+        await flushProgressLog();
+        return c.json(
+          { success: false, error: state.error, progress: state.progress, logPath: state.logPath },
+          500
+        );
       }
     });
   });
@@ -3438,10 +3833,21 @@ export function createApiRoutes(): Hono {
           if (!dryRun) {
             await ensureSupplementalKeysForWebDeploy(keysDir);
           }
+          if (!cfg) {
+            state.status = 'error';
+            return c.json(
+              { success: false, error: 'Environment config is required for UI deployment' },
+              400
+            );
+          }
 
           // Build first (unless skipped)
-          if (!skipBuild && !dryRun) {
-            addProgress(`Building ${componentName}...`);
+          if (!dryRun) {
+            addProgress(
+              skipBuild
+                ? `Reusing the existing ${componentName} build output...`
+                : `Building ${componentName}...`
+            );
             const uiDir = join(rootDir, 'packages', componentName);
 
             if (!existsSync(uiDir)) {
@@ -3532,6 +3938,13 @@ export function createApiRoutes(): Hono {
               apiBaseUrl,
               loginUiClientId,
             });
+            if (componentName === 'ar-login-ui' && loginUiClientId) {
+              await mergeAndSaveUiEnv(
+                getEnvironmentPaths({ baseDir: rootDir, env }).uiEnv,
+                uiSettings.uiEnv
+              );
+              addProgress('Login UI env updated with client_id');
+            }
             if (componentName === 'ar-admin-ui' && uiSettings.adminUiApiMode) {
               addProgress(
                 `Admin UI API mode: ${uiSettings.adminUiApiMode} - ${describeAdminUiApiMode(
@@ -3541,7 +3954,12 @@ export function createApiRoutes(): Hono {
             }
             const adminUiBffSecrets =
               componentName === 'ar-admin-ui' && !dryRun
-                ? await loadAdminUiBffWorkerSecrets(keysDir)
+                ? await prepareAdminUiBffDeployment({
+                    env,
+                    config: cfg as AuthrimConfig,
+                    keysDir,
+                    onProgress: addProgress,
+                  })
                 : undefined;
 
             const result = await deployUiWorkerComponent(componentName as UiWorkerComponent, {
@@ -3555,8 +3973,30 @@ export function createApiRoutes(): Hono {
               workersDev: uiSettings.workersDev,
               routes: uiSettings.routes,
               adminUiBffSecrets,
+              skipBuild,
               onProgress: addProgress,
             });
+
+            if (!dryRun && result.deployedAt && (result.success || result.trafficCommitted)) {
+              try {
+                const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+                if (currentLock && lockPath) {
+                  const version = await getPackageVersion(join(rootDir, 'packages', componentName));
+                  const workers = { ...currentLock.workers };
+                  workers[componentName] = {
+                    name: result.projectName,
+                    deployedAt: result.deployedAt,
+                    version: version ?? undefined,
+                  };
+
+                  await saveLockFile({ ...currentLock, workers }, lockPath);
+                  addProgress('Lock file updated');
+                }
+              } catch (lockError) {
+                addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
+              }
+            }
 
             if (result.success) {
               state.status = 'complete';
@@ -3616,7 +4056,6 @@ export function createApiRoutes(): Hono {
                 baseDir: rootDir,
                 env,
                 dryRun: false,
-                includeDurableObjectMigrations: false,
                 components: [componentName as WorkerComponent],
                 onProgress: addProgress,
               });
@@ -3649,12 +4088,28 @@ export function createApiRoutes(): Hono {
             // Continue anyway - the config might already exist
           }
 
+          const { lock: componentLock, path: componentLockPath } = await loadLockFileAuto(
+            rootDir,
+            env
+          );
+          let deploymentSecrets: Record<string, string> = {};
+          if (!dryRun) {
+            const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
+            deploymentSecrets = await loadSupplementalSecretsForWorkers({
+              env,
+              keysDir,
+              workers: [componentName as WorkerComponent],
+            });
+          }
+
           // Build first (unless skipped)
           if (!skipBuild && !dryRun) {
             addProgress('Building packages...');
             const buildResult = await buildApiPackages({
               rootDir,
-              components: [componentName as WorkerComponent],
+              components: componentLock?.workers?.[componentName]
+                ? [componentName as WorkerComponent]
+                : undefined,
               onProgress: addProgress,
             });
 
@@ -3662,6 +4117,25 @@ export function createApiRoutes(): Hono {
               state.status = 'error';
               return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
             }
+          }
+
+          const componentDeployOptions = {
+            env,
+            rootDir,
+            dryRun,
+            concurrency: 2,
+            deploymentStrategy: 'auto' as const,
+            existingComponents: WORKER_COMPONENTS.filter(
+              (component) => componentLock?.workers?.[component] !== undefined
+            ),
+            secrets: deploymentSecrets,
+            onProgress: addProgress,
+          };
+          if (!dryRun) {
+            componentDeployOptions.existingComponents = await resolveExistingWorkerComponents(
+              componentDeployOptions,
+              WORKER_COMPONENTS
+            );
           }
 
           if (!dryRun && componentName === 'ar-router') {
@@ -3689,35 +4163,50 @@ export function createApiRoutes(): Hono {
             }
           }
 
-          // Deploy the worker
-          const result = await deployWorker(componentName as WorkerComponent, {
-            env,
-            rootDir,
-            dryRun,
-            onProgress: addProgress,
-          });
+          if (!dryRun && componentName === 'ar-router') {
+            const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
+              { env, rootDir, onProgress: addProgress },
+              {
+                loginUi: cfg?.components?.loginUi ?? true,
+                adminUi: cfg?.components?.adminUi ?? true,
+              }
+            );
+            if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
+              const placeholder = await deployUiWorkerBindingTargets(
+                {
+                  env,
+                  rootDir,
+                  apiBaseUrl: resolveIssuerUrl(cfg, { env }),
+                  onProgress: addProgress,
+                },
+                missingUiBindingTargets
+              );
+              if (placeholder.failedCount > 0) {
+                state.status = 'error';
+                return c.json(
+                  { success: false, error: 'UI Worker binding-target deployment failed' },
+                  500
+                );
+              }
+            }
+          }
+
+          const summary = await deployAll(componentDeployOptions, [
+            componentName as WorkerComponent,
+          ]);
+          const result = summary.results.find((candidate) => candidate.component === componentName);
 
           // Update lock file if successful
-          if (result.success && !dryRun) {
+          if (
+            summary.results.some((candidate) => candidate.success || candidate.trafficCommitted) &&
+            !dryRun
+          ) {
             try {
-              const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
-              const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
-
-              if (currentLock && lockPath) {
-                const workers = { ...currentLock.workers };
-                workers[componentName] = {
-                  name: result.workerName,
-                  deployedAt: result.deployedAt,
-                  version: result.version,
-                };
-
-                const updatedLock = {
-                  ...currentLock,
-                  workers,
-                  updatedAt: new Date().toISOString(),
-                };
-
-                await saveLock(updatedLock, lockPath);
+              if (componentLock && componentLockPath) {
+                await saveLockFile(
+                  updateLockWithDeployments(componentLock, summary.results),
+                  componentLockPath
+                );
                 addProgress('Lock file updated');
               }
             } catch (lockError) {
@@ -3725,7 +4214,7 @@ export function createApiRoutes(): Hono {
             }
           }
 
-          if (result.success) {
+          if (summary.failedCount === 0 && result?.success) {
             await maybeConfigureDownstreamIntrospectionForWebDeploy({
               env,
               rootDir,
@@ -3735,7 +4224,7 @@ export function createApiRoutes(): Hono {
             });
           }
 
-          if (result.success) {
+          if (summary.failedCount === 0 && result?.success) {
             state.status = 'complete';
             addProgress(`✓ ${componentName} deployed successfully`);
             return c.json({
@@ -3753,7 +4242,7 @@ export function createApiRoutes(): Hono {
                 success: false,
                 component: componentName,
                 type: 'worker',
-                error: result.error,
+                error: result?.error || 'dependency deployment failed',
               },
               500
             );
@@ -3786,6 +4275,73 @@ export function createApiRoutes(): Hono {
   // Apply session validation to migrations
   api.use('/migrations/*', validateSession);
 
+  api.get('/migrations/status/:env', async (c) => {
+    try {
+      const envParam = c.req.param('env');
+      const parseResult = EnvNameSchema.safeParse(envParam);
+      if (!parseResult.success) {
+        return c.json({ success: false, error: 'Invalid environment name' }, 400);
+      }
+
+      const env = parseResult.data;
+      const result = await getD1MigrationStatusForEnvironment(env, process.cwd(), addProgress);
+      return c.json({ ...result, success: result.success });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.post('/migrations/apply', async (c) => {
+    return withLock(async () => {
+      try {
+        const body = await c.req.json();
+        const { env: envParam, role, filenames } = body;
+
+        const parseResult = EnvNameSchema.safeParse(envParam);
+        if (!parseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        if (role !== undefined && !['core', 'pii', 'admin'].includes(role)) {
+          return c.json({ success: false, error: 'Invalid migration database role' }, 400);
+        }
+        if (
+          filenames !== undefined &&
+          (!Array.isArray(filenames) || filenames.some((file) => typeof file !== 'string'))
+        ) {
+          return c.json({ success: false, error: 'Invalid migration filenames' }, 400);
+        }
+
+        const safeFilenames = Array.isArray(filenames)
+          ? filenames.filter((file) => file.endsWith('.sql') && !file.includes('..'))
+          : undefined;
+        if (Array.isArray(filenames) && safeFilenames?.length !== filenames.length) {
+          return c.json({ success: false, error: 'Invalid migration filenames' }, 400);
+        }
+
+        clearProgress();
+        addProgress(`📜 Applying database migrations for environment: ${parseResult.data}`);
+        const result = await runD1MigrationsForEnvironmentSelection({
+          env: parseResult.data,
+          rootDir: process.cwd(),
+          role,
+          filenames: safeFilenames,
+          onProgress: addProgress,
+          config: state.config ?? undefined,
+        });
+
+        if (result.success) {
+          addProgress('✅ Database migrations completed successfully');
+        } else {
+          addProgress('❌ Database migrations failed');
+        }
+
+        return c.json({ ...result, success: result.success, progress: state.progress });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
   // Run D1 migrations for an environment
   api.post('/migrations/run', async (c) => {
     return withLock(async () => {
@@ -3817,6 +4373,7 @@ export function createApiRoutes(): Hono {
           success: result.success,
           core: result.core,
           pii: result.pii,
+          admin: result.admin,
           progress: state.progress,
         });
       } catch (error) {

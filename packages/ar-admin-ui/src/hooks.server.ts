@@ -57,11 +57,25 @@ interface BffAdminAccessToken {
 
 const BFF_TOKEN_CACHE_SKEW_SECONDS = 30;
 const bffAdminAccessTokenCache = new Map<string, BffAdminAccessToken>();
-const bffAdminAccessTokenInflight = new Map<string, Promise<BffAdminAccessToken>>();
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
+
+const httpsRedirect: Handle = async ({ event, resolve }) => {
+	if (event.url.protocol !== 'http:' || isLoopbackHost(event.url.hostname)) {
+		return resolve(event);
+	}
+
+	const redirectUrl = new URL(event.url);
+	redirectUrl.protocol = 'https:';
+	return new Response(null, {
+		status: 308,
+		headers: {
+			Location: redirectUrl.toString()
+		}
+	});
+};
 
 function isHttpsUrl(url: string): boolean {
 	try {
@@ -399,25 +413,13 @@ async function getBffAdminAccessToken(
 		return cached.accessToken;
 	}
 
-	const inflight = bffAdminAccessTokenInflight.get(cacheKey);
-	if (inflight) {
-		return (await inflight).accessToken;
-	}
-
-	const tokenPromise = requestBffAdminAccessToken(apiBackendUrl, config, options);
-	bffAdminAccessTokenInflight.set(cacheKey, tokenPromise);
-	try {
-		const token = await tokenPromise;
-		bffAdminAccessTokenCache.set(cacheKey, token);
-		return token.accessToken;
-	} finally {
-		bffAdminAccessTokenInflight.delete(cacheKey);
-	}
+	const token = await requestBffAdminAccessToken(apiBackendUrl, config, options);
+	bffAdminAccessTokenCache.set(cacheKey, token);
+	return token.accessToken;
 }
 
 export function clearBffAdminAccessTokenCacheForTests(): void {
 	bffAdminAccessTokenCache.clear();
-	bffAdminAccessTokenInflight.clear();
 }
 
 /**
@@ -471,7 +473,8 @@ function isAllowedProxyPath(pathname: string): boolean {
 		pathname === '/api/admin' ||
 		pathname.startsWith('/api/admin/') ||
 		pathname === '/api/admin-setup' ||
-		pathname.startsWith('/api/admin-setup/')
+		pathname.startsWith('/api/admin-setup/') ||
+		pathname.startsWith('/api/assets/')
 	);
 }
 
@@ -969,14 +972,14 @@ export const securityHeaders: Handle = async ({ event, resolve }) => {
 	// Content Security Policy
 	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
 	// - connect-src includes API origin for cross-origin API calls
-	// - img-src allows HTTPS and data: URIs (charts, dynamic images)
+	// - img-src allows HTTPS, data: URIs, and blob: URLs for local image previews
 	response.headers.set(
 		'Content-Security-Policy',
 		[
 			"default-src 'self'",
 			"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
 			"style-src 'self' 'unsafe-inline'",
-			"img-src 'self' https: data:",
+			"img-src 'self' https: data: blob:",
 			buildConnectSrc(platformEnv),
 			"font-src 'self'",
 			"frame-ancestors 'none'",
@@ -1046,4 +1049,4 @@ const csrfProtection: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handle = sequence(apiProxy, securityHeaders, csrfProtection);
+export const handle = sequence(httpsRedirect, apiProxy, securityHeaders, csrfProtection);

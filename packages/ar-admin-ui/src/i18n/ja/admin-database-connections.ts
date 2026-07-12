@@ -50,7 +50,7 @@ const adminDatabaseConnections = {
 	admin_database_connections_set: 'Set',
 	admin_database_connections_not_set: 'Not set',
 	admin_database_connections_credential_updated: 'Credential Updated',
-	admin_database_connections_updated_by: 'Updated By',
+	admin_database_connections_updated_by: '変更者',
 	admin_database_connections_update_credential: 'Credentialを更新',
 	admin_database_connections_elevation_grant_id: 'Elevation grant ID',
 	admin_database_connections_new_credential_object: 'New credential object',

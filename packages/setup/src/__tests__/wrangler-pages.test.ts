@@ -19,6 +19,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('[assets]');
       expect(result).toContain('directory = ".svelte-kit/cloudflare"');
       expect(result).toContain('binding = "ASSETS"');
+      expect(result).toContain('run_worker_first = ["/account", "/account/*"]');
       expect(result).not.toContain('[[services]]');
       expect(result).not.toContain('AR_ROUTER');
     });
@@ -33,6 +34,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('name = "prod-ar-admin-ui"');
       expect(result).toContain('workers_dev = true');
       expect(result).toContain('main = ".svelte-kit/cloudflare/_worker.js"');
+      expect(result).not.toContain('run_worker_first');
       expect(result).not.toContain('[[services]]');
     });
   });
@@ -110,6 +112,24 @@ describe('generateUiWorkersWranglerConfig', () => {
     expect(result).toContain('[vars]');
     expect(result).toContain('API_BACKEND_URL = "__DISABLED__"');
     expect(result).toContain('PUBLIC_AUTHRIM_ISSUER = "https://issuer.example.com"');
+  });
+
+  it('quotes the Email Verification Origin Trial token map as one Worker var', () => {
+    const tokenMap = JSON.stringify({
+      'https://login.example.com': 'A'.repeat(64),
+    });
+    const result = generateUiWorkersWranglerConfig({
+      component: 'ar-login-ui',
+      env: 'test',
+      needsProxy: false,
+      vars: {
+        EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: tokenMap,
+      },
+    });
+
+    expect(result).toContain(
+      `EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS = ${JSON.stringify(tokenMap)}`
+    );
   });
 
   it('disables workers.dev and binds a custom domain when UI custom domain routes are provided', () => {

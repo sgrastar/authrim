@@ -107,6 +107,26 @@ echo -e "${GREEN}✅ RP Token Encryption Key generated${NC}"
 echo "📝 Saved to: $RP_ENCRYPTION_KEY_PATH"
 echo ""
 
+# Generate PII Encryption Key (32 bytes = 256 bits, hex encoded)
+PII_ENCRYPTION_KEY_PATH="$KEYS_DIR/pii_encryption_key.txt"
+PII_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | xxd -p -c 64)
+echo -n "$PII_ENCRYPTION_KEY" > "$PII_ENCRYPTION_KEY_PATH"
+chmod 600 "$PII_ENCRYPTION_KEY_PATH"
+
+echo -e "${GREEN}✅ PII Encryption Key generated${NC}"
+echo "📝 Saved to: $PII_ENCRYPTION_KEY_PATH"
+echo ""
+
+# Generate OTP HMAC Secret (32 bytes = 256 bits, base64url encoded)
+OTP_HMAC_SECRET_PATH="$KEYS_DIR/otp_hmac_secret.txt"
+OTP_HMAC_SECRET=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+echo -n "$OTP_HMAC_SECRET" > "$OTP_HMAC_SECRET_PATH"
+chmod 600 "$OTP_HMAC_SECRET_PATH"
+
+echo -e "${GREEN}✅ OTP HMAC Secret generated${NC}"
+echo "📝 Saved to: $OTP_HMAC_SECRET_PATH"
+echo ""
+
 # Extract public key from private key
 TEMP_PUBLIC_KEY=$(mktemp)
 openssl rsa -in "$PRIVATE_KEY_PATH" -pubout -out "$TEMP_PUBLIC_KEY" 2>/dev/null
@@ -182,7 +202,9 @@ cat > "$METADATA_PATH" << EOF
   "files": {
     "privateKey": "$PRIVATE_KEY_PATH",
     "publicKey": "$PUBLIC_JWK_PATH",
-    "rpTokenEncryptionKey": "$RP_ENCRYPTION_KEY_PATH"
+    "rpTokenEncryptionKey": "$RP_ENCRYPTION_KEY_PATH",
+    "piiEncryptionKey": "$PII_ENCRYPTION_KEY_PATH",
+    "otpHmacSecret": "$OTP_HMAC_SECRET_PATH"
   }
 }
 EOF
@@ -205,12 +227,16 @@ echo ""
 echo "   PRIVATE_KEY_PEM=\"\$(cat $PRIVATE_KEY_PATH)\""
 echo "   KEY_ID=\"$KID\""
 echo "   RP_TOKEN_ENCRYPTION_KEY=\"\$(cat $RP_ENCRYPTION_KEY_PATH)\""
+echo "   PII_ENCRYPTION_KEY=\"\$(cat $PII_ENCRYPTION_KEY_PATH)\""
+echo "   OTP_HMAC_SECRET=\"\$(cat $OTP_HMAC_SECRET_PATH)\""
 echo ""
 echo "2. For Remote environment, upload keys as secrets:"
 echo ""
 echo "   cat $PRIVATE_KEY_PATH | wrangler secret put PRIVATE_KEY_PEM"
 echo "   wrangler vars set KEY_ID \"$KID\""
 echo "   cat $RP_ENCRYPTION_KEY_PATH | wrangler secret put RP_TOKEN_ENCRYPTION_KEY"
+echo "   cat $PII_ENCRYPTION_KEY_PATH | wrangler secret put PII_ENCRYPTION_KEY"
+echo "   cat $OTP_HMAC_SECRET_PATH | wrangler secret put OTP_HMAC_SECRET"
 echo ""
 echo "3. Or use setup-resend.sh to configure Resend:"
 echo ""

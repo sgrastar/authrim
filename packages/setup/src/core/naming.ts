@@ -184,18 +184,47 @@ export function getAutoWorkerUrl(
 // =============================================================================
 
 /**
- * Deployment levels - components at the same level can be deployed in parallel
+ * Worker-to-Worker deployment dependencies.
+ *
+ * Cloudflare validates Durable Object and Service Binding targets while a
+ * Worker is uploaded. Keep this graph aligned with the bindings generated in
+ * wrangler.ts. Dependencies that are not part of a partial deployment are
+ * assumed to already exist remotely.
+ */
+export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly WorkerComponent[]> = {
+  'ar-lib-core': [],
+  'ar-bridge': ['ar-lib-core'],
+  'ar-discovery': ['ar-lib-core'],
+  'ar-token': ['ar-lib-core'],
+  'ar-userinfo': ['ar-lib-core'],
+  'ar-async': ['ar-lib-core'],
+  'ar-policy': ['ar-lib-core'],
+  'ar-saml': ['ar-lib-core'],
+  'ar-vc': ['ar-lib-core'],
+  'ar-auth': ['ar-lib-core', 'ar-bridge'],
+  'ar-management': ['ar-lib-core', 'ar-bridge', 'ar-auth'],
+  'ar-router': CORE_WORKER_COMPONENTS.filter((component) => component !== 'ar-router'),
+};
+
+/**
+ * Coarse deployment levels retained for callers that display the plan. The
+ * deploy engine uses WORKER_DEPLOYMENT_DEPENDENCIES directly so ar-auth can
+ * start as soon as ar-bridge is ready without waiting for unrelated Workers.
  */
 export const DEPLOYMENT_LEVELS: WorkerComponent[][] = [
-  // Level 0: DO definitions (must be first)
   ['ar-lib-core'],
-  // Level 1: Discovery
-  ['ar-discovery'],
-  // Level 2: Core OIDC endpoints (parallel)
-  ['ar-auth', 'ar-token', 'ar-userinfo', 'ar-management'],
-  // Level 3: Optional components (parallel)
-  ['ar-async', 'ar-policy', 'ar-saml', 'ar-bridge', 'ar-vc'],
-  // Level 4: Router with Service Bindings (must be last)
+  [
+    'ar-bridge',
+    'ar-discovery',
+    'ar-token',
+    'ar-userinfo',
+    'ar-async',
+    'ar-policy',
+    'ar-saml',
+    'ar-vc',
+  ],
+  ['ar-auth'],
+  ['ar-management'],
   ['ar-router'],
 ];
 

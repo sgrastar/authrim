@@ -15,8 +15,11 @@ import { writeFile } from 'node:fs/promises';
 import { loadLockFileAuto, saveLockFile, type AuthrimLock } from '../../core/lock.js';
 import {
   deployAll,
+  deployUiWorkerBindingTargets,
+  resolveMissingUiWorkerBindingTargets,
+  resolveExistingWorkerComponents,
   buildApiPackages,
-  DEFAULT_INTER_DEPLOY_DELAY_MS,
+  loadDeploySecretsFromKeys,
   type DeployOptions,
   type DeployResult,
 } from '../../core/deploy.js';
@@ -28,10 +31,12 @@ import {
   getComponentsToUpdate,
   type VersionComparison,
 } from '../../core/version.js';
-import { findAuthrimBaseDir, getEnvironmentPaths } from '../../core/paths.js';
+import { findAuthrimBaseDir, findKeysDirectory, getEnvironmentPaths } from '../../core/paths.js';
 import { syncWranglerConfigs } from '../../core/wrangler-sync.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
 import { AuthrimConfigSchema } from '../../core/config.js';
+import { ensureSupplementalKeyFiles } from '../../core/keys.js';
+import { resolveIssuerUrl } from '../../core/url-config.js';
 import { readFile } from 'node:fs/promises';
 import {
   buildWorkerHttpReadinessTargets,
@@ -103,7 +108,7 @@ function updateLockWithDeploymentsAndVersions(
   const workers = { ...lock.workers };
 
   for (const result of results) {
-    if (result.success && result.deployedAt) {
+    if ((result.success || result.trafficCommitted) && result.deployedAt) {
       workers[result.component] = {
         name: result.workerName,
         deployedAt: result.deployedAt,
@@ -352,22 +357,66 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   // Deploy workers
   console.log(chalk.bold('\n🚀 Deploying workers...\n'));
 
+  const keysDirectory = findKeysDirectory({
+    env,
+    sourceDir: baseDir,
+    keysBaseDir: process.cwd(),
+  });
+  if (keysDirectory) {
+    await ensureSupplementalKeyFiles(keysDirectory.path);
+  }
+  const deploymentSecrets = keysDirectory
+    ? await loadDeploySecretsFromKeys(keysDirectory.path, componentsToUpdate)
+    : {};
+
   const deployOptions: DeployOptions = {
     env,
     rootDir: resolve(baseDir),
     maxRetries: 3,
-    retryDelayMs: 5000,
-    interDeploymentDelayMs: DEFAULT_INTER_DEPLOY_DELAY_MS,
+    retryDelayMs: 1000,
+    concurrency: 2,
+    deploymentStrategy: 'auto',
+    existingComponents: CORE_WORKER_COMPONENTS.filter(
+      (component) => lock.workers?.[component] !== undefined
+    ),
+    secrets: deploymentSecrets,
     onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
     onError: (component, error) => {
       console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
     },
   };
+  if (!options.dryRun) {
+    deployOptions.existingComponents = await resolveExistingWorkerComponents(
+      deployOptions,
+      CORE_WORKER_COMPONENTS
+    );
+  }
+
+  if (componentsToUpdate.includes('ar-router') && existsSync(envPaths.config)) {
+    const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(envPaths.config, 'utf-8')));
+    const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(deployOptions, {
+      loginUi: config.components.loginUi ?? true,
+      adminUi: config.components.adminUi ?? true,
+    });
+    if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
+      const placeholderSummary = await deployUiWorkerBindingTargets(
+        {
+          ...deployOptions,
+          apiBaseUrl: resolveIssuerUrl(config, { env }),
+        },
+        missingUiBindingTargets
+      );
+      if (placeholderSummary.failedCount > 0) {
+        console.error(chalk.red('UI Worker binding-target deployment failed'));
+        process.exit(1);
+      }
+    }
+  }
 
   const summary = await deployAll(deployOptions, componentsToUpdate);
 
   // Update lock file with new versions
-  if (summary.successCount > 0) {
+  if (summary.results.some((result) => result.success || result.trafficCommitted)) {
     const updatedLock = updateLockWithDeploymentsAndVersions(lock, summary.results, localVersions);
     await saveLockFile(updatedLock, lockPath);
     console.log(chalk.gray(`\n  Lock file updated: ${lockPath}`));

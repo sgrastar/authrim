@@ -72,12 +72,13 @@ const PLUGINS_SCHEMA_PREFIX = 'plugins:schema:';
 
 // Import builtin plugins
 import { builtinNotifierPlugins } from '../builtin/notifier';
+import { builtinSecurityPlugins } from '../builtin/security';
 
 /**
  * Get all builtin plugins
  */
 export function getBuiltinPlugins(): AuthrimPlugin<unknown>[] {
-  return [...builtinNotifierPlugins] as AuthrimPlugin<unknown>[];
+  return [...builtinNotifierPlugins, ...builtinSecurityPlugins] as AuthrimPlugin<unknown>[];
 }
 
 /**
@@ -101,8 +102,12 @@ export function resolveBuiltinPluginBootstrapConfig(
         ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
       };
     case 'notifier-resend':
+      if (!env.RESEND_API_KEY) {
+        return {};
+      }
+
       return {
-        ...(env.RESEND_API_KEY ? { apiKey: env.RESEND_API_KEY } : {}),
+        apiKey: env.RESEND_API_KEY,
         ...(env.EMAIL_FROM ? { defaultFrom: env.EMAIL_FROM } : {}),
       };
     default:

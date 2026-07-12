@@ -466,6 +466,28 @@ describe('Discovery API: host-based tenant context (is_common_entry_host)', () =
     expect(body.is_common_entry_host).toBe(true);
   });
 
+  it('returns is_common_entry_host: true when UI_URL is a reserved subdomain under BASE_DOMAIN', async () => {
+    const { app, env } = createDiscoveryApp({
+      UI_URL: 'https://login.auth.example.com',
+    });
+
+    const res = await app.request(
+      'https://login.auth.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'login.auth.example.com' },
+      },
+      env
+    );
+
+    const body = (await res.json()) as {
+      is_common_entry_host: boolean;
+      common_discover_url: string | null;
+    };
+    expect(body.is_common_entry_host).toBe(true);
+    expect(body.common_discover_url).toBe('https://login.auth.example.com/discover');
+  });
+
   it('returns is_common_entry_host: false when Host equals BASE_DOMAIN in naked-domain issuer mode', async () => {
     const { app, env } = createDiscoveryApp(
       {

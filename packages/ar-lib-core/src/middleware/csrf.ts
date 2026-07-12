@@ -29,6 +29,76 @@ import { getTenantSettings } from '../utils/tenant-settings';
 
 const log = createLogger().module('CSRF');
 
+interface DiagnosticTimingSpan {
+  name: string;
+  durationMs: number;
+}
+
+function isCsrfTimingEnabled(env: Env, path: string): boolean {
+  if (path !== '/api/v1/login/interactions/start') {
+    return false;
+  }
+  const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function roundDiagnosticDurationMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+async function timeDiagnosticSpan<T>(
+  spans: DiagnosticTimingSpan[] | null,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!spans) {
+    return operation();
+  }
+
+  const startedAtMs = Date.now();
+  try {
+    return await operation();
+  } finally {
+    spans.push({
+      name,
+      durationMs: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+    });
+  }
+}
+
+function appendServerTiming(c: Context<{ Bindings: Env }>, spans: DiagnosticTimingSpan[]): void {
+  if (spans.length === 0) {
+    return;
+  }
+
+  const value = spans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ');
+  const existing = c.res.headers.get('Server-Timing');
+  c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+function finishCsrfTiming(
+  c: Context<{ Bindings: Env }>,
+  spans: DiagnosticTimingSpan[] | null,
+  startedAtMs: number,
+  result: string
+): void {
+  if (!spans) {
+    return;
+  }
+
+  spans.push({
+    name: 'csrf_total',
+    durationMs: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+  });
+  appendServerTiming(c, spans);
+  log.info('CSRF timing', {
+    path: c.req.path,
+    result,
+    duration_ms: roundDiagnosticDurationMs(Date.now() - startedAtMs),
+    spans_ms: Object.fromEntries(spans.map((span) => [span.name, span.durationMs])),
+  });
+}
+
 /**
  * Options for CSRF protection middleware
  */
@@ -142,18 +212,24 @@ export function csrfProtectionMiddleware(options: CsrfProtectionOptions = {}) {
   const { excludePaths = [], skipForBearerToken = true } = options;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const path = new URL(c.req.url).pathname;
+    const timingSpans: DiagnosticTimingSpan[] | null = isCsrfTimingEnabled(c.env, path) ? [] : null;
+    const timingStartedAtMs = Date.now();
     const method = c.req.method;
 
     // 1. Skip safe methods (no state change)
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
-      return next();
+      await next();
+      finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'safe_method');
+      return;
     }
 
     // 2. Skip excluded paths (server-to-server endpoints)
     if (excludePaths.length > 0) {
-      const path = new URL(c.req.url).pathname;
       if (isExcludedPath(path, excludePaths)) {
-        return next();
+        await next();
+        finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'excluded_path');
+        return;
       }
     }
 
@@ -161,19 +237,25 @@ export function csrfProtectionMiddleware(options: CsrfProtectionOptions = {}) {
     if (skipForBearerToken) {
       const authHeader = c.req.header('Authorization');
       if (authHeader?.startsWith('Bearer ')) {
-        return next();
+        await next();
+        finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'bearer_token');
+        return;
       }
     }
 
     // 4. Resolve allowed origins
     const resolveOrigins = options.resolveAllowedOrigins || defaultResolveAllowedOrigins;
-    const allowedOrigins = await resolveOrigins(c);
+    const allowedOrigins = await timeDiagnosticSpan(timingSpans, 'csrf_allowed_origins', () =>
+      Promise.resolve(resolveOrigins(c))
+    );
 
     // 5. Validate Origin header (primary check)
     const origin = c.req.header('Origin');
     if (origin) {
       if (isAllowedOrigin(origin, allowedOrigins)) {
-        return next();
+        await next();
+        finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'origin_allowed');
+        return;
       }
 
       log.warn('CSRF: Origin not allowed', {
@@ -197,7 +279,9 @@ export function csrfProtectionMiddleware(options: CsrfProtectionOptions = {}) {
       try {
         const refererOrigin = new URL(referer).origin;
         if (isAllowedOrigin(refererOrigin, allowedOrigins)) {
-          return next();
+          await next();
+          finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'referer_allowed');
+          return;
         }
       } catch {
         // Invalid Referer URL - fall through to rejection

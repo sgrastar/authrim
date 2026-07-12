@@ -44,7 +44,7 @@
 		background: var(--bg-card);
 		backdrop-filter: var(--blur-sm);
 		-webkit-backdrop-filter: var(--blur-sm);
-		border-radius: var(--radius-xl);
+		border-radius: var(--card-radius, var(--radius-xl));
 		border: 1px solid var(--border-glass);
 		box-shadow: var(--shadow-sm);
 		transition: all var(--transition-base);
@@ -65,7 +65,7 @@
 	}
 
 	.card-body {
-		padding: 24px;
+		padding: var(--auth-card-padding, var(--card-padding, 24px));
 	}
 
 	.card.no-padding .card-body {

@@ -9,6 +9,8 @@ import type {
 import {
   AttributeReleaseConsentRepository,
   evaluateReleaseConsentGate,
+  resolveClientTrustPolicy,
+  resolveConsentRequirements,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 
@@ -80,13 +82,14 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
   attributes: SAMLAttribute[];
   confirmedRelease?: SAMLRequestContext['attributeReleaseConsentConfirmed'];
 }): Promise<SAMLAttributeReleaseConsentCheckResult> {
-  const policy = normalizeAttributeReleaseConsentPolicy(input.spConfig.attributeReleaseConsent);
-  if (!policy?.enabled || input.attributes.length === 0) {
+  if (input.attributes.length === 0) {
     return { action: 'release', attributeSetHash: null, reasonCodes: [] };
   }
 
+  let policy = normalizeAttributeReleaseConsentPolicy(input.spConfig.attributeReleaseConsent);
   const attributeSetHash = await buildSAMLAttributeSetHash(input.attributes);
   if (
+    policy?.enabled &&
     confirmedAttributeReleaseMatches({
       confirmedRelease: input.confirmedRelease,
       subjectId: input.subjectId,
@@ -105,6 +108,56 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     input.env,
     'saml-attribute-release-consent'
   );
+  const trustPolicy = await resolveClientTrustPolicy(
+    adapter,
+    input.tenantId,
+    'saml_sp',
+    input.spConfig.entityId
+  );
+  if (trustPolicy?.trusted || trustPolicy?.skip_authorization_consent) {
+    return { action: 'release', attributeSetHash: null, reasonCodes: ['release.trusted_saml_sp'] };
+  }
+
+  if (!policy?.enabled) {
+    try {
+      const policyRequirements = await resolveConsentRequirements(
+        adapter,
+        input.tenantId,
+        input.spConfig.entityId,
+        {},
+        {
+          target_type: 'saml_sp',
+          target_id: input.spConfig.entityId,
+          requested_saml_attributes: input.attributes.map((attribute) => attribute.name),
+        }
+      );
+      if (policyRequirements.some((requirement) => requirement.is_required)) {
+        policy = { enabled: true, mode: 'once' };
+      }
+    } catch {
+      policy = null;
+    }
+  }
+
+  if (!policy?.enabled) {
+    return { action: 'release', attributeSetHash: null, reasonCodes: [] };
+  }
+
+  if (
+    confirmedAttributeReleaseMatches({
+      confirmedRelease: input.confirmedRelease,
+      subjectId: input.subjectId,
+      destinationId: input.spConfig.entityId,
+      attributeSetHash,
+    })
+  ) {
+    return {
+      action: 'release',
+      attributeSetHash,
+      reasonCodes: ['release.attribute_consent.transaction_confirmed'],
+    };
+  }
+
   const repository = new AttributeReleaseConsentRepository(adapter);
   const existingConsent =
     policy.mode === 'until_attributes_change'

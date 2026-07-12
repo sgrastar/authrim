@@ -119,7 +119,7 @@ const fr: Translations = {
   'env.customDesc': "Entrez un nom d'environnement personnalisé",
   'env.customPrompt': "Entrez le nom d'environnement personnalisé",
   'env.customValidation':
-    'Seuls les lettres minuscules, chiffres et tirets sont autorisés (ex : prod, staging, dev)',
+    'Seuls les lettres minuscules, chiffres et tirets sont autorisés (ex : prod, main, tokyo, acme-dev)',
   'env.detected': 'Environnements Détectés :',
   'env.selectExisting': 'Sélectionner un environnement existant',
   'env.createNew': 'Créer un nouvel environnement',
@@ -717,7 +717,7 @@ const fr: Translations = {
   'web.systemMode': 'Système',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Prérequis',
+  'web.prereq.title': 'Préparer',
   'web.prereq.checking': 'Vérification...',
   'web.prereq.checkingRequirements': 'Vérification des exigences système...',
   'web.prereq.ready': 'Prêt',
@@ -848,13 +848,10 @@ const fr: Translations = {
   'web.complete.issuerUrl': "URL de l'Émetteur",
   'web.complete.loginUrl': 'URL de Connexion',
   'web.complete.adminUrl': "URL d'Admin",
-  'web.complete.nextSteps': 'Prochaines Étapes :',
-  'web.complete.step1':
-    "Complétez la configuration initiale de l'admin en utilisant le bouton ci-dessus",
-  'web.complete.step2': "Configurez votre premier client OAuth dans l'UI d'Admin",
-  'web.complete.step3': 'Intégrez avec votre application',
   'web.complete.saveConfig': 'Enregistrer la Configuration',
   'web.complete.backToMain': "Retour à l'Accueil",
+  'web.config.saveToFileTitle': 'Enregistrer la configuration dans un fichier',
+  'web.complete.backToMainTitle': 'Revenir à l’écran principal',
   'web.complete.canClose':
     'La configuration est terminée. Vous pouvez fermer cette fenêtre en toute sécurité.',
   'web.complete.adminAccountTitle': 'Configuration du compte administrateur',
@@ -931,7 +928,7 @@ const fr: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': "Nom de l'Environnement",
-  'web.form.envNamePlaceholder': 'ex : prod, staging, dev',
+  'web.form.envNamePlaceholder': 'ex : prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Lettres minuscules, chiffres et tirets uniquement',
   'web.form.envNameError':
     'Seuls les lettres minuscules, chiffres et tirets sont autorisés (doit commencer par une lettre)',
@@ -1113,6 +1110,42 @@ const fr: Translations = {
   'web.envDetail.queues': "Files d'attente",
   'web.envDetail.r2Buckets': 'Buckets R2',
   'web.envDetail.pagesProjects': 'Legacy Pages Projects',
+  'web.envDetail.emailSettings': 'Paramètres email',
+  'web.envDetail.emailDesc': 'Activez Cloudflare Email Service plus tard pour cet environnement.',
+  'web.envDetail.emailCurrentProvider': 'Fournisseur actuel',
+  'web.envDetail.emailCurrentStatus': 'État',
+  'web.envDetail.emailCurrentFrom': 'Adresse From',
+  'web.envDetail.emailConfigured': 'Configuré',
+  'web.envDetail.emailNotConfigured': 'Non configuré',
+  'web.envDetail.emailProviderNone': 'Non configuré',
+  'web.envDetail.emailCloudflareRequirements': 'Prérequis',
+  'web.envDetail.emailCloudflareRequirementPaid': 'Workers Paid Plan est requis',
+  'web.envDetail.emailCloudflareRequirementDns':
+    'Le DNS Cloudflare et l’onboarding du domaine sont requis',
+  'web.envDetail.emailCloudflareRequirementManual':
+    'La configuration du domaine dans Cloudflare Dashboard reste manuelle',
+  'web.envDetail.emailCloudflareFromHint':
+    'Si vous utilisez Cloudflare Email Service, l’adresse doit appartenir à un domaine onboardé dans Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Paramètres Cloudflare Email Routing',
+  'web.envDetail.emailResendFromHint':
+    'Si vous utilisez Resend, le domaine doit être ajouté et vérifié dans Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Domaines Resend',
+  'web.envDetail.emailFromAddress': 'Adresse email From',
+  'web.envDetail.emailFromName': 'Nom affiché de l’expéditeur (optionnel)',
+  'web.envDetail.emailEnableCloudflare': 'Activer Cloudflare Email Service',
+  'web.envDetail.emailDeploying': 'Application...',
+  'web.envDetail.emailProgress': 'Progression de la configuration email :',
+  'web.envDetail.emailUpdatedSuccess': 'Cloudflare Email activé.',
+  'web.envDetail.emailUpdateFailed': 'Échec de l’activation de Cloudflare Email.',
+  'web.envDetail.emailFromMissing': 'Saisissez une adresse email From.',
+  'web.envDetail.emailFromInvalid': 'Saisissez une adresse email valide.',
+  'web.envDetail.emailSwitchProviderConfirm':
+    'Cet environnement a déjà un autre fournisseur email configuré. Passer à Cloudflare Email Service ?',
+  'web.envDetail.emailStarting': 'Démarrage de la configuration Cloudflare Email...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'Cet environnement a déjà un autre fournisseur email configuré. Passer à Resend ?',
+  'web.envDetail.emailResendStarting': 'Enregistrement de la configuration email Resend...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Configuration email Resend enregistrée.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Mettre à jour tous les Workers',
@@ -1124,6 +1157,7 @@ const fr: Translations = {
   'web.envDetail.upToDate': 'À jour',
   'web.envDetail.notDeployed': 'Non déployé',
   'web.envDetail.updateOnlyChanged': 'Mettre à jour uniquement les versions modifiées',
+  'web.envDetail.updateIncludeUiWorkers': 'Mettre à jour Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Mettre à jour tous les Workers',
   'web.envDetail.refreshVersions': 'Actualiser',
   'web.envDetail.updateProgress': 'Progression de la mise à jour :',
@@ -1167,7 +1201,7 @@ const fr: Translations = {
   'web.error.notLoggedIn': 'Non connecté à Cloudflare',
   'web.error.runCommand': 'Veuillez exécuter cette commande dans votre terminal :',
   'web.error.thenRefresh': 'Puis actualisez cette page.',
-  'web.error.checkingPrereq': 'Erreur lors de la vérification des prérequis :',
+  'web.error.checkingPrereq': 'Erreur lors de la vérification de la préparation :',
   'web.error.invalidJson': 'JSON invalide :',
   'web.error.validationFailed': 'Échec de la requête de validation :',
 

@@ -10,6 +10,18 @@
 
 import { API_BASE_URL, adminFetch } from './admin-request';
 
+function adminUserPath(id: string): string {
+	return `${API_BASE_URL}/api/admin/users/${encodeURIComponent(id)}`;
+}
+
+export interface PasskeyProvider {
+	aaguid: string;
+	name: string | null;
+	icon_dark: string | null;
+	icon_light: string | null;
+	known: boolean;
+}
+
 /**
  * User entity
  */
@@ -41,9 +53,37 @@ export interface User {
 	passkeys?: Array<{
 		id: string;
 		device_name: string | null;
+		aaguid: string | null;
+		provider: PasskeyProvider | null;
 		created_at: number;
 		last_used_at: number | null;
 	}>;
+	totp_credentials?: Array<{
+		id: string;
+		label: string | null;
+		algorithm: 'SHA1' | 'SHA256';
+		digits: number;
+		period: number;
+		window: number;
+		status: 'pending' | 'active' | 'disabled';
+		created_at: number;
+		activated_at: number | null;
+		last_used_at: number | null;
+	}>;
+	customFields?: UserCustomField[];
+	missing_required_fields?: UserMissingRequiredField[];
+}
+
+export interface UserCustomField {
+	field_name: string;
+	field_value: string;
+	field_type: string;
+}
+
+export interface UserMissingRequiredField {
+	field_key: string;
+	label: string;
+	field_type: string;
 }
 
 /**
@@ -101,6 +141,7 @@ export interface UpdateUserInput {
 	phone_number?: string;
 	email_verified?: boolean;
 	phone_number_verified?: boolean;
+	[key: string]: string | boolean | number | null | undefined;
 }
 
 /**
@@ -137,7 +178,7 @@ export const adminUsersAPI = {
 	 * GET /api/admin/users/:id
 	 */
 	async get(id: string): Promise<User> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}`);
+		const response = await adminFetch(adminUserPath(id));
 
 		if (!response.ok) {
 			if (response.status === 404) {
@@ -146,11 +187,34 @@ export const adminUsersAPI = {
 			throw new Error('Failed to fetch user');
 		}
 
-		const data = (await response.json()) as { user: User; passkeys?: User['passkeys'] };
+		const data = (await response.json()) as {
+			user: User;
+			passkeys?: User['passkeys'];
+			totp_credentials?: User['totp_credentials'];
+			customFields?: UserCustomField[];
+			missing_required_fields?: UserMissingRequiredField[];
+		};
 		return {
 			...data.user,
-			passkeys: data.user.passkeys ?? data.passkeys
+			passkeys: data.user.passkeys ?? data.passkeys,
+			totp_credentials: data.user.totp_credentials ?? data.totp_credentials ?? [],
+			customFields: data.user.customFields ?? data.customFields ?? [],
+			missing_required_fields:
+				data.user.missing_required_fields ?? data.missing_required_fields ?? []
 		};
+	},
+
+	async resetTotp(id: string): Promise<{ ok: boolean; deleted: number }> {
+		const response = await adminFetch(`${adminUserPath(id)}/totp/reset`, {
+			method: 'POST',
+			includeJsonContentType: true,
+			body: JSON.stringify({})
+		});
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to reset TOTP');
+		}
+		return response.json();
 	},
 
 	/**
@@ -178,7 +242,7 @@ export const adminUsersAPI = {
 	 * PUT /api/admin/users/:id
 	 */
 	async update(id: string, data: UpdateUserInput): Promise<User> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}`, {
+		const response = await adminFetch(adminUserPath(id), {
 			method: 'PUT',
 			includeJsonContentType: true,
 			body: JSON.stringify(data)
@@ -198,7 +262,7 @@ export const adminUsersAPI = {
 	 * DELETE /api/admin/users/:id
 	 */
 	async delete(id: string): Promise<void> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}`, {
+		const response = await adminFetch(adminUserPath(id), {
 			method: 'DELETE'
 		});
 
@@ -216,7 +280,7 @@ export const adminUsersAPI = {
 		reasonCode: string = 'admin_action',
 		options?: { durationHours?: number; reasonDetail?: string }
 	): Promise<void> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}/suspend`, {
+		const response = await adminFetch(`${adminUserPath(id)}/suspend`, {
 			method: 'POST',
 			includeJsonContentType: true,
 			body: JSON.stringify({
@@ -241,7 +305,7 @@ export const adminUsersAPI = {
 		reasonCode: string = 'admin_action',
 		options?: { unlockAt?: string; reasonDetail?: string }
 	): Promise<void> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}/lock`, {
+		const response = await adminFetch(`${adminUserPath(id)}/lock`, {
 			method: 'POST',
 			includeJsonContentType: true,
 			body: JSON.stringify({
@@ -266,7 +330,7 @@ export const adminUsersAPI = {
 		reasonCode: string = 'admin_action',
 		options?: { reasonDetail?: string }
 	): Promise<{ user_id: string; status: string; previous_status: string; effective_at: string }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/users/${id}/activate`, {
+		const response = await adminFetch(`${adminUserPath(id)}/activate`, {
 			method: 'POST',
 			includeJsonContentType: true,
 			body: JSON.stringify({

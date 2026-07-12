@@ -23,53 +23,9 @@ type RootTranslation = {
 	 */
 	app_subtitle: string
 	/**
-	 * F​r​o​n​t​e​n​d​ ​S​t​a​c​k​ ​T​e​s​t
-	 */
-	test_title: string
-	/**
-	 * T​e​s​t​ ​M​e​l​t​ ​U​I​ ​(​H​e​a​d​l​e​s​s​ ​C​o​m​p​o​n​e​n​t​s​)​:
-	 */
-	test_meltui: string
-	/**
-	 * P​r​i​m​a​r​y​ ​B​u​t​t​o​n
-	 */
-	button_primary: string
-	/**
-	 * S​e​c​o​n​d​a​r​y​ ​B​u​t​t​o​n
-	 */
-	button_secondary: string
-	/**
-	 * G​h​o​s​t​ ​B​u​t​t​o​n
-	 */
-	button_ghost: string
-	/**
 	 * O​p​e​n​ ​D​i​a​l​o​g
 	 */
 	button_openDialog: string
-	/**
-	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
-	 */
-	form_email: string
-	/**
-	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m
-	 */
-	form_emailPlaceholder: string
-	/**
-	 * S​u​c​c​e​s​s
-	 */
-	badge_success: string
-	/**
-	 * W​a​r​n​i​n​g
-	 */
-	badge_warning: string
-	/**
-	 * E​r​r​o​r
-	 */
-	badge_error: string
-	/**
-	 * I​n​f​o
-	 */
-	badge_info: string
 	/**
 	 * M​e​l​t​ ​U​I​ ​D​i​a​l​o​g
 	 */
@@ -103,9 +59,17 @@ type RootTranslation = {
 	 */
 	language_english: string
 	/**
-	 * J​a​p​a​n​e​s​e
+	 * 日​本​語
 	 */
 	language_japanese: string
+	/**
+	 * S​w​i​t​c​h​ ​t​o​ ​l​i​g​h​t​ ​m​o​d​e
+	 */
+	theme_switchToLightMode: string
+	/**
+	 * S​w​i​t​c​h​ ​t​o​ ​d​a​r​k​ ​m​o​d​e
+	 */
+	theme_switchToDarkMode: string
 	/**
 	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
 	 */
@@ -127,10 +91,6 @@ type RootTranslation = {
 	 */
 	common_continue: string
 	/**
-	 * C​a​n​c​e​l
-	 */
-	common_cancel: string
-	/**
 	 * B​a​c​k​ ​t​o​ ​l​o​g​i​n
 	 */
 	common_backToLogin: string
@@ -143,6 +103,342 @@ type RootTranslation = {
 	 */
 	common_loading: string
 	/**
+	 * U​s​e​r
+	 */
+	common_userFallback: string
+	/**
+	 * A​c​c​o​u​n​t​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	account_pageTitle: string
+	/**
+	 * A​c​c​o​u​n​t
+	 */
+	account_title: string
+	/**
+	 * P​r​o​f​i​l​e
+	 */
+	account_profileTitle: string
+	/**
+	 * S​e​c​u​r​i​t​y
+	 */
+	account_securityTitle: string
+	/**
+	 * N​a​m​e
+	 */
+	account_name: string
+	/**
+	 * E​m​a​i​l
+	 */
+	account_email: string
+	/**
+	 * M​a​n​a​g​e
+	 */
+	account_manage: string
+	/**
+	 * P​a​s​s​k​e​y​s
+	 */
+	account_passkeys: string
+	/**
+	 * S​o​c​i​a​l​ ​a​c​c​o​u​n​t​s
+	 */
+	account_socialAccounts: string
+	/**
+	 * A​c​c​o​u​n​t​ ​p​a​g​e
+	 */
+	account_openPage: string
+	/**
+	 * V​e​r​i​f​i​e​d
+	 */
+	account_verified: string
+	/**
+	 * E​d​i​t​ ​n​a​m​e
+	 */
+	account_editName: string
+	/**
+	 * S​a​v​e
+	 */
+	account_save: string
+	/**
+	 * S​a​v​e​d
+	 */
+	account_saved: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​c​h​a​n​g​e​s
+	 */
+	account_saveFailed: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​a​c​c​o​u​n​t​ ​d​a​t​a
+	 */
+	account_loadFailed: string
+	/**
+	 * R​e​f​r​e​s​h
+	 */
+	account_refresh: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e
+	 */
+	account_reauth: string
+	/**
+	 * R​e​c​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​i​r​e​d​.​ ​R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​a​n​d​ ​r​e​t​r​y​.
+	 */
+	account_reauthRequired: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n
+	 */
+	account_reauthTitle: string
+	/**
+	 * C​o​n​f​i​r​m​ ​y​o​u​r​ ​i​d​e​n​t​i​t​y​ ​b​e​f​o​r​e​ ​c​o​n​t​i​n​u​i​n​g​ ​w​i​t​h​ ​t​h​i​s​ ​s​e​c​u​r​i​t​y​-​s​e​n​s​i​t​i​v​e​ ​o​p​e​r​a​t​i​o​n​.
+	 */
+	account_reauthDescription: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​P​a​s​s​k​e​y
+	 */
+	account_reauthWithPasskey: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​e​m​a​i​l​ ​c​o​d​e
+	 */
+	account_reauthWithEmailCode: string
+	/**
+	 * A​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e​ ​w​a​s​ ​s​e​n​t​ ​t​o​ ​{​e​m​a​i​l​}​.
+	 * @param {string} email
+	 */
+	account_reauthEmailCodeSent: RequiredParams<'email'>
+	/**
+	 * 6​-​d​i​g​i​t​ ​c​o​d​e
+	 */
+	account_reauthEmailCodePlaceholder: string
+	/**
+	 * V​e​r​i​f​y​ ​c​o​d​e
+	 */
+	account_reauthVerifyEmailCode: string
+	/**
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​r​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	account_reauthNoMethods: string
+	/**
+	 * D​e​v​i​c​e​s
+	 */
+	account_devices: string
+	/**
+	 * C​u​r​r​e​n​t
+	 */
+	account_currentDevice: string
+	/**
+	 * S​e​s​s​i​o​n​s
+	 */
+	account_sessions: string
+	/**
+	 * C​u​r​r​e​n​t​ ​s​e​s​s​i​o​n
+	 */
+	account_currentSession: string
+	/**
+	 * L​o​g​ ​o​u​t
+	 */
+	account_logoutSession: string
+	/**
+	 * P​a​s​s​k​e​y​ ​n​a​m​e
+	 */
+	account_passkeyName: string
+	/**
+	 * A​d​d​ ​p​a​s​s​k​e​y
+	 */
+	account_addPasskey: string
+	/**
+	 * D​e​l​e​t​e
+	 */
+	account_delete: string
+	/**
+	 * N​o​ ​i​t​e​m​s
+	 */
+	account_empty: string
+	/**
+	 * P​l​a​n​n​e​d
+	 */
+	account_planned: string
+	/**
+	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
+	 */
+	account_passkeyUnsupported: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s
+	 */
+	account_totp: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​n​a​m​e
+	 */
+	account_totpName: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_totpDefaultName: string
+	/**
+	 * A​d​d​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_addTotp: string
+	/**
+	 * S​e​t​ ​u​p​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_totpSetupTitle: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​Q​R​ ​c​o​d​e
+	 */
+	account_totpQrAlt: string
+	/**
+	 * M​a​n​u​a​l​ ​k​e​y
+	 */
+	account_totpManualKey: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	account_totpActivationCode: string
+	/**
+	 * A​c​t​i​v​a​t​e
+	 */
+	account_totpActivate: string
+	/**
+	 * B​a​c​k​u​p​ ​c​o​d​e​s
+	 */
+	account_totpBackupCodes: string
+	/**
+	 * {​r​e​m​a​i​n​i​n​g​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​b​a​c​k​u​p​ ​c​o​d​e​s​ ​r​e​m​a​i​n​i​n​g
+	 * @param {number} remaining
+	 * @param {number} total
+	 */
+	account_totpBackupCodesRemaining: RequiredParams<'remaining' | 'total'>
+	/**
+	 * R​e​g​e​n​e​r​a​t​e​ ​b​a​c​k​u​p​ ​c​o​d​e​s
+	 */
+	account_totpRegenerateBackupCodes: string
+	/**
+	 * C​u​r​r​e​n​t​ ​c​o​d​e
+	 */
+	account_totpCurrentCode: string
+	/**
+	 * C​u​r​r​e​n​t​ ​c​o​d​e
+	 */
+	account_totpDeleteCode: string
+	/**
+	 * P​e​n​d​i​n​g​ ​s​e​t​u​p
+	 */
+	account_totpPending: string
+	/**
+	 * D​o​n​e
+	 */
+	account_totpDone: string
+	/**
+	 * L​a​s​t​ ​u​s​e​d​ ​{​t​i​m​e​}
+	 * @param {string} time
+	 */
+	account_totpLastUsed: RequiredParams<'time'>
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	account_reauthWithTotp: string
+	/**
+	 * 6​ ​o​r​ ​8​ ​d​i​g​i​t​ ​c​o​d​e
+	 */
+	account_reauthTotpCodePlaceholder: string
+	/**
+	 * T​h​e​ ​o​p​e​r​a​t​i​o​n​ ​f​a​i​l​e​d
+	 */
+	account_actionFailed: string
+	/**
+	 * A​d​d​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​b​e​f​o​r​e​ ​d​e​l​e​t​i​n​g​ ​t​h​i​s​ ​m​e​t​h​o​d​.
+	 */
+	account_remainingLoginMethodRequired: string
+	/**
+	 * A​c​t​i​v​i​t​y
+	 */
+	account_activityTitle: string
+	/**
+	 * N​a​m​e​ ​c​h​a​n​g​e​d
+	 */
+	account_operationNameUpdated: string
+	/**
+	 * P​a​s​s​k​e​y​ ​a​d​d​e​d
+	 */
+	account_operationPasskeyCreated: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​n​a​m​e​d
+	 */
+	account_operationPasskeyUpdated: string
+	/**
+	 * P​a​s​s​k​e​y​ ​d​e​l​e​t​e​d
+	 */
+	account_operationPasskeyDeleted: string
+	/**
+	 * S​e​s​s​i​o​n​ ​l​o​g​g​e​d​ ​o​u​t
+	 */
+	account_operationSessionRevoked: string
+	/**
+	 * C​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n​s
+	 */
+	account_consentTitle: string
+	/**
+	 * R​e​v​i​e​w​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​n​d​ ​s​c​o​p​e​s​ ​y​o​u​ ​h​a​v​e​ ​c​o​n​f​i​r​m​e​d​ ​a​c​c​e​s​s​ ​f​o​r​ ​o​n​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
+	 */
+	account_consentDescription: string
+	/**
+	 * N​o​ ​a​c​t​i​v​e​ ​c​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n​s
+	 */
+	account_consentEmpty: string
+	/**
+	 * S​c​o​p​e​s
+	 */
+	account_consentScopes: string
+	/**
+	 * C​o​n​f​i​r​m​e​d​ ​a​t
+	 */
+	account_consentGrantedAt: string
+	/**
+	 * E​x​p​i​r​e​s
+	 */
+	account_consentExpiresAt: string
+	/**
+	 * N​o​ ​e​x​p​i​r​a​t​i​o​n
+	 */
+	account_consentNoExpiry: string
+	/**
+	 * P​o​l​i​c​y​ ​v​e​r​s​i​o​n​s
+	 */
+	account_consentPolicyVersions: string
+	/**
+	 * P​r​i​v​a​c​y​ ​p​o​l​i​c​y
+	 */
+	account_consentPrivacyPolicy: string
+	/**
+	 * T​e​r​m​s
+	 */
+	account_consentTerms: string
+	/**
+	 * C​o​n​s​e​n​t
+	 */
+	account_consentVersion: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	account_consentStatus: string
+	/**
+	 * G​r​a​n​t​e​d
+	 */
+	account_consentStatusGranted: string
+	/**
+	 * W​i​t​h​d​r​a​w​n
+	 */
+	account_consentStatusWithdrawn: string
+	/**
+	 * D​e​n​i​e​d
+	 */
+	account_consentStatusDenied: string
+	/**
+	 * V​e​r​s​i​o​n
+	 */
+	account_consentVersionLabel: string
+	/**
+	 * S​t​a​t​e​m​e​n​t​ ​I​D
+	 */
+	account_consentStatementId: string
+	/**
 	 * W​e​l​c​o​m​e​ ​b​a​c​k
 	 */
 	login_title: string
@@ -151,10 +447,6 @@ type RootTranslation = {
 	 */
 	login_subtitle: string
 	/**
-	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​P​a​s​s​k​e​y
-	 */
-	login_continueWithPasskey: string
-	/**
 	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​P​a​s​s​k​e​y
 	 */
 	login_signInWithPasskey: string
@@ -162,6 +454,42 @@ type RootTranslation = {
 	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	login_sendCode: string
+	/**
+	 * E​m​a​i​l​ ​o​r​ ​u​s​e​r​n​a​m​e
+	 */
+	login_totpIdentifierLabel: string
+	/**
+	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m​ ​o​r​ ​u​s​e​r​n​a​m​e
+	 */
+	login_totpIdentifierPlaceholder: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	login_totpCodeLabel: string
+	/**
+	 * 6​ ​o​r​ ​8​ ​d​i​g​i​t​ ​c​o​d​e
+	 */
+	login_totpCodePlaceholder: string
+	/**
+	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	login_totpContinue: string
+	/**
+	 * V​e​r​i​f​y​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	login_totpVerify: string
+	/**
+	 * E​m​a​i​l​ ​o​r​ ​u​s​e​r​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	login_totpIdentifierRequired: string
+	/**
+	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​d​e
+	 */
+	login_totpCodeInvalid: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​t​a​r​t​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​s​i​g​n​-​i​n
+	 */
+	login_totpStartFailed: string
 	/**
 	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​{​l​a​b​e​l​}
 	 * @param {string} label
@@ -224,6 +552,18 @@ type RootTranslation = {
 	 * @param {string} provider
 	 */
 	login_continueWith: RequiredParams<'provider'>
+	/**
+	 * L​o​a​d​i​n​g​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​.​.​.
+	 */
+	login_humanVerificationLoading: string
+	/**
+	 * S​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​R​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	login_humanVerificationLoadFailed: string
+	/**
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	login_noMethodsAvailable: string
 	/**
 	 * T​e​n​a​n​t​ ​D​i​s​c​o​v​e​r​y
 	 */
@@ -341,6 +681,18 @@ type RootTranslation = {
 	 */
 	header_logout: string
 	/**
+	 * A​u​t​h​r​i​m​ ​-​ ​A​ ​m​o​d​e​r​n​ ​O​p​e​n​I​D​ ​C​o​n​n​e​c​t​ ​P​r​o​v​i​d​e​r​ ​b​u​i​l​t​ ​w​i​t​h​ ​C​l​o​u​d​f​l​a​r​e​ ​W​o​r​k​e​r​s​.
+	 */
+	landing_metaDescription: string
+	/**
+	 * O​p​e​n​I​D​ ​C​o​n​n​e​c​t​ ​P​r​o​v​i​d​e​r
+	 */
+	landing_providerBadge: string
+	/**
+	 * S​i​g​n​e​d​ ​i​n​ ​a​s
+	 */
+	landing_signedInAs: string
+	/**
 	 * C​r​e​a​t​e​ ​y​o​u​r​ ​a​c​c​o​u​n​t
 	 */
 	register_title: string
@@ -357,6 +709,18 @@ type RootTranslation = {
 	 */
 	register_sendCode: string
 	/**
+	 * C​r​e​a​t​e​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	register_createWithTotp: string
+	/**
+	 * S​e​t​ ​u​p​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	register_totpSetupTitle: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​t​a​r​t​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​ ​s​e​t​u​p
+	 */
+	register_totpStartFailed: string
+	/**
 	 * A​l​r​e​a​d​y​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​S​i​g​n​ ​i​n
 	 */
 	register_alreadyHaveAccount: string
@@ -365,9 +729,9 @@ type RootTranslation = {
 	 */
 	register_termsAgreement: string
 	/**
-	 * N​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 * N​o​ ​s​i​g​n​u​p​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
 	 */
-	register_errorNameRequired: string
+	register_noMethodsAvailable: string
 	/**
 	 * C​h​e​c​k​ ​y​o​u​r​ ​e​m​a​i​l
 	 */
@@ -409,10 +773,6 @@ type RootTranslation = {
 	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​c​o​d​e
 	 */
 	emailCode_errorInvalid: string
-	/**
-	 * S​e​s​s​i​o​n​ ​m​i​s​m​a​t​c​h​.​ ​P​l​e​a​s​e​ ​r​e​q​u​e​s​t​ ​a​ ​n​e​w​ ​c​o​d​e​.
-	 */
-	emailCode_errorSessionMismatch: string
 	/**
 	 * {​c​l​i​e​n​t​N​a​m​e​}​ ​w​a​n​t​s​ ​t​o​ ​a​c​c​e​s​s​ ​y​o​u​r​ ​a​c​c​o​u​n​t
 	 * @param {string} clientName
@@ -505,10 +865,6 @@ type RootTranslation = {
 	 */
 	consent_yourRoles: string
 	/**
-	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	consent_noOrganization: string
-	/**
 	 * T​r​u​s​t​e​d​ ​a​p​p​l​i​c​a​t​i​o​n
 	 */
 	consent_trustedClient: string
@@ -538,6 +894,14 @@ type RootTranslation = {
 	 * O​p​t​i​o​n​a​l
 	 */
 	consent_item_optional_badge: string
+	/**
+	 * P​r​o​c​e​s​s​i​n​g​ ​p​u​r​p​o​s​e
+	 */
+	consent_item_processing_purpose: string
+	/**
+	 * W​i​t​h​d​r​a​w​a​l​ ​i​m​p​a​c​t
+	 */
+	consent_item_withdrawal_impact: string
 	/**
 	 * R​e​q​u​e​s​t​ ​a​c​c​o​u​n​t​ ​d​e​l​e​t​i​o​n
 	 */
@@ -607,18 +971,6 @@ type RootTranslation = {
 	 */
 	device_subtitle: string
 	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​8​-​c​h​a​r​a​c​t​e​r​ ​c​o​d​e​ ​d​i​s​p​l​a​y​e​d​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e​ ​t​o​ ​a​u​t​h​o​r​i​z​e​ ​i​t
-	 */
-	device_instructions: string
-	/**
-	 * S​c​a​n​ ​t​h​i​s​ ​Q​R​ ​c​o​d​e
-	 */
-	device_qrCodeLabel: string
-	/**
-	 * o​r​ ​e​n​t​e​r​ ​c​o​d​e​ ​m​a​n​u​a​l​l​y
-	 */
-	device_orManual: string
-	/**
 	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
 	 */
 	device_codeLabel: string
@@ -639,10 +991,6 @@ type RootTranslation = {
 	 */
 	device_confirmTitle: string
 	/**
-	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y​!​ ​Y​o​u​ ​c​a​n​ ​c​l​o​s​e​ ​t​h​i​s​ ​w​i​n​d​o​w​.
-	 */
-	device_successMessage: string
-	/**
 	 * R​e​q​u​e​s​t​e​d​ ​p​e​r​m​i​s​s​i​o​n​s
 	 */
 	device_requestedPermissions: string
@@ -659,25 +1007,29 @@ type RootTranslation = {
 	 */
 	device_success: string
 	/**
-	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​d​e​n​i​e​d
-	 */
-	device_denied: string
-	/**
 	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	device_errorInvalidCode: string
 	/**
-	 * T​h​i​s​ ​c​o​d​e​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​u​s​e​d
+	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​c​o​d​e
 	 */
-	device_errorAlreadyUsed: string
+	device_errorInvalidOrExpiredCode: string
 	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 * F​a​i​l​e​d​ ​t​o​ ​v​e​r​i​f​y​ ​d​e​v​i​c​e​ ​c​o​d​e
 	 */
-	device_errorGeneric: string
+	device_errorVerifyFailed: string
 	/**
-	 * P​l​e​a​s​e​ ​e​n​t​e​r​ ​t​h​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 * F​a​i​l​e​d​ ​t​o​ ​a​p​p​r​o​v​e​ ​d​e​v​i​c​e
 	 */
-	device_errorCodeRequired: string
+	device_errorApproveFailed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​d​e​n​y​ ​d​e​v​i​c​e
+	 */
+	device_errorDenyFailed: string
+	/**
+	 * I​n​v​a​l​i​d​ ​r​e​d​i​r​e​c​t​ ​U​R​L​ ​r​e​c​e​i​v​e​d​ ​f​r​o​m​ ​s​e​r​v​e​r
+	 */
+	device_errorInvalidRedirect: string
 	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​R​e​q​u​e​s​t
 	 */
@@ -691,13 +1043,29 @@ type RootTranslation = {
 	 */
 	ciba_noPendingRequests: string
 	/**
+	 * Y​o​u​ ​d​o​n​'​t​ ​h​a​v​e​ ​a​n​y​ ​p​e​n​d​i​n​g​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​r​e​q​u​e​s​t​s​ ​a​t​ ​t​h​e​ ​m​o​m​e​n​t​.
+	 */
+	ciba_noPendingDescription: string
+	/**
 	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​m​e​s​s​a​g​e
 	 */
 	ciba_bindingMessage: string
 	/**
-	 * R​e​q​u​e​s​t​e​d​ ​p​e​r​m​i​s​s​i​o​n​s
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​R​e​q​u​e​s​t
 	 */
-	ciba_requestedPermissions: string
+	ciba_authenticationRequest: string
+	/**
+	 * E​x​p​i​r​e​s​ ​i​n
+	 */
+	ciba_expiresIn: string
+	/**
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
+	 */
+	ciba_verificationCode: string
+	/**
+	 * R​e​q​u​e​s​t​e​d​ ​A​c​c​e​s​s
+	 */
+	ciba_requestedAccess: string
 	/**
 	 * A​p​p​r​o​v​e
 	 */
@@ -719,16 +1087,25 @@ type RootTranslation = {
 	 */
 	ciba_expired: string
 	/**
-	 * {​m​i​n​u​t​e​s​}​m​ ​{​s​e​c​o​n​d​s​}​s​ ​r​e​m​a​i​n​i​n​g
-	 * @param {number} minutes
-	 * @param {number} seconds
+	 * R​e​f​r​e​s​h
 	 */
-	ciba_remainingMinutes: RequiredParams<'minutes' | 'seconds'>
+	ciba_refresh: string
 	/**
-	 * {​s​e​c​o​n​d​s​}​s​ ​r​e​m​a​i​n​i​n​g
-	 * @param {number} seconds
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​p​e​n​d​i​n​g​ ​r​e​q​u​e​s​t​s
 	 */
-	ciba_remainingSeconds: RequiredParams<'seconds'>
+	ciba_errorLoadPending: string
+	/**
+	 * A​n​ ​e​r​r​o​r​ ​o​c​c​u​r​r​e​d
+	 */
+	ciba_errorGeneric: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​a​p​p​r​o​v​e​ ​r​e​q​u​e​s​t
+	 */
+	ciba_errorApproveFailed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​d​e​n​y​ ​r​e​q​u​e​s​t
+	 */
+	ciba_errorDenyFailed: string
 	/**
 	 * V​e​r​i​f​y​ ​Y​o​u​r​ ​I​d​e​n​t​i​t​y
 	 */
@@ -774,425 +1151,9 @@ type RootTranslation = {
 	 */
 	callback_errorMissingCode: string
 	/**
-	 * S​e​c​u​r​i​t​y​ ​v​a​l​i​d​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​s​i​g​n​i​n​g​ ​i​n​ ​a​g​a​i​n​.
-	 */
-	callback_errorStateMismatch: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​o​m​p​l​e​t​e​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
-	 */
-	callback_errorExchangeFailed: string
-	/**
-	 * A​ ​n​e​t​w​o​r​k​ ​e​r​r​o​r​ ​o​c​c​u​r​r​e​d​.​ ​P​l​e​a​s​e​ ​c​h​e​c​k​ ​y​o​u​r​ ​c​o​n​n​e​c​t​i​o​n​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
-	 */
-	callback_errorNetwork: string
-	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​l​o​g​g​i​n​g​ ​i​n​ ​a​g​a​i​n​.
-	 */
-	callback_errorMissingCodeVerifier: string
-	/**
-	 * Y​o​u​r​ ​b​r​o​w​s​e​r​ ​s​e​t​t​i​n​g​s​ ​p​r​e​v​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.​ ​P​l​e​a​s​e​ ​e​n​a​b​l​e​ ​c​o​o​k​i​e​s​ ​a​n​d​ ​s​t​o​r​a​g​e​.
-	 */
-	callback_errorStorageUnavailable: string
-	/**
-	 * Y​o​u​r​ ​b​r​o​w​s​e​r​ ​s​t​o​r​a​g​e​ ​i​s​ ​f​u​l​l​.​ ​P​l​e​a​s​e​ ​c​l​e​a​r​ ​s​o​m​e​ ​s​t​o​r​a​g​e​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
-	 */
-	callback_errorStorageQuotaExceeded: string
-	/**
 	 * B​a​c​k​ ​t​o​ ​h​o​m​e
 	 */
 	common_backToHome: string
-	/**
-	 * D​a​s​h​b​o​a​r​d
-	 */
-	admin_sidebar_dashboard: string
-	/**
-	 * U​s​e​r​s
-	 */
-	admin_sidebar_users: string
-	/**
-	 * C​l​i​e​n​t​s
-	 */
-	admin_sidebar_clients: string
-	/**
-	 * S​e​s​s​i​o​n​s
-	 */
-	admin_sidebar_sessions: string
-	/**
-	 * A​u​d​i​t​ ​L​o​g
-	 */
-	admin_sidebar_audit_log: string
-	/**
-	 * S​e​t​t​i​n​g​s
-	 */
-	admin_sidebar_settings: string
-	/**
-	 * S​C​I​M​ ​T​o​k​e​n​s
-	 */
-	admin_sidebar_scim_tokens: string
-	/**
-	 * I​d​e​n​t​i​t​y​ ​P​r​o​v​i​d​e​r​s
-	 */
-	admin_sidebar_identity_providers: string
-	/**
-	 * D​a​s​h​b​o​a​r​d
-	 */
-	admin_dashboard_title: string
-	/**
-	 * A​c​t​i​v​e​ ​U​s​e​r​s
-	 */
-	admin_dashboard_activeUsers: string
-	/**
-	 * T​o​t​a​l​ ​U​s​e​r​s
-	 */
-	admin_dashboard_totalUsers: string
-	/**
-	 * O​A​u​t​h​ ​C​l​i​e​n​t​s
-	 */
-	admin_dashboard_clients: string
-	/**
-	 * T​o​d​a​y​'​s​ ​L​o​g​i​n​s
-	 */
-	admin_dashboard_todayLogins: string
-	/**
-	 * R​e​c​e​n​t​ ​A​c​t​i​v​i​t​y
-	 */
-	admin_dashboard_recentActivity: string
-	/**
-	 * U​s​e​r​ ​M​a​n​a​g​e​m​e​n​t
-	 */
-	admin_users_title: string
-	/**
-	 * S​e​a​r​c​h​ ​b​y​ ​e​m​a​i​l​ ​o​r​ ​n​a​m​e
-	 */
-	admin_users_search: string
-	/**
-	 * A​d​d​ ​U​s​e​r
-	 */
-	admin_users_addUser: string
-	/**
-	 * F​i​l​t​e​r
-	 */
-	admin_users_filter: string
-	/**
-	 * A​l​l
-	 */
-	admin_users_all: string
-	/**
-	 * V​e​r​i​f​i​e​d
-	 */
-	admin_users_verified: string
-	/**
-	 * U​n​v​e​r​i​f​i​e​d
-	 */
-	admin_users_unverified: string
-	/**
-	 * E​m​a​i​l
-	 */
-	admin_users_email: string
-	/**
-	 * N​a​m​e
-	 */
-	admin_users_name: string
-	/**
-	 * S​t​a​t​u​s
-	 */
-	admin_users_status: string
-	/**
-	 * C​r​e​a​t​e​d
-	 */
-	admin_users_created: string
-	/**
-	 * L​a​s​t​ ​L​o​g​i​n
-	 */
-	admin_users_lastLogin: string
-	/**
-	 * A​c​t​i​o​n​s
-	 */
-	admin_users_actions: string
-	/**
-	 * E​d​i​t
-	 */
-	admin_users_edit: string
-	/**
-	 * D​e​l​e​t​e
-	 */
-	admin_users_delete: string
-	/**
-	 * V​i​e​w
-	 */
-	admin_users_view: string
-	/**
-	 * U​s​e​r​ ​D​e​t​a​i​l​s
-	 */
-	admin_user_detail_title: string
-	/**
-	 * B​a​s​i​c​ ​I​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_user_detail_basicInfo: string
-	/**
-	 * C​u​s​t​o​m​ ​F​i​e​l​d​s
-	 */
-	admin_user_detail_customFields: string
-	/**
-	 * R​e​g​i​s​t​e​r​e​d​ ​P​a​s​s​k​e​y​s
-	 */
-	admin_user_detail_passkeys: string
-	/**
-	 * A​c​t​i​v​e​ ​S​e​s​s​i​o​n​s
-	 */
-	admin_user_detail_sessions: string
-	/**
-	 * S​a​v​e​ ​C​h​a​n​g​e​s
-	 */
-	admin_user_detail_save: string
-	/**
-	 * D​e​l​e​t​e​ ​U​s​e​r
-	 */
-	admin_user_detail_deleteUser: string
-	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​i​s​ ​u​s​e​r​?
-	 */
-	admin_user_detail_deleteConfirm: string
-	/**
-	 * C​l​i​e​n​t​ ​M​a​n​a​g​e​m​e​n​t
-	 */
-	admin_clients_title: string
-	/**
-	 * S​e​a​r​c​h​ ​b​y​ ​c​l​i​e​n​t​ ​n​a​m​e​ ​o​r​ ​I​D
-	 */
-	admin_clients_search: string
-	/**
-	 * R​e​g​i​s​t​e​r​ ​C​l​i​e​n​t
-	 */
-	admin_clients_registerClient: string
-	/**
-	 * C​l​i​e​n​t​ ​I​D
-	 */
-	admin_clients_clientId: string
-	/**
-	 * C​l​i​e​n​t​ ​N​a​m​e
-	 */
-	admin_clients_clientName: string
-	/**
-	 * G​r​a​n​t​ ​T​y​p​e​s
-	 */
-	admin_clients_grantTypes: string
-	/**
-	 * C​r​e​a​t​e​d
-	 */
-	admin_clients_created: string
-	/**
-	 * A​c​t​i​o​n​s
-	 */
-	admin_clients_actions: string
-	/**
-	 * C​l​i​e​n​t​ ​D​e​t​a​i​l​s
-	 */
-	admin_client_detail_title: string
-	/**
-	 * B​a​s​i​c​ ​I​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_client_detail_basicInfo: string
-	/**
-	 * R​e​d​i​r​e​c​t​ ​U​R​I​s
-	 */
-	admin_client_detail_redirectUris: string
-	/**
-	 * G​r​a​n​t​ ​T​y​p​e​s
-	 */
-	admin_client_detail_grantTypes: string
-	/**
-	 * S​c​o​p​e​s
-	 */
-	admin_client_detail_scopes: string
-	/**
-	 * S​a​v​e​ ​C​h​a​n​g​e​s
-	 */
-	admin_client_detail_save: string
-	/**
-	 * R​e​g​e​n​e​r​a​t​e​ ​S​e​c​r​e​t
-	 */
-	admin_client_detail_regenerateSecret: string
-	/**
-	 * D​e​l​e​t​e​ ​C​l​i​e​n​t
-	 */
-	admin_client_detail_deleteClient: string
-	/**
-	 * S​e​t​t​i​n​g​s
-	 */
-	admin_settings_title: string
-	/**
-	 * G​e​n​e​r​a​l
-	 */
-	admin_settings_general: string
-	/**
-	 * A​p​p​e​a​r​a​n​c​e
-	 */
-	admin_settings_appearance: string
-	/**
-	 * S​e​c​u​r​i​t​y
-	 */
-	admin_settings_security: string
-	/**
-	 * E​m​a​i​l
-	 */
-	admin_settings_email: string
-	/**
-	 * A​d​v​a​n​c​e​d
-	 */
-	admin_settings_advanced: string
-	/**
-	 * A​u​d​i​t​ ​L​o​g
-	 */
-	admin_audit_title: string
-	/**
-	 * T​i​m​e​s​t​a​m​p
-	 */
-	admin_audit_timestamp: string
-	/**
-	 * U​s​e​r
-	 */
-	admin_audit_user: string
-	/**
-	 * A​c​t​i​o​n
-	 */
-	admin_audit_action: string
-	/**
-	 * R​e​s​o​u​r​c​e
-	 */
-	admin_audit_resource: string
-	/**
-	 * I​P​ ​A​d​d​r​e​s​s
-	 */
-	admin_audit_ip: string
-	/**
-	 * S​t​a​t​u​s
-	 */
-	admin_audit_status: string
-	/**
-	 * E​x​p​o​r​t
-	 */
-	admin_audit_export: string
-	/**
-	 * P​o​l​i​c​y
-	 */
-	admin_sidebar_policy: string
-	/**
-	 * P​o​l​i​c​y​ ​S​e​t​t​i​n​g​s
-	 */
-	admin_policy_title: string
-	/**
-	 * C​o​n​f​i​g​u​r​e​ ​p​o​l​i​c​y​ ​s​y​s​t​e​m​ ​f​e​a​t​u​r​e​s​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s
-	 */
-	admin_policy_subtitle: string
-	/**
-	 * S​a​v​e​ ​C​h​a​n​g​e​s
-	 */
-	admin_policy_save: string
-	/**
-	 * P​o​l​i​c​y​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
-	 */
-	admin_policy_save_success: string
-	/**
-	 * O​I​D​C​ ​C​o​n​f​o​r​m​a​n​c​e​ ​N​o​t​i​c​e
-	 */
-	admin_policy_warning_title: string
-	/**
-	 * E​n​a​b​l​i​n​g​ ​p​o​l​i​c​y​ ​f​e​a​t​u​r​e​s​ ​m​a​y​ ​a​f​f​e​c​t​ ​O​I​D​C​ ​c​o​n​f​o​r​m​a​n​c​e​ ​t​e​s​t​i​n​g​.​ ​C​u​s​t​o​m​ ​c​l​a​i​m​s​ ​u​s​e​ ​t​h​e​ ​"​a​u​t​h​r​i​m​_​"​ ​p​r​e​f​i​x​ ​t​o​ ​a​v​o​i​d​ ​c​o​n​f​l​i​c​t​s​ ​w​i​t​h​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​s​.
-	 */
-	admin_policy_warning_desc: string
-	/**
-	 * F​e​a​t​u​r​e​ ​F​l​a​g​s
-	 */
-	admin_policy_feature_flags: string
-	/**
-	 * E​n​a​b​l​e​ ​A​B​A​C​ ​(​A​t​t​r​i​b​u​t​e​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​)
-	 */
-	admin_policy_enable_abac: string
-	/**
-	 * E​v​a​l​u​a​t​e​ ​a​c​c​e​s​s​ ​b​a​s​e​d​ ​o​n​ ​u​s​e​r​ ​a​t​t​r​i​b​u​t​e​s​ ​(​d​e​p​a​r​t​m​e​n​t​,​ ​c​l​e​a​r​a​n​c​e​ ​l​e​v​e​l​,​ ​e​t​c​.​)
-	 */
-	admin_policy_enable_abac_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​R​e​B​A​C​ ​(​R​e​l​a​t​i​o​n​s​h​i​p​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​)
-	 */
-	admin_policy_enable_rebac: string
-	/**
-	 * E​v​a​l​u​a​t​e​ ​a​c​c​e​s​s​ ​b​a​s​e​d​ ​o​n​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​b​e​t​w​e​e​n​ ​e​n​t​i​t​i​e​s​ ​(​G​o​o​g​l​e​ ​Z​a​n​z​i​b​a​r​ ​s​t​y​l​e​)
-	 */
-	admin_policy_enable_rebac_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​P​o​l​i​c​y​ ​L​o​g​g​i​n​g
-	 */
-	admin_policy_enable_logging: string
-	/**
-	 * L​o​g​ ​d​e​t​a​i​l​e​d​ ​p​o​l​i​c​y​ ​e​v​a​l​u​a​t​i​o​n​ ​r​e​s​u​l​t​s​ ​f​o​r​ ​d​e​b​u​g​g​i​n​g
-	 */
-	admin_policy_enable_logging_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​V​e​r​i​f​i​e​d​ ​A​t​t​r​i​b​u​t​e​s
-	 */
-	admin_policy_enable_verified_attrs: string
-	/**
-	 * R​e​q​u​i​r​e​ ​c​r​y​p​t​o​g​r​a​p​h​i​c​ ​p​r​o​o​f​ ​o​f​ ​a​t​t​r​i​b​u​t​e​ ​c​l​a​i​m​s
-	 */
-	admin_policy_enable_verified_attrs_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​C​u​s​t​o​m​ ​R​u​l​e​s
-	 */
-	admin_policy_enable_custom_rules: string
-	/**
-	 * A​l​l​o​w​ ​c​u​s​t​o​m​ ​p​o​l​i​c​y​ ​r​u​l​e​s​ ​b​e​y​o​n​d​ ​d​e​f​a​u​l​t​ ​R​B​A​C
-	 */
-	admin_policy_enable_custom_rules_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​S​D​-​J​W​T​ ​(​S​e​l​e​c​t​i​v​e​ ​D​i​s​c​l​o​s​u​r​e​)
-	 */
-	admin_policy_enable_sd_jwt: string
-	/**
-	 * I​s​s​u​e​ ​I​D​ ​T​o​k​e​n​s​ ​i​n​ ​S​D​-​J​W​T​ ​f​o​r​m​a​t​ ​f​o​r​ ​s​e​l​e​c​t​i​v​e​ ​d​i​s​c​l​o​s​u​r​e​ ​(​R​F​C​ ​9​9​0​1​)
-	 */
-	admin_policy_enable_sd_jwt_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​P​o​l​i​c​y​ ​E​m​b​e​d​d​i​n​g​ ​i​n​ ​A​c​c​e​s​s​ ​T​o​k​e​n
-	 */
-	admin_policy_enable_embedding: string
-	/**
-	 * E​v​a​l​u​a​t​e​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​g​a​i​n​s​t​ ​p​o​l​i​c​y​ ​a​n​d​ ​e​m​b​e​d​ ​p​e​r​m​i​t​t​e​d​ ​a​c​t​i​o​n​s​ ​a​s​ ​a​u​t​h​r​i​m​_​p​e​r​m​i​s​s​i​o​n​s​ ​c​l​a​i​m
-	 */
-	admin_policy_enable_embedding_desc: string
-	/**
-	 * T​o​k​e​n​ ​C​l​a​i​m​s​ ​C​o​n​f​i​g​u​r​a​t​i​o​n
-	 */
-	admin_policy_token_claims: string
-	/**
-	 * A​c​c​e​s​s​ ​T​o​k​e​n​ ​C​l​a​i​m​s
-	 */
-	admin_policy_access_token_claims: string
-	/**
-	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​l​i​s​t​ ​o​f​ ​c​l​a​i​m​s​ ​t​o​ ​i​n​c​l​u​d​e​ ​i​n​ ​A​c​c​e​s​s​ ​T​o​k​e​n​ ​(​p​r​e​f​i​x​e​d​ ​w​i​t​h​ ​a​u​t​h​r​i​m​_​)
-	 */
-	admin_policy_access_token_claims_desc: string
-	/**
-	 * I​D​ ​T​o​k​e​n​ ​C​l​a​i​m​s
-	 */
-	admin_policy_id_token_claims: string
-	/**
-	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​l​i​s​t​ ​o​f​ ​c​l​a​i​m​s​ ​t​o​ ​i​n​c​l​u​d​e​ ​i​n​ ​I​D​ ​T​o​k​e​n​ ​(​p​r​e​f​i​x​e​d​ ​w​i​t​h​ ​a​u​t​h​r​i​m​_​)
-	 */
-	admin_policy_id_token_claims_desc: string
-	/**
-	 * A​v​a​i​l​a​b​l​e​ ​C​l​a​i​m​s
-	 */
-	admin_policy_available_claims: string
-	/**
-	 * P​o​l​i​c​y​ ​E​m​b​e​d​d​i​n​g​ ​I​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_policy_embedding_info: string
-	/**
-	 * W​h​e​n​ ​e​n​a​b​l​e​d​,​ ​t​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​s​e​r​v​e​r​ ​e​v​a​l​u​a​t​e​s​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​g​a​i​n​s​t​ ​t​h​e​ ​u​s​e​r​'​s​ ​p​e​r​m​i​s​s​i​o​n​s​ ​a​n​d​ ​e​m​b​e​d​s​ ​o​n​l​y​ ​p​e​r​m​i​t​t​e​d​ ​a​c​t​i​o​n​s​ ​i​n​ ​t​h​e​ ​A​c​c​e​s​s​ ​T​o​k​e​n​.
-	 */
-	admin_policy_embedding_info_desc: string
 	/**
 	 * A​c​c​o​u​n​t​ ​A​l​r​e​a​d​y​ ​E​x​i​s​t​s
 	 */
@@ -1290,53 +1251,9 @@ export type TranslationFunctions = {
 	 */
 	app_subtitle: () => LocalizedString
 	/**
-	 * Frontend Stack Test
-	 */
-	test_title: () => LocalizedString
-	/**
-	 * Test Melt UI (Headless Components):
-	 */
-	test_meltui: () => LocalizedString
-	/**
-	 * Primary Button
-	 */
-	button_primary: () => LocalizedString
-	/**
-	 * Secondary Button
-	 */
-	button_secondary: () => LocalizedString
-	/**
-	 * Ghost Button
-	 */
-	button_ghost: () => LocalizedString
-	/**
 	 * Open Dialog
 	 */
 	button_openDialog: () => LocalizedString
-	/**
-	 * Email address
-	 */
-	form_email: () => LocalizedString
-	/**
-	 * you@example.com
-	 */
-	form_emailPlaceholder: () => LocalizedString
-	/**
-	 * Success
-	 */
-	badge_success: () => LocalizedString
-	/**
-	 * Warning
-	 */
-	badge_warning: () => LocalizedString
-	/**
-	 * Error
-	 */
-	badge_error: () => LocalizedString
-	/**
-	 * Info
-	 */
-	badge_info: () => LocalizedString
 	/**
 	 * Melt UI Dialog
 	 */
@@ -1370,9 +1287,17 @@ export type TranslationFunctions = {
 	 */
 	language_english: () => LocalizedString
 	/**
-	 * Japanese
+	 * 日本語
 	 */
 	language_japanese: () => LocalizedString
+	/**
+	 * Switch to light mode
+	 */
+	theme_switchToLightMode: () => LocalizedString
+	/**
+	 * Switch to dark mode
+	 */
+	theme_switchToDarkMode: () => LocalizedString
 	/**
 	 * Email address
 	 */
@@ -1394,10 +1319,6 @@ export type TranslationFunctions = {
 	 */
 	common_continue: () => LocalizedString
 	/**
-	 * Cancel
-	 */
-	common_cancel: () => LocalizedString
-	/**
 	 * Back to login
 	 */
 	common_backToLogin: () => LocalizedString
@@ -1410,6 +1331,338 @@ export type TranslationFunctions = {
 	 */
 	common_loading: () => LocalizedString
 	/**
+	 * User
+	 */
+	common_userFallback: () => LocalizedString
+	/**
+	 * Account - Authrim
+	 */
+	account_pageTitle: () => LocalizedString
+	/**
+	 * Account
+	 */
+	account_title: () => LocalizedString
+	/**
+	 * Profile
+	 */
+	account_profileTitle: () => LocalizedString
+	/**
+	 * Security
+	 */
+	account_securityTitle: () => LocalizedString
+	/**
+	 * Name
+	 */
+	account_name: () => LocalizedString
+	/**
+	 * Email
+	 */
+	account_email: () => LocalizedString
+	/**
+	 * Manage
+	 */
+	account_manage: () => LocalizedString
+	/**
+	 * Passkeys
+	 */
+	account_passkeys: () => LocalizedString
+	/**
+	 * Social accounts
+	 */
+	account_socialAccounts: () => LocalizedString
+	/**
+	 * Account page
+	 */
+	account_openPage: () => LocalizedString
+	/**
+	 * Verified
+	 */
+	account_verified: () => LocalizedString
+	/**
+	 * Edit name
+	 */
+	account_editName: () => LocalizedString
+	/**
+	 * Save
+	 */
+	account_save: () => LocalizedString
+	/**
+	 * Saved
+	 */
+	account_saved: () => LocalizedString
+	/**
+	 * Could not save changes
+	 */
+	account_saveFailed: () => LocalizedString
+	/**
+	 * Could not load account data
+	 */
+	account_loadFailed: () => LocalizedString
+	/**
+	 * Refresh
+	 */
+	account_refresh: () => LocalizedString
+	/**
+	 * Re-authenticate
+	 */
+	account_reauth: () => LocalizedString
+	/**
+	 * Recent authentication is required. Re-authenticate and retry.
+	 */
+	account_reauthRequired: () => LocalizedString
+	/**
+	 * Re-authentication
+	 */
+	account_reauthTitle: () => LocalizedString
+	/**
+	 * Confirm your identity before continuing with this security-sensitive operation.
+	 */
+	account_reauthDescription: () => LocalizedString
+	/**
+	 * Re-authenticate with Passkey
+	 */
+	account_reauthWithPasskey: () => LocalizedString
+	/**
+	 * Re-authenticate with email code
+	 */
+	account_reauthWithEmailCode: () => LocalizedString
+	/**
+	 * A verification code was sent to {email}.
+	 */
+	account_reauthEmailCodeSent: (arg: { email: string }) => LocalizedString
+	/**
+	 * 6-digit code
+	 */
+	account_reauthEmailCodePlaceholder: () => LocalizedString
+	/**
+	 * Verify code
+	 */
+	account_reauthVerifyEmailCode: () => LocalizedString
+	/**
+	 * No authentication method is available for re-authentication.
+	 */
+	account_reauthNoMethods: () => LocalizedString
+	/**
+	 * Devices
+	 */
+	account_devices: () => LocalizedString
+	/**
+	 * Current
+	 */
+	account_currentDevice: () => LocalizedString
+	/**
+	 * Sessions
+	 */
+	account_sessions: () => LocalizedString
+	/**
+	 * Current session
+	 */
+	account_currentSession: () => LocalizedString
+	/**
+	 * Log out
+	 */
+	account_logoutSession: () => LocalizedString
+	/**
+	 * Passkey name
+	 */
+	account_passkeyName: () => LocalizedString
+	/**
+	 * Add passkey
+	 */
+	account_addPasskey: () => LocalizedString
+	/**
+	 * Delete
+	 */
+	account_delete: () => LocalizedString
+	/**
+	 * No items
+	 */
+	account_empty: () => LocalizedString
+	/**
+	 * Planned
+	 */
+	account_planned: () => LocalizedString
+	/**
+	 * This browser does not support passkey registration.
+	 */
+	account_passkeyUnsupported: () => LocalizedString
+	/**
+	 * Authenticator apps
+	 */
+	account_totp: () => LocalizedString
+	/**
+	 * Authenticator app name
+	 */
+	account_totpName: () => LocalizedString
+	/**
+	 * Authenticator app
+	 */
+	account_totpDefaultName: () => LocalizedString
+	/**
+	 * Add authenticator app
+	 */
+	account_addTotp: () => LocalizedString
+	/**
+	 * Set up authenticator app
+	 */
+	account_totpSetupTitle: () => LocalizedString
+	/**
+	 * Authenticator app QR code
+	 */
+	account_totpQrAlt: () => LocalizedString
+	/**
+	 * Manual key
+	 */
+	account_totpManualKey: () => LocalizedString
+	/**
+	 * Authenticator code
+	 */
+	account_totpActivationCode: () => LocalizedString
+	/**
+	 * Activate
+	 */
+	account_totpActivate: () => LocalizedString
+	/**
+	 * Backup codes
+	 */
+	account_totpBackupCodes: () => LocalizedString
+	/**
+	 * {remaining} of {total} backup codes remaining
+	 */
+	account_totpBackupCodesRemaining: (arg: { remaining: number, total: number }) => LocalizedString
+	/**
+	 * Regenerate backup codes
+	 */
+	account_totpRegenerateBackupCodes: () => LocalizedString
+	/**
+	 * Current code
+	 */
+	account_totpCurrentCode: () => LocalizedString
+	/**
+	 * Current code
+	 */
+	account_totpDeleteCode: () => LocalizedString
+	/**
+	 * Pending setup
+	 */
+	account_totpPending: () => LocalizedString
+	/**
+	 * Done
+	 */
+	account_totpDone: () => LocalizedString
+	/**
+	 * Last used {time}
+	 */
+	account_totpLastUsed: (arg: { time: string }) => LocalizedString
+	/**
+	 * Re-authenticate with authenticator app
+	 */
+	account_reauthWithTotp: () => LocalizedString
+	/**
+	 * 6 or 8 digit code
+	 */
+	account_reauthTotpCodePlaceholder: () => LocalizedString
+	/**
+	 * The operation failed
+	 */
+	account_actionFailed: () => LocalizedString
+	/**
+	 * Add another login method before deleting this method.
+	 */
+	account_remainingLoginMethodRequired: () => LocalizedString
+	/**
+	 * Activity
+	 */
+	account_activityTitle: () => LocalizedString
+	/**
+	 * Name changed
+	 */
+	account_operationNameUpdated: () => LocalizedString
+	/**
+	 * Passkey added
+	 */
+	account_operationPasskeyCreated: () => LocalizedString
+	/**
+	 * Passkey renamed
+	 */
+	account_operationPasskeyUpdated: () => LocalizedString
+	/**
+	 * Passkey deleted
+	 */
+	account_operationPasskeyDeleted: () => LocalizedString
+	/**
+	 * Session logged out
+	 */
+	account_operationSessionRevoked: () => LocalizedString
+	/**
+	 * Consent confirmations
+	 */
+	account_consentTitle: () => LocalizedString
+	/**
+	 * Review applications and scopes you have confirmed access for on this account.
+	 */
+	account_consentDescription: () => LocalizedString
+	/**
+	 * No active consent confirmations
+	 */
+	account_consentEmpty: () => LocalizedString
+	/**
+	 * Scopes
+	 */
+	account_consentScopes: () => LocalizedString
+	/**
+	 * Confirmed at
+	 */
+	account_consentGrantedAt: () => LocalizedString
+	/**
+	 * Expires
+	 */
+	account_consentExpiresAt: () => LocalizedString
+	/**
+	 * No expiration
+	 */
+	account_consentNoExpiry: () => LocalizedString
+	/**
+	 * Policy versions
+	 */
+	account_consentPolicyVersions: () => LocalizedString
+	/**
+	 * Privacy policy
+	 */
+	account_consentPrivacyPolicy: () => LocalizedString
+	/**
+	 * Terms
+	 */
+	account_consentTerms: () => LocalizedString
+	/**
+	 * Consent
+	 */
+	account_consentVersion: () => LocalizedString
+	/**
+	 * Status
+	 */
+	account_consentStatus: () => LocalizedString
+	/**
+	 * Granted
+	 */
+	account_consentStatusGranted: () => LocalizedString
+	/**
+	 * Withdrawn
+	 */
+	account_consentStatusWithdrawn: () => LocalizedString
+	/**
+	 * Denied
+	 */
+	account_consentStatusDenied: () => LocalizedString
+	/**
+	 * Version
+	 */
+	account_consentVersionLabel: () => LocalizedString
+	/**
+	 * Statement ID
+	 */
+	account_consentStatementId: () => LocalizedString
+	/**
 	 * Welcome back
 	 */
 	login_title: () => LocalizedString
@@ -1418,10 +1671,6 @@ export type TranslationFunctions = {
 	 */
 	login_subtitle: () => LocalizedString
 	/**
-	 * Continue with Passkey
-	 */
-	login_continueWithPasskey: () => LocalizedString
-	/**
 	 * Sign in with Passkey
 	 */
 	login_signInWithPasskey: () => LocalizedString
@@ -1429,6 +1678,42 @@ export type TranslationFunctions = {
 	 * Send verification code
 	 */
 	login_sendCode: () => LocalizedString
+	/**
+	 * Email or username
+	 */
+	login_totpIdentifierLabel: () => LocalizedString
+	/**
+	 * you@example.com or username
+	 */
+	login_totpIdentifierPlaceholder: () => LocalizedString
+	/**
+	 * Authenticator code
+	 */
+	login_totpCodeLabel: () => LocalizedString
+	/**
+	 * 6 or 8 digit code
+	 */
+	login_totpCodePlaceholder: () => LocalizedString
+	/**
+	 * Continue with authenticator app
+	 */
+	login_totpContinue: () => LocalizedString
+	/**
+	 * Verify authenticator code
+	 */
+	login_totpVerify: () => LocalizedString
+	/**
+	 * Email or username is required
+	 */
+	login_totpIdentifierRequired: () => LocalizedString
+	/**
+	 * Invalid or expired authenticator code
+	 */
+	login_totpCodeInvalid: () => LocalizedString
+	/**
+	 * Could not start authenticator app sign-in
+	 */
+	login_totpStartFailed: () => LocalizedString
 	/**
 	 * Sign in with {label}
 	 */
@@ -1489,6 +1774,18 @@ export type TranslationFunctions = {
 	 * Continue with {provider}
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString
+	/**
+	 * Loading security check...
+	 */
+	login_humanVerificationLoading: () => LocalizedString
+	/**
+	 * Security check could not be loaded. Reload the page and try again.
+	 */
+	login_humanVerificationLoadFailed: () => LocalizedString
+	/**
+	 * No authentication method is enabled for this tenant. Contact your administrator.
+	 */
+	login_noMethodsAvailable: () => LocalizedString
 	/**
 	 * Tenant Discovery
 	 */
@@ -1606,6 +1903,18 @@ export type TranslationFunctions = {
 	 */
 	header_logout: () => LocalizedString
 	/**
+	 * Authrim - A modern OpenID Connect Provider built with Cloudflare Workers.
+	 */
+	landing_metaDescription: () => LocalizedString
+	/**
+	 * OpenID Connect Provider
+	 */
+	landing_providerBadge: () => LocalizedString
+	/**
+	 * Signed in as
+	 */
+	landing_signedInAs: () => LocalizedString
+	/**
 	 * Create your account
 	 */
 	register_title: () => LocalizedString
@@ -1622,6 +1931,18 @@ export type TranslationFunctions = {
 	 */
 	register_sendCode: () => LocalizedString
 	/**
+	 * Create account with authenticator app
+	 */
+	register_createWithTotp: () => LocalizedString
+	/**
+	 * Set up authenticator app
+	 */
+	register_totpSetupTitle: () => LocalizedString
+	/**
+	 * Could not start authenticator app setup
+	 */
+	register_totpStartFailed: () => LocalizedString
+	/**
 	 * Already have an account? Sign in
 	 */
 	register_alreadyHaveAccount: () => LocalizedString
@@ -1630,9 +1951,9 @@ export type TranslationFunctions = {
 	 */
 	register_termsAgreement: () => LocalizedString
 	/**
-	 * Name is required
+	 * No signup method is enabled for this tenant. Contact your administrator.
 	 */
-	register_errorNameRequired: () => LocalizedString
+	register_noMethodsAvailable: () => LocalizedString
 	/**
 	 * Check your email
 	 */
@@ -1673,10 +1994,6 @@ export type TranslationFunctions = {
 	 * Invalid or expired code
 	 */
 	emailCode_errorInvalid: () => LocalizedString
-	/**
-	 * Session mismatch. Please request a new code.
-	 */
-	emailCode_errorSessionMismatch: () => LocalizedString
 	/**
 	 * {clientName} wants to access your account
 	 */
@@ -1766,10 +2083,6 @@ export type TranslationFunctions = {
 	 */
 	consent_yourRoles: () => LocalizedString
 	/**
-	 * No organization
-	 */
-	consent_noOrganization: () => LocalizedString
-	/**
 	 * Trusted application
 	 */
 	consent_trustedClient: () => LocalizedString
@@ -1797,6 +2110,14 @@ export type TranslationFunctions = {
 	 * Optional
 	 */
 	consent_item_optional_badge: () => LocalizedString
+	/**
+	 * Processing purpose
+	 */
+	consent_item_processing_purpose: () => LocalizedString
+	/**
+	 * Withdrawal impact
+	 */
+	consent_item_withdrawal_impact: () => LocalizedString
 	/**
 	 * Request account deletion
 	 */
@@ -1866,18 +2187,6 @@ export type TranslationFunctions = {
 	 */
 	device_subtitle: () => LocalizedString
 	/**
-	 * Enter the 8-character code displayed on your device to authorize it
-	 */
-	device_instructions: () => LocalizedString
-	/**
-	 * Scan this QR code
-	 */
-	device_qrCodeLabel: () => LocalizedString
-	/**
-	 * or enter code manually
-	 */
-	device_orManual: () => LocalizedString
-	/**
 	 * Verification Code
 	 */
 	device_codeLabel: () => LocalizedString
@@ -1898,10 +2207,6 @@ export type TranslationFunctions = {
 	 */
 	device_confirmTitle: () => LocalizedString
 	/**
-	 * Device authorized successfully! You can close this window.
-	 */
-	device_successMessage: () => LocalizedString
-	/**
 	 * Requested permissions
 	 */
 	device_requestedPermissions: () => LocalizedString
@@ -1918,25 +2223,29 @@ export type TranslationFunctions = {
 	 */
 	device_success: () => LocalizedString
 	/**
-	 * Device authorization denied
-	 */
-	device_denied: () => LocalizedString
-	/**
 	 * Invalid or expired verification code
 	 */
 	device_errorInvalidCode: () => LocalizedString
 	/**
-	 * This code has already been used
+	 * Invalid or expired code
 	 */
-	device_errorAlreadyUsed: () => LocalizedString
+	device_errorInvalidOrExpiredCode: () => LocalizedString
 	/**
-	 * Verification failed. Please try again.
+	 * Failed to verify device code
 	 */
-	device_errorGeneric: () => LocalizedString
+	device_errorVerifyFailed: () => LocalizedString
 	/**
-	 * Please enter the verification code
+	 * Failed to approve device
 	 */
-	device_errorCodeRequired: () => LocalizedString
+	device_errorApproveFailed: () => LocalizedString
+	/**
+	 * Failed to deny device
+	 */
+	device_errorDenyFailed: () => LocalizedString
+	/**
+	 * Invalid redirect URL received from server
+	 */
+	device_errorInvalidRedirect: () => LocalizedString
 	/**
 	 * Authentication Request
 	 */
@@ -1950,13 +2259,29 @@ export type TranslationFunctions = {
 	 */
 	ciba_noPendingRequests: () => LocalizedString
 	/**
+	 * You don't have any pending authentication requests at the moment.
+	 */
+	ciba_noPendingDescription: () => LocalizedString
+	/**
 	 * Verification message
 	 */
 	ciba_bindingMessage: () => LocalizedString
 	/**
-	 * Requested permissions
+	 * Authentication Request
 	 */
-	ciba_requestedPermissions: () => LocalizedString
+	ciba_authenticationRequest: () => LocalizedString
+	/**
+	 * Expires in
+	 */
+	ciba_expiresIn: () => LocalizedString
+	/**
+	 * Verification Code
+	 */
+	ciba_verificationCode: () => LocalizedString
+	/**
+	 * Requested Access
+	 */
+	ciba_requestedAccess: () => LocalizedString
 	/**
 	 * Approve
 	 */
@@ -1978,13 +2303,25 @@ export type TranslationFunctions = {
 	 */
 	ciba_expired: () => LocalizedString
 	/**
-	 * {minutes}m {seconds}s remaining
+	 * Refresh
 	 */
-	ciba_remainingMinutes: (arg: { minutes: number, seconds: number }) => LocalizedString
+	ciba_refresh: () => LocalizedString
 	/**
-	 * {seconds}s remaining
+	 * Failed to load pending requests
 	 */
-	ciba_remainingSeconds: (arg: { seconds: number }) => LocalizedString
+	ciba_errorLoadPending: () => LocalizedString
+	/**
+	 * An error occurred
+	 */
+	ciba_errorGeneric: () => LocalizedString
+	/**
+	 * Failed to approve request
+	 */
+	ciba_errorApproveFailed: () => LocalizedString
+	/**
+	 * Failed to deny request
+	 */
+	ciba_errorDenyFailed: () => LocalizedString
 	/**
 	 * Verify Your Identity
 	 */
@@ -2030,425 +2367,9 @@ export type TranslationFunctions = {
 	 */
 	callback_errorMissingCode: () => LocalizedString
 	/**
-	 * Security validation failed. Please try signing in again.
-	 */
-	callback_errorStateMismatch: () => LocalizedString
-	/**
-	 * Failed to complete authentication. Please try again.
-	 */
-	callback_errorExchangeFailed: () => LocalizedString
-	/**
-	 * A network error occurred. Please check your connection and try again.
-	 */
-	callback_errorNetwork: () => LocalizedString
-	/**
-	 * Authentication failed. Please try logging in again.
-	 */
-	callback_errorMissingCodeVerifier: () => LocalizedString
-	/**
-	 * Your browser settings prevent authentication. Please enable cookies and storage.
-	 */
-	callback_errorStorageUnavailable: () => LocalizedString
-	/**
-	 * Your browser storage is full. Please clear some storage and try again.
-	 */
-	callback_errorStorageQuotaExceeded: () => LocalizedString
-	/**
 	 * Back to home
 	 */
 	common_backToHome: () => LocalizedString
-	/**
-	 * Dashboard
-	 */
-	admin_sidebar_dashboard: () => LocalizedString
-	/**
-	 * Users
-	 */
-	admin_sidebar_users: () => LocalizedString
-	/**
-	 * Clients
-	 */
-	admin_sidebar_clients: () => LocalizedString
-	/**
-	 * Sessions
-	 */
-	admin_sidebar_sessions: () => LocalizedString
-	/**
-	 * Audit Log
-	 */
-	admin_sidebar_audit_log: () => LocalizedString
-	/**
-	 * Settings
-	 */
-	admin_sidebar_settings: () => LocalizedString
-	/**
-	 * SCIM Tokens
-	 */
-	admin_sidebar_scim_tokens: () => LocalizedString
-	/**
-	 * Identity Providers
-	 */
-	admin_sidebar_identity_providers: () => LocalizedString
-	/**
-	 * Dashboard
-	 */
-	admin_dashboard_title: () => LocalizedString
-	/**
-	 * Active Users
-	 */
-	admin_dashboard_activeUsers: () => LocalizedString
-	/**
-	 * Total Users
-	 */
-	admin_dashboard_totalUsers: () => LocalizedString
-	/**
-	 * OAuth Clients
-	 */
-	admin_dashboard_clients: () => LocalizedString
-	/**
-	 * Today's Logins
-	 */
-	admin_dashboard_todayLogins: () => LocalizedString
-	/**
-	 * Recent Activity
-	 */
-	admin_dashboard_recentActivity: () => LocalizedString
-	/**
-	 * User Management
-	 */
-	admin_users_title: () => LocalizedString
-	/**
-	 * Search by email or name
-	 */
-	admin_users_search: () => LocalizedString
-	/**
-	 * Add User
-	 */
-	admin_users_addUser: () => LocalizedString
-	/**
-	 * Filter
-	 */
-	admin_users_filter: () => LocalizedString
-	/**
-	 * All
-	 */
-	admin_users_all: () => LocalizedString
-	/**
-	 * Verified
-	 */
-	admin_users_verified: () => LocalizedString
-	/**
-	 * Unverified
-	 */
-	admin_users_unverified: () => LocalizedString
-	/**
-	 * Email
-	 */
-	admin_users_email: () => LocalizedString
-	/**
-	 * Name
-	 */
-	admin_users_name: () => LocalizedString
-	/**
-	 * Status
-	 */
-	admin_users_status: () => LocalizedString
-	/**
-	 * Created
-	 */
-	admin_users_created: () => LocalizedString
-	/**
-	 * Last Login
-	 */
-	admin_users_lastLogin: () => LocalizedString
-	/**
-	 * Actions
-	 */
-	admin_users_actions: () => LocalizedString
-	/**
-	 * Edit
-	 */
-	admin_users_edit: () => LocalizedString
-	/**
-	 * Delete
-	 */
-	admin_users_delete: () => LocalizedString
-	/**
-	 * View
-	 */
-	admin_users_view: () => LocalizedString
-	/**
-	 * User Details
-	 */
-	admin_user_detail_title: () => LocalizedString
-	/**
-	 * Basic Information
-	 */
-	admin_user_detail_basicInfo: () => LocalizedString
-	/**
-	 * Custom Fields
-	 */
-	admin_user_detail_customFields: () => LocalizedString
-	/**
-	 * Registered Passkeys
-	 */
-	admin_user_detail_passkeys: () => LocalizedString
-	/**
-	 * Active Sessions
-	 */
-	admin_user_detail_sessions: () => LocalizedString
-	/**
-	 * Save Changes
-	 */
-	admin_user_detail_save: () => LocalizedString
-	/**
-	 * Delete User
-	 */
-	admin_user_detail_deleteUser: () => LocalizedString
-	/**
-	 * Are you sure you want to delete this user?
-	 */
-	admin_user_detail_deleteConfirm: () => LocalizedString
-	/**
-	 * Client Management
-	 */
-	admin_clients_title: () => LocalizedString
-	/**
-	 * Search by client name or ID
-	 */
-	admin_clients_search: () => LocalizedString
-	/**
-	 * Register Client
-	 */
-	admin_clients_registerClient: () => LocalizedString
-	/**
-	 * Client ID
-	 */
-	admin_clients_clientId: () => LocalizedString
-	/**
-	 * Client Name
-	 */
-	admin_clients_clientName: () => LocalizedString
-	/**
-	 * Grant Types
-	 */
-	admin_clients_grantTypes: () => LocalizedString
-	/**
-	 * Created
-	 */
-	admin_clients_created: () => LocalizedString
-	/**
-	 * Actions
-	 */
-	admin_clients_actions: () => LocalizedString
-	/**
-	 * Client Details
-	 */
-	admin_client_detail_title: () => LocalizedString
-	/**
-	 * Basic Information
-	 */
-	admin_client_detail_basicInfo: () => LocalizedString
-	/**
-	 * Redirect URIs
-	 */
-	admin_client_detail_redirectUris: () => LocalizedString
-	/**
-	 * Grant Types
-	 */
-	admin_client_detail_grantTypes: () => LocalizedString
-	/**
-	 * Scopes
-	 */
-	admin_client_detail_scopes: () => LocalizedString
-	/**
-	 * Save Changes
-	 */
-	admin_client_detail_save: () => LocalizedString
-	/**
-	 * Regenerate Secret
-	 */
-	admin_client_detail_regenerateSecret: () => LocalizedString
-	/**
-	 * Delete Client
-	 */
-	admin_client_detail_deleteClient: () => LocalizedString
-	/**
-	 * Settings
-	 */
-	admin_settings_title: () => LocalizedString
-	/**
-	 * General
-	 */
-	admin_settings_general: () => LocalizedString
-	/**
-	 * Appearance
-	 */
-	admin_settings_appearance: () => LocalizedString
-	/**
-	 * Security
-	 */
-	admin_settings_security: () => LocalizedString
-	/**
-	 * Email
-	 */
-	admin_settings_email: () => LocalizedString
-	/**
-	 * Advanced
-	 */
-	admin_settings_advanced: () => LocalizedString
-	/**
-	 * Audit Log
-	 */
-	admin_audit_title: () => LocalizedString
-	/**
-	 * Timestamp
-	 */
-	admin_audit_timestamp: () => LocalizedString
-	/**
-	 * User
-	 */
-	admin_audit_user: () => LocalizedString
-	/**
-	 * Action
-	 */
-	admin_audit_action: () => LocalizedString
-	/**
-	 * Resource
-	 */
-	admin_audit_resource: () => LocalizedString
-	/**
-	 * IP Address
-	 */
-	admin_audit_ip: () => LocalizedString
-	/**
-	 * Status
-	 */
-	admin_audit_status: () => LocalizedString
-	/**
-	 * Export
-	 */
-	admin_audit_export: () => LocalizedString
-	/**
-	 * Policy
-	 */
-	admin_sidebar_policy: () => LocalizedString
-	/**
-	 * Policy Settings
-	 */
-	admin_policy_title: () => LocalizedString
-	/**
-	 * Configure policy system features and token claims
-	 */
-	admin_policy_subtitle: () => LocalizedString
-	/**
-	 * Save Changes
-	 */
-	admin_policy_save: () => LocalizedString
-	/**
-	 * Policy settings saved successfully
-	 */
-	admin_policy_save_success: () => LocalizedString
-	/**
-	 * OIDC Conformance Notice
-	 */
-	admin_policy_warning_title: () => LocalizedString
-	/**
-	 * Enabling policy features may affect OIDC conformance testing. Custom claims use the "authrim_" prefix to avoid conflicts with standard claims.
-	 */
-	admin_policy_warning_desc: () => LocalizedString
-	/**
-	 * Feature Flags
-	 */
-	admin_policy_feature_flags: () => LocalizedString
-	/**
-	 * Enable ABAC (Attribute-Based Access Control)
-	 */
-	admin_policy_enable_abac: () => LocalizedString
-	/**
-	 * Evaluate access based on user attributes (department, clearance level, etc.)
-	 */
-	admin_policy_enable_abac_desc: () => LocalizedString
-	/**
-	 * Enable ReBAC (Relationship-Based Access Control)
-	 */
-	admin_policy_enable_rebac: () => LocalizedString
-	/**
-	 * Evaluate access based on relationships between entities (Google Zanzibar style)
-	 */
-	admin_policy_enable_rebac_desc: () => LocalizedString
-	/**
-	 * Enable Policy Logging
-	 */
-	admin_policy_enable_logging: () => LocalizedString
-	/**
-	 * Log detailed policy evaluation results for debugging
-	 */
-	admin_policy_enable_logging_desc: () => LocalizedString
-	/**
-	 * Enable Verified Attributes
-	 */
-	admin_policy_enable_verified_attrs: () => LocalizedString
-	/**
-	 * Require cryptographic proof of attribute claims
-	 */
-	admin_policy_enable_verified_attrs_desc: () => LocalizedString
-	/**
-	 * Enable Custom Rules
-	 */
-	admin_policy_enable_custom_rules: () => LocalizedString
-	/**
-	 * Allow custom policy rules beyond default RBAC
-	 */
-	admin_policy_enable_custom_rules_desc: () => LocalizedString
-	/**
-	 * Enable SD-JWT (Selective Disclosure)
-	 */
-	admin_policy_enable_sd_jwt: () => LocalizedString
-	/**
-	 * Issue ID Tokens in SD-JWT format for selective disclosure (RFC 9901)
-	 */
-	admin_policy_enable_sd_jwt_desc: () => LocalizedString
-	/**
-	 * Enable Policy Embedding in Access Token
-	 */
-	admin_policy_enable_embedding: () => LocalizedString
-	/**
-	 * Evaluate requested scopes against policy and embed permitted actions as authrim_permissions claim
-	 */
-	admin_policy_enable_embedding_desc: () => LocalizedString
-	/**
-	 * Token Claims Configuration
-	 */
-	admin_policy_token_claims: () => LocalizedString
-	/**
-	 * Access Token Claims
-	 */
-	admin_policy_access_token_claims: () => LocalizedString
-	/**
-	 * Comma-separated list of claims to include in Access Token (prefixed with authrim_)
-	 */
-	admin_policy_access_token_claims_desc: () => LocalizedString
-	/**
-	 * ID Token Claims
-	 */
-	admin_policy_id_token_claims: () => LocalizedString
-	/**
-	 * Comma-separated list of claims to include in ID Token (prefixed with authrim_)
-	 */
-	admin_policy_id_token_claims_desc: () => LocalizedString
-	/**
-	 * Available Claims
-	 */
-	admin_policy_available_claims: () => LocalizedString
-	/**
-	 * Policy Embedding Information
-	 */
-	admin_policy_embedding_info: () => LocalizedString
-	/**
-	 * When enabled, the authorization server evaluates requested scopes against the user's permissions and embeds only permitted actions in the Access Token.
-	 */
-	admin_policy_embedding_info_desc: () => LocalizedString
 	/**
 	 * Account Already Exists
 	 */

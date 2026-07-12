@@ -1,7 +1,7 @@
 {
 	"name": "@authrim/ar-login-ui",
 	"private": true,
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"type": "module",
 	"engines": {
 		"node": ">=22.0.0"
@@ -21,8 +21,8 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"typecheck": "svelte-check --tsconfig ./tsconfig.json",
-		"deploy:preview": "pnpm build && wrangler deploy",
-		"deploy:production": "pnpm build && wrangler deploy",
+		"deploy:preview": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-ui.ts --env=\"$DEPLOY_ENV\" --package=ar-login-ui --phase=final",
+		"deploy:production": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-ui.ts --env=\"$DEPLOY_ENV\" --package=ar-login-ui --phase=final",
 		"typesafe-i18n": "typesafe-i18n"
 	},
 	"devDependencies": {

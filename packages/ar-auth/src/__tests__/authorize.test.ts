@@ -399,6 +399,88 @@ describe('Authorization Handler', () => {
       const location = response.headers.get('Location');
       expect(location).toContain('https://client-login.example.com/login');
       expect(location).toContain('challenge_id=');
+      expect(location).toContain('tenant_host=test.example.com');
+    });
+
+    it('routes OIDC certification clients to built-in login without global conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      const certificationRedirectUri =
+        'https://www.certification.openid.net/test/a/authrim/callback';
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: [certificationRedirectUri],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+        login_ui_url: 'https://client-login.example.com',
+      });
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=${encodeURIComponent(
+          certificationRedirectUri
+        )}&scope=openid&state=test-state`,
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!, 'https://test.example.com');
+      expect(redirectUrl.pathname).toBe('/flow/login');
+      expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
+      expect(location).not.toContain('login.example.com');
+      expect(location).not.toContain('client-login.example.com');
+    });
+
+    it('should keep authorization UI redirects on the tenant issuer host in multi-tenant mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      env.BASE_DOMAIN = 'test.authrim.com';
+
+      const response = await app.request(
+        'https://default.test.authrim.com/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        {
+          method: 'GET',
+          headers: {
+            Host: 'default.test.authrim.com',
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe(
+        'https://default.test.authrim.com/login'
+      );
+      expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
+      expect(redirectUrl.searchParams.get('tenant_host')).toBe('default.test.authrim.com');
+      expect(redirectUrl.searchParams.get('tenant_hint')).toBe('default');
+    });
+
+    it('should use UI_URL for separate Login UI redirects in single-tenant mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://login.example.com/login');
+      expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
+      expect(redirectUrl.searchParams.get('tenant_host')).toBe('test.example.com');
     });
 
     it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {
@@ -850,6 +932,140 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it('issues an authorization code for a confirmed login even when SSO is disabled', async () => {
+      await configureClientSettings(env, {
+        'client.consent_required': false,
+      });
+      getChallengeMap(env).set('confirm_login', {
+        id: 'confirm_login',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'confirm_login',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: 1_700_000_100,
+          sessionUserId: 'test-user',
+        },
+      });
+      const authCodeStore = getAuthCodeStore(env);
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=confirmed-state&_confirmation_challenge=confirm_login',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://example.com/callback');
+      expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+      expect(redirectUrl.searchParams.get('state')).toBe('confirmed-state');
+      expect(redirectUrl.searchParams.get('error')).toBeNull();
+      expect(getChallengeMap(env).has('confirm_login')).toBe(false);
+      expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'default',
+          clientId: 'test-client',
+          userId: 'test-user',
+          scope: 'openid',
+          state: 'confirmed-state',
+        })
+      );
+    });
+
+    it('issues an authorization code for confirmed consent even when SSO is disabled', async () => {
+      seedSession(env);
+      getChallengeMap(env).set('confirm_consent', {
+        id: 'confirm_consent',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'test-user',
+        challenge: 'confirm_consent',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+        },
+      });
+      const authCodeStore = getAuthCodeStore(env);
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=consent-confirmed-state&_consent_confirmation_challenge=confirm_consent',
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://example.com/callback');
+      expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+      expect(redirectUrl.searchParams.get('state')).toBe('consent-confirmed-state');
+      expect(redirectUrl.searchParams.get('error')).toBeNull();
+      expect(getChallengeMap(env).has('confirm_consent')).toBe(false);
+      expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'default',
+          clientId: 'test-client',
+          userId: 'test-user',
+          scope: 'openid',
+          state: 'consent-confirmed-state',
+        })
+      );
+    });
+
+    it('allows prompt=none for logged-in OIDC certification clients without global conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      const certificationRedirectUri =
+        'https://www.certification.openid.net/test/a/authrim/callback';
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: [certificationRedirectUri],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      await configureClientSettings(env, {
+        'client.consent_required': false,
+      });
+      seedSession(env);
+      const authCodeStore = getAuthCodeStore(env);
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=${encodeURIComponent(
+          certificationRedirectUri
+        )}&scope=openid&state=prompt-none-state&prompt=none`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe(certificationRedirectUri);
+      expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+      expect(redirectUrl.searchParams.get('error')).toBeNull();
+      expect(redirectUrl.searchParams.get('state')).toBe('prompt-none-state');
+      expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'default',
+          clientId: 'test-client',
+          userId: 'test-user',
+          scope: 'openid',
+          state: 'prompt-none-state',
+        })
+      );
+    });
+
     it('issues a handoff token for prompt=none SSO without returning an authorization code', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
@@ -1007,6 +1223,56 @@ describe('Authorization Handler', () => {
           scope: 'openid email',
           state: 'needs-consent',
           sessionUserId: 'test-user',
+        }),
+      });
+    });
+
+    it('preserves authorization_details when redirecting authenticated users to consent', async () => {
+      env.ENABLE_RAR = 'true';
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      seedSession(env);
+
+      const authorizationDetails = encodeURIComponent(
+        JSON.stringify([
+          {
+            type: 'payment_initiation',
+            instructedAmount: { amount: '100.00', currency: 'EUR' },
+            creditorAccount: { iban: 'DE89370400440532013000' },
+          },
+        ])
+      );
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20email&state=rar-needs-consent&authorization_details=${authorizationDetails}`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toContain('/auth/consent');
+      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
+        'challenge_id'
+      );
+      expect(challengeId).toBeTruthy();
+      expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+        type: 'consent',
+        metadata: expect.objectContaining({
+          state: 'rar-needs-consent',
+          authorization_details: JSON.stringify([
+            {
+              type: 'payment_initiation',
+              instructedAmount: { amount: '100.00', currency: 'EUR' },
+              creditorAccount: { iban: 'DE89370400440532013000' },
+            },
+          ]),
         }),
       });
     });
@@ -1295,6 +1561,57 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error')).toBe('temporarily_unavailable');
       expect(redirectUrl.searchParams.get('error_description')).toBe('Login UI is not configured');
       expect(getChallengeMap(env).size).toBe(0);
+    });
+
+    it('routes OIDC certification clients to built-in consent without global conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      const certificationRedirectUri =
+        'https://www.certification.openid.net/test/a/authrim/callback';
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: [certificationRedirectUri],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      seedSession(env);
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=${encodeURIComponent(
+          certificationRedirectUri
+        )}&scope=openid%20email&state=needs-consent`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      const redirectUrl = new URL(location!, 'https://test.example.com');
+      expect(redirectUrl.pathname).toBe('/auth/consent');
+      const challengeId = redirectUrl.searchParams.get('challenge_id');
+      expect(challengeId).toBeTruthy();
+      expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+        type: 'consent',
+        userId: 'test-user',
+        metadata: expect.objectContaining({
+          client_id: 'test-client',
+          redirect_uri: certificationRedirectUri,
+          scope: 'openid email',
+          state: 'needs-consent',
+        }),
+      });
     });
 
     it('should handle multiple scopes and redirect to login', async () => {

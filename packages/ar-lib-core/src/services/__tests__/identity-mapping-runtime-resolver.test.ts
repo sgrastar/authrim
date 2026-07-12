@@ -55,8 +55,32 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
           path: 'urn:oid:0.9.2342.19200300.100.1.3',
           catalogEntryId: 'field.saml.mail',
         },
+        edgeKind: 'direct',
       },
     ]);
+  });
+
+  it('preserves transform input edge kind for runtime release evaluation', async () => {
+    const adapter = new ResolverAdapter({
+      activations: [
+        activationRow('activation-default', {
+          kind: 'tenant',
+          id: 'tenant_a',
+          protocol: 'saml',
+          role: 'idp',
+        }),
+      ],
+      edgeKind: 'transform_input',
+    });
+
+    const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+      tenantId: 'tenant_a',
+      protocol: 'saml',
+      role: 'idp',
+      partnerEntityId: 'https://sp.example.edu/saml',
+    });
+
+    expect(binding?.edges[0]?.edgeKind).toBe('transform_input');
   });
 
   it('uses the selected policy set when a provider override is configured', async () => {
@@ -107,6 +131,7 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
 
 interface ResolverAdapterInput {
   activations: Record<string, unknown>[];
+  edgeKind?: string;
 }
 
 class ResolverAdapter implements DatabaseAdapter {
@@ -163,6 +188,7 @@ class ResolverAdapter implements DatabaseAdapter {
             path: 'urn:oid:0.9.2342.19200300.100.1.3',
             catalogEntryId: 'field.saml.mail',
           }),
+          edge_kind: this.input.edgeKind ?? 'direct',
           display_order: 0,
         },
       ] as T[];

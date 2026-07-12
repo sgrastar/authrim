@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
+  buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValues,
   validateRegistrationFieldSubmission,
 } from '../registration-field-utils';
@@ -21,6 +22,42 @@ function createMockAdapter(): DatabaseAdapter {
 describe('registration-field-utils', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('extracts canonical profile fields from signup form submissions', () => {
+    expect(
+      buildCanonicalProfileRuntimeUserFields({
+        given_name: ' Yuta ',
+        family_name: ' Hoshina ',
+      })
+    ).toEqual({
+      piiFields: {
+        given_name: true,
+        family_name: true,
+      },
+      sensitiveValues: {
+        given_name: 'Yuta',
+        family_name: 'Hoshina',
+      },
+    });
+  });
+
+  it('extracts first and last name aliases as canonical profile fields', () => {
+    expect(
+      buildCanonicalProfileRuntimeUserFields({
+        first_name: 'Yuta',
+        last_name: 'Hoshina',
+      })
+    ).toEqual({
+      piiFields: {
+        given_name: true,
+        family_name: true,
+      },
+      sensitiveValues: {
+        given_name: 'Yuta',
+        family_name: 'Hoshina',
+      },
+    });
   });
 
   it('rejects missing required registration fields', async () => {
@@ -48,6 +85,83 @@ describe('registration-field-utils', () => {
           fieldType: 'string',
         },
       ],
+    });
+  });
+
+  it('validates required signup base fields from registration schema', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      {
+        field_key: 'field.canonical.name',
+        display_label: 'Full Name',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'field.canonical.email',
+        display_label: 'Email',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+    ]);
+
+    const result = await validateRegistrationFieldSubmission(adapter, 'tenant-1', {});
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Full Name is required',
+      missingRequiredFields: [
+        {
+          fieldKey: 'field.canonical.name',
+          label: 'Full Name',
+          fieldType: 'string',
+        },
+        {
+          fieldKey: 'field.canonical.email',
+          label: 'Email',
+          fieldType: 'string',
+        },
+      ],
+    });
+  });
+
+  it('accepts submitted signup base fields without persisting them as custom fields', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      {
+        field_key: 'field.canonical.name',
+        display_label: 'Full Name',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'field.canonical.email',
+        display_label: 'Email',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+    ]);
+
+    const result = await validateRegistrationFieldSubmission(adapter, 'tenant-1', {
+      'field.canonical.name': 'Yuta',
+      'field.canonical.email': 'yuta@example.com',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      schemas: expect.any(Array),
+      values: {
+        'field.canonical.name': 'Yuta',
+        'field.canonical.email': 'yuta@example.com',
+      },
     });
   });
 

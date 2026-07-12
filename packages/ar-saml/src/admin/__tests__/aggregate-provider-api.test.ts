@@ -352,6 +352,9 @@ describe('SAML aggregate provider API', () => {
           name: 'Example SP',
           providerType: 'saml_sp',
           metadataUrl: 'https://sp.example.test/metadata.xml',
+          config: {
+            identityMapping: { fieldMappingSetId: 'test-saml-outbound' },
+          },
         },
       })
     );
@@ -380,6 +383,7 @@ describe('SAML aggregate provider API', () => {
             ssoUrl: 'https://idp.example.test/sso',
             certificate: expiredCertificate,
             nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+            identityMapping: { fieldMappingSetId: 'test-saml-inbound' },
           },
         },
       })
@@ -418,6 +422,7 @@ describe('SAML aggregate provider API', () => {
             certificate: 'invalid-test-certificate',
             nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
             attributeMapping: { email: 'email' },
+            identityMapping: { fieldMappingSetId: 'test-saml-inbound' },
             allowedBindings: ['post'],
           },
         },
@@ -478,6 +483,7 @@ describe('SAML aggregate provider API', () => {
         certificate: 'invalid-test-certificate',
         nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
         attributeMapping: { email: 'mail' },
+        identityMapping: { fieldMappingSetId: 'test-saml-inbound' },
         allowedBindings: ['post'],
       }),
     });
@@ -511,6 +517,7 @@ describe('SAML aggregate provider API', () => {
         certificate: 'invalid-test-certificate',
         nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
         attributeMapping: { email: 'mail' },
+        identityMapping: { fieldMappingSetId: 'test-saml-inbound' },
         allowedBindings: ['post'],
       }),
     });

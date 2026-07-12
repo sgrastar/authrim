@@ -121,6 +121,14 @@ RP_TOKEN_ENCRYPTION_KEY=""
 if [ -f "$KEYS_DIR/rp_token_encryption_key.txt" ]; then
     RP_TOKEN_ENCRYPTION_KEY=$(cat "$KEYS_DIR/rp_token_encryption_key.txt")
 fi
+PII_ENCRYPTION_KEY=""
+if [ -f "$KEYS_DIR/pii_encryption_key.txt" ]; then
+    PII_ENCRYPTION_KEY=$(cat "$KEYS_DIR/pii_encryption_key.txt")
+fi
+OTP_HMAC_SECRET=""
+if [ -f "$KEYS_DIR/otp_hmac_secret.txt" ]; then
+    OTP_HMAC_SECRET=$(cat "$KEYS_DIR/otp_hmac_secret.txt")
+fi
 
 # Create base .dev.vars file
 cat > .dev.vars << EOF
@@ -134,6 +142,10 @@ KEY_ID="$KEY_ID"
 
 # RP Token Encryption Key
 RP_TOKEN_ENCRYPTION_KEY="$RP_TOKEN_ENCRYPTION_KEY"
+
+# PII/TOTP secrets
+PII_ENCRYPTION_KEY="$PII_ENCRYPTION_KEY"
+OTP_HMAC_SECRET="$OTP_HMAC_SECRET"
 
 # Local development configuration
 ALLOW_HTTP_REDIRECT="true"

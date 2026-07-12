@@ -39,6 +39,8 @@ const mockLinkedIdentityRepo = vi.hoisted(() => ({
 }));
 
 const mockResolveDID = vi.hoisted(() => vi.fn());
+const mockPublishEvent = vi.hoisted(() => vi.fn());
+const mockCreateAuditLog = vi.hoisted(() => vi.fn());
 
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -60,6 +62,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
       constructor() {}
       findByProviderUser = mockLinkedIdentityRepo.findByProviderUser;
     },
+    publishEvent: mockPublishEvent,
+    createAuditLog: mockCreateAuditLog,
   };
 });
 
@@ -145,6 +149,10 @@ describe('DID Authentication', () => {
     mockChallengeStoreStub.consumeChallengeRpc.mockReset();
     mockSessionStoreStub.createSessionRpc.mockReset();
     mockLinkedIdentityRepo.findByProviderUser.mockReset();
+    mockPublishEvent.mockReset();
+    mockCreateAuditLog.mockReset();
+    mockPublishEvent.mockResolvedValue(undefined);
+    mockCreateAuditLog.mockResolvedValue(undefined);
   });
 
   describe('didAuthChallengeHandler', () => {

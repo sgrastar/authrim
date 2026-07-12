@@ -117,7 +117,7 @@ const en: Translations = {
   'env.customDesc': 'Enter a custom environment name',
   'env.customPrompt': 'Enter custom environment name',
   'env.customValidation':
-    'Only lowercase alphanumeric and hyphens allowed (e.g., prod, staging, dev)',
+    'Only lowercase alphanumeric and hyphens allowed (e.g., prod, main, tokyo, acme-dev)',
   'env.detected': 'Detected Environments:',
   'env.selectExisting': 'Select existing environment',
   'env.createNew': 'Create new environment',
@@ -701,7 +701,7 @@ const en: Translations = {
   'web.systemMode': 'System',
 
   // Web UI Prerequisites
-  'web.prereq.title': 'Prerequisites',
+  'web.prereq.title': 'Prepare',
   'web.prereq.checking': 'Checking...',
   'web.prereq.checkingRequirements': 'Checking system requirements...',
   'web.prereq.ready': 'Ready',
@@ -778,18 +778,19 @@ const en: Translations = {
   'web.db.name': 'Name',
   'web.db.region': 'Region',
   'web.db.regionAuto': 'Automatic (nearest)',
-  'web.db.storageProfileTitle': 'Storage Deployment Profile',
+  'web.db.storageProfileTitle': 'Storage\nProfile',
   'web.db.storageProfileDesc': 'Select how user core/PII data is placed for this deployment.',
   'web.db.sharedD1Title': 'Shared D1',
   'web.db.sharedD1Desc':
-    'One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.',
+    'Share one core D1 and one PII D1 across the whole environment. This is the standard configuration with the lowest setup cost.',
   'web.db.tenantD1Title': 'Tenant D1',
   'web.db.tenantD1Desc':
-    'One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.',
+    'Assign a core / PII D1 pair to each tenant. Slots must be preallocated before tenant activation.',
   'web.db.preallocatedSlotsTitle': 'Preallocated tenant slots',
   'web.db.preallocatedSlotsDesc': 'Each tenant slot creates two D1 databases: core and PII.',
   'web.db.slotsLabel': 'Slots',
-  'web.db.slotsHelp': 'Default is 3. Maximum is 500 slots.',
+  'web.db.slotsHelp':
+    'One slot creates two D1 databases: core and PII. Default is 3, maximum is 500. You can expand this later from environment management.',
 
   // Web UI Email
   'web.email.title': 'Email Provider',
@@ -828,20 +829,18 @@ const en: Translations = {
   'web.complete.issuerUrl': 'Issuer URL',
   'web.complete.loginUrl': 'Login URL',
   'web.complete.adminUrl': 'Admin URL',
-  'web.complete.nextSteps': 'Next Steps:',
-  'web.complete.step1': 'Complete initial admin setup using the button above',
-  'web.complete.step2': 'Configure your first OAuth client in the Admin UI',
-  'web.complete.step3': 'Integrate with your application',
   'web.complete.saveConfig': 'Save Configuration',
   'web.complete.backToMain': 'Back to Main',
+  'web.config.saveToFileTitle': 'Save configuration to file',
+  'web.complete.backToMainTitle': 'Return to main screen',
   'web.complete.canClose': 'Setup is complete. You can safely close this window.',
-  'web.complete.adminAccountTitle': 'Admin Account Setup',
+  'web.complete.adminAccountTitle': 'Admin Setup URL',
   'web.complete.adminAccountImportant': 'IMPORTANT',
   'web.complete.adminAccountDesc':
-    'Register your first administrator account with Passkey authentication:',
-  'web.complete.copy': '📋 Copy',
+    'Open this URL in your browser and register the first administrator account with a passkey. Passwords are not used. If it expires, regenerate it from environment management.',
+  'web.complete.copy': 'Copy',
   'web.complete.copied': '✓ Copied',
-  'web.complete.openSetup': '🔑 Open Setup',
+  'web.complete.openSetup': 'Open Setup ↗',
   'web.complete.urlWarning':
     'This URL can only be used <strong>once</strong> and expires <strong>{{date}}</strong>.',
   'web.complete.adminSetupUnavailable':
@@ -908,7 +907,7 @@ const en: Translations = {
 
   // Web UI Form Labels
   'web.form.envName': 'Environment Name',
-  'web.form.envNamePlaceholder': 'e.g., prod, staging, dev',
+  'web.form.envNamePlaceholder': 'e.g., prod, main, tokyo, acme-dev',
   'web.form.envNameHint': 'Lowercase letters, numbers, and hyphens only',
   'web.form.envNameError':
     'Only lowercase letters, numbers, and hyphens are allowed (must start with a letter)',
@@ -1012,12 +1011,13 @@ const en: Translations = {
   'web.email.introDesc':
     'Used for sending Mail OTP and email address verification. You can configure this later if you prefer.',
   'web.email.configureLater': 'Configure later',
-  'web.email.configureLaterHint': 'Skip for now and configure later.',
-  'web.email.configureCloudflare': 'Configure Cloudflare Email Service',
+  'web.email.configureLaterHint':
+    'Skip for now and configure it later from environment management after setup.',
+  'web.email.configureCloudflare': 'Cloudflare Email Service',
   'web.email.configureCloudflareHint':
     'Use the native Workers Email Service binding. Requires a Workers Paid plan and Cloudflare DNS.',
-  'web.email.configureResend': 'Configure Resend',
-  'web.email.configureResendHint': 'Set up email sending with Resend (recommended for production).',
+  'web.email.configureResend': 'Resend',
+  'web.email.configureResendHint': 'Send with Resend. Recommended for production use.',
   'web.email.cloudflareSetup': 'Cloudflare Email Service',
   'web.email.cloudflareRequirements': 'Requirements',
   'web.email.cloudflareRequirementPaid': 'Workers Paid Plan is required',
@@ -1030,7 +1030,8 @@ const en: Translations = {
   'web.email.step2': 'Add and verify your domain at',
   'web.email.step3': 'Create an API key at',
   'web.email.resendApiKey': 'Resend API Key',
-  'web.email.resendApiKeyHint': 'Your API key starts with "re_"',
+  'web.email.resendApiKeyHint':
+    'The API key starts with re_. It is saved as a Workers secret and is not stored in plaintext in the config file.',
   'web.email.resendApiKeyMissing': 'Please enter your Resend API key',
   'web.email.resendApiKeyConfirmInvalid':
     'API key does not start with "re_". This may not be a valid Resend API key. Continue anyway?',
@@ -1048,10 +1049,10 @@ const en: Translations = {
   'web.email.learnMore': 'Learn more about domain verification →',
 
   // Web UI Provision Section
-  'web.provision.resourcePreview': 'Resource Names:',
-  'web.provision.d1Databases': 'D1 Databases:',
-  'web.provision.kvNamespaces': 'KV Namespaces:',
-  'web.provision.cryptoKeys': 'Cryptographic Keys:',
+  'web.provision.resourcePreview': 'Resource Names',
+  'web.provision.d1Databases': 'D1 Databases',
+  'web.provision.kvNamespaces': 'KV Namespaces',
+  'web.provision.cryptoKeys': 'Cryptographic Keys',
   'web.provision.initializing': 'Initializing...',
   'web.provision.showLog': 'Show detailed log',
   'web.provision.hideLog': 'Hide detailed log',
@@ -1099,7 +1100,11 @@ const en: Translations = {
   'web.envDetail.emailCloudflareRequirementManual':
     'Domain setup in the Cloudflare dashboard is still manual',
   'web.envDetail.emailCloudflareFromHint':
-    'Must be from a domain onboarded to Cloudflare Email Service.',
+    'When using Cloudflare Email Service, the address must belong to a domain onboarded in Cloudflare.',
+  'web.envDetail.emailCloudflareSettingsLink': 'Cloudflare Email Routing settings',
+  'web.envDetail.emailResendFromHint':
+    'When using Resend, the domain must be added and verified in Resend.',
+  'web.envDetail.emailResendDomainsLink': 'Resend Domains',
   'web.envDetail.emailFromAddress': 'From Email Address',
   'web.envDetail.emailFromName': 'From Display Name (optional)',
   'web.envDetail.emailEnableCloudflare': 'Enable Cloudflare Email Service',
@@ -1112,6 +1117,10 @@ const en: Translations = {
   'web.envDetail.emailSwitchProviderConfirm':
     'This environment already has another email provider configured. Switch it to Cloudflare Email Service?',
   'web.envDetail.emailStarting': 'Starting Cloudflare Email setup...',
+  'web.envDetail.emailSwitchProviderToResendConfirm':
+    'This environment already has another email provider configured. Switch it to Resend?',
+  'web.envDetail.emailResendStarting': 'Saving Resend email configuration...',
+  'web.envDetail.emailResendUpdatedSuccess': 'Resend email configuration saved.',
 
   // Web UI Worker Update Section
   'web.envDetail.workerUpdate': 'Update All Workers',
@@ -1123,6 +1132,7 @@ const en: Translations = {
   'web.envDetail.upToDate': 'Current',
   'web.envDetail.notDeployed': 'Not Deployed',
   'web.envDetail.updateOnlyChanged': 'Update only changed versions',
+  'web.envDetail.updateIncludeUiWorkers': 'Update Admin UI / Login UI',
   'web.envDetail.updateAllWorkers': 'Update All Workers',
   'web.envDetail.refreshVersions': 'Refresh',
   'web.envDetail.updateProgress': 'Update Progress:',
@@ -1166,7 +1176,7 @@ const en: Translations = {
   'web.error.notLoggedIn': 'Not logged in to Cloudflare',
   'web.error.runCommand': 'Please run this command in your terminal:',
   'web.error.thenRefresh': 'Then refresh this page.',
-  'web.error.checkingPrereq': 'Error checking prerequisites:',
+  'web.error.checkingPrereq': 'Error checking preparation:',
   'web.error.invalidJson': 'Invalid JSON:',
   'web.error.validationFailed': 'Validation request failed:',
 

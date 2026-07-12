@@ -29,6 +29,28 @@ describe('messageForApiError', () => {
 		).toBe('login required');
 	});
 
+	it('exposes actionable invalid_request details for direct session and authorization challenge failures', () => {
+		expect(
+			messageForApiError(
+				{
+					error: 'invalid_request',
+					error_description: 'Missing required fields: direct_auth_artifact',
+					error_details: { code: 'DIRECT_SESSION_REQUIRED_FIELDS_MISSING' }
+				},
+				messages
+			)
+		).toBe('Missing required fields: direct_auth_artifact');
+		expect(
+			messageForApiError(
+				{
+					error: 'invalid_request',
+					error_description: 'Authorization challenge is invalid or expired'
+				},
+				messages
+			)
+		).toBe('Authorization challenge is invalid or expired');
+	});
+
 	it('falls back to server description only for unknown errors', () => {
 		expect(
 			messageForApiError({ error: 'custom_error', error_description: 'Custom failure' }, messages)

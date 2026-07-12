@@ -201,7 +201,7 @@
 <style>
 	.preview-panel {
 		border: 1px solid var(--color-border-default);
-		border-radius: 16px;
+		border-radius: var(--preview-panel-radius, var(--radius-panel, 16px));
 		padding: 1rem;
 		background: var(--color-surface-elevated);
 	}
@@ -229,7 +229,7 @@
 		border: 1px solid var(--color-border-default);
 		background: var(--color-surface-default);
 		color: var(--color-text-primary);
-		border-radius: 999px;
+		border-radius: var(--guide-badge-radius, var(--status-badge-radius, 999px));
 		padding: 0.55rem 0.9rem;
 		font-weight: 700;
 		cursor: pointer;
@@ -254,7 +254,7 @@
 
 	.preview-card {
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 12px;
+		border-radius: var(--preview-card-radius, var(--radius-panel, 12px));
 		padding: 0.75rem;
 		background: var(--color-surface-default);
 	}
@@ -294,14 +294,14 @@
 
 	.preview-step {
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 12px;
+		border-radius: var(--preview-card-radius, var(--radius-panel, 12px));
 		padding: 0.75rem;
 		background: var(--color-surface-default);
 	}
 
 	.preview-step-error {
 		border-color: var(--color-danger-400);
-		background: color-mix(in srgb, var(--color-danger-50) 55%, white);
+		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
 	}
 
 	.preview-step-header {
@@ -342,8 +342,8 @@
 	.preview-guidance {
 		margin-top: 0.75rem;
 		padding: 0.7rem 0.75rem;
-		border-radius: 10px;
-		background: color-mix(in srgb, var(--color-info-50) 55%, white);
+		border-radius: var(--guide-note-radius, var(--radius-control, 10px));
+		background: color-mix(in srgb, var(--color-info) 10%, var(--color-surface));
 		display: grid;
 		gap: 0.25rem;
 	}
@@ -364,7 +364,7 @@
 
 	.preview-badge {
 		padding: 0.25rem 0.5rem;
-		border-radius: 999px;
+		border-radius: var(--guide-badge-radius, var(--status-badge-radius, 999px));
 		font-size: 0.75rem;
 		font-weight: 700;
 		background: var(--color-success-100);

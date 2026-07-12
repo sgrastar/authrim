@@ -204,7 +204,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
-  'ar-router': ['AUTHRIM_CONFIG'],
+  'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
   'ar-async': ['AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
@@ -273,6 +273,27 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-vc': ['KEY_MANAGER', 'VERSION_MANAGER'],
 };
 
+const COMPONENT_LOCAL_DO_BINDINGS: Partial<
+  Record<WorkerComponent, Array<{ name: string; className: string }>>
+> = {
+  'ar-auth': [{ name: 'DIRECTORY_CONNECTOR_RELAY', className: 'DirectoryConnectorRelay' }],
+};
+
+const COMPONENT_EXTERNAL_DO_BINDINGS: Partial<
+  Record<
+    WorkerComponent,
+    Array<{ name: string; className: string; scriptComponent: WorkerComponent }>
+  >
+> = {
+  'ar-management': [
+    {
+      name: 'DIRECTORY_CONNECTOR_RELAY',
+      className: 'DirectoryConnectorRelay',
+      scriptComponent: 'ar-auth',
+    },
+  ],
+};
+
 // =============================================================================
 // Component Entry Points
 // =============================================================================
@@ -324,6 +345,18 @@ export function normalizeWorkersDevUrl(url: string, workersSubdomain?: string): 
     return parsed.origin;
   } catch {
     return url;
+  }
+}
+
+function getUrlHost(url: string | undefined): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return undefined;
   }
 }
 
@@ -510,18 +543,39 @@ export function generateWranglerConfig(
   } else {
     // Other components reference DOs from ar-lib-core
     const doBindings = COMPONENT_DO_BINDINGS[component];
-    if (doBindings.length > 0) {
+    const localDOBindings = COMPONENT_LOCAL_DO_BINDINGS[component] ?? [];
+    const externalDOBindings = COMPONENT_EXTERNAL_DO_BINDINGS[component] ?? [];
+    if (doBindings.length > 0 || localDOBindings.length > 0 || externalDOBindings.length > 0) {
       const scriptName = getDOScriptName(env);
       wranglerConfig.durable_objects = {
-        bindings: doBindings.map((doName) => {
-          const doDef = DURABLE_OBJECTS.find((d) => d.name === doName);
-          return {
-            name: doName,
-            class_name: doDef?.className || doName,
-            script_name: scriptName,
-          };
-        }),
+        bindings: [
+          ...doBindings.map((doName) => {
+            const doDef = DURABLE_OBJECTS.find((d) => d.name === doName);
+            return {
+              name: doName,
+              class_name: doDef?.className || doName,
+              script_name: scriptName,
+            };
+          }),
+          ...localDOBindings.map((binding) => ({
+            name: binding.name,
+            class_name: binding.className,
+          })),
+          ...externalDOBindings.map((binding) => ({
+            name: binding.name,
+            class_name: binding.className,
+            script_name: getWorkerName(env, binding.scriptComponent),
+          })),
+        ],
       };
+    }
+    if (localDOBindings.length > 0) {
+      wranglerConfig.migrations = [
+        {
+          tag: `${component}-local-v1`,
+          new_sqlite_classes: localDOBindings.map((binding) => binding.className),
+        },
+      ];
     }
   }
 
@@ -530,6 +584,10 @@ export function generateWranglerConfig(
     const r2Buckets: Array<{ binding: string; bucket_name: string }> = [];
 
     if (component === 'ar-auth' || component === 'ar-management') {
+      r2Buckets.push({
+        binding: 'PUBLIC_ASSETS',
+        bucket_name: resourceIds.r2['PUBLIC_ASSETS']?.name || `${env}-public-assets`,
+      });
       r2Buckets.push({
         binding: 'AVATARS',
         bucket_name: resourceIds.r2['AVATARS']?.name || `${env}-authrim-avatars`,
@@ -633,6 +691,11 @@ export function generateWranglerConfig(
     wranglerConfig.send_email = [{ name: 'EMAIL' }];
   }
 
+  // Service Bindings for standard services used by auth/runtime and admin proxies.
+  if (component === 'ar-auth' || component === 'ar-management') {
+    wranglerConfig.services = [{ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` }];
+  }
+
   // Service Bindings for ar-router (required for routing to other workers)
   if (component === 'ar-router') {
     // Core services (always required)
@@ -655,6 +718,12 @@ export function generateWranglerConfig(
     }
     if (config.components.adminUi) {
       services.push({ binding: 'ADMIN_UI_WORKER', service: `${env}-ar-admin-ui` });
+    }
+    if (config.serviceSite?.enabled && config.serviceSite.workerName) {
+      services.push({
+        binding: config.serviceSite.binding || 'SERVICE_SITE',
+        service: config.serviceSite.workerName,
+      });
     }
 
     wranglerConfig.services = services;
@@ -720,7 +789,7 @@ export function generateEnvVars(
   const multiTenantBaseDomain =
     config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
   const multiTenantEnabled = !!multiTenantBaseDomain;
-  const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
+  const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true;
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
@@ -736,13 +805,21 @@ export function generateEnvVars(
       workersSubdomain
     );
   }
-  // UI_URL: when sameAsApi=true, UI is proxied through the API domain
+  // UI_URL: when sameAsApi=true, UI is proxied through the API/tenant domain.
+  // Multi-tenant deployments with a separate Login UI domain keep UI_URL on that
+  // Login UI origin and pass the tenant host at runtime.
   const apiUrlForUi = normalizeWorkersDevUrl(
     config.urls?.api?.custom || config.urls?.api?.auto || '',
     workersSubdomain
   );
+  const tenantIssuerUiUrl =
+    multiTenantEnabled && multiTenantBaseDomain
+      ? config.tenant?.nakedDomain
+        ? `https://${multiTenantBaseDomain}`
+        : `https://${config.tenant?.name || 'default'}.${multiTenantBaseDomain}`
+      : apiUrlForUi;
   const uiUrl = loginUiUsesApiDomain
-    ? apiUrlForUi
+    ? tenantIssuerUiUrl
     : normalizeWorkersDevUrl(
         config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl,
         workersSubdomain
@@ -798,6 +875,18 @@ export function generateEnvVars(
     'ar-bridge',
     'ar-vc',
   ];
+  const routerServiceBoundComponents: WorkerComponent[] = [
+    'ar-discovery',
+    'ar-auth',
+    'ar-token',
+    'ar-userinfo',
+    'ar-management',
+    'ar-async',
+    'ar-policy',
+    'ar-saml',
+    'ar-bridge',
+    'ar-vc',
+  ];
 
   if (tenantAwareComponents.includes(component)) {
     vars['DEFAULT_TENANT_ID'] = config.tenant?.name || 'default';
@@ -819,6 +908,10 @@ export function generateEnvVars(
       if (config.tenant.nakedDomain) {
         vars['NAKED_DOMAIN_AS_ISSUER'] = 'true';
       }
+    }
+
+    if (config.urls?.api?.custom && routerServiceBoundComponents.includes(component)) {
+      vars['AUTHRIM_TRUST_FORWARDED_HOST'] = 'true';
     }
   }
 
@@ -875,6 +968,12 @@ export function generateEnvVars(
   }
 
   // OIDC settings
+  if (component === 'ar-lib-core') {
+    // AuthorizationCodeStore lives in ar-lib-core, so the DO must receive the
+    // same auth-code TTL as ar-auth/ar-token.
+    vars['AUTH_CODE_EXPIRY'] = config.oidc.authCodeTtl.toString();
+  }
+
   if (component === 'ar-auth' || component === 'ar-token') {
     vars['ACCESS_TOKEN_EXPIRY'] = config.oidc.accessTokenTtl.toString();
     vars['AUTH_CODE_EXPIRY'] = config.oidc.authCodeTtl.toString();
@@ -891,6 +990,9 @@ export function generateEnvVars(
   // Security settings
   vars['ENABLE_HTTP_REDIRECT'] = 'false';
   vars['ENABLE_OPEN_REGISTRATION'] = 'false';
+  if (component === 'ar-auth') {
+    vars['ENABLE_LOGIN_RUNTIME_FLOW'] = 'true';
+  }
 
   // Sharding configuration
   if (component === 'ar-lib-core' || component === 'ar-auth' || component === 'ar-token') {
@@ -902,6 +1004,18 @@ export function generateEnvVars(
   const componentSecrets = getSecretNamesForWorker(component);
   if (componentSecrets.includes('KEY_MANAGER_SECRET')) {
     vars['KEY_MANAGER_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
+    vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('PII_ENCRYPTION_KEY')) {
+    vars['PII_ENCRYPTION_KEY'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('OTP_HMAC_SECRET')) {
+    vars['OTP_HMAC_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('FLOW_RUNTIME_HMAC_SECRET')) {
+    vars['FLOW_RUNTIME_HMAC_SECRET'] = ''; // Set via secret
   }
   if (componentSecrets.includes('VERSION_MANAGER_SECRET')) {
     vars['VERSION_MANAGER_SECRET'] = ''; // Set via secret
@@ -934,9 +1048,14 @@ export function generateEnvVars(
     }
 
     const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
+    const loginUiHostMode =
+      config.urls?.loginUi?.sameAsApi === true || getUrlHost(uiUrl) === getUrlHost(apiUrlForUi)
+        ? 'shared'
+        : 'dedicated';
     vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
     if (uiUrl) {
       vars['LOGIN_UI_URL'] = uiUrl;
+      vars['LOGIN_UI_HOST_MODE'] = loginUiHostMode;
     }
     if (loginProxyEnabled) {
       const loginUiWorkerUrl = normalizeWorkersDevUrl(
@@ -946,6 +1065,9 @@ export function generateEnvVars(
       if (loginUiWorkerUrl) {
         vars['AR_LOGIN_UI_URL'] = loginUiWorkerUrl;
       }
+    }
+    if (config.serviceSite?.enabled && config.serviceSite.workerName) {
+      vars['SERVICE_SITE_BINDING'] = config.serviceSite.binding || 'SERVICE_SITE';
     }
   }
 
@@ -1735,6 +1857,9 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
     `directory = ".svelte-kit/cloudflare"`,
     `binding = "ASSETS"`,
   ];
+  if (component === 'ar-login-ui') {
+    lines.push(`run_worker_first = ["/account", "/account/*"]`);
+  }
 
   const definedVars = Object.entries(vars).filter((entry): entry is [string, string] => {
     const [, value] = entry;

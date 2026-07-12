@@ -2,7 +2,12 @@
  * Utility exports
  */
 
-export { formatDate, formatRelativeTime } from './date';
+export {
+	formatDate,
+	formatRelativeTime,
+	formatTimestamp,
+	normalizeTimestampToMillis
+} from './date';
 export { isValidDownloadUrl } from './url-validation';
 export {
 	DEFAULT_PAGE_SIZE,

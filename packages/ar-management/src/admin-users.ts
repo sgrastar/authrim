@@ -28,6 +28,7 @@ import {
   runPIIWriteWithCompensation,
   type CanonicalRuntimeUserProjection,
 } from '@authrim/ar-lib-core';
+import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
   ADMIN_USER_UPDATE_RESERVED_FIELDS,
@@ -96,6 +97,50 @@ function userTypeFromAccountType(accountType: string): string {
     return 'anonymous';
   }
   return 'end_user';
+}
+
+function normalizeAdminEmailInput(
+  email: unknown
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof email !== 'string') {
+    return { ok: false, error: 'Email is required' };
+  }
+
+  const normalized = email.trim();
+  if (!normalized) {
+    return { ok: false, error: 'Email is required' };
+  }
+  if (normalized.length > 254 || /[\s\x00-\x1f\x7f]/.test(normalized)) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  const parts = normalized.split('@');
+  if (parts.length !== 2) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  const [localPart, domain] = parts;
+  if (!localPart || localPart.length > 64 || !domain || domain.length > 253) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+  if (localPart.startsWith('.') || localPart.endsWith('.') || localPart.includes('..')) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  const labels = domain.split('.');
+  const validDomain =
+    labels.length >= 2 &&
+    labels.every(
+      (label) =>
+        label.length > 0 &&
+        label.length <= 63 &&
+        /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+    );
+  if (!validDomain) {
+    return { ok: false, error: 'Email must be a valid email address' };
+  }
+
+  return { ok: true, value: normalized };
 }
 
 function addressPartsFromProjection(projection: CanonicalRuntimeUserProjection): {
@@ -182,10 +227,14 @@ function buildCanonicalPiiDeletionPatch(): Record<string, null> {
   };
 }
 
-function formatCanonicalAdminUser(projection: CanonicalRuntimeUserProjection) {
+function formatCanonicalAdminUser(
+  projection: CanonicalRuntimeUserProjection,
+  sessionLastLoginAt: number | null = null
+) {
   const address = addressPartsFromProjection(projection);
   const createdAt = Date.parse(projection.created_at);
   const updatedAt = Date.parse(projection.updated_at);
+  const lastLoginAt = projection.last_login_at ?? sessionLastLoginAt;
   return {
     id: projection.id,
     tenant_id: projection.tenant_id,
@@ -218,7 +267,7 @@ function formatCanonicalAdminUser(projection: CanonicalRuntimeUserProjection) {
     pii_status: projection.active ? 'active' : 'deleted',
     created_at: Number.isFinite(createdAt) ? createdAt : null,
     updated_at: Number.isFinite(updatedAt) ? updatedAt : null,
-    last_login_at: null,
+    last_login_at: toMilliseconds(lastLoginAt),
     status: projection.active ? 'active' : 'inactive',
     suspended_at: null,
     suspended_until: null,
@@ -456,14 +505,33 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const accountRows = await authCtx.coreAdapter.query<{ legacy_user_id: string }>(
-      `SELECT legacy_user_id
-         FROM identity_accounts
-        WHERE tenant_id = ?
-          AND legacy_user_id IS NOT NULL
-          AND lifecycle_state = 'active'
-        ORDER BY created_at DESC`,
-      [tenantId]
+    const [accountRows, sessionRows] = await Promise.all([
+      authCtx.coreAdapter.query<{ legacy_user_id: string }>(
+        `SELECT legacy_user_id
+           FROM identity_accounts
+          WHERE tenant_id = ?
+            AND legacy_user_id IS NOT NULL
+            AND lifecycle_state = 'active'
+          ORDER BY created_at DESC`,
+        [tenantId]
+      ),
+      authCtx.coreAdapter.query<{ user_id: string; last_login_at: number | null }>(
+        `SELECT user_id, MAX(created_at) AS last_login_at
+           FROM sessions
+          WHERE tenant_id = ?
+          GROUP BY user_id`,
+        [tenantId]
+      ),
+    ]);
+    const sessionLastLoginByUserId = new Map(
+      sessionRows
+        .filter(
+          (row) =>
+            typeof row.user_id === 'string' &&
+            row.user_id.length > 0 &&
+            typeof row.last_login_at === 'number'
+        )
+        .map((row) => [row.user_id, row.last_login_at] as const)
     );
     const projections: CanonicalRuntimeUserProjection[] = [];
     for (const row of accountRows) {
@@ -504,7 +572,9 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const totalPages = Math.ceil(total / limit);
     const formattedUsers = filteredUsers
       .slice(offset, offset + limit)
-      .map(formatCanonicalAdminUser);
+      .map((projection) =>
+        formatCanonicalAdminUser(projection, sessionLastLoginByUserId.get(projection.id) ?? null)
+      );
 
     return c.json({
       users: formattedUsers,
@@ -554,7 +624,16 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const passkeys = await authCtx.repositories.passkey.findByUserId(userId);
+    const [passkeys, totpCredentials, latestSession] = await Promise.all([
+      authCtx.repositories.passkey.findByUserId(userId),
+      authCtx.repositories.totp.findByUserId(userId),
+      authCtx.coreAdapter.queryOne<{ last_login_at: number | null }>(
+        `SELECT MAX(created_at) AS last_login_at
+           FROM sessions
+          WHERE tenant_id = ? AND user_id = ?`,
+        [tenantId, userId]
+      ),
+    ]);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const customFields = await ensureDatabaseAdapter(
       customClaimSources.nonPiiDb,
@@ -580,19 +659,37 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     });
     const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];
 
-    const formattedUser = formatCanonicalAdminUser(projection);
+    const formattedUser = formatCanonicalAdminUser(
+      projection,
+      latestSession?.last_login_at ?? null
+    );
 
     const formattedPasskeys = passkeys.map((p) => ({
       id: p.id,
       credential_id: p.credential_id,
       device_name: p.device_name,
+      aaguid: p.aaguid ?? null,
+      provider: resolveAaguidAuthenticator(p.aaguid),
       created_at: toMilliseconds(p.created_at),
       last_used_at: toMilliseconds(p.last_used_at),
+    }));
+    const formattedTotpCredentials = totpCredentials.map((credential) => ({
+      id: credential.id,
+      label: credential.label,
+      algorithm: credential.algorithm,
+      digits: credential.digits,
+      period: credential.period,
+      window: credential.window,
+      status: credential.status,
+      created_at: toMilliseconds(credential.created_at),
+      activated_at: toMilliseconds(credential.activated_at),
+      last_used_at: toMilliseconds(credential.last_used_at),
     }));
 
     return c.json({
       user: formattedUser,
       passkeys: formattedPasskeys,
+      totp_credentials: formattedTotpCredentials,
       missing_required_fields: missingRequiredFields.map((field) => ({
         field_key: field.fieldKey,
         label: field.label,
@@ -609,6 +706,53 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       },
       500
     );
+  }
+}
+
+/**
+ * Reset user TOTP credentials.
+ * POST /admin/users/:id/totp/reset
+ */
+export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id')!;
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+      c,
+      authCtx.coreAdapter,
+      tenantId
+    );
+    if (!projectionRepository) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const projection = await projectionRepository.findByLegacyUserId(userId, {
+      includeInactive: true,
+    });
+    if (!projection) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
+
+    const deleted = await authCtx.repositories.totp.deleteByUserId(userId);
+    await createAuditLogFromContext(
+      c,
+      'admin.user.totp.reset',
+      'user',
+      userId,
+      { deleted },
+      'warning'
+    );
+
+    return c.json({ ok: true, deleted });
+  } catch (error) {
+    logSanitizedError('Admin user TOTP reset error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
 
@@ -648,15 +792,17 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     } = body;
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_CREATE_RESERVED_FIELDS);
 
-    if (!email) {
+    const emailValidation = normalizeAdminEmailInput(email);
+    if (!emailValidation.ok) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'Email is required',
+          error_description: emailValidation.error,
         },
         400
       );
     }
+    const normalizedEmail = emailValidation.value;
 
     const tenantId = getTenantIdFromContext(c);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
@@ -675,7 +821,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           AND value_json = ?
           AND lifecycle_state = 'active'
         LIMIT 1`,
-      [tenantId, JSON.stringify(email)]
+      [tenantId, JSON.stringify(normalizedEmail)]
     );
 
     if (emailExists) {
@@ -726,7 +872,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           user_type: typeof user_type === 'string' ? user_type : 'end_user',
         },
         {
-          email,
+          email: normalizedEmail,
           phone_number: phone_number ?? null,
           name: name ?? null,
           given_name: given_name ?? null,
@@ -832,6 +978,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const body = await c.req.json<{
+      email?: string;
       name?: string;
       given_name?: string;
       family_name?: string;

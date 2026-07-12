@@ -12,7 +12,6 @@ export * from './oauth';
 export * from './session';
 export * from './security';
 export * from './infrastructure';
-export * from './consent';
 export * from './ciba';
 export * from './rate-limit';
 export * from './device-flow';
@@ -39,6 +38,8 @@ export * from './dr-backup';
 export * from './login-entry';
 export * from './tenant-discovery-ui';
 export * from './support-ops';
+export * from './self-service';
+export * from './service-site';
 
 // Re-export SettingsManager types
 export type {
@@ -72,7 +73,6 @@ import { OAUTH_CATEGORY_META } from './oauth';
 import { SESSION_CATEGORY_META } from './session';
 import { SECURITY_CATEGORY_META } from './security';
 import { INFRASTRUCTURE_CATEGORY_META } from './infrastructure';
-import { CONSENT_CATEGORY_META } from './consent';
 import { CIBA_CATEGORY_META } from './ciba';
 import { RATE_LIMIT_CATEGORY_META } from './rate-limit';
 import { DEVICE_FLOW_CATEGORY_META } from './device-flow';
@@ -99,6 +99,8 @@ import { DR_BACKUP_CATEGORY_META } from './dr-backup';
 import { LOGIN_ENTRY_CATEGORY_META } from './login-entry';
 import { TENANT_DISCOVERY_UI_CATEGORY_META } from './tenant-discovery-ui';
 import { SUPPORT_OPS_CATEGORY_META } from './support-ops';
+import { SELF_SERVICE_CATEGORY_META } from './self-service';
+import { SERVICE_SITE_CATEGORY_META } from './service-site';
 
 // Export commonly used category metadata
 export { CLIENT_CATEGORY_META, OAUTH_CATEGORY_META };
@@ -111,7 +113,6 @@ export const ALL_CATEGORY_META = {
   oauth: OAUTH_CATEGORY_META,
   session: SESSION_CATEGORY_META,
   security: SECURITY_CATEGORY_META,
-  consent: CONSENT_CATEGORY_META,
   ciba: CIBA_CATEGORY_META,
   'rate-limit': RATE_LIMIT_CATEGORY_META,
   'device-flow': DEVICE_FLOW_CATEGORY_META,
@@ -154,6 +155,8 @@ export const ALL_CATEGORY_META = {
   'login-entry': LOGIN_ENTRY_CATEGORY_META,
   'tenant-discovery-ui': TENANT_DISCOVERY_UI_CATEGORY_META,
   'support-ops': SUPPORT_OPS_CATEGORY_META,
+  'self-service': SELF_SERVICE_CATEGORY_META,
+  'service-site': SERVICE_SITE_CATEGORY_META,
 } as const;
 
 /**
@@ -213,9 +216,6 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   security: {
     allowedScopes: ['tenant', 'client'],
   },
-  consent: {
-    allowedScopes: ['tenant', 'client'],
-  },
   'device-flow': {
     allowedScopes: ['tenant', 'client'],
   },
@@ -273,7 +273,7 @@ export const CATEGORY_SCOPE_CONFIG: Record<
 
   // Login UI Customization
   'login-ui': {
-    allowedScopes: ['tenant'],
+    allowedScopes: ['tenant', 'client'],
   },
   'authentication-methods': {
     allowedScopes: ['tenant'],
@@ -285,6 +285,12 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['platform', 'tenant'],
   },
   'support-ops': {
+    allowedScopes: ['tenant'],
+  },
+  'self-service': {
+    allowedScopes: ['tenant'],
+  },
+  'service-site': {
     allowedScopes: ['tenant'],
   },
 

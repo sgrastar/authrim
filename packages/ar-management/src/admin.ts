@@ -203,6 +203,7 @@ export {
   adminUserCreateHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
 } from './admin-users';
@@ -1906,7 +1907,7 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
         idTokenTtl: 3600, // 1 hour
         refreshTokenTtl: 2592000, // 30 days
         passkeyEnabled: true,
-        magicLinkEnabled: true,
+        magicLinkEnabled: false,
       },
       ciba: {
         enabled: true,

@@ -13,6 +13,13 @@
 		createEmptyContext
 	} from '$lib/api/admin-policies';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
+	import {
+		AdminPageHeader,
+		AdminPageShell,
+		AdminPagination,
+		AdminSection,
+		AdminToolbar
+	} from '$lib/components/admin';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
@@ -65,8 +72,12 @@
 	let deleteError = $state('');
 
 	// Simulation dialog state
-	let showSimulateDialog = $state(false);
-	let simulationContext: PolicyContext = $state(createEmptyContext());
+	function createSimulationContext(): PolicyContext {
+		return { ...createEmptyContext(), environment: {} };
+	}
+
+	let showSimulationDialog = $state(false);
+	let simulationContext: PolicyContext = $state(createSimulationContext());
 	let simulationResult: SimulationResult | null = $state(null);
 	let simulating = $state(false);
 	let simulationError = $state('');
@@ -229,10 +240,10 @@
 	}
 
 	function openSimulateDialog() {
-		simulationContext = createEmptyContext();
+		showSimulationDialog = true;
+		simulationContext = createSimulationContext();
 		simulationResult = null;
 		simulationError = '';
-		showSimulateDialog = true;
 	}
 
 	async function runSimulation() {
@@ -665,54 +676,53 @@
 	<title>{$LL.admin_policies_head_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">{$LL.admin_policies_title()}</h1>
-			<p class="page-description">
-				{$LL.admin_policies_description()}
-			</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={openSimulateDialog} disabled={!customRulesEnabled}>
-				<i class="i-ph-play"></i>
-				{$LL.admin_policies_simulate()}
-			</button>
+<AdminPageShell>
+	<AdminPageHeader
+		title={$LL.admin_policies_title()}
+		description={$LL.admin_policies_description()}
+	>
+		{#snippet actions()}
 			<button class="btn btn-primary" onclick={openCreateDialog} disabled={!customRulesEnabled}>
 				<i class="i-ph-plus"></i>
 				{$LL.admin_policies_create_policy()}
 			</button>
-		</div>
-	</div>
+			<button class="btn btn-secondary" onclick={openSimulateDialog} disabled={!customRulesEnabled}>
+				<i class="i-ph-play"></i>
+				{$LL.admin_policies_simulate()}
+			</button>
+		{/snippet}
+	</AdminPageHeader>
 
 	<!-- Custom Rules Feature Flag Toggle -->
-	<div class="panel feature-toggle-panel">
-		<div class="feature-toggle-row">
-			<div class="feature-toggle-info">
-				<h3 class="feature-toggle-title">{$LL.admin_policies_custom_rules()}</h3>
-				<p class="feature-toggle-description">
-					{$LL.admin_policies_custom_rules_description()}
-				</p>
+	<AdminSection>
+		<div class="feature-toggle-card">
+			<div class="feature-toggle-row">
+				<div class="feature-toggle-info">
+					<h3 class="feature-toggle-title">{$LL.admin_policies_custom_rules()}</h3>
+					<p class="feature-toggle-description">
+						{$LL.admin_policies_custom_rules_description()}
+					</p>
+				</div>
+				<div class="feature-toggle-control">
+					{#if customRulesLoading}
+						<span class="loading-text">{$LL.admin_policies_loading()}</span>
+					{:else}
+						<ToggleSwitch
+							checked={customRulesEnabled}
+							disabled={customRulesSaving}
+							onchange={toggleCustomRules}
+						/>
+					{/if}
+				</div>
 			</div>
-			<div class="feature-toggle-control">
-				{#if customRulesLoading}
-					<span class="loading-text">{$LL.admin_policies_loading()}</span>
-				{:else}
-					<ToggleSwitch
-						checked={customRulesEnabled}
-						disabled={customRulesSaving}
-						onchange={toggleCustomRules}
-					/>
-				{/if}
-			</div>
+			{#if customRulesError}
+				<div class="alert alert-error alert-sm">{customRulesError}</div>
+			{/if}
+			{#if customRulesSaving}
+				<div class="saving-indicator">{$LL.admin_policies_saving()}</div>
+			{/if}
 		</div>
-		{#if customRulesError}
-			<div class="alert alert-error alert-sm">{customRulesError}</div>
-		{/if}
-		{#if customRulesSaving}
-			<div class="saving-indicator">{$LL.admin_policies_saving()}</div>
-		{/if}
-	</div>
+	</AdminSection>
 
 	{#if !customRulesEnabled && !customRulesLoading}
 		<div class="alert alert-warning">
@@ -731,164 +741,156 @@
 	{/if}
 
 	<!-- Filters -->
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group" style="flex: 2;">
-				<label for="filter-search" class="form-label">{$LL.admin_policies_search()}</label>
-				<input
-					id="filter-search"
-					type="text"
-					class="form-input"
-					placeholder={$LL.admin_policies_search_placeholder()}
-					bind:value={filterSearch}
-					onkeydown={(e) => e.key === 'Enter' && applyFilters()}
-				/>
-			</div>
-			<div class="form-group">
-				<label for="filter-status" class="form-label">{$LL.admin_policies_status()}</label>
-				<select
-					id="filter-status"
-					class="form-select"
-					bind:value={filterEnabled}
-					onchange={applyFilters}
-				>
-					<option value={undefined}>{$LL.admin_policies_all_status()}</option>
-					<option value={true}>{$LL.admin_policies_enabled()}</option>
-					<option value={false}>{$LL.admin_policies_disabled()}</option>
-				</select>
-			</div>
-			<div class="form-group form-group-action">
-				<button class="btn btn-primary" onclick={applyFilters}>{$LL.admin_policies_apply()}</button>
-				<button class="btn btn-secondary" onclick={clearFilters}
-					>{$LL.admin_policies_clear()}</button
-				>
-			</div>
+	<AdminToolbar>
+		<div class="admin-field admin-field--search">
+			<label class="admin-field__label" for="filter-search">{$LL.admin_policies_search()}</label>
+			<input
+				id="filter-search"
+				type="text"
+				class="admin-input"
+				placeholder={$LL.admin_policies_search_placeholder()}
+				bind:value={filterSearch}
+				onkeydown={(e) => e.key === 'Enter' && applyFilters()}
+			/>
 		</div>
-	</div>
+		<div class="admin-field admin-field--compact">
+			<label class="admin-field__label" for="filter-status">{$LL.admin_policies_status()}</label>
+			<select
+				id="filter-status"
+				class="admin-select"
+				bind:value={filterEnabled}
+				onchange={applyFilters}
+			>
+				<option value={undefined}>{$LL.admin_policies_all_status()}</option>
+				<option value={true}>{$LL.admin_policies_enabled()}</option>
+				<option value={false}>{$LL.admin_policies_disabled()}</option>
+			</select>
+		</div>
+		<div class="toolbar-actions">
+			<button class="btn btn-primary" onclick={applyFilters}>{$LL.admin_policies_apply()}</button>
+			<button class="btn btn-secondary" onclick={clearFilters}>{$LL.admin_policies_clear()}</button>
+		</div>
+	</AdminToolbar>
 
 	<!-- Rules List -->
 	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>{$LL.admin_policies_loading()}</p>
-		</div>
+		<AdminSection>
+			<div class="loading-state">
+				<i class="i-ph-circle-notch loading-spinner"></i>
+				<p>{$LL.admin_policies_loading()}</p>
+			</div>
+		</AdminSection>
 	{:else if rules.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_policies_empty()}</p>
 				<button class="btn btn-primary" onclick={openCreateDialog}
 					>{$LL.admin_policies_create_policy()}</button
 				>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="policy-list">
-			{#each rules as rule (rule.id)}
-				<div class="policy-card" class:disabled={!rule.enabled}>
-					<div class="policy-card-header">
-						<div class="policy-info">
-							<span class="policy-priority">#{rule.priority}</span>
-							<h3 class="policy-name">{rule.name}</h3>
-							<span class={rule.effect === 'allow' ? 'badge badge-success' : 'badge badge-danger'}>
-								{formatEffect(rule.effect)}
-							</span>
-							{#if !rule.enabled}
-								<span class="badge badge-neutral">{$LL.admin_policies_disabled()}</span>
+		<AdminSection>
+			<div class="policy-list">
+				{#each rules as rule (rule.id)}
+					<div class="policy-card" class:disabled={!rule.enabled}>
+						<div class="policy-card-header">
+							<div class="policy-info">
+								<span class="policy-priority">#{rule.priority}</span>
+								<h3 class="policy-name">{rule.name}</h3>
+								<span
+									class={rule.effect === 'allow' ? 'badge badge-success' : 'badge badge-danger'}
+								>
+									{formatEffect(rule.effect)}
+								</span>
+								{#if !rule.enabled}
+									<span class="badge badge-neutral">{$LL.admin_policies_disabled()}</span>
+								{/if}
+							</div>
+							<div class="action-buttons">
+								<button
+									class="btn-toggle"
+									onclick={(e) => toggleEnabled(rule, e)}
+									title={rule.enabled ? $LL.admin_policies_disable() : $LL.admin_policies_enable()}
+								>
+									<i class={rule.enabled ? 'i-ph-toggle-right' : 'i-ph-toggle-left'}></i>
+								</button>
+								<button class="btn btn-secondary btn-sm" onclick={() => openEditDialog(rule)}
+									>{$LL.admin_policies_edit()}</button
+								>
+								<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(rule, e)}>
+									{$LL.admin_policies_delete()}
+								</button>
+							</div>
+						</div>
+
+						{#if rule.description}
+							<p class="policy-description">{rule.description}</p>
+						{/if}
+
+						<div class="policy-details">
+							{#if rule.resource_types.length > 0}
+								<div class="detail-row">
+									<span class="detail-label">{$LL.admin_policies_resources_label()}</span>
+									<span class="tag-list">
+										{#each rule.resource_types as type (type)}
+											<span class="tag">{type}</span>
+										{/each}
+									</span>
+								</div>
+							{/if}
+
+							{#if rule.actions.length > 0}
+								<div class="detail-row">
+									<span class="detail-label">{$LL.admin_policies_actions_label()}</span>
+									<span class="tag-list">
+										{#each rule.actions as action (action)}
+											<span class="tag">{action}</span>
+										{/each}
+									</span>
+								</div>
+							{/if}
+
+							{#if rule.conditions.length > 0}
+								<div class="detail-row detail-row-vertical">
+									<span class="detail-label">{$LL.admin_policies_conditions_label()}</span>
+									<div class="tag-list">
+										{#each rule.conditions as condition, i (i)}
+											<span class="tag tag-info">{formatConditionLocalized(condition)}</span>
+										{/each}
+									</div>
+								</div>
 							{/if}
 						</div>
-						<div class="action-buttons">
-							<button
-								class="btn-toggle"
-								onclick={(e) => toggleEnabled(rule, e)}
-								title={rule.enabled ? $LL.admin_policies_disable() : $LL.admin_policies_enable()}
+
+						<div class="policy-meta">
+							<span class="muted"
+								>{$LL.admin_policies_updated_at({ date: formatDate(rule.updated_at) })}</span
 							>
-								<i class={rule.enabled ? 'i-ph-toggle-right' : 'i-ph-toggle-left'}></i>
-							</button>
-							<button class="btn btn-secondary btn-sm" onclick={() => openEditDialog(rule)}
-								>{$LL.admin_policies_edit()}</button
-							>
-							<button class="btn btn-danger btn-sm" onclick={(e) => openDeleteDialog(rule, e)}>
-								{$LL.admin_policies_delete()}
-							</button>
 						</div>
 					</div>
+				{/each}
+			</div>
 
-					{#if rule.description}
-						<p class="policy-description">{rule.description}</p>
-					{/if}
-
-					<div class="policy-details">
-						{#if rule.resource_types.length > 0}
-							<div class="detail-row">
-								<span class="detail-label">{$LL.admin_policies_resources_label()}</span>
-								<span class="tag-list">
-									{#each rule.resource_types as type (type)}
-										<span class="tag">{type}</span>
-									{/each}
-								</span>
-							</div>
-						{/if}
-
-						{#if rule.actions.length > 0}
-							<div class="detail-row">
-								<span class="detail-label">{$LL.admin_policies_actions_label()}</span>
-								<span class="tag-list">
-									{#each rule.actions as action (action)}
-										<span class="tag">{action}</span>
-									{/each}
-								</span>
-							</div>
-						{/if}
-
-						{#if rule.conditions.length > 0}
-							<div class="detail-row detail-row-vertical">
-								<span class="detail-label">{$LL.admin_policies_conditions_label()}</span>
-								<div class="tag-list">
-									{#each rule.conditions as condition, i (i)}
-										<span class="tag tag-info">{formatConditionLocalized(condition)}</span>
-									{/each}
-								</div>
-							</div>
-						{/if}
-					</div>
-
-					<div class="policy-meta">
-						<span class="muted"
-							>{$LL.admin_policies_updated_at({ date: formatDate(rule.updated_at) })}</span
-						>
-					</div>
-				</div>
-			{/each}
-		</div>
-
-		<!-- Pagination -->
-		{#if pagination.total_pages > 1}
-			<div class="pagination">
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={pagination.page === 1}
-					onclick={() => goToPage(pagination.page - 1)}
-				>
-					{$LL.admin_policies_previous()}
-				</button>
-				<span class="pagination-info">
-					{$LL.admin_policies_page_of({
+			{#if pagination.total_pages > 1}
+				<AdminPagination
+					label={$LL.admin_policies_title()}
+					info={$LL.admin_policies_page_of({
 						page: pagination.page,
 						totalPages: pagination.total_pages,
 						count: pagination.total
 					})}
-				</span>
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={pagination.page === pagination.total_pages}
-					onclick={() => goToPage(pagination.page + 1)}
-				>
-					{$LL.admin_policies_next()}
-				</button>
-			</div>
-		{/if}
+					previousLabel={$LL.admin_policies_previous()}
+					nextLabel={$LL.admin_policies_next()}
+					hasPrevious={pagination.page > 1}
+					hasNext={pagination.page < pagination.total_pages}
+					onPrevious={() => goToPage(pagination.page - 1)}
+					onNext={() => goToPage(pagination.page + 1)}
+				/>
+			{/if}
+		</AdminSection>
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Create/Edit Rule Dialog -->
 <Modal
@@ -902,7 +904,7 @@
 	{/if}
 
 	<div class="form-row-inline">
-		<div class="form-group" style="flex: 2;">
+		<div class="form-group form-group--wide">
 			<label for="rule-name" class="form-label">{$LL.admin_policies_name_required_label()}</label>
 			<input
 				id="rule-name"
@@ -1184,8 +1186,8 @@
 
 <!-- Simulate Dialog -->
 <Modal
-	open={showSimulateDialog}
-	onClose={() => (showSimulateDialog = false)}
+	open={showSimulationDialog}
+	onClose={() => (showSimulationDialog = false)}
 	title={$LL.admin_policies_simulator_title()}
 	size="lg"
 >
@@ -1320,7 +1322,7 @@
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showSimulateDialog = false)}
+		<button class="btn btn-secondary" onclick={() => (showSimulationDialog = false)}
 			>{$LL.admin_policies_close()}</button
 		>
 		<button class="btn btn-primary" onclick={runSimulation} disabled={simulating}>
@@ -1330,10 +1332,12 @@
 </Modal>
 
 <style>
-	/* Feature Toggle Panel Styles */
-	.feature-toggle-panel {
-		margin-bottom: 1.5rem;
+	.feature-toggle-card {
 		padding: 1rem 1.25rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface);
+		box-shadow: var(--card-shadow, var(--shadow-sm));
 	}
 
 	.feature-toggle-row {
@@ -1351,13 +1355,13 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text);
 	}
 
 	.feature-toggle-description {
 		margin: 0.25rem 0 0;
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.feature-toggle-control {
@@ -1368,13 +1372,13 @@
 
 	.loading-text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.saving-indicator {
 		margin-top: 0.5rem;
 		font-size: 0.75rem;
-		color: var(--text-secondary);
+		color: var(--color-text-muted);
 	}
 
 	.alert-sm {
@@ -1384,11 +1388,38 @@
 	}
 
 	.alert-warning {
-		background-color: rgba(234, 179, 8, 0.1);
-		border: 1px solid rgba(234, 179, 8, 0.3);
-		border-radius: 0.375rem;
+		background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-warning) 32%, transparent);
+		border-radius: var(--radius-control);
 		padding: 0.75rem 1rem;
-		color: var(--text-primary);
+		color: var(--color-text);
 		margin-bottom: 1rem;
+	}
+
+	.toolbar-actions {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.5rem;
+		margin-left: auto;
+	}
+
+	.form-group--wide {
+		flex: 2;
+	}
+
+	@media (max-width: 720px) {
+		.feature-toggle-row {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.toolbar-actions {
+			width: 100%;
+			margin-left: 0;
+		}
+
+		.toolbar-actions .btn {
+			flex: 1 1 0;
+		}
 	}
 </style>

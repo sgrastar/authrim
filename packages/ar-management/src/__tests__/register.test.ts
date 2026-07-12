@@ -117,6 +117,12 @@ const createMockKV = (): KVNamespace => {
   } as unknown as KVNamespace;
 };
 
+function getLastBindArgs(env: Env): unknown[] {
+  const db = env.DB as unknown as ReturnType<typeof createMockDB>;
+  const calls = db._mockStatement.bind.mock.calls;
+  return calls[calls.length - 1] ?? [];
+}
+
 describe('Dynamic Client Registration Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
@@ -184,6 +190,61 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.headers.get('Pragma')).toBe('no-cache');
     });
 
+    it('stores issuer URL as the default access-token resource for authorization-code clients', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const args = getLastBindArgs(mockEnv);
+      expect(args).toHaveLength(56);
+      expect(args).toContain('https://id.example.com');
+    });
+
+    it('uses tenant client.default_resource before the issuer URL default', async () => {
+      mockEnv.SETTINGS = createMockKV();
+      await mockEnv.SETTINGS.put(
+        'settings:tenant:default:client',
+        JSON.stringify({ 'client.default_resource': 'https://api.example.com/' })
+      );
+
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const args = getLastBindArgs(mockEnv);
+      expect(args).toHaveLength(56);
+      expect(args).toContain('https://api.example.com/');
+      expect(args).not.toContain('https://id.example.com');
+    });
+
     it('should register a client with all optional fields', async () => {
       const requestBody = {
         redirect_uris: ['https://example.com/callback', 'https://example.com/callback2'],
@@ -232,6 +293,31 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.response_types).toEqual(['code']);
       expect(json.application_type).toBe('native');
       expect(json.scope).toBe('openid profile email');
+    });
+
+    it('should default require_pkce to true for public authorization code clients', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.require_pkce).toBe(true);
     });
 
     it('uses the request host for registration_client_uri in multi-tenant mode', async () => {
@@ -935,6 +1021,60 @@ describe('Dynamic Client Registration Handler', () => {
       const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('Unsupported grant_type');
+    });
+  });
+
+  describe('Validation - require_pkce', () => {
+    it('should reject non-boolean require_pkce', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        require_pkce: 'true',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('require_pkce must be a boolean');
+    });
+
+    it('should reject require_pkce false for public authorization code clients', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code'],
+        require_pkce: false,
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('require_pkce must be true');
     });
   });
 

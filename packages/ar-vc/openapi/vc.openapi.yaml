@@ -1,0 +1,1083 @@
+openapi: 3.2.0
+info:
+  title: Authrim Verifiable Credentials API
+  version: 0.3.3
+  summary: OpenID4VP, OpenID4VCI, status list, and DID endpoints.
+  description: Initial OpenAPI contract for `@authrim/ar-vc`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: OpenID4VP
+  - name: OpenID4VCI
+  - name: DID
+  - name: Status Lists
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      summary: Return VC Worker health.
+      responses:
+        "200":
+          $ref: "#/components/responses/VCHealth"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /.well-known/openid-credential-verifier:
+    get:
+      tags:
+        - OpenID4VP
+      summary: Return OpenID4VP verifier metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/VerifierMetadata"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vp/authorize:
+    post:
+      tags:
+        - OpenID4VP
+      summary: Create an OpenID4VP authorization request.
+      requestBody:
+        $ref: "#/components/requestBodies/VPAuthorize"
+      responses:
+        "200":
+          $ref: "#/components/responses/VPAuthorize"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vp/response:
+    post:
+      tags:
+        - OpenID4VP
+      summary: Receive a wallet VP response.
+      requestBody:
+        $ref: "#/components/requestBodies/VPResponse"
+      responses:
+        "200":
+          $ref: "#/components/responses/VPResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vp/requests/{id}:
+    get:
+      tags:
+        - OpenID4VP
+      summary: Get VP request status.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/VPRequestStatus"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /.well-known/openid-credential-issuer:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Return OpenID4VCI issuer metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/IssuerMetadata"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vci/token:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Exchange a pre-authorized code for a credential access token.
+      requestBody:
+        $ref: "#/components/requestBodies/VCIToken"
+      responses:
+        "200":
+          $ref: "#/components/responses/VCIToken"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vci/offers/{id}:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Get a credential offer.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/CredentialOffer"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vci/credential:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Issue a credential.
+      requestBody:
+        $ref: "#/components/requestBodies/CredentialRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Credential"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security:
+        - credentialBearer: []
+  /vci/deferred:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Retrieve a deferred credential.
+      requestBody:
+        $ref: "#/components/requestBodies/DeferredCredential"
+      responses:
+        "200":
+          $ref: "#/components/responses/Credential"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      security:
+        - credentialBearer: []
+  /vci/status-lists/{listId}:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Return a status list credential.
+      parameters:
+        - $ref: "#/components/parameters/ListId"
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusListCredential"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /.well-known/did.json:
+    get:
+      tags:
+        - DID
+      summary: Return Authrim DID document.
+      responses:
+        "200":
+          $ref: "#/components/responses/DIDDocument"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /did/resolve/{did}:
+    get:
+      tags:
+        - DID
+      summary: Resolve a DID.
+      parameters:
+        - $ref: "#/components/parameters/Did"
+      responses:
+        "200":
+          $ref: "#/components/responses/DIDResolution"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /health/live:
+    get:
+      tags:
+        - Health
+      operationId: getHealthLive
+      summary: Return VC Worker liveness probe status.
+      description: Reports whether the VC Worker process is live. This probe is public and is intended for
+        platform health checks.
+      responses:
+        "200":
+          $ref: "#/components/responses/HealthProbe"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /health/ready:
+    get:
+      tags:
+        - Health
+      operationId: getHealthReady
+      summary: Return VC Worker readiness probe status.
+      description: Checks VC Worker dependencies such as storage bindings before reporting readiness.
+      responses:
+        "200":
+          $ref: "#/components/responses/HealthProbe"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /vci/status-lists/{listId}/json:
+    get:
+      tags:
+        - Status Lists
+      operationId: getVciStatusListsByListIdJson
+      summary: Return status list metadata as JSON.
+      description: Returns the stored status list record for debugging and operational inspection. The
+        primary wallet-facing endpoint returns the JWT status list credential.
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusListJson"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/ListId"
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    ListId:
+      name: listId
+      in: path
+      required: true
+      schema:
+        type: string
+    Did:
+      name: did
+      in: path
+      required: true
+      schema:
+        type: string
+        example: did:web:auth.example.com
+  requestBodies:
+    VPAuthorize:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VPAuthorizeRequest"
+    VPResponse:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VPResponseRequest"
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: "#/components/schemas/VPResponseRequest"
+    VCIToken:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: "#/components/schemas/VCITokenRequest"
+    CredentialRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CredentialRequest"
+    DeferredCredential:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DeferredCredentialRequest"
+  responses:
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    VCHealth:
+      description: VC Worker health response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VCHealth"
+    HealthProbe:
+      description: Health probe response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HealthProbe"
+    VerifierMetadata:
+      description: OpenID4VP verifier metadata.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VerifierMetadata"
+    VPAuthorize:
+      description: Created OpenID4VP authorization request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VPAuthorizeResponse"
+    VPResponse:
+      description: Verified VP response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VPResponseResult"
+    VPRequestStatus:
+      description: VP request status.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VPRequestStatus"
+    IssuerMetadata:
+      description: OpenID4VCI issuer metadata.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/IssuerMetadata"
+    VCIToken:
+      description: VCI token response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VCITokenResponse"
+    CredentialOffer:
+      description: Credential offer.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CredentialOffer"
+    Credential:
+      description: Credential issuance response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CredentialResponse"
+    DIDDocument:
+      description: DID document.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DIDDocument"
+    DIDResolution:
+      description: DID resolution result.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DIDResolutionResult"
+    StatusListCredential:
+      description: JWT status list credential.
+      content:
+        application/statuslist+jwt:
+          schema:
+            type: string
+            description: JWT-formatted status list credential.
+    StatusListJson:
+      description: Status list record.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StatusListJson"
+  securitySchemes:
+    credentialBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OpenID4VCI credential access token returned by POST /vci/token.
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - error_description
+      properties:
+        error:
+          type: string
+          example: invalid_request
+        error_description:
+          type: string
+          example: The request is invalid.
+    VCHealth:
+      type: object
+      required:
+        - status
+        - service
+        - components
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+          example: ok
+        service:
+          type: string
+          example: ar-vc
+        components:
+          type: array
+          items:
+            type: string
+          example:
+            - verifier
+            - issuer
+            - did
+        timestamp:
+          type: string
+          format: date-time
+          example: 2026-02-03T04:05:06.000Z
+    HealthProbe:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: ar-vc
+        version:
+          type: string
+          example: 0.1.0
+        timestamp:
+          type: string
+          format: date-time
+          example: 2026-02-03T04:05:06.000Z
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+    VerifierMetadata:
+      type: object
+      required:
+        - verifier_identifier
+        - vp_formats_supported
+        - client_id_schemes_supported
+        - response_types_supported
+        - response_modes_supported
+      properties:
+        verifier_identifier:
+          type: string
+          example: did:web:auth.example.com
+        vp_formats_supported:
+          type: object
+          properties:
+            dc+sd-jwt:
+              $ref: "#/components/schemas/AlgorithmSupport"
+            mso_mdoc:
+              $ref: "#/components/schemas/AlgorithmSupport"
+        client_id_schemes_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - pre-registered
+            - did
+            - redirect_uri
+        response_types_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - vp_token
+        response_modes_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - direct_post
+            - direct_post.jwt
+        dcql_supported:
+          type: boolean
+          example: true
+        presentation_definition_uri_schemes_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - https
+    AlgorithmSupport:
+      type: object
+      required:
+        - alg_values_supported
+      properties:
+        alg_values_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - ES256
+            - ES384
+            - ES512
+    VPAuthorizeRequest:
+      type: object
+      required:
+        - client_id
+      properties:
+        tenant_id:
+          type: string
+          example: tenant_123
+        client_id:
+          type: string
+          example: client_123
+        client_id_scheme:
+          type: string
+          enum:
+            - pre-registered
+            - redirect_uri
+            - entity_id
+            - did
+            - x509_san_dns
+            - x509_san_uri
+          example: pre-registered
+        presentation_definition_id:
+          type: string
+          example: identity-v1
+        presentation_definition:
+          type: object
+          description: Presentation Exchange definition requested from the wallet.
+        dcql_query:
+          type: object
+          description: Digital Credentials Query Language query.
+        response_uri:
+          type: string
+          format: uri
+          example: https://auth.example.com/vp/response
+        state:
+          type: string
+          example: state_123
+        user_id:
+          type: string
+          example: user_123
+      example:
+        client_id: client_123
+        client_id_scheme: pre-registered
+        presentation_definition:
+          id: pd_identity
+          input_descriptors: []
+        state: state_123
+    VPAuthorizationRequestObject:
+      type: object
+      required:
+        - response_type
+        - client_id
+        - client_id_scheme
+        - response_mode
+        - response_uri
+        - nonce
+      properties:
+        response_type:
+          type: string
+          example: vp_token
+        client_id:
+          type: string
+          example: client_123
+        client_id_scheme:
+          type: string
+          example: pre-registered
+        response_mode:
+          type: string
+          example: direct_post
+        response_uri:
+          type: string
+          format: uri
+          example: https://auth.example.com/vp/response
+        nonce:
+          type: string
+          example: nonce_123
+        state:
+          type: string
+          example: state_123
+        presentation_definition:
+          type: object
+        dcql_query:
+          type: object
+    VPAuthorizeResponse:
+      type: object
+      required:
+        - request_id
+        - request_uri
+        - nonce
+        - expires_in
+        - authorization_request
+      properties:
+        request_id:
+          type: string
+          example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
+        request_uri:
+          type: string
+          format: uri
+          example: https://auth.example.com/vp/request/g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
+        nonce:
+          type: string
+          example: nonce_123
+        expires_in:
+          type: integer
+          example: 300
+        authorization_request:
+          $ref: "#/components/schemas/VPAuthorizationRequestObject"
+    VPResponseRequest:
+      type: object
+      required:
+        - vp_token
+        - state
+      properties:
+        vp_token:
+          type: string
+          description: Wallet presentation token, typically an SD-JWT VC with key binding.
+        state:
+          type: string
+          description: The VP request id returned as state.
+          example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
+        presentation_submission:
+          type: object
+    VPResponseResult:
+      type: object
+      required:
+        - success
+        - request_id
+      properties:
+        success:
+          type: boolean
+          example: true
+        request_id:
+          type: string
+          example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
+        disclosed_claims:
+          type: object
+          additionalProperties: true
+          example:
+            email: user@example.com
+            age_over_18: true
+        haip_compliant:
+          type: boolean
+          example: true
+    VPRequestStatus:
+      type: object
+      required:
+        - request_id
+        - status
+        - expires_at
+      properties:
+        request_id:
+          type: string
+          example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
+        status:
+          type: string
+          enum:
+            - pending
+            - received
+            - verified
+            - failed
+            - expired
+          example: verified
+        created_at:
+          type: string
+          format: date-time
+          example: 2026-02-03T04:00:00.000Z
+        expires_at:
+          type: string
+          format: date-time
+          example: 2026-02-03T04:05:00.000Z
+        verified_claims:
+          type: object
+          additionalProperties: true
+          example:
+            email: user@example.com
+        error:
+          type: string
+          example: verification_failed
+        error_description:
+          type: string
+          example: The VP token could not be verified.
+    IssuerMetadata:
+      type: object
+      required:
+        - credential_issuer
+        - credential_endpoint
+        - credential_configurations_supported
+      properties:
+        credential_issuer:
+          type: string
+          example: did:web:auth.example.com
+        credential_endpoint:
+          type: string
+          format: uri
+          example: https://auth.example.com/vci/credential
+        deferred_credential_endpoint:
+          type: string
+          format: uri
+          example: https://auth.example.com/vci/deferred
+        credential_configurations_supported:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CredentialConfiguration"
+          example:
+            AuthrimIdentityCredential:
+              format: dc+sd-jwt
+              vct: https://authrim.com/credentials/identity/v1
+              cryptographic_binding_methods_supported:
+                - jwk
+              credential_signing_alg_values_supported:
+                - ES256
+                - ES384
+                - ES512
+        display:
+          type: array
+          items:
+            $ref: "#/components/schemas/DisplayProperties"
+    CredentialConfiguration:
+      type: object
+      required:
+        - format
+      properties:
+        format:
+          type: string
+          example: dc+sd-jwt
+        vct:
+          type: string
+          example: https://authrim.com/credentials/identity/v1
+        cryptographic_binding_methods_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - jwk
+        credential_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - ES256
+            - ES384
+            - ES512
+        claims:
+          type: object
+          additionalProperties:
+            type: object
+        display:
+          type: array
+          items:
+            $ref: "#/components/schemas/DisplayProperties"
+    DisplayProperties:
+      type: object
+      required:
+        - name
+        - locale
+      properties:
+        name:
+          type: string
+          example: Authrim Identity Credential
+        locale:
+          type: string
+          example: en
+        logo:
+          type: object
+          properties:
+            uri:
+              type: string
+              format: uri
+        background_color:
+          type: string
+          example: "#1E3A8A"
+        text_color:
+          type: string
+          example: "#FFFFFF"
+    VCITokenRequest:
+      type: object
+      required:
+        - grant_type
+        - pre-authorized_code
+      properties:
+        grant_type:
+          type: string
+          enum:
+            - urn:ietf:params:oauth:grant-type:pre-authorized_code
+        pre-authorized_code:
+          type: string
+          example: g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000:secret
+        tx_code:
+          type: string
+          example: "123456"
+    VCITokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - c_nonce
+        - c_nonce_expires_in
+        - authorization_details
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
+        token_type:
+          type: string
+          enum:
+            - Bearer
+          example: Bearer
+        expires_in:
+          type: integer
+          example: 3600
+        c_nonce:
+          type: string
+          example: nonce_1234567890
+        c_nonce_expires_in:
+          type: integer
+          example: 300
+        authorization_details:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthorizationDetail"
+    AuthorizationDetail:
+      type: object
+      required:
+        - type
+        - credential_configuration_id
+      properties:
+        type:
+          type: string
+          example: openid_credential
+        credential_configuration_id:
+          type: string
+          example: AuthrimIdentityCredential
+    CredentialOffer:
+      type: object
+      required:
+        - credential_issuer
+        - credential_configuration_ids
+      properties:
+        credential_issuer:
+          type: string
+          example: did:web:auth.example.com
+        credential_configuration_ids:
+          type: array
+          items:
+            type: string
+          example:
+            - AuthrimIdentityCredential
+        grants:
+          $ref: "#/components/schemas/CredentialOfferGrants"
+    CredentialOfferGrants:
+      type: object
+      properties:
+        urn:ietf:params:oauth:grant-type:pre-authorized_code:
+          type: object
+          required:
+            - pre-authorized_code
+          properties:
+            pre-authorized_code:
+              type: string
+              example: g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000:secret
+            tx_code:
+              type: object
+              properties:
+                input_mode:
+                  type: string
+                  enum:
+                    - numeric
+                    - text
+                  example: numeric
+                length:
+                  type: integer
+                  example: 6
+                description:
+                  type: string
+                  example: Enter the PIN you received
+        authorization_code:
+          type: object
+          properties:
+            issuer_state:
+              type: string
+    CredentialRequest:
+      type: object
+      required:
+        - format
+      properties:
+        format:
+          type: string
+          enum:
+            - dc+sd-jwt
+          example: dc+sd-jwt
+        credential_configuration_id:
+          type: string
+          example: AuthrimIdentityCredential
+        vct:
+          type: string
+          example: https://authrim.com/credentials/identity/v1
+        proof:
+          $ref: "#/components/schemas/CredentialProof"
+    CredentialProof:
+      type: object
+      required:
+        - proof_type
+      properties:
+        proof_type:
+          type: string
+          example: jwt
+        jwt:
+          type: string
+          example: eyJhbGciOiJFUzI1NiIsInR5cCI6Im9wZW5pZDR2Y2ktcHJvb2Yrand0In0...
+    CredentialResponse:
+      type: object
+      properties:
+        credential:
+          type: string
+          description: Issued SD-JWT VC compact serialization.
+        c_nonce:
+          type: string
+          example: nonce_1234567890
+        c_nonce_expires_in:
+          type: integer
+          example: 300
+        transaction_id:
+          type: string
+          description: Present only when issuance is deferred.
+      anyOf:
+        - required:
+            - credential
+        - required:
+            - transaction_id
+    DeferredCredentialRequest:
+      type: object
+      required:
+        - transaction_id
+      properties:
+        transaction_id:
+          type: string
+          example: txn_123
+    DIDDocument:
+      type: object
+      required:
+        - "@context"
+        - id
+      properties:
+        "@context":
+          type: array
+          items:
+            type: string
+          example:
+            - https://www.w3.org/ns/did/v1
+            - https://w3id.org/security/suites/jws-2020/v1
+        id:
+          type: string
+          example: did:web:auth.example.com
+        verificationMethod:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationMethod"
+        authentication:
+          type: array
+          items:
+            type: string
+        assertionMethod:
+          type: array
+          items:
+            type: string
+        service:
+          type: array
+          items:
+            $ref: "#/components/schemas/DIDService"
+    VerificationMethod:
+      type: object
+      required:
+        - id
+        - type
+        - controller
+      properties:
+        id:
+          type: string
+          example: did:web:auth.example.com#key-1
+        type:
+          type: string
+          example: JsonWebKey2020
+        controller:
+          type: string
+          example: did:web:auth.example.com
+        publicKeyJwk:
+          type: object
+          additionalProperties: true
+    DIDService:
+      type: object
+      required:
+        - id
+        - type
+        - serviceEndpoint
+      properties:
+        id:
+          type: string
+          example: did:web:auth.example.com#vc-issuer
+        type:
+          type: string
+          example: OpenID4VCIssuer
+        serviceEndpoint:
+          oneOf:
+            - type: string
+              format: uri
+            - type: array
+              items:
+                type: string
+                format: uri
+    DIDResolutionResult:
+      type: object
+      required:
+        - "@context"
+        - didResolutionMetadata
+        - didDocumentMetadata
+      properties:
+        "@context":
+          type: string
+          example: https://w3id.org/did-resolution/v1
+        didDocument:
+          type: object
+          nullable: true
+        didResolutionMetadata:
+          type: object
+          properties:
+            contentType:
+              type: string
+              example: application/did+json
+            error:
+              type: string
+              example: notFound
+            message:
+              type: string
+              example: DID document not found
+        didDocumentMetadata:
+          type: object
+          additionalProperties: true
+    StatusListJson:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - purpose
+        - encoded_list
+        - updated_at
+      properties:
+        id:
+          type: string
+          example: status_list_123
+        tenant_id:
+          type: string
+          example: tenant_123
+        purpose:
+          type: string
+          enum:
+            - revocation
+            - suspension
+          example: revocation
+        encoded_list:
+          type: string
+          example: H4sIAAAAA...
+        updated_at:
+          type: integer
+          example: 1770000000000

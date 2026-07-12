@@ -593,10 +593,6 @@ export class RuntimeLoggingPolicySnapshotMemoryCache<TPolicy = unknown> {
   private readonly ttlMs: number;
   private readonly maxEntries: number;
   private readonly entries = new Map<string, RuntimeLoggingPolicySnapshotCacheEntry<TPolicy>>();
-  private readonly inflight = new Map<
-    string,
-    Promise<RuntimeLoggingPolicySnapshot<TPolicy> | null>
-  >();
 
   constructor(options: RuntimeLoggingPolicySnapshotCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? 60_000;
@@ -670,24 +666,11 @@ export class RuntimeLoggingPolicySnapshotMemoryCache<TPolicy = unknown> {
       return cached;
     }
 
-    const existing = this.inflight.get(key);
-    if (existing) {
-      return existing;
+    const snapshot = await input.loader();
+    if (snapshot) {
+      this.set(key, snapshot, now);
     }
-
-    const promise = input
-      .loader()
-      .then((snapshot) => {
-        if (snapshot) {
-          this.set(key, snapshot, now);
-        }
-        return snapshot;
-      })
-      .finally(() => {
-        this.inflight.delete(key);
-      });
-    this.inflight.set(key, promise);
-    return promise;
+    return snapshot;
   }
 
   invalidate(scopeType: LoggingPolicyScopeType, scopeId: string): void {
@@ -696,6 +679,5 @@ export class RuntimeLoggingPolicySnapshotMemoryCache<TPolicy = unknown> {
 
   clear(): void {
     this.entries.clear();
-    this.inflight.clear();
   }
 }

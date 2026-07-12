@@ -1,6 +1,6 @@
 const adminAccount = {
-	admin_account_page_title: 'Account Settings - Admin Dashboard - Authrim',
-	admin_account_heading: 'Account Settings',
+	admin_account_page_title: 'Preferences - Admin Dashboard - Authrim',
+	admin_account_heading: 'Preferences',
 	admin_account_description: 'Customize your admin dashboard experience',
 	admin_account_security: 'Security',
 	admin_account_passkeys: 'PassKeys',
@@ -29,9 +29,21 @@ const adminAccount = {
 	admin_account_theme_mode_desc: 'Choose between light and dark mode',
 	admin_account_light: 'Light',
 	admin_account_dark: 'Dark',
-	admin_account_theme_color: 'Theme Color',
-	admin_account_light_theme_color_desc: 'Select your preferred light theme color',
-	admin_account_dark_theme_color_desc: 'Select your preferred dark theme color',
+	admin_account_theme_color: 'Admin Skin',
+	admin_account_light_theme_color_desc:
+		'Select the Admin UI skin. Each skin supports light and dark mode.',
+	admin_account_dark_theme_color_desc:
+		'Select the Admin UI skin. Each skin supports light and dark mode.',
+	admin_account_skin_classic: 'Classic',
+	admin_account_skin_classic_desc: 'Timeless ivory, navy, and brass administration surface.',
+	admin_account_skin_swiss_grid: 'Swiss Grid',
+	admin_account_skin_swiss_grid_desc:
+		'Dense grid, strong rules, mono labels, and operational clarity.',
+	admin_account_skin_paper_beige: 'Paper Beige',
+	admin_account_skin_paper_beige_desc:
+		'Warm paper, softer controls, dark navigation, and emerald accents.',
+	admin_account_skin_frosted: 'Frosted',
+	admin_account_skin_frosted_desc: 'Translucent panels, blur, and a quiet indigo control language.',
 	admin_account_theme_warm_beige: 'Warm Beige',
 	admin_account_theme_blue_gray: 'Blue Gray',
 	admin_account_theme_fresh_green: 'Fresh Green',

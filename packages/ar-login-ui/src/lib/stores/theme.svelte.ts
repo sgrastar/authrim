@@ -69,7 +69,7 @@ function getSystemTheme(): ThemeMode {
 }
 
 // Create reactive state
-function createThemeStore() {
+export function createThemeStore() {
 	// Initialize state with system preference as default
 	let mode = $state<ThemeMode>(getSystemTheme());
 	let lightVariant = $state<LightVariant>(DEFAULT_LIGHT_VARIANT);
@@ -126,13 +126,22 @@ function createThemeStore() {
 	function setTenantDefaults(themeMode?: string | null, variant?: string | null) {
 		if (themeMode === 'light' || themeMode === 'dark') {
 			tenantMode = themeMode;
+			if (!isInitialized) {
+				mode = themeMode;
+			}
 		}
 		if (variant) {
 			if (LIGHT_VARIANTS.some((v) => v.id === variant)) {
 				tenantLightVariant = variant as LightVariant;
+				if (!isInitialized) {
+					lightVariant = variant as LightVariant;
+				}
 			}
 			if (DARK_VARIANTS.some((v) => v.id === variant)) {
 				tenantDarkVariant = variant as DarkVariant;
+				if (!isInitialized) {
+					darkVariant = variant as DarkVariant;
+				}
 			}
 		}
 
@@ -274,6 +283,3 @@ function createThemeStore() {
 		setTheme
 	};
 }
-
-// Export singleton instance
-export const themeStore = createThemeStore();

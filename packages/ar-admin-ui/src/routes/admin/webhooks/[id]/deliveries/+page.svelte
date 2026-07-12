@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
 		adminWebhooksAPI,
@@ -10,6 +9,11 @@
 	} from '$lib/api/admin-webhooks';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
+	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
 
 	let webhook: Webhook | null = $state(null);
 	let deliveries: WebhookDelivery[] = $state([]);
@@ -161,10 +165,6 @@
 		}
 	}
 
-	function _navigateBack() {
-		goto('/admin/webhooks');
-	}
-
 	function getStatusBadgeClass(status: DeliveryStatus): string {
 		switch (status) {
 			case 'success':
@@ -278,41 +278,52 @@
 	}
 </script>
 
-<div class="deliveries-page admin-page">
-	<div class="page-header">
-		<div>
-			<a href="/admin/webhooks" class="back-link">← {$LL.admin_webhooks_deliveries_back()}</a>
-			{#if webhook}
-				<h1 class="page-title">
-					{$LL.admin_webhooks_deliveries_title_with_name({ name: webhook.name })}
-				</h1>
-				<p class="page-description">{$LL.admin_webhooks_deliveries_description()}</p>
-			{:else}
-				<h1 class="page-title">{$LL.admin_webhooks_deliveries_title()}</h1>
-			{/if}
-		</div>
-	</div>
+<svelte:head>
+	<title>{$LL.admin_webhooks_deliveries_title()}</title>
+</svelte:head>
+
+{#snippet headerActions()}
+	<a href="/admin/webhooks" class="btn btn-secondary">
+		<i class="i-ph-arrow-left" aria-hidden="true"></i>
+		<span>{$LL.admin_webhooks_deliveries_back()}</span>
+	</a>
+{/snippet}
+
+<AdminPageShell>
+	<AdminPageHeader
+		title={webhook
+			? $LL.admin_webhooks_deliveries_title_with_name({ name: webhook.name })
+			: $LL.admin_webhooks_deliveries_title()}
+		description={webhook ? $LL.admin_webhooks_deliveries_description() : undefined}
+		actions={headerActions}
+	/>
 
 	{#if error}
-		<div class="error-banner">
+		<div class="alert alert-error alert-inline">
 			<span>{error}</span>
-			<button onclick={() => loadDeliveries()}>{$LL.admin_webhooks_retry()}</button>
+			<button class="btn btn-secondary btn-sm" onclick={() => loadDeliveries()}>
+				{$LL.admin_webhooks_retry()}
+			</button>
 		</div>
 	{/if}
 
 	{#if replayError}
-		<div class="error-banner">
+		<div class="alert alert-error alert-inline">
 			<span>{replayError}</span>
-			<button onclick={() => (replayError = '')}>{$LL.admin_webhooks_dismiss()}</button>
+			<button class="btn btn-secondary btn-sm" onclick={() => (replayError = '')}>
+				{$LL.admin_webhooks_dismiss()}
+			</button>
 		</div>
 	{/if}
 
 	<!-- Filters -->
-	<div class="filter-section">
-		<div class="filter-row">
-			<div class="filter-group">
-				<label for="status-filter">{$LL.admin_webhooks_status()}</label>
-				<select id="status-filter" bind:value={statusFilter}>
+	<AdminSection>
+		<AdminToolbar>
+			<div class="admin-field admin-field--compact">
+				<label for="status-filter" class="admin-field__label">
+					{$LL.admin_webhooks_status()}
+				</label>
+				<select id="status-filter" class="admin-select" bind:value={statusFilter}>
 					<option value="all">{$LL.admin_webhooks_all()}</option>
 					<option value="success">{$LL.admin_webhooks_status_success()}</option>
 					<option value="failed">{$LL.admin_webhooks_status_failed()}</option>
@@ -320,19 +331,19 @@
 					<option value="pending">{$LL.admin_webhooks_status_pending()}</option>
 				</select>
 			</div>
-			<div class="filter-group">
-				<label for="date-from">{$LL.admin_webhooks_from()}</label>
-				<input type="date" id="date-from" bind:value={dateFrom} />
+			<div class="admin-field admin-field--compact">
+				<label for="date-from" class="admin-field__label">{$LL.admin_webhooks_from()}</label>
+				<input type="date" id="date-from" class="admin-input" bind:value={dateFrom} />
 			</div>
-			<div class="filter-group">
-				<label for="date-to">{$LL.admin_webhooks_to()}</label>
-				<input type="date" id="date-to" bind:value={dateTo} />
+			<div class="admin-field admin-field--compact">
+				<label for="date-to" class="admin-field__label">{$LL.admin_webhooks_to()}</label>
+				<input type="date" id="date-to" class="admin-input" bind:value={dateTo} />
 			</div>
 			<button class="btn btn-secondary" onclick={applyFilters}
 				>{$LL.admin_webhooks_apply_filters()}</button
 			>
-		</div>
-	</div>
+		</AdminToolbar>
+	</AdminSection>
 
 	<!-- Deliveries Table -->
 	{#if loading}
@@ -341,14 +352,14 @@
 			<p>{$LL.admin_webhooks_deliveries_loading()}</p>
 		</div>
 	{:else if deliveries.length === 0}
-		<div class="panel">
+		<AdminSection>
 			<div class="empty-state">
 				<p class="empty-state-description">{$LL.admin_webhooks_deliveries_empty()}</p>
 			</div>
-		</div>
+		</AdminSection>
 	{:else}
-		<div class="deliveries-table-container">
-			<table class="deliveries-table">
+		<AdminSection title={$LL.admin_webhooks_deliveries_title()}>
+			<AdminDataTable width="xwide">
 				<thead>
 					<tr>
 						<th>{$LL.admin_webhooks_event()}</th>
@@ -395,7 +406,7 @@
 							<td class="date-cell">{formatDate(delivery.created_at)}</td>
 							<td class="actions-cell">
 								<button
-									class="action-btn view-btn"
+									class="btn btn-secondary btn-sm"
 									onclick={(e) => {
 										e.stopPropagation();
 										openDetailDialog(delivery);
@@ -405,7 +416,7 @@
 								</button>
 								{#if canReplay(delivery)}
 									<button
-										class="action-btn replay-btn"
+										class="btn btn-primary btn-sm"
 										onclick={(e) => {
 											e.stopPropagation();
 											handleReplay(delivery);
@@ -421,8 +432,8 @@
 						</tr>
 					{/each}
 				</tbody>
-			</table>
-		</div>
+			</AdminDataTable>
+		</AdminSection>
 
 		{#if hasMore}
 			<div class="load-more">
@@ -432,7 +443,7 @@
 			</div>
 		{/if}
 	{/if}
-</div>
+</AdminPageShell>
 
 <!-- Detail Dialog -->
 <Modal
@@ -590,3 +601,160 @@
 		>
 	{/snippet}
 </Modal>
+
+<style>
+	.alert-inline {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.delivery-row {
+		cursor: pointer;
+	}
+
+	.event-cell {
+		display: grid;
+		gap: 4px;
+	}
+
+	.event-type {
+		color: var(--color-text);
+		font-weight: 650;
+	}
+
+	.event-id,
+	.duration-cell,
+	.attempts-cell,
+	.date-cell {
+		color: var(--color-text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+	}
+
+	.response-code {
+		font-family: var(--font-mono);
+		font-weight: 700;
+	}
+
+	.response-code.success {
+		color: var(--color-success);
+	}
+
+	.response-code.error,
+	.error-text {
+		color: var(--color-danger);
+	}
+
+	.actions-cell {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.load-more {
+		display: flex;
+		justify-content: center;
+		margin-top: 18px;
+	}
+
+	.detail-info {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 12px;
+	}
+
+	.info-row {
+		display: grid;
+		gap: 5px;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		background: var(--color-surface-raised);
+	}
+
+	.info-label {
+		color: var(--color-text-subtle);
+		font-family: var(--font-meta, var(--font-body));
+		font-size: var(--field-label-size, 0.68rem);
+		font-weight: 700;
+		letter-spacing: var(--field-label-letter-spacing, 0.16em);
+		text-transform: uppercase;
+	}
+
+	.info-value {
+		color: var(--color-text);
+	}
+
+	.view-mode-tabs {
+		display: flex;
+		gap: 8px;
+		margin: 18px 0 12px;
+	}
+
+	.tab-btn {
+		min-height: 34px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		padding: 0 12px;
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.tab-btn.active {
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
+	}
+
+	.payload-section {
+		margin-top: 16px;
+	}
+
+	.payload-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 8px;
+	}
+
+	.payload-header h3 {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.95rem;
+	}
+
+	.copy-btn {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		padding: 6px 10px;
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.payload-content {
+		max-height: 360px;
+		overflow: auto;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-panel);
+		padding: 12px;
+		background: var(--color-surface-raised);
+		color: var(--color-text);
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+		line-height: 1.55;
+	}
+
+	@media (max-width: 720px) {
+		.alert-inline {
+			align-items: stretch;
+			flex-direction: column;
+		}
+	}
+</style>

@@ -15,6 +15,9 @@ export * from './types/check-api';
 export * from './types/support-ops';
 export * from './types/runtime-profile';
 export * from './types/approval';
+export * from './types/screens';
+export * from './types/oidc-scopes';
+export * from './types/consent-records';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -35,6 +38,7 @@ export * from './types/contracts';
 
 // Flow UI Types (Flow × UI Separation Architecture)
 export * from './schemas/flow-ui';
+export * from './schemas/flow-runtime';
 
 // API Versioning Types (Stripe-style date-based versioning)
 export * from './types/api-version';
@@ -52,6 +56,7 @@ export * from './types/id-jag';
 export * from './types/settings/assurance-levels';
 
 // Utils
+export * from './db';
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
 export * from './utils/crypto';
@@ -96,6 +101,7 @@ export * from './utils/canonical-runtime-claims';
 export * from './utils/dcr-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';
+export * from './utils/login-ui-css-validator';
 export * from './utils/pii-encryption';
 export * from './utils/pii-config';
 export * from './utils/challenge-sharding';
@@ -119,11 +125,17 @@ export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';
 export * from './utils/device-fingerprint';
 export * from './utils/ssrf-protection';
+export * from './utils/post-login-routing';
+export * from './utils/totp';
+export * from './utils/totp-backup-codes';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/directory-auth';
+export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
+export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
 export * from './utils/custom-redirect';
@@ -177,6 +189,20 @@ export {
   ConsentItemAction,
   ConditionalRuleOperator,
 } from './types/consent-statements';
+export type {
+  ConsentPolicy,
+  ConsentPolicyItem,
+  ConsentPolicyAssignment,
+  ConsentPolicyAssignmentType,
+  ConsentPolicyCheckboxMode,
+  ConsentPolicyItemBindingType,
+  ConsentPolicyRequirement,
+  ConsentPolicyVersionMode,
+  ClientTrustPolicy,
+  ClientTrustPolicyTargetType,
+  SignInConfirmationMode,
+  SignInConfirmationPolicy,
+} from './types/consent-policies';
 export * from './utils/consent-statements';
 
 // Initial Setup (Admin Account Setup)
@@ -532,3 +558,19 @@ export type {
   IRelationParser,
   RelationEvaluationContext,
 } from './rebac';
+
+export type {
+  Screen,
+  ScreenBlockType,
+  ScreenCanvasLayout,
+  ScreenDisplayCondition,
+  ScreenDisplayConditionFeature,
+  ScreenDisplayConditionMode,
+  ScreenField,
+  ScreenHumanVerificationTiming,
+  ScreenKind,
+  ScreenLocalization,
+  ScreenResponse,
+  ScreenSettings,
+  ScreenValueType,
+} from './types/screens';

@@ -1,14 +1,17 @@
 import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import {
-	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
 	isCurrentSessionActive,
 	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
 } from '../../lib/discovery-entry';
+import { fetchCachedLoginDiscoveryConfig } from '../../lib/login-discovery-config-cache';
+import { shouldUseFastPlainLoginShell } from '../../lib/server/login-entry-fast-path';
 
 const DISCOVERY_GRANT_VERIFIED_COOKIE = 'authrim_discovery_grant_verified';
+const INVALID_CHALLENGE_ERROR_URL =
+	'/error?error=invalid_request&error_description=Authorization%20challenge%20is%20invalid%20or%20expired';
 
 function buildPublicUrl(url: URL, request: Request): URL {
 	const nextUrl = new URL(url);
@@ -53,6 +56,13 @@ function consumeVerifiedGrantCookie(
 	return true;
 }
 
+function getDiscoveryConfigCacheKey(
+	discoveryHeaders: HeadersInit | undefined,
+	event: Parameters<PageServerLoad>[0]
+): string {
+	return new Headers(discoveryHeaders).get('x-authrim-original-host') || event.url.host;
+}
+
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);
@@ -62,6 +72,15 @@ export const load: PageServerLoad = async (event) => {
 		event.url.searchParams.get('return_to') === 'saml_sso';
 
 	if (challengeId) {
+		const bootstrapTarget = event.locals?.loginChallengeThemeTarget;
+		if (bootstrapTarget?.challengeId === challengeId) {
+			if (bootstrapTarget.valid) {
+				return {
+					authenticationMethods: event.locals?.authenticationMethods ?? undefined
+				};
+			}
+			throw redirect(303, INVALID_CHALLENGE_ERROR_URL);
+		}
 		const challengeBelongsToCurrentTenant = await verifyLoginChallengeForCurrentTenant(
 			event.fetch,
 			challengeId,
@@ -70,6 +89,7 @@ export const load: PageServerLoad = async (event) => {
 		if (challengeBelongsToCurrentTenant) {
 			return {};
 		}
+		throw redirect(303, INVALID_CHALLENGE_ERROR_URL);
 	}
 
 	if (!hasProtocolLoginContext && event.cookies.get('authrim_session')) {
@@ -81,7 +101,15 @@ export const load: PageServerLoad = async (event) => {
 		}
 	}
 
-	const config = await fetchDiscoveryConfig(event.fetch, discoveryHeaders).catch(() => null);
+	if (shouldUseFastPlainLoginShell(event)) {
+		return {};
+	}
+
+	const config = await fetchCachedLoginDiscoveryConfig(
+		event.fetch,
+		getDiscoveryConfigCacheKey(discoveryHeaders, event),
+		discoveryHeaders
+	).catch(() => null);
 	if (!config) {
 		return {};
 	}

@@ -1,497 +1,658 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { LL } from '$i18n/i18n-svelte';
+	import { getFlowKindLabel, getSavedFlowDescription } from '$lib/admin/flow-i18n';
 	import {
 		adminFlowsAPI,
-		type Flow,
-		type ProfileId,
-		getProfileDisplayName,
-		getProfileBadgeClass,
-		canDeleteFlow
+		type AdminFlow,
+		type AdminFlowStatus,
+		type FlowRuntimeContractPackage,
+		type FlowValidationIssue
 	} from '$lib/api/admin-flows';
-	import { adminSettingsAPI } from '$lib/api/admin-settings';
-	import { Modal, ToggleSwitch } from '$lib/components';
+	import { Modal } from '$lib/components';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import { onMount } from 'svelte';
 
-	// Product note: Flow may be omitted from Admin UI; keep new i18n work for this
-	// feature paused until product direction is confirmed.
+	const MAX_IMPORT_JSON_BYTES = 512 * 1024;
 
-	let flows: Flow[] = $state([]);
-	let loading = $state(true);
-	let error = $state('');
-
-	// Flow Engine Feature Flag state
-	let flowEngineEnabled = $state(false);
-	let flowEngineLoading = $state(true);
-	let flowEngineError = $state('');
-	let flowEngineSaving = $state(false);
-	let featureFlagsVersion = $state('');
-
-	// Pagination
-	let page = $state(1);
-	let limit = $state(20);
-	let total = $state(0);
-	let totalPages = $state(0);
-
-	// Filter state
-	let filterProfile: ProfileId | 'all' = $state('all');
-	let filterActive: 'all' | 'active' | 'inactive' = $state('all');
-	let searchQuery = $state('');
-
-	// Delete confirmation dialog state
-	let showDeleteDialog = $state(false);
-	let flowToDelete: Flow | null = $state(null);
-	let deleting = $state(false);
-	let deleteError = $state('');
-
-	async function loadFlowEngineStatus() {
-		flowEngineLoading = true;
-		flowEngineError = '';
-
-		try {
-			const settings = await adminSettingsAPI.getSettings('feature-flags');
-			flowEngineEnabled = settings.values['feature.enable_flow_engine'] === true;
-			featureFlagsVersion = settings.version;
-		} catch (err) {
-			console.error('Failed to load Flow Engine status:', err);
-			flowEngineError = 'Failed to load Flow Engine status';
-		} finally {
-			flowEngineLoading = false;
-		}
-	}
-
-	async function toggleFlowEngine() {
-		if (flowEngineSaving) return;
-
-		flowEngineSaving = true;
-		flowEngineError = '';
-
-		try {
-			// Ensure we have a valid version before updating
-			if (!featureFlagsVersion) {
-				const settings = await adminSettingsAPI.getSettings('feature-flags');
-				featureFlagsVersion = settings.version;
-				flowEngineEnabled = settings.values['feature.enable_flow_engine'] === true;
-			}
-
-			const newValue = !flowEngineEnabled;
-			const result = await adminSettingsAPI.updateSettings('feature-flags', {
-				ifMatch: featureFlagsVersion,
-				set: { 'feature.enable_flow_engine': newValue }
-			});
-			flowEngineEnabled = newValue;
-			featureFlagsVersion = result.version;
-		} catch (err) {
-			console.error('Failed to update Flow Engine status:', err);
-			flowEngineError = err instanceof Error ? err.message : 'Failed to update Flow Engine status';
-			// Reload to get current state
-			await loadFlowEngineStatus();
-		} finally {
-			flowEngineSaving = false;
-		}
-	}
-
-	async function loadFlows() {
-		loading = true;
-		error = '';
-
-		try {
-			const response = await adminFlowsAPI.list({
-				profile_id: filterProfile !== 'all' ? filterProfile : undefined,
-				is_active: filterActive === 'all' ? undefined : filterActive === 'active',
-				search: searchQuery || undefined,
-				page,
-				limit
-			});
-			flows = response.flows;
-			total = response.pagination.total;
-			totalPages = response.pagination.total_pages;
-		} catch (err) {
-			console.error('Failed to load flows:', err);
-			error = 'Failed to load flows';
-		} finally {
-			loading = false;
-		}
-	}
+	let flows = $state<AdminFlow[]>([]);
+	let flowsLoading = $state(true);
+	let flowsError = $state('');
+	let importModalOpen = $state(false);
+	let importJson = $state('');
+	let importError = $state('');
+	let importing = $state(false);
+	let importValidationRan = $state(false);
+	let importValidationIssues = $state<FlowValidationIssue[]>([]);
 
 	onMount(() => {
-		loadFlowEngineStatus();
-		loadFlows();
+		void loadFlows();
 	});
 
-	function handleSearch() {
-		page = 1;
-		loadFlows();
-	}
-
-	function handleFilterChange() {
-		page = 1;
-		loadFlows();
-	}
-
-	function navigateToFlow(flow: Flow) {
-		goto(`/admin/flows/${flow.id}`);
-	}
-
-	function navigateToCreate() {
-		goto('/admin/flows/new');
-	}
-
-	function openDeleteDialog(flow: Flow, event: Event) {
-		event.stopPropagation();
-		if (!canDeleteFlow(flow)) {
-			return;
-		}
-		flowToDelete = flow;
-		deleteError = '';
-		showDeleteDialog = true;
-	}
-
-	function closeDeleteDialog() {
-		showDeleteDialog = false;
-		flowToDelete = null;
-		deleteError = '';
-	}
-
-	async function confirmDelete() {
-		if (!flowToDelete) return;
-
-		deleting = true;
-		deleteError = '';
-
+	async function loadFlows() {
+		flowsLoading = true;
+		flowsError = '';
 		try {
-			await adminFlowsAPI.delete(flowToDelete.id);
-			closeDeleteDialog();
-			await loadFlows();
-		} catch (err) {
-			deleteError = err instanceof Error ? err.message : 'Failed to delete flow';
+			const response = await adminFlowsAPI.list();
+			flows = response.flows;
+		} catch (error) {
+			flowsError = error instanceof Error ? error.message : $LL.admin_flows_load_error();
 		} finally {
-			deleting = false;
+			flowsLoading = false;
 		}
 	}
 
-	function formatDate(timestamp: number): string {
-		return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+	function getAdminFlowStatusLabel(status: AdminFlowStatus): string {
+		switch (status) {
+			case 'published':
+				return $LL.admin_flows_status_published();
+			case 'disabled':
+				return $LL.admin_flows_status_disabled();
+			case 'draft':
+			default:
+				return $LL.admin_flows_status_draft();
+		}
+	}
+
+	function getAdminFlowKindLabel(kind: string): string {
+		switch (kind) {
+			case 'approve':
+				return $LL.admin_flows_kind_authorization();
+			case 'registration':
+			case 'login':
+				return getFlowKindLabel($LL, kind);
+			case 'account':
+				return $LL.admin_flows_palette_account_label();
+			default:
+				return kind;
+		}
+	}
+
+	function formatDate(seconds: number): string {
+		if (!seconds) return '-';
+		return new Intl.DateTimeFormat(undefined, {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric'
-		});
+		}).format(new Date(seconds * 1000));
 	}
 
-	function goToPage(newPage: number) {
-		if (newPage >= 1 && newPage <= totalPages) {
-			page = newPage;
-			loadFlows();
+	function openImportModal() {
+		importModalOpen = true;
+		importError = '';
+		importValidationRan = false;
+		importValidationIssues = [];
+	}
+
+	function closeImportModal() {
+		if (importing) return;
+		importModalOpen = false;
+		importError = '';
+		importValidationRan = false;
+		importValidationIssues = [];
+	}
+
+	async function importFlowJson() {
+		importing = true;
+		importError = '';
+		importValidationRan = false;
+		importValidationIssues = [];
+		try {
+			if (new Blob([importJson]).size > MAX_IMPORT_JSON_BYTES) {
+				throw new Error($LL.admin_flows_import_failed());
+			}
+			const parsed = JSON.parse(importJson) as FlowRuntimeContractPackage;
+			const validation = await adminFlowsAPI.validate('import-preview', { contract: parsed });
+			importValidationRan = true;
+			importValidationIssues = validation.issues;
+			if (!validation.valid) {
+				return;
+			}
+			const response = await adminFlowsAPI.import(parsed);
+			importModalOpen = false;
+			importJson = '';
+			await loadFlows();
+			await goto(`/admin/flows/${response.flow_id}/edit`);
+		} catch (error) {
+			importError = error instanceof Error ? error.message : $LL.admin_flows_import_failed();
+		} finally {
+			importing = false;
+		}
+	}
+
+	async function handleImportFile(event: Event) {
+		const input = event.currentTarget;
+		if (!(input instanceof HTMLInputElement)) return;
+		const file = input.files?.[0];
+		if (!file) return;
+		importError = '';
+		try {
+			if (file.size > MAX_IMPORT_JSON_BYTES) {
+				throw new Error($LL.admin_flows_import_failed());
+			}
+			importJson = await file.text();
+		} catch (error) {
+			importError = error instanceof Error ? error.message : $LL.admin_flows_import_failed();
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Flows - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_flows_page_title()}</title>
 </svelte:head>
 
-<div class="admin-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1 class="page-title">Flows</h1>
-			<p class="page-description">Manage authentication and authorization flows.</p>
-		</div>
-		<div class="page-actions">
-			<button class="btn btn-primary" onclick={navigateToCreate} disabled={!flowEngineEnabled}>
-				<i class="i-ph-plus"></i>
-				Create Flow
+<AdminPageShell>
+	<AdminPageHeader title={$LL.admin_flows_title()} description={$LL.admin_flows_description()}>
+		{#snippet actions()}
+			<a href="/admin/consent-policies" class="btn btn-secondary">
+				<i class="i-ph-clipboard-text" aria-hidden="true"></i>
+				{$LL.admin_flows_consent_policies()}
+			</a>
+			<a href="/admin/field-mapping/field-mapping-sets" class="btn btn-secondary">
+				<i class="i-ph-graph" aria-hidden="true"></i>
+				{$LL.admin_flows_field_mapping()}
+			</a>
+			<button type="button" class="btn btn-secondary" onclick={openImportModal}>
+				<i class="i-ph-upload-simple" aria-hidden="true"></i>
+				{$LL.admin_flows_import_json()}
 			</button>
-		</div>
-	</div>
+			<a href="/admin/flows/new" class="btn btn-primary">
+				<i class="i-ph-plus" aria-hidden="true"></i>
+				{$LL.admin_flows_new_flow()}
+			</a>
+		{/snippet}
+	</AdminPageHeader>
 
-	<!-- Flow Engine Feature Flag Toggle -->
-	<div class="panel flow-engine-toggle-panel">
-		<div class="flow-engine-toggle-row">
-			<div class="flow-engine-info">
-				<h3 class="flow-engine-title">Flow Engine</h3>
-				<p class="flow-engine-description">
-					Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be
-					used.
-				</p>
-			</div>
-			<div class="flow-engine-control">
-				{#if flowEngineLoading}
-					<span class="loading-text">Loading...</span>
-				{:else}
-					<ToggleSwitch
-						checked={flowEngineEnabled}
-						disabled={flowEngineSaving}
-						onchange={toggleFlowEngine}
-					/>
-				{/if}
-			</div>
-		</div>
-		{#if flowEngineError}
-			<div class="alert alert-error alert-sm">{flowEngineError}</div>
-		{/if}
-		{#if flowEngineSaving}
-			<div class="saving-indicator">Saving...</div>
-		{/if}
-	</div>
-
-	{#if !flowEngineEnabled && !flowEngineLoading}
-		<div class="alert alert-warning">
-			<strong>Flow Engine is disabled.</strong> Enable it above to manage flows. When disabled, standard
-			OIDC flows will be used instead.
-		</div>
-	{/if}
-
-	{#if error}
-		<div class="alert alert-error">
-			<span>{error}</span>
-			<button class="btn btn-secondary btn-sm" onclick={loadFlows}>Retry</button>
-		</div>
-	{/if}
-
-	<!-- Filters -->
-	<div class="panel">
-		<div class="filter-row">
-			<div class="form-group" style="flex: 1;">
-				<label for="search" class="form-label">Search</label>
-				<div class="search-box">
-					<input
-						id="search"
-						type="text"
-						class="form-input"
-						placeholder="Search flows..."
-						bind:value={searchQuery}
-						onkeypress={(e) => e.key === 'Enter' && handleSearch()}
-					/>
-					<button class="btn btn-secondary" onclick={handleSearch} aria-label="Search">
-						<i class="i-ph-magnifying-glass"></i>
-					</button>
+	<AdminSection
+		title={$LL.admin_flows_overview_title()}
+		description={$LL.admin_flows_overview_description()}
+	>
+		<div class="flow-overview">
+			<div class="overview-step">
+				<span class="overview-step__icon i-ph-sign-in" aria-hidden="true"></span>
+				<div>
+					<strong>{$LL.admin_flows_overview_request_title()}</strong>
+					<span>{$LL.admin_flows_overview_request_subtitle()}</span>
 				</div>
 			</div>
-
-			<div class="form-group">
-				<label for="profile-filter" class="form-label">Profile</label>
-				<select
-					id="profile-filter"
-					class="form-select"
-					bind:value={filterProfile}
-					onchange={handleFilterChange}
-				>
-					<option value="all">All</option>
-					<option value="human-basic">Human (Basic)</option>
-					<option value="human-org">Human (Org)</option>
-					<option value="ai-agent">AI Agent</option>
-					<option value="iot-device">IoT Device</option>
-				</select>
+			<span class="overview-arrow i-ph-arrow-right" aria-hidden="true"></span>
+			<div class="overview-step">
+				<span class="overview-step__icon i-ph-graph" aria-hidden="true"></span>
+				<div>
+					<strong>{$LL.admin_flows_overview_mapping_title()}</strong>
+					<span>{$LL.admin_flows_overview_mapping_subtitle()}</span>
+				</div>
 			</div>
-
-			<div class="form-group">
-				<label for="status-filter" class="form-label">Status</label>
-				<select
-					id="status-filter"
-					class="form-select"
-					bind:value={filterActive}
-					onchange={handleFilterChange}
-				>
-					<option value="all">All</option>
-					<option value="active">Active</option>
-					<option value="inactive">Inactive</option>
-				</select>
+			<span class="overview-arrow i-ph-arrow-right" aria-hidden="true"></span>
+			<div class="overview-step">
+				<span class="overview-step__icon i-ph-handshake" aria-hidden="true"></span>
+				<div>
+					<strong>{$LL.admin_flows_overview_consent_title()}</strong>
+					<span>{$LL.admin_flows_overview_consent_subtitle()}</span>
+				</div>
+			</div>
+			<span class="overview-arrow i-ph-arrow-right" aria-hidden="true"></span>
+			<div class="overview-step">
+				<span class="overview-step__icon i-ph-paper-plane-tilt" aria-hidden="true"></span>
+				<div>
+					<strong>{$LL.admin_flows_overview_output_title()}</strong>
+					<span>{$LL.admin_flows_overview_output_subtitle()}</span>
+				</div>
 			</div>
 		</div>
-	</div>
+	</AdminSection>
 
-	{#if loading}
-		<div class="loading-state">
-			<i class="i-ph-circle-notch loading-spinner"></i>
-			<p>Loading flows...</p>
-		</div>
-	{:else if flows.length === 0}
-		<div class="panel">
-			<div class="empty-state">
-				<p class="empty-state-description">No flows found.</p>
-				<button class="btn btn-primary" onclick={navigateToCreate}>Create your first flow</button>
-			</div>
-		</div>
-	{:else}
-		<div class="data-table-container">
-			<table class="data-table">
-				<thead>
-					<tr>
-						<th>Name</th>
-						<th>Profile</th>
-						<th>Client</th>
-						<th>Status</th>
-						<th>Version</th>
-						<th>Updated</th>
-						<th class="text-right">Actions</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each flows as flow (flow.id)}
-						<tr
-							onclick={() => navigateToFlow(flow)}
-							onkeydown={(e) => e.key === 'Enter' && navigateToFlow(flow)}
-							tabindex="0"
-							role="button"
-						>
-							<td>
-								<div class="cell-primary">
-									{flow.name}
-									{#if flow.is_builtin}
-										<span class="badge badge-info">Builtin</span>
-									{/if}
+	<AdminSection
+		title={$LL.admin_flows_list_title()}
+		description={$LL.admin_flows_list_description()}
+	>
+		<div class="flow-list">
+			{#if flowsLoading}
+				<div class="flow-empty" role="status">{$LL.admin_flows_loading()}</div>
+			{:else if flowsError}
+				<div class="flow-empty flow-empty--error" role="alert">
+					{$LL.admin_flows_load_error()}
+					<span>{flowsError}</span>
+				</div>
+			{:else if flows.length > 0}
+				{#each flows as flow (flow.id)}
+					<a class="flow-row" href={`/admin/flows/${flow.id}`}>
+						<div class="flow-row__main">
+							<div class="flow-row__icon">
+								<i class="i-ph-flow-arrow" aria-hidden="true"></i>
+							</div>
+							<div>
+								<div class="flow-row__title">
+									<strong>{flow.display_name || flow.name || flow.slug}</strong>
+									<span class="status-badge" data-state={flow.status}>
+										{getAdminFlowStatusLabel(flow.status)}
+									</span>
 								</div>
-							</td>
-							<td>
-								<span class={getProfileBadgeClass(flow.profile_id)}>
-									{getProfileDisplayName(flow.profile_id)}
-								</span>
-							</td>
-							<td class="muted">
-								{flow.client_id || 'Tenant Default'}
-							</td>
-							<td>
-								<span class={flow.is_active ? 'badge badge-success' : 'badge badge-neutral'}>
-									{flow.is_active ? 'Active' : 'Inactive'}
-								</span>
-							</td>
-							<td class="mono muted">{flow.version}</td>
-							<td class="muted nowrap">{formatDate(flow.updated_at)}</td>
-							<td class="text-right" onclick={(e) => e.stopPropagation()}>
-								<div class="action-buttons">
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={(e) => {
-											e.stopPropagation();
-											navigateToFlow(flow);
-										}}
-									>
-										View
-									</button>
-									{#if canDeleteFlow(flow)}
-										<button
-											class="btn btn-danger btn-sm"
-											onclick={(e) => openDeleteDialog(flow, e)}
-										>
-											Delete
-										</button>
-									{/if}
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
+								<p>{getSavedFlowDescription($LL, flow)}</p>
+							</div>
+						</div>
+						<div class="flow-row__meta">
+							<span>{getAdminFlowKindLabel(flow.kind)}</span>
+							<span>{flow.slug}</span>
+							<span>{formatDate(flow.updated_at)}</span>
+						</div>
+						<i class="i-ph-caret-right flow-row__arrow" aria-hidden="true"></i>
+					</a>
+				{/each}
+			{:else}
+				<div class="flow-empty">{$LL.admin_flows_saved_flows_empty()}</div>
+			{/if}
 		</div>
+	</AdminSection>
+</AdminPageShell>
 
-		{#if totalPages > 1}
-			<div class="pagination">
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={page === 1}
-					onclick={() => goToPage(page - 1)}
-				>
-					Previous
-				</button>
-				<span class="pagination-info">Page {page} of {totalPages} ({total} total)</span>
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={page === totalPages}
-					onclick={() => goToPage(page + 1)}
-				>
-					Next
-				</button>
+<Modal
+	open={importModalOpen}
+	onClose={closeImportModal}
+	title={$LL.admin_flows_import_modal_title()}
+	size="lg"
+>
+	<div class="import-form">
+		<p>{$LL.admin_flows_import_modal_description()}</p>
+		<label class="file-input">
+			<span>{$LL.admin_flows_import_json()}</span>
+			<input type="file" accept="application/json,.json" onchange={handleImportFile} />
+		</label>
+		<textarea
+			class="admin-input"
+			rows="14"
+			bind:value={importJson}
+			placeholder="JSON"
+			spellcheck="false"
+		></textarea>
+		{#if importError}
+			<div class="flow-empty flow-empty--error" role="alert">{importError}</div>
+		{/if}
+		{#if importValidationRan}
+			<div class="import-validation" data-valid={importValidationIssues.length === 0}>
+				<strong>
+					{importValidationIssues.length === 0
+						? $LL.admin_flows_validation_valid()
+						: $LL.admin_flows_validation_failed()}
+				</strong>
+				{#if importValidationIssues.length > 0}
+					<ul>
+						{#each importValidationIssues as issue, index (`${issue.code}-${issue.path ?? ''}-${index}`)}
+							<li data-level={issue.level}>
+								<code>{issue.code}</code>
+								<span>{issue.message}</span>
+								{#if issue.node_id || issue.edge_id || issue.path}
+									<small>{issue.node_id || issue.edge_id || issue.path}</small>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</div>
 		{/if}
-	{/if}
-</div>
-
-<!-- Delete Confirmation Dialog -->
-<Modal
-	open={showDeleteDialog && !!flowToDelete}
-	onClose={closeDeleteDialog}
-	title="Delete Flow"
-	size="md"
->
-	{#if deleteError}
-		<div class="alert alert-error">{deleteError}</div>
-	{/if}
-
-	<p class="modal-description">
-		Are you sure you want to delete the flow <strong>{flowToDelete?.name}</strong>?
-	</p>
-	<p class="danger-text">This action cannot be undone.</p>
+	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			Cancel
+		<button type="button" class="btn btn-secondary" onclick={closeImportModal} disabled={importing}>
+			{$LL.admin_flows_cancel()}
 		</button>
-		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-			{deleting ? 'Deleting...' : 'Delete'}
+		<button
+			type="button"
+			class="btn btn-primary"
+			onclick={importFlowJson}
+			disabled={importing || !importJson.trim()}
+		>
+			{importing ? $LL.admin_flows_importing() : $LL.admin_flows_import_json()}
 		</button>
 	{/snippet}
 </Modal>
 
 <style>
-	/* Flow Engine Toggle Panel Styles */
-	.flow-engine-toggle-panel {
-		margin-bottom: 1.5rem;
-		padding: 1rem 1.25rem;
-	}
-
-	.flow-engine-toggle-row {
-		display: flex;
-		justify-content: space-between;
+	.btn {
+		min-height: var(--control-height, 36px);
+		display: inline-flex;
 		align-items: center;
-		gap: 1rem;
+		justify-content: center;
+		gap: 8px;
+		padding: 0 13px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font: inherit;
+		font-weight: 800;
+		text-decoration: none;
+		cursor: pointer;
 	}
 
-	.flow-engine-info {
-		flex: 1;
+	.btn:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
-	.flow-engine-title {
+	.btn-primary {
+		border-color: var(--button-primary-bg, var(--color-accent));
+		background: var(--button-primary-bg, var(--color-accent));
+		color: var(--button-primary-color, var(--color-accent-contrast));
+	}
+
+	.btn-primary:hover {
+		color: var(--button-primary-color, var(--color-accent-contrast));
+	}
+
+	.btn:disabled {
+		opacity: 0.68;
+		cursor: wait;
+	}
+
+	.flow-overview {
+		display: grid;
+		grid-template-columns:
+			minmax(150px, 1fr) auto minmax(150px, 1fr) auto minmax(150px, 1fr)
+			auto minmax(150px, 1fr);
+		align-items: center;
+		gap: 12px;
+	}
+
+	.overview-step {
+		min-height: 82px;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 16px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+	}
+
+	.overview-step__icon {
+		width: 34px;
+		height: 34px;
+		display: inline-flex;
+		flex: 0 0 auto;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
+		font-size: 1.25rem;
+	}
+
+	.overview-step strong,
+	.overview-step span {
+		display: block;
+	}
+
+	.overview-step strong {
+		color: var(--color-text);
+		font-size: 0.92rem;
+	}
+
+	.overview-step span {
+		margin-top: 3px;
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+
+	.overview-arrow {
+		color: var(--color-text-muted);
+		font-size: 1.1rem;
+	}
+
+	.flow-list {
+		display: grid;
+		gap: 12px;
+	}
+
+	.flow-empty {
+		padding: 18px;
+		border: 1px dashed var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		font-size: 0.88rem;
+	}
+
+	.flow-empty span {
+		display: block;
+		margin-top: 4px;
+		font-size: 0.78rem;
+	}
+
+	.flow-empty--error {
+		border-color: color-mix(in srgb, var(--color-danger) 54%, var(--color-border));
+		color: var(--color-danger);
+	}
+
+	.import-form {
+		display: grid;
+		gap: 12px;
+	}
+
+	.import-form p {
 		margin: 0;
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text-muted);
+		font-size: 0.86rem;
+		line-height: 1.55;
 	}
 
-	.flow-engine-description {
-		margin: 0.25rem 0 0;
-		font-size: 0.875rem;
-		color: var(--text-secondary);
+	.file-input {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		width: fit-content;
+		min-height: var(--control-height, 36px);
+		padding: 0 13px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.84rem;
+		font-weight: 800;
+		cursor: pointer;
 	}
 
-	.flow-engine-control {
+	.file-input:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.file-input input {
+		display: none;
+	}
+
+	.import-validation {
+		display: grid;
+		gap: 10px;
+		padding: 12px;
+		border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-danger) 9%, var(--color-surface));
+		color: var(--color-text);
+		font-size: 0.84rem;
+	}
+
+	.import-validation[data-valid='true'] {
+		border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 9%, var(--color-surface));
+	}
+
+	.import-validation ul {
+		display: grid;
+		gap: 8px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.import-validation li {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 4px 8px;
+		padding: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+	}
+
+	.import-validation li[data-level='warning'] {
+		border-color: color-mix(in srgb, var(--color-warning) 44%, var(--color-border));
+	}
+
+	.import-validation code {
+		color: var(--color-text-muted);
+		font-size: 0.74rem;
+	}
+
+	.import-validation small {
+		grid-column: 1 / -1;
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+	}
+
+	.admin-input {
+		width: 100%;
+		padding: 10px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--control-bg, var(--color-surface));
+		color: var(--color-text);
+		font: inherit;
+		font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+		line-height: 1.5;
+		resize: vertical;
+	}
+
+	.flow-row {
+		min-height: 112px;
+		display: grid;
+		grid-template-columns: minmax(280px, 1fr) minmax(220px, auto) auto;
+		align-items: center;
+		gap: 18px;
+		padding: 18px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface);
+		color: var(--color-text);
+		text-decoration: none;
+		transition:
+			border-color 120ms ease,
+			background 120ms ease,
+			transform 120ms ease;
+	}
+
+	.flow-row:hover {
+		border-color: var(--color-accent);
+		background: var(--color-surface-muted);
+		transform: translateY(-1px);
+	}
+
+	.flow-row__main {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: 14px;
+		min-width: 0;
 	}
 
-	.loading-text {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
+	.flow-row__icon {
+		width: 42px;
+		height: 42px;
+		display: inline-flex;
+		flex: 0 0 auto;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		color: var(--color-accent);
+		font-size: 1.3rem;
 	}
 
-	.saving-indicator {
-		margin-top: 0.5rem;
-		font-size: 0.75rem;
-		color: var(--text-secondary);
+	.flow-row__title {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
 	}
 
-	.alert-sm {
-		margin-top: 0.75rem;
-		padding: 0.5rem 0.75rem;
-		font-size: 0.875rem;
+	.flow-row__title strong {
+		font-size: 1rem;
 	}
 
-	.alert-warning {
-		background-color: rgba(234, 179, 8, 0.1);
-		border: 1px solid rgba(234, 179, 8, 0.3);
-		border-radius: 0.375rem;
-		padding: 0.75rem 1rem;
-		color: var(--text-primary);
-		margin-bottom: 1rem;
+	.flow-row p {
+		margin: 5px 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.86rem;
+		line-height: 1.55;
+	}
+
+	.flow-row__meta {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.flow-row__meta span,
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		min-height: 24px;
+		padding: 0 9px;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-weight: 800;
+	}
+
+	.status-badge[data-state='preview'] {
+		border-color: color-mix(in srgb, var(--color-success) 55%, transparent);
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
+	}
+
+	.status-badge[data-state='planning'] {
+		border-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
+		background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+		color: var(--color-warning);
+	}
+
+	.status-badge[data-state='draft'] {
+		border-color: color-mix(in srgb, var(--color-info, var(--color-accent)) 55%, transparent);
+		background: color-mix(in srgb, var(--color-info, var(--color-accent)) 12%, transparent);
+		color: var(--color-info, var(--color-accent));
+	}
+
+	.status-badge[data-state='published'] {
+		border-color: color-mix(in srgb, var(--color-success) 55%, transparent);
+		background: color-mix(in srgb, var(--color-success) 12%, transparent);
+		color: var(--color-success);
+	}
+
+	.status-badge[data-state='disabled'] {
+		border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
+		background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+		color: var(--color-danger);
+	}
+
+	.flow-row__arrow {
+		color: var(--color-text-muted);
+	}
+
+	@media (max-width: 980px) {
+		.flow-overview,
+		.flow-row {
+			grid-template-columns: 1fr;
+		}
+
+		.overview-arrow,
+		.flow-row__arrow {
+			display: none;
+		}
+
+		.flow-row__meta {
+			justify-content: flex-start;
+		}
 	}
 </style>

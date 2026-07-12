@@ -6,7 +6,7 @@
 	import {
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
-		type SAMLAttributePreset,
+		type SAMLAttributeReleaseConfirmationValueDisplay,
 		type SAMLFederationTrustProfile,
 		type SAMLMetadataAggregatePreviewResponse,
 		type SAMLMetadataBatchStatus,
@@ -17,12 +17,35 @@
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+	import {
+		adminConsentStatementsAPI,
+		type ConsentStatement
+	} from '$lib/api/admin-consent-statements';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingFieldMappingSetSummary
+	} from '$lib/api/admin-identity-mapping';
+	import {
+		AdminDataTable,
+		AdminPageHeader,
+		AdminPageShell,
+		AdminSection
+	} from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import { selectMetadataNameIdFormat } from '$lib/saml/metadata-nameid';
 	import { onMount } from 'svelte';
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';
 	type AggregateImportMode = 'selected_entities' | 'trust_profile';
 	type SetupTarget = SAMLProvider['providerType'] | 'federation';
+	type AttributeReleaseConfirmationMode =
+		| 'disabled'
+		| 'uapprove_once'
+		| 'uapprove_until_attributes_change'
+		| 'every_time';
+	type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
+
+	const samlAttributeReleaseConfirmationCategory = 'saml_attribute_release_confirmation';
 
 	const nameIdFormats = [
 		{
@@ -47,10 +70,10 @@
 		}
 	];
 
-	let presets = $state<SAMLAttributePreset[]>([]);
+	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let setupTarget = $state<SetupTarget>('saml_idp');
 	let providerType = $state<SAMLProvider['providerType']>('saml_idp');
-	let setupMode = $state<SetupMode>('manual');
+	let setupMode = $state<SetupMode>('metadata_url');
 	let name = $state('');
 	let description = $state('');
 	let enabled = $state(true);
@@ -65,6 +88,7 @@
 	let sloUrl = $state('');
 	let certificate = $state('');
 	let nameIdFormat = $state(nameIdFormats[0].value);
+	let metadataNameIdFormats = $state<string[]>([]);
 	let allowPost = $state(true);
 	let allowRedirect = $state(true);
 	let signAssertions = $state(true);
@@ -83,9 +107,15 @@
 		'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
-	let attributePresetId = $state('basic.v1');
-	let attributeMappingJson = $state('{\n\t"email": "email",\n\t"name": "name"\n}');
-	let loadingPresets = $state(false);
+	let identityMappingFieldMappingSetId = $state('');
+	let attributeReleaseConfirmationMode = $state<AttributeReleaseConfirmationMode>(
+		'uapprove_until_attributes_change'
+	);
+	let attributeReleaseValueDisplay =
+		$state<SAMLAttributeReleaseConfirmationValueDisplay>('masked_values');
+	let attributeReleaseTemplateStatementId = $state('');
+	let attributeReleaseButtonLabel = $state('');
+	let consentStatements = $state<ConsentStatement[]>([]);
 	let importingMetadata = $state(false);
 	let metadataImported = $state(false);
 	let metadataImportedProviderType = $state<SAMLProvider['providerType'] | ''>('');
@@ -132,6 +162,16 @@
 	let metadataImportTimer: ReturnType<typeof setTimeout> | undefined;
 	let providerCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
 	let federationCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
+	const attributeReleaseTemplateStatements = $derived(
+		consentStatements.filter(
+			(statement) => statement.category === samlAttributeReleaseConfirmationCategory
+		)
+	);
+	const selectedAttributeReleaseTemplate = $derived(
+		attributeReleaseTemplateStatements.find(
+			(statement) => statement.id === attributeReleaseTemplateStatementId
+		) || null
+	);
 
 	onMount(() => {
 		const trustProfileId = $page.url.searchParams.get('trustProfileId');
@@ -144,18 +184,31 @@
 			providerType = requestedType === 'sp' ? 'saml_sp' : 'saml_idp';
 			setupTarget = providerType;
 		}
-		void loadPresets();
+		void loadFieldMappingSets();
+		void loadConsentStatements();
 	});
 
-	async function loadPresets() {
-		loadingPresets = true;
+	async function loadFieldMappingSets() {
 		try {
-			const result = await adminSAMLAPI.listAttributePresets();
-			presets = result.presets;
+			const result = await adminIdentityMappingAPI.listFieldMappingSets();
+			fieldMappingSets = result.fieldMappingSets || [];
 		} catch {
-			presets = [];
-		} finally {
-			loadingPresets = false;
+			fieldMappingSets = [];
+		}
+	}
+
+	async function loadConsentStatements() {
+		try {
+			const result = await adminConsentStatementsAPI.listStatements();
+			consentStatements = result.statements || [];
+			if (!attributeReleaseTemplateStatementId) {
+				attributeReleaseTemplateStatementId =
+					consentStatements.find(
+						(statement) => statement.category === samlAttributeReleaseConfirmationCategory
+					)?.id || '';
+			}
+		} catch {
+			consentStatements = [];
 		}
 	}
 
@@ -185,15 +238,6 @@
 		}
 	}
 
-	function parseMapping(): Record<string, string> {
-		if (!attributeMappingJson.trim()) return {};
-		const parsed = JSON.parse(attributeMappingJson) as unknown;
-		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error($LL.admin_saml_detail_mapping_object_error());
-		}
-		return parsed as Record<string, string>;
-	}
-
 	function selectedBindings() {
 		const bindings: string[] = [];
 		if (allowPost) bindings.push('post');
@@ -201,14 +245,122 @@
 		return bindings;
 	}
 
-	function selectedPresetConfig(): SAMLProviderConfig {
-		if (providerType !== 'saml_sp' || !attributePresetId) return {};
-		const preset = presets.find((item) => item.id === attributePresetId);
+	function attributeReleaseConfirmationEnabled(): boolean {
+		return providerType === 'saml_sp' && attributeReleaseConfirmationMode !== 'disabled';
+	}
+
+	function attributeReleaseConsentMode(): AttributeReleaseConsentMode {
+		if (attributeReleaseConfirmationMode === 'every_time') return 'every_time';
+		if (attributeReleaseConfirmationMode === 'uapprove_once') return 'once';
+		return 'until_attributes_change';
+	}
+
+	function attributeReleaseConfirmationConfig(): Partial<SAMLProviderConfig> {
+		if (providerType !== 'saml_sp') return {};
+		if (!attributeReleaseConfirmationEnabled()) {
+			return {
+				attributeReleaseConsent: {
+					enabled: false,
+					mode: 'once'
+				}
+			};
+		}
 		return {
-			attributePresetId,
-			attributePresetVersion: preset?.version,
-			attributeReleasePolicy: preset?.attributeReleasePolicy
+			attributeReleaseConsent: {
+				enabled: true,
+				mode: attributeReleaseConsentMode()
+			},
+			attributeReleaseConfirmation: {
+				compatibilityMode:
+					attributeReleaseConfirmationMode === 'every_time' ? 'custom' : 'uapprove',
+				valueDisplay: attributeReleaseValueDisplay,
+				templateStatementId: attributeReleaseTemplateStatementId || undefined,
+				buttonLabel: attributeReleaseButtonLabel.trim() || undefined
+			}
 		};
+	}
+
+	function identityMappingConfig(): Partial<SAMLProviderConfig> {
+		if (!identityMappingFieldMappingSetId) return {};
+		return {
+			identityMapping: {
+				fieldMappingSetId: identityMappingFieldMappingSetId,
+				destinationNamespace: providerType === 'saml_sp' ? 'saml.attribute' : undefined
+			}
+		};
+	}
+
+	function tAttributeRelease(key: string): string {
+		const ja = getLocale() === 'ja';
+		const labels: Record<string, { ja: string; en: string }> = {
+			title: { ja: '属性送信確認', en: 'Attribute release confirmation' },
+			description: {
+				ja: 'uApprove互換の確認画面として、SPに送信する属性をユーザーに提示します。',
+				en: 'Show a uApprove-compatible confirmation before releasing attributes to this SP.'
+			},
+			displayMode: { ja: '表示モード', en: 'Display mode' },
+			disabled: { ja: '表示しない', en: 'Do not show' },
+			uapproveOnce: {
+				ja: 'uApprove互換: 初回のみ確認',
+				en: 'uApprove compatible: first time only'
+			},
+			uapproveChanged: {
+				ja: 'uApprove互換: 属性が変わったら再確認',
+				en: 'uApprove compatible: ask again when attributes change'
+			},
+			everyTime: { ja: '毎回確認', en: 'Ask every SSO' },
+			valueDisplay: { ja: '属性値表示', en: 'Attribute value display' },
+			names: { ja: '属性名のみ', en: 'Attribute names only' },
+			maskedValues: { ja: '値をマスクして表示', en: 'Show masked values' },
+			fullValues: { ja: '属性値を表示', en: 'Show values' },
+			template: { ja: '通知文テンプレート', en: 'Notice template' },
+			noTemplate: { ja: 'テンプレートを指定しない', en: 'No template' },
+			buttonLabel: { ja: 'ユーザー画面のボタン文言', en: 'User-facing button label' },
+			buttonPlaceholder: { ja: '同意して続行', en: 'Accept and continue' },
+			preview: { ja: 'ユーザー表示プレビュー', en: 'User-facing display preview' },
+			previewCaption: {
+				ja: 'この枠は保存される設定値ではなく、ユーザーに表示される確認画面の見え方です。',
+				en: 'This preview shows what users will see. It is not a saved configuration summary.'
+			},
+			previewTitle: {
+				ja: 'このサービスに以下の情報を送信します。',
+				en: 'The following information will be released to this service.'
+			},
+			service: { ja: 'サービス', en: 'Service' },
+			entityId: { ja: '送信先', en: 'Destination' },
+			attribute: { ja: '属性', en: 'Attribute' },
+			value: { ja: '値', en: 'Value' },
+			remember: {
+				ja: 'このサービスへの属性送信を次回から表示しない',
+				en: 'Do not show this again for this service'
+			},
+			rememberChanged: {
+				ja: '送信される属性が変更された場合は再度表示されます。',
+				en: 'It will be shown again if released attributes change.'
+			},
+			noAttributes: {
+				ja: '送信属性の詳細はField Mapping Setの設定ページで確認してください。',
+				en: 'Use the Field Mapping Set settings page to review the released attributes.'
+			},
+			enabled: { ja: '有効', en: 'Enabled' }
+		};
+		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
+	}
+
+	function attributeReleaseButtonText(): string {
+		return attributeReleaseButtonLabel.trim() || tAttributeRelease('buttonPlaceholder');
+	}
+
+	function releasePreviewAttributes(): Array<{ name: string; value: string }> {
+		return [];
+	}
+
+	function displayPreviewValue(value: string): string {
+		if (attributeReleaseValueDisplay === 'names') return '-';
+		if (attributeReleaseValueDisplay === 'full_values') return value;
+		if (!value) return '';
+		if (value.length <= 4) return '••••';
+		return `${value.slice(0, 2)}••••${value.slice(-2)}`;
 	}
 
 	function buildManualConfig(): SAMLProviderConfig {
@@ -219,13 +371,16 @@
 			entityId: entityId.trim(),
 			sloUrl: sloUrl.trim() || undefined,
 			nameIdFormat,
-			attributeMapping: parseMapping(),
+			metadataNameIdFormats:
+				metadataNameIdFormats.length > 0 ? [...metadataNameIdFormats] : undefined,
+			attributeMapping: {},
 			allowedBindings: selectedBindings()
 		};
 
 		if (providerType === 'saml_idp') {
 			return {
 				...config,
+				...identityMappingConfig(),
 				providerName: providerName.trim() || undefined,
 				ssoUrl: ssoUrl.trim(),
 				certificate: certificate.trim(),
@@ -254,7 +409,8 @@
 			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
-			...selectedPresetConfig()
+			...identityMappingConfig(),
+			...attributeReleaseConfirmationConfig()
 		};
 	}
 
@@ -263,7 +419,7 @@
 			description: description.trim() || undefined,
 			logoUrl: logoUrl.trim() || undefined,
 			iconName: iconName || undefined,
-			...selectedPresetConfig()
+			...identityMappingConfig()
 		};
 		if (providerType !== 'saml_sp') {
 			return {
@@ -287,7 +443,9 @@
 			logoutRequestSignaturePolicy,
 			authnContextClassRefMode,
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
-			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined
+			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
+			...identityMappingConfig(),
+			...attributeReleaseConfirmationConfig()
 		};
 	}
 
@@ -300,12 +458,21 @@
 		acsUrl = config.acsUrl || '';
 		sloUrl = config.sloUrl || '';
 		certificate = config.certificate || '';
-		nameIdFormat = config.nameIdFormat || nameIdFormats[0].value;
+		metadataNameIdFormats = config.metadataNameIdFormats ?? [];
+		const importedProfile = config.samlProfile || samlProfile;
+		nameIdFormat =
+			providerType === 'saml_sp'
+				? selectMetadataNameIdFormat({
+						advertisedFormats: metadataNameIdFormats,
+						profile: importedProfile,
+						currentFormat: config.nameIdFormat
+					})
+				: config.nameIdFormat || nameIdFormats[0].value;
 		allowPost = config.allowedBindings?.includes('post') ?? true;
 		allowRedirect = config.allowedBindings?.includes('redirect') ?? true;
 		signAssertions = config.signAssertions ?? true;
 		signResponses = config.signResponses ?? true;
-		samlProfile = config.samlProfile || samlProfile;
+		samlProfile = importedProfile;
 		authnRequestSignaturePolicy = config.authnRequestSignaturePolicy || 'optional';
 		logoutRequestSignaturePolicy = config.logoutRequestSignaturePolicy || 'required';
 		authnContextPolicyMode = config.authnContextPolicy?.mode || 'observe';
@@ -325,9 +492,7 @@
 			'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport';
 		passkeyAuthnContextClassRef =
 			config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
-		attributePresetId =
-			config.attributePresetId || (providerType === 'saml_sp' ? attributePresetId : '');
-		attributeMappingJson = JSON.stringify(config.attributeMapping || {}, null, 2);
+		identityMappingFieldMappingSetId = config.identityMapping?.fieldMappingSetId || '';
 		if (!name.trim() && config.entityId) {
 			name = config.entityId;
 		}
@@ -346,6 +511,46 @@
 		return type === 'saml_sp'
 			? $LL.admin_saml_detail_service_provider()
 			: $LL.admin_saml_detail_identity_provider();
+	}
+
+	function samlProfileHint() {
+		switch (samlProfile) {
+			case 'strict':
+				return $LL.admin_saml_detail_profile_hint_strict();
+			case 'academic_publisher':
+				return $LL.admin_saml_detail_profile_hint_academic_publisher();
+			case 'legacy':
+				return $LL.admin_saml_detail_profile_hint_legacy();
+			default:
+				return $LL.admin_saml_detail_profile_hint_baseline();
+		}
+	}
+
+	function handleSamlProfileChange(event: Event) {
+		samlProfile = (event.currentTarget as HTMLSelectElement).value;
+		if (metadataImported && providerType === 'saml_sp') {
+			nameIdFormat = selectMetadataNameIdFormat({
+				advertisedFormats: metadataNameIdFormats,
+				profile: samlProfile,
+				currentFormat: nameIdFormat
+			});
+		}
+	}
+
+	function metadataNameIdSelectionHint(): string {
+		const selected =
+			nameIdFormats.find((format) => format.value === nameIdFormat)?.label ?? nameIdFormat;
+		if (metadataNameIdFormats.length > 0) {
+			const advertised = metadataNameIdFormats
+				.map((value) => nameIdFormats.find((format) => format.value === value)?.label ?? value)
+				.join(', ');
+			return getLocale() === 'ja'
+				? `Metadata宣言: ${advertised} / 自動選択: ${selected}`
+				: `Metadata: ${advertised} / Selected automatically: ${selected}`;
+		}
+		return getLocale() === 'ja'
+			? `MetadataにNameIDFormat宣言がないため、${samlProfile}プロファイルの既定値「${selected}」を使用します。`
+			: `Metadata does not declare NameIDFormat. Using the ${samlProfile} profile default: ${selected}.`;
 	}
 
 	function isValidLoginLogoUrl(value: string): boolean {
@@ -372,6 +577,11 @@
 			return;
 		}
 
+		if (setupTarget === 'federation') {
+			metadataImportMessage = '';
+			metadataImportTone = 'success';
+			metadataImportError = '';
+		}
 		providerType = nextProviderType;
 		setupTarget = nextProviderType;
 	}
@@ -424,8 +634,7 @@
 		try {
 			const preview = await adminSAMLAPI.previewMetadata({
 				metadataUrl: metadataUrl.trim(),
-				samlProfile,
-				attributePresetId: attributePresetId || undefined
+				samlProfile
 			});
 			await applyMetadataPreview(preview, {
 				source: 'url',
@@ -457,8 +666,7 @@
 		try {
 			const preview = await adminSAMLAPI.previewMetadata({
 				metadataXml: metadataXml.trim(),
-				samlProfile,
-				attributePresetId: attributePresetId || undefined
+				samlProfile
 			});
 			await applyMetadataPreview(preview, { source: 'xml' });
 		} catch (err) {
@@ -514,6 +722,7 @@
 	function resetMetadataImportState() {
 		metadataImported = false;
 		metadataImportedProviderType = '';
+		metadataNameIdFormats = [];
 		aggregatePreview = null;
 		aggregateEntities = [];
 		aggregateEntityTotal = 0;
@@ -803,7 +1012,6 @@
 			aggregateBatch = await adminSAMLAPI.startAggregateBatchCreate(aggregatePreview.previewId, {
 				entityIds: selectedAggregateEntityIds,
 				samlProfile,
-				attributePresetId: attributePresetId || undefined,
 				enabled
 			});
 			if (aggregateBatchPolling) clearInterval(aggregateBatchPolling);
@@ -852,7 +1060,11 @@
 			if (providerType === 'saml_sp' && !acsUrl.trim()) {
 				return $LL.admin_saml_detail_sp_required();
 			}
-			parseMapping();
+		}
+		if (!identityMappingFieldMappingSetId) {
+			return getLocale() === 'ja'
+				? 'Field Mapping Setを選択してください。'
+				: 'Select a Field Mapping Set.';
 		}
 		return '';
 	}
@@ -899,7 +1111,6 @@
 				if (setupMode === 'metadata_xml') request.metadataXml = metadataXml.trim();
 				if (providerType === 'saml_sp') {
 					request.samlProfile = samlProfile;
-					request.attributePresetId = attributePresetId || undefined;
 				}
 			}
 
@@ -965,12 +1176,17 @@
 	</div>
 {/snippet}
 
-<div class="admin-page">
-	<a href="/admin/saml" class="back-link">← {$LL.admin_saml_detail_back()}</a>
+{#snippet pageActions()}
+	<a href="/admin/saml" class="btn btn-secondary">{$LL.admin_saml_detail_back()}</a>
+{/snippet}
 
-	<h1 class="page-title">
-		{isEditingFederationProfile ? $LL.admin_saml_new_edit_title() : $LL.admin_saml_new_title()}
-	</h1>
+<AdminPageShell>
+	<AdminPageHeader
+		title={isEditingFederationProfile
+			? $LL.admin_saml_new_edit_title()
+			: $LL.admin_saml_new_title()}
+		actions={pageActions}
+	/>
 
 	<form
 		onsubmit={(event) => {
@@ -996,7 +1212,7 @@
 		{/if}
 
 		{#if !aggregatePreview}
-			<div class="panel">
+			<AdminSection>
 				{#if setupTarget === 'federation'}
 					<ToggleSwitch
 						bind:checked={enabled}
@@ -1010,19 +1226,19 @@
 						description={$LL.admin_saml_detail_provider_status_desc()}
 					/>
 				{/if}
-			</div>
+			</AdminSection>
 		{/if}
 
 		{#if !isEditingFederationProfile}
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_saml_detail_saml_configuration()}</h2>
-				<p class="form-hint panel-hint">
+			<AdminSection title={$LL.admin_saml_detail_saml_configuration()}>
+				<p class="field-hint panel-hint">
 					{$LL.admin_saml_new_config_intro()}
 				</p>
 
 				<div class="metadata-import-row">
-					<div class="form-group metadata-import-input">
-						<label for="metadataUrl" class="form-label">{$LL.admin_saml_local_metadata_url()}</label
+					<div class="admin-field metadata-import-input">
+						<label for="metadataUrl" class="admin-field__label"
+							>{$LL.admin_saml_local_metadata_url()}</label
 						>
 						<input
 							id="metadataUrl"
@@ -1031,7 +1247,7 @@
 							oninput={handleMetadataUrlInput}
 							onchange={scheduleMetadataImport}
 							onpaste={scheduleMetadataImport}
-							class="form-input"
+							class="admin-input"
 							placeholder="https://example.com/saml/metadata"
 						/>
 					</div>
@@ -1051,7 +1267,7 @@
 				</div>
 
 				{#if importingMetadata}
-					<p class="form-hint loading-hint">
+					<p class="field-hint loading-hint">
 						<i class="i-ph-circle-notch loading-spinner"></i>
 						{$LL.admin_saml_new_metadata_loading_hint()}
 					</p>
@@ -1065,16 +1281,15 @@
 						{metadataImportMessage}
 					</p>
 				{:else}
-					<p class="form-hint">
+					<p class="field-hint">
 						{$LL.admin_saml_new_metadata_import_hint()}
 					</p>
 				{/if}
-			</div>
+			</AdminSection>
 		{/if}
 
 		{#if aggregatePreview}
-			<div class="panel">
-				<h2 class="panel-title">{$LL.admin_saml_new_aggregate_detected()}</h2>
+			<AdminSection title={$LL.admin_saml_new_aggregate_detected()}>
 				<p
 					class:form-success={aggregatePreview.verification.status === 'verified'}
 					class:form-warning={aggregatePreview.verification.status !== 'verified'}
@@ -1094,7 +1309,7 @@
 						class:template-card-selected={aggregateImportMode === 'selected_entities'}
 						onclick={() => (aggregateImportMode = 'selected_entities')}
 					>
-						<div class="i-ph-list-checks h-5 w-5 template-icon"></div>
+						<div class="i-ph-list-checks template-icon"></div>
 						<div class="template-name">{$LL.admin_saml_new_create_providers()}</div>
 						<div class="template-desc">{$LL.admin_saml_new_create_providers_desc()}</div>
 					</button>
@@ -1104,7 +1319,7 @@
 						class:template-card-selected={aggregateImportMode === 'trust_profile'}
 						onclick={() => (aggregateImportMode = 'trust_profile')}
 					>
-						<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
+						<div class="i-ph-shield-check template-icon"></div>
 						<div class="template-name">{$LL.admin_saml_new_federation_trust_profile()}</div>
 						<div class="template-desc">{$LL.admin_saml_new_federation_trust_profile_desc()}</div>
 					</button>
@@ -1113,58 +1328,58 @@
 				{#if aggregateImportMode === 'trust_profile'}
 					<div class="federation-profile-form">
 						<div class="form-grid">
-							<div class="form-group">
-								<label for="federationProfileName" class="form-label">
+							<div class="admin-field">
+								<label for="federationProfileName" class="admin-field__label">
 									{$LL.admin_saml_new_profile_name_required()}
 								</label>
 								<input
 									id="federationProfileName"
 									bind:value={federationProfileName}
-									class="form-input"
+									class="admin-input"
 									placeholder={$LL.admin_saml_new_profile_name_placeholder()}
 								/>
 							</div>
-							<div class="form-group">
-								<label for="federationProfilePolicy" class="form-label"
+							<div class="admin-field">
+								<label for="federationProfilePolicy" class="admin-field__label"
 									>{$LL.admin_saml_policy()}</label
 								>
 								<select
 									id="federationProfilePolicy"
 									bind:value={federationProfilePolicy}
-									class="form-select"
+									class="admin-select"
 								>
 									<option value="strict">Strict</option>
 									<option value="warn">Warn</option>
 									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
 							</div>
-							<div class="form-group form-group-full">
-								<label for="federationProfileUrlPattern" class="form-label">
+							<div class="admin-field admin-field--full">
+								<label for="federationProfileUrlPattern" class="admin-field__label">
 									{$LL.admin_saml_new_metadata_url_pattern_required()}
 								</label>
 								<input
 									id="federationProfileUrlPattern"
 									bind:value={federationProfileUrlPattern}
-									class="form-input"
+									class="admin-input"
 								/>
-								<p class="form-hint">
+								<p class="field-hint">
 									{$LL.admin_saml_new_exact_pattern_hint()}
 								</p>
 							</div>
-							<div class="form-group form-group-full">
-								<label for="federationProfileCertificate" class="form-label">
+							<div class="admin-field admin-field--full">
+								<label for="federationProfileCertificate" class="admin-field__label">
 									{$LL.admin_saml_new_federation_certificate_required()}
 								</label>
 								<div class="metadata-import-row certificate-url-row">
-									<div class="form-group metadata-import-input">
-										<label for="federationProfileCertificateUrl" class="form-label">
+									<div class="admin-field metadata-import-input">
+										<label for="federationProfileCertificateUrl" class="admin-field__label">
 											{$LL.admin_saml_new_certificate_url()}
 										</label>
 										<input
 											id="federationProfileCertificateUrl"
 											type="url"
 											bind:value={federationProfileCertificateUrl}
-											class="form-input"
+											class="admin-input"
 											placeholder="https://metadata.example.edu/federation-signer-2026.cer"
 										/>
 									</div>
@@ -1183,11 +1398,11 @@
 									id="federationProfileCertificate"
 									bind:value={federationProfileCertificate}
 									oninput={handleFederationCertificateInput}
-									class="form-input form-textarea monospace"
+									class="admin-input form-textarea monospace"
 									rows="8"
 									placeholder={$LL.admin_saml_new_certificate_input_placeholder()}
 								></textarea>
-								<p class="form-hint">
+								<p class="field-hint">
 									{$LL.admin_saml_new_federation_certificate_hint()}
 								</p>
 								<div class="certificate-actions">
@@ -1216,15 +1431,15 @@
 					</div>
 				{:else}
 					<div class="metadata-import-row">
-						<div class="form-group metadata-import-input">
-							<label for="aggregateSearch" class="form-label">
+						<div class="admin-field metadata-import-input">
+							<label for="aggregateSearch" class="admin-field__label">
 								{$LL.admin_saml_new_search_entities()}
 							</label>
 							<input
 								id="aggregateSearch"
 								type="search"
 								bind:value={aggregateEntityQuery}
-								class="form-input"
+								class="admin-input"
 								placeholder={$LL.admin_saml_new_search_placeholder()}
 								onkeydown={(event) => {
 									if (event.key === 'Enter') {
@@ -1245,13 +1460,13 @@
 
 					{#if aggregateKeywordFacets.length > 0}
 						<div class="aggregate-filter-row">
-							<div class="form-group aggregate-filter-category">
-								<label for="aggregateKeywordCategory" class="form-label">
+							<div class="admin-field aggregate-filter-category">
+								<label for="aggregateKeywordCategory" class="admin-field__label">
 									{$LL.admin_saml_new_keyword_category()}
 								</label>
 								<select
 									id="aggregateKeywordCategory"
-									class="form-select"
+									class="admin-select"
 									value={aggregateKeywordCategory}
 									onchange={handleAggregateCategoryChange}
 								>
@@ -1283,7 +1498,7 @@
 						</div>
 					{/if}
 
-					<p class="form-hint">
+					<p class="field-hint">
 						{$LL.admin_saml_new_aggregate_showing({
 							shown: aggregateEntities.length,
 							total: aggregateEntityTotal,
@@ -1351,14 +1566,13 @@
 						</div>
 					{/if}
 				{/if}
-			</div>
+			</AdminSection>
 		{/if}
 
 		{#if !aggregatePreview}
 			{#if !isEditingFederationProfile}
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_new_choose_provider_type()}</h2>
-					<p class="form-hint panel-hint">
+				<AdminSection title={$LL.admin_saml_new_choose_provider_type()}>
+					<p class="field-hint panel-hint">
 						{$LL.admin_saml_new_choose_provider_type_hint()}
 					</p>
 
@@ -1369,7 +1583,7 @@
 							class:template-card-selected={setupTarget === 'saml_idp'}
 							onclick={() => chooseProviderType('saml_idp')}
 						>
-							<div class="i-ph-identification-card h-5 w-5 template-icon"></div>
+							<div class="i-ph-identification-card template-icon"></div>
 							<div class="template-name">{$LL.admin_saml_detail_identity_provider()}</div>
 							<div class="template-desc">{$LL.admin_saml_new_external_login()}</div>
 						</button>
@@ -1380,7 +1594,7 @@
 							class:template-card-selected={setupTarget === 'saml_sp'}
 							onclick={() => chooseProviderType('saml_sp')}
 						>
-							<div class="i-ph-app-window h-5 w-5 template-icon"></div>
+							<div class="i-ph-app-window template-icon"></div>
 							<div class="template-name">{$LL.admin_saml_detail_service_provider()}</div>
 							<div class="template-desc">{$LL.admin_saml_new_authrim_as_idp()}</div>
 						</button>
@@ -1391,96 +1605,95 @@
 							class:template-card-selected={setupTarget === 'federation'}
 							onclick={chooseFederation}
 						>
-							<div class="i-ph-shield-check h-5 w-5 template-icon"></div>
+							<div class="i-ph-shield-check template-icon"></div>
 							<div class="template-name">{$LL.admin_saml_new_federation()}</div>
 							<div class="template-desc">{$LL.admin_saml_new_aggregate_metadata_trust()}</div>
 						</button>
 					</div>
 
 					{#if metadataImported && metadataImportedProviderType}
-						<p class="form-hint selected-metadata-role">
+						<p class="field-hint selected-metadata-role">
 							{$LL.admin_saml_new_imported_metadata_role({
 								role: providerTypeLabel(metadataImportedProviderType)
 							})}
 						</p>
 					{/if}
-				</div>
+				</AdminSection>
 			{/if}
 
 			{#if setupTarget === 'federation'}
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_new_federation_trust_profile()}</h2>
-					<p class="form-hint panel-hint">
+				<AdminSection title={$LL.admin_saml_new_federation_trust_profile()}>
+					<p class="field-hint panel-hint">
 						{$LL.admin_saml_new_federation_profile_hint()}
 					</p>
 
 					<div class="form-grid">
-						<div class="form-group">
-							<label for="manualFederationProfileName" class="form-label">
+						<div class="admin-field">
+							<label for="manualFederationProfileName" class="admin-field__label">
 								{$LL.admin_saml_new_profile_name_required()}
 							</label>
 							<input
 								id="manualFederationProfileName"
 								bind:value={federationProfileName}
-								class="form-input"
+								class="admin-input"
 								placeholder={$LL.admin_saml_new_profile_name_placeholder()}
 							/>
 						</div>
-						<div class="form-group">
-							<label for="manualFederationProfilePolicy" class="form-label">
+						<div class="admin-field">
+							<label for="manualFederationProfilePolicy" class="admin-field__label">
 								{$LL.admin_saml_policy()}
 							</label>
 							<select
 								id="manualFederationProfilePolicy"
 								bind:value={federationProfilePolicy}
-								class="form-select"
+								class="admin-select"
 							>
 								<option value="strict">Strict</option>
 								<option value="warn">Warn</option>
 								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 						</div>
-						<div class="form-group form-group-full">
-							<label for="manualFederationDescription" class="form-label">
+						<div class="admin-field admin-field--full">
+							<label for="manualFederationDescription" class="admin-field__label">
 								{$LL.admin_saml_detail_description()}
 							</label>
 							<textarea
 								id="manualFederationDescription"
 								bind:value={description}
-								class="form-input form-textarea"
+								class="admin-input form-textarea"
 								rows="3"
 								placeholder={$LL.admin_saml_new_federation_description_placeholder()}
 							></textarea>
 						</div>
-						<div class="form-group form-group-full">
-							<label for="manualFederationProfileUrlPattern" class="form-label">
+						<div class="admin-field admin-field--full">
+							<label for="manualFederationProfileUrlPattern" class="admin-field__label">
 								{$LL.admin_saml_new_metadata_url_pattern_required()}
 							</label>
 							<textarea
 								id="manualFederationProfileUrlPattern"
 								bind:value={federationProfileUrlPattern}
-								class="form-input form-textarea monospace"
+								class="admin-input form-textarea monospace"
 								rows="3"
 								placeholder="https://metadata.example.org/*"
 							></textarea>
-							<p class="form-hint">
+							<p class="field-hint">
 								{$LL.admin_saml_new_line_pattern_hint()}
 							</p>
 						</div>
-						<div class="form-group form-group-full">
-							<label for="manualFederationProfileCertificate" class="form-label">
+						<div class="admin-field admin-field--full">
+							<label for="manualFederationProfileCertificate" class="admin-field__label">
 								{$LL.admin_saml_new_federation_certificate_required()}
 							</label>
 							<div class="metadata-import-row certificate-url-row">
-								<div class="form-group metadata-import-input">
-									<label for="manualFederationProfileCertificateUrl" class="form-label">
+								<div class="admin-field metadata-import-input">
+									<label for="manualFederationProfileCertificateUrl" class="admin-field__label">
 										{$LL.admin_saml_new_certificate_url()}
 									</label>
 									<input
 										id="manualFederationProfileCertificateUrl"
 										type="url"
 										bind:value={federationProfileCertificateUrl}
-										class="form-input"
+										class="admin-input"
 										placeholder="https://metadata.example.edu/federation-signer-2026.cer"
 									/>
 								</div>
@@ -1499,11 +1712,11 @@
 								id="manualFederationProfileCertificate"
 								bind:value={federationProfileCertificate}
 								oninput={handleFederationCertificateInput}
-								class="form-input form-textarea monospace"
+								class="admin-input form-textarea monospace"
 								rows="10"
 								placeholder={$LL.admin_saml_new_certificate_input_placeholder()}
 							></textarea>
-							<p class="form-hint">
+							<p class="field-hint">
 								{$LL.admin_saml_new_federation_certificate_hint_shibboleth()}
 							</p>
 							<div class="certificate-actions">
@@ -1524,56 +1737,61 @@
 							{/if}
 						</div>
 					</div>
-				</div>
+				</AdminSection>
 			{:else}
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_detail_basic_information()}</h2>
-
+				<AdminSection title={$LL.admin_saml_detail_basic_information()}>
 					<div class="form-grid">
-						<div class="form-group">
-							<label for="name" class="form-label">{$LL.admin_saml_detail_name_required()}</label>
+						<div class="admin-field">
+							<label for="name" class="admin-field__label"
+								>{$LL.admin_saml_detail_name_required()}</label
+							>
 							<input
 								id="name"
 								type="text"
 								bind:value={name}
 								required
 								placeholder={providerType === 'saml_idp' ? 'e.g., MockSAML' : 'e.g., Salesforce SP'}
-								class="form-input"
+								class="admin-input"
 							/>
 						</div>
 
-						<div class="form-group">
-							<label for="nameIdFormat" class="form-label"
+						<div class="admin-field">
+							<label for="nameIdFormat" class="admin-field__label"
 								>{$LL.admin_saml_detail_nameid_format()}</label
 							>
-							<select id="nameIdFormat" bind:value={nameIdFormat} class="form-select">
+							<select id="nameIdFormat" bind:value={nameIdFormat} class="admin-select">
 								{#each nameIdFormats as format (format.value)}
 									<option value={format.value}>{format.label}</option>
 								{/each}
 							</select>
+							{#if metadataImported && providerType === 'saml_sp'}
+								<p class="field-hint">{metadataNameIdSelectionHint()}</p>
+							{/if}
 						</div>
 
-						<div class="form-group form-group-full">
-							<label for="description" class="form-label"
+						<div class="admin-field admin-field--full">
+							<label for="description" class="admin-field__label"
 								>{$LL.admin_saml_detail_description()}</label
 							>
 							<textarea
 								id="description"
 								bind:value={description}
-								class="form-input form-textarea"
+								class="admin-input form-textarea"
 								rows="3"
 								placeholder={$LL.admin_saml_new_description_placeholder()}
 							></textarea>
 						</div>
 
-						<div class="form-group form-group-full">
-							<label for="logoUrl" class="form-label">{$LL.admin_saml_detail_logo_url()}</label>
+						<div class="admin-field admin-field--full">
+							<label for="logoUrl" class="admin-field__label"
+								>{$LL.admin_saml_detail_logo_url()}</label
+							>
 							<div class="logo-url-field">
 								<input
 									id="logoUrl"
 									type="url"
 									bind:value={logoUrl}
-									class="form-input"
+									class="admin-input"
 									placeholder="https://example.com/logo.png"
 								/>
 								{#if logoUrl}
@@ -1582,12 +1800,12 @@
 									</div>
 								{/if}
 							</div>
-							<p class="form-hint">
+							<p class="field-hint">
 								{$LL.admin_saml_detail_logo_hint()}
 							</p>
 						</div>
 
-						<div class="form-group form-group-full">
+						<div class="admin-field admin-field--full">
 							<LoginProviderIconPicker
 								bind:value={iconName}
 								defaultIcon="buildings"
@@ -1596,11 +1814,10 @@
 							/>
 						</div>
 					</div>
-				</div>
+				</AdminSection>
 
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_new_configuration_method()}</h2>
-					<p class="form-hint panel-hint">
+				<AdminSection title={$LL.admin_saml_new_configuration_method()}>
+					<p class="field-hint panel-hint">
 						{$LL.admin_saml_new_configuration_method_hint()}
 					</p>
 
@@ -1611,7 +1828,7 @@
 							class:template-card-selected={setupMode === 'metadata_url'}
 							onclick={() => (setupMode = 'metadata_url')}
 						>
-							<div class="i-ph-link h-5 w-5 template-icon"></div>
+							<div class="i-ph-link template-icon"></div>
 							<div class="template-name">{$LL.admin_saml_local_metadata_url()}</div>
 							<div class="template-desc">{$LL.admin_saml_new_auto_fetch()}</div>
 						</button>
@@ -1622,7 +1839,7 @@
 							class:template-card-selected={setupMode === 'metadata_xml'}
 							onclick={() => (setupMode = 'metadata_xml')}
 						>
-							<div class="i-ph-file-code h-5 w-5 template-icon"></div>
+							<div class="i-ph-file-code template-icon"></div>
 							<div class="template-name">{$LL.admin_saml_new_metadata_xml()}</div>
 							<div class="template-desc">{$LL.admin_saml_new_paste_xml()}</div>
 						</button>
@@ -1633,45 +1850,43 @@
 							class:template-card-selected={setupMode === 'manual'}
 							onclick={() => (setupMode = 'manual')}
 						>
-							<div class="i-ph-sliders h-5 w-5 template-icon"></div>
+							<div class="i-ph-sliders template-icon"></div>
 							<div class="template-name">{$LL.admin_saml_new_manual()}</div>
 							<div class="template-desc">{$LL.admin_saml_new_direct_input()}</div>
 						</button>
 					</div>
-				</div>
+				</AdminSection>
 
-				<div class="panel">
-					<h2 class="panel-title">{$LL.admin_saml_detail_saml_configuration()}</h2>
-
+				<AdminSection title={$LL.admin_saml_detail_saml_configuration()}>
 					{#if setupMode === 'metadata_url'}
-						<div class="form-group">
-							<label for="metadataUrlMode" class="form-label">
+						<div class="admin-field">
+							<label for="metadataUrlMode" class="admin-field__label">
 								{$LL.admin_saml_new_metadata_url_required()}
 							</label>
 							<input
 								id="metadataUrlMode"
 								type="url"
 								bind:value={metadataUrl}
-								class="form-input"
+								class="admin-input"
 								placeholder="https://example.com/saml/metadata"
 							/>
-							<p class="form-hint">
+							<p class="field-hint">
 								{$LL.admin_saml_new_metadata_url_backend_hint()}
 							</p>
 						</div>
 					{:else if setupMode === 'metadata_xml'}
-						<div class="form-group">
-							<label for="metadataXml" class="form-label">
+						<div class="admin-field">
+							<label for="metadataXml" class="admin-field__label">
 								{$LL.admin_saml_new_metadata_xml_required()}
 							</label>
 							<textarea
 								id="metadataXml"
 								bind:value={metadataXml}
 								oninput={handleMetadataXmlInput}
-								class="form-input form-textarea monospace"
+								class="admin-input form-textarea monospace"
 								rows="12"
 							></textarea>
-							<p class="form-hint">
+							<p class="field-hint">
 								{$LL.admin_saml_new_metadata_xml_hint()}
 							</p>
 							<div class="form-actions compact-actions">
@@ -1702,30 +1917,36 @@
 						</div>
 					{:else}
 						<div class="form-grid">
-							<div class="form-group form-group-full">
-								<label for="entityId" class="form-label">{$LL.admin_saml_entity_id()} *</label>
-								<input id="entityId" type="text" bind:value={entityId} class="form-input" />
+							<div class="admin-field admin-field--full">
+								<label for="entityId" class="admin-field__label"
+									>{$LL.admin_saml_entity_id()} *</label
+								>
+								<input id="entityId" type="text" bind:value={entityId} class="admin-input" />
 							</div>
 
 							{#if providerType === 'saml_idp'}
-								<div class="form-group">
-									<label for="ssoUrl" class="form-label">{$LL.admin_saml_sso_url_required()}</label>
-									<input id="ssoUrl" type="url" bind:value={ssoUrl} class="form-input" />
+								<div class="admin-field">
+									<label for="ssoUrl" class="admin-field__label"
+										>{$LL.admin_saml_sso_url_required()}</label
+									>
+									<input id="ssoUrl" type="url" bind:value={ssoUrl} class="admin-input" />
 								</div>
 							{:else}
-								<div class="form-group">
-									<label for="acsUrl" class="form-label">{$LL.admin_saml_acs_url_required()}</label>
-									<input id="acsUrl" type="url" bind:value={acsUrl} class="form-input" />
+								<div class="admin-field">
+									<label for="acsUrl" class="admin-field__label"
+										>{$LL.admin_saml_acs_url_required()}</label
+									>
+									<input id="acsUrl" type="url" bind:value={acsUrl} class="admin-input" />
 								</div>
 							{/if}
 
-							<div class="form-group">
-								<label for="sloUrl" class="form-label">{$LL.admin_saml_slo_url()}</label>
-								<input id="sloUrl" type="url" bind:value={sloUrl} class="form-input" />
+							<div class="admin-field">
+								<label for="sloUrl" class="admin-field__label">{$LL.admin_saml_slo_url()}</label>
+								<input id="sloUrl" type="url" bind:value={sloUrl} class="admin-input" />
 							</div>
 
-							<div class="form-group form-group-full">
-								<label for="certificate" class="form-label">
+							<div class="admin-field admin-field--full">
+								<label for="certificate" class="admin-field__label">
 									{providerType === 'saml_idp'
 										? $LL.admin_saml_detail_signing_certificate_required()
 										: $LL.admin_saml_detail_sp_certificate()}
@@ -1734,11 +1955,11 @@
 									id="certificate"
 									bind:value={certificate}
 									oninput={handleProviderCertificateInput}
-									class="form-input form-textarea monospace"
+									class="admin-input form-textarea monospace"
 									rows="8"
 									placeholder="-----BEGIN CERTIFICATE-----"
 								></textarea>
-								<p class="form-hint">
+								<p class="field-hint">
 									{$LL.admin_saml_new_manual_certificate_hint()}
 								</p>
 								<div class="certificate-actions">
@@ -1760,18 +1981,6 @@
 									{@render certificatePreviewCard(providerCertificatePreview)}
 								{/if}
 							</div>
-
-							<div class="form-group form-group-full">
-								<label for="attributeMapping" class="form-label">
-									{$LL.admin_saml_detail_attribute_mapping_json()}
-								</label>
-								<textarea
-									id="attributeMapping"
-									bind:value={attributeMappingJson}
-									class="form-input form-textarea monospace"
-									rows="6"
-								></textarea>
-							</div>
 						</div>
 
 						<div class="form-checkbox-group compact-checkboxes">
@@ -1785,34 +1994,32 @@
 							</label>
 						</div>
 					{/if}
-				</div>
+				</AdminSection>
 
 				{#if providerType === 'saml_idp'}
-					<div class="panel">
-						<h2 class="panel-title">{$LL.admin_saml_detail_sp_login_policy()}</h2>
-
+					<AdminSection title={$LL.admin_saml_detail_sp_login_policy()}>
 						<div class="form-grid">
-							<div class="form-group">
-								<label for="providerName" class="form-label">
+							<div class="admin-field">
+								<label for="providerName" class="admin-field__label">
 									{$LL.admin_saml_detail_sp_display_name()}
 								</label>
 								<input
 									id="providerName"
 									type="text"
 									bind:value={providerName}
-									class="form-input"
+									class="admin-input"
 									placeholder="Authrim"
 								/>
 							</div>
 
-							<div class="form-group">
-								<label for="jitEmailLinkingPolicy" class="form-label">
+							<div class="admin-field">
+								<label for="jitEmailLinkingPolicy" class="admin-field__label">
 									{$LL.admin_saml_detail_jit_linking_policy()}
 								</label>
 								<select
 									id="jitEmailLinkingPolicy"
 									bind:value={jitEmailLinkingPolicy}
-									class="form-select"
+									class="admin-select"
 								>
 									<option value="email_linking"
 										>{$LL.admin_saml_detail_jit_existing_or_create()}</option
@@ -1825,7 +2032,32 @@
 								</p>
 							</div>
 
-							<div class="form-group form-group-full">
+							<div class="admin-field">
+								<label for="identityMappingFieldMappingInbound" class="admin-field__label">
+									{$LL.admin_saml_detail_identity_mapping_policy()}
+								</label>
+								<select
+									id="identityMappingFieldMappingInbound"
+									bind:value={identityMappingFieldMappingSetId}
+									class="admin-select"
+								>
+									<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option
+									>
+									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+										<option value={fieldMappingSet.id}>
+											{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
+										</option>
+									{/each}
+								</select>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_identity_mapping_policy_hint()}
+									<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
+										{$LL.admin_saml_detail_identity_mapping_policy_link()}
+									</a>
+								</p>
+							</div>
+
+							<div class="admin-field admin-field--full">
 								<label class="form-checkbox-label">
 									<input
 										type="checkbox"
@@ -1839,14 +2071,14 @@
 								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="logoutRequestSignaturePolicy" class="form-label">
+							<div class="admin-field">
+								<label for="logoutRequestSignaturePolicy" class="admin-field__label">
 									{$LL.admin_saml_detail_idp_logout_signature()}
 								</label>
 								<select
 									id="logoutRequestSignaturePolicy"
 									bind:value={logoutRequestSignaturePolicy}
-									class="form-select"
+									class="admin-select"
 								>
 									<option value="required">{$LL.admin_saml_detail_required()}</option>
 									<option value="optional">{$LL.admin_saml_detail_optional()}</option>
@@ -1857,136 +2089,365 @@
 								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="authnContextPolicyMode" class="form-label">
+							<div class="admin-field">
+								<label for="authnContextPolicyMode" class="admin-field__label">
 									{$LL.admin_saml_detail_authn_context_policy()}
 								</label>
 								<select
 									id="authnContextPolicyMode"
 									bind:value={authnContextPolicyMode}
-									class="form-select"
+									class="admin-select"
 								>
 									<option value="observe">{$LL.admin_saml_detail_observe()}</option>
 									<option value="require_any">{$LL.admin_saml_detail_require_allowed()}</option>
 								</select>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_authn_context_policy_hint()}
+								</p>
 							</div>
 
-							<div class="form-group form-group-full">
-								<label for="allowedAuthnContextClassRefs" class="form-label">
+							<div class="admin-field admin-field--full">
+								<label for="allowedAuthnContextClassRefs" class="admin-field__label">
 									{$LL.admin_saml_detail_allowed_authn_context()}
 								</label>
 								<textarea
 									id="allowedAuthnContextClassRefs"
 									bind:value={allowedAuthnContextClassRefs}
-									class="form-input form-textarea monospace"
+									class="admin-input form-textarea monospace"
 									rows="3"
 								></textarea>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_allowed_authn_context_hint()}
+								</p>
 							</div>
 						</div>
-					</div>
+					</AdminSection>
 				{/if}
 
 				{#if providerType === 'saml_sp'}
-					<div class="panel">
-						<h2 class="panel-title">{$LL.admin_saml_detail_sp_policy()}</h2>
-
+					<AdminSection title={$LL.admin_saml_detail_sp_policy()}>
 						<div class="form-grid">
-							<div class="form-group">
-								<label for="samlProfile" class="form-label">{$LL.admin_saml_detail_profile()}</label
+							<div class="admin-field">
+								<label for="samlProfile" class="admin-field__label"
+									>{$LL.admin_saml_detail_profile()}</label
 								>
-								<select id="samlProfile" bind:value={samlProfile} class="form-select">
+								<select
+									id="samlProfile"
+									value={samlProfile}
+									onchange={handleSamlProfileChange}
+									class="admin-select"
+								>
 									<option value="baseline">Baseline</option>
 									<option value="strict">Strict</option>
 									<option value="academic_publisher">Academic Publisher</option>
 									<option value="legacy">Legacy</option>
 								</select>
+								<p class="field-hint">{samlProfileHint()}</p>
 							</div>
 
-							<div class="form-group">
-								<label for="attributePreset" class="form-label">
-									{$LL.admin_saml_detail_attribute_preset()}
+							<div class="admin-field">
+								<label for="identityMappingFieldMapping" class="admin-field__label">
+									{$LL.admin_saml_detail_identity_mapping_policy()}
 								</label>
 								<select
-									id="attributePreset"
-									bind:value={attributePresetId}
-									class="form-select"
-									disabled={loadingPresets}
+									id="identityMappingFieldMapping"
+									bind:value={identityMappingFieldMappingSetId}
+									class="admin-select"
 								>
-									<option value="">{$LL.admin_saml_detail_none()}</option>
-									{#each presets as preset (preset.id)}
-										<option value={preset.id}>{preset.label}</option>
+									<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option
+									>
+									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+										<option value={fieldMappingSet.id}>
+											{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
+										</option>
 									{/each}
 								</select>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_identity_mapping_policy_hint()}
+									<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
+										{$LL.admin_saml_detail_identity_mapping_policy_link()}
+									</a>
+								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="authnRequestSignaturePolicy" class="form-label">
+							<div class="admin-field admin-field--full attribute-release-confirmation">
+								<div class="attribute-release-confirmation__header">
+									<div>
+										<h3>{tAttributeRelease('title')}</h3>
+										<p>{tAttributeRelease('description')}</p>
+									</div>
+									<span
+										class="status-badge"
+										data-state={attributeReleaseConfirmationEnabled() ? 'active' : 'inactive'}
+									>
+										{attributeReleaseConfirmationEnabled()
+											? tAttributeRelease('enabled')
+											: $LL.admin_saml_detail_disabled()}
+									</span>
+								</div>
+
+								<div class="form-grid compact-release-grid">
+									<div class="admin-field">
+										<label for="attributeReleaseConfirmationMode" class="admin-field__label">
+											{tAttributeRelease('displayMode')}
+										</label>
+										<select
+											id="attributeReleaseConfirmationMode"
+											bind:value={attributeReleaseConfirmationMode}
+											class="admin-select"
+										>
+											<option value="disabled">{tAttributeRelease('disabled')}</option>
+											<option value="uapprove_once">{tAttributeRelease('uapproveOnce')}</option>
+											<option value="uapprove_until_attributes_change">
+												{tAttributeRelease('uapproveChanged')}
+											</option>
+											<option value="every_time">{tAttributeRelease('everyTime')}</option>
+										</select>
+									</div>
+
+									<div class="admin-field">
+										<label for="attributeReleaseValueDisplay" class="admin-field__label">
+											{tAttributeRelease('valueDisplay')}
+										</label>
+										<select
+											id="attributeReleaseValueDisplay"
+											bind:value={attributeReleaseValueDisplay}
+											class="admin-select"
+											disabled={!attributeReleaseConfirmationEnabled()}
+										>
+											<option value="names">{tAttributeRelease('names')}</option>
+											<option value="masked_values">{tAttributeRelease('maskedValues')}</option>
+											<option value="full_values">{tAttributeRelease('fullValues')}</option>
+										</select>
+									</div>
+
+									<div class="admin-field">
+										<label for="attributeReleaseTemplate" class="admin-field__label">
+											{tAttributeRelease('template')}
+										</label>
+										<select
+											id="attributeReleaseTemplate"
+											bind:value={attributeReleaseTemplateStatementId}
+											class="admin-select"
+											disabled={!attributeReleaseConfirmationEnabled()}
+										>
+											<option value="">{tAttributeRelease('noTemplate')}</option>
+											{#each attributeReleaseTemplateStatements as statement (statement.id)}
+												<option value={statement.id}>{statement.slug}</option>
+											{/each}
+										</select>
+									</div>
+
+									<div class="admin-field">
+										<label for="attributeReleaseButtonLabel" class="admin-field__label">
+											{tAttributeRelease('buttonLabel')}
+										</label>
+										<input
+											id="attributeReleaseButtonLabel"
+											type="text"
+											class="admin-input"
+											bind:value={attributeReleaseButtonLabel}
+											placeholder={tAttributeRelease('buttonPlaceholder')}
+											disabled={!attributeReleaseConfirmationEnabled()}
+										/>
+									</div>
+								</div>
+
+								{#if attributeReleaseConfirmationEnabled()}
+									<div class="attribute-release-preview" aria-label={tAttributeRelease('preview')}>
+										<div class="attribute-release-preview__copy">
+											<div>
+												<p class="attribute-release-preview__eyebrow">
+													{tAttributeRelease('preview')}
+												</p>
+												<p class="attribute-release-preview__caption">
+													{tAttributeRelease('previewCaption')}
+												</p>
+											</div>
+											<p>{tAttributeRelease('previewTitle')}</p>
+											<dl>
+												<div>
+													<dt>{tAttributeRelease('service')}</dt>
+													<dd>{name || '-'}</dd>
+												</div>
+												<div>
+													<dt>{tAttributeRelease('entityId')}</dt>
+													<dd>{entityId || '-'}</dd>
+												</div>
+												{#if selectedAttributeReleaseTemplate}
+													<div>
+														<dt>{tAttributeRelease('template')}</dt>
+														<dd>{selectedAttributeReleaseTemplate.slug}</dd>
+													</div>
+												{/if}
+											</dl>
+										</div>
+
+										{#if releasePreviewAttributes().length > 0}
+											<AdminDataTable compact>
+												<thead>
+													<tr>
+														<th>{tAttributeRelease('attribute')}</th>
+														<th>{tAttributeRelease('value')}</th>
+													</tr>
+												</thead>
+												<tbody>
+													{#each releasePreviewAttributes() as attribute, index (`${attribute.name}-${index}`)}
+														<tr>
+															<td>{attribute.name}</td>
+															<td>{displayPreviewValue(attribute.value)}</td>
+														</tr>
+													{/each}
+												</tbody>
+											</AdminDataTable>
+										{:else}
+											<p class="field-hint">{tAttributeRelease('noAttributes')}</p>
+										{/if}
+
+										<label class="preview-check">
+											<input
+												type="checkbox"
+												checked={attributeReleaseConfirmationMode !== 'every_time'}
+												disabled
+											/>
+											<span>
+												{tAttributeRelease('remember')}
+												<small>{tAttributeRelease('rememberChanged')}</small>
+											</span>
+										</label>
+
+										<div class="attribute-release-preview__actions">
+											<button type="button" class="btn btn-primary" disabled>
+												{attributeReleaseButtonText()}
+											</button>
+											<button type="button" class="btn btn-secondary" disabled>
+												{$LL.admin_consent_statements_cancel()}
+											</button>
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<div class="admin-field">
+								<span class="admin-field__label">
 									{$LL.admin_saml_detail_authn_request_signature()}
-								</label>
-								<select
+								</span>
+								<div
 									id="authnRequestSignaturePolicy"
-									bind:value={authnRequestSignaturePolicy}
-									class="form-select"
+									class="radio-card-group"
+									role="radiogroup"
+									aria-label={$LL.admin_saml_detail_authn_request_signature()}
 								>
-									<option value="optional">{$LL.admin_saml_detail_optional()}</option>
-									<option value="required">{$LL.admin_saml_detail_required()}</option>
-									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
-								</select>
+									<label class="radio-card">
+										<input type="radio" bind:group={authnRequestSignaturePolicy} value="optional" />
+										<span>{$LL.admin_saml_detail_optional()}</span>
+									</label>
+									<label class="radio-card">
+										<input type="radio" bind:group={authnRequestSignaturePolicy} value="required" />
+										<span>{$LL.admin_saml_detail_required()}</span>
+									</label>
+									<label class="radio-card">
+										<input type="radio" bind:group={authnRequestSignaturePolicy} value="disabled" />
+										<span>{$LL.admin_saml_detail_disabled()}</span>
+									</label>
+								</div>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_authn_request_signature_hint()}
+								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="spLogoutRequestSignaturePolicy" class="form-label">
+							<div class="admin-field">
+								<span class="admin-field__label">
 									{$LL.admin_saml_detail_logout_request_signature()}
-								</label>
-								<select
+								</span>
+								<div
 									id="spLogoutRequestSignaturePolicy"
-									bind:value={logoutRequestSignaturePolicy}
-									class="form-select"
+									class="radio-card-group"
+									role="radiogroup"
+									aria-label={$LL.admin_saml_detail_logout_request_signature()}
 								>
-									<option value="required">{$LL.admin_saml_detail_required()}</option>
-									<option value="optional">{$LL.admin_saml_detail_optional()}</option>
-									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
-								</select>
+									<label class="radio-card">
+										<input
+											type="radio"
+											bind:group={logoutRequestSignaturePolicy}
+											value="required"
+										/>
+										<span>{$LL.admin_saml_detail_required()}</span>
+									</label>
+									<label class="radio-card">
+										<input
+											type="radio"
+											bind:group={logoutRequestSignaturePolicy}
+											value="optional"
+										/>
+										<span>{$LL.admin_saml_detail_optional()}</span>
+									</label>
+									<label class="radio-card">
+										<input
+											type="radio"
+											bind:group={logoutRequestSignaturePolicy}
+											value="disabled"
+										/>
+										<span>{$LL.admin_saml_detail_disabled()}</span>
+									</label>
+								</div>
 								<p class="field-hint">
 									{$LL.admin_saml_detail_sp_signature_hint()}
 								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="authnContextClassRefMode" class="form-label">
+							<div class="admin-field">
+								<span class="admin-field__label">
 									{$LL.admin_saml_detail_authn_context_mode()}
-								</label>
-								<select
+								</span>
+								<div
 									id="authnContextClassRefMode"
-									bind:value={authnContextClassRefMode}
-									class="form-select"
+									class="radio-card-group"
+									role="radiogroup"
+									aria-label={$LL.admin_saml_detail_authn_context_mode()}
 								>
-									<option value="session">{$LL.admin_saml_detail_session_aware()}</option>
-									<option value="legacy_static">{$LL.admin_saml_detail_legacy_static()}</option>
-								</select>
+									<label class="radio-card">
+										<input type="radio" bind:group={authnContextClassRefMode} value="session" />
+										<span>{$LL.admin_saml_detail_session_aware()}</span>
+									</label>
+									<label class="radio-card">
+										<input
+											type="radio"
+											bind:group={authnContextClassRefMode}
+											value="legacy_static"
+										/>
+										<span>{$LL.admin_saml_detail_legacy_static()}</span>
+									</label>
+								</div>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_authn_context_mode_hint()}
+								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="defaultAuthnContextClassRef" class="form-label">
+							<div class="admin-field">
+								<label for="defaultAuthnContextClassRef" class="admin-field__label">
 									{$LL.admin_saml_detail_default_authn_context()}
 								</label>
 								<input
 									id="defaultAuthnContextClassRef"
 									type="text"
 									bind:value={defaultAuthnContextClassRef}
-									class="form-input"
+									class="admin-input"
 								/>
+								<p class="field-hint">
+									{$LL.admin_saml_detail_default_authn_context_hint()}
+								</p>
 							</div>
 
-							<div class="form-group">
-								<label for="passkeyAuthnContextClassRef" class="form-label">
+							<div class="admin-field">
+								<label for="passkeyAuthnContextClassRef" class="admin-field__label">
 									{$LL.admin_saml_detail_passkey_authn_context()}
 								</label>
 								<input
 									id="passkeyAuthnContextClassRef"
 									type="text"
 									bind:value={passkeyAuthnContextClassRef}
-									class="form-input"
+									class="admin-input"
 								/>
 							</div>
 						</div>
@@ -2003,7 +2464,7 @@
 								description={$LL.admin_saml_detail_sign_responses_desc()}
 							/>
 						</div>
-					</div>
+					</AdminSection>
 				{/if}
 			{/if}
 		{/if}
@@ -2059,7 +2520,7 @@
 			</button>
 		</div>
 	</form>
-</div>
+</AdminPageShell>
 
 <style>
 	.panel-hint {
@@ -2109,9 +2570,9 @@
 		gap: 10px;
 		margin-top: 12px;
 		padding: 12px;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 8px;
-		background: var(--color-surface-subtle, #f8fafc);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-subtle);
 	}
 
 	.certificate-preview-header {
@@ -2129,13 +2590,13 @@
 	}
 
 	.certificate-preview-grid span {
-		color: var(--color-text-muted, #657083);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		font-weight: 600;
 	}
 
 	.certificate-preview-grid code {
-		color: var(--color-text, #111827);
+		color: var(--color-text);
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		overflow-wrap: anywhere;
@@ -2145,7 +2606,7 @@
 	.certificate-warnings {
 		display: grid;
 		gap: 6px;
-		color: var(--color-danger, #dc2626);
+		color: var(--color-danger);
 		font-size: 0.8125rem;
 	}
 
@@ -2154,10 +2615,10 @@
 		gap: 8px;
 		margin-top: 16px;
 		padding: 12px;
-		border: 1px solid rgba(220, 38, 38, 0.35);
-		border-radius: 8px;
-		background: rgba(220, 38, 38, 0.08);
-		color: var(--color-danger, #dc2626);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+		border-radius: var(--radius-control);
+		background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+		color: var(--color-danger);
 		font-size: 0.875rem;
 	}
 
@@ -2175,13 +2636,13 @@
 
 	.form-success {
 		margin: 8px 0 0;
-		color: var(--color-success, #22c55e);
+		color: var(--color-success);
 		font-size: 0.875rem;
 	}
 
 	.form-warning {
 		margin: 8px 0 0;
-		color: var(--color-warning, #b08800);
+		color: var(--color-warning);
 		font-size: 0.875rem;
 	}
 
@@ -2202,7 +2663,7 @@
 	.federation-profile-form {
 		margin-top: 16px;
 		padding-top: 16px;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.form-textarea {
@@ -2217,7 +2678,7 @@
 		gap: 12px;
 	}
 
-	.logo-url-field .form-input {
+	.logo-url-field .admin-input {
 		flex: 1;
 	}
 
@@ -2227,9 +2688,9 @@
 		height: 40px;
 		flex: 0 0 40px;
 		place-items: center;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 8px;
-		background: var(--color-surface-subtle, #f8fafc);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-subtle);
 	}
 
 	.logo-url-preview img {
@@ -2247,13 +2708,196 @@
 		padding-top: 4px;
 	}
 
+	.field-hint-link {
+		display: inline-flex;
+		margin-left: 8px;
+		color: var(--color-accent);
+		font-weight: 700;
+		text-decoration: none;
+	}
+
+	.field-hint-link:hover {
+		text-decoration: underline;
+	}
+
+	.attribute-release-confirmation {
+		display: grid;
+		gap: 16px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-subtle);
+	}
+
+	.attribute-release-confirmation__header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.attribute-release-confirmation__header h3 {
+		margin: 0 0 4px;
+		color: var(--color-text);
+		font-size: 0.95rem;
+	}
+
+	.attribute-release-confirmation__header p {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+
+	.compact-release-grid {
+		gap: 12px;
+	}
+
+	.radio-card-group {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+		gap: 8px;
+	}
+
+	.radio-card {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 38px;
+		padding: 8px 10px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.8125rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.radio-card:hover {
+		border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+	}
+
+	.radio-card:has(input:checked) {
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
+	}
+
+	.radio-card input {
+		flex: 0 0 auto;
+		margin: 0;
+	}
+
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		min-height: 24px;
+		padding: 2px 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.status-badge[data-state='active'] {
+		color: var(--color-success);
+		border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 8%, transparent);
+	}
+
+	.attribute-release-preview {
+		display: grid;
+		gap: 12px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
+	}
+
+	.attribute-release-preview__copy {
+		display: grid;
+		gap: 10px;
+	}
+
+	.attribute-release-preview__copy p {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.9rem;
+		font-weight: 700;
+	}
+
+	.attribute-release-preview__copy .attribute-release-preview__eyebrow {
+		margin: 0 0 3px;
+		color: var(--color-accent);
+		font-size: 0.75rem;
+		font-weight: 800;
+		text-transform: uppercase;
+	}
+
+	.attribute-release-preview__copy .attribute-release-preview__caption {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		line-height: 1.45;
+	}
+
+	.attribute-release-preview dl {
+		display: grid;
+		gap: 6px;
+		margin: 0;
+	}
+
+	.attribute-release-preview dl div {
+		display: grid;
+		grid-template-columns: 110px minmax(0, 1fr);
+		gap: 8px;
+	}
+
+	.attribute-release-preview dt {
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		font-weight: 700;
+	}
+
+	.attribute-release-preview dd {
+		margin: 0;
+		color: var(--color-text);
+		font-size: 0.8125rem;
+		overflow-wrap: anywhere;
+	}
+
+	.preview-check {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		color: var(--color-text);
+		font-size: 0.8125rem;
+	}
+
+	.preview-check small {
+		display: block;
+		margin-top: 2px;
+		color: var(--color-text-muted);
+		line-height: 1.4;
+	}
+
+	.attribute-release-preview__actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 8px;
+	}
+
 	.aggregate-entity-list {
 		display: grid;
 		gap: 8px;
 		max-height: 420px;
 		overflow: auto;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
 		padding: 8px;
 	}
 
@@ -2284,15 +2928,15 @@
 		gap: 6px;
 		min-height: 32px;
 		padding: 5px 8px;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 999px;
-		background: var(--color-surface, #fff);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full, 999px);
+		background: var(--color-surface);
 		font-size: 0.8125rem;
 		white-space: nowrap;
 	}
 
 	.aggregate-keyword-option small {
-		color: var(--color-text-muted, #657083);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 	}
 
@@ -2302,15 +2946,15 @@
 		gap: 10px;
 		align-items: start;
 		padding: 8px;
-		border-radius: 6px;
+		border-radius: var(--radius-control);
 	}
 
 	.aggregate-entity-logo {
 		width: 32px;
 		height: 32px;
-		border: 1px solid var(--color-border, #d8dde6);
-		border-radius: 6px;
-		background: var(--color-surface, #fff);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface);
 		object-fit: contain;
 	}
 
@@ -2319,7 +2963,7 @@
 	}
 
 	.aggregate-entity-row:hover {
-		background: var(--color-surface-muted, #f6f7f9);
+		background: var(--color-surface-muted);
 	}
 
 	.aggregate-entity-row span {
@@ -2329,7 +2973,7 @@
 	}
 
 	.aggregate-entity-row small {
-		color: var(--color-text-muted, #657083);
+		color: var(--color-text-muted);
 		overflow-wrap: anywhere;
 	}
 
