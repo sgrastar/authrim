@@ -378,12 +378,7 @@ export function validateFlowRuntimeContractPackage(input: unknown): FlowValidati
   }
 
   if (input.editor !== undefined) {
-    issues.push(
-      ...validateFlowEditorState(input.editor).map((issue) => ({
-        ...issue,
-        path: issue.path?.replace('$.editor', '$.editor') ?? '$.editor',
-      }))
-    );
+    issues.push(...validateFlowEditorState(input.editor));
   }
 
   return issues;

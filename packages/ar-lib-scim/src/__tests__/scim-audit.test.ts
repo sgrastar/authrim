@@ -390,15 +390,14 @@ describe('logScimAudit (non-blocking wrapper)', () => {
     expect(mockCreateAuditLog).toHaveBeenCalled();
   });
 
-  it('should be truly non-blocking (returns void immediately)', () => {
+  it('should be truly non-blocking (returns void without waiting for the audit log)', () => {
+    mockCreateAuditLog.mockImplementationOnce(() => new Promise(() => {}));
     const context = createMockContext({});
 
-    const startTime = Date.now();
-    logScimAudit(context, 'scim.user.create', 'scim_user', 'user-123', {});
-    const endTime = Date.now();
+    const result = logScimAudit(context, 'scim.user.create', 'scim_user', 'user-123', {});
 
-    // Should return almost immediately (< 5ms)
-    expect(endTime - startTime).toBeLessThan(5);
+    expect(result).toBeUndefined();
+    expect(mockCreateAuditLog).toHaveBeenCalledOnce();
   });
 
   it('should support warning severity for delete operations', async () => {
