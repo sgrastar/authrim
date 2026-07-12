@@ -199,7 +199,7 @@ export interface Env {
   // PII Encryption
   ENABLE_PII_ENCRYPTION?: string; // "true" to enable PII field encryption
   PII_ENCRYPTION_KEY?: string; // 32-byte hex string (64 characters) for AES-256
-  PII_ENCRYPTION_ALGORITHM?: string; // AES-256-GCM (default), AES-256-CBC, or NONE
+  PII_ENCRYPTION_ALGORITHM?: string; // AES-256-GCM (default) or NONE
   PII_ENCRYPTION_FIELDS?: string; // Comma-separated list of fields to encrypt
   PII_ENCRYPTION_KEY_VERSION?: string; // Key version for rotation (default: 1)
 
@@ -347,6 +347,9 @@ export interface Env {
   ADMIN_UI_URL?: string; // URL of the Admin UI deployment (e.g., https://admin.example.com)
   ADMIN_WEBAUTHN_ALLOWED_ORIGINS?: string; // Optional extra Admin WebAuthn origins
   LOGIN_UI_ENABLED?: string; // "true" when Login UI is deployed/enabled for this environment
+  // Where browser Login UI flows execute: 'issuer' keeps the stable tenant issuer origin.
+  // When unset, legacy deployments infer issuer hosting from BASE_DOMAIN.
+  LOGIN_UI_EXECUTION_HOST_MODE?: 'issuer' | 'dedicated';
   TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
   TRUSTED_DOMAINS?: string; // Comma-separated trusted client domains
 

@@ -28,6 +28,21 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('DO-KEY-MANAGER');
 const MAX_KEY_MANAGER_JSON_BODY_BYTES = 64 * 1024;
+const SECRET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
+const FORBIDDEN_SECRET_REFS = new Set(['__proto__', 'constructor', 'prototype']);
+
+class InvalidSecretRefError extends Error {
+  constructor() {
+    super('Invalid secret reference');
+    this.name = 'InvalidSecretRefError';
+  }
+}
+
+function validateSecretRef(secretRef: string): void {
+  if (!SECRET_REF_PATTERN.test(secretRef) || FORBIDDEN_SECRET_REFS.has(secretRef)) {
+    throw new InvalidSecretRefError();
+  }
+}
 
 /**
  * Stored key metadata (RSA)
@@ -883,12 +898,15 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   private async getOrCreateSecret(secretRef: string): Promise<StoredSecret> {
+    validateSecretRef(secretRef);
     await this.initializeState();
 
     const state = this.getState();
     state.secrets ??= {};
 
-    const existing = state.secrets[secretRef];
+    const existing = Object.getOwnPropertyDescriptor(state.secrets, secretRef)?.value as
+      | StoredSecret
+      | undefined;
     if (existing) {
       return existing;
     }
@@ -898,7 +916,12 @@ export class KeyManager extends DurableObject<Env> {
       active: this.generateSecretVersion(),
       updatedAt: Date.now(),
     };
-    state.secrets[secretRef] = secret;
+    Object.defineProperty(state.secrets, secretRef, {
+      value: secret,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
     await this.saveState();
     return secret;
   }
@@ -1835,6 +1858,12 @@ export class KeyManager extends DurableObject<Env> {
 
       return new Response('Not Found', { status: 404 });
     } catch (error) {
+      if (error instanceof InvalidSecretRefError) {
+        return new Response(JSON.stringify({ error: 'Bad Request', message: error.message }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       log.error('Request error', {}, error as Error);
       return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
         status: 500,

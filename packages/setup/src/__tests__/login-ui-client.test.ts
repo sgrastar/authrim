@@ -368,6 +368,51 @@ describe('ensureLoginUiClient', () => {
     expect(createBody).not.toHaveProperty('dpop_bound_access_tokens');
   });
 
+  it('updates Login UI callbacks and origins when the canonical issuer changes', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          clients: [
+            {
+              client_id: 'client-login-ui',
+              client_name: 'Login UI',
+              is_trusted: true,
+              redirect_uris: ['https://old-login.example.test/callback'],
+              token_endpoint_auth_method: 'none',
+              require_pkce: true,
+              browser_refresh_token_policy: 'disabled',
+              description:
+                'System-managed public OAuth client used by the built-in Authrim Login UI.',
+            },
+          ],
+          pagination: { total: 1 },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ client: { client_id: 'client-login-ui' } }));
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://auth.example.test',
+      loginUiUrl: 'https://auth.example.test',
+      adminApiSecretPath,
+      maxRetries: 1,
+    });
+
+    expect(result).toEqual({ success: true, clientId: 'client-login-ui', alreadyExists: true });
+    const updateBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(updateBody.redirect_uris).toEqual([
+      'https://auth.example.test/callback',
+      'https://auth.example.test/reauth/callback',
+      'https://auth.example.test/device/callback',
+      'https://auth.example.test/ciba/callback',
+    ]);
+    expect(updateBody.web_origin_registry).toMatchObject({
+      origins: [{ origin: 'https://auth.example.test' }],
+    });
+  });
+
   it('builds token_session browser client metadata with DPoP-bound refresh token opt-in', () => {
     expect(
       buildBrowserClientMetadata({

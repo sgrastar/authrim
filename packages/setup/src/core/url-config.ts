@@ -233,11 +233,24 @@ export function resolveLoginUiEntryUrl(
   config: Partial<AuthrimConfig> | null | undefined,
   options: ResolveEnvironmentUrlOptions
 ): string {
+  return `${resolveLoginUiExecutionOrigin(config, options)}/login`;
+}
+
+/**
+ * Resolve the browser origin that executes Login UI flows.
+ *
+ * A workers.dev-only deployment keeps Login UI on its dedicated Worker origin.
+ * Issuer-hosted UI is used once the UI shares the API host or tenant hosts are enabled.
+ */
+export function resolveLoginUiExecutionOrigin(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
   if (isMultiTenantConfigured(config) || config?.urls?.loginUi?.sameAsApi === true) {
-    return `${resolveIssuerUrl(config, options)}/login`;
+    return resolveIssuerUrl(config, options);
   }
 
-  return `${resolveSharedLoginUiBaseUrl(config, options)}/login`;
+  return resolveSharedLoginUiBaseUrl(config, options);
 }
 
 export function resolveAdminUiEntryUrl(

@@ -18,7 +18,7 @@ import type { Env } from '../types/env';
 /**
  * Supported encryption algorithms
  */
-export type EncryptionAlgorithm = 'AES-256-GCM' | 'AES-256-CBC' | 'NONE';
+export type EncryptionAlgorithm = 'AES-256-GCM' | 'NONE';
 
 /**
  * PII fields that can be encrypted
@@ -119,7 +119,7 @@ export const ENCRYPTION_CONFIG_METADATA: Record<
     label: 'Encryption Algorithm',
     description:
       'Algorithm for PII encryption. AES-256-GCM (recommended) provides authenticated encryption.',
-    options: ['AES-256-GCM', 'AES-256-CBC', 'NONE'],
+    options: ['AES-256-GCM', 'NONE'],
   },
   PII_ENCRYPTION_FIELDS: {
     type: 'multiselect',
@@ -151,7 +151,6 @@ function parseBool(value: string | undefined, defaultValue: boolean): boolean {
  */
 const ALGORITHM_MAP: Record<string, EncryptionAlgorithm> = {
   'AES-256-GCM': 'AES-256-GCM',
-  'AES-256-CBC': 'AES-256-CBC',
   NONE: 'NONE',
 };
 

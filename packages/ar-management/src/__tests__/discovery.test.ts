@@ -327,6 +327,29 @@ describe('discovery API', () => {
     expect(body.ui.title_text).toBe('Find your workspace');
   });
 
+  it('returns the dedicated Login UI URL for a workers.dev-only single tenant', async () => {
+    const { app, env } = createDiscoveryApp({
+      BASE_DOMAIN: undefined,
+      ISSUER_URL: 'https://single-ar-router.example.workers.dev',
+      UI_URL: 'https://single-ar-login-ui.example.workers.dev',
+      LOGIN_UI_EXECUTION_HOST_MODE: 'dedicated',
+    });
+
+    const response = await app.request(
+      'https://single-ar-login-ui.example.workers.dev/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'tenant_code', value: 'default' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { candidate: { login_url: string } };
+    expect(body.candidate.login_url).toBe('https://single-ar-login-ui.example.workers.dev/login');
+  });
+
   it('uses platform login-entry settings for the common entry host', async () => {
     const kv = createMockKV({
       'settings:platform:login-entry': JSON.stringify({

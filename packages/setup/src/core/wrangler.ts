@@ -790,6 +790,7 @@ export function generateEnvVars(
     config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
   const multiTenantEnabled = !!multiTenantBaseDomain;
   const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true;
+  const loginUiRunsOnIssuer = loginUiUsesApiDomain || multiTenantEnabled;
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
@@ -805,9 +806,10 @@ export function generateEnvVars(
       workersSubdomain
     );
   }
-  // UI_URL: when sameAsApi=true, UI is proxied through the API/tenant domain.
-  // Multi-tenant deployments with a separate Login UI domain keep UI_URL on that
-  // Login UI origin and pass the tenant host at runtime.
+  // UI_URL remains the Login UI deployment origin used for service-to-service
+  // configuration. Browser login execution is explicitly pinned to the issuer
+  // below, so a single-tenant custom domain can become the primary tenant of a
+  // multi-tenant deployment without changing its Login UI origin.
   const apiUrlForUi = normalizeWorkersDevUrl(
     config.urls?.api?.custom || config.urls?.api?.auto || '',
     workersSubdomain
@@ -918,6 +920,12 @@ export function generateEnvVars(
   if (component === 'ar-auth' || component === 'ar-management' || component === 'ar-saml') {
     vars['UI_URL'] = uiUrl;
     vars['LOGIN_UI_ENABLED'] = config.components.loginUi ? 'true' : 'false';
+    if (component === 'ar-auth' && config.components.loginUi) {
+      // workers.dev-only deployments use the Login UI Worker's own origin.
+      // Once Login UI shares the API/issuer host (or tenant hosts are enabled),
+      // execute browser flows on the issuer.
+      vars['LOGIN_UI_EXECUTION_HOST_MODE'] = loginUiRunsOnIssuer ? 'issuer' : 'dedicated';
+    }
   }
 
   if (component === 'ar-auth' || component === 'ar-management') {
@@ -938,7 +946,7 @@ export function generateEnvVars(
     // Cookie SameSite configuration based on origin relationship
     // If UI is served from same domain as API (via proxy), use 'Lax' (more secure)
     // If UI is on different domain, use 'None' (required for cross-origin)
-    const loginUiSameOrigin = loginUiUsesApiDomain;
+    const loginUiSameOrigin = config.components.loginUi && loginUiRunsOnIssuer;
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
     vars['ADMIN_UI_URL'] = adminUiUrl;
@@ -1047,12 +1055,16 @@ export function generateEnvVars(
       }
     }
 
+    // A dedicated Login UI keeps browser traffic off Router UI paths. When the
+    // UI shares the API/issuer host (or tenant hosts are enabled), Router owns
+    // both the root proxy behaviour and Login UI paths.
     const loginProxyEnabled = config.urls?.loginUi?.sameAsApi === true || multiTenantEnabled;
     const loginUiHostMode =
       config.urls?.loginUi?.sameAsApi === true || getUrlHost(uiUrl) === getUrlHost(apiUrlForUi)
         ? 'shared'
         : 'dedicated';
     vars['ENABLE_LOGIN_UI_PROXY'] = loginProxyEnabled ? 'true' : 'false';
+    vars['ENABLE_LOGIN_UI_PATH_PROXY'] = loginProxyEnabled ? 'true' : 'false';
     if (uiUrl) {
       vars['LOGIN_UI_URL'] = uiUrl;
       vars['LOGIN_UI_HOST_MODE'] = loginUiHostMode;

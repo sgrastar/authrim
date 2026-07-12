@@ -405,6 +405,7 @@ describe('Authorization Handler', () => {
     it('routes OIDC certification clients to built-in login without global conformance mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -467,6 +468,7 @@ describe('Authorization Handler', () => {
     it('should use UI_URL for separate Login UI redirects in single-tenant mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
 
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -481,6 +483,25 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://login.example.com/login');
       expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
       expect(redirectUrl.searchParams.get('tenant_host')).toBe('test.example.com');
+    });
+
+    it('should use the issuer for issuer-hosted single-tenant Login UI redirects', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
+
+      const response = await app.request(
+        'https://test.example.com/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      expect(new URL(location!).origin + new URL(location!).pathname).toBe(
+        'https://test.example.com/login'
+      );
     });
 
     it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {

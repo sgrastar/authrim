@@ -77,6 +77,7 @@ ENABLE_CLIENT_CREDENTIALS
 |----------|------|---------|-------------|
 | `ISSUER_URL` | string | - | OAuth/OIDC issuer URL (e.g., `https://auth.example.com`) |
 | `UI_URL` | string | - | Login/consent UI URL |
+| `LOGIN_UI_EXECUTION_HOST_MODE` | `issuer` \| `dedicated` | legacy inference | Browser Login UI execution origin. `issuer` serves flows at the canonical issuer `/login`; `dedicated` uses the separate Login UI origin (the workers.dev-only default). |
 | `BASE_DOMAIN` | string | - | Base domain for multi-tenant deployment |
 | `TRUSTED_DOMAINS` | string | - | Comma-separated list of trusted redirect domains |
 | `ALLOWED_ORIGINS` | string | - | CORS allowed origins |

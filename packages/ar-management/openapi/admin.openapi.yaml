@@ -33264,7 +33264,6 @@ components:
             recommendations: []
             supportedAlgorithms:
               - AES-256-GCM
-              - AES-256-CBC
               - NONE
             allEncryptableFields:
               - email
@@ -55491,9 +55490,15 @@ components:
           type: boolean
         allowedIssuers:
           type: array
+          description: >-
+            Trusted external ID-JAG issuer identifiers. Each value must be a public HTTPS URL
+            without credentials, query parameters, or a fragment. The issuer's OpenID Provider
+            metadata and JWKS are discovered at runtime and used to verify subject-token
+            signatures, issuer, audience, and expiration.
           items:
             type: string
             format: uri
+            pattern: '^https://[^?#]+$'
         maxTokenLifetime:
           type: integer
         includeTenantClaim:

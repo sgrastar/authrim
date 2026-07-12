@@ -555,6 +555,38 @@ describe('KeyManager Durable Object', () => {
       expect(rotated.active.value).not.toBe(initial.active.value);
       expect(rotated.previous?.value).toBe(initial.active.value);
     });
+
+    it.each(['__proto__', 'constructor', 'prototype'])(
+      'should reject unsafe secret reference %s',
+      async (secretRef) => {
+        await expect(keyManager.getOrCreateSecretRpc(secretRef)).rejects.toThrow(
+          'Invalid secret reference'
+        );
+
+        const response = await keyManager.fetch(
+          createRequest(
+            `/internal/secrets/${encodeURIComponent(secretRef)}`,
+            'GET',
+            'test-secret-token'
+          )
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+          error: 'Bad Request',
+          message: 'Invalid secret reference',
+        });
+      }
+    );
+
+    it('should reject malformed secret references', async () => {
+      await expect(keyManager.getOrCreateSecretRpc('tenant ref with spaces')).rejects.toThrow(
+        'Invalid secret reference'
+      );
+      await expect(keyManager.getOrCreateSecretRpc(`tenant:${'a'.repeat(256)}`)).rejects.toThrow(
+        'Invalid secret reference'
+      );
+    });
   });
 
   describe('Key Rotation', () => {

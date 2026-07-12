@@ -1,14 +1,10 @@
 /**
  * PII Field Encryption Utility
  *
- * Provides encryption and decryption for PII fields using configurable algorithms.
- * Supports:
- * - AES-256-GCM (recommended, authenticated encryption)
- * - AES-256-CBC (legacy compatibility)
+ * Provides authenticated encryption and decryption for PII fields using AES-256-GCM.
  *
  * Encrypted format:
  * - GCM: enc:v{version}:gcm:{base64(iv || ciphertext || tag)}
- * - CBC: enc:v{version}:cbc:{base64(iv || ciphertext)}
  *
  * This format allows:
  * - Detection of encrypted vs plaintext values
@@ -23,13 +19,13 @@ import { createLogger } from './logger';
 const log = createLogger().module('PII_ENCRYPTION');
 
 const IV_LENGTH_GCM = 12; // 96 bits for GCM (NIST recommended)
-const IV_LENGTH_CBC = 16; // 128 bits for CBC
 const KEY_LENGTH = 32; // 256 bits
+const ENCRYPTED_VALUE_PREFIX = 'enc:';
 
 /**
  * Encrypted value prefix pattern
  */
-const ENCRYPTED_PREFIX_REGEX = /^enc:v(\d+):(gcm|cbc):(.+)$/;
+const ENCRYPTED_PREFIX_REGEX = /^enc:v(\d+):gcm:(.+)$/;
 
 /**
  * Result of encryption operation
@@ -63,21 +59,21 @@ export function isEncrypted(value: string | null | undefined): boolean {
  */
 export function parseEncryptedValue(
   value: string
-): { algorithm: 'gcm' | 'cbc'; keyVersion: number; payload: string } | null {
+): { algorithm: 'gcm'; keyVersion: number; payload: string } | null {
   const match = value.match(ENCRYPTED_PREFIX_REGEX);
   if (!match) return null;
 
   return {
     keyVersion: parseInt(match[1], 10),
-    algorithm: match[2] as 'gcm' | 'cbc',
-    payload: match[3],
+    algorithm: 'gcm',
+    payload: match[2],
   };
 }
 
 /**
  * Derive a CryptoKey from hex-encoded key string
  */
-async function deriveKey(hexKey: string, algorithm: 'AES-GCM' | 'AES-CBC'): Promise<CryptoKey> {
+async function deriveKey(hexKey: string): Promise<CryptoKey> {
   if (!hexKey || hexKey.length !== KEY_LENGTH * 2) {
     throw new Error(
       `Invalid encryption key: expected ${KEY_LENGTH * 2} hex characters, got ${hexKey?.length || 0}`
@@ -89,7 +85,7 @@ async function deriveKey(hexKey: string, algorithm: 'AES-GCM' | 'AES-CBC'): Prom
     keyBytes[i] = parseInt(hexKey.substring(i * 2, i * 2 + 2), 16);
   }
 
-  return crypto.subtle.importKey('raw', keyBytes, { name: algorithm }, false, [
+  return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [
     'encrypt',
     'decrypt',
   ]);
@@ -99,7 +95,7 @@ async function deriveKey(hexKey: string, algorithm: 'AES-GCM' | 'AES-CBC'): Prom
  * Encrypt using AES-256-GCM
  */
 async function encryptGCM(plaintext: string, hexKey: string, keyVersion: number): Promise<string> {
-  const key = await deriveKey(hexKey, 'AES-GCM');
+  const key = await deriveKey(hexKey);
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH_GCM));
   const encoder = new TextEncoder();
   const plaintextBytes = encoder.encode(plaintext);
@@ -123,7 +119,7 @@ async function encryptGCM(plaintext: string, hexKey: string, keyVersion: number)
  * Decrypt using AES-256-GCM
  */
 async function decryptGCM(payload: string, hexKey: string): Promise<string> {
-  const key = await deriveKey(hexKey, 'AES-GCM');
+  const key = await deriveKey(hexKey);
   const combined = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
 
   if (combined.length < IV_LENGTH_GCM + 16) {
@@ -138,46 +134,6 @@ async function decryptGCM(payload: string, hexKey: string): Promise<string> {
     key,
     ciphertext
   );
-
-  const decoder = new TextDecoder();
-  return decoder.decode(plaintextBytes);
-}
-
-/**
- * Encrypt using AES-256-CBC
- */
-async function encryptCBC(plaintext: string, hexKey: string, keyVersion: number): Promise<string> {
-  const key = await deriveKey(hexKey, 'AES-CBC');
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH_CBC));
-  const encoder = new TextEncoder();
-  const plaintextBytes = encoder.encode(plaintext);
-
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, plaintextBytes);
-
-  // Combine iv + ciphertext
-  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), iv.length);
-
-  const payload = btoa(String.fromCharCode(...combined));
-  return `enc:v${keyVersion}:cbc:${payload}`;
-}
-
-/**
- * Decrypt using AES-256-CBC
- */
-async function decryptCBC(payload: string, hexKey: string): Promise<string> {
-  const key = await deriveKey(hexKey, 'AES-CBC');
-  const combined = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
-
-  if (combined.length < IV_LENGTH_CBC + 16) {
-    throw new Error('Invalid encrypted data: too short for CBC');
-  }
-
-  const iv = combined.slice(0, IV_LENGTH_CBC);
-  const ciphertext = combined.slice(IV_LENGTH_CBC);
-
-  const plaintextBytes = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, ciphertext);
 
   const decoder = new TextDecoder();
   return decoder.decode(plaintextBytes);
@@ -200,20 +156,11 @@ export async function encryptValue(
     return { encrypted: plaintext, algorithm, keyVersion };
   }
 
-  let encrypted: string;
-  switch (algorithm) {
-    case 'AES-256-GCM':
-      encrypted = await encryptGCM(plaintext, hexKey, keyVersion);
-      break;
-    case 'AES-256-CBC':
-      encrypted = await encryptCBC(plaintext, hexKey, keyVersion);
-      break;
-    default: {
-      // Exhaustive check - should never reach here
-      const exhaustiveCheck: never = algorithm;
-      throw new Error(`Unsupported algorithm: ${String(exhaustiveCheck)}`);
-    }
+  if (algorithm !== 'AES-256-GCM') {
+    throw new Error(`Unsupported algorithm: ${String(algorithm)}`);
   }
+
+  const encrypted = await encryptGCM(plaintext, hexKey, keyVersion);
 
   return { encrypted, algorithm, keyVersion };
 }
@@ -232,24 +179,15 @@ export async function decryptValue(
 
   const parsed = parseEncryptedValue(value);
   if (!parsed) {
+    if (value.startsWith(ENCRYPTED_VALUE_PREFIX)) {
+      throw new Error('Unsupported encrypted value format');
+    }
     return { decrypted: value, wasEncrypted: false };
   }
 
   let decrypted: string;
   try {
-    switch (parsed.algorithm) {
-      case 'gcm':
-        decrypted = await decryptGCM(parsed.payload, hexKey);
-        break;
-      case 'cbc':
-        decrypted = await decryptCBC(parsed.payload, hexKey);
-        break;
-      default: {
-        // Exhaustive check - should never reach here
-        const exhaustiveCheck: never = parsed.algorithm;
-        throw new Error(`Unsupported algorithm: ${String(exhaustiveCheck)}`);
-      }
-    }
+    decrypted = await decryptGCM(parsed.payload, hexKey);
   } catch (error) {
     throw new Error(
       `Decryption failed: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -259,7 +197,7 @@ export async function decryptValue(
   return {
     decrypted,
     wasEncrypted: true,
-    algorithm: parsed.algorithm === 'gcm' ? 'AES-256-GCM' : 'AES-256-CBC',
+    algorithm: 'AES-256-GCM',
     keyVersion: parsed.keyVersion,
   };
 }
@@ -295,8 +233,11 @@ export class PIIEncryptionService {
   ): Promise<string | null | undefined> {
     if (!value) return value;
 
-    // Check if already encrypted
-    if (isEncrypted(value)) return value;
+    // Check if already encrypted, and fail closed for removed/unknown formats.
+    if (value.startsWith(ENCRYPTED_VALUE_PREFIX)) {
+      if (!isEncrypted(value)) throw new Error('Unsupported encrypted value format');
+      return value;
+    }
 
     // Check if encryption is enabled and field should be encrypted
     const shouldEncrypt = await this.configManager.shouldEncryptField(fieldName);
@@ -320,7 +261,7 @@ export class PIIEncryptionService {
   async decryptField(value: string | null | undefined): Promise<string | null | undefined> {
     if (!value) return value;
 
-    if (!isEncrypted(value)) return value;
+    if (!value.startsWith(ENCRYPTED_VALUE_PREFIX)) return value;
 
     if (!this.encryptionKey) {
       throw new Error('Cannot decrypt: PII_ENCRYPTION_KEY not configured');
@@ -353,7 +294,10 @@ export class PIIEncryptionService {
 
       const value = data[fieldName];
       if (typeof value !== 'string' || !value) continue;
-      if (isEncrypted(value)) continue;
+      if (value.startsWith(ENCRYPTED_VALUE_PREFIX)) {
+        if (!isEncrypted(value)) throw new Error('Unsupported encrypted value format');
+        continue;
+      }
 
       const encrypted = await encryptValue(value, this.encryptionKey, algorithm, keyVersion);
       (result as Record<string, unknown>)[fieldName] = encrypted.encrypted;
@@ -376,7 +320,7 @@ export class PIIEncryptionService {
     for (const fieldName of fieldNames) {
       const value = data[fieldName];
       if (typeof value !== 'string' || !value) continue;
-      if (!isEncrypted(value)) continue;
+      if (!value.startsWith(ENCRYPTED_VALUE_PREFIX)) continue;
 
       const decrypted = await decryptValue(value, this.encryptionKey);
       (result as Record<string, unknown>)[fieldName] = decrypted.decrypted;

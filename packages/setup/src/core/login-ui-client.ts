@@ -40,7 +40,7 @@ export interface LoginUiClientConfig {
    * serve Admin API requests is used for this provisioning operation.
    */
   apiBaseUrls?: string[];
-  /** Login UI URL (e.g., https://prod-ar-login-ui.workers.dev) */
+  /** Canonical Login UI execution origin (e.g., https://auth.example.com) */
   loginUiUrl: string;
   /**
    * Path to admin_api_secret.txt.
@@ -113,7 +113,7 @@ interface AdminClientListResponse {
   clients: Array<{
     client_id: string;
     client_name: string;
-    redirect_uris: string[];
+    redirect_uris?: string[];
     grant_types: string[];
     is_trusted?: boolean;
     skip_consent?: boolean;
@@ -235,6 +235,10 @@ interface ExistingClientInfo {
   needsMigration: boolean;
 }
 
+function sameStringSet(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
+}
+
 /**
  * Check if a Login UI client already exists.
  * Returns client_id and whether migration to public client is needed.
@@ -242,6 +246,7 @@ interface ExistingClientInfo {
 async function findExistingClient(
   apiBaseUrl: string,
   adminSecret: string,
+  loginUiUrl: string,
   tenantId?: string
 ): Promise<ExistingClientInfo | null> {
   const response = await fetchWithTimeout(
@@ -274,7 +279,9 @@ async function findExistingClient(
       existing.token_endpoint_auth_method !== 'none' ||
       existing.require_pkce !== true ||
       existing.browser_refresh_token_policy !== 'disabled' ||
-      existing.description !== LOGIN_UI_CLIENT_DESCRIPTION,
+      existing.description !== LOGIN_UI_CLIENT_DESCRIPTION ||
+      (Array.isArray(existing.redirect_uris) &&
+        !sameStringSet(existing.redirect_uris, buildRedirectUris(loginUiUrl))),
   };
 }
 
@@ -286,6 +293,7 @@ async function updateClientToPublic(
   apiBaseUrl: string,
   adminSecret: string,
   clientId: string,
+  loginUiUrl: string,
   tenantId?: string
 ): Promise<void> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients/${clientId}`, {
@@ -296,13 +304,14 @@ async function updateClientToPublic(
       Accept: 'application/json',
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
-    body: JSON.stringify({
-      description: LOGIN_UI_CLIENT_DESCRIPTION,
-      token_endpoint_auth_method: 'none',
-      require_pkce: true,
-      browser_public_client_mode: 'cookie_fallback',
-      browser_refresh_token_policy: 'disabled',
-    }),
+    body: JSON.stringify(
+      buildBrowserClientMetadata({
+        clientName: LOGIN_UI_CLIENT_NAME,
+        description: LOGIN_UI_CLIENT_DESCRIPTION,
+        redirectUris: buildRedirectUris(loginUiUrl),
+        sessionProfile: 'managed_browser_session',
+      })
+    ),
   });
 
   if (!response.ok) {
@@ -355,7 +364,8 @@ async function createClient(
  * Ensure a Login UI OAuth client exists, creating one if necessary.
  *
  * This is idempotent: if a client named "Login UI" with is_trusted=true
- * already exists, its client_id is returned without creating a new one.
+ * already exists, its client_id is returned. Its public-client metadata and
+ * callback origins are reconciled when the canonical Login UI origin changes.
  */
 export async function ensureLoginUiClient(
   config: LoginUiClientConfig
@@ -398,6 +408,7 @@ export async function ensureLoginUiClient(
           const existingClient = await findExistingClient(
             candidateApiBaseUrl,
             adminBearerToken,
+            loginUiUrl,
             tenantId
           );
 
@@ -410,6 +421,7 @@ export async function ensureLoginUiClient(
                 candidateApiBaseUrl,
                 adminBearerToken,
                 existingClient.clientId,
+                loginUiUrl,
                 tenantId
               );
               onProgress?.(

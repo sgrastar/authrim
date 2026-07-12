@@ -31,7 +31,11 @@ import { tenantDatabasePoolStatusCommand } from './cli/commands/tenant-db-pool-s
 import { tenantDatabaseSlotResetCommand } from './cli/commands/tenant-db-slot-reset.js';
 import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
 import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
-import { resolveApiBaseUrlCandidates, resolveIssuerUrl } from './core/url-config.js';
+import {
+  resolveApiBaseUrlCandidates,
+  resolveIssuerUrl,
+  resolveLoginUiExecutionOrigin,
+} from './core/url-config.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -310,12 +314,7 @@ program
 
         let loginUiClientId: string | undefined;
         if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
-          const loginUiUrl =
-            (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
-              ?.custom ||
-            (cfg as { urls?: { loginUi?: { custom?: string; auto?: string } } })?.urls?.loginUi
-              ?.auto ||
-            `https://${env}-ar-login-ui.workers.dev`;
+          const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
           const adminApiSecretPath = join(uiKeysDir, 'admin_api_secret.txt');
           const keysDir = uiKeysDir;
 

@@ -81,6 +81,7 @@ import {
   buildUrlsConfig,
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
+  resolveLoginUiExecutionOrigin,
   validateDomainRoutingConfig,
 } from '../core/url-config.js';
 import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
@@ -2453,10 +2454,7 @@ export function createApiRoutes(): Hono {
 
           let loginUiClientId: string | undefined;
           if (cfg?.components?.loginUi && !dryRun) {
-            const loginUiUrl =
-              cfg?.urls?.loginUi?.custom ||
-              cfg?.urls?.loginUi?.auto ||
-              `https://${env}-ar-login-ui.workers.dev`;
+            const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
             const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
             const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
@@ -3888,10 +3886,7 @@ export function createApiRoutes(): Hono {
                   );
                 }
 
-                const loginUiUrl =
-                  cfg?.urls?.loginUi?.custom ||
-                  cfg?.urls?.loginUi?.auto ||
-                  `https://${env}-ar-login-ui.workers.dev`;
+                const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
                 const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
                 const { ensureLoginUiClient } = await import('../core/login-ui-client.js');

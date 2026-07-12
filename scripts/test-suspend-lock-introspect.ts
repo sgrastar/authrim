@@ -1,4 +1,6 @@
 #!/usr/bin/env npx tsx
+import { randomBytes } from 'node:crypto';
+
 /**
  * Integration Test: Suspend/Lock → Introspect Flow
  *
@@ -105,12 +107,13 @@ async function getAccessToken(userId: string): Promise<string | null> {
 
 async function createTestUser(): Promise<string | null> {
   const testEmail = `test-suspend-${Date.now()}@example.com`;
+  const testPassword = `Tt1!${randomBytes(24).toString('base64url')}`;
   log(`Creating test user: ${testEmail}`);
 
   const response = await adminRequest('POST', '/api/admin/users', {
     email: testEmail,
     name: 'Test User for Suspend/Lock',
-    password: 'TestPassword123!',
+    password: testPassword,
     email_verified: true,
   });
 
@@ -142,7 +145,9 @@ async function testSuspendUserAndIntrospect() {
   }
 
   // Note: Response format is { users: [...], pagination: {...} }
-  const usersData = (await usersResponse.json()) as { users: Array<{ id: string; email: string; status: string }> };
+  const usersData = (await usersResponse.json()) as {
+    users: Array<{ id: string; email: string; status: string }>;
+  };
 
   let testUser: { id: string; email: string; status: string };
 
@@ -256,7 +261,9 @@ async function testLockUserFlow() {
   }
 
   // Note: Response format is { users: [...], pagination: {...} }
-  const usersData = (await usersResponse.json()) as { users?: Array<{ id: string; status: string }> };
+  const usersData = (await usersResponse.json()) as {
+    users?: Array<{ id: string; status: string }>;
+  };
 
   if (!usersData.users) {
     log('No users data in response, skipping lock test...');

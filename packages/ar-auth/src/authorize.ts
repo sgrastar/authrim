@@ -397,7 +397,23 @@ async function getUIRedirectTarget(
 }
 
 function shouldUseIssuerHostedUi(env: Env, issuerUiBaseUrl?: string | null): boolean {
-  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false' || !env.BASE_DOMAIN) {
+  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false') {
+    return false;
+  }
+
+  // Setup-generated deployments pin browser Login UI execution to the issuer.
+  // This preserves the primary tenant's Login UI origin when a custom-domain
+  // single-tenant deployment is later expanded to multi-tenant routing.
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'issuer') {
+    return true;
+  }
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'dedicated') {
+    return false;
+  }
+
+  // Legacy configurations used issuer-hosted Login UI only for multi-tenant
+  // deployments. Preserve that behavior until they opt in explicitly.
+  if (!env.BASE_DOMAIN) {
     return false;
   }
 
