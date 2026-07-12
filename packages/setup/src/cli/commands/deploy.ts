@@ -480,7 +480,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (uiComponent === 'ar-login-ui' && !options.dryRun) {
       const loginUiUrl = resolveLoginUiExecutionOrigin(config, { env });
       const keysDir = uiKeysDir!;
-      const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
       const readinessResult = await waitForRouterWorkerReady({
         apiBaseUrl,
@@ -515,7 +514,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             purpose: 'tenant-scoped-admin',
           }),
           loginUiUrl,
-          adminApiSecretPath,
           keysDir,
           tenantId: config.tenant?.name,
           onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
@@ -981,6 +979,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       (component) => currentLock.workers?.[component] !== undefined
     ),
     secrets: deploymentSecrets,
+    cleanupLegacyStaticSecrets: true,
     onProgress: (msg) => console.log(msg),
     onError: (component, error) => {
       console.error(chalk.red(`Error in ${component}: ${error.message}`));
@@ -1452,7 +1451,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (config.components.loginUi && !options.dryRun) {
       const loginUiUrl = resolveLoginUiExecutionOrigin(config, { env });
       const keysDir = getResolvedKeysDir();
-      const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
       const clientResult = await ensureLoginUiClient({
         apiBaseUrl,
@@ -1461,7 +1459,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           purpose: 'tenant-scoped-admin',
         }),
         loginUiUrl,
-        adminApiSecretPath,
         keysDir,
         tenantId: config.tenant?.name,
         onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),

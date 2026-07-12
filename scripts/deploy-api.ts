@@ -3,6 +3,7 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
+  cleanupLegacyStaticSecrets,
   deployAll,
   deployWorkerGradually,
   loadDeploySecretsFromKeys,
@@ -32,6 +33,7 @@ interface CliOptions {
   healthUrl?: string;
   keysDir?: string;
   preflight: boolean;
+  finalizeLegacyStaticSecretCleanup: boolean;
 }
 
 function readValue(argument: string, name: string): string | undefined {
@@ -50,6 +52,7 @@ function parseOptions(argv: string[]): CliOptions {
   let healthUrl: string | undefined;
   let keysDir: string | undefined;
   let preflight = false;
+  let finalizeLegacyStaticSecretCleanup = false;
 
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
@@ -87,6 +90,8 @@ function parseOptions(argv: string[]): CliOptions {
       dryRun = true;
     } else if (argument === '--preflight') {
       preflight = true;
+    } else if (argument === '--finalize-legacy-static-secret-cleanup') {
+      finalizeLegacyStaticSecretCleanup = true;
     } else if (gradualStagesValue !== undefined) {
       gradualStages = gradualStagesValue.split(',').map(Number);
     } else if (argument === '--gradual-stages' && next) {
@@ -143,6 +148,11 @@ function parseOptions(argv: string[]): CliOptions {
   if (healthUrl && !/^https:\/\//.test(healthUrl)) {
     throw new Error('--health-url must be an https URL');
   }
+  if (finalizeLegacyStaticSecretCleanup && (component || gradualStages || preflight || dryRun)) {
+    throw new Error(
+      '--finalize-legacy-static-secret-cleanup cannot be combined with deployment options'
+    );
+  }
   return {
     env,
     component,
@@ -154,6 +164,7 @@ function parseOptions(argv: string[]): CliOptions {
     healthUrl,
     keysDir,
     preflight,
+    finalizeLegacyStaticSecretCleanup,
   };
 }
 
@@ -222,6 +233,39 @@ async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const rootDir = resolve(process.cwd());
   const { lock, path: lockPath } = await loadLockFileAuto(rootDir, options.env);
+  if (options.finalizeLegacyStaticSecretCleanup) {
+    const cleanupResult = await cleanupLegacyStaticSecrets(
+      {
+        env: options.env,
+        rootDir,
+        concurrency: options.concurrency,
+        maxRetries: 4,
+        retryDelayMs: 1000,
+        onProgress: console.log,
+      },
+      ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management']
+    );
+    if (cleanupResult.failures.length > 0) {
+      for (const failure of cleanupResult.failures) {
+        console.error(`${failure.component}: ${failure.error}`);
+      }
+      process.exitCode = 1;
+      return;
+    }
+    if (options.healthUrl) {
+      const health = await checkOidcHealth(options.healthUrl);
+      if (!health.success) {
+        console.error(`Post-cleanup health check failed: ${health.error || 'unknown error'}`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    for (const [component, versionId] of Object.entries(cleanupResult.activeVersionIds)) {
+      console.log(`  ✓ ${component}: cleanup version ${versionId}`);
+    }
+    console.log('Legacy static secret cleanup finalized.');
+    return;
+  }
   const selected = options.component ? [options.component] : [...CORE_WORKER_COMPONENTS];
   const deploymentScope = getDeploymentScope(selected);
   const lockComponents = CORE_WORKER_COMPONENTS.filter(
@@ -275,6 +319,7 @@ async function main(): Promise<void> {
       deploymentStrategy: options.strategy,
       existingComponents: lockComponents,
       secrets,
+      cleanupLegacyStaticSecrets: true,
       varsByComponent: buildVersionVars(),
       maxRetries: 4,
       retryDelayMs: 1000,
@@ -319,6 +364,22 @@ async function main(): Promise<void> {
         stageWaitMs: options.gradualWaitMs,
         healthCheck: options.healthUrl ? () => checkOidcHealth(options.healthUrl!) : undefined,
       });
+      if (!options.dryRun && result.success && deployOptions.cleanupLegacyStaticSecrets) {
+        const cleanupResult = await cleanupLegacyStaticSecrets(deployOptions, [options.component]);
+        const activeVersionId = cleanupResult.activeVersionIds[options.component];
+        if (activeVersionId) {
+          result.cloudflareVersionId = activeVersionId;
+          result.deployedAt = new Date().toISOString();
+        }
+        const cleanupFailure = cleanupResult.failures.find(
+          (failure) => failure.component === options.component
+        );
+        if (cleanupFailure) {
+          result.success = false;
+          result.trafficCommitted = true;
+          result.error = `Worker deployed, but legacy static secret cleanup failed: ${cleanupFailure.error}`;
+        }
+      }
       summary = {
         totalComponents: 1,
         successCount: result.success ? 1 : 0,

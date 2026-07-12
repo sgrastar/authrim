@@ -30,7 +30,6 @@ describe('generated approvals smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(keysDir, 'admin_api_secret.txt'), 'admin-secret');
 
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
     vi.stubGlobal('fetch', fetchMock as typeof fetch);
@@ -283,7 +282,6 @@ describe('generated approvals smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(keysDir, 'admin_api_secret.txt'), 'admin-secret');
 
     let protectedReadCount = 0;
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();

@@ -122,12 +122,9 @@ describe('generateAllSecrets', () => {
     expect(secrets.piiEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.otpHmacSecret).toBeDefined();
-    expect(secrets.versionManagerSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
     expect(secrets.flowRuntimeHmacSecret).toBeDefined();
     expect(secrets.pluginEncryptionKey).toBeDefined();
-    expect(secrets.adminApiSecret).toBeDefined();
-    expect(secrets.keyManagerSecret).toBeDefined();
     expect(secrets.setupToken).toBeDefined();
   });
 });
@@ -196,11 +193,8 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
@@ -294,16 +288,13 @@ describe('ensureSupplementalKeyFiles', () => {
     writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
     writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
     writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
-    writeFileSync(join(keysDir, 'admin_api_secret.txt'), 'legacy-admin-secret');
-    writeFileSync(join(keysDir, 'key_manager_secret.txt'), 'legacy-key-manager-secret');
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(14);
+    expect(result.createdFiles).toHaveLength(13);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
@@ -348,6 +339,42 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(secondResult.createdFiles).toHaveLength(0);
   });
 
+  it('removes legacy static secret files and metadata references', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    for (const fileName of [
+      'admin_api_secret.txt',
+      'key_manager_secret.txt',
+      'version_manager_secret.txt',
+    ]) {
+      writeFileSync(join(keysDir, fileName), 'legacy-secret');
+    }
+    writeFileSync(
+      join(keysDir, 'metadata.json'),
+      JSON.stringify({
+        kid: 'legacy-key',
+        files: {
+          adminApiSecret: 'admin_api_secret.txt',
+          keyManagerSecret: 'key_manager_secret.txt',
+          versionManagerSecret: 'version_manager_secret.txt',
+        },
+      })
+    );
+
+    await ensureSupplementalKeyFiles(keysDir);
+
+    expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(false);
+    expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(false);
+    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(false);
+    const metadata = JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8'));
+    expect(metadata.files).not.toHaveProperty('adminApiSecret');
+    expect(metadata.files).not.toHaveProperty('keyManagerSecret');
+    expect(metadata.files).not.toHaveProperty('versionManagerSecret');
+  });
+
   it('rejects partial supplemental machine key pairs', async () => {
     const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
     mkdirSync(keysDir, { recursive: true });
@@ -385,9 +412,6 @@ describe('generateWranglerSecretCommands', () => {
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/otp_hmac_secret.txt)" | wrangler secret put OTP_HMAC_SECRET --env dev'
-    );
-    expect(commands).toContain(
-      'echo -n "$(cat /tmp/keys/version_manager_secret.txt)" | wrangler secret put VERSION_MANAGER_SECRET --env dev'
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/logging_cursor_hmac_secret.txt)" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET --env dev'

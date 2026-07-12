@@ -11,14 +11,14 @@ import { randomBytes } from 'node:crypto';
  * Usage:
  *   BASE_URL=https://conformance.authrim.com \
  *   CLIENT_ID=xxx CLIENT_SECRET=xxx \
- *   ADMIN_API_SECRET=xxx \
+ *   ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *   npx tsx scripts/test-suspend-lock-introspect.ts
  */
 
 const BASE_URL = process.env.BASE_URL || 'https://conformance.authrim.com';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 
 interface TestResult {
   name: string;
@@ -53,7 +53,7 @@ async function adminRequest(
   const url = `${BASE_URL}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${ADMIN_API_SECRET}`,
+    Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   };
 
   return fetch(url, {
@@ -350,9 +350,9 @@ async function main() {
   console.log('Suspend/Lock → Introspect Integration Tests');
   console.log('========================================\n');
 
-  if (!CLIENT_ID || !CLIENT_SECRET || !ADMIN_API_SECRET) {
+  if (!CLIENT_ID || !CLIENT_SECRET || !ADMIN_MACHINE_ACCESS_TOKEN) {
     console.error(
-      'Missing required environment variables: CLIENT_ID, CLIENT_SECRET, ADMIN_API_SECRET'
+      'Missing required environment variables: CLIENT_ID, CLIENT_SECRET, ADMIN_MACHINE_ACCESS_TOKEN'
     );
     process.exit(1);
   }

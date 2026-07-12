@@ -1239,15 +1239,6 @@ app.all('/external-idp/*', async (c) => {
 });
 
 /**
- * Internal endpoints - Route to OP_AUTH worker
- * - /_internal/warmup - Pre-heat Durable Objects (admin only)
- */
-app.all('/_internal/*', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_AUTH.fetch(request);
-});
-
-/**
  * Initial Admin Setup endpoints - Route to OP_AUTH worker
  * - /admin-init-setup - Initial admin setup page (one-time use, expires in 1 hour)
  * - /api/admin-init-setup/* - Setup API endpoints

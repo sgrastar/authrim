@@ -81,7 +81,7 @@ export interface WranglerConfig {
       dead_letter_queue?: string;
     }>;
   };
-  services?: Array<{ binding: string; service: string }>;
+  services?: Array<{ binding: string; service: string; entrypoint?: string }>;
   send_email?: Array<{
     name: string;
     destination_address?: string;
@@ -218,7 +218,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
 
 const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-lib-core': [], // Defines DOs, doesn't reference external
-  'ar-discovery': ['KEY_MANAGER', 'VERSION_MANAGER'],
+  'ar-discovery': [],
   'ar-auth': [
     'KEY_MANAGER',
     'SESSION_STORE',
@@ -226,7 +226,6 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'CHALLENGE_STORE',
     'RATE_LIMITER',
     'PAR_REQUEST_STORE',
-    'VERSION_MANAGER',
     'FLOW_STATE_STORE',
   ],
   'ar-token': [
@@ -239,7 +238,6 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'TOKEN_REVOCATION_STORE',
     'DEVICE_CODE_STORE',
     'CIBA_REQUEST_STORE',
-    'VERSION_MANAGER',
   ],
   'ar-userinfo': [
     'KEY_MANAGER',
@@ -247,7 +245,6 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'RATE_LIMITER',
     'DPOP_JTI_STORE',
     'TOKEN_REVOCATION_STORE',
-    'VERSION_MANAGER',
   ],
   'ar-management': [
     'KEY_MANAGER',
@@ -258,19 +255,18 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'VERSION_MANAGER',
     'CHALLENGE_STORE',
   ],
-  'ar-router': ['VERSION_MANAGER'],
-  'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE', 'VERSION_MANAGER'],
-  'ar-policy': ['PERMISSION_CHANGE_HUB', 'VERSION_MANAGER'],
+  'ar-router': [],
+  'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE'],
+  'ar-policy': ['PERMISSION_CHANGE_HUB'],
   'ar-saml': [
     'KEY_MANAGER',
     'SAML_REQUEST_STORE',
     'SAML_AGGREGATE_METADATA_STORE',
     'SESSION_STORE',
     'CHALLENGE_STORE',
-    'VERSION_MANAGER',
   ],
-  'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE', 'VERSION_MANAGER'],
-  'ar-vc': ['KEY_MANAGER', 'VERSION_MANAGER'],
+  'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE'],
+  'ar-vc': ['KEY_MANAGER'],
 };
 
 const COMPONENT_LOCAL_DO_BINDINGS: Partial<
@@ -692,6 +688,16 @@ export function generateWranglerConfig(
   }
 
   // Service Bindings for standard services used by auth/runtime and admin proxies.
+  if (component === 'ar-discovery') {
+    wranglerConfig.services = [
+      {
+        binding: 'KEY_MANAGER_PUBLIC',
+        service: `${env}-ar-lib-core`,
+        entrypoint: 'KeyManagerPublicEntrypoint',
+      },
+    ];
+  }
+
   if (component === 'ar-auth' || component === 'ar-management') {
     wranglerConfig.services = [{ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` }];
   }
@@ -1010,9 +1016,6 @@ export function generateEnvVars(
   }
 
   const componentSecrets = getSecretNamesForWorker(component);
-  if (componentSecrets.includes('KEY_MANAGER_SECRET')) {
-    vars['KEY_MANAGER_SECRET'] = ''; // Set via secret
-  }
   if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
     vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
   }
@@ -1024,12 +1027,6 @@ export function generateEnvVars(
   }
   if (componentSecrets.includes('FLOW_RUNTIME_HMAC_SECRET')) {
     vars['FLOW_RUNTIME_HMAC_SECRET'] = ''; // Set via secret
-  }
-  if (componentSecrets.includes('VERSION_MANAGER_SECRET')) {
-    vars['VERSION_MANAGER_SECRET'] = ''; // Set via secret
-  }
-  if (componentSecrets.includes('ADMIN_API_SECRET')) {
-    vars['ADMIN_API_SECRET'] = ''; // Set via secret
   }
 
   // ar-router: UI proxy configuration
@@ -1366,6 +1363,9 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push(`[[env.${envName}.services]]`);
         lines.push(`binding = "${svc.binding}"`);
         lines.push(`service = "${svc.service}"`);
+        if (svc.entrypoint) {
+          lines.push(`entrypoint = "${svc.entrypoint}"`);
+        }
         lines.push('');
       }
     }
@@ -1548,6 +1548,9 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push('[[services]]');
         lines.push(`binding = "${svc.binding}"`);
         lines.push(`service = "${svc.service}"`);
+        if (svc.entrypoint) {
+          lines.push(`entrypoint = "${svc.entrypoint}"`);
+        }
         lines.push('');
       }
     }

@@ -44,7 +44,6 @@ import {
   hasAdminPermission,
   type AdminAuthContext,
   getDefaultTenantId,
-  readResponseTextWithLimit,
 } from '@authrim/ar-lib-core';
 import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
@@ -52,8 +51,6 @@ import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
 import { isTenantScopedAdminPath } from './admin-tenant-access';
-
-const VERSION_MANAGER_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -3556,35 +3553,7 @@ app.post(
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');
       const vm = c.env.VERSION_MANAGER.get(vmId);
-      if (!c.env.VERSION_MANAGER_SECRET) {
-        const log = getLogger(c).module('VERSION-API');
-        log.error('VERSION_MANAGER_SECRET not configured');
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
-      const response = await vm.fetch(
-        new Request(`https://do/version/${workerName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${c.env.VERSION_MANAGER_SECRET}`,
-          },
-          body: JSON.stringify({
-            uuid: body.uuid,
-            deployTime: body.deployTime,
-          }),
-        })
-      );
-
-      if (!response.ok) {
-        const error = await readResponseTextWithLimit(
-          response,
-          VERSION_MANAGER_ERROR_BODY_MAX_BYTES
-        );
-        const log = getLogger(c).module('VERSION-API');
-        log.error('Failed to register version', { workerName, error });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
+      await vm.registerVersionRpc(workerName, body.uuid, body.deployTime);
 
       const log = getLogger(c).module('VERSION-API');
       log.info('Registered version', {
@@ -3606,7 +3575,7 @@ app.post(
  * GET /api/internal/version-manager/status
  * Get all registered versions
  *
- * Requires: Admin authentication plus internal VersionManager DO secret.
+ * Requires: Admin authentication. The VersionManager service binding is the internal capability.
  */
 app.get(
   '/api/internal/version-manager/status',
@@ -3615,33 +3584,12 @@ app.get(
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');
       const vm = c.env.VERSION_MANAGER.get(vmId);
-      if (!c.env.VERSION_MANAGER_SECRET) {
-        const log = getLogger(c).module('VERSION-API');
-        log.error('VERSION_MANAGER_SECRET not configured');
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
-      const response = await vm.fetch(
-        new Request('https://do/version-manager/status', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${c.env.VERSION_MANAGER_SECRET}`,
-          },
-        })
-      );
-
-      if (!response.ok) {
-        const error = await readResponseTextWithLimit(
-          response,
-          VERSION_MANAGER_ERROR_BODY_MAX_BYTES
-        );
-        const log = getLogger(c).module('VERSION-API');
-        log.error('Failed to get version status', { error });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
-      const data = await response.json();
-      return c.json(data);
+      const versions = await vm.getAllVersionsRpc();
+      return c.json({
+        versions,
+        workerCount: Object.keys(versions).length,
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
       const log = getLogger(c).module('VERSION-API');
       log.error('Version status error', {}, error as Error);

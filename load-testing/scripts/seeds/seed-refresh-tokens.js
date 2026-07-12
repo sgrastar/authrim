@@ -14,7 +14,7 @@
  *   BASE_URL             Target Authrim Worker URL (default: https://your-authrim.example.com)
  *   CLIENT_ID            Client ID (required)
  *   CLIENT_SECRET        Client secret (required)
- *   ADMIN_API_SECRET     Admin API secret (required)
+ *   ADMIN_MACHINE_ACCESS_TOKEN     Admin Machine Access token (required)
  *   TENANT_ID            Tenant ID for admin API requests (optional)
  *   COUNT                Number of tokens to generate (default: 120)
  *   CONCURRENCY          Parallel requests (default: 20)
@@ -25,7 +25,7 @@
  *       so each token is assigned a different user ID ({USER_ID_PREFIX}-{index}).
  *
  * Usage:
- *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node scripts/generate-refresh-tokens-parallel.js
+ *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz node scripts/generate-refresh-tokens-parallel.js
  */
 
 import { SignJWT, importPKCS8 } from 'jose';
@@ -41,7 +41,7 @@ let shardConfigCache = null;
 const BASE_URL = process.env.BASE_URL || '';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const TENANT_ID = process.env.TENANT_ID || '';
 const COUNT = Number.parseInt(process.env.COUNT || '120', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
@@ -54,13 +54,13 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
   process.exit(1);
 }
 
-if (!ADMIN_API_SECRET) {
-  console.error('❌ ADMIN_API_SECRET is required. Set environment variable.');
+if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+  console.error('❌ ADMIN_MACHINE_ACCESS_TOKEN is required. Set environment variable.');
   process.exit(1);
 }
 
 const adminAuthHeader = {
-  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
 };
 

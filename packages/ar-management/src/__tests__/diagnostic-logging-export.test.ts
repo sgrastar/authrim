@@ -65,7 +65,6 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
 
 function createEnv(bucket: MockR2Bucket, kvData: Record<string, string> = {}): Env {
   return {
-    ADMIN_API_SECRET: 'admin-secret',
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'otp-secret',
     DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,

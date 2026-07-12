@@ -1323,6 +1323,7 @@ export function createApiRoutes(): Hono {
           existingComponents: WORKER_COMPONENTS.filter(
             (component) => lock.workers?.[component] !== undefined
           ),
+          cleanupLegacyStaticSecrets: true,
           onProgress: addProgress,
         };
         routerDeployOptions.existingComponents = await resolveExistingWorkerComponents(
@@ -2147,6 +2148,7 @@ export function createApiRoutes(): Hono {
             deploymentStrategy: 'auto',
             existingComponents,
             secrets: deploymentSecrets,
+            cleanupLegacyStaticSecrets: true,
             onProgress: addProgress,
             onError: (comp, error) => {
               addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -2455,13 +2457,11 @@ export function createApiRoutes(): Hono {
           let loginUiClientId: string | undefined;
           if (cfg?.components?.loginUi && !dryRun) {
             const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
-            const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
             const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
             const clientResult = await ensureLoginUiClient({
               apiBaseUrl,
               loginUiUrl,
-              adminApiSecretPath,
               keysDir,
               tenantId: cfg?.tenant?.name,
               onProgress: addProgress,
@@ -3569,6 +3569,7 @@ export function createApiRoutes(): Hono {
             (component) => lock.workers?.[component] !== undefined
           ),
           secrets: deploymentSecrets,
+          cleanupLegacyStaticSecrets: true,
           onProgress: addProgress,
           onError: (comp: string, error: Error) => {
             addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -3887,13 +3888,11 @@ export function createApiRoutes(): Hono {
                 }
 
                 const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
-                const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
                 const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
                 const clientResult = await ensureLoginUiClient({
                   apiBaseUrl,
                   loginUiUrl,
-                  adminApiSecretPath,
                   keysDir,
                   tenantId: cfg?.tenant?.name,
                   onProgress: addProgress,
@@ -4124,6 +4123,7 @@ export function createApiRoutes(): Hono {
               (component) => componentLock?.workers?.[component] !== undefined
             ),
             secrets: deploymentSecrets,
+            cleanupLegacyStaticSecrets: true,
             onProgress: addProgress,
           };
           if (!dryRun) {

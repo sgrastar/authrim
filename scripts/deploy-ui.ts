@@ -178,7 +178,6 @@ async function resolveLoginUiClientId(
     config.urls?.loginUi?.auto ||
     `https://${env}-ar-login-ui.workers.dev`;
   const apiBaseUrl = getApiBaseUrl(config);
-  const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
 
   const setupMachineResult = await ensureSetupMachineAccessInD1(env, config, keysDir, (message) =>
     console.log(message)
@@ -198,7 +197,6 @@ async function resolveLoginUiClientId(
         purpose: 'tenant-scoped-admin',
       }),
       loginUiUrl,
-      adminApiSecretPath,
       keysDir,
       tenantId: config.tenant?.name,
       onProgress: (message) => console.log(message),

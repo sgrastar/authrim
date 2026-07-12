@@ -8,7 +8,7 @@
  *
  * Environment variables:
  *   BASE_URL             Target Authrim Worker URL (default: https://your-authrim.example.com)
- *   ADMIN_API_SECRET     Admin API secret (required)
+ *   ADMIN_MACHINE_ACCESS_TOKEN     Admin Machine Access token (required)
  *   TENANT_ID            Tenant ID for admin API requests (optional)
  *   PASSKEY_USER_COUNT   Number of users to generate (default: 100)
  *   CONCURRENCY          Parallel requests (default: 10)
@@ -17,7 +17,7 @@
  *
  * Usage:
  *   BASE_URL=https://your-authrim.example.com \
- *   ADMIN_API_SECRET=xxx \
+ *   ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *   PASSKEY_USER_COUNT=500 \
  *   node scripts/seed-passkey-users.js
  */
@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 // Environment variables
 const BASE_URL = process.env.BASE_URL || '';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const TENANT_ID = process.env.TENANT_ID || '';
 const PASSKEY_USER_COUNT = Number.parseInt(process.env.PASSKEY_USER_COUNT || '100', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '10', 10);
@@ -42,13 +42,13 @@ const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(SCRIPT_DIR, '..', 'seeds'
 const RP_ID = new URL(BASE_URL).hostname;
 const ORIGIN = BASE_URL.replace(/^http:/, 'https:');
 
-if (!ADMIN_API_SECRET) {
-  console.error('❌ ADMIN_API_SECRET is required. Set environment variable.');
+if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+  console.error('❌ ADMIN_MACHINE_ACCESS_TOKEN is required. Set environment variable.');
   process.exit(1);
 }
 
 const adminAuthHeader = {
-  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
 };
 
@@ -356,7 +356,7 @@ async function registerBatch(startIndex, batchSize) {
 }
 
 async function main() {
-  console.log("🚀 Passkey User Seed Generator");
+  console.log('🚀 Passkey User Seed Generator');
   console.log(`   BASE_URL           : ${BASE_URL}`);
   console.log(`   RP_ID              : ${RP_ID}`);
   console.log(`   PASSKEY_USER_COUNT : ${PASSKEY_USER_COUNT}`);

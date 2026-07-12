@@ -70,11 +70,8 @@ export interface KeyFilePaths {
   piiEncryptionKey: string;
   objectEncryptionRootKey: string;
   otpHmacSecret: string;
-  versionManagerSecret: string;
   loggingCursorHmacSecret: string;
   pluginEncryptionKey: string;
-  adminApiSecret: string;
-  keyManagerSecret: string;
   tenantRuntimeRegistrySigningPrivateJwk: string;
   tenantRuntimeRegistryVerifyingPublicJwks: string;
   tenantRuntimeRegistrySigningKeyId: string;
@@ -219,11 +216,8 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
     piiEncryptionKey: join(keysDir, 'pii_encryption_key.txt'),
     objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
-    versionManagerSecret: join(keysDir, 'version_manager_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     pluginEncryptionKey: join(keysDir, 'plugin_encryption_key.txt'),
-    adminApiSecret: join(keysDir, 'admin_api_secret.txt'),
-    keyManagerSecret: join(keysDir, 'key_manager_secret.txt'),
     tenantRuntimeRegistrySigningPrivateJwk: join(
       keysDir,
       'tenant_runtime_registry_signing_private.jwk.json'

@@ -75,7 +75,7 @@ const serverErrors = new Counter('server_errors');
 const BASE_URL = __ENV.BASE_URL || '';
 const CLIENT_ID = __ENV.CLIENT_ID || '';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || '';
-const ADMIN_API_SECRET = __ENV.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = __ENV.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
 const PRESET = __ENV.PRESET || 'rps100';
 
@@ -365,7 +365,7 @@ if (USER_LIST_URL) {
     console.log(`📂 Loaded ${userList.length} users from ${USER_LIST_PATH}`);
   } catch (e) {
     console.warn(`⚠️  Could not load user list from file: ${e.message}`);
-    console.warn("   Will attempt to fetch from USER_LIST_URL if provided");
+    console.warn('   Will attempt to fetch from USER_LIST_URL if provided');
   }
 }
 
@@ -405,20 +405,20 @@ function generateRandomHex(bytes) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔑 Client: ${CLIENT_ID}`);
-  console.log("☁️  K6 Cloud Mode");
-  console.log("");
+  console.log('☁️  K6 Cloud Mode');
+  console.log('');
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
     throw new Error('CLIENT_ID and CLIENT_SECRET are required');
   }
 
-  if (!ADMIN_API_SECRET) {
-    throw new Error('ADMIN_API_SECRET is required for generating test email codes');
+  if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+    throw new Error('ADMIN_MACHINE_ACCESS_TOKEN is required for generating test email codes');
   }
 
   // Fetch user list
@@ -468,10 +468,10 @@ export function setup() {
   const userCount = Math.min(users.length, selectedPreset.userCount);
   const selectedUsers = users.slice(0, userCount).map((email) => ({ email }));
   console.log(`📦 Using ${selectedUsers.length} users for benchmark`);
-  console.log("");
+  console.log('');
 
   // Warmup
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(10, selectedUsers.length); i++) {
     const user = selectedUsers[i];
     // Authorize endpoint warmup
@@ -486,14 +486,14 @@ export function setup() {
       {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${ADMIN_API_SECRET}`,
+          Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
         },
         tags: { name: 'Warmup' },
       }
     );
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     users: selectedUsers,
@@ -503,13 +503,21 @@ export function setup() {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     redirectUri: REDIRECT_URI,
-    adminSecret: ADMIN_API_SECRET,
+    adminMachineAccessToken: ADMIN_MACHINE_ACCESS_TOKEN,
   };
 }
 
 // Main test function (executed repeatedly by each VU)
 export default function (data) {
-  const { users, userCount, clientId, clientSecret, redirectUri, baseUrl, adminSecret } = data;
+  const {
+    users,
+    userCount,
+    clientId,
+    clientSecret,
+    redirectUri,
+    baseUrl,
+    adminMachineAccessToken,
+  } = data;
 
   // Select user based on VU ID (round-robin)
   const userIndex = (__VU - 1) % userCount;
@@ -531,14 +539,14 @@ export default function (data) {
   // ===============================
   const authorizeInitUrl =
     `${baseUrl}/authorize?` +
-    "response_type=code&" +
+    'response_type=code&' +
     `client_id=${encodeURIComponent(clientId)}&` +
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    "scope=openid&" +
+    'scope=openid&' +
     `state=${state}&` +
     `nonce=${nonce}&` +
     `code_challenge=${codeChallenge}&` +
-    "code_challenge_method=S256";
+    'code_challenge_method=S256';
 
   const step1Response = http.get(authorizeInitUrl, {
     headers: { Accept: 'text/html', Connection: 'keep-alive' },
@@ -566,7 +574,7 @@ export default function (data) {
       {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminSecret}`,
+          Authorization: `Bearer ${adminMachineAccessToken}`,
           Connection: 'keep-alive',
         },
         tags: { name: 'EmailCodeGenerate' },
@@ -647,7 +655,7 @@ export default function (data) {
         success = false;
         sessionErrors.add(1);
         if (exec.vu.iterationInInstance < 3) {
-          console.error("❌ No session cookie returned from verify endpoint");
+          console.error('❌ No session cookie returned from verify endpoint');
         }
       }
     }
@@ -661,15 +669,15 @@ export default function (data) {
   if (success && sessionCookie) {
     const authorizeCodeUrl =
       `${baseUrl}/authorize?` +
-      "response_type=code&" +
+      'response_type=code&' +
       `client_id=${encodeURIComponent(clientId)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      "scope=openid&" +
+      'scope=openid&' +
       `state=${state}&` +
       `nonce=${nonce}&` +
       `code_challenge=${codeChallenge}&` +
-      "code_challenge_method=S256&" +
-      "prompt=none";
+      'code_challenge_method=S256&' +
+      'prompt=none';
 
     const step4Response = http.get(authorizeCodeUrl, {
       headers: {
@@ -718,7 +726,7 @@ export default function (data) {
 
     const step5Response = http.post(
       `${baseUrl}/token`,
-      "grant_type=authorization_code" +
+      'grant_type=authorization_code' +
         `&code=${encodeURIComponent(authCode)}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&code_verifier=${codeVerifier}`,
@@ -772,7 +780,7 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test Complete`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);
@@ -835,54 +843,54 @@ function generateTextSummary(data) {
   // Test information
   summary += `🎯 Preset: ${PRESET}\n`;
   summary += `📝 Description: ${selectedPreset.description}\n`;
-  summary += "☁️  Environment: K6 Cloud\n\n";
+  summary += '☁️  Environment: K6 Cloud\n\n';
 
   // Flow statistics
-  summary += "📈 Flow Statistics:\n";
+  summary += '📈 Flow Statistics:\n';
   summary += `  Total Iterations: ${totalIterations}\n`;
   summary += `  Flow Success Rate: ${flowSuccessRate.toFixed(2)}%\n\n`;
 
   // Per-step latency
-  summary += "⏱️  Per-Step Latency:\n";
-  summary += "  1. Authorize Init:\n";
+  summary += '⏱️  Per-Step Latency:\n';
+  summary += '  1. Authorize Init:\n';
   summary += `     med: ${getMetric('authorize_init_latency', 'med').toFixed(2)}ms, `;
   summary += `p95: ${getMetric('authorize_init_latency', 'p(95)').toFixed(2)}ms, `;
   summary += `p99: ${getMetric('authorize_init_latency', 'p(99)').toFixed(2)}ms, `;
   summary += `p999: ${getMetric('authorize_init_latency', 'p(99.9)').toFixed(2)}ms\n`;
-  summary += "  2. Email Code Generate:\n";
+  summary += '  2. Email Code Generate:\n';
   summary += `     med: ${getMetric('email_code_generate_latency', 'med').toFixed(2)}ms, `;
   summary += `p95: ${getMetric('email_code_generate_latency', 'p(95)').toFixed(2)}ms, `;
   summary += `p99: ${getMetric('email_code_generate_latency', 'p(99)').toFixed(2)}ms, `;
   summary += `p999: ${getMetric('email_code_generate_latency', 'p(99.9)').toFixed(2)}ms\n`;
-  summary += "  3. Email Code Verify:\n";
+  summary += '  3. Email Code Verify:\n';
   summary += `     med: ${getMetric('email_code_verify_latency', 'med').toFixed(2)}ms, `;
   summary += `p95: ${getMetric('email_code_verify_latency', 'p(95)').toFixed(2)}ms, `;
   summary += `p99: ${getMetric('email_code_verify_latency', 'p(99)').toFixed(2)}ms, `;
   summary += `p999: ${getMetric('email_code_verify_latency', 'p(99.9)').toFixed(2)}ms\n`;
-  summary += "  4. Authorize Code:\n";
+  summary += '  4. Authorize Code:\n';
   summary += `     med: ${getMetric('authorize_code_latency', 'med').toFixed(2)}ms, `;
   summary += `p95: ${getMetric('authorize_code_latency', 'p(95)').toFixed(2)}ms, `;
   summary += `p99: ${getMetric('authorize_code_latency', 'p(99)').toFixed(2)}ms, `;
   summary += `p999: ${getMetric('authorize_code_latency', 'p(99.9)').toFixed(2)}ms\n`;
-  summary += "  5. Token:\n";
+  summary += '  5. Token:\n';
   summary += `     med: ${getMetric('token_latency', 'med').toFixed(2)}ms, `;
   summary += `p95: ${getMetric('token_latency', 'p(95)').toFixed(2)}ms, `;
   summary += `p99: ${getMetric('token_latency', 'p(99)').toFixed(2)}ms, `;
   summary += `p999: ${getMetric('token_latency', 'p(99.9)').toFixed(2)}ms\n`;
-  summary += "  Full Flow:\n";
+  summary += '  Full Flow:\n';
   summary += `     med: ${getMetric('full_flow_latency', 'med').toFixed(2)}ms\n`;
   summary += `     p95: ${getMetric('full_flow_latency', 'p(95)').toFixed(2)}ms\n`;
   summary += `     p99: ${getMetric('full_flow_latency', 'p(99)').toFixed(2)}ms\n`;
   summary += `     p999: ${getMetric('full_flow_latency', 'p(99.9)').toFixed(2)}ms\n\n`;
 
   // Per-step success rate
-  summary += "✅ Per-Step Success Rate:\n";
+  summary += '✅ Per-Step Success Rate:\n';
   summary += `  Email Code Auth: ${(getRate('email_code_success') * 100).toFixed(2)}%\n`;
   summary += `  Auth Code: ${(getRate('authorize_success') * 100).toFixed(2)}%\n`;
   summary += `  Token Issuance: ${(getRate('token_success') * 100).toFixed(2)}%\n\n`;
 
   // Error statistics
-  summary += "❌ Error Statistics:\n";
+  summary += '❌ Error Statistics:\n';
   summary += `  OTP Generate Errors: ${getCount('otp_generate_errors')}\n`;
   summary += `  OTP Verify Errors: ${getCount('otp_verify_errors')}\n`;
   summary += `  Session Errors: ${getCount('session_errors')}\n`;
@@ -896,7 +904,7 @@ function generateTextSummary(data) {
   const serverErr = getCount('server_errors');
   const serverErrRate = totalIterations > 0 ? (serverErr / totalIterations) * 100 : 0;
 
-  summary += "📋 Target Check:\n";
+  summary += '📋 Target Check:\n';
   summary += `  Success Rate > 95%: ${rate > 0.95 ? '✅ PASS' : '❌ FAIL'} (${flowSuccessRate.toFixed(2)}%)\n`;
   summary += `  Full Flow p95 < 5000ms: ${p95 < 5000 ? '✅ PASS' : '⚠️  WARN'} (${p95.toFixed(2)}ms)\n`;
   summary += `  5xx < 1%: ${serverErrRate < 1 ? '✅ PASS' : '❌ FAIL'} (${serverErrRate.toFixed(3)}%)\n\n`;

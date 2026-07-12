@@ -20,13 +20,16 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DISCOVERY');
 
   try {
-    // Get per-tenant KeyManager DO instance
     const tenantId = getTenantIdFromContext(c);
-    const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-    const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+    if (!c.env.KEY_MANAGER_PUBLIC) {
+      log.warn(
+        'KeyManager public service binding unavailable, falling back to environment variable'
+      );
+      return fallbackToEnvKey(c, log);
+    }
 
-    // Fetch JWKS from KeyManager DO via RPC
-    const keys = await keyManager.getAllPublicKeysRpc();
+    // Fetch JWKS through the public-key-only Worker RPC facade.
+    const keys = await c.env.KEY_MANAGER_PUBLIC.getAllPublicKeys(tenantId);
 
     // If KeyManager returns empty keys, fall back to environment variable
     if (!keys || keys.length === 0) {

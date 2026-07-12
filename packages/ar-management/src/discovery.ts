@@ -316,12 +316,8 @@ async function getCommonDiscoverUrl(env: Env): Promise<string | null> {
   return null;
 }
 
-function getDiscoveryGrantSecret(env: Env): string | null {
-  return env.KEY_MANAGER_SECRET || env.ADMIN_API_SECRET || env.OTP_HMAC_SECRET || null;
-}
-
 async function getDiscoveryGrantKey(env: Env): Promise<Uint8Array> {
-  const secret = getDiscoveryGrantSecret(env);
+  const secret = env.OTP_HMAC_SECRET;
   if (!secret) {
     throw new Error('Discovery grant secret is not configured');
   }

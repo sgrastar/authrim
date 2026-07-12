@@ -1766,7 +1766,7 @@ async function hmacBase64Url(secret: string, value: string): Promise<string> {
 }
 
 function getRuntimeHmacSecret(env: FlowRuntimeEnv): string | null {
-  return readString(env.FLOW_RUNTIME_HMAC_SECRET, 2048) ?? readString(env.KEY_MANAGER_SECRET, 2048);
+  return readString(env.FLOW_RUNTIME_HMAC_SECRET, 2048);
 }
 
 async function signContract(input: {

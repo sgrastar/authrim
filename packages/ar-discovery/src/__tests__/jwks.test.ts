@@ -9,42 +9,26 @@ let primaryJwk: JWK;
 let secondaryJwk: JWK;
 let fallbackJwk: JWK;
 
-function createKeyManager(keys: JWK[] | Promise<JWK[]>) {
-  const getAllPublicKeysRpc = vi.fn(async () => keys);
-  const idFromName = vi.fn((name: string) => ({ name }) as unknown as DurableObjectId);
-  const get = vi.fn(() => ({ getAllPublicKeysRpc }));
-
+function createKeyManagerPublicService(keys: JWK[] | Promise<JWK[]>) {
+  const getAllPublicKeys = vi.fn(async (_tenantId: string) => keys);
   return {
-    namespace: {
-      idFromName,
-      get,
-    } as unknown as Env['KEY_MANAGER'],
-    idFromName,
-    get,
-    getAllPublicKeysRpc,
+    binding: { getAllPublicKeys } as Env['KEY_MANAGER_PUBLIC'],
+    getAllPublicKeys,
   };
 }
 
-function createFailingKeyManager(error: Error) {
-  const getAllPublicKeysRpc = vi.fn(async () => {
+function createFailingKeyManagerPublicService(error: Error) {
+  const getAllPublicKeys = vi.fn(async (_tenantId: string) => {
     throw error;
   });
-  const idFromName = vi.fn((name: string) => ({ name }) as unknown as DurableObjectId);
-  const get = vi.fn(() => ({ getAllPublicKeysRpc }));
-
   return {
-    namespace: {
-      idFromName,
-      get,
-    } as unknown as Env['KEY_MANAGER'],
-    idFromName,
-    get,
-    getAllPublicKeysRpc,
+    binding: { getAllPublicKeys } as Env['KEY_MANAGER_PUBLIC'],
+    getAllPublicKeys,
   };
 }
 
 function createMockEnv(options: {
-  keyManager?: Env['KEY_MANAGER'];
+  keyManagerPublic?: Env['KEY_MANAGER_PUBLIC'];
   publicJWK?: JWK;
   publicJWKJson?: string;
 }): Env {
@@ -52,8 +36,8 @@ function createMockEnv(options: {
     ISSUER_URL: 'https://test.example.com',
     PUBLIC_JWK_JSON:
       options.publicJWKJson ?? (options.publicJWK ? JSON.stringify(options.publicJWK) : undefined),
-    KEY_MANAGER: options.keyManager,
-  } as Env;
+    KEY_MANAGER_PUBLIC: options.keyManagerPublic,
+  } as unknown as Env;
 }
 
 function createApp(tenantId = 'default') {
@@ -80,12 +64,12 @@ describe('JWKS Handler', () => {
   });
 
   it('returns active public keys from KeyManager', async () => {
-    const keyManager = createKeyManager([primaryJwk, secondaryJwk]);
+    const keyManager = createKeyManagerPublicService([primaryJwk, secondaryJwk]);
     const response = await app.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
       createMockEnv({
-        keyManager: keyManager.namespace,
+        keyManagerPublic: keyManager.binding,
         publicJWK: fallbackJwk,
       })
     );
@@ -98,31 +82,29 @@ describe('JWKS Handler', () => {
     const jwks = (await response.json()) as { keys: JWK[] };
     expect(jwks.keys.map((key) => key.kid)).toEqual(['primary-key', 'secondary-key']);
     expect(jwks.keys.map((key) => key.kid)).not.toContain('fallback-key');
-    expect(keyManager.idFromName).toHaveBeenCalledWith('default-v3');
-    expect(keyManager.get).toHaveBeenCalledTimes(1);
-    expect(keyManager.getAllPublicKeysRpc).toHaveBeenCalledTimes(1);
+    expect(keyManager.getAllPublicKeys).toHaveBeenCalledWith('default');
   });
 
   it('uses tenant context to select the KeyManager instance', async () => {
     const tenantApp = createApp('tenant-a');
-    const keyManager = createKeyManager([primaryJwk]);
+    const keyManager = createKeyManagerPublicService([primaryJwk]);
 
     await tenantApp.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
-      createMockEnv({ keyManager: keyManager.namespace })
+      createMockEnv({ keyManagerPublic: keyManager.binding })
     );
 
-    expect(keyManager.idFromName).toHaveBeenCalledWith('tenant-a-v3');
+    expect(keyManager.getAllPublicKeys).toHaveBeenCalledWith('tenant-a');
   });
 
   it('falls back to PUBLIC_JWK_JSON when KeyManager returns no keys', async () => {
-    const keyManager = createKeyManager([]);
+    const keyManager = createKeyManagerPublicService([]);
     const response = await app.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
       createMockEnv({
-        keyManager: keyManager.namespace,
+        keyManagerPublic: keyManager.binding,
         publicJWK: fallbackJwk,
       })
     );
@@ -136,12 +118,12 @@ describe('JWKS Handler', () => {
   });
 
   it('falls back to PUBLIC_JWK_JSON when KeyManager RPC fails', async () => {
-    const keyManager = createFailingKeyManager(new Error('key manager unavailable'));
+    const keyManager = createFailingKeyManagerPublicService(new Error('key manager unavailable'));
     const response = await app.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
       createMockEnv({
-        keyManager: keyManager.namespace,
+        keyManagerPublic: keyManager.binding,
         publicJWK: fallbackJwk,
       })
     );
@@ -152,11 +134,11 @@ describe('JWKS Handler', () => {
   });
 
   it('returns an empty key set when neither KeyManager nor fallback keys are available', async () => {
-    const keyManager = createKeyManager([]);
+    const keyManager = createKeyManagerPublicService([]);
     const response = await app.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
-      createMockEnv({ keyManager: keyManager.namespace })
+      createMockEnv({ keyManagerPublic: keyManager.binding })
     );
 
     expect(response.status).toBe(200);
@@ -164,12 +146,12 @@ describe('JWKS Handler', () => {
   });
 
   it('returns a server error when fallback key JSON is invalid', async () => {
-    const keyManager = createKeyManager([]);
+    const keyManager = createKeyManagerPublicService([]);
     const response = await app.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
       createMockEnv({
-        keyManager: keyManager.namespace,
+        keyManagerPublic: keyManager.binding,
         publicJWKJson: 'invalid-json{',
       })
     );
@@ -183,11 +165,11 @@ describe('JWKS Handler', () => {
   });
 
   it('does not expose private key material in published keys', async () => {
-    const keyManager = createKeyManager([primaryJwk]);
+    const keyManager = createKeyManagerPublicService([primaryJwk]);
     const response = await app.request(
       '/.well-known/jwks.json',
       { method: 'GET' },
-      createMockEnv({ keyManager: keyManager.namespace })
+      createMockEnv({ keyManagerPublic: keyManager.binding })
     );
 
     const jwks = (await response.json()) as { keys: Array<Record<string, unknown>> };

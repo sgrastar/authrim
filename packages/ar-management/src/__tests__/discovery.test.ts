@@ -250,7 +250,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     BASE_DOMAIN: 'auth.example.com',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
-    KEY_MANAGER_SECRET: 'test-discovery-grant-secret',
+    OTP_HMAC_SECRET: 'test-discovery-grant-secret',
     ...envOverrides,
   } as unknown as Env;
 

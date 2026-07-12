@@ -1,5 +1,6 @@
 // Import DO classes for type-safe RPC bindings
 import type { KeyManager } from '../durable-objects/KeyManager';
+import type { VersionManager } from '../durable-objects/VersionManager';
 import type { SessionStore } from '../durable-objects/SessionStore';
 import type { SessionClientStore } from '../durable-objects/SessionClientStore';
 import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
@@ -8,6 +9,11 @@ import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
 import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
+import type { JWK } from 'jose';
+
+export interface KeyManagerPublicServiceBinding {
+  getAllPublicKeys(tenantId: string): Promise<JWK[]>;
+}
 
 export interface EmailServiceBinding {
   send(message: {
@@ -96,7 +102,7 @@ export interface Env {
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
   CIBA_REQUEST_STORE: DurableObjectNamespace; // OpenID Connect CIBA Flow
-  VERSION_MANAGER: DurableObjectNamespace; // Worker bundle version management
+  VERSION_MANAGER: DurableObjectNamespace<VersionManager>; // Worker bundle version management
   SAML_REQUEST_STORE: DurableObjectNamespace; // SAML 2.0 request/artifact store
   SAML_AGGREGATE_METADATA_STORE?: DurableObjectNamespace<SAMLAggregateMetadataStore>; // SAML aggregate metadata previews and batch imports
   PERMISSION_CHANGE_HUB?: DurableObjectNamespace; // Phase 8.3: Real-time permission change notifications
@@ -104,6 +110,7 @@ export interface Env {
   DIRECTORY_CONNECTOR_RELAY?: DurableObjectNamespace; // Wordwarden outbound connector relay
 
   // Service Bindings (Worker-to-Worker communication)
+  KEY_MANAGER_PUBLIC?: KeyManagerPublicServiceBinding; // Public-key-only KeyManager RPC facade
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
   EMAIL?: EmailServiceBinding; // Cloudflare Email Service send_email binding
 
@@ -313,17 +320,16 @@ export interface Env {
   PAIRWISE_SALT?: string; // Pairwise subject identifier salt (OIDC Core 8.1)
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
-  KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
+  KEY_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
   PLUGIN_ENCRYPTION_KEY?: string; // Dedicated encryption key for plugin configuration secrets
   PLUGIN_ENCRYPTION_SALT?: string; // Optional salt override for plugin configuration secret encryption
-  VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
+  VERSION_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK?: string; // Ed25519 private JWK for control/management snapshot publishing only
   TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID?: string; // Key ID for runtime registry snapshot signatures
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWK?: string; // Ed25519 public JWK for runtime snapshot verification
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS?: string; // JWKS with current/previous runtime snapshot verification keys
   TENANT_RUNTIME_REGISTRY_PREVIOUS_VERIFYING_PUBLIC_JWK?: string; // Optional previous public JWK during key rotation
-  ADMIN_API_SECRET?: string; // Deprecated bootstrap/break-glass secret, not accepted by Admin API
   EMAIL_DOMAIN_HASH_SECRET?: string; // HMAC secret for email domain blind index
   CLOUDFLARE_API_TOKEN?: string; // Cloudflare Custom Hostnames automation token
   CLOUDFLARE_D1_API_TOKEN?: string; // Optional Cloudflare D1 read/provisioning token

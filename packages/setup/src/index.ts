@@ -315,7 +315,6 @@ program
         let loginUiClientId: string | undefined;
         if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
           const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
-          const adminApiSecretPath = join(uiKeysDir, 'admin_api_secret.txt');
           const keysDir = uiKeysDir;
 
           const { waitForRouterWorkerReady } = await import('./core/worker-readiness.js');
@@ -359,7 +358,6 @@ program
                 purpose: 'tenant-scoped-admin',
               }),
               loginUiUrl,
-              adminApiSecretPath,
               keysDir,
               tenantId: (cfg as AuthrimConfig | null)?.tenant?.name,
               onProgress: (msg) => {
@@ -527,6 +525,7 @@ program
             (component) => upgradeLock?.workers?.[component] !== undefined
           ),
           secrets,
+          cleanupLegacyStaticSecrets: true,
           concurrency: 2,
           onProgress: (msg: string) => {
             deploySpinner.text = msg;

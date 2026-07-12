@@ -18,7 +18,7 @@
  * Usage:
  * ./bin/k6-passkeys run \
  *   --env BASE_URL=https://your-authrim.example.com \
- *   --env ADMIN_API_SECRET=xxx \
+ *   --env ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *   --env CLIENT_ID=xxx \
  *   --env CLIENT_SECRET=xxx \
  *   --env PRESET=rps30 \
@@ -66,7 +66,7 @@ const BASE_URL = __ENV.BASE_URL || '';
 const CLIENT_ID = __ENV.CLIENT_ID || 'test_client';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
-const ADMIN_API_SECRET = __ENV.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = __ENV.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const PRESET = __ENV.PRESET || 'rps30';
 const USER_ID_PREFIX = __ENV.USER_ID_PREFIX || 'pk-bench';
 
@@ -249,7 +249,7 @@ function createUser(index, timestamp) {
     {
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${ADMIN_API_SECRET}`,
+        Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
       },
       tags: { name: 'AdminCreateUser' },
     }
@@ -268,26 +268,26 @@ function createUser(index, timestamp) {
 
 // Setup - User registration (excluded from benchmark)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔑 Client: ${CLIENT_ID}`);
   console.log(`🌐 RP ID: ${RP_ID}`);
   console.log(`👥 User Count: ${selectedPreset.passkeyUserCount}`);
-  console.log("");
+  console.log('');
 
   if (!CLIENT_SECRET) {
     throw new Error('CLIENT_SECRET is required for token endpoint');
   }
 
-  if (!ADMIN_API_SECRET) {
-    throw new Error('ADMIN_API_SECRET is required for user creation');
+  if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+    throw new Error('ADMIN_MACHINE_ACCESS_TOKEN is required for user creation');
   }
 
   console.log(`📝 Registering ${selectedPreset.passkeyUserCount} passkey users...`);
-  console.log("   (Setup phase, not included in benchmark)");
-  console.log("");
+  console.log('   (Setup phase, not included in benchmark)');
+  console.log('');
 
   const users = [];
   const timestamp = Date.now();
@@ -387,14 +387,14 @@ export function setup() {
     throw new Error('No users registered successfully. Aborting.');
   }
 
-  console.log("");
+  console.log('');
   console.log(`✅ Setup complete: ${users.length} users registered in ${totalTime.toFixed(2)}s`);
   console.log(`   Rate: ${(users.length / totalTime).toFixed(1)} users/sec`);
   console.log(`   Errors: ${errorCount}`);
-  console.log("");
+  console.log('');
 
   // Warmup
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(5, users.length); i++) {
     const user = users[i];
     http.get(`${BASE_URL}/authorize?response_type=code&client_id=${CLIENT_ID}&scope=openid`, {
@@ -406,8 +406,8 @@ export function setup() {
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     users,
@@ -448,14 +448,14 @@ export default function (data) {
   // ===============================
   const authorizeInitUrl =
     `${baseUrl}/authorize?` +
-    "response_type=code&" +
+    'response_type=code&' +
     `client_id=${encodeURIComponent(clientId)}&` +
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    "scope=openid&" +
+    'scope=openid&' +
     `state=${state}&` +
     `nonce=${nonce}&` +
     `code_challenge=${codeChallenge}&` +
-    "code_challenge_method=S256";
+    'code_challenge_method=S256';
 
   const step1Response = http.get(authorizeInitUrl, {
     headers: { Accept: 'text/html', Connection: 'keep-alive' },
@@ -621,7 +621,7 @@ export default function (data) {
   // ===============================
   if (success && authCode) {
     const tokenPayload =
-      "grant_type=authorization_code&" +
+      'grant_type=authorization_code&' +
       `code=${encodeURIComponent(authCode)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `code_verifier=${codeVerifier}`;
@@ -671,7 +671,7 @@ export default function (data) {
 
 // Teardown
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

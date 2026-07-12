@@ -125,26 +125,19 @@ describe('SAML key utilities', () => {
     const certificateStoreCalls: unknown[] = [];
 
     const keyManager = {
-      fetch: async (request: Request): Promise<Response> => {
-        const path = new URL(request.url).pathname;
-        if (path === '/internal/active-with-private') {
-          return Response.json({ ...keyData, certificatePEM: storedCertificate });
-        }
-        if (path === '/internal/certificate') {
-          const body = (await request.json()) as {
-            kid: string;
-            certificatePEM: string;
-            certificateSha256Thumbprint?: string;
-          };
-          certificateStoreCalls.push(body);
-          storedCertificate ??= body.certificatePEM;
-          return Response.json({ ...keyData, certificatePEM: storedCertificate });
-        }
-        return new Response('not found', { status: 404 });
+      getActiveKeyWithPrivateRpc: async () => ({ ...keyData, certificatePEM: storedCertificate }),
+      rotateKeys: async () => ({ ...keyData, certificatePEM: storedCertificate }),
+      storeCertificateForKey: async (body: {
+        kid: string;
+        certificatePEM: string;
+        certificateSha256Thumbprint?: string;
+      }) => {
+        certificateStoreCalls.push(body);
+        storedCertificate ??= body.certificatePEM;
+        return { ...keyData, certificatePEM: storedCertificate };
       },
     };
     const env = {
-      KEY_MANAGER_SECRET: 'test-secret',
       KEY_MANAGER: {
         idFromName: () => 'stub-id',
         get: () => keyManager,

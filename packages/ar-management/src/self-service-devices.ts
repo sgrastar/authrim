@@ -484,7 +484,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
   const tenantId = getTenantIdFromContext(c);
   const cursor = await parseCursor(
     c.req.query('cursor'),
-    c.env.KEY_MANAGER_SECRET,
+    c.env.LOGGING_CURSOR_HMAC_SECRET,
     access.sub,
     tenantId
   );
@@ -547,7 +547,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
     nextOffset < devices.length
       ? await buildCursor(
           { offset: nextOffset, sub: access.sub, tenant_id: tenantId },
-          c.env.KEY_MANAGER_SECRET
+          c.env.LOGGING_CURSOR_HMAC_SECRET
         )
       : undefined;
 

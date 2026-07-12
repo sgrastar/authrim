@@ -190,13 +190,13 @@ if (!TOKEN_URL) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🗄️  Storage profile: ${STORAGE_PROFILE}`);
   console.log(`👥 Dataset users: ${DATASET_USER_COUNT}`);
-  console.log("");
+  console.log('');
 
   let tokens = [];
 
@@ -221,7 +221,7 @@ export function setup() {
   }
 
   // Warmup: Initialize DO with first few requests
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(10, tokens.length); i++) {
     const token = tokens[i];
     http.get(`${BASE_URL}/userinfo`, {
@@ -231,8 +231,8 @@ export function setup() {
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokens: useRemoteData ? tokens : null,
@@ -316,7 +316,7 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

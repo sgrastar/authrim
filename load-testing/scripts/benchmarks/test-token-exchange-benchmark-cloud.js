@@ -389,13 +389,13 @@ function validateJWTStructure(token) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔐 Client: ${CLIENT_ID}`);
-  console.log("☁️  K6 Cloud Mode: Fetching tokens from R2");
-  console.log("");
+  console.log('☁️  K6 Cloud Mode: Fetching tokens from R2');
+  console.log('');
 
   // K6 Cloud: Fetch tokens from R2
   console.log(`📥 Fetching tokens from: ${TOKEN_URL}`);
@@ -441,18 +441,18 @@ export function setup() {
     if (tokenObj.scope) scopeSet.add(tokenObj.scope);
   }
 
-  console.log("📊 Token Distribution:");
+  console.log('📊 Token Distribution:');
   console.log(`   Valid:   ${tokensByType.valid.length} (with actor: ${actorTokenCount})`);
   console.log(`   Expired: ${tokensByType.expired.length}`);
   console.log(`   Invalid: ${tokensByType.invalid.length}`);
   console.log(`   Revoked: ${tokensByType.revoked.length}`);
-  console.log("📈 Variations:");
+  console.log('📈 Variations:');
   console.log(`   Audiences: ${audienceSet.size}`);
   console.log(`   Scopes:    ${scopeSet.size}`);
-  console.log("");
+  console.log('');
 
   // Warmup: Initialize Token Exchange endpoint
-  console.log("🔥 Warming up Token Exchange endpoint...");
+  console.log('🔥 Warming up Token Exchange endpoint...');
   if (tokensByType.valid.length > 0) {
     for (let i = 0; i < Math.min(10, tokensByType.valid.length); i++) {
       const tokenObj = tokensByType.valid[i];
@@ -472,8 +472,8 @@ export function setup() {
           body.error === 'unsupported_grant_type' &&
           body.error_description?.includes('not enabled')
         ) {
-          console.error("❌ Token Exchange is not enabled!");
-          console.error("   Set ENABLE_TOKEN_EXCHANGE=true or enable via KV settings.");
+          console.error('❌ Token Exchange is not enabled!');
+          console.error('   Set ENABLE_TOKEN_EXCHANGE=true or enable via KV settings.');
           throw new Error('Token Exchange feature is disabled');
         }
       }
@@ -482,15 +482,15 @@ export function setup() {
       if (res.status === 403) {
         const body = JSON.parse(res.body);
         if (body.error === 'unauthorized_client') {
-          console.error("❌ Client is not allowed to use Token Exchange!");
+          console.error('❌ Client is not allowed to use Token Exchange!');
           console.error(`   Set token_exchange_allowed=true for client ${CLIENT_ID}`);
           throw new Error('Client not authorized for Token Exchange');
         }
       }
     }
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokensByType,
@@ -648,7 +648,7 @@ export function benchmarkScenario(data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

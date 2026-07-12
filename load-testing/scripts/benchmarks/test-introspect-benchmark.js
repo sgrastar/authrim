@@ -24,7 +24,7 @@
  *
  * Note: strictValidation=true must be set before running tests
  *   curl -X PUT https://your-authrim.example.com/api/admin/settings/introspection-validation \
- *     -H "Authorization: Bearer $ADMIN_API_SECRET" \
+ *     -H "Authorization: Bearer $ADMIN_MACHINE_ACCESS_TOKEN" \
  *     -H "Content-Type: application/json" \
  *     -d '{"strictValidation": true}'
  *
@@ -283,7 +283,7 @@ if (!TOKEN_URL) {
     const wrongAudienceTokens = allTokens.filter((t) => t.type === 'wrong_audience');
     const wrongClientTokens = allTokens.filter((t) => t.type === 'wrong_client');
 
-    console.log("📂 Loaded tokens from local file:");
+    console.log('📂 Loaded tokens from local file:');
     console.log(`   Valid:           ${validTokens.length}`);
     console.log(`   Valid (TE/act):  ${validExchangedTokens.length}`);
     console.log(`   Expired:         ${expiredTokens.length}`);
@@ -347,12 +347,12 @@ function selectTokenByType(tokens, type, vuId) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔐 Client: ${CLIENT_ID}`);
-  console.log("");
+  console.log('');
 
   let tokens = [];
 
@@ -385,7 +385,7 @@ export function setup() {
     wrong_audience: tokens.filter((t) => t.type === 'wrong_audience').length,
     wrong_client: tokens.filter((t) => t.type === 'wrong_client').length,
   };
-  console.log("📊 Token distribution:");
+  console.log('📊 Token distribution:');
   console.log(
     `   Valid:           ${counts.valid} (${((counts.valid / tokens.length) * 100).toFixed(1)}%)`
   );
@@ -404,10 +404,10 @@ export function setup() {
   console.log(
     `   Wrong client:    ${counts.wrong_client} (${((counts.wrong_client / tokens.length) * 100).toFixed(1)}%)`
   );
-  console.log("");
+  console.log('');
 
   // Warmup: Initialize DO with first few requests
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   const validToken = tokens.find((t) => t.type === 'valid');
   if (validToken) {
     for (let i = 0; i < 5; i++) {
@@ -420,8 +420,8 @@ export function setup() {
       });
     }
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokens: useRemoteData ? tokens : null,
@@ -584,7 +584,7 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureDownstreamIntrospectionClient } from '../core/downstream-introspection-client.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
@@ -21,7 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe('ensureDownstreamIntrospectionClient', () => {
   const fetchMock = vi.fn<typeof fetch>();
   let tempDir = '';
-  let adminApiSecretPath = '';
+  let adminBearerToken = '';
 
   beforeEach(async () => {
     vi.stubGlobal('fetch', fetchMock);
@@ -30,8 +30,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
     const testTempRoot = join(process.cwd(), '.tmp-tests');
     await mkdir(testTempRoot, { recursive: true });
     tempDir = await mkdtemp(join(testTempRoot, 'authrim-downstream-introspection-client-'));
-    adminApiSecretPath = join(tempDir, 'admin_api_secret.txt');
-    await writeFile(adminApiSecretPath, 'secret-token');
+    adminBearerToken = 'secret-token';
   });
 
   afterEach(async () => {
@@ -72,7 +71,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      adminApiSecretPath,
+      adminBearerToken,
       keysDir: tempDir,
       tenantId: 'default',
       onProgress: (message) => progress.push(message),
@@ -109,7 +108,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      adminApiSecretPath,
+      adminBearerToken,
       keysDir: tempDir,
       tenantId: 'default',
       maxRetries: 1,
@@ -169,7 +168,6 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      adminApiSecretPath,
       keysDir: tempDir,
       tenantId: 'default',
       onProgress: (message) => progress.push(message),
@@ -222,7 +220,6 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://first.multi-tenant.authrim.com',
-      adminApiSecretPath,
       keysDir: tempDir,
       tenantId: 'first',
       onProgress: (message) => progress.push(message),

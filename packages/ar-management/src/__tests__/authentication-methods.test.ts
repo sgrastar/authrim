@@ -817,7 +817,7 @@ describe('Authentication Methods API', () => {
       );
     });
 
-    it('should not require ADMIN_API_SECRET for external login providers', async () => {
+    it('should use the public external-provider discovery surface', async () => {
       const externalIdp = createMockExternalIdp({
         providers: [{ id: 'ggl-123', name: 'Google', slug: 'google', enabled: true }],
       });

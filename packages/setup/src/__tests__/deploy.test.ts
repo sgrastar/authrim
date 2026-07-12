@@ -14,6 +14,7 @@ import { execa } from 'execa';
 import {
   buildApiPackages,
   buildUiWorkerBuildEnv,
+  cleanupLegacyStaticSecrets,
   deployAll,
   deployUiWorkerComponent,
   deployUiWorkerBindingTargets,
@@ -364,6 +365,113 @@ describe('loadDeploySecretsFromKeys', () => {
       OBJECT_ENCRYPTION_ROOT_KEY: 'core-secret',
       FLOW_RUNTIME_HMAC_SECRET: 'auth-secret',
     });
+  });
+});
+
+describe('cleanupLegacyStaticSecrets', () => {
+  it('deletes only retired secret names that still exist on successfully deployed workers', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args.includes('list')) {
+        if (args.includes('deployments')) {
+          return {
+            ...successfulCommandResult(),
+            stdout: JSON.stringify([
+              {
+                id: 'cleanup-deployment',
+                versions: [{ version_id: 'cleanup-v2', percentage: 100 }],
+              },
+            ]),
+          } as Awaited<ReturnType<typeof execa>>;
+        }
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            { name: 'ADMIN_API_SECRET', type: 'secret_text' },
+            { name: 'KEY_MANAGER_SECRET', type: 'secret_text' },
+            { name: 'OTP_HMAC_SECRET', type: 'secret_text' },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      return successfulCommandResult();
+    });
+
+    await expect(
+      cleanupLegacyStaticSecrets({ env: 'test', rootDir }, ['ar-auth'])
+    ).resolves.toEqual({ failures: [], activeVersionIds: { 'ar-auth': 'cleanup-v2' } });
+
+    const bulkCalls = vi
+      .mocked(execa)
+      .mock.calls.filter(([, args]) => args.includes('delete'))
+      .map(([, args]) => args);
+    expect(bulkCalls).toHaveLength(0);
+    const bulkCall = vi.mocked(execa).mock.calls.find(([, args]) => args.includes('bulk'));
+    expect(bulkCall?.[1]).toEqual(expect.arrayContaining(['secret', 'bulk']));
+    expect(bulkCall?.[2]).toMatchObject({
+      input: JSON.stringify({ ADMIN_API_SECRET: null, KEY_MANAGER_SECRET: null }),
+    });
+  });
+
+  it('defers shared KeyManager and VersionManager cleanup during a partial rollout', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+
+    await expect(
+      cleanupLegacyStaticSecrets({ env: 'test', rootDir }, ['ar-lib-core'])
+    ).resolves.toEqual({ failures: [], activeVersionIds: {} });
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('cleans shared provider secrets after the full former-caller cohort succeeds', async () => {
+    const rootDir = createTempRoot();
+    const components = ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management'] as const;
+    for (const component of components) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const component = components.find((candidate) => options?.cwd?.endsWith(candidate));
+      if (args.includes('deployments')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: `${component}-cleanup-deployment`,
+              versions: [{ version_id: `${component}-cleanup-v2`, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify(
+            component === 'ar-lib-core'
+              ? [
+                  { name: 'KEY_MANAGER_SECRET', type: 'secret_text' },
+                  { name: 'VERSION_MANAGER_SECRET', type: 'secret_text' },
+                ]
+              : [{ name: 'KEY_MANAGER_SECRET', type: 'secret_text' }]
+          ),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await cleanupLegacyStaticSecrets({ env: 'test', rootDir }, components);
+
+    expect(result.failures).toEqual([]);
+    expect(result.activeVersionIds['ar-lib-core']).toBe('ar-lib-core-cleanup-v2');
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(
+          ([, args, options]) =>
+            options?.cwd?.endsWith('ar-lib-core') &&
+            args.includes('secret') &&
+            args.includes('bulk')
+        )
+    ).toBe(true);
   });
 });
 

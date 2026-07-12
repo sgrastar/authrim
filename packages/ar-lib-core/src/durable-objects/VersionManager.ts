@@ -39,6 +39,7 @@
  * - Used only for internal deployment tracking
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { timingSafeEqual } from '../utils/crypto';
 import { createLogger, type Logger } from '../utils/logger';
@@ -46,7 +47,7 @@ import { createLogger, type Logger } from '../utils/logger';
 /**
  * Version record for a single Worker
  */
-interface VersionRecord {
+export interface VersionRecord {
   uuid: string;
   deployTime: string; // ISO 8601 format
   registeredAt: number; // Unix timestamp of registration
@@ -67,15 +68,12 @@ interface VersionManagerState {
  *
  * Centralized version management for all Workers in the deployment.
  */
-export class VersionManager {
-  private state: DurableObjectState;
-  private env: Env;
+export class VersionManager extends DurableObject<Env> {
   private versionManagerState: VersionManagerState | null = null;
   private readonly log: Logger = createLogger().module('VersionManager');
 
   constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+    super(state, env);
   }
 
   /**
@@ -86,7 +84,7 @@ export class VersionManager {
       return;
     }
 
-    const stored = await this.state.storage.get<VersionManagerState>('state');
+    const stored = await this.ctx.storage.get<VersionManagerState>('state');
 
     if (stored) {
       this.versionManagerState = stored;
@@ -114,7 +112,7 @@ export class VersionManager {
    */
   private async saveState(): Promise<void> {
     if (this.versionManagerState) {
-      await this.state.storage.put('state', this.versionManagerState);
+      await this.ctx.storage.put('state', this.versionManagerState);
     }
   }
 
@@ -158,6 +156,16 @@ export class VersionManager {
 
     const state = this.getState();
     return { ...state.versions };
+  }
+
+  /** RPC entry point used by the management Worker service binding. */
+  async registerVersionRpc(workerName: string, uuid: string, deployTime: string): Promise<void> {
+    await this.registerVersion(workerName, uuid, deployTime);
+  }
+
+  /** RPC entry point used by the management Worker service binding. */
+  async getAllVersionsRpc(): Promise<Record<string, VersionRecord>> {
+    return this.getAllVersions();
   }
 
   /**

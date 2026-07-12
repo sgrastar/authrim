@@ -106,9 +106,12 @@ describe('SECRET_UPLOAD_PLAN', () => {
     );
   });
 
-  it('keeps VersionManager secret separate from broad Admin API secret', () => {
-    expect(getSecretNamesForWorker('ar-lib-core')).toContain('VERSION_MANAGER_SECRET');
-    expect(getSecretNamesForWorker('ar-management')).toContain('VERSION_MANAGER_SECRET');
+  it('uses Durable Object bindings instead of static KeyManager or VersionManager credentials', () => {
+    expect(getSecretNamesForWorker('ar-lib-core')).not.toContain('VERSION_MANAGER_SECRET');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain('VERSION_MANAGER_SECRET');
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain('KEY_MANAGER_SECRET');
+    expect(getSecretNamesForWorker('ar-token')).not.toContain('KEY_MANAGER_SECRET');
+    expect(getSecretNamesForWorker('ar-saml')).not.toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-management')).not.toContain('ADMIN_API_SECRET');
   });
 
@@ -151,8 +154,8 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-management')).not.toContain('EMAIL_FROM_NAME');
   });
 
-  it('does not upload Admin API root bearer material to SAML or bridge workers', () => {
-    expect(getSecretNamesForWorker('ar-saml')).toContain('KEY_MANAGER_SECRET');
+  it('does not upload static internal bearer material to SAML or bridge workers', () => {
+    expect(getSecretNamesForWorker('ar-saml')).not.toContain('KEY_MANAGER_SECRET');
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');
     expect(getSecretNamesForWorker('ar-bridge')).toEqual([
       'RP_TOKEN_ENCRYPTION_KEY',
