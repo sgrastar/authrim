@@ -169,13 +169,6 @@ function isOidcCertificationRedirectUri(value: unknown): boolean {
   }
 }
 
-function isOidcCertificationClient(clientMetadata?: { redirect_uris?: unknown } | null): boolean {
-  return (
-    Array.isArray(clientMetadata?.redirect_uris) &&
-    clientMetadata.redirect_uris.some(isOidcCertificationRedirectUri)
-  );
-}
-
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
   return splitScopes(responseType).includes('code');
 }
@@ -1767,7 +1760,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       'Invalid Client'
     );
   }
-  const useCertificationBuiltinForms = isOidcCertificationClient(clientMetadata);
+  // Certification behavior must be scoped to both an explicitly enabled
+  // conformance environment and the redirect URI used by this request. A client
+  // merely registering a certification URI must not turn its other flows into
+  // credential-accepting test flows.
+  const useCertificationBuiltinForms =
+    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(redirect_uri);
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
@@ -3504,7 +3502,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               tenantId,
               clientMetadata?.login_ui_url,
               getRequestIssuer(c),
-              isOidcCertificationClient(clientMetadata)
+              useCertificationBuiltinForms
             );
             if (consentTarget.type === 'redirect') {
               return c.redirect(consentTarget.url, 302);
@@ -4860,14 +4858,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   const metadata = challengeData.metadata || {};
 
-  // Determine if this is an OIDC Conformance Test client
-  const client_id = metadata.client_id as string | undefined;
-  let isCertificationTest = false;
-
-  if (client_id) {
-    const clientMetadata = await getClientCached(c, c.env, client_id);
-    isCertificationTest = isOidcCertificationClient(clientMetadata);
-  }
+  // Never infer certification privileges from the client's registered URI set.
+  // The consumed challenge must itself target the certification service and the
+  // deployment must have explicitly enabled its built-in conformance forms.
+  const isCertificationTest =
+    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(metadata.redirect_uri);
 
   // Create a new user and session (stub - in production, verify credentials first)
   let userId: string;

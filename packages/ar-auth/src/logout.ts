@@ -27,6 +27,7 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   getSessionStoreBySessionId,
+  recordUserSessionRevocationEpoch,
   isShardedSessionId,
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -1250,9 +1251,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       // Legacy non-sharded session ID - cannot route
       log.warn('Cannot delete legacy session format', { sessionId, action: 'BackchannelLogout' });
     } else {
-      // No sessionId provided - "delete all user sessions" is not supported with sharding
-      // This would require maintaining a userId -> sessionIds index across all shards
-      log.warn('Cannot invalidate all sessions without sessionId', {
+      // A subject-only logout cannot locate every shard, so advance the user's
+      // revocation epoch. SessionStore checks this epoch on active-session reads.
+      await recordUserSessionRevocationEpoch(authCtx.coreAdapter, tenantId, userId);
+      sessionDeleted = true;
+      log.info('Invalidated all user sessions by revocation epoch', {
         userId,
         action: 'BackchannelLogout',
       });

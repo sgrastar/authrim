@@ -26,6 +26,8 @@ import {
   buildIssuerUrl,
   getLogger,
   createLogger,
+  createAuthContextFromHono,
+  recordUserSessionRevocationEpoch,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutRequestXml,
@@ -730,13 +732,9 @@ async function terminateSessionByNameId(
     // PII/Non-PII DB separation: search email in PII DB
     const user = await findActiveSamlUserByEmail(env, tenantId, nameId);
     if (user) {
-      // PII Protection: Do not log NameID (may contain email/PII)
-      log.warn(
-        'Cannot delete all sessions for user (sharded SessionStore requires sessionIndex). Ensure the SP includes sessionIndex in LogoutRequest.',
-        {}
-      );
-      // Return true to indicate the logout request was processed (even if we couldn't delete all sessions)
-      // The session cookie will still be cleared by the caller
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      await recordUserSessionRevocationEpoch(authCtx.coreAdapter, tenantId, user.id);
+      log.info('Terminated all user sessions by revocation epoch', {});
       return true;
     } else {
       // PII Protection: Do not log NameID (may contain email/PII)

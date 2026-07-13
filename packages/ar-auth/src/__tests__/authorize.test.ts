@@ -402,7 +402,7 @@ describe('Authorization Handler', () => {
       expect(location).toContain('tenant_host=test.example.com');
     });
 
-    it('routes OIDC certification clients to built-in login without global conformance mode', async () => {
+    it('does not enable built-in login from a certification redirect URI alone', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
@@ -430,11 +430,10 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
-      const redirectUrl = new URL(location!, 'https://test.example.com');
-      expect(redirectUrl.pathname).toBe('/flow/login');
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin).toBe('https://client-login.example.com');
+      expect(redirectUrl.pathname).toBe('/login');
       expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
-      expect(location).not.toContain('login.example.com');
-      expect(location).not.toContain('client-login.example.com');
     });
 
     it('should keep authorization UI redirects on the tenant issuer host in multi-tenant mode', async () => {
@@ -1230,8 +1229,8 @@ describe('Authorization Handler', () => {
       );
     });
 
-    it('allows prompt=none for logged-in OIDC certification clients without global conformance mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+    it('allows prompt=none for logged-in OIDC certification clients in conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'true';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -1643,6 +1642,43 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).has('login_challenge')).toBe(false);
     });
 
+    it('rejects certification stub login when conformance mode is disabled', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.ENABLE_TEST_ENDPOINTS = 'false';
+      getChallengeMap(env).set('certification_login_challenge', {
+        id: 'certification_login_challenge',
+        type: 'login',
+        userId: 'anonymous',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://www.certification.openid.net/test/a/authrim/callback',
+          scope: 'openid',
+        },
+      });
+
+      const response = await app.request(
+        '/flow/login',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            challenge_id: 'certification_login_challenge',
+            username: 'attacker@example.com',
+            password: 'accepted-by-old-stub',
+          }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'access_denied',
+      });
+    });
+
     it('renders and processes built-in reauthentication confirmation', async () => {
       getChallengeMap(env).set('reauth_challenge', {
         id: 'reauth_challenge',
@@ -1776,8 +1812,8 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).size).toBe(0);
     });
 
-    it('routes OIDC certification clients to built-in consent without global conformance mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+    it('routes OIDC certification clients to built-in consent in conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'true';
       env.UI_URL = 'https://login.example.com';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';

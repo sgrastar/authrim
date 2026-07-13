@@ -340,6 +340,7 @@ export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/session-client-store';
+export { recordUserSessionRevocationEpoch } from './services/session-persistence';
 export * from './services/storage-target-resolver';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';
