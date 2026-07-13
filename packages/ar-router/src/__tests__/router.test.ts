@@ -660,6 +660,27 @@ describe('Router Worker', () => {
       expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
     });
 
+    it('strips credentialed CORS headers returned by a backend without a router allowlist', async () => {
+      mockEnv.OP_AUTH.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ session_id: 'must-not-be-readable-cross-origin' }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Credentials': 'true',
+          },
+        })
+      );
+      const req = new Request('https://example.com/api/sessions/issue', {
+        method: 'POST',
+        headers: { Origin: 'https://attacker.example' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://attacker.example');
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+    });
+
     it('should allow whitelisted origin with credentials when ALLOWED_ORIGINS is set', async () => {
       const envWithOrigins = {
         ...mockEnv,

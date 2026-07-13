@@ -114,6 +114,12 @@ function createTestApp(
   } = {}
 ) {
   const mockKV = options.kv ?? createMockKV();
+  const mockRateLimiterIncrement = vi.fn().mockResolvedValue({
+    allowed: true,
+    current: 1,
+    limit: 100,
+    resetAt: Math.floor(Date.now() / 1000) + 60,
+  });
 
   const app = new Hono<{
     Bindings: Env;
@@ -152,11 +158,15 @@ function createTestApp(
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockKV,
     DB: options.db ?? createMockDB(),
+    RATE_LIMITER: {
+      idFromName: vi.fn().mockReturnValue('rate-limit-id'),
+      get: vi.fn().mockReturnValue({ incrementRpc: mockRateLimiterIncrement }),
+    },
     BASE_DOMAIN: 'example.com', // enable multi-tenant mode so ensureSupportedTenantId passes
     ...options.env,
   } as unknown as Env;
 
-  return { app, mockEnv, mockKV };
+  return { app, mockEnv, mockKV, mockRateLimiterIncrement };
 }
 
 describe('Settings API v2', () => {
@@ -166,6 +176,19 @@ describe('Settings API v2', () => {
 
   describe('Tenant Settings', () => {
     describe('GET /tenants/:tenantId/settings/:category', () => {
+      it('applies rate limiting to concrete mounted settings paths', async () => {
+        const { app, mockEnv, mockRateLimiterIncrement } = createTestApp();
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/oauth',
+          { method: 'GET', headers: { 'CF-Connecting-IP': '192.0.2.10' } },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        expect(mockRateLimiterIncrement).toHaveBeenCalledTimes(1);
+      });
+
       it('should return settings with default values', async () => {
         const { app, mockEnv } = createTestApp();
 

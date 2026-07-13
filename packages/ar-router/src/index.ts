@@ -606,7 +606,7 @@ app.use('*', async (c, next) => {
     return null;
   };
 
-  return cors({
+  const result = await cors({
     origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: [
@@ -630,6 +630,14 @@ app.use('*', async (c, next) => {
     maxAge: 86400,
     credentials: allowCredentials,
   })(c, next);
+
+  // Backend Workers may return their own credentialed CORS header. When this
+  // router has no explicit origin allowlist, strip it after downstream handling
+  // so reflecting a public Origin can never become credentialed CORS.
+  if (!allowCredentials) {
+    c.res.headers.delete('Access-Control-Allow-Credentials');
+  }
+  return result;
 });
 
 app.use('*', async (c, next) => {

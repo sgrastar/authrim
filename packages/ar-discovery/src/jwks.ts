@@ -2,6 +2,47 @@ import type { Context } from 'hono';
 import type { Env, Logger } from '@authrim/ar-lib-core';
 import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
+const PUBLIC_JWK_FIELDS = new Set([
+  'kty',
+  'use',
+  'key_ops',
+  'alg',
+  'kid',
+  'x5u',
+  'x5c',
+  'x5t',
+  'x5t#S256',
+  'n',
+  'e',
+  'crv',
+  'x',
+  'y',
+]);
+
+function toPublicJwk(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('JWK must be an object');
+  }
+
+  const jwk = value as Record<string, unknown>;
+  if (typeof jwk.kty !== 'string' || jwk.kty === 'oct') {
+    throw new Error('JWKS requires an asymmetric public key');
+  }
+
+  const publicJwk = Object.fromEntries(
+    Object.entries(jwk).filter(([field]) => PUBLIC_JWK_FIELDS.has(field))
+  );
+  if (
+    (jwk.kty === 'RSA' && (typeof publicJwk.n !== 'string' || typeof publicJwk.e !== 'string')) ||
+    ((jwk.kty === 'EC' || jwk.kty === 'OKP') &&
+      (typeof publicJwk.crv !== 'string' || typeof publicJwk.x !== 'string'))
+  ) {
+    throw new Error('JWK is missing required public key parameters');
+  }
+
+  return publicJwk;
+}
+
 /**
  * JSON Web Key Set (JWKS) Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#JWKs
@@ -42,7 +83,7 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
     c.header('Cache-Control', 'public, max-age=300');
     c.header('Vary', 'Accept-Encoding');
 
-    return c.json({ keys });
+    return c.json({ keys: keys.map(toPublicJwk) });
   } catch (error) {
     log.error('Error fetching JWKS from KeyManager', {}, error as Error);
     // Fallback to environment variable if KeyManager is unavailable
@@ -64,7 +105,7 @@ function fallbackToEnvKey(c: Context<{ Bindings: Env }>, log: Logger) {
   }
 
   try {
-    const publicJWK = JSON.parse(publicJWKJson);
+    const publicJWK = toPublicJwk(JSON.parse(publicJWKJson));
 
     c.header('Cache-Control', 'public, max-age=3600');
     c.header('Vary', 'Accept-Encoding');

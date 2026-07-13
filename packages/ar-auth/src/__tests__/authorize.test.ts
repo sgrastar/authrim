@@ -2180,6 +2180,38 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it('preserves security-sensitive authorization parameters from PAR', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+        'client.consent_required': false,
+      });
+      seedSession(env);
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_security_parameters';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'par-form-post',
+        response_mode: 'form_post',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('text/html');
+      const html = await response.text();
+      expect(html).toContain('name="code"');
+      expect(html).toContain('name="state" value="par-form-post"');
+    });
+
     it('should return error when redirect_uri is missing and client has multiple redirect_uris', async () => {
       // Default mock client has multiple redirect_uris
       const response = await app.request(

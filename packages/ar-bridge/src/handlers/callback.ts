@@ -7,7 +7,7 @@
  */
 
 import type { Context } from 'hono';
-import { setCookie } from 'hono/cookie';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
@@ -41,9 +41,9 @@ import {
   createErrorResponse,
   safeFetchJson,
 } from '@authrim/ar-lib-core';
+import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
-import { consumeAuthState } from '../utils/state';
 import { handleIdentity } from '../services/identity-stitching';
 import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
@@ -159,6 +159,12 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   if (!code || !state) {
     return redirectWithError(c, 'invalid_request', 'Missing code or state');
   }
+
+  const stateCookieName = await getAuthStateCookieName(state);
+  if (!matchesAuthStateCookie(state, getCookie(c, stateCookieName))) {
+    return redirectWithError(c, 'invalid_state', 'State is not bound to this browser');
+  }
+  deleteCookie(c, stateCookieName, { path: '/auth/external/' });
 
   // Declare provider outside try block so it's accessible in catch block for event logging
   let provider: UpstreamProvider | null = null;

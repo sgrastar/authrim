@@ -190,4 +190,31 @@ describe('JWKS Handler', () => {
     expect(jwk?.dq).toBeUndefined();
     expect(jwk?.qi).toBeUndefined();
   });
+
+  it('strips private key material from the PUBLIC_JWK_JSON fallback', async () => {
+    const privateLikeJwk = {
+      ...fallbackJwk,
+      d: 'private-exponent',
+      p: 'private-prime',
+      q: 'private-prime',
+      dp: 'private-value',
+      dq: 'private-value',
+      qi: 'private-value',
+    };
+    const response = await app.request(
+      '/.well-known/jwks.json',
+      { method: 'GET' },
+      createMockEnv({ publicJWKJson: JSON.stringify(privateLikeJwk) })
+    );
+
+    expect(response.status).toBe(200);
+    const jwks = (await response.json()) as { keys: Array<Record<string, unknown>> };
+    expect(jwks.keys[0]).toMatchObject({ n: fallbackJwk.n, e: fallbackJwk.e });
+    expect(jwks.keys[0]?.d).toBeUndefined();
+    expect(jwks.keys[0]?.p).toBeUndefined();
+    expect(jwks.keys[0]?.q).toBeUndefined();
+    expect(jwks.keys[0]?.dp).toBeUndefined();
+    expect(jwks.keys[0]?.dq).toBeUndefined();
+    expect(jwks.keys[0]?.qi).toBeUndefined();
+  });
 });

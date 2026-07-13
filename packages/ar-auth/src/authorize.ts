@@ -1216,6 +1216,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge_method?: string;
         claims?: string;
         response_mode?: string;
+        prompt?: string;
+        display?: string;
+        max_age?: number;
+        ui_locales?: string;
+        id_token_hint?: string;
+        login_hint?: string;
+        acr_values?: string;
         authorization_details?: string;
       } | null = null;
 
@@ -1277,7 +1284,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           code_challenge_method: consumed.code_challenge_method,
           claims: consumed.claims,
           authorization_details: consumed.authorization_details,
-          response_mode: undefined,
+          response_mode: consumed.response_mode,
+          prompt: consumed.prompt,
+          display: consumed.display,
+          max_age: consumed.max_age,
+          ui_locales: consumed.ui_locales,
+          id_token_hint: consumed.id_token_hint,
+          login_hint: consumed.login_hint,
+          acr_values: consumed.acr_values,
         };
       } catch {
         // RPC error (invalid/expired request_uri)
@@ -1306,6 +1320,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge_method?: string;
         claims?: string;
         response_mode?: string;
+        prompt?: string;
+        display?: string;
+        max_age?: number;
+        ui_locales?: string;
+        id_token_hint?: string;
+        login_hint?: string;
+        acr_values?: string;
         authorization_details?: string; // RFC 9396: Rich Authorization Requests
       } = parsedData;
 
@@ -1334,6 +1355,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         claimsRequestIntegrityProtected = true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
+        prompt = parData.prompt;
+        display = parData.display;
+        max_age = parData.max_age === undefined ? undefined : String(parData.max_age);
+        ui_locales = parData.ui_locales;
+        id_token_hint = parData.id_token_hint;
+        login_hint = parData.login_hint;
+        acr_values = parData.acr_values;
       } catch {
         return c.json(
           {

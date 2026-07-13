@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   emailNotifierEnabled: true,
   rateLimiter: {
     incrementRpc: vi.fn(),
+    resetRpc: vi.fn(),
   },
   coreAdapter: {
     query: vi.fn(),
@@ -290,6 +291,7 @@ describe('directory password login handler', () => {
     mocks.emailNotifierEnabled = true;
     mocks.emailNotifier.send.mockReset().mockResolvedValue({ success: true, messageId: 'email-1' });
     mocks.rateLimiter.incrementRpc.mockReset().mockResolvedValue({ allowed: true });
+    mocks.rateLimiter.resetRpc.mockReset().mockResolvedValue(true);
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
   });
@@ -1533,6 +1535,66 @@ describe('directory password login handler', () => {
       })
     );
     expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^account:[a-f0-9]{64}$/),
+      { windowSeconds: 900, maxRequests: 5 }
+    );
+  });
+
+  it('atomically blocks an exhausted account before contacting the directory connector', async () => {
+    mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({
+      allowed: false,
+      retryAfter: 300,
+    });
+    const fetcher = vi.fn();
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext({ username: 'Alice', password: 'guessed-password' }) as never
+    );
+
+    expect(response.status).toBe(429);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^account:[a-f0-9]{64}$/),
+      { windowSeconds: 900, maxRequests: 5 }
+    );
+  });
+
+  it('limits a concurrent password-guess burst before connector verification', async () => {
+    let attemptCount = 0;
+    mocks.rateLimiter.incrementRpc.mockImplementation(async () => {
+      attemptCount += 1;
+      return {
+        allowed: attemptCount <= 5,
+        retryAfter: attemptCount <= 5 ? 0 : 300,
+      };
+    });
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'failure',
+        reason: 'invalid_credentials',
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        handler(
+          createContext({ username: 'alice', password: `guessed-password-${index}` }) as never
+        )
+      )
+    );
+
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      401, 401, 401, 401, 401, 429,
+    ]);
+    expect(fetcher).toHaveBeenCalledTimes(5);
   });
 
   it('does not create a session for policy-required directory verdicts', async () => {

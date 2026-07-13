@@ -85,6 +85,24 @@ const RP_NAME = 'Authrim';
 const MIGRATION_PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60;
 const MIGRATION_EMAIL_CODE_TTL_SECONDS = 5 * 60;
 const DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX = 'directory_unavailable_recovery:';
+const DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS = 15 * 60;
+const DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES = 5;
+
+async function getDirectoryPasswordAccountLimiter(env: Env, tenantId: string, username: string) {
+  const normalizedUsername = username.normalize('NFKC').toLocaleLowerCase('en-US');
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${tenantId}\u0000${normalizedUsername}`)
+  );
+  const accountHash = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  const key = `account:${accountHash}`;
+  const id = env.RATE_LIMITER.idFromName(
+    buildDOKey('rate-limit', 'directory-password-account', tenantId)
+  );
+  return { limiter: env.RATE_LIMITER.get(id), key };
+}
 
 interface DirectoryPasswordLoginRequest {
   username?: unknown;
@@ -245,6 +263,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
 
+    const accountRateLimit = await getDirectoryPasswordAccountLimiter(c.env, tenantId, username);
     let turnstileAction: 'login' | 'reauth' = 'login';
     if (authorizationChallengeId) {
       const challengeType = await readAuthorizationChallengeType(
@@ -292,6 +311,29 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         404
       );
     }
+
+    // Reserve the account attempt atomically before contacting the connector.
+    // Checking and incrementing after verification would allow a concurrent
+    // burst to send many password guesses before any failure is recorded.
+    const accountAttempt = await accountRateLimit.limiter.incrementRpc(accountRateLimit.key, {
+      windowSeconds: DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS,
+      maxRequests: DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES,
+    });
+    if (!accountAttempt.allowed) {
+      return c.json(
+        {
+          error: 'rate_limit_exceeded',
+          error_description: 'Too many login attempts. Please try again later.',
+        },
+        429,
+        {
+          'Retry-After': String(
+            accountAttempt.retryAfter || DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS
+          ),
+        }
+      );
+    }
+
     let verdict;
     try {
       verdict = await client.verifyPassword({
@@ -354,6 +396,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       );
       return c.json({ error: 'invalid_credentials' }, 401);
     }
+
+    await accountRateLimit.limiter.resetRpc(accountRateLimit.key);
 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);

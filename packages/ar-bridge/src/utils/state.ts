@@ -20,6 +20,23 @@ const log = createLogger().module('EXTERNAL-IDP');
 
 const STATE_TTL_SECONDS = 600; // 10 minutes
 
+export async function getAuthStateCookieName(state: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state));
+  const suffix = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  return `authrim_external_state_${suffix}`;
+}
+
+export function matchesAuthStateCookie(state: string, cookieValue: string | undefined): boolean {
+  if (!cookieValue || cookieValue.length !== state.length) return false;
+  let difference = 0;
+  for (let index = 0; index < state.length; index++) {
+    difference |= state.charCodeAt(index) ^ cookieValue.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 /**
  * Store auth state in D1
  */

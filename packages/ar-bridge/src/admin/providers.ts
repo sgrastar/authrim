@@ -150,6 +150,44 @@ function normalizeLoginProviderIconName(value: unknown): string | undefined {
   return LOGIN_PROVIDER_ICON_NAMES.has(normalized) ? normalized : undefined;
 }
 
+async function protectProviderQuirks(
+  quirks: Record<string, unknown>,
+  encryptionKey: string
+): Promise<Record<string, unknown>> {
+  const privateKey = quirks.privateKeyEncrypted;
+  if (typeof privateKey !== 'string' || privateKey.length === 0) {
+    return quirks;
+  }
+  return {
+    ...quirks,
+    privateKeyEncrypted: await encrypt(privateKey, encryptionKey),
+  };
+}
+
+function sanitizeProvider<
+  T extends {
+    clientSecretEncrypted?: string;
+    privateKeyJwkEncrypted?: string;
+    providerQuirks?: unknown;
+  },
+>(provider: T) {
+  const quirks =
+    provider.providerQuirks && typeof provider.providerQuirks === 'object'
+      ? { ...(provider.providerQuirks as Record<string, unknown>) }
+      : {};
+  const hasPrivateKey = typeof quirks.privateKeyEncrypted === 'string';
+  delete quirks.privateKeyEncrypted;
+  return {
+    ...provider,
+    clientSecretEncrypted: undefined,
+    privateKeyJwkEncrypted: undefined,
+    providerQuirks: quirks,
+    hasSecret: !!provider.clientSecretEncrypted,
+    hasPrivateKey,
+    hasPrivateKeyJwk: !!provider.privateKeyJwkEncrypted,
+  };
+}
+
 /**
  * List all providers (admin)
  * GET /external-idp/admin/providers
@@ -169,11 +207,7 @@ export async function handleAdminListProviders(c: AdminProviderContext): Promise
     const providers = await listAllProviders(c.env, tenantId);
 
     // Remove encrypted secrets from response
-    const sanitized = providers.map((p) => ({
-      ...p,
-      clientSecretEncrypted: undefined,
-      hasSecret: !!p.clientSecretEncrypted,
-    }));
+    const sanitized = providers.map(sanitizeProvider);
 
     return c.json({ providers: sanitized });
   } catch (error) {
@@ -388,6 +422,10 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       (defaults.attributeMapping as Record<string, string> | undefined) || {};
     const defaultProviderQuirks =
       (defaults.providerQuirks as Record<string, unknown> | undefined) || {};
+    const providerQuirks = await protectProviderQuirks(
+      body.provider_quirks || defaultProviderQuirks,
+      encryptionKey
+    );
     const defaultIconUrl = (defaults.iconUrl as string | undefined) || undefined;
     const defaultButtonColor = (defaults.buttonColor as string | undefined) || undefined;
     const defaultButtonColorDark = (defaults.buttonColorDark as string | undefined) || undefined;
@@ -430,7 +468,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       requireEmailVerified: body.require_email_verified !== false,
       alwaysFetchUserinfo: body.always_fetch_userinfo === true,
       enableSso: body.enable_sso !== false,
-      providerQuirks: body.provider_quirks || defaultProviderQuirks,
+      providerQuirks,
       iconUrl: body.icon_url || defaultIconUrl,
       iconName: normalizeLoginProviderIconName(body.icon_name),
       buttonColor: body.button_color || defaultButtonColor,
@@ -444,11 +482,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
     });
 
     // Remove secret from response
-    const response = {
-      ...provider,
-      clientSecretEncrypted: undefined,
-      hasSecret: true,
-    };
+    const response = sanitizeProvider(provider);
 
     return c.json(response, 201);
   } catch (error) {
@@ -482,11 +516,7 @@ export async function handleAdminGetProvider(c: AdminProviderContext): Promise<R
     }
 
     // Remove secret from response
-    const response = {
-      ...provider,
-      clientSecretEncrypted: undefined,
-      hasSecret: !!provider.clientSecretEncrypted,
-    };
+    const response = sanitizeProvider(provider);
 
     return c.json(response);
   } catch (error) {
@@ -612,7 +642,28 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
           return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
         }
       }
-      updates.providerQuirks = body.provider_quirks;
+      if (
+        typeof body.provider_quirks.privateKeyEncrypted === 'string' &&
+        body.provider_quirks.privateKeyEncrypted.length > 0
+      ) {
+        updates.providerQuirks = await protectProviderQuirks(
+          body.provider_quirks,
+          getEncryptionKey(c.env)
+        );
+      } else {
+        // Secret fields are intentionally omitted from GET/list responses.
+        // Preserve the stored Apple key when an admin updates only non-secret
+        // quirks instead of replacing it with the sanitized response object.
+        const existingProvider = await getProvider(c.env, getTenantIdFromContext(c), id);
+        const existingQuirks = existingProvider?.providerQuirks as
+          | Record<string, unknown>
+          | undefined;
+        const existingPrivateKey = existingQuirks?.privateKeyEncrypted;
+        updates.providerQuirks =
+          typeof existingPrivateKey === 'string'
+            ? { ...body.provider_quirks, privateKeyEncrypted: existingPrivateKey }
+            : body.provider_quirks;
+      }
     }
 
     // Request Object (JAR - RFC 9101) settings
@@ -635,11 +686,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
     }
 
     // Remove secret from response
-    const response = {
-      ...provider,
-      clientSecretEncrypted: undefined,
-      hasSecret: !!provider.clientSecretEncrypted,
-    };
+    const response = sanitizeProvider(provider);
 
     return c.json(response);
   } catch (error) {

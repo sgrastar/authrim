@@ -577,6 +577,20 @@ const app = new Hono<{ Bindings: Env }>();
 // SCIM Discovery endpoints that should be accessible without authentication (RFC 7644 Section 4)
 const SCIM_DISCOVERY_PATHS = ['/ServiceProviderConfig', '/ResourceTypes', '/Schemas'];
 
+function isScimDiscoveryRequest(method: string, pathname: string): boolean {
+  if (method !== 'GET') return false;
+
+  const mountIndex = pathname.indexOf('/scim/v2');
+  const routePath = mountIndex >= 0 ? pathname.slice(mountIndex + '/scim/v2'.length) : pathname;
+  return SCIM_DISCOVERY_PATHS.some(
+    (discoveryPath) =>
+      routePath === discoveryPath ||
+      (discoveryPath !== '/ServiceProviderConfig' &&
+        routePath.startsWith(`${discoveryPath}/`) &&
+        !routePath.slice(discoveryPath.length + 1).includes('/'))
+  );
+}
+
 function resolveScimTenantId(c: ScimContext): string | null {
   const contextTenantId = (c as any).get?.('tenantId');
   if (typeof contextTenantId === 'string' && contextTenantId.trim()) {
@@ -617,11 +631,10 @@ app.use('*', async (c, next) => {
 // Apply SCIM authentication to all routes EXCEPT discovery endpoints
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  // Skip auth for discovery endpoints (RFC 7644 Section 4 recommends unauthenticated access)
-  for (const discoveryPath of SCIM_DISCOVERY_PATHS) {
-    if (path.endsWith(discoveryPath) || path.includes(`${discoveryPath}/`)) {
-      return next();
-    }
+  // Skip auth only for anchored GET discovery routes. Reserved-looking resource
+  // IDs such as /Users/Schemas must still pass through SCIM authentication.
+  if (isScimDiscoveryRequest(c.req.method, path)) {
+    return next();
   }
   return scimAuthMiddleware(c, next);
 });
