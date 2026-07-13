@@ -411,6 +411,35 @@ describe('cleanupLegacyStaticSecrets', () => {
     expect(bulkCall?.[2]).toMatchObject({
       input: JSON.stringify({ ADMIN_API_SECRET: null, KEY_MANAGER_SECRET: null }),
     });
+
+    const listCall = vi
+      .mocked(execa)
+      .mock.calls.find(([, args]) => args.includes('secret') && args.includes('list'));
+    expect(listCall?.[1]).toEqual(expect.arrayContaining(['--format', 'json']));
+    expect(listCall?.[2]).toMatchObject({
+      env: { WRANGLER_LOG: 'log' },
+    });
+  });
+
+  it('reports a clear failure when Wrangler suppresses secret list JSON output', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    vi.mocked(execa).mockResolvedValue({
+      ...successfulCommandResult(),
+      stdout: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(
+      cleanupLegacyStaticSecrets({ env: 'test', rootDir }, ['ar-auth'])
+    ).resolves.toEqual({
+      failures: [
+        {
+          component: 'ar-auth',
+          error: 'Wrangler secret list returned empty JSON output',
+        },
+      ],
+      activeVersionIds: {},
+    });
   });
 
   it('defers shared KeyManager and VersionManager cleanup during a partial rollout', async () => {
