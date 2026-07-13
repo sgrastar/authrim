@@ -74,10 +74,20 @@ function definition(overrides: Record<string, unknown> = {}) {
 
 function tuple(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'tuple-1', tenant_id: 'tenant-a', relationship_type: 'viewer',
-    from_type: 'user', from_id: 'user-1', to_type: 'document', to_id: 'doc-1',
-    permission_level: 'full', expires_at: null, is_bidirectional: 0,
-    metadata_json: null, created_at: 100, updated_at: 101, ...overrides,
+    id: 'tuple-1',
+    tenant_id: 'tenant-a',
+    relationship_type: 'viewer',
+    from_type: 'user',
+    from_id: 'user-1',
+    to_type: 'document',
+    to_id: 'doc-1',
+    permission_level: 'full',
+    expires_at: null,
+    is_bidirectional: 0,
+    metadata_json: null,
+    created_at: 100,
+    updated_at: 101,
+    ...overrides,
   };
 }
 
@@ -94,17 +104,23 @@ describe('admin ReBAC APIs', () => {
 
   it.each([
     [{}, [50, 0]],
-    [{ page: '2', limit: '10', object_type: 'document', search: '100%_viewer', is_active: 'true' }, [10, 10]],
+    [
+      { page: '2', limit: '10', object_type: 'document', search: '100%_viewer', is_active: 'true' },
+      [10, 10],
+    ],
     [{ is_active: 'false' }, [50, 0]],
   ])('lists relation definitions with tenant-scoped filters %#', async (query, pageTail) => {
     mocks.adapter.query
       .mockResolvedValueOnce([{ count: 11 }])
       .mockResolvedValueOnce([definition()]);
-    const body = (await (
-      await adminRelationDefinitionsListHandler(context({ query }))
-    ).json()) as { definitions: Array<Record<string, unknown>>; pagination: unknown };
+    const body = (await (await adminRelationDefinitionsListHandler(context({ query }))).json()) as {
+      definitions: Array<Record<string, unknown>>;
+      pagination: unknown;
+    };
     expect(body.definitions[0]).toMatchObject({
-      definition: { union: ['owner'] }, is_active: true, created_at: 100_000,
+      definition: { union: ['owner'] },
+      is_active: true,
+      created_at: 100_000,
     });
     expect(mocks.adapter.query.mock.calls[1][1]).toEqual(expect.arrayContaining(pageTail));
     if ('search' in query && query.search) {
@@ -116,12 +132,14 @@ describe('admin ReBAC APIs', () => {
 
   it('defaults missing definition counts and rejects corrupt stored definitions', async () => {
     mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    await expect((await adminRelationDefinitionsListHandler(context())).json()).resolves.toMatchObject({
+    await expect(
+      (await adminRelationDefinitionsListHandler(context())).json()
+    ).resolves.toMatchObject({
       pagination: { total: 0 },
     });
-    mocks.adapter.query.mockResolvedValueOnce([{ count: 1 }]).mockResolvedValueOnce([
-      definition({ definition_json: '{' }),
-    ]);
+    mocks.adapter.query
+      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([definition({ definition_json: '{' })]);
     expect((await adminRelationDefinitionsListHandler(context())).status).toBe(500);
   });
 
@@ -155,22 +173,35 @@ describe('admin ReBAC APIs', () => {
     ).toBe(409);
   });
 
-  it.each([true, false])('creates active=%s relation definition and audits it', async (is_active) => {
-    const response = await adminRelationDefinitionCreateHandler(
-      context({
-        body: {
-          object_type: 'document', relation_name: 'viewer', definition: { union: ['owner'] },
-          description: 'Can view', priority: 0, is_active,
-        },
-      })
-    );
-    expect(response.status).toBe(201);
-    expect(mocks.adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO relation_definitions'),
-      expect.arrayContaining(['generated-id', 'tenant-a', 'document', 'viewer', is_active ? 1 : 0])
-    );
-    expect(mocks.audit).toHaveBeenCalled();
-  });
+  it.each([true, false])(
+    'creates active=%s relation definition and audits it',
+    async (is_active) => {
+      const response = await adminRelationDefinitionCreateHandler(
+        context({
+          body: {
+            object_type: 'document',
+            relation_name: 'viewer',
+            definition: { union: ['owner'] },
+            description: 'Can view',
+            priority: 0,
+            is_active,
+          },
+        })
+      );
+      expect(response.status).toBe(201);
+      expect(mocks.adapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO relation_definitions'),
+        expect.arrayContaining([
+          'generated-id',
+          'tenant-a',
+          'document',
+          'viewer',
+          is_active ? 1 : 0,
+        ])
+      );
+      expect(mocks.audit).toHaveBeenCalled();
+    }
+  );
 
   it('uses create defaults and handles persistence failure', async () => {
     mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
@@ -195,7 +226,11 @@ describe('admin ReBAC APIs', () => {
       expect.arrayContaining(['{}', '', 0, 0, 'item-1', 'tenant-a'])
     );
     expect(mocks.audit).toHaveBeenCalledWith(
-      expect.anything(), 'update', 'relation_definition', 'item-1', { changes: Object.keys(body) }
+      expect.anything(),
+      'update',
+      'relation_definition',
+      'item-1',
+      { changes: Object.keys(body) }
     );
   });
 
@@ -226,14 +261,24 @@ describe('admin ReBAC APIs', () => {
         tuple(),
       ]);
     const query = {
-      page: '2', limit: '1', from_type: 'user', from_id: 'user-1', to_type: 'document',
-      to_id: 'doc-1', relationship_type: 'viewer',
+      page: '2',
+      limit: '1',
+      from_type: 'user',
+      from_id: 'user-1',
+      to_type: 'document',
+      to_id: 'doc-1',
+      relationship_type: 'viewer',
     };
     const body = (await (await adminRelationshipTuplesListHandler(context({ query }))).json()) as {
-      tuples: Array<Record<string, unknown>>; pagination: unknown;
+      tuples: Array<Record<string, unknown>>;
+      pagination: unknown;
     };
     expect(body.tuples).toEqual([
-      expect.objectContaining({ expires_at: 200_000, is_bidirectional: true, metadata: { source: 'manual' } }),
+      expect.objectContaining({
+        expires_at: 200_000,
+        is_bidirectional: true,
+        metadata: { source: 'manual' },
+      }),
       expect.objectContaining({ expires_at: null, is_bidirectional: false, metadata: null }),
     ]);
     expect(body.pagination).toMatchObject({ page: 2, total_pages: 2 });
@@ -241,12 +286,14 @@ describe('admin ReBAC APIs', () => {
 
   it('defaults tuple counts and rejects malformed metadata', async () => {
     mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    await expect((await adminRelationshipTuplesListHandler(context())).json()).resolves.toMatchObject({
+    await expect(
+      (await adminRelationshipTuplesListHandler(context())).json()
+    ).resolves.toMatchObject({
       pagination: { total: 0 },
     });
-    mocks.adapter.query.mockResolvedValueOnce([{ count: 1 }]).mockResolvedValueOnce([
-      tuple({ metadata_json: '{' }),
-    ]);
+    mocks.adapter.query
+      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([tuple({ metadata_json: '{' })]);
     expect((await adminRelationshipTuplesListHandler(context())).status).toBe(500);
   });
 
@@ -260,15 +307,23 @@ describe('admin ReBAC APIs', () => {
   it.each([false, true])('creates tuple with explicit optional data=%s', async (explicit) => {
     const body = explicit
       ? {
-          relationship_type: 'editor', from_type: 'group', from_id: 'group-1',
-          to_type: 'document', to_id: 'doc-1', permission_level: 'write',
-          expires_at: 1_800_000_123_456, metadata: { source: 'manual' },
+          relationship_type: 'editor',
+          from_type: 'group',
+          from_id: 'group-1',
+          to_type: 'document',
+          to_id: 'doc-1',
+          permission_level: 'write',
+          expires_at: 1_800_000_123_456,
+          metadata: { source: 'manual' },
         }
       : { relationship_type: 'viewer', from_id: 'user-1', to_type: 'document', to_id: 'doc-1' };
     const response = await adminRelationshipTupleCreateHandler(context({ body }));
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({
-      tuple: { from_type: explicit ? 'group' : 'subject', permission_level: explicit ? 'write' : 'full' },
+      tuple: {
+        from_type: explicit ? 'group' : 'subject',
+        permission_level: explicit ? 'write' : 'full',
+      },
     });
     expect(mocks.audit).toHaveBeenCalled();
   });
@@ -278,7 +333,9 @@ describe('admin ReBAC APIs', () => {
     expect(
       (
         await adminRelationshipTupleCreateHandler(
-          context({ body: { relationship_type: 'viewer', from_id: 'u', to_type: 'doc', to_id: 'd' } })
+          context({
+            body: { relationship_type: 'viewer', from_id: 'u', to_type: 'doc', to_id: 'd' },
+          })
         )
       ).status
     ).toBe(500);
@@ -305,13 +362,26 @@ describe('admin ReBAC APIs', () => {
       : undefined;
     const response = await adminRelationshipCheckHandler(
       context({
-        body: { user_id: 'user-1', relation: 'viewer', object: 'doc-1', object_type: 'document', contextual_tuples },
+        body: {
+          user_id: 'user-1',
+          relation: 'viewer',
+          object: 'doc-1',
+          object_type: 'document',
+          contextual_tuples,
+        },
       })
     );
-    await expect(response.json()).resolves.toEqual({ allowed: true, resolved_via: 'direct', path: ['tuple-1'] });
-    expect(mocks.check).toHaveBeenCalledWith(expect.objectContaining({
-      tenant_id: 'tenant-a', context: withContext ? { contextual_tuples } : undefined,
-    }));
+    await expect(response.json()).resolves.toEqual({
+      allowed: true,
+      resolved_via: 'direct',
+      path: ['tuple-1'],
+    });
+    expect(mocks.check).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: 'tenant-a',
+        context: withContext ? { contextual_tuples } : undefined,
+      })
+    );
   });
 
   it('handles permission check failures', async () => {

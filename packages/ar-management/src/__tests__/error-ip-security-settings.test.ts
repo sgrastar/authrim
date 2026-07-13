@@ -42,7 +42,9 @@ function kv(values: Record<string, string | null> = {}) {
   };
 }
 
-function context(options: { store?: ReturnType<typeof kv>; body?: unknown; bodyError?: boolean } = {}) {
+function context(
+  options: { store?: ReturnType<typeof kv>; body?: unknown; bodyError?: boolean } = {}
+) {
   return {
     env: options.store ? { AUTHRIM_CONFIG: options.store } : {},
     req: {
@@ -67,12 +69,20 @@ describe('error response and IP security settings', () => {
       error_id_mode: { current: '5xx', source: 'default' },
     });
     await expect((await getErrorLocale(context())).json()).resolves.toMatchObject({ locale: 'en' });
-    await expect((await getErrorResponseFormat(context())).json()).resolves.toMatchObject({ response_format: 'oauth' });
-    await expect((await getErrorIdMode(context())).json()).resolves.toMatchObject({ error_id_mode: '5xx' });
+    await expect((await getErrorResponseFormat(context())).json()).resolves.toMatchObject({
+      response_format: 'oauth',
+    });
+    await expect((await getErrorIdMode(context())).json()).resolves.toMatchObject({
+      error_id_mode: '5xx',
+    });
   });
 
   it('reads all error settings from KV', async () => {
-    const store = kv({ error_locale: 'ja', error_response_format: 'problem_details', error_id_mode: 'security_only' });
+    const store = kv({
+      error_locale: 'ja',
+      error_response_format: 'problem_details',
+      error_id_mode: 'security_only',
+    });
     await expect((await getErrorConfig(context({ store }))).json()).resolves.toMatchObject({
       locale: { current: 'ja', source: 'kv' },
       response_format: { current: 'problem_details', source: 'kv' },
@@ -83,10 +93,18 @@ describe('error response and IP security settings', () => {
   it('falls back safely when KV reads fail', async () => {
     const store = kv();
     store.get.mockRejectedValue(new Error('KV unavailable'));
-    await expect((await getErrorConfig(context({ store }))).json()).resolves.toMatchObject({ locale: { current: 'en' } });
-    await expect((await getErrorLocale(context({ store }))).json()).resolves.toMatchObject({ locale: 'en' });
-    await expect((await getErrorResponseFormat(context({ store }))).json()).resolves.toMatchObject({ response_format: 'oauth' });
-    await expect((await getErrorIdMode(context({ store }))).json()).resolves.toMatchObject({ error_id_mode: '5xx' });
+    await expect((await getErrorConfig(context({ store }))).json()).resolves.toMatchObject({
+      locale: { current: 'en' },
+    });
+    await expect((await getErrorLocale(context({ store }))).json()).resolves.toMatchObject({
+      locale: 'en',
+    });
+    await expect((await getErrorResponseFormat(context({ store }))).json()).resolves.toMatchObject({
+      response_format: 'oauth',
+    });
+    await expect((await getErrorIdMode(context({ store }))).json()).resolves.toMatchObject({
+      error_id_mode: '5xx',
+    });
   });
 
   it.each([
@@ -127,12 +145,18 @@ describe('error response and IP security settings', () => {
 
   it('uses default or valid KV cloud provider and ignores failures/invalid values', async () => {
     await expect(getIpSecuritySettings({} as never)).resolves.toEqual({
-      settings: { cloudProvider: 'cloudflare' }, sources: { cloudProvider: 'default' },
+      settings: { cloudProvider: 'cloudflare' },
+      sources: { cloudProvider: 'default' },
     });
-    await expect(getIpSecuritySettings({ AUTHRIM_CONFIG: kv({ security_cloud_provider: 'aws' }) } as never)).resolves.toEqual({
-      settings: { cloudProvider: 'aws' }, sources: { cloudProvider: 'kv' },
+    await expect(
+      getIpSecuritySettings({ AUTHRIM_CONFIG: kv({ security_cloud_provider: 'aws' }) } as never)
+    ).resolves.toEqual({
+      settings: { cloudProvider: 'aws' },
+      sources: { cloudProvider: 'kv' },
     });
-    await expect(getIpSecuritySettings({ AUTHRIM_CONFIG: kv({ security_cloud_provider: 'invalid' }) } as never)).resolves.toMatchObject({
+    await expect(
+      getIpSecuritySettings({ AUTHRIM_CONFIG: kv({ security_cloud_provider: 'invalid' }) } as never)
+    ).resolves.toMatchObject({
       settings: { cloudProvider: 'cloudflare' },
     });
     const store = kv();
@@ -142,33 +166,51 @@ describe('error response and IP security settings', () => {
     });
   });
 
-  it.each(['cloudflare', 'aws', 'azure', 'gcp', 'none'])('returns provider metadata for %s', async (provider) => {
-    const response = await getIpSecurityConfig(context({ store: kv({ security_cloud_provider: provider }) }));
-    const body = (await response.json()) as { settings: { cloudProvider: { info: { securityLevel: string } } }; availableProviders: unknown[] };
-    expect(body.availableProviders).toHaveLength(5);
-    expect(body.settings.cloudProvider.info.securityLevel).toMatch(/high|medium|low/);
-  });
+  it.each(['cloudflare', 'aws', 'azure', 'gcp', 'none'])(
+    'returns provider metadata for %s',
+    async (provider) => {
+      const response = await getIpSecurityConfig(
+        context({ store: kv({ security_cloud_provider: provider }) })
+      );
+      const body = (await response.json()) as {
+        settings: { cloudProvider: { info: { securityLevel: string } } };
+        availableProviders: unknown[];
+      };
+      expect(body.availableProviders).toHaveLength(5);
+      expect(body.settings.cloudProvider.info.securityLevel).toMatch(/high|medium|low/);
+    }
+  );
 
   it('requires KV and valid JSON/provider for IP security update', async () => {
     expect((await updateIpSecurityConfig(context())).status).toBe(500);
-    expect((await updateIpSecurityConfig(context({ store: kv(), bodyError: true }))).status).toBe(400);
-    expect((await updateIpSecurityConfig(context({ store: kv(), body: { cloudProvider: 'bad' } }))).status).toBe(400);
+    expect((await updateIpSecurityConfig(context({ store: kv(), bodyError: true }))).status).toBe(
+      400
+    );
+    expect(
+      (await updateIpSecurityConfig(context({ store: kv(), body: { cloudProvider: 'bad' } })))
+        .status
+    ).toBe(400);
   });
 
-  it.each(['cloudflare', 'aws', 'azure', 'gcp', 'none'])('updates IP provider %s and clears cache', async (cloudProvider) => {
-    const store = kv({ security_cloud_provider: cloudProvider });
-    const response = await updateIpSecurityConfig(context({ store, body: { cloudProvider } }));
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as Record<string, unknown>;
-    expect(body.hasOwnProperty('warning')).toBe(cloudProvider === 'none');
-    expect(mocks.clearProviderCache).toHaveBeenCalled();
-  });
+  it.each(['cloudflare', 'aws', 'azure', 'gcp', 'none'])(
+    'updates IP provider %s and clears cache',
+    async (cloudProvider) => {
+      const store = kv({ security_cloud_provider: cloudProvider });
+      const response = await updateIpSecurityConfig(context({ store, body: { cloudProvider } }));
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.hasOwnProperty('warning')).toBe(cloudProvider === 'none');
+      expect(mocks.clearProviderCache).toHaveBeenCalled();
+    }
+  );
 
   it('allows an empty IP update and handles KV write failures', async () => {
     expect((await updateIpSecurityConfig(context({ store: kv(), body: {} }))).status).toBe(200);
     const store = kv();
     store.put.mockRejectedValueOnce(new Error('failure'));
-    expect((await updateIpSecurityConfig(context({ store, body: { cloudProvider: 'aws' } }))).status).toBe(500);
+    expect(
+      (await updateIpSecurityConfig(context({ store, body: { cloudProvider: 'aws' } }))).status
+    ).toBe(500);
   });
 
   it('clears IP override, requires KV, and handles delete failure', async () => {

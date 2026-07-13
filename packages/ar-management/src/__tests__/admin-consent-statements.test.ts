@@ -45,7 +45,9 @@ import {
   adminUserConsentWithdrawHandler,
 } from '../admin-consent-statements';
 
-function context(options: { params?: Record<string, string>; body?: unknown; bodyError?: boolean } = {}) {
+function context(
+  options: { params?: Record<string, string>; body?: unknown; bodyError?: boolean } = {}
+) {
   return {
     req: {
       param: vi.fn((name: string) => options.params?.[name] ?? name),
@@ -79,9 +81,12 @@ describe('admin consent statement lifecycle', () => {
     expect((await adminConsentStatementsListHandler(context())).status).toBe(500);
   });
 
-  it.each([[{}], [{ slug: 1 }], [{ slug: '' }]])('requires a string statement slug %#', async (body) => {
-    expect((await adminConsentStatementCreateHandler(context({ body }))).status).toBe(400);
-  });
+  it.each([[{}], [{ slug: 1 }], [{ slug: '' }]])(
+    'requires a string statement slug %#',
+    async (body) => {
+      expect((await adminConsentStatementCreateHandler(context({ body }))).status).toBe(400);
+    }
+  );
 
   it('rejects duplicate statement slugs', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ id: 'existing' }]);
@@ -114,10 +119,16 @@ describe('admin consent statement lifecycle', () => {
     const body = defaults
       ? { slug: 'privacy' }
       : {
-          slug: 'marketing', category: 'marketing', legal_basis: 'consent',
-          processing_purpose: 'Email offers', display_order: 0, record_retention_days: 0,
-          withdrawal_allowed: false, withdrawal_impact: '  No more offers  ',
-          reconsent_on_version_change: false, reconsent_interval_days: null,
+          slug: 'marketing',
+          category: 'marketing',
+          legal_basis: 'consent',
+          processing_purpose: 'Email offers',
+          display_order: 0,
+          record_retention_days: 0,
+          withdrawal_allowed: false,
+          withdrawal_impact: '  No more offers  ',
+          reconsent_on_version_change: false,
+          reconsent_interval_days: null,
         };
     mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 'created' }]);
     const response = await adminConsentStatementCreateHandler(context({ body }));
@@ -155,19 +166,26 @@ describe('admin consent statement lifecycle', () => {
     expect((await adminConsentStatementUpdateHandler(context({ body: {} }))).status).toBe(400);
   });
 
-  it.each([
-    [{ record_retention_days: -1 }],
-    [{ reconsent_interval_days: 2.5 }],
-  ])('rejects invalid statement update numeric fields %#', async (body) => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'statement-1' }]);
-    expect((await adminConsentStatementUpdateHandler(context({ body }))).status).toBe(400);
-  });
+  it.each([[{ record_retention_days: -1 }], [{ reconsent_interval_days: 2.5 }]])(
+    'rejects invalid statement update numeric fields %#',
+    async (body) => {
+      mocks.adapter.query.mockResolvedValueOnce([{ id: 'statement-1' }]);
+      expect((await adminConsentStatementUpdateHandler(context({ body }))).status).toBe(400);
+    }
+  );
 
   it('updates every mutable statement field including false, zero, and null', async () => {
     const body = {
-      slug: 'privacy-v2', category: 'legal', legal_basis: 'contract', processing_purpose: '',
-      display_order: 0, is_active: false, record_retention_days: null,
-      withdrawal_allowed: false, withdrawal_impact: '', reconsent_on_version_change: false,
+      slug: 'privacy-v2',
+      category: 'legal',
+      legal_basis: 'contract',
+      processing_purpose: '',
+      display_order: 0,
+      is_active: false,
+      record_retention_days: null,
+      withdrawal_allowed: false,
+      withdrawal_impact: '',
+      reconsent_on_version_change: false,
       reconsent_interval_days: 0,
     };
     mocks.adapter.query
@@ -230,7 +248,8 @@ describe('admin consent statement lifecycle', () => {
   it.each([false, true])('creates version with optional end=%s', async (withEnd) => {
     mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 'version-1' }]);
     const body = {
-      version: '20260101', effective_at: 100,
+      version: '20260101',
+      effective_at: 100,
       ...(withEnd ? { effective_until: 200, content_type: 'inline' } : {}),
     };
     expect((await adminConsentVersionCreateHandler(context({ body }))).status).toBe(201);
@@ -258,15 +277,14 @@ describe('admin consent statement lifecycle', () => {
     expect((await adminConsentVersionUpdateHandler(context({ body: {} }))).status).toBe(400);
   });
 
-  it.each([
-    [{ version: 'bad' }],
-    [{ effective_until: 100 }],
-    [{}],
-  ])('rejects invalid draft version update %#', async (body) => {
-    mocks.adapter.query.mockResolvedValueOnce([{ status: 'draft', effective_at: 100 }]);
-    mocks.validateVersion.mockReturnValue(!('version' in body) || body.version !== 'bad');
-    expect((await adminConsentVersionUpdateHandler(context({ body }))).status).toBe(400);
-  });
+  it.each([[{ version: 'bad' }], [{ effective_until: 100 }], [{}]])(
+    'rejects invalid draft version update %#',
+    async (body) => {
+      mocks.adapter.query.mockResolvedValueOnce([{ status: 'draft', effective_at: 100 }]);
+      mocks.validateVersion.mockReturnValue(!('version' in body) || body.version !== 'bad');
+      expect((await adminConsentVersionUpdateHandler(context({ body }))).status).toBe(400);
+    }
+  );
 
   it('updates all draft version fields', async () => {
     mocks.adapter.query
@@ -275,7 +293,14 @@ describe('admin consent statement lifecycle', () => {
     expect(
       (
         await adminConsentVersionUpdateHandler(
-          context({ body: { version: '20260202', content_type: 'inline', effective_at: 200, effective_until: null } })
+          context({
+            body: {
+              version: '20260202',
+              content_type: 'inline',
+              effective_at: 200,
+              effective_until: null,
+            },
+          })
         )
       ).status
     ).toBe(200);
@@ -316,8 +341,13 @@ describe('admin consent statement lifecycle', () => {
     });
     mocks.adapter.query.mockResolvedValueOnce([
       {
-        status: 'granted', version_id: 'version-1', version: '20260101', expires_at: null,
-        withdrawal_allowed: 1, record_retention_days: 30, reconsent_interval_days: null,
+        status: 'granted',
+        version_id: 'version-1',
+        version: '20260101',
+        expires_at: null,
+        withdrawal_allowed: 1,
+        record_retention_days: 30,
+        reconsent_interval_days: null,
       },
     ]);
     expect((await adminUserConsentWithdrawHandler(context())).status).toBe(200);
@@ -336,8 +366,13 @@ describe('admin consent statement lifecycle', () => {
   it('supports no-retention withdrawal and handles persistence failure', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
       {
-        status: 'granted', version_id: 'v', version: '20260101', expires_at: null,
-        withdrawal_allowed: null, record_retention_days: null, reconsent_interval_days: 0,
+        status: 'granted',
+        version_id: 'v',
+        version: '20260101',
+        expires_at: null,
+        withdrawal_allowed: null,
+        record_retention_days: null,
+        reconsent_interval_days: 0,
       },
     ]);
     mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
@@ -357,12 +392,12 @@ describe('admin consent statement lifecycle', () => {
     ]);
   });
 
-  it.each([
-    [{}],
-    [{ title: 'Title' }],
-  ])('requires localization title and description %#', async (body) => {
-    expect((await adminConsentLocalizationUpsertHandler(context({ body }))).status).toBe(400);
-  });
+  it.each([[{}], [{ title: 'Title' }]])(
+    'requires localization title and description %#',
+    async (body) => {
+      expect((await adminConsentLocalizationUpsertHandler(context({ body }))).status).toBe(400);
+    }
+  );
 
   it.each([undefined, null, '', ' https://example.com/notice '])(
     'inserts localization with public link %#',

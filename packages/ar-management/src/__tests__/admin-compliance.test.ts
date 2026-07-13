@@ -61,19 +61,41 @@ function context(
 
 function review(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'review-1', tenant_id: 'tenant-a', name: 'Quarterly review', description: null,
-    scope: 'all_users', scope_value: null, status: 'pending', reviewer_id: 'admin-1',
-    total_items: 4, reviewed_items: 2, approved_items: 1, revoked_items: 1,
-    created_at: 100, started_at: null, completed_at: null, due_date: null, ...overrides,
+    id: 'review-1',
+    tenant_id: 'tenant-a',
+    name: 'Quarterly review',
+    description: null,
+    scope: 'all_users',
+    scope_value: null,
+    status: 'pending',
+    reviewer_id: 'admin-1',
+    total_items: 4,
+    reviewed_items: 2,
+    approved_items: 1,
+    revoked_items: 1,
+    created_at: 100,
+    started_at: null,
+    completed_at: null,
+    due_date: null,
+    ...overrides,
   };
 }
 
 function report(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'report-1', tenant_id: 'tenant-a', type: 'soc2_audit', name: 'SOC2',
-    status: 'completed', requested_by: 'admin-1', parameters: '{"year":2026}',
-    result_url: null, error_message: null, created_at: 100,
-    completed_at: 200, expires_at: null, ...overrides,
+    id: 'report-1',
+    tenant_id: 'tenant-a',
+    type: 'soc2_audit',
+    name: 'SOC2',
+    status: 'completed',
+    requested_by: 'admin-1',
+    parameters: '{"year":2026}',
+    result_url: null,
+    error_message: null,
+    created_at: 100,
+    completed_at: 200,
+    expires_at: null,
+    ...overrides,
   };
 }
 
@@ -241,7 +263,10 @@ describe('admin compliance APIs', () => {
       })
     );
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ reviewer_id: 'admin-1', total_items: count });
+    await expect(response.json()).resolves.toMatchObject({
+      reviewer_id: 'admin-1',
+      total_items: count,
+    });
     expect(mocks.audit).toHaveBeenCalled();
   });
 
@@ -284,13 +309,19 @@ describe('admin compliance APIs', () => {
   it.each(['bad', Buffer.from('{}').toString('base64url')])(
     'rejects invalid report cursor %s',
     async (cursor) => {
-      expect((await adminComplianceReportsListHandler(context({ query: { cursor } }))).status).toBe(400);
+      expect((await adminComplianceReportsListHandler(context({ query: { cursor } }))).status).toBe(
+        400
+      );
     }
   );
 
   it('ignores unknown report filters and handles query failures', async () => {
     await expect(
-      (await adminComplianceReportsListHandler(context({ query: { filter: 'status=nope,type=nope' } }))).json()
+      (
+        await adminComplianceReportsListHandler(
+          context({ query: { filter: 'status=nope,type=nope' } })
+        )
+      ).json()
     ).resolves.toMatchObject({ pagination: { has_more: false } });
     mocks.core.query.mockRejectedValueOnce(new Error('failure'));
     expect((await adminComplianceReportsListHandler(context())).status).toBe(500);

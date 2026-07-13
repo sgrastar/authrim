@@ -31,10 +31,19 @@ function context(options: { query?: Record<string, string>; id?: string } = {}) 
 
 function trace(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'trace-1', tenant_id: 'tenant-a', subject_id: 'user-1', permission: 'document:read',
-    permission_json: '{"resource":"doc-1"}', allowed: 1,
-    resolved_via_json: '["role","organization"]', final_decision: 'allow', reason: null,
-    api_key_id: null, client_id: 'client-1', checked_at: 100, ...overrides,
+    id: 'trace-1',
+    tenant_id: 'tenant-a',
+    subject_id: 'user-1',
+    permission: 'document:read',
+    permission_json: '{"resource":"doc-1"}',
+    allowed: 1,
+    resolved_via_json: '["role","organization"]',
+    final_decision: 'allow',
+    reason: null,
+    api_key_id: null,
+    client_id: 'client-1',
+    checked_at: 100,
+    ...overrides,
   };
 }
 
@@ -51,8 +60,14 @@ describe('admin access trace APIs', () => {
     [{}, [50, 0]],
     [
       {
-        subject_id: 'user-1', permission: 'document', allowed: 'true', final_decision: 'allow',
-        start_time: '10', end_time: '20', page: '2', limit: '999',
+        subject_id: 'user-1',
+        permission: 'document',
+        allowed: 'true',
+        final_decision: 'allow',
+        start_time: '10',
+        end_time: '20',
+        page: '2',
+        limit: '999',
       },
       [200, 200],
     ],
@@ -68,7 +83,11 @@ describe('admin access trace APIs', () => {
       pagination: Record<string, unknown>;
     };
     expect(body.entries).toEqual([
-      expect.objectContaining({ allowed: true, permission_parsed: { resource: 'doc-1' }, resolved_via: ['role', 'organization'] }),
+      expect.objectContaining({
+        allowed: true,
+        permission_parsed: { resource: 'doc-1' },
+        resolved_via: ['role', 'organization'],
+      }),
       expect.objectContaining({ allowed: false, permission_parsed: null, resolved_via: [] }),
     ]);
     expect(mocks.adapter.query.mock.calls[0][1]).toEqual(expect.arrayContaining(pageTail));
@@ -93,33 +112,42 @@ describe('admin access trace APIs', () => {
     expect((await adminAccessTraceGetHandler(context())).status).toBe(500);
   });
 
-  it.each(['1h', '6h', '24h', '7d', '30d', 'unknown'])('computes stats for period %s', async (period) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce({ total: 10, allowed: 7, denied: 3 });
-    mocks.adapter.query
-      .mockResolvedValueOnce([{ permission: 'admin:write', count: 3 }])
-      .mockResolvedValueOnce([{ subject_id: 'user-1', count: 3 }])
-      .mockResolvedValueOnce([
-        { resolved_via_json: '["role","role"]' },
-        { resolved_via_json: '"direct"' },
-        { resolved_via_json: '{"policy":"allow"}' },
-        { resolved_via_json: '{' },
-        { resolved_via_json: null },
-      ]);
-    const body = (await (
-      await adminAccessTraceStatsHandler(context({ query: { period } }))
-    ).json()) as { allow_rate: number; resolution_distribution: Array<{ resolved_via: string; count: number }> };
-    expect(body.allow_rate).toBe(70);
-    expect(body.resolution_distribution[0]).toEqual({ resolved_via: 'role', count: 2 });
-    expect(body.resolution_distribution).toEqual(
-      expect.arrayContaining([
-        { resolved_via: 'direct', count: 1 },
-        { resolved_via: '{"policy":"allow"}', count: 1 },
-      ])
-    );
-  });
+  it.each(['1h', '6h', '24h', '7d', '30d', 'unknown'])(
+    'computes stats for period %s',
+    async (period) => {
+      mocks.adapter.queryOne.mockResolvedValueOnce({ total: 10, allowed: 7, denied: 3 });
+      mocks.adapter.query
+        .mockResolvedValueOnce([{ permission: 'admin:write', count: 3 }])
+        .mockResolvedValueOnce([{ subject_id: 'user-1', count: 3 }])
+        .mockResolvedValueOnce([
+          { resolved_via_json: '["role","role"]' },
+          { resolved_via_json: '"direct"' },
+          { resolved_via_json: '{"policy":"allow"}' },
+          { resolved_via_json: '{' },
+          { resolved_via_json: null },
+        ]);
+      const body = (await (
+        await adminAccessTraceStatsHandler(context({ query: { period } }))
+      ).json()) as {
+        allow_rate: number;
+        resolution_distribution: Array<{ resolved_via: string; count: number }>;
+      };
+      expect(body.allow_rate).toBe(70);
+      expect(body.resolution_distribution[0]).toEqual({ resolved_via: 'role', count: 2 });
+      expect(body.resolution_distribution).toEqual(
+        expect.arrayContaining([
+          { resolved_via: 'direct', count: 1 },
+          { resolved_via: '{"policy":"allow"}', count: 1 },
+        ])
+      );
+    }
+  );
 
   it('returns zero rates for missing stats and handles stats failure', async () => {
-    const body = (await (await adminAccessTraceStatsHandler(context())).json()) as Record<string, unknown>;
+    const body = (await (await adminAccessTraceStatsHandler(context())).json()) as Record<
+      string,
+      unknown
+    >;
     expect(body).toMatchObject({ total: 0, allowed: 0, denied: 0, allow_rate: 0 });
     mocks.adapter.queryOne.mockRejectedValueOnce(new Error('failure'));
     expect((await adminAccessTraceStatsHandler(context())).status).toBe(500);

@@ -15,7 +15,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
 }));
 
 vi.mock('@authrim/ar-lib-core/services/persistent-identifiers', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@authrim/ar-lib-core/services/persistent-identifiers')>()),
+  ...(await importOriginal<
+    typeof import('@authrim/ar-lib-core/services/persistent-identifiers')
+  >()),
   generatePersistentIdentifier: mocks.generate,
   resolveOIDCPairwiseAudience: mocks.oidcAudience,
   resolveSAMLPersistentIdentifierAudience: mocks.samlAudience,
@@ -30,9 +32,7 @@ import {
   adminPersistentIdentifierProfileUpdateHandler,
 } from '../persistent-identifier-profiles';
 
-function context(
-  options: { profileId?: string; body?: unknown; bodyError?: boolean } = {}
-) {
+function context(options: { profileId?: string; body?: unknown; bodyError?: boolean } = {}) {
   const stub = { getOrCreateSecretRpc: mocks.secret };
   return {
     req: {
@@ -53,12 +53,24 @@ function context(
 
 function profile(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'profile-1', tenant_id: 'tenant-a', profile_key: 'pairwise', display_name: 'Pairwise',
-    description: null, mode: 'computed', algorithm: 'authrim_sha256_base64url',
-    protocol_scope: 'oidc', usage_json: '["oidc","oidc",1]', source_ref_json: '{}',
-    secret_ref: 'tenant:tenant-a:oidc:pairwise-sub', issuer_entity_id: null,
-    audience_mode: 'runtime', format_json: '{}', lifecycle_state: 'active',
-    created_at: 100, updated_at: 200, ...overrides,
+    id: 'profile-1',
+    tenant_id: 'tenant-a',
+    profile_key: 'pairwise',
+    display_name: 'Pairwise',
+    description: null,
+    mode: 'computed',
+    algorithm: 'authrim_sha256_base64url',
+    protocol_scope: 'oidc',
+    usage_json: '["oidc","oidc",1]',
+    source_ref_json: '{}',
+    secret_ref: 'tenant:tenant-a:oidc:pairwise-sub',
+    issuer_entity_id: null,
+    audience_mode: 'runtime',
+    format_json: '{}',
+    lifecycle_state: 'active',
+    created_at: 100,
+    updated_at: 200,
+    ...overrides,
   };
 }
 
@@ -79,7 +91,10 @@ describe('persistent identifier profiles', () => {
     mocks.adapter.query.mockResolvedValueOnce([
       profile(),
       profile({
-        id: 'profile-2', usage_json: '{', source_ref_json: '[]', format_json: '{',
+        id: 'profile-2',
+        usage_json: '{',
+        source_ref_json: '[]',
+        format_json: '{',
       }),
     ]);
     const body = (await (await adminPersistentIdentifierProfilesListHandler(context())).json()) as {
@@ -108,25 +123,41 @@ describe('persistent identifier profiles', () => {
   });
 
   it('rejects malformed JSON request', async () => {
-    expect((await adminPersistentIdentifierProfileCreateHandler(context({ bodyError: true }))).status).toBe(400);
+    expect(
+      (await adminPersistentIdentifierProfileCreateHandler(context({ bodyError: true }))).status
+    ).toBe(400);
   });
 
   it.each([
     [{ displayName: 'Default Pairwise' }, 'default_pairwise', 'authrim_sha256_base64url', 'any'],
     [
       {
-        displayName: 'SAML Pairwise', profileKey: 'saml:pairwise', description: 'Description',
-        mode: 'computed', algorithm: 'shibboleth_sha1_base64', protocolScope: 'saml',
-        usage: ['saml', 'saml', 1], sourceRef: { source: 'subject' }, secretRef: 'custom-secret',
-        issuerEntityId: 'https://idp.example', audienceMode: 'saml_sp_entity_id',
-        format: { separator: '!' }, lifecycleState: 'draft',
+        displayName: 'SAML Pairwise',
+        profileKey: 'saml:pairwise',
+        description: 'Description',
+        mode: 'computed',
+        algorithm: 'shibboleth_sha1_base64',
+        protocolScope: 'saml',
+        usage: ['saml', 'saml', 1],
+        sourceRef: { source: 'subject' },
+        secretRef: 'custom-secret',
+        issuerEntityId: 'https://idp.example',
+        audienceMode: 'saml_sp_entity_id',
+        format: { separator: '!' },
+        lifecycleState: 'draft',
       },
       'saml:pairwise',
       'shibboleth_sha1_base64',
       'saml',
     ],
     [
-      { displayName: 'Fallbacks', mode: 'bad', algorithm: 'bad', protocolScope: 'bad', audienceMode: 'bad' },
+      {
+        displayName: 'Fallbacks',
+        mode: 'bad',
+        algorithm: 'bad',
+        protocolScope: 'bad',
+        audienceMode: 'bad',
+      },
       'fallbacks',
       'authrim_sha256_base64url',
       'any',
@@ -147,14 +178,25 @@ describe('persistent identifier profiles', () => {
   ])('maps create write error %#', async (error, status) => {
     mocks.adapter.execute.mockRejectedValueOnce(error);
     expect(
-      (await adminPersistentIdentifierProfileCreateHandler(context({ body: { displayName: 'Profile' } }))).status
+      (
+        await adminPersistentIdentifierProfileCreateHandler(
+          context({ body: { displayName: 'Profile' } })
+        )
+      ).status
     ).toBe(status);
   });
 
   it('requires profile ID for update and validates update body', async () => {
-    expect((await adminPersistentIdentifierProfileUpdateHandler(context({ body: { displayName: 'P' } }))).status).toBe(400);
     expect(
-      (await adminPersistentIdentifierProfileUpdateHandler(context({ profileId: 'profile-1', body: {} }))).status
+      (await adminPersistentIdentifierProfileUpdateHandler(context({ body: { displayName: 'P' } })))
+        .status
+    ).toBe(400);
+    expect(
+      (
+        await adminPersistentIdentifierProfileUpdateHandler(
+          context({ profileId: 'profile-1', body: {} })
+        )
+      ).status
     ).toBe(400);
   });
 
@@ -181,16 +223,24 @@ describe('persistent identifier profiles', () => {
   it('blocks deletion while active mapping versions reference the exact profile', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
       {
-        field_mapping_set_id: 'set-1', version_id: 'version-1', lifecycle_state: 'active',
-        transform_id: 'transform-1', parameters_json: '{"persistentIdentifierProfileId":"profile-1"}',
+        field_mapping_set_id: 'set-1',
+        version_id: 'version-1',
+        lifecycle_state: 'active',
+        transform_id: 'transform-1',
+        parameters_json: '{"persistentIdentifierProfileId":"profile-1"}',
       },
       {
-        field_mapping_set_id: 'set-2', version_id: 'version-2', lifecycle_state: 'active',
-        transform_id: 'transform-2', parameters_json: '{"persistentIdentifierProfileId":"other"}',
+        field_mapping_set_id: 'set-2',
+        version_id: 'version-2',
+        lifecycle_state: 'active',
+        transform_id: 'transform-2',
+        parameters_json: '{"persistentIdentifierProfileId":"other"}',
       },
       { parameters_json: '{' },
     ]);
-    const response = await adminPersistentIdentifierProfileDeleteHandler(context({ profileId: 'profile-1' }));
+    const response = await adminPersistentIdentifierProfileDeleteHandler(
+      context({ profileId: 'profile-1' })
+    );
     expect(response.status).toBe(409);
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });
@@ -247,7 +297,9 @@ describe('persistent identifier profiles', () => {
     const response = await adminPersistentIdentifierPreviewHandler(
       context({
         body: {
-          profileId: 'profile-1', subject: ' user-1 ', audience: ' client-1 ',
+          profileId: 'profile-1',
+          subject: ' user-1 ',
+          audience: ' client-1 ',
           issuerEntityId: 'https://override-idp.example',
         },
       })
@@ -260,7 +312,9 @@ describe('persistent identifier profiles', () => {
       },
     });
     expect(saml ? mocks.samlAudience : mocks.oidcAudience).toHaveBeenCalled();
-    expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ secret: 'secret-material' }));
+    expect(mocks.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ secret: 'secret-material' })
+    );
   });
 
   it('returns null SAML attribute without issuer and maps generator failures', async () => {

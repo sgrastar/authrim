@@ -106,7 +106,10 @@ describe('admin policies APIs', () => {
 
   it.each([
     [{}, [20, 0]],
-    [{ enabled: 'true', search: 'reader', page: '2', limit: '200' }, [1, '%reader%', '%reader%', 100, 100]],
+    [
+      { enabled: 'true', search: 'reader', page: '2', limit: '200' },
+      [1, '%reader%', '%reader%', 100, 100],
+    ],
     [{ enabled: 'false', page: '0', limit: '0' }, [0, 1, 0]],
   ])('lists tenant rules with bounded pagination %#', async (query, expectedTail) => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ count: 21 });

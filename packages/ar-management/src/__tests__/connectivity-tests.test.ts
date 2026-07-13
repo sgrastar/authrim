@@ -85,27 +85,34 @@ describe('admin connectivity probes', () => {
     mocks.mysqlClose.mockResolvedValue(undefined);
   });
 
-  it.each([
-    ['r2'],
-    ['aws_s3'],
-    ['custom'],
-  ])('does not probe disabled %s storage destination', async (provider) => {
-    const result = await testStorageDestinationConnectivity(
-      {} as never,
-      destination(provider, { status: 'disabled' })
-    );
-    expect(result).toMatchObject({ status: 'error', message: 'Storage destination is disabled.' });
-  });
+  it.each([['r2'], ['aws_s3'], ['custom']])(
+    'does not probe disabled %s storage destination',
+    async (provider) => {
+      const result = await testStorageDestinationConnectivity(
+        {} as never,
+        destination(provider, { status: 'disabled' })
+      );
+      expect(result).toMatchObject({
+        status: 'error',
+        message: 'Storage destination is disabled.',
+      });
+    }
+  );
 
   it('returns unsupported for unknown storage provider', async () => {
-    await expect(testStorageDestinationConnectivity({} as never, destination('ftp'))).resolves.toMatchObject({
+    await expect(
+      testStorageDestinationConnectivity({} as never, destination('ftp'))
+    ).resolves.toMatchObject({
       status: 'unsupported',
       provider: 'ftp',
     });
   });
 
   it.each([{}, { bindingRef: 'MISSING' }])('validates R2 binding %#', async (config) => {
-    const result = await testStorageDestinationConnectivity({} as never, destination('r2', { config }));
+    const result = await testStorageDestinationConnectivity(
+      {} as never,
+      destination('r2', { config })
+    );
     expect(result.status).toBe('error');
   });
 
@@ -170,14 +177,20 @@ describe('admin connectivity probes', () => {
     await expect(
       testStorageDestinationConnectivity(
         { RP_TOKEN_ENCRYPTION_KEY: 'key' } as never,
-        destination('aws_s3', { credential_encrypted: 'encrypted', config: { bucketName: 'bucket', endpointUrl: 'https://localhost' } })
+        destination('aws_s3', {
+          credential_encrypted: 'encrypted',
+          config: { bucketName: 'bucket', endpointUrl: 'https://localhost' },
+        })
       )
     ).resolves.toMatchObject({ status: 'error', message: 'private address denied' });
 
     await expect(
       testStorageDestinationConnectivity(
         { PII_ENCRYPTION_KEY: 'key' } as never,
-        destination('aws_s3', { credential_encrypted: 'encrypted', config: { bucket: 'bucket', endpoint: 'http://example.com' } })
+        destination('aws_s3', {
+          credential_encrypted: 'encrypted',
+          config: { bucket: 'bucket', endpoint: 'http://example.com' },
+        })
       )
     ).resolves.toMatchObject({ status: 'error', message: 'S3 endpoint URL must use HTTPS.' });
   });
@@ -208,17 +221,22 @@ describe('admin connectivity probes', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(mocks.safeFetch.mock.calls[0][1]).toMatchObject({
       method: 'PUT',
-      headers: expect.objectContaining({ authorization: expect.stringContaining('AWS4-HMAC-SHA256') }),
+      headers: expect.objectContaining({
+        authorization: expect.stringContaining('AWS4-HMAC-SHA256'),
+      }),
     });
   });
 
-  it.each([{}, { testUrl: 'not-a-url' }])('validates custom HTTP destination %#', async (config) => {
-    const result = await testStorageDestinationConnectivity(
-      {} as never,
-      destination('custom', { config })
-    );
-    expect(['unsupported', 'error']).toContain(result.status);
-  });
+  it.each([{}, { testUrl: 'not-a-url' }])(
+    'validates custom HTTP destination %#',
+    async (config) => {
+      const result = await testStorageDestinationConnectivity(
+        {} as never,
+        destination('custom', { config })
+      );
+      expect(['unsupported', 'error']).toContain(result.status);
+    }
+  );
 
   it.each([200, 503])('runs custom HTTP HEAD health probe status=%s', async (status) => {
     mocks.safeFetch.mockResolvedValueOnce(new Response(null, { status }));
@@ -233,20 +251,35 @@ describe('admin connectivity probes', () => {
     );
   });
 
-  it.each(['d1', 'hyperdrive', 'postgres', 'mysql', 'custom'])('does not probe disabled %s database', async (provider) => {
-    await expect(
-      testDatabaseConnectionConnectivity({} as never, connection(provider, { status: 'disabled' }))
-    ).resolves.toMatchObject({ status: 'error', message: 'Database connection is disabled.' });
-  });
+  it.each(['d1', 'hyperdrive', 'postgres', 'mysql', 'custom'])(
+    'does not probe disabled %s database',
+    async (provider) => {
+      await expect(
+        testDatabaseConnectionConnectivity(
+          {} as never,
+          connection(provider, { status: 'disabled' })
+        )
+      ).resolves.toMatchObject({ status: 'error', message: 'Database connection is disabled.' });
+    }
+  );
 
-  it.each(['custom', 'unknown'])('returns unsupported for %s database provider', async (provider) => {
-    await expect(testDatabaseConnectionConnectivity({} as never, connection(provider))).resolves.toMatchObject({
-      status: 'unsupported', provider,
-    });
-  });
+  it.each(['custom', 'unknown'])(
+    'returns unsupported for %s database provider',
+    async (provider) => {
+      await expect(
+        testDatabaseConnectionConnectivity({} as never, connection(provider))
+      ).resolves.toMatchObject({
+        status: 'unsupported',
+        provider,
+      });
+    }
+  );
 
   it.each([{}, { binding: 'MISSING' }])('validates D1 binding %#', async (config) => {
-    const result = await testDatabaseConnectionConnectivity({} as never, connection('d1', { config }));
+    const result = await testDatabaseConnectionConnectivity(
+      {} as never,
+      connection('d1', { config })
+    );
     expect(result.status).toBe('error');
   });
 

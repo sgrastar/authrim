@@ -808,7 +808,7 @@
 					<p class="field-hint">{$LL.admin_tenants_lifecycle_no_actions()}</p>
 				{:else}
 					<div class="form-actions">
-						{#each lifecycleActions as command}
+						{#each lifecycleActions as command (command)}
 							<button
 								class={command === 'freeze' || command === 'suspend'
 									? 'btn btn-danger-outline'
@@ -866,7 +866,7 @@
 					<p class="field-hint">{$LL.admin_tenants_lifecycle_history_empty()}</p>
 				{:else}
 					<div class="lifecycle-history">
-						{#each lifecycleJobs as job}
+						{#each lifecycleJobs as job (job.id)}
 							<article class="lifecycle-job">
 								<div class="card-header-row">
 									<div>
@@ -887,7 +887,7 @@
 								{#if job.error_message}<div class="alert alert-error">{job.error_message}</div>{/if}
 								{#if job.progress?.checks?.length}
 									<ul class="lifecycle-checks">
-										{#each job.progress.checks as check}
+										{#each job.progress.checks as check (check.id)}
 											<li>
 												<strong>{check.id}</strong>: {check.status}
 												{#if check.evidence}<span> — {check.evidence}</span>{/if}

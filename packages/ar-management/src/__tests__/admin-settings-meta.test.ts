@@ -133,7 +133,9 @@ describe('admin settings metadata APIs', () => {
       const response = await adminSettingsDiffHandler(
         context({ query: { from_version: '1', to_version: '2' } })
       );
-      const body = (await response.json()) as { diffs: Array<{ category: string; changes: unknown[] }> };
+      const body = (await response.json()) as {
+        diffs: Array<{ category: string; changes: unknown[] }>;
+      };
       expect(body.diffs.find((item) => item.category === 'oauth')?.changes).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: 'nested.removed', type: 'removed' }),
@@ -175,14 +177,15 @@ describe('admin settings metadata APIs', () => {
       [{ settings: null, updated_at: 0 }, {}],
       [{ settings: '{', updated_at: 0 }, {}],
       [{ settings: '[]', updated_at: 0 }, {}],
-      [{ settings: JSON.stringify({ oauth: { require_pkce: false } }), updated_at: 1 }, { require_pkce: false }],
+      [
+        { settings: JSON.stringify({ oauth: { require_pkce: false } }), updated_at: 1 },
+        { require_pkce: false },
+      ],
     ])('compares a category with current tenant settings %#', async (current, expected) => {
       mocks.adapter.query.mockResolvedValueOnce([history('oauth', { require_pkce: true })]);
       mocks.adapter.queryOne.mockResolvedValueOnce(current);
       const body = (await (
-        await adminSettingsDiffHandler(
-          context({ query: { category: 'oauth', from_version: '1' } })
-        )
+        await adminSettingsDiffHandler(context({ query: { category: 'oauth', from_version: '1' } }))
       ).json()) as { to_version: string; diffs: Array<{ changes: unknown[] }> };
       expect(body.to_version).toBe('current');
       if (current) {
@@ -240,14 +243,12 @@ describe('admin settings metadata APIs', () => {
   });
 
   describe('settings validation', () => {
-    it.each([
-      [null],
-      [{}],
-      [{ settings: [] }],
-      [{ category: 1, settings: {} }],
-    ])('rejects malformed request %#', async (body) => {
-      expect((await adminSettingsValidateHandler(context({ body }))).status).toBe(400);
-    });
+    it.each([[null], [{}], [{ settings: [] }], [{ category: 1, settings: {} }]])(
+      'rejects malformed request %#',
+      async (body) => {
+        expect((await adminSettingsValidateHandler(context({ body }))).status).toBe(400);
+      }
+    );
 
     it('rejects an unknown category', async () => {
       expect(
@@ -356,7 +357,9 @@ describe('admin settings metadata APIs', () => {
     });
 
     it('returns the unsupported tenant guard response', async () => {
-      mocks.tenantGuard.mockResolvedValueOnce(Response.json({ error: 'unsupported' }, { status: 400 }));
+      mocks.tenantGuard.mockResolvedValueOnce(
+        Response.json({ error: 'unsupported' }, { status: 400 })
+      );
       expect((await adminTenantCloneHandler(context({ body: validBody }))).status).toBe(400);
     });
 
@@ -367,7 +370,9 @@ describe('admin settings metadata APIs', () => {
     });
 
     it('requires a source tenant ID', async () => {
-      expect((await adminTenantCloneHandler(context({ id: '', body: validBody }))).status).toBe(400);
+      expect((await adminTenantCloneHandler(context({ id: '', body: validBody }))).status).toBe(
+        400
+      );
     });
 
     it.each([

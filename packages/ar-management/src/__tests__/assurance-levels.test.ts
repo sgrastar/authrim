@@ -23,7 +23,9 @@ function kv(initial: string | null = null) {
   };
 }
 
-function context(options: { env?: Record<string, unknown>; body?: unknown; bodyError?: boolean } = {}) {
+function context(
+  options: { env?: Record<string, unknown>; body?: unknown; bodyError?: boolean } = {}
+) {
   return {
     env: options.env ?? {},
     req: {
@@ -63,39 +65,74 @@ describe('assurance level settings', () => {
       DEFAULT_FAL: 'bad',
       DEFAULT_IAL: 'IAL2',
     } as never);
-    expect(result.settings).toMatchObject({ enabled: true, defaultAAL: 'AAL3', defaultFAL: 'FAL1', defaultIAL: 'IAL2' });
-    expect(result.sources).toMatchObject({ enabled: 'env', defaultAAL: 'env', defaultFAL: 'default', defaultIAL: 'env' });
+    expect(result.settings).toMatchObject({
+      enabled: true,
+      defaultAAL: 'AAL3',
+      defaultFAL: 'FAL1',
+      defaultIAL: 'IAL2',
+    });
+    expect(result.sources).toMatchObject({
+      enabled: 'env',
+      defaultAAL: 'env',
+      defaultFAL: 'default',
+      defaultIAL: 'env',
+    });
   });
 
   it('applies valid KV values over environment values and coerces booleans strictly', async () => {
-    const store = kv(JSON.stringify({
-      assurance: {
-        enabled: false,
-        defaultAAL: 'AAL2', defaultFAL: 'FAL3', defaultIAL: 'IAL3',
-        scopeAALRequirements: { admin: 'AAL3' },
-        includeInIdToken: false, includeInAccessToken: true,
-        fal2RequiresDPoP: false, fal3RequiresPAR: false,
-      },
-    }));
+    const store = kv(
+      JSON.stringify({
+        assurance: {
+          enabled: false,
+          defaultAAL: 'AAL2',
+          defaultFAL: 'FAL3',
+          defaultIAL: 'IAL3',
+          scopeAALRequirements: { admin: 'AAL3' },
+          includeInIdToken: false,
+          includeInAccessToken: true,
+          fal2RequiresDPoP: false,
+          fal3RequiresPAR: false,
+        },
+      })
+    );
     const result = await getAssuranceLevelsSettings({
       SETTINGS: store,
       ENABLE_NIST_ASSURANCE_LEVELS: 'true',
       DEFAULT_AAL: 'AAL1',
     } as never);
     expect(result.settings).toMatchObject({
-      enabled: false, defaultAAL: 'AAL2', defaultFAL: 'FAL3', defaultIAL: 'IAL3',
-      scopeAALRequirements: { admin: 'AAL3' }, includeInIdToken: false,
-      includeInAccessToken: true, fal2RequiresDPoP: false, fal3RequiresPAR: false,
+      enabled: false,
+      defaultAAL: 'AAL2',
+      defaultFAL: 'FAL3',
+      defaultIAL: 'IAL3',
+      scopeAALRequirements: { admin: 'AAL3' },
+      includeInIdToken: false,
+      includeInAccessToken: true,
+      fal2RequiresDPoP: false,
+      fal3RequiresPAR: false,
     });
     expect(Object.values(result.sources)).toEqual(Array(9).fill('kv'));
   });
 
   it.each([
     ['{'],
-    [JSON.stringify({ assurance: { defaultAAL: 'bad', defaultFAL: 'bad', defaultIAL: 'bad', scopeAALRequirements: null } })],
+    [
+      JSON.stringify({
+        assurance: {
+          defaultAAL: 'bad',
+          defaultFAL: 'bad',
+          defaultIAL: 'bad',
+          scopeAALRequirements: null,
+        },
+      }),
+    ],
   ])('ignores malformed or invalid KV settings %#', async (stored) => {
     const result = await getAssuranceLevelsSettings({ SETTINGS: kv(stored) } as never);
-    expect(result.settings).toMatchObject({ defaultAAL: 'AAL1', defaultFAL: 'FAL1', defaultIAL: 'IAL1' });
+    expect(result.settings).toMatchObject({
+      defaultAAL: 'AAL1',
+      defaultFAL: 'FAL1',
+      defaultIAL: 'IAL1',
+    });
   });
 
   it('ignores KV read failures', async () => {
@@ -107,7 +144,9 @@ describe('assurance level settings', () => {
   });
 
   it('resolves enabled state and scope requirements', async () => {
-    const store = kv(JSON.stringify({ assurance: { enabled: true, scopeAALRequirements: { admin: 'AAL2' } } }));
+    const store = kv(
+      JSON.stringify({ assurance: { enabled: true, scopeAALRequirements: { admin: 'AAL2' } } })
+    );
     const env = { SETTINGS: store } as never;
     await expect(isAssuranceLevelsEnabled(env)).resolves.toBe(true);
     await expect(getRequiredAALForScope(env, 'admin')).resolves.toBe('AAL2');
@@ -124,13 +163,16 @@ describe('assurance level settings', () => {
     });
     const store = kv();
     store.get.mockRejectedValueOnce('ignored');
-    expect((await getAssuranceLevelsConfig(context({ env: { SETTINGS: store } }))).status).toBe(200);
+    expect((await getAssuranceLevelsConfig(context({ env: { SETTINGS: store } }))).status).toBe(
+      200
+    );
   });
 
   it('requires SETTINGS KV and valid JSON for update', async () => {
     expect((await updateAssuranceLevelsConfig(context({ body: {} }))).status).toBe(500);
     expect(
-      (await updateAssuranceLevelsConfig(context({ env: { SETTINGS: kv() }, bodyError: true }))).status
+      (await updateAssuranceLevelsConfig(context({ env: { SETTINGS: kv() }, bodyError: true })))
+        .status
     ).toBe(400);
   });
 
@@ -147,27 +189,46 @@ describe('assurance level settings', () => {
   });
 
   it('merges all update fields without deleting unrelated system settings', async () => {
-    const store = kv(JSON.stringify({ unrelated: { keep: true }, assurance: { defaultAAL: 'AAL1' } }));
+    const store = kv(
+      JSON.stringify({ unrelated: { keep: true }, assurance: { defaultAAL: 'AAL1' } })
+    );
     const body = {
-      enabled: false, defaultAAL: 'AAL3', defaultFAL: 'FAL2', defaultIAL: 'IAL2',
-      scopeAALRequirements: { admin: 'AAL3' }, includeInIdToken: false,
-      includeInAccessToken: true, fal2RequiresDPoP: false, fal3RequiresPAR: false,
+      enabled: false,
+      defaultAAL: 'AAL3',
+      defaultFAL: 'FAL2',
+      defaultIAL: 'IAL2',
+      scopeAALRequirements: { admin: 'AAL3' },
+      includeInIdToken: false,
+      includeInAccessToken: true,
+      fal2RequiresDPoP: false,
+      fal3RequiresPAR: false,
     };
     const response = await updateAssuranceLevelsConfig(context({ env: { SETTINGS: store }, body }));
     expect(response.status).toBe(200);
     const saved = JSON.parse(store.put.mock.calls[0][1]);
     expect(saved).toMatchObject({ unrelated: { keep: true }, assurance: body });
-    expect(mocks.logger.info).toHaveBeenCalledWith('Assurance Levels settings updated', expect.objectContaining({ updatedFields: Object.keys(body) }));
+    expect(mocks.logger.info).toHaveBeenCalledWith(
+      'Assurance Levels settings updated',
+      expect.objectContaining({ updatedFields: Object.keys(body) })
+    );
   });
 
   it('creates assurance object from empty storage and handles write failure', async () => {
     const store = kv(null);
     expect(
-      (await updateAssuranceLevelsConfig(context({ env: { SETTINGS: store }, body: { enabled: true } }))).status
+      (
+        await updateAssuranceLevelsConfig(
+          context({ env: { SETTINGS: store }, body: { enabled: true } })
+        )
+      ).status
     ).toBe(200);
     store.put.mockRejectedValueOnce(new Error('KV unavailable'));
     expect(
-      (await updateAssuranceLevelsConfig(context({ env: { SETTINGS: store }, body: { enabled: false } }))).status
+      (
+        await updateAssuranceLevelsConfig(
+          context({ env: { SETTINGS: store }, body: { enabled: false } })
+        )
+      ).status
     ).toBe(500);
   });
 
@@ -179,7 +240,9 @@ describe('assurance level settings', () => {
     'deletes assurance override stored=%s',
     async (stored) => {
       const store = kv(stored);
-      expect((await deleteAssuranceLevelsConfig(context({ env: { SETTINGS: store } }))).status).toBe(200);
+      expect(
+        (await deleteAssuranceLevelsConfig(context({ env: { SETTINGS: store } }))).status
+      ).toBe(200);
       expect(store.put).toHaveBeenCalledTimes(stored ? 1 : 0);
       if (stored) expect(JSON.parse(store.put.mock.calls[0][1])).toEqual({ unrelated: true });
     }
@@ -187,7 +250,9 @@ describe('assurance level settings', () => {
 
   it('handles malformed/deletion KV failures', async () => {
     const store = kv('{');
-    expect((await deleteAssuranceLevelsConfig(context({ env: { SETTINGS: store } }))).status).toBe(500);
+    expect((await deleteAssuranceLevelsConfig(context({ env: { SETTINGS: store } }))).status).toBe(
+      500
+    );
     expect(mocks.logger.error).toHaveBeenCalled();
   });
 });

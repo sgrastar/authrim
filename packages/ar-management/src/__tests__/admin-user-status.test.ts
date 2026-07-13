@@ -41,11 +41,7 @@ vi.mock('../admin-shared', async (importOriginal) => {
   };
 });
 
-import {
-  adminUserActivateHandler,
-  adminUserLockHandler,
-  adminUserSuspendHandler,
-} from '../admin';
+import { adminUserActivateHandler, adminUserLockHandler, adminUserSuspendHandler } from '../admin';
 
 function context(
   options: {
@@ -96,13 +92,12 @@ describe('admin user account status transitions', () => {
     mocks.retention.mockResolvedValue(90);
   });
 
-  it.each([
-    [adminUserSuspendHandler],
-    [adminUserLockHandler],
-    [adminUserActivateHandler],
-  ])('requires a user route ID %#', async (handler) => {
-    expect((await handler(context({ id: '' }))).status).toBe(400);
-  });
+  it.each([[adminUserSuspendHandler], [adminUserLockHandler], [adminUserActivateHandler]])(
+    'requires a user route ID %#',
+    async (handler) => {
+      expect((await handler(context({ id: '' }))).status).toBe(400);
+    }
+  );
 
   it.each([
     [adminUserSuspendHandler, {}],
@@ -127,11 +122,8 @@ describe('admin user account status transitions', () => {
 
   it.each(['not-a-date', '2026-13-01'])('rejects invalid unlock time %s', async (unlock_at) => {
     expect(
-      (
-        await adminUserLockHandler(
-          context({ body: { reason_code: 'admin_action', unlock_at } })
-        )
-      ).status
+      (await adminUserLockHandler(context({ body: { reason_code: 'admin_action', unlock_at } })))
+        .status
     ).toBe(400);
   });
 
@@ -156,7 +148,11 @@ describe('admin user account status transitions', () => {
         },
       })
     );
-    const body = (await response.json()) as { status: string; expires_at: string; revoked: unknown };
+    const body = (await response.json()) as {
+      status: string;
+      expires_at: string;
+      revoked: unknown;
+    };
     expect(body).toMatchObject({
       status: 'suspended',
       previous_status: 'active',
@@ -181,31 +177,37 @@ describe('admin user account status transitions', () => {
     expect(body.revoked).toEqual({ tokens: -1, sessions: -1 });
   });
 
-  it.each([undefined, '2027-01-01T00:00:00.000Z'])('locks with unlock time %#', async (unlock_at) => {
-    queueAccount('suspended');
-    const response = await adminUserLockHandler(
-      context({ body: { reason_code: 'security_incident', unlock_at } })
-    );
-    const body = (await response.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ status: 'locked', previous_status: 'suspended' });
-    expect(body.hasOwnProperty('unlock_at')).toBe(Boolean(unlock_at));
-  });
+  it.each([undefined, '2027-01-01T00:00:00.000Z'])(
+    'locks with unlock time %#',
+    async (unlock_at) => {
+      queueAccount('suspended');
+      const response = await adminUserLockHandler(
+        context({ body: { reason_code: 'security_incident', unlock_at } })
+      );
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ status: 'locked', previous_status: 'suspended' });
+      expect(body.hasOwnProperty('unlock_at')).toBe(Boolean(unlock_at));
+    }
+  );
 
-  it.each(['active', 'deleted'])('does not activate user already in terminal state %s', async (status) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce({
-      id: 'account-1',
-      lifecycle_state: status,
-      metadata_json: JSON.stringify({ status }),
-    });
-    expect(
-      (
-        await adminUserActivateHandler(
-          context({ body: { reason_code: 'investigation_cleared' } })
-        )
-      ).status
-    ).toBe(400);
-    expect(mocks.adapter.execute).not.toHaveBeenCalled();
-  });
+  it.each(['active', 'deleted'])(
+    'does not activate user already in terminal state %s',
+    async (status) => {
+      mocks.adapter.queryOne.mockResolvedValueOnce({
+        id: 'account-1',
+        lifecycle_state: status,
+        metadata_json: JSON.stringify({ status }),
+      });
+      expect(
+        (
+          await adminUserActivateHandler(
+            context({ body: { reason_code: 'investigation_cleared' } })
+          )
+        ).status
+      ).toBe(400);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    }
+  );
 
   it('activates a locked user and clears all restriction metadata', async () => {
     queueAccount('locked');
@@ -227,26 +229,37 @@ describe('admin user account status transitions', () => {
   });
 
   it.each([
-    [adminUserSuspendHandler, 'user.suspend', { reason_code: 'admin_action', reason_detail: 'private' }],
+    [
+      adminUserSuspendHandler,
+      'user.suspend',
+      { reason_code: 'admin_action', reason_detail: 'private' },
+    ],
     [adminUserLockHandler, 'user.lock', { reason_code: 'investigation', reason_detail: 'private' }],
-    [adminUserActivateHandler, 'user.activate', { reason_code: 'admin_action', reason_detail: 'private' }],
-  ])('stores private reason detail only in encrypted operational logs %#', async (handler, action, body) => {
-    queueAccount(action === 'user.activate' ? 'locked' : 'active');
-    const response = await handler(
-      context({
-        body,
-        adminId: 'admin-1',
-        env: { PII_ENCRYPTION_KEY: 'secret', AUTHRIM_CONFIG: {} },
-      })
-    );
-    expect(response.status).toBe(200);
-    expect(mocks.operationalLog).toHaveBeenCalledWith(
-      mocks.adapter,
-      expect.objectContaining({ inlineEncryptionKey: 'secret' }),
-      expect.objectContaining({ action, reasonDetail: 'private', actorId: 'admin-1' })
-    );
-    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('private');
-  });
+    [
+      adminUserActivateHandler,
+      'user.activate',
+      { reason_code: 'admin_action', reason_detail: 'private' },
+    ],
+  ])(
+    'stores private reason detail only in encrypted operational logs %#',
+    async (handler, action, body) => {
+      queueAccount(action === 'user.activate' ? 'locked' : 'active');
+      const response = await handler(
+        context({
+          body,
+          adminId: 'admin-1',
+          env: { PII_ENCRYPTION_KEY: 'secret', AUTHRIM_CONFIG: {} },
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.operationalLog).toHaveBeenCalledWith(
+        mocks.adapter,
+        expect.objectContaining({ inlineEncryptionKey: 'secret' }),
+        expect.objectContaining({ action, reasonDetail: 'private', actorId: 'admin-1' })
+      );
+      expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('private');
+    }
+  );
 
   it('does not fail the status transition when encrypted operational logging fails', async () => {
     queueAccount('active');

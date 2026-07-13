@@ -34,7 +34,11 @@ function context(
       param: vi.fn(() => options.id ?? 'grant-1'),
       json: vi.fn().mockResolvedValue(options.body ?? {}),
       header: vi.fn((name: string) =>
-        name === 'CF-Connecting-IP' ? '203.0.113.1' : name === 'User-Agent' ? 'test-agent' : undefined
+        name === 'CF-Connecting-IP'
+          ? '203.0.113.1'
+          : name === 'User-Agent'
+            ? 'test-agent'
+            : undefined
       ),
     },
     env: {},
@@ -44,10 +48,20 @@ function context(
 
 function grant(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'grant-1', tenant_id: 'tenant-a', client_id: 'client-1', ai_principal: 'agent:assistant',
-    scopes: 'ai:read', scope_targets: '{"resource":"documents"}', is_active: 1,
-    expires_at: null, created_by: 'admin-1', created_at: 100, updated_at: 100,
-    revoked_at: null, revoked_by: null, ...overrides,
+    id: 'grant-1',
+    tenant_id: 'tenant-a',
+    client_id: 'client-1',
+    ai_principal: 'agent:assistant',
+    scopes: 'ai:read',
+    scope_targets: '{"resource":"documents"}',
+    is_active: 1,
+    expires_at: null,
+    created_by: 'admin-1',
+    created_at: 100,
+    updated_at: 100,
+    revoked_at: null,
+    revoked_by: null,
+    ...overrides,
   };
 }
 
@@ -65,7 +79,16 @@ describe('AI grants admin APIs', () => {
 
   it.each([
     [{}, [20, 0]],
-    [{ page: '2', limit: '500', client_id: 'client-1', ai_principal: '100%_agent', is_active: 'true' }, [100, 100]],
+    [
+      {
+        page: '2',
+        limit: '500',
+        client_id: 'client-1',
+        ai_principal: '100%_agent',
+        is_active: 'true',
+      },
+      [100, 100],
+    ],
     [{ is_active: 'false' }, [20, 0]],
   ])('lists grants with tenant filters %#', async (query, pageTail) => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ count: 21 });
@@ -117,32 +140,44 @@ describe('AI grants admin APIs', () => {
       expect(
         (
           await adminAIGrantCreateHandler(
-            context({ body: { client_id: 'client', ai_principal: 'agent', scopes: 'ai:read', expires_at } })
+            context({
+              body: { client_id: 'client', ai_principal: 'agent', scopes: 'ai:read', expires_at },
+            })
           )
         ).status
       ).toBe(400);
     }
   });
 
-  it.each([' ', 'openid', 'ai:read bad', 'ai:Read'])('rejects invalid scopes %s', async (scopes) => {
-    expect(
-      (
-        await adminAIGrantCreateHandler(
-          context({ body: { client_id: 'client', ai_principal: 'agent', scopes } })
-        )
-      ).status
-    ).toBe(400);
-  });
+  it.each([' ', 'openid', 'ai:read bad', 'ai:Read'])(
+    'rejects invalid scopes %s',
+    async (scopes) => {
+      expect(
+        (
+          await adminAIGrantCreateHandler(
+            context({ body: { client_id: 'client', ai_principal: 'agent', scopes } })
+          )
+        ).status
+      ).toBe(400);
+    }
+  );
 
   it.each([false, true])('creates grant with optional targets/expiry=%s', async (explicit) => {
     mocks.adapter.queryOne.mockResolvedValueOnce(grant());
     const body = {
-      client_id: 'client-1', ai_principal: 'agent:assistant', scopes: 'ai:read ai:execute',
+      client_id: 'client-1',
+      ai_principal: 'agent:assistant',
+      scopes: 'ai:read ai:execute',
       ...(explicit
-        ? { scope_targets: { resource: 'documents' }, expires_at: Math.floor(Date.now() / 1000) + 3600 }
+        ? {
+            scope_targets: { resource: 'documents' },
+            expires_at: Math.floor(Date.now() / 1000) + 3600,
+          }
         : {}),
     };
-    const response = await adminAIGrantCreateHandler(context({ body, userId: explicit ? 'admin-1' : undefined }));
+    const response = await adminAIGrantCreateHandler(
+      context({ body, userId: explicit ? 'admin-1' : undefined })
+    );
     expect(response.status).toBe(201);
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
@@ -183,9 +218,11 @@ describe('AI grants admin APIs', () => {
   });
 
   it('updates all grant fields including null expiry/targets and inactive state', async () => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(grant()).mockResolvedValueOnce(
-      grant({ scopes: 'ai:write', scope_targets: null, expires_at: null, is_active: 0 })
-    );
+    mocks.adapter.queryOne
+      .mockResolvedValueOnce(grant())
+      .mockResolvedValueOnce(
+        grant({ scopes: 'ai:write', scope_targets: null, expires_at: null, is_active: 0 })
+      );
     const response = await adminAIGrantUpdateHandler(
       context({
         body: { scopes: 'ai:write', scope_targets: null, expires_at: null, is_active: false },
@@ -196,7 +233,10 @@ describe('AI grants admin APIs', () => {
     expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
       expect.arrayContaining(['ai:write', null, null, 0, 'grant-1', 'tenant-a'])
     );
-    expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'ai_grant.update' }));
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'ai_grant.update' })
+    );
   });
 
   it('supports timestamp-only no-op update and handles persistence errors', async () => {

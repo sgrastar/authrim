@@ -15,10 +15,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     generateId: mocks.generateId,
     createAuditLogFromContext: mocks.audit,
     createErrorResponse: vi.fn((c, code) =>
-      c.json(
-        { error: code },
-        code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND ? 404 : 500
-      )
+      c.json({ error: code }, code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND ? 404 : 500)
     ),
   };
 });
@@ -104,21 +101,26 @@ describe('admin attributes APIs', () => {
     expect((await adminAttributesListHandler(context())).status).toBe(500);
   });
 
-  it.each([false, true])('gets a user and attributes (include expired=%s)', async (includeExpired) => {
-    mocks.adapter.query
-      .mockResolvedValueOnce([{ id: 'attr-1' }])
-      .mockResolvedValueOnce([{ id: 'user-1', email: 'user@example.com', name: null }]);
-    const body = (await (
-      await adminUserAttributesHandler(
-        context({
-          params: { userId: 'user-1' },
-          query: { include_expired: String(includeExpired) },
-        })
-      )
-    ).json()) as { user: unknown };
-    expect(body.user).toEqual(expect.objectContaining({ id: 'user-1' }));
-    expect(mocks.adapter.query.mock.calls[0][0].includes('expires_at IS NULL')).toBe(!includeExpired);
-  });
+  it.each([false, true])(
+    'gets a user and attributes (include expired=%s)',
+    async (includeExpired) => {
+      mocks.adapter.query
+        .mockResolvedValueOnce([{ id: 'attr-1' }])
+        .mockResolvedValueOnce([{ id: 'user-1', email: 'user@example.com', name: null }]);
+      const body = (await (
+        await adminUserAttributesHandler(
+          context({
+            params: { userId: 'user-1' },
+            query: { include_expired: String(includeExpired) },
+          })
+        )
+      ).json()) as { user: unknown };
+      expect(body.user).toEqual(expect.objectContaining({ id: 'user-1' }));
+      expect(mocks.adapter.query.mock.calls[0][0].includes('expires_at IS NULL')).toBe(
+        !includeExpired
+      );
+    }
+  );
 
   it('returns null for a missing user and handles query errors', async () => {
     mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
@@ -235,14 +237,16 @@ describe('admin attributes APIs', () => {
   });
 
   it('returns not found when updating a tenant-external attribute', async () => {
-    expect((await adminAttributeUpdateHandler(context({ body: { attribute_value: 'x' } }))).status).toBe(
-      404
-    );
+    expect(
+      (await adminAttributeUpdateHandler(context({ body: { attribute_value: 'x' } }))).status
+    ).toBe(404);
   });
 
   it('treats an empty update as a successful no-op', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ tenant_id: 'tenant-a', source_type: 'manual' }]);
-    await expect((await adminAttributeUpdateHandler(context({ body: {} }))).json()).resolves.toEqual({
+    await expect(
+      (await adminAttributeUpdateHandler(context({ body: {} }))).json()
+    ).resolves.toEqual({
       success: true,
     });
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
@@ -300,24 +304,22 @@ describe('admin attributes APIs', () => {
   });
 
   it('lists verification history with boolean and mapped-ID normalization', async () => {
-    mocks.adapter.query
-      .mockResolvedValueOnce([{ count: 2 }])
-      .mockResolvedValueOnce([
-        {
-          id: 'verification-1',
-          holder_binding_verified: 1,
-          issuer_trusted: 0,
-          status_valid: 1,
-          mapped_attribute_ids: '["attr-1"]',
-        },
-        {
-          id: 'verification-2',
-          holder_binding_verified: 0,
-          issuer_trusted: 1,
-          status_valid: 0,
-          mapped_attribute_ids: null,
-        },
-      ]);
+    mocks.adapter.query.mockResolvedValueOnce([{ count: 2 }]).mockResolvedValueOnce([
+      {
+        id: 'verification-1',
+        holder_binding_verified: 1,
+        issuer_trusted: 0,
+        status_valid: 1,
+        mapped_attribute_ids: '["attr-1"]',
+      },
+      {
+        id: 'verification-2',
+        holder_binding_verified: 0,
+        issuer_trusted: 1,
+        status_valid: 0,
+        mapped_attribute_ids: null,
+      },
+    ]);
     const body = (await (
       await adminVerificationsListHandler(
         context({ query: { page: '2', limit: '1', user_id: 'user-1', result: 'verified' } })

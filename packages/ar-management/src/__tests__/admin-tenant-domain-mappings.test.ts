@@ -49,7 +49,9 @@ import {
   updateTenantDomainMappingHandler,
 } from '../admin-tenant-domain-mappings';
 
-function context(options: { query?: Record<string, string>; id?: string; body?: unknown; adminId?: string } = {}) {
+function context(
+  options: { query?: Record<string, string>; id?: string; body?: unknown; adminId?: string } = {}
+) {
   return {
     get: vi.fn((name: string) =>
       name === 'adminAuth' && options.adminId ? { adminId: options.adminId } : undefined
@@ -104,7 +106,10 @@ describe('tenant domain mappings', () => {
 
   it.each([
     [{}, [50, 0]],
-    [{ tenant_id: 'tenant-a', verified: 'true', limit: '500', offset: '10' }, ['tenant-a', 1, 100, 10]],
+    [
+      { tenant_id: 'tenant-a', verified: 'true', limit: '500', offset: '10' },
+      ['tenant-a', 1, 100, 10],
+    ],
     [{ verified: 'false' }, [0, 50, 0]],
   ])('lists mappings with allowlisted filters %#', async (query, expectedParams) => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ count: 1 });
@@ -181,7 +186,13 @@ describe('tenant domain mappings', () => {
     const response = await createTenantDomainMappingHandler(
       context({
         adminId: 'admin-1',
-        body: { domain: 'Example.COM', tenant_id: 'tenant-a', priority: 7, is_active, verified: true },
+        body: {
+          domain: 'Example.COM',
+          tenant_id: 'tenant-a',
+          priority: 7,
+          is_active,
+          verified: true,
+        },
       })
     );
     expect(response.status).toBe(201);
@@ -215,7 +226,9 @@ describe('tenant domain mappings', () => {
   });
 
   it('validates update input and missing mappings', async () => {
-    expect((await updateTenantDomainMappingHandler(context({ body: { priority: -1 } }))).status).toBe(400);
+    expect(
+      (await updateTenantDomainMappingHandler(context({ body: { priority: -1 } }))).status
+    ).toBe(400);
     expect((await updateTenantDomainMappingHandler(context({ body: {} }))).status).toBe(404);
   });
 
@@ -312,8 +325,18 @@ describe('tenant domain mappings', () => {
     [{}, null, false, false],
     [{ id: 'missing', domain: 'example.com' }, null, false, false],
     [{ id: 'mapping-1', domain: 'example.com' }, mapping(), false, false],
-    [{ id: 'mapping-1', domain: 'example.com' }, mapping({ verification_token: 'token' }), true, false],
-    [{ id: 'mapping-1', domain: 'example.com' }, mapping({ verification_token: 'token' }), false, false],
+    [
+      { id: 'mapping-1', domain: 'example.com' },
+      mapping({ verification_token: 'token' }),
+      true,
+      false,
+    ],
+    [
+      { id: 'mapping-1', domain: 'example.com' },
+      mapping({ verification_token: 'token' }),
+      false,
+      false,
+    ],
   ])('rejects invalid confirmation state %#', async (body, row, expired, dns) => {
     mocks.adapter.queryOne.mockResolvedValueOnce(row);
     mocks.expired.mockReturnValueOnce(expired);

@@ -220,9 +220,7 @@ describe('AdminStorageDestinationRepository', () => {
   it('uses empty metadata and a null actor when optional usage fields are omitted', async () => {
     const db = adapter();
     vi.mocked(db.execute).mockResolvedValueOnce({ success: true, rowsAffected: 0 });
-    vi.mocked(db.query).mockResolvedValueOnce([
-      usage({ metadata_json: '{}', created_by: null }),
-    ]);
+    vi.mocked(db.query).mockResolvedValueOnce([usage({ metadata_json: '{}', created_by: null })]);
     const repository = new AdminStorageDestinationRepository(db);
     await expect(
       repository.recordUsage({
