@@ -710,13 +710,11 @@ export function didWebToUrl(did: string): string | null {
     return null;
   }
 
-  // Decode percent-encoded characters in method-specific-id
-  const decoded = decodeURIComponent(parsed.methodSpecificId);
-
-  // Split by colons to get domain and path
-  const parts = decoded.split(':');
-  const domain = parts[0];
-  const pathParts = parts.slice(1);
+  // Split DID path separators before decoding. A percent-encoded colon in the
+  // authority (for example example.com%3A8443) represents a port, not a path.
+  const encodedParts = parsed.methodSpecificId.split(':');
+  const domain = decodeURIComponent(encodedParts[0]);
+  const pathParts = encodedParts.slice(1).map((part) => decodeURIComponent(part));
 
   // Build URL
   let url = `https://${domain}`;

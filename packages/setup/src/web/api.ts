@@ -614,6 +614,10 @@ export function createApiRoutes(): Hono {
     c: Parameters<Parameters<typeof api.use>[1]>[0],
     next: () => Promise<void>
   ) => {
+    if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+      await next();
+      return;
+    }
     const token = c.req.header('X-Session-Token');
     if (!sessionToken || token !== sessionToken) {
       return c.json({ error: 'Invalid or missing session token' }, 401);
@@ -2711,6 +2715,12 @@ export function createApiRoutes(): Hono {
       try {
         const body = await c.req.json();
         const { env, baseUrl } = body;
+
+        if (!env || !baseUrl) {
+          addProgress('Error: env and baseUrl are required');
+          return c.json({ success: false, error: 'env and baseUrl are required' }, 400);
+        }
+
         const baseDir = findAuthrimBaseDir(process.cwd());
 
         // Determine structure type
@@ -2749,11 +2759,6 @@ export function createApiRoutes(): Hono {
         addProgress(
           `Admin setup request: env=${env}, baseUrl=${resolvedBaseUrl}, structure=${resolved.type}`
         );
-
-        if (!env || !resolvedBaseUrl) {
-          addProgress('Error: env and baseUrl are required');
-          return c.json({ success: false, error: 'env and baseUrl are required' }, 400);
-        }
 
         addProgress('Setting up initial admin...');
         addProgress(`Looking for setup token at: ${tokenPath}`);

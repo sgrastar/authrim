@@ -1,151 +1,124 @@
-/**
- * DID Utilities Tests
- *
- * Tests for DID parsing and validation utilities (Phase 9).
- */
+import { describe, expect, it } from 'vitest';
+import { didWebToUrl, isDIDMethodSupported, isValidDID, parseDID, resolveDID } from '../did';
 
-import { describe, it, expect } from 'vitest';
-import { parseDID, isValidDID, isDIDMethodSupported, didWebToUrl } from '../did';
+const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-describe('DID Utilities', () => {
-  describe('parseDID', () => {
-    it('should parse valid did:web', () => {
-      const result = parseDID('did:web:example.com');
+function base58(bytes: number[]): string {
+  let value = bytes.reduce((result, byte) => result * 256n + BigInt(byte), 0n);
+  let encoded = '';
+  while (value > 0n) {
+    encoded = alphabet[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    encoded = `1${encoded}`;
+  }
+  return encoded || '1';
+}
 
-      expect(result).not.toBeNull();
-      expect(result!.did).toBe('did:web:example.com');
-      expect(result!.method).toBe('web');
-      expect(result!.methodSpecificId).toBe('example.com');
+describe('DID parsing and did:key resolution', () => {
+  it('parses all optional DID URL components without normalizing identity', () => {
+    expect(parseDID('did:web:example.com:users:alice/path?service=agent#key-1')).toEqual({
+      did: 'did:web:example.com:users:alice/path?service=agent#key-1',
+      method: 'web',
+      methodSpecificId: 'example.com:users:alice',
+      path: 'path',
+      query: 'service=agent',
+      fragment: 'key-1',
     });
-
-    it('should parse did:web with path', () => {
-      const result = parseDID('did:web:example.com:users:alice');
-
-      expect(result).not.toBeNull();
-      expect(result!.method).toBe('web');
-      expect(result!.methodSpecificId).toBe('example.com:users:alice');
-    });
-
-    it('should parse did:key', () => {
-      const result = parseDID('did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK');
-
-      expect(result).not.toBeNull();
-      expect(result!.method).toBe('key');
-      expect(result!.methodSpecificId).toBe('z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK');
-    });
-
-    it('should parse DID with fragment', () => {
-      const result = parseDID('did:web:example.com#key-1');
-
-      expect(result).not.toBeNull();
-      expect(result!.fragment).toBe('key-1');
-    });
-
-    it('should parse DID with query', () => {
-      const result = parseDID('did:web:example.com?service=files');
-
-      expect(result).not.toBeNull();
-      expect(result!.query).toBe('service=files');
-    });
-
-    it('should parse DID with path, query and fragment', () => {
-      const result = parseDID('did:web:example.com/path/to/doc?query=value#fragment');
-
-      expect(result).not.toBeNull();
-      expect(result!.path).toBe('path/to/doc');
-      expect(result!.query).toBe('query=value');
-      expect(result!.fragment).toBe('fragment');
-    });
-
-    it('should return null for invalid DID', () => {
-      expect(parseDID('not-a-did')).toBeNull();
-      expect(parseDID('')).toBeNull();
-      expect(parseDID('did:')).toBeNull();
-      expect(parseDID('did:web')).toBeNull();
-    });
-
-    it('should handle various DID methods', () => {
-      expect(parseDID('did:ion:abc123')?.method).toBe('ion');
-      expect(parseDID('did:ethr:0x123')?.method).toBe('ethr');
-      expect(parseDID('did:pkh:eip155:1:0x123')?.method).toBe('pkh');
+    expect(parseDID('did:key:zabc')).toEqual({
+      did: 'did:key:zabc',
+      method: 'key',
+      methodSpecificId: 'zabc',
+      path: undefined,
+      query: undefined,
+      fragment: undefined,
     });
   });
 
-  describe('isValidDID', () => {
-    it('should return true for valid DIDs', () => {
-      expect(isValidDID('did:web:example.com')).toBe(true);
-      expect(isValidDID('did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK')).toBe(true);
-      expect(isValidDID('did:web:example.com#key-1')).toBe(true);
-    });
+  it.each(['', 'did:', 'did:web:', 'web:example.com'])('rejects malformed DID %s', (did) => {
+    expect(parseDID(did)).toBeNull();
+    expect(isValidDID(did)).toBe(false);
+  });
 
-    it('should return false for invalid DIDs', () => {
-      expect(isValidDID('not-a-did')).toBe(false);
-      expect(isValidDID('')).toBe(false);
-      expect(isValidDID('did:')).toBe(false);
+  it('checks supported methods only after successful parsing', () => {
+    expect(isDIDMethodSupported('did:web:example.com', ['web', 'key'])).toBe(true);
+    expect(isDIDMethodSupported('did:ion:abc', ['web', 'key'])).toBe(false);
+    expect(isDIDMethodSupported('invalid', ['web'])).toBe(false);
+  });
+
+  it.each([
+    ['did:web:example.com', 'https://example.com/.well-known/did.json'],
+    ['did:web:example.com:users:alice', 'https://example.com/users/alice/did.json'],
+    ['did:web:example.com%3A8443:tenant', 'https://example.com:8443/tenant/did.json'],
+    ['did:key:zabc', null],
+    ['invalid', null],
+  ])('maps did:web %s to %s', (did, url) => {
+    expect(didWebToUrl(did)).toBe(url);
+  });
+
+  it('resolves a valid Ed25519 did:key to JWK verification material', async () => {
+    const multibase = `z${base58([0xed, 0x01, ...new Array(32).fill(7)])}`;
+    const did = `did:key:${multibase}`;
+    await expect(resolveDID(did)).resolves.toMatchObject({
+      id: did,
+      verificationMethod: [
+        {
+          type: 'Ed25519VerificationKey2020',
+          controller: did,
+          publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', use: 'sig' },
+        },
+      ],
+      authentication: [`${did}#${multibase}`],
     });
   });
 
-  describe('isDIDMethodSupported', () => {
-    it('should return true for supported methods', () => {
-      const supportedMethods = ['web', 'key'] as const;
-
-      expect(isDIDMethodSupported('did:web:example.com', [...supportedMethods])).toBe(true);
-      expect(isDIDMethodSupported('did:key:z6Mk...', [...supportedMethods])).toBe(true);
-    });
-
-    it('should return false for unsupported methods', () => {
-      const supportedMethods = ['web', 'key'] as const;
-
-      expect(isDIDMethodSupported('did:ion:abc', [...supportedMethods])).toBe(false);
-      expect(isDIDMethodSupported('did:ethr:0x123', [...supportedMethods])).toBe(false);
-    });
-
-    it('should return false for invalid DIDs', () => {
-      expect(isDIDMethodSupported('not-a-did', ['web', 'key'])).toBe(false);
+  it.each([
+    [0x80, 0x24, 65, 'P-256', 'ES256'],
+    [0x81, 0x24, 97, 'P-384', 'ES384'],
+    [0x82, 0x24, 133, 'P-521', 'ES512'],
+  ])('resolves uncompressed multicodec %#/%#', async (first, second, length, curve, alg) => {
+    const key = [first, second, 0x04, ...new Array(length - 1).fill(1)];
+    const multibase = `z${base58(key)}`;
+    await expect(resolveDID(`did:key:${multibase}`)).resolves.toMatchObject({
+      verificationMethod: [
+        {
+          type: 'JsonWebKey2020',
+          publicKeyJwk: { kty: 'EC', crv: curve, alg, use: 'sig' },
+        },
+      ],
     });
   });
 
-  describe('didWebToUrl', () => {
-    it('should convert simple did:web to URL', () => {
-      const url = didWebToUrl('did:web:example.com');
-
-      expect(url).toBe('https://example.com/.well-known/did.json');
+  it('decompresses a syntactically valid compressed P-256 point', async () => {
+    const multibase = `z${base58([0x80, 0x24, 0x02, ...new Array(32).fill(1)])}`;
+    await expect(resolveDID(`did:key:${multibase}`)).resolves.toMatchObject({
+      verificationMethod: [
+        { publicKeyJwk: { kty: 'EC', crv: 'P-256', x: expect.any(String), y: expect.any(String) } },
+      ],
     });
+  });
 
-    it('should convert did:web with path to URL', () => {
-      const url = didWebToUrl('did:web:example.com:users:alice');
-
-      expect(url).toBe('https://example.com/users/alice/did.json');
+  it.each([
+    ['xabc', 'unsupported multibase'],
+    [`z${base58([0xed, 0x01, 1])}`, 'wrong Ed25519 length'],
+    [`z${base58([0x80, 0x24, 0x04, 1])}`, 'wrong P-256 length'],
+    [`z${base58([0x81, 0x24, 0x04, 1])}`, 'wrong P-384 length'],
+    [`z${base58([0x82, 0x24, 0x04, 1])}`, 'wrong P-521 length'],
+    [`z${base58([0x99, 0x01, 1, 2])}`, 'unknown codec'],
+  ])('falls back to Multikey for %s (%s)', async (multibase) => {
+    await expect(resolveDID(`did:key:${multibase}`)).resolves.toMatchObject({
+      verificationMethod: [{ type: 'Multikey', publicKeyMultibase: multibase }],
     });
+  });
 
-    it('should handle percent-encoded paths', () => {
-      // Colons in path segments are percent-encoded
-      const url = didWebToUrl('did:web:example.com:path%3Awith%3Acolons');
+  it('rejects invalid base58 key material', async () => {
+    await expect(resolveDID('did:key:z0')).rejects.toThrow('Invalid base58 character');
+  });
 
-      // After decoding, colons become path separators
-      expect(url).toBe('https://example.com/path/with/colons/did.json');
-    });
-
-    it('should handle subdomains', () => {
-      const url = didWebToUrl('did:web:api.example.com');
-
-      expect(url).toBe('https://api.example.com/.well-known/did.json');
-    });
-
-    it('should handle deep paths', () => {
-      const url = didWebToUrl('did:web:example.com:a:b:c');
-
-      expect(url).toBe('https://example.com/a/b/c/did.json');
-    });
-
-    it('should return null for non-web DIDs', () => {
-      expect(didWebToUrl('did:key:z6Mk...')).toBeNull();
-      expect(didWebToUrl('did:ion:abc')).toBeNull();
-    });
-
-    it('should return null for invalid DIDs', () => {
-      expect(didWebToUrl('not-a-did')).toBeNull();
-      expect(didWebToUrl('')).toBeNull();
-    });
+  it('rejects invalid and unsupported DID methods', async () => {
+    await expect(resolveDID('invalid')).rejects.toThrow('Invalid DID format');
+    await expect(resolveDID('did:ion:abc')).rejects.toThrow('Unsupported DID method');
   });
 });

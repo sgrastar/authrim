@@ -284,6 +284,14 @@ function createResendHandler(config: ResendNotifierConfig) {
         };
       }
 
+      if (config.sandboxMode) {
+        return {
+          success: true,
+          messageId: `resend-sandbox-${crypto.randomUUID()}`,
+          providerResponse: { sandbox: true },
+        };
+      }
+
       try {
         // Send email via Resend API
         const result = await sendEmail(emailRequest, config);
