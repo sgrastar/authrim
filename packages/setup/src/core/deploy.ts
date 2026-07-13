@@ -146,10 +146,23 @@ export interface LegacyStaticSecretCleanupResult {
 }
 
 function parseWranglerSecretNames(stdout: unknown): Set<string> {
-  const parsed = JSON.parse(String(stdout)) as Array<{ name?: unknown }>;
+  const output = String(stdout).trim();
+  if (output.length === 0) {
+    throw new Error('Wrangler secret list returned empty JSON output');
+  }
+
+  const parsed = JSON.parse(output) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error('Wrangler secret list returned a non-array JSON response');
+  }
+
   return new Set(
     parsed
-      .map((entry) => entry.name)
+      .map((entry: unknown) =>
+        typeof entry === 'object' && entry !== null && 'name' in entry
+          ? (entry as { name?: unknown }).name
+          : undefined
+      )
       .filter((name): name is string => typeof name === 'string' && name.length > 0)
   );
 }
@@ -197,8 +210,26 @@ export async function cleanupLegacyStaticSecrets(
         () =>
           execa(
             'pnpm',
-            ['exec', 'wrangler', 'secret', 'list', ...getConfigArgs(options), '--env', options.env],
-            { cwd: packageDir, reject: true, cancelSignal: options.signal }
+            [
+              'exec',
+              'wrangler',
+              'secret',
+              'list',
+              '--format',
+              'json',
+              ...getConfigArgs(options),
+              '--env',
+              options.env,
+            ],
+            {
+              cwd: packageDir,
+              reject: true,
+              cancelSignal: options.signal,
+              // Wrangler emits command results through its `log` channel. The deployment
+              // workflow uses WRANGLER_LOG=warn globally, so enable captured JSON output only
+              // for this subprocess without increasing the surrounding CI log verbosity.
+              env: { WRANGLER_LOG: 'log' },
+            }
           )
       );
       const existingNames = parseWranglerSecretNames(listed.stdout);
