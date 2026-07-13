@@ -35,6 +35,8 @@ import {
   buildTenantRuntimeRegistrySnapshotKey,
   publishTenantRuntimeRegistrySnapshot,
   usesNakedDomainIssuer,
+  ADMIN_PERMISSIONS,
+  hasAdminPermission,
 } from '@authrim/ar-lib-core';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 
@@ -476,20 +478,73 @@ const CreateTenantSchema = z.object({
   description: z.string().max(500).optional(),
 });
 
-const UpdateTenantSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  tenant_code: z
-    .string()
-    .min(1)
-    .max(63)
-    .regex(
-      TENANT_ID_REGEX,
-      'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
-    )
-    .optional(),
-  description: z.string().max(500).nullable().optional(),
-  lifecycle_state: z.enum(TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES).optional(),
+const UpdateTenantSchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    tenant_code: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(
+        TENANT_ID_REGEX,
+        'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
+      )
+      .optional(),
+    description: z.string().max(500).nullable().optional(),
+  })
+  .strict();
+
+const TenantLifecycleCommandSchema = z.object({
+  expected_state: z.enum(TENANT_LIFECYCLE_STATES),
+  expected_updated_at: z.number().int().nonnegative(),
+  reason: z.string().trim().min(3).max(1000),
+  break_glass: z.boolean().optional().default(false),
 });
+
+type TenantLifecycleCommand = 'suspend' | 'resume' | 'freeze' | 'unfreeze' | 'restore-validate';
+
+const TENANT_LIFECYCLE_TRANSITIONS: Record<
+  TenantLifecycleCommand,
+  readonly { from: TenantLifecycleState; to: TenantLifecycleState; async: boolean }[]
+> = {
+  suspend: [{ from: 'active', to: 'suspended', async: false }],
+  resume: [{ from: 'suspended', to: 'active', async: true }],
+  freeze: [
+    { from: 'active', to: 'frozen', async: false },
+    { from: 'migration_read_only', to: 'frozen', async: false },
+  ],
+  unfreeze: [{ from: 'frozen', to: 'active', async: true }],
+  'restore-validate': [
+    { from: 'restore_pending', to: 'restore_validating', async: true },
+    { from: 'restore_validating', to: 'restore_validating', async: true },
+  ],
+};
+
+export function validateTenantLifecycleTransition(
+  command: TenantLifecycleCommand,
+  currentState: TenantLifecycleState,
+  breakGlass = false
+): { targetState: TenantLifecycleState; async: boolean } {
+  const transition = TENANT_LIFECYCLE_TRANSITIONS[command].find(
+    (candidate) => candidate.from === currentState
+  );
+  if (transition) return { targetState: transition.to, async: transition.async };
+  if (breakGlass && !['deleted', 'deleting', 'provisioning'].includes(currentState)) {
+    const fallbackTarget: TenantLifecycleState =
+      command === 'suspend'
+        ? 'suspended'
+        : command === 'freeze'
+          ? 'frozen'
+          : command === 'restore-validate'
+            ? 'restore_validating'
+            : 'active';
+    return {
+      targetState: fallbackTarget,
+      async: ['resume', 'unfreeze', 'restore-validate'].includes(command),
+    };
+  }
+  throw new Error(`Invalid lifecycle transition: ${currentState} -> ${command}`);
+}
 
 // =============================================================================
 // Tenant Provisioning Helpers
@@ -1446,39 +1501,6 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const protectedTenantId = isSingleTenantMode(c.env)
-      ? getDefaultTenantId(c.env)
-      : getPrimaryTenantId(c.env);
-
-    if (
-      (id === protectedTenantId || existing.is_default === 1) &&
-      updates.lifecycle_state &&
-      updates.lifecycle_state !== 'active'
-    ) {
-      const reason =
-        existing.is_default === 1
-          ? 'Cannot deactivate the default tenant'
-          : isSingleTenantMode(c.env)
-            ? 'The initial tenant must remain active in single-tenant mode'
-            : 'Cannot deactivate the primary tenant';
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'lifecycle_state', reason },
-      });
-    }
-
-    if (
-      updates.lifecycle_state !== undefined &&
-      updates.lifecycle_state !== existing.lifecycle_state &&
-      isInternalLifecycleState(existing.lifecycle_state)
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'lifecycle_state',
-          reason: 'Lifecycle state requires a dedicated operation',
-        },
-      });
-    }
-
     // Build update fields
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -1506,11 +1528,6 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       fields.push('description = ?');
       values.push(updates.description ?? null);
     }
-    if (updates.lifecycle_state !== undefined) {
-      fields.push('lifecycle_state = ?');
-      values.push(updates.lifecycle_state);
-    }
-
     if (fields.length === 0) {
       return c.json(formatTenant(existing));
     }
@@ -1521,11 +1538,6 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
     values.push(id);
 
     await adapter.execute(`UPDATE tenants SET ${fields.join(', ')} WHERE id = ?`, values);
-
-    // Invalidate cache if lifecycle_state changed (tenant may have been activated or deactivated)
-    if (updates.lifecycle_state !== undefined) {
-      await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
-    }
 
     const updated = await adapter.queryOne<TenantRow>(
       'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
@@ -1542,6 +1554,333 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
     log.error('Failed to update tenant', { id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+async function executeTenantLifecycleCommand(
+  c: Context<{ Bindings: Env }>,
+  command: TenantLifecycleCommand
+): Promise<Response> {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) return platformError;
+
+  const id = c.req.param('id')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) return blocked;
+
+  const idempotencyKey = c.req.header('Idempotency-Key')?.trim();
+  if (!idempotencyKey || idempotencyKey.length > 200) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'A valid Idempotency-Key header is required',
+      },
+      400
+    );
+  }
+
+  const parsed = TenantLifecycleCommandSchema.safeParse(await c.req.json<unknown>());
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: parsed.error.issues.map((issue) => issue.message).join(', '),
+      },
+      400
+    );
+  }
+
+  const adminAuth = getAdminAuth(c);
+  if (
+    parsed.data.break_glass &&
+    !hasAdminPermission(
+      adminAuth?.permissions ?? [],
+      ADMIN_PERMISSIONS.TENANT_LIFECYCLE_BREAK_GLASS
+    )
+  ) {
+    return c.json(
+      {
+        error: 'insufficient_permissions',
+        error_description: 'Break-glass tenant lifecycle permission is required',
+      },
+      403
+    );
+  }
+
+  const adapter = createAdapter(c);
+  const existingJob = await adapter.queryOne<{
+    id: string;
+    status: string;
+    progress: string | null;
+    config: string | null;
+  }>(
+    `SELECT id, status, progress, config FROM admin_jobs
+      WHERE tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
+        AND json_extract(config, '$.idempotency_key') = ?
+      ORDER BY created_at DESC LIMIT 1`,
+    [id, idempotencyKey]
+  );
+  if (existingJob) {
+    const existingConfig = existingJob.config
+      ? (JSON.parse(existingJob.config) as Record<string, unknown>)
+      : {};
+    const samePayload =
+      existingConfig.command === command &&
+      existingConfig.source_state === parsed.data.expected_state &&
+      existingConfig.expected_updated_at === parsed.data.expected_updated_at &&
+      existingConfig.reason === parsed.data.reason &&
+      existingConfig.break_glass === parsed.data.break_glass;
+    if (!samePayload) {
+      return c.json(
+        {
+          error: 'idempotency_conflict',
+          error_description: 'Idempotency-Key was already used with a different request payload',
+        },
+        409
+      );
+    }
+    return c.json(
+      {
+        job_id: existingJob.id,
+        status: existingJob.status,
+        idempotent_replay: true,
+        progress: existingJob.progress ? JSON.parse(existingJob.progress) : null,
+      },
+      existingJob.status === 'completed' ? 200 : 202
+    );
+  }
+
+  const tenant = await adapter.queryOne<TenantRow>(
+    'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+    [id]
+  );
+  if (!tenant) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+      variables: { resource: 'tenant' },
+    });
+  }
+  if (
+    tenant.lifecycle_state !== parsed.data.expected_state ||
+    tenant.updated_at !== parsed.data.expected_updated_at
+  ) {
+    return c.json(
+      {
+        error: 'lifecycle_conflict',
+        error_description: 'Tenant lifecycle state or version changed',
+        current_state: tenant.lifecycle_state,
+        current_updated_at: tenant.updated_at,
+      },
+      409
+    );
+  }
+  if (tenant.is_default === 1 && command !== 'resume' && command !== 'unfreeze') {
+    return c.json(
+      { error: 'invalid_request', error_description: 'Cannot deactivate the default tenant' },
+      400
+    );
+  }
+
+  let transition: { targetState: TenantLifecycleState; async: boolean };
+  try {
+    transition = validateTenantLifecycleTransition(
+      command,
+      tenant.lifecycle_state,
+      parsed.data.break_glass
+    );
+  } catch (error) {
+    return c.json(
+      { error: 'invalid_lifecycle_transition', error_description: (error as Error).message },
+      409
+    );
+  }
+
+  const nowTs = Math.max(Math.floor(Date.now() / 1000), tenant.updated_at + 1);
+  const jobId = crypto.randomUUID();
+  const validationKind = command === 'restore-validate' ? 'restore' : command;
+  const config = {
+    command,
+    validation_kind: validationKind,
+    source_state: tenant.lifecycle_state,
+    target_state: transition.targetState,
+    reason: parsed.data.reason,
+    break_glass: parsed.data.break_glass,
+    idempotency_key: idempotencyKey,
+    expected_updated_at: parsed.data.expected_updated_at,
+    actor_id: adminAuth?.actorId ?? adminAuth?.userId ?? null,
+  };
+  const nextState =
+    command === 'restore-validate'
+      ? 'restore_validating'
+      : transition.async
+        ? tenant.lifecycle_state
+        : transition.targetState;
+  const status = transition.async ? 'pending' : 'completed';
+  const progress = transition.async
+    ? { stage: 'queued', checks: [] }
+    : { stage: 'completed', checks: [], transitioned_to: nextState };
+
+  try {
+    await adapter.transaction(async (tx) => {
+      const update = await tx.execute(
+        'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?',
+        [nextState, nowTs, id, tenant.lifecycle_state, tenant.updated_at]
+      );
+      if (update.rowsAffected === 0) throw new Error('lifecycle_conflict');
+      await tx.execute(
+        `INSERT INTO admin_jobs (
+        id, tenant_id, job_type, status, progress, config, created_by,
+        created_at, updated_at, estimated_completion, attempt_count, max_attempts
+      ) VALUES (?, ?, 'tenants/lifecycle-validation', ?, ?, ?, ?, ?, ?, ?, 0, 3)`,
+        [
+          jobId,
+          id,
+          status,
+          JSON.stringify(progress),
+          JSON.stringify(config),
+          adminAuth?.actorId ?? adminAuth?.userId ?? 'unknown',
+          nowTs,
+          nowTs,
+          transition.async ? nowTs + 300 : nowTs,
+        ]
+      );
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'lifecycle_conflict') {
+      return c.json(
+        { error: 'lifecycle_conflict', error_description: 'Tenant lifecycle changed concurrently' },
+        409
+      );
+    }
+    throw error;
+  }
+
+  await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
+  await createAuditLogFromContext(c, `tenant.lifecycle.${command}`, 'tenant', id, {
+    job_id: jobId,
+    source_state: tenant.lifecycle_state,
+    target_state: nextState,
+    reason: parsed.data.reason,
+    break_glass: parsed.data.break_glass,
+    idempotency_key: idempotencyKey,
+  });
+
+  return c.json(
+    {
+      job_id: jobId,
+      status,
+      tenant_id: id,
+      lifecycle_state: nextState,
+      validation_required: transition.async,
+    },
+    transition.async ? 202 : 200
+  );
+}
+
+export const adminTenantSuspendHandler = (c: Context<{ Bindings: Env }>) =>
+  executeTenantLifecycleCommand(c, 'suspend');
+export const adminTenantResumeHandler = (c: Context<{ Bindings: Env }>) =>
+  executeTenantLifecycleCommand(c, 'resume');
+export const adminTenantFreezeHandler = (c: Context<{ Bindings: Env }>) =>
+  executeTenantLifecycleCommand(c, 'freeze');
+export const adminTenantUnfreezeHandler = (c: Context<{ Bindings: Env }>) =>
+  executeTenantLifecycleCommand(c, 'unfreeze');
+export const adminTenantRestoreValidateHandler = (c: Context<{ Bindings: Env }>) =>
+  executeTenantLifecycleCommand(c, 'restore-validate');
+
+export async function adminTenantLifecycleJobsHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) return platformError;
+  const id = c.req.param('id')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) return blocked;
+
+  const adapter = createAdapter(c);
+  const jobs = await adapter.query<{
+    id: string;
+    status: string;
+    progress: string | null;
+    result: string | null;
+    config: string | null;
+    error_message: string | null;
+    attempt_count: number | null;
+    max_attempts: number | null;
+    next_run_at: number | null;
+    created_at: number;
+    updated_at: number;
+    completed_at: number | null;
+  }>(
+    `SELECT id, status, progress, result, config, error_message, attempt_count, max_attempts,
+            next_run_at, created_at, updated_at, completed_at
+       FROM admin_jobs
+      WHERE tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
+      ORDER BY created_at DESC LIMIT 20`,
+    [id]
+  );
+  return c.json({
+    jobs: jobs.map((job) => ({
+      ...job,
+      progress: job.progress ? JSON.parse(job.progress) : null,
+      result: job.result ? JSON.parse(job.result) : null,
+      config: job.config ? JSON.parse(job.config) : null,
+    })),
+  });
+}
+
+export async function adminTenantLifecycleJobRetryHandler(c: Context<{ Bindings: Env }>) {
+  const platformError = await requirePlatformTenantManagementAuthority(c);
+  if (platformError) return platformError;
+  const id = c.req.param('id')!;
+  const jobId = c.req.param('jobId')!;
+  const blocked = await ensureSupportedTenantId(c, id);
+  if (blocked) return blocked;
+
+  const adapter = createAdapter(c);
+  const job = await adapter.queryOne<{ id: string; status: string; config: string | null }>(
+    `SELECT id, status, config FROM admin_jobs
+      WHERE id = ? AND tenant_id = ? AND job_type = 'tenants/lifecycle-validation'`,
+    [jobId, id]
+  );
+  if (!job) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+      variables: { resource: 'tenant lifecycle job' },
+    });
+  }
+  if (!['failed', 'partial_failure'].includes(job.status)) {
+    return c.json(
+      {
+        error: 'invalid_job_state',
+        error_description: 'Only failed lifecycle jobs can be retried',
+      },
+      409
+    );
+  }
+
+  const nowTs = Math.floor(Date.now() / 1000);
+  await adapter.execute(
+    `UPDATE admin_jobs
+        SET status = 'pending', progress = ?, result = NULL, error_code = NULL,
+            error_message = NULL, attempt_count = 0, next_run_at = ?,
+            dead_lettered_at = NULL, completed_at = NULL, updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND status IN ('failed', 'partial_failure')`,
+    [JSON.stringify({ stage: 'retry_queued', checks: [] }), nowTs, nowTs, jobId, id]
+  );
+  await createAuditLogFromContext(c, 'tenant.lifecycle.validation_retry_requested', 'tenant', id, {
+    job_id: jobId,
+    prior_status: job.status,
+    config: job.config ? JSON.parse(job.config) : null,
+  });
+  const config = job.config
+    ? (JSON.parse(job.config) as { source_state?: TenantLifecycleState })
+    : {};
+  return c.json(
+    {
+      job_id: jobId,
+      status: 'pending',
+      tenant_id: id,
+      lifecycle_state: config.source_state ?? 'frozen',
+      validation_required: true,
+    },
+    202
+  );
 }
 
 /**

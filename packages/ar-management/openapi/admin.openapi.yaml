@@ -1474,8 +1474,9 @@ paths:
         '200':
           $ref: '#/components/responses/Tenant'
       description: >-
-        Update mutable tenant metadata or operator-controlled lifecycle state. The path parameter
-        identifies the target tenant, so X-Tenant-Id is not required.
+        Update mutable tenant display metadata. Lifecycle state changes require a dedicated
+        lifecycle command endpoint. The path parameter identifies the target tenant, so
+        X-Tenant-Id is not required.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1491,6 +1492,145 @@ paths:
       description: >-
         Queue asynchronous tenant deletion. The tenant is moved out of the active lifecycle
         immediately and the background deletion job removes tenant data later.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/suspend':
+    post:
+      tags: [Tenants]
+      summary: Suspend a tenant.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/TenantLifecycleCommand'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantLifecycleCommand'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/resume':
+    post:
+      tags: [Tenants]
+      summary: Validate and resume a suspended tenant.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/TenantLifecycleCommand'
+      responses:
+        '202':
+          $ref: '#/components/responses/TenantLifecycleCommand'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/freeze':
+    post:
+      tags: [Tenants]
+      summary: Freeze a tenant.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/TenantLifecycleCommand'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantLifecycleCommand'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/unfreeze':
+    post:
+      tags: [Tenants]
+      summary: Validate and unfreeze a tenant.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/TenantLifecycleCommand'
+      responses:
+        '202':
+          $ref: '#/components/responses/TenantLifecycleCommand'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/restore-validate':
+    post:
+      tags: [Tenants]
+      summary: Validate a restored tenant before activation.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/TenantLifecycleCommand'
+      responses:
+        '202':
+          $ref: '#/components/responses/TenantLifecycleCommand'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/jobs':
+    get:
+      tags: [Tenants]
+      summary: List tenant lifecycle validation jobs and history.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Lifecycle job history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/lifecycle/jobs/{jobId}/retry':
+    post:
+      tags: [Tenants]
+      summary: Retry a failed tenant lifecycle validation job.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          $ref: '#/components/responses/TenantLifecycleCommand'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -26640,7 +26780,12 @@ components:
           example:
             name: Acme Corporation
             description: Primary production tenant for Acme Corporation.
-            lifecycle_state: active
+    TenantLifecycleCommand:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantLifecycleCommandRequest'
     WebhookCreate:
       required: true
       content:
@@ -31395,6 +31540,12 @@ components:
             job_id: 018f3f7c-85b0-7c5d-a6b6-1c3a6e6b9e01
             status: pending
             estimated_completion: 1770007200
+    TenantLifecycleCommand:
+      description: Tenant lifecycle command or validation job response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantLifecycleCommandResponse'
     TenantClone:
       description: Tenant clone response.
       content:
@@ -42832,12 +42983,52 @@ components:
             - string
             - 'null'
           maxLength: 500
-        lifecycle_state:
-          $ref: '#/components/schemas/TenantOperatorMutableLifecycleState'
       example:
         name: Acme Corporation
         description: Primary production tenant for Acme Corporation.
-        lifecycle_state: active
+    TenantLifecycleCommandRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_state
+        - expected_updated_at
+        - reason
+      properties:
+        expected_state:
+          $ref: '#/components/schemas/TenantLifecycleState'
+        expected_updated_at:
+          type: integer
+          format: int64
+          minimum: 0
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 1000
+        break_glass:
+          type: boolean
+          default: false
+    TenantLifecycleCommandResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - job_id
+        - status
+        - tenant_id
+        - lifecycle_state
+        - validation_required
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+        lifecycle_state:
+          $ref: '#/components/schemas/TenantLifecycleState'
+        validation_required:
+          type: boolean
+        idempotent_replay:
+          type: boolean
     Tenant:
       type: object
       description: 'Tenant row returned by create, update, set-default, and other tenant mutation operations.'

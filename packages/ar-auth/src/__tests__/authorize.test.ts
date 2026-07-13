@@ -572,6 +572,198 @@ describe('Authorization Handler', () => {
     });
   });
 
+  describe('Authorization request validation matrix', () => {
+    const base =
+      '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid&state=test-state';
+
+    it.each(['-1', '1.5', 'abc', '+1', ' 1'])('rejects invalid max_age=%s', async (maxAge) => {
+      const response = await app.request(`${base}&max_age=${encodeURIComponent(maxAge)}`, {}, env);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_request',
+        error_description: 'max_age must be a non-negative integer',
+      });
+    });
+
+    it.each(['unsupported', 'query.invalid', 'fragment.invalid', 'form_post.invalid'])(
+      'rejects unsupported response_mode=%s',
+      async (mode) => {
+        const response = await app.request(`${base}&response_mode=${mode}`, {}, env);
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toContain('error=invalid_request');
+      }
+    );
+
+    it('rejects fragment mode for authorization-code-only responses', async () => {
+      const response = await app.request(`${base}&response_mode=fragment`, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it.each(['query', 'form_post', 'query.jwt', 'form_post.jwt', 'jwt'])(
+      'accepts response_mode=%s for code flow through request validation',
+      async (mode) => {
+        const response = await app.request(`${base}&response_mode=${mode}`, {}, env);
+        expect([200, 302]).toContain(response.status);
+        const text = await response.clone().text();
+        expect(text).not.toContain('Unsupported response_mode');
+        expect(response.headers.get('location') ?? '').not.toContain('error=invalid_request');
+      }
+    );
+
+    it('rejects prompt=none combined with interactive prompt values', async () => {
+      const response = await app.request(`${base}&prompt=none%20login`, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it('requires state when the OAuth CSRF setting is enabled', async () => {
+      env.ENABLE_STATE_REQUIRED = 'true';
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid',
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it.each([
+      '{',
+      '[]',
+      'null',
+      JSON.stringify({ userinfo: 'not-an-object' }),
+      JSON.stringify({ id_token: [] }),
+    ])('rejects malformed claims request %s', async (claims) => {
+      const response = await app.request(`${base}&claims=${encodeURIComponent(claims)}`, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it('preserves validated OIDC UX parameters in the login challenge', async () => {
+      const response = await app.request(
+        `${base}&max_age=0&acr_values=${encodeURIComponent('urn:mace:incommon:iap:silver urn:mace:incommon:iap:bronze')}&display=popup&ui_locales=ja%20en&login_hint=user%40example.com`,
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      const location = response.headers.get('location');
+      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
+        'challenge_id'
+      );
+      const challenge = getChallengeMap(env).get(challengeId!) as {
+        metadata?: Record<string, unknown>;
+      };
+      expect(challenge.metadata).toMatchObject({
+        max_age: '0',
+        acr_values: 'urn:mace:incommon:iap:silver urn:mace:incommon:iap:bronze',
+        display: 'popup',
+        ui_locales: 'ja en',
+        login_hint: 'user@example.com',
+      });
+    });
+
+    it('requires PAR by default when FAPI mode is enabled', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({ fapi: { enabled: true } })
+      );
+      const response = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error_description: expect.stringContaining('PAR is required'),
+      });
+    });
+
+    it('rejects public clients when FAPI explicitly disallows them', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          fapi: { enabled: true, allowPublicClients: false },
+          oidc: { requirePar: false },
+        })
+      );
+      const response = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_client',
+        error_description: expect.stringContaining('Public clients'),
+      });
+    });
+
+    it('requires S256 PKCE for a confidential FAPI client', async () => {
+      mockGetClient.mockResolvedValueOnce({
+        client_id: 'test-client',
+        client_secret_hash: 'hash',
+        redirect_uris: ['https://example.com/callback'],
+        response_types: ['code'],
+        scope: 'openid',
+      });
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({ fapi: { enabled: true }, oidc: { requirePar: false } })
+      );
+      const response = await app.request(base, {}, env);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error_description: expect.stringContaining('PKCE with S256'),
+      });
+    });
+
+    it('continues with safe defaults when FAPI settings JSON is malformed', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put('system_settings', '{');
+      const response = await app.request(base, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('/flow/login');
+    });
+
+    it('parses all supported form parameters without trusting non-string values', async () => {
+      const body = new URLSearchParams({
+        response_type: 'code',
+        client_id: 'test-client',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid profile',
+        state: 'post-state',
+        nonce: 'post-nonce',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        claims: JSON.stringify({ userinfo: { email: null } }),
+        authorization_details: '',
+        response_mode: 'query',
+        prompt: 'login',
+        max_age: '0',
+        id_token_hint: 'invalid.jwt.value',
+        acr_values: 'urn:mace:incommon:iap:bronze',
+        display: 'page',
+        ui_locales: 'ja en',
+        login_hint: 'user@example.com',
+        org_id: 'org-1',
+        acting_as: 'delegated-user',
+        error_uri: 'https://example.com/error',
+        cancel_uri: 'https://example.com/cancel',
+      });
+      const response = await app.request(
+        '/authorize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        },
+        env
+      );
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('/flow/login');
+    });
+  });
+
   describe('PKCE Support', () => {
     it('should accept valid PKCE parameters and redirect to login', async () => {
       const codeChallenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'; // Valid S256 challenge

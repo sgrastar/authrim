@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
 		adminTenantsAPI,
-		type OperatorMutableTenantLifecycleState,
 		type Tenant,
+		type TenantLifecycleCommand,
+		type TenantLifecycleJob,
 		type UpdateTenantRequest
 	} from '$lib/api/admin-tenants';
 	import {
@@ -41,7 +42,18 @@
 	let editName = $state('');
 	let editTenantCode = $state('');
 	let editDescription = $state('');
-	let editLifecycleState = $state<OperatorMutableTenantLifecycleState>('active');
+
+	// Lifecycle actions
+	let lifecycleCommand = $state<TenantLifecycleCommand | null>(null);
+	let lifecycleReason = $state('');
+	let lifecycleConfirmInput = $state('');
+	let lifecycleSubmitting = $state(false);
+	let lifecycleError = $state('');
+	let lifecycleResult = $state('');
+	let lifecycleJobs = $state<TenantLifecycleJob[]>([]);
+	let lifecycleJobsLoading = $state(false);
+	let lifecycleRetryingId = $state<string | null>(null);
+	let lifecyclePollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// Delete confirmation
 	let showDeleteConfirm = $state(false);
@@ -81,12 +93,24 @@
 	const provisioningFailed = $derived(tenant?.provisioning_status === 'provisioning_failed');
 	const provisioningDraftState = $derived(getTenantProvisioningDraftUiState(tenant));
 	const tenantOperational = $derived(tenant?.lifecycle_state === 'active' && !provisioningFailed);
-	const lifecycleEditable = $derived(
-		tenant?.lifecycle_state === 'active' ||
-			tenant?.lifecycle_state === 'suspended' ||
-			tenant?.lifecycle_state === 'frozen' ||
-			tenant?.lifecycle_state === 'migration_read_only'
-	);
+	const lifecycleActions = $derived.by((): TenantLifecycleCommand[] => {
+		if (!tenant || tenant.is_default || singleTenantMode) return [];
+		switch (tenant.lifecycle_state) {
+			case 'active':
+				return ['suspend', 'freeze'];
+			case 'suspended':
+				return ['resume', 'freeze'];
+			case 'frozen':
+				return ['unfreeze'];
+			case 'migration_read_only':
+				return ['freeze'];
+			case 'restore_pending':
+			case 'restore_validating':
+				return ['restore-validate'];
+			default:
+				return [];
+		}
+	});
 
 	// ==========================================================================
 	// Validation
@@ -114,6 +138,21 @@
 			error = err instanceof Error ? err.message : $LL.admin_tenants_load_tenant_failed();
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadLifecycleJobs(silent = false) {
+		if (!tenantId) return;
+		if (!silent) lifecycleJobsLoading = true;
+		try {
+			lifecycleJobs = await adminTenantsAPI.lifecycleJobs(tenantId);
+		} catch (err) {
+			if (!silent) {
+				lifecycleError =
+					err instanceof Error ? err.message : $LL.admin_tenants_lifecycle_jobs_load_failed();
+			}
+		} finally {
+			if (!silent) lifecycleJobsLoading = false;
 		}
 	}
 
@@ -154,9 +193,19 @@
 
 	onMount(async () => {
 		await loadTenant();
+		await loadLifecycleJobs();
+		lifecyclePollTimer = setInterval(async () => {
+			if (lifecycleJobs.some((job) => job.status === 'pending' || job.status === 'processing')) {
+				await Promise.all([loadLifecycleJobs(true), loadTenant()]);
+			}
+		}, 3000);
 		if (tenantOperational) {
 			await Promise.all([loadSettings(), loadVanityDomains()]);
 		}
+	});
+
+	onDestroy(() => {
+		if (lifecyclePollTimer) clearInterval(lifecyclePollTimer);
 	});
 
 	// ==========================================================================
@@ -168,12 +217,6 @@
 		editName = tenant.name;
 		editTenantCode = tenant.tenant_code;
 		editDescription = tenant.description ?? '';
-		editLifecycleState =
-			tenant.lifecycle_state === 'suspended' ||
-			tenant.lifecycle_state === 'frozen' ||
-			tenant.lifecycle_state === 'migration_read_only'
-				? tenant.lifecycle_state
-				: 'active';
 		saveError = '';
 		isEditing = true;
 	}
@@ -194,11 +237,6 @@
 			saveError = $LL.admin_tenants_name_required();
 			return;
 		}
-		if (singleTenantMode && lifecycleEditable && editLifecycleState !== tenant.lifecycle_state) {
-			saveError = $LL.admin_tenants_initial_active_required();
-			return;
-		}
-
 		saving = true;
 		saveError = '';
 		try {
@@ -207,9 +245,6 @@
 				tenant_code: editTenantCode.trim(),
 				description: editDescription.trim() || null
 			};
-			if (lifecycleEditable && editLifecycleState !== tenant.lifecycle_state) {
-				payload.lifecycle_state = editLifecycleState;
-			}
 			const updated = await adminTenantsAPI.update(tenant.id, payload);
 			tenantStore.update(updated);
 			tenant = updated;
@@ -218,6 +253,78 @@
 			saveError = err instanceof Error ? err.message : $LL.admin_tenants_save_failed();
 		} finally {
 			saving = false;
+		}
+	}
+
+	function lifecycleActionLabel(command: TenantLifecycleCommand): string {
+		switch (command) {
+			case 'suspend':
+				return $LL.admin_tenants_lifecycle_suspend();
+			case 'resume':
+				return $LL.admin_tenants_lifecycle_resume();
+			case 'freeze':
+				return $LL.admin_tenants_lifecycle_freeze();
+			case 'unfreeze':
+				return $LL.admin_tenants_lifecycle_unfreeze();
+			case 'restore-validate':
+				return $LL.admin_tenants_lifecycle_restore_validate();
+		}
+	}
+
+	function selectLifecycleCommand(command: TenantLifecycleCommand) {
+		lifecycleCommand = command;
+		lifecycleReason = '';
+		lifecycleConfirmInput = '';
+		lifecycleError = '';
+		lifecycleResult = '';
+	}
+
+	async function handleLifecycleCommand() {
+		if (!tenant || !lifecycleCommand || lifecycleSubmitting) return;
+		if (lifecycleReason.trim().length < 3) {
+			lifecycleError = $LL.admin_tenants_lifecycle_reason_required();
+			return;
+		}
+		if (lifecycleConfirmInput !== tenant.id) {
+			lifecycleError = $LL.admin_tenants_lifecycle_confirm_mismatch();
+			return;
+		}
+
+		lifecycleSubmitting = true;
+		lifecycleError = '';
+		try {
+			const result = await adminTenantsAPI.lifecycleCommand(tenant.id, lifecycleCommand, {
+				expected_state: tenant.lifecycle_state,
+				expected_updated_at: tenant.updated_at,
+				reason: lifecycleReason.trim()
+			});
+			lifecycleResult = result.validation_required
+				? $LL.admin_tenants_lifecycle_validation_queued({ jobId: result.job_id })
+				: $LL.admin_tenants_lifecycle_completed();
+			lifecycleCommand = null;
+			await loadTenant();
+			await loadLifecycleJobs();
+			if (tenant) tenantStore.update(tenant);
+		} catch (err) {
+			lifecycleError =
+				err instanceof Error ? err.message : $LL.admin_tenants_lifecycle_action_failed();
+		} finally {
+			lifecycleSubmitting = false;
+		}
+	}
+
+	async function retryLifecycleJob(jobId: string) {
+		if (lifecycleRetryingId) return;
+		lifecycleRetryingId = jobId;
+		lifecycleError = '';
+		try {
+			await adminTenantsAPI.retryLifecycleJob(tenantId, jobId);
+			await loadLifecycleJobs();
+		} catch (err) {
+			lifecycleError =
+				err instanceof Error ? err.message : $LL.admin_tenants_lifecycle_retry_failed();
+		} finally {
+			lifecycleRetryingId = null;
 		}
 	}
 
@@ -627,31 +734,6 @@
 								maxlength="500"
 							></textarea>
 						</div>
-						<div class="form-group">
-							<label for="edit-lifecycle-state" class="form-label"
-								>{$LL.admin_tenants_lifecycle_state()}</label
-							>
-							<select
-								id="edit-lifecycle-state"
-								class="form-input"
-								bind:value={editLifecycleState}
-								disabled={singleTenantMode || tenant.is_default || !lifecycleEditable}
-							>
-								<option value="active">{$LL.admin_tenants_active()}</option>
-								<option value="suspended">{$LL.admin_tenants_suspended()}</option>
-								<option value="frozen">{$LL.admin_tenants_frozen()}</option>
-								<option value="migration_read_only"
-									>{$LL.admin_tenants_migration_read_only()}</option
-								>
-							</select>
-							{#if singleTenantMode}
-								<p class="field-hint">{$LL.admin_tenants_lifecycle_single_tenant_hint()}</p>
-							{:else if tenant.is_default}
-								<p class="field-hint">{$LL.admin_tenants_lifecycle_default_hint()}</p>
-							{:else if !lifecycleEditable}
-								<p class="field-hint">{$LL.admin_tenants_lifecycle_dedicated_operation_hint()}</p>
-							{/if}
-						</div>
 					</div>
 					<div class="form-actions">
 						<button class="btn btn-secondary" onclick={cancelEdit} disabled={saving}
@@ -716,6 +798,112 @@
 					</dl>
 				</section>
 			{/if}
+
+			<section class="card">
+				<h2 class="card-title">{$LL.admin_tenants_lifecycle_actions_title()}</h2>
+				<p class="card-description">{$LL.admin_tenants_lifecycle_actions_description()}</p>
+				{#if lifecycleResult}<div class="alert alert-success">{lifecycleResult}</div>{/if}
+				{#if lifecycleError}<div class="alert alert-error">{lifecycleError}</div>{/if}
+				{#if lifecycleActions.length === 0}
+					<p class="field-hint">{$LL.admin_tenants_lifecycle_no_actions()}</p>
+				{:else}
+					<div class="form-actions">
+						{#each lifecycleActions as command}
+							<button
+								class={command === 'freeze' || command === 'suspend'
+									? 'btn btn-danger-outline'
+									: 'btn btn-secondary'}
+								onclick={() => selectLifecycleCommand(command)}
+								disabled={lifecycleSubmitting}
+							>
+								{lifecycleActionLabel(command)}
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				{#if lifecycleCommand}
+					<div class="form-grid lifecycle-command-form">
+						<div class="form-group form-group-full">
+							<label for="lifecycle-reason" class="form-label"
+								>{$LL.admin_tenants_lifecycle_reason()}</label
+							>
+							<textarea
+								id="lifecycle-reason"
+								class="form-input"
+								bind:value={lifecycleReason}
+								rows="3"
+							></textarea>
+						</div>
+						<div class="form-group form-group-full">
+							<label for="lifecycle-confirm" class="form-label"
+								>{$LL.admin_tenants_lifecycle_confirm({ tenantId: tenant.id })}</label
+							>
+							<input id="lifecycle-confirm" class="form-input" bind:value={lifecycleConfirmInput} />
+						</div>
+					</div>
+					<div class="form-actions">
+						<button
+							class="btn btn-secondary"
+							onclick={() => (lifecycleCommand = null)}
+							disabled={lifecycleSubmitting}>{$LL.admin_tenants_cancel()}</button
+						>
+						<button
+							class="btn btn-primary"
+							onclick={handleLifecycleCommand}
+							disabled={lifecycleSubmitting}
+						>
+							{#if lifecycleSubmitting}<i class="i-ph-circle-notch animate-spin"></i>{/if}
+							{lifecycleActionLabel(lifecycleCommand)}
+						</button>
+					</div>
+				{/if}
+
+				<h3 class="subsection-title">{$LL.admin_tenants_lifecycle_history()}</h3>
+				{#if lifecycleJobsLoading}
+					<p class="field-hint">{$LL.admin_tenants_loading()}</p>
+				{:else if lifecycleJobs.length === 0}
+					<p class="field-hint">{$LL.admin_tenants_lifecycle_history_empty()}</p>
+				{:else}
+					<div class="lifecycle-history">
+						{#each lifecycleJobs as job}
+							<article class="lifecycle-job">
+								<div class="card-header-row">
+									<div>
+										<strong>{job.config?.command ?? 'lifecycle validation'}</strong>
+										<span class="badge badge-inactive">{job.status}</span>
+										<p class="field-hint">{job.config?.reason ?? '—'}</p>
+									</div>
+									{#if job.status === 'failed' || job.status === 'partial_failure'}
+										<button
+											class="btn btn-secondary"
+											onclick={() => retryLifecycleJob(job.id)}
+											disabled={Boolean(lifecycleRetryingId)}
+										>
+											{$LL.admin_tenants_lifecycle_retry()}
+										</button>
+									{/if}
+								</div>
+								{#if job.error_message}<div class="alert alert-error">{job.error_message}</div>{/if}
+								{#if job.progress?.checks?.length}
+									<ul class="lifecycle-checks">
+										{#each job.progress.checks as check}
+											<li>
+												<strong>{check.id}</strong>: {check.status}
+												{#if check.evidence}<span> — {check.evidence}</span>{/if}
+											</li>
+										{/each}
+									</ul>
+								{/if}
+								<p class="field-hint">
+									{new Date(job.created_at * 1000).toLocaleString()} · {job.attempt_count ??
+										0}/{job.max_attempts ?? 3}
+								</p>
+							</article>
+						{/each}
+					</div>
+				{/if}
+			</section>
 
 			{#if !singleTenantMode && tenantOperational}
 				<!-- Vanity Domains -->
@@ -1018,6 +1206,30 @@
 
 	.card-danger {
 		border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
+	}
+
+	.subsection-title {
+		margin: 24px 0 12px;
+		font-size: 0.95rem;
+	}
+
+	.lifecycle-history {
+		display: grid;
+		gap: 12px;
+	}
+
+	.lifecycle-job {
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+	}
+
+	.lifecycle-checks {
+		margin: 10px 0;
+		padding-left: 20px;
+		font-size: 0.82rem;
+		color: var(--color-text-muted);
 	}
 
 	.status-card {

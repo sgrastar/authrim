@@ -380,6 +380,13 @@ import {
   adminTenantSetDefaultHandler,
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
+  adminTenantSuspendHandler,
+  adminTenantResumeHandler,
+  adminTenantFreezeHandler,
+  adminTenantUnfreezeHandler,
+  adminTenantRestoreValidateHandler,
+  adminTenantLifecycleJobsHandler,
+  adminTenantLifecycleJobRetryHandler,
 } from './admin-tenants';
 import {
   listTenantDomainMappingsHandler,
@@ -1519,6 +1526,41 @@ app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
 app.post('/api/admin/tenants/:id/provisioning/retry', adminTenantProvisioningRetryHandler);
 app.post('/api/admin/tenants/:id/provisioning/cleanup', adminTenantProvisioningCleanupHandler);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/suspend',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]),
+  adminTenantSuspendHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/resume',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]),
+  adminTenantResumeHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/freeze',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]),
+  adminTenantFreezeHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/unfreeze',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantUnfreezeHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/restore-validate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantRestoreValidateHandler
+);
+app.get(
+  '/api/admin/tenants/:id/lifecycle/jobs',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantLifecycleJobsHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/jobs/:jobId/retry',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantLifecycleJobRetryHandler
+);
 app.get('/api/admin/tenants/:id/info', adminTenantInfoHandler);
 app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
 app.post(

@@ -18,6 +18,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import { listScimTokens } from '@authrim/ar-lib-scim';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
 type AdminJobResultDelivery = 'auto' | 'inline' | 'artifact';
@@ -76,6 +77,7 @@ export interface AdminJobRow {
   attempt_count?: number | null;
   max_attempts?: number | null;
   next_run_at?: number | null;
+  tenant_lifecycle_state?: string | null;
 }
 
 interface AdminJobLogger {
@@ -161,6 +163,7 @@ async function emitAdminJobRuntimeLog(
 }
 
 const GENERIC_ADMIN_JOB_TYPES = [
+  'tenants/lifecycle-validation',
   'tenant-database/provision',
   'tenant-database/export',
   'tenant-database/restore-dry-run',
@@ -171,6 +174,246 @@ const GENERIC_ADMIN_JOB_TYPES = [
 ] as const;
 
 type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
+
+export function isAdminJobAllowedForTenantLifecycle(
+  lifecycleState: string,
+  jobType: string
+): boolean {
+  if (lifecycleState === 'active') return true;
+  if (jobType === 'tenants/lifecycle-validation') {
+    return ['suspended', 'frozen', 'restore_pending', 'restore_validating'].includes(
+      lifecycleState
+    );
+  }
+  if (lifecycleState === 'suspended') {
+    return ['tenant-database/export', 'tenant-database/restore-dry-run'].includes(jobType);
+  }
+  if (lifecycleState === 'frozen' || lifecycleState === 'migration_read_only') {
+    return [
+      'tenant-database/export',
+      'tenant-database/restore-dry-run',
+      'tenant-database/provision',
+    ].includes(jobType);
+  }
+  if (lifecycleState === 'restore_pending' || lifecycleState === 'restore_validating') {
+    return ['tenant-database/restore-dry-run'].includes(jobType);
+  }
+  return false;
+}
+
+interface TenantLifecycleValidationConfig {
+  command: 'resume' | 'unfreeze' | 'restore-validate';
+  validation_kind: string;
+  source_state: string;
+  target_state: 'active';
+  reason: string;
+  idempotency_key: string;
+  actor_id?: string | null;
+}
+
+async function writeTenantLifecycleJobAudit(
+  env: Env,
+  fallbackAdapter: DatabaseAdapter,
+  job: AdminJobRow,
+  input: {
+    action: string;
+    result: 'success' | 'failure';
+    severity: 'info' | 'error';
+    metadata: Record<string, unknown>;
+    error?: unknown;
+  }
+): Promise<void> {
+  const auditAdapter = ensureDatabaseAdapter(
+    env.DB_ADMIN ?? fallbackAdapter,
+    'tenant-lifecycle-job-audit'
+  );
+  const config = job.config ? (JSON.parse(job.config) as TenantLifecycleValidationConfig) : null;
+  await auditAdapter.execute(
+    `INSERT INTO admin_audit_log (
+      id, tenant_id, admin_user_id, action, resource_type, resource_id,
+      result, error_code, error_message, severity, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      crypto.randomUUID(),
+      job.tenant_id,
+      config?.actor_id ?? null,
+      input.action,
+      job.tenant_id,
+      input.result,
+      input.result === 'failure' ? 'tenant_lifecycle_validation_failed' : null,
+      input.error instanceof Error ? input.error.message : input.error ? String(input.error) : null,
+      input.severity,
+      JSON.stringify({ job_id: job.id, ...input.metadata }),
+      Date.now(),
+    ]
+  );
+}
+
+async function processTenantLifecycleValidationJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  job: AdminJobRow
+): Promise<AdminJobProcessorResult> {
+  const config = parseJsonConfig<TenantLifecycleValidationConfig>(job);
+  const tenant = await adapter.queryOne<{ id: string; lifecycle_state: string }>(
+    'SELECT id, lifecycle_state FROM tenants WHERE id = ?',
+    [job.tenant_id]
+  );
+  if (!tenant) throw new Error('tenant_lifecycle_validation_tenant_not_found');
+
+  const allowedState =
+    config.command === 'restore-validate' ? 'restore_validating' : config.source_state;
+  if (tenant.lifecycle_state !== allowedState) {
+    throw new Error(
+      `tenant_lifecycle_validation_state_conflict:${tenant.lifecycle_state}:${allowedState}`
+    );
+  }
+
+  const checks: Array<{ id: string; status: 'passed'; evidence: string }> = [];
+  checks.push({ id: 'control_db', status: 'passed', evidence: 'tenant row present' });
+
+  const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'tenant-lifecycle-validation',
+    { tenantId: job.tenant_id }
+  );
+  await tenantAdapter.queryOne('SELECT 1 AS ok');
+  checks.push({ id: 'tenant_db_read', status: 'passed', evidence: 'SELECT 1 succeeded' });
+
+  const probeId = `lifecycle:${job.id}`;
+  await tenantAdapter.execute(
+    `INSERT INTO authrim_runtime_probes
+      (id, tenant_id, role, probe_kind, nonce, created_at)
+     VALUES (?, ?, 'tenant_core', 'write_read', ?, ?)`,
+    [probeId, job.tenant_id, crypto.randomUUID(), Math.floor(Date.now() / 1000)]
+  );
+  const probe = await tenantAdapter.queryOne<{ id: string; tenant_id: string }>(
+    'SELECT id, tenant_id FROM authrim_runtime_probes WHERE id = ? AND tenant_id = ?',
+    [probeId, job.tenant_id]
+  );
+  if (probe?.id !== probeId || probe.tenant_id !== job.tenant_id) {
+    throw new Error('tenant_lifecycle_validation_write_read_failed');
+  }
+  await tenantAdapter.execute('DELETE FROM authrim_runtime_probes WHERE id = ? AND tenant_id = ?', [
+    probeId,
+    job.tenant_id,
+  ]);
+  checks.push({
+    id: 'tenant_db_write_read',
+    status: 'passed',
+    evidence: 'probe round-trip succeeded',
+  });
+
+  const issuer = env.BASE_DOMAIN ? `https://${job.tenant_id}.${env.BASE_DOMAIN}` : env.ISSUER_URL;
+  if (!issuer) throw new Error('tenant_lifecycle_validation_issuer_missing');
+  new URL(issuer);
+  if (!env.AUTHRIM_CONFIG) throw new Error('tenant_lifecycle_validation_kv_binding_missing');
+  const tenantSettingsRaw = await env.AUTHRIM_CONFIG.get(`settings:tenant:${job.tenant_id}:tenant`);
+  if (!tenantSettingsRaw) throw new Error('tenant_lifecycle_validation_tenant_settings_missing');
+  const tenantSettings = JSON.parse(tenantSettingsRaw) as Record<string, unknown>;
+  if (typeof tenantSettings['tenant.allowed_identifiers'] !== 'string') {
+    throw new Error('tenant_lifecycle_validation_discovery_settings_invalid');
+  }
+  checks.push({ id: 'discovery_issuer', status: 'passed', evidence: issuer });
+
+  if (config.command === 'restore-validate') {
+    const samlProviders = await tenantAdapter.queryOne<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM identity_providers
+        WHERE tenant_id = ? AND provider_type LIKE 'saml%'`,
+      [job.tenant_id]
+    );
+    checks.push({
+      id: 'saml',
+      status: 'passed',
+      evidence: `${samlProviders?.count ?? 0} tenant-scoped provider(s) queryable`,
+    });
+
+    if (!env.INITIAL_ACCESS_TOKENS) {
+      throw new Error('tenant_lifecycle_validation_scim_token_store_missing');
+    }
+    const scimTokens = await listScimTokens(env, { tenantId: job.tenant_id });
+    checks.push({
+      id: 'scim',
+      status: 'passed',
+      evidence: `${scimTokens.length} tenant-scoped token record(s) queryable`,
+    });
+  }
+
+  checks.push({
+    id: 'kv',
+    status: 'passed',
+    evidence: 'tenant settings read and parsed',
+  });
+
+  if (config.command === 'restore-validate') {
+    if (!env.EXPORT_ARTIFACTS) throw new Error('tenant_lifecycle_validation_r2_binding_missing');
+    const r2ProbeKey = `lifecycle-validation/${job.tenant_id}/${job.id}.json`;
+    const r2ProbeBody = JSON.stringify({ tenant_id: job.tenant_id, job_id: job.id });
+    await env.EXPORT_ARTIFACTS.put(r2ProbeKey, r2ProbeBody);
+    const restoredProbe = await env.EXPORT_ARTIFACTS.get(r2ProbeKey);
+    if (!restoredProbe || (await restoredProbe.text()) !== r2ProbeBody) {
+      throw new Error('tenant_lifecycle_validation_r2_round_trip_failed');
+    }
+    await env.EXPORT_ARTIFACTS.delete(r2ProbeKey);
+    checks.push({ id: 'r2', status: 'passed', evidence: 'temporary object round-trip succeeded' });
+  }
+
+  const auditAdapter = ensureDatabaseAdapter(
+    env.DB_ADMIN ?? adapter,
+    'tenant-lifecycle-audit-probe'
+  );
+  await auditAdapter.queryOne('SELECT id FROM admin_audit_log WHERE tenant_id = ? LIMIT 1', [
+    job.tenant_id,
+  ]);
+  checks.push({
+    id: 'audit_sink',
+    status: 'passed',
+    evidence: 'admin audit storage is queryable',
+  });
+
+  const currentVersion = await adapter.queryOne<{ updated_at: number }>(
+    'SELECT updated_at FROM tenants WHERE id = ?',
+    [job.tenant_id]
+  );
+  const nowTs = Math.max(
+    Math.floor(Date.now() / 1000),
+    Number(currentVersion?.updated_at ?? 0) + 1
+  );
+  const update = await adapter.execute(
+    'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ?',
+    [config.target_state, nowTs, job.tenant_id, allowedState]
+  );
+  if (update.rowsAffected === 0) throw new Error('tenant_lifecycle_validation_activation_conflict');
+  await env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${job.tenant_id}`).catch(() => {});
+
+  await writeTenantLifecycleJobAudit(env, adapter, job, {
+    action: 'tenant.lifecycle.validation_completed',
+    result: 'success',
+    severity: 'info',
+    metadata: { checks, source_state: config.source_state, target_state: config.target_state },
+  });
+
+  return {
+    status: 'completed',
+    progress: {
+      stage: 'completed',
+      total: checks.length,
+      processed: checks.length,
+      succeeded: checks.length,
+      failed: 0,
+      checks,
+    },
+    result: {
+      summary: { total: checks.length, succeeded: checks.length, failed: 0 },
+      checks,
+      lifecycle_state: config.target_state,
+      source_state: config.source_state,
+      reason: config.reason,
+      actor_id: config.actor_id ?? null,
+      idempotency_key: config.idempotency_key,
+    },
+  };
+}
 
 const USER_BULK_UPDATE_COLUMNS = {
   status: {
@@ -1786,6 +2029,7 @@ async function processOrganizationBulkMembersJob(
 }
 
 const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
+  'tenants/lifecycle-validation': processTenantLifecycleValidationJob,
   'tenant-database/provision': processTenantDatabaseProvisionJob,
   'tenant-database/export': processTenantDatabaseExportJob,
   'tenant-database/restore-dry-run': processTenantDatabaseRestoreDryRunJob,
@@ -1903,6 +2147,18 @@ function getRetryDelaySeconds(attemptCount: number): number {
 
 function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: number) {
   const message = error instanceof Error ? error.message : String(error);
+  const lifecycleCheckId = (() => {
+    if (job.job_type !== 'tenants/lifecycle-validation') return null;
+    if (message.includes('_kv_') || message.includes('tenant_settings')) return 'kv';
+    if (message.includes('_r2_')) return 'r2';
+    if (message.includes('_scim_')) return 'scim';
+    if (message.includes('_saml_')) return 'saml';
+    if (message.includes('_issuer_') || message.includes('_discovery_')) return 'discovery_issuer';
+    if (message.includes('_write_read_')) return 'tenant_db_write_read';
+    if (message.includes('_audit_')) return 'audit_sink';
+    if (message.includes('_state_') || message.includes('_activation_')) return 'control_db';
+    return 'tenant_db_read';
+  })();
   return JSON.stringify({
     summary: {
       total: 1,
@@ -1920,6 +2176,9 @@ function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: numb
       },
     ],
     job_type: job.job_type,
+    ...(lifecycleCheckId
+      ? { checks: [{ id: lifecycleCheckId, status: 'failed', evidence: message }] }
+      : {}),
   });
 }
 
@@ -1935,7 +2194,9 @@ export async function processPendingGenericAdminJobs(
     `SELECT id, tenant_id, job_type, status, progress, config, created_at,
             COALESCE(attempt_count, 0) AS attempt_count,
             COALESCE(max_attempts, ?) AS max_attempts,
-            next_run_at
+            next_run_at,
+            (SELECT lifecycle_state FROM tenants WHERE tenants.id = admin_jobs.tenant_id)
+              AS tenant_lifecycle_state
        FROM admin_jobs
       WHERE job_type IN (${placeholders})
         AND (
@@ -1951,6 +2212,27 @@ export async function processPendingGenericAdminJobs(
   for (const job of jobs) {
     const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
     if (!processor) continue;
+
+    if (
+      typeof job.tenant_lifecycle_state === 'string' &&
+      !isAdminJobAllowedForTenantLifecycle(job.tenant_lifecycle_state, job.job_type)
+    ) {
+      const blockedAt = Math.floor(Date.now() / 1000);
+      await adapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'partial_failure', progress = ?, error = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+        [
+          JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
+          `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
+          blockedAt,
+          blockedAt,
+          job.id,
+          job.tenant_id,
+        ]
+      );
+      continue;
+    }
 
     const startedTs = Math.floor(Date.now() / 1000);
     const transition = await adapter.execute(
@@ -2063,13 +2345,46 @@ export async function processPendingGenericAdminJobs(
           ]
         );
       } else {
-        await adapter.execute(
-          `UPDATE admin_jobs
-              SET status = 'pending', error_message = ?, attempt_count = ?,
+        if (job.job_type === 'tenants/lifecycle-validation') {
+          const failureResult = JSON.parse(
+            buildFailureResult(job, error, nextAttemptCount)
+          ) as Record<string, unknown>;
+          await adapter.execute(
+            `UPDATE admin_jobs
+              SET status = 'pending', progress = ?, error_message = ?, attempt_count = ?,
                   max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
             WHERE id = ? AND tenant_id = ?`,
-          [String(error), nextAttemptCount, maxAttempts, nextRunAt, failedTs, job.id, job.tenant_id]
-        );
+            [
+              JSON.stringify({
+                stage: 'validation_failed_retry_scheduled',
+                checks: failureResult.checks ?? [],
+              }),
+              String(error),
+              nextAttemptCount,
+              maxAttempts,
+              nextRunAt,
+              failedTs,
+              job.id,
+              job.tenant_id,
+            ]
+          );
+        } else {
+          await adapter.execute(
+            `UPDATE admin_jobs
+                SET status = 'pending', error_message = ?, attempt_count = ?,
+                    max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
+              WHERE id = ? AND tenant_id = ?`,
+            [
+              String(error),
+              nextAttemptCount,
+              maxAttempts,
+              nextRunAt,
+              failedTs,
+              job.id,
+              job.tenant_id,
+            ]
+          );
+        }
       }
       logger.error(
         exhausted ? 'Generic admin job dead-lettered' : 'Generic admin job retry scheduled',
@@ -2083,6 +2398,28 @@ export async function processPendingGenericAdminJobs(
         },
         error as Error
       );
+      if (job.job_type === 'tenants/lifecycle-validation') {
+        await writeTenantLifecycleJobAudit(env, adapter, job, {
+          action: exhausted
+            ? 'tenant.lifecycle.validation_failed'
+            : 'tenant.lifecycle.validation_retry_scheduled',
+          result: 'failure',
+          severity: 'error',
+          error,
+          metadata: {
+            attempt_count: nextAttemptCount,
+            max_attempts: maxAttempts,
+            next_run_at: nextRunAt,
+            safe_state_preserved: true,
+          },
+        }).catch((auditError) => {
+          logger.error(
+            'Failed to write tenant lifecycle validation audit',
+            { job_id: job.id, tenant_id: job.tenant_id },
+            auditError as Error
+          );
+        });
+      }
       await emitAdminJobRuntimeLog(env, adapter, logger, {
         job,
         status: exhausted ? 'failed' : 'retrying',

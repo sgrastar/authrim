@@ -204,6 +204,238 @@ describe('TOTP login handlers', () => {
     vi.restoreAllMocks();
   });
 
+  const enabledSettings = {
+    'settings:tenant:default:authentication-methods': {
+      'authentication-methods.totp.login_enabled': true,
+      'authentication-methods.totp.signup_enabled': true,
+    },
+  };
+
+  async function post(
+    path: string,
+    body: Record<string, unknown>,
+    env = createEnv(enabledSettings),
+    constantTime = false
+  ) {
+    const responsePromise = createApp().request(
+      path,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+        body: JSON.stringify(body),
+      },
+      env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    );
+    return constantTime ? resolveConstantTimeResponse(responsePromise) : responsePromise;
+  }
+
+  describe('rejection and enumeration-resistance boundaries', () => {
+    it.each([
+      [{}, 'missing identifier'],
+      [{ identifier: '   ' }, 'blank identifier'],
+      [{ identifier: 42 }, 'non-string identifier'],
+    ])('rejects login start with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/login/start', body, undefined, true);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not issue a login challenge when TOTP login is disabled', async () => {
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        createEnv(),
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    });
+
+    it('rate limits login challenge creation before user lookup', async () => {
+      mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 30 });
+
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBe(429);
+      expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{}, 'missing challenge and code'],
+      [{ challenge_id: 'challenge' }, 'missing code'],
+      [{ challenge_id: 'challenge', code: '12ab56' }, 'non-numeric code'],
+      [{ challenge_id: 'challenge', code: '12345' }, 'wrong-length code'],
+    ])('rejects login verification with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/login/verify', body, undefined, true);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('normalizes challenge-store failures to the same invalid-code response', async () => {
+      mockChallengeStore.consumeChallengeRpc.mockRejectedValueOnce(
+        new Error('storage unavailable')
+      );
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ data: expect.objectContaining({ errorCode: 'challenge_error' }) })
+      );
+    });
+
+    it.each([
+      [undefined, 'missing user identity'],
+      ['unknown', 'enumeration-resistant unknown identity'],
+    ])('does not reveal %s from a consumed challenge', async (userId, _case) => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId });
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockRuntimeUserStore.findById).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the TOTP encryption key is absent', async () => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId: 'user-1' });
+      const env = createEnv(enabledSettings);
+      delete (env as unknown as Record<string, unknown>).PII_ENCRYPTION_KEY;
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        env,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [null, [], 'missing user'],
+      [{ id: 'user-1', active: 0 }, [], 'inactive user'],
+      [{ id: 'user-1', active: 1 }, [], 'no active credential'],
+    ])('returns one generic failure for %s', async (user, credentials, _case) => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId: 'user-1' });
+      mockRuntimeUserStore.findById.mockResolvedValueOnce(user);
+      mockTotpRepo.findActiveByUserId.mockResolvedValueOnce(credentials);
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockSessionStore.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{}, 'missing email'],
+      [{ email: 'not-an-email' }, 'invalid email'],
+      [{ email: 'person@example.com', label: 'x'.repeat(129) }, 'oversized label'],
+    ])('rejects signup options with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/signup/options', body);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('requires both encryption and HMAC secrets before generating a TOTP seed', async () => {
+      const env = createEnv(enabledSettings);
+      delete (env as unknown as Record<string, unknown>).OTP_HMAC_SECRET;
+
+      const response = await post(
+        '/api/auth/totp/signup/options',
+        { email: 'person@example.com' },
+        env
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    });
+
+    it('returns registration schema details when required custom fields are missing', async () => {
+      mockValidateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
+        ok: false,
+        error: 'Department is required',
+        missingRequiredFields: [
+          { fieldKey: 'department', label: 'Department', fieldType: 'string' },
+        ],
+      });
+
+      const response = await post('/api/auth/totp/signup/options', {
+        email: 'person@example.com',
+        custom_fields: [],
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(body)).toContain('department');
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not allow TOTP signup to claim an existing email address', async () => {
+      mockRuntimeUserStore.findByEmail.mockResolvedValueOnce({ id: 'existing-user', active: 1 });
+
+      const response = await post('/api/auth/totp/signup/options', {
+        email: 'person@example.com',
+      });
+
+      expect(response.status).toBe(409);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{}, 'missing challenge and code'],
+      [{ challenge_id: 'challenge' }, 'missing activation code'],
+    ])('rejects signup activation with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/signup/activate', body);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.getChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('rejects missing or mismatched signup challenge metadata', async () => {
+      mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
+        userId: 'user-1',
+        challenge: 'different',
+        metadata: { credential_id: 'credential-1' },
+      });
+
+      const response = await post('/api/auth/totp/signup/activate', {
+        challenge_id: 'challenge',
+        code: '123456',
+      });
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockTotpRepo.findById).not.toHaveBeenCalled();
+    });
+  });
+
   it('starts a login challenge without exposing unknown identifiers', async () => {
     const app = createApp();
     const responsePromise = app.request(
