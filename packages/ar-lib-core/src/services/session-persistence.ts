@@ -22,6 +22,39 @@ export interface SessionPersistenceAdapter {
   getType(): string;
 }
 
+/**
+ * Record a tenant-scoped user revocation epoch used by every SessionStore shard.
+ * Sessions created at or before this instant are rejected even when their shard
+ * cannot be located by a user-to-session index.
+ */
+export async function recordUserSessionRevocationEpoch(
+  db: Pick<DatabaseAdapter, 'queryOne' | 'execute'>,
+  tenantId: string,
+  userId: string,
+  revokedAfterMs = Date.now()
+): Promise<number> {
+  const normalizedEpoch = Math.floor(revokedAfterMs);
+  const updatedAt = Math.floor(normalizedEpoch / 1000);
+  const existing = await db.queryOne<{ tenant_id: string }>(
+    'SELECT tenant_id FROM session_revocation_epochs WHERE tenant_id = ? AND user_id = ?',
+    [tenantId, userId]
+  );
+
+  if (existing) {
+    await db.execute(
+      'UPDATE session_revocation_epochs SET revoked_after_ms = ?, updated_at = ? WHERE tenant_id = ? AND user_id = ?',
+      [normalizedEpoch, updatedAt, tenantId, userId]
+    );
+  } else {
+    await db.execute(
+      'INSERT INTO session_revocation_epochs (tenant_id, user_id, revoked_after_ms, updated_at) VALUES (?, ?, ?, ?)',
+      [tenantId, userId, normalizedEpoch, updatedAt]
+    );
+  }
+
+  return normalizedEpoch;
+}
+
 class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
   constructor(
     private readonly db: DatabaseAdapter,

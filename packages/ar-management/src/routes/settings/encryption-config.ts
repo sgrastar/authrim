@@ -56,12 +56,6 @@ export async function getEncryptionStatus(c: AppContext) {
       );
     }
 
-    if (status.algorithm === 'AES-256-CBC') {
-      recommendations.push(
-        'AES-256-GCM is recommended over AES-256-CBC for authenticated encryption.'
-      );
-    }
-
     if (status.fields.length < 3) {
       recommendations.push('Consider encrypting more PII fields for better data protection.');
     }
@@ -75,7 +69,7 @@ export async function getEncryptionStatus(c: AppContext) {
       keyConfigured,
       warnings,
       recommendations,
-      supportedAlgorithms: ['AES-256-GCM', 'AES-256-CBC', 'NONE'],
+      supportedAlgorithms: ['AES-256-GCM', 'NONE'],
       allEncryptableFields: ENCRYPTABLE_PII_FIELDS,
       note: 'Encryption settings are controlled via environment variables. Redeploy to change settings.',
     });

@@ -538,6 +538,11 @@ export const ADMIN_PERMISSIONS = {
   TENANT_DOMAINS_DELETE: 'admin:tenant_domains:delete',
   TENANT_DOMAINS_ALL: 'admin:tenant_domains:*',
 
+  // Tenant lifecycle operations
+  TENANT_LIFECYCLE_STANDARD: 'admin:tenants:lifecycle:standard',
+  TENANT_LIFECYCLE_RECOVERY: 'admin:tenants:lifecycle:recovery',
+  TENANT_LIFECYCLE_BREAK_GLASS: 'admin:tenants:lifecycle:break_glass',
+
   // Audit log (EndUser audit)
   AUDIT_READ: 'admin:audit:read',
   AUDIT_ALL: 'admin:audit:*',

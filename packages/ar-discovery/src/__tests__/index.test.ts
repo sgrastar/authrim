@@ -11,11 +11,11 @@ function createMockEnv(): Env {
       },
       batch: async () => [],
     } as unknown as D1Database,
-  } as Env;
+  } as unknown as Env;
 }
 
 function createHealthEnv(options: { keyManagerError?: Error } = {}): Env {
-  const getAllPublicKeysRpc = options.keyManagerError
+  const getAllPublicKeys = options.keyManagerError
     ? vi.fn(async () => {
         throw options.keyManagerError;
       })
@@ -24,11 +24,8 @@ function createHealthEnv(options: { keyManagerError?: Error } = {}): Env {
     KV: {
       get: vi.fn(async () => null),
     } as unknown as KVNamespace,
-    KEY_MANAGER: {
-      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-      get: vi.fn(() => ({ getAllPublicKeysRpc })),
-    } as unknown as Env['KEY_MANAGER'],
-  } as Env;
+    KEY_MANAGER_PUBLIC: { getAllPublicKeys },
+  } as unknown as Env;
 }
 
 describe('discovery app routes', () => {
@@ -86,7 +83,7 @@ describe('discovery app routes', () => {
       },
     });
     expect((env.KV as KVNamespace).get).toHaveBeenCalledWith('__health_check__');
-    expect(env.KEY_MANAGER.idFromName).toHaveBeenCalledWith('default-v3');
+    expect(env.KEY_MANAGER_PUBLIC?.getAllPublicKeys).toHaveBeenCalledWith('default');
   });
 
   it('returns not_ready when a readiness dependency fails', async () => {

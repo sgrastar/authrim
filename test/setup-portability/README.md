@@ -100,7 +100,7 @@ Main checks:
 
 Notes:
 
-- `ADMIN_API_SECRET` is loaded from generated keys by default
+- Admin API checks use temporary scoped Admin Machine Access credentials by default
 - if no `client_id` is available for `check-api-keys`, the runner creates a temporary DCR client
   and deletes it afterward
 

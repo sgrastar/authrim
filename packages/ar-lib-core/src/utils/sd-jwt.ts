@@ -398,9 +398,13 @@ export async function parseSDJWT(
       // Try array element disclosure (2-element format)
       disclosure = await decodeArrayElementDisclosure(parts[i]);
     }
-    if (disclosure) {
-      disclosures.push(disclosure);
+    if (!disclosure) {
+      // A non-disclosure component can be a Key Binding JWT. This API does not
+      // accept the verifier inputs required to validate one, so fail closed
+      // instead of silently discarding the holder proof.
+      return null;
     }
+    disclosures.push(disclosure);
   }
 
   return { jwt, disclosures };
@@ -436,6 +440,10 @@ export async function verifySDJWT(
   });
 
   const sdPayload = payload as SDJWTPayload;
+
+  if (sdPayload.cnf) {
+    throw new Error('Holder-bound SD-JWT requires Key Binding JWT verification');
+  }
 
   // Build disclosed claims map
   const disclosedClaims: Record<string, unknown> = {};
@@ -981,6 +989,10 @@ export async function verifyAdvancedSDJWT(
   });
 
   const sdPayload = payload as SDJWTPayload;
+
+  if (sdPayload.cnf) {
+    throw new Error('Holder-bound SD-JWT requires Key Binding JWT verification');
+  }
 
   // Process all disclosures including nested and array elements
   const { result: disclosedClaims, undisclosedCount } = processNestedDisclosures(

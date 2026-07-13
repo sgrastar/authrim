@@ -265,7 +265,7 @@ export async function readGeneratedAdminApiSecret(options: {
   const secretPath = options.adminSecretPath;
   const secret = (await readFile(secretPath, 'utf-8')).trim();
   if (!secret) {
-    throw new Error(`admin_api_secret_empty:${secretPath}`);
+    throw new Error(`admin_access_token_empty:${secretPath}`);
   }
 
   return { secret, path: secretPath };

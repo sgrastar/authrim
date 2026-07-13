@@ -27,7 +27,7 @@
  *   BASE_URL          - Authrim URL (default: https://your-authrim.example.com)
  *   CLIENT_ID         - OAuth client ID (required)
  *   CLIENT_SECRET     - OAuth client secret (required)
- *   ADMIN_API_SECRET  - Admin API secret (required)
+ *   ADMIN_MACHINE_ACCESS_TOKEN  - Admin Machine Access token (required)
  *   PRESET            - Preset name (default: rps10)
  *   TENANT_ID         - Tenant ID for tenant-d1 admin test endpoints (optional)
  *   USER_LIST_PATH    - User list file path (default: ../seeds/otp_user_list.txt)
@@ -35,7 +35,7 @@
  * Usage:
  * # Step 0: Seed users
  * BASE_URL=https://your-authrim.example.com \
- *   ADMIN_API_SECRET=xxx \
+ *   ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *   OTP_USER_COUNT=500 \
  *   node scripts/seed-otp-users.js
  *
@@ -44,7 +44,7 @@
  *   -e BASE_URL=https://your-authrim.example.com \
  *   -e CLIENT_ID=xxx \
  *   -e CLIENT_SECRET=yyy \
- *   -e ADMIN_API_SECRET=zzz \
+ *   -e ADMIN_MACHINE_ACCESS_TOKEN=zzz \
  *   -e USER_LIST_PATH=../seeds/otp_user_list.txt \
  *   scripts/test-mail-otp-full-login-benchmark.js
  */
@@ -85,7 +85,7 @@ const serverErrors = new Counter('server_errors');
 const BASE_URL = __ENV.BASE_URL || '';
 const CLIENT_ID = __ENV.CLIENT_ID || '';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || '';
-const ADMIN_API_SECRET = __ENV.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = __ENV.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
 const PRESET = __ENV.PRESET || 'rps10';
 const USER_LIST_PATH = __ENV.USER_LIST_PATH || '../seeds/otp_user_list.txt';
@@ -259,8 +259,8 @@ export function setup() {
     throw new Error('CLIENT_ID and CLIENT_SECRET are required');
   }
 
-  if (!ADMIN_API_SECRET) {
-    throw new Error('ADMIN_API_SECRET is required for generating test email codes');
+  if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+    throw new Error('ADMIN_MACHINE_ACCESS_TOKEN is required for generating test email codes');
   }
 
   // Prepare user list
@@ -293,7 +293,7 @@ export function setup() {
     http.post(`${BASE_URL}/api/admin/test/email-codes`, JSON.stringify({ email: user.email }), {
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${ADMIN_API_SECRET}`,
+        Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
         ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
       },
       tags: { name: 'Warmup' },
@@ -312,13 +312,21 @@ export function setup() {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     redirectUri: REDIRECT_URI,
-    adminSecret: ADMIN_API_SECRET,
+    adminMachineAccessToken: ADMIN_MACHINE_ACCESS_TOKEN,
   };
 }
 
 // Main test function
 export default function (data) {
-  const { users, userCount, clientId, clientSecret, redirectUri, baseUrl, adminSecret } = data;
+  const {
+    users,
+    userCount,
+    clientId,
+    clientSecret,
+    redirectUri,
+    baseUrl,
+    adminMachineAccessToken,
+  } = data;
 
   // Select user based on VU ID
   const userIndex = (__VU - 1) % userCount;
@@ -377,7 +385,7 @@ export default function (data) {
       {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminSecret}`,
+          Authorization: `Bearer ${adminMachineAccessToken}`,
           ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
           Connection: 'keep-alive',
         },

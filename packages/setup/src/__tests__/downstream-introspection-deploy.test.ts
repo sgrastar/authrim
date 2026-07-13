@@ -131,7 +131,6 @@ describe('configureDownstreamIntrospectionDeployment', () => {
     expect(result.redeployResult).toEqual(redeployResult);
     expect(vi.mocked(ensureDownstreamIntrospectionClient)).toHaveBeenCalledWith({
       apiBaseUrl: 'https://single-ar-router.example.com',
-      adminApiSecretPath: join(keysDir, 'admin_api_secret.txt'),
       keysDir,
       tenantId: 'tenant-a',
       maxRetries: 24,

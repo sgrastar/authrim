@@ -250,7 +250,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     BASE_DOMAIN: 'auth.example.com',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
-    KEY_MANAGER_SECRET: 'test-discovery-grant-secret',
+    OTP_HMAC_SECRET: 'test-discovery-grant-secret',
     ...envOverrides,
   } as unknown as Env;
 
@@ -325,6 +325,29 @@ describe('discovery API', () => {
     expect(body.ui.brand_name).toBe('Shared Discovery');
     expect(body.ui.theme).toBe('dark');
     expect(body.ui.title_text).toBe('Find your workspace');
+  });
+
+  it('returns the dedicated Login UI URL for a workers.dev-only single tenant', async () => {
+    const { app, env } = createDiscoveryApp({
+      BASE_DOMAIN: undefined,
+      ISSUER_URL: 'https://single-ar-router.example.workers.dev',
+      UI_URL: 'https://single-ar-login-ui.example.workers.dev',
+      LOGIN_UI_EXECUTION_HOST_MODE: 'dedicated',
+    });
+
+    const response = await app.request(
+      'https://single-ar-login-ui.example.workers.dev/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'tenant_code', value: 'default' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { candidate: { login_url: string } };
+    expect(body.candidate.login_url).toBe('https://single-ar-login-ui.example.workers.dev/login');
   });
 
   it('uses platform login-entry settings for the common entry host', async () => {

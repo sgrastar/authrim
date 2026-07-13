@@ -9,6 +9,7 @@
  */
 
 import type { Context } from 'hono';
+import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { verifyHumanVerificationToken } from '@authrim/ar-lib-plugin/builtin/security';
 import {
@@ -26,7 +27,12 @@ import {
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { generatePKCE, generateState, generateNonce } from '../utils/pkce';
-import { storeAuthState, getStateExpiresAt, consumeAuthState } from '../utils/state';
+import {
+  storeAuthState,
+  getStateExpiresAt,
+  consumeAuthState,
+  getAuthStateCookieName,
+} from '../utils/state';
 import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import { isAppleProvider, type AppleProviderQuirks } from '../providers/apple';
 
@@ -611,6 +617,18 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       });
       await diagnosticLogger.cleanup();
     }
+
+    // Bind this state to the initiating browser. A per-state cookie supports
+    // concurrent login tabs and prevents login-CSRF/session swapping.
+    const stateCookieName = await getAuthStateCookieName(state);
+    const secureCookie = buildIssuerUrl(c.env, tenantIdResolved).startsWith('https://');
+    setCookie(c, stateCookieName, state, {
+      path: '/auth/external/',
+      httpOnly: true,
+      secure: secureCookie,
+      sameSite: secureCookie ? 'None' : 'Lax',
+      maxAge: 10 * 60,
+    });
 
     // 10. Redirect to provider
     return c.redirect(authUrl);

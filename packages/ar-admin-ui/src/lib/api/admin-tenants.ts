@@ -38,11 +38,12 @@ export interface Tenant {
 	provisioning_updated_at?: number | null;
 }
 
-export type OperatorMutableTenantLifecycleState =
-	| 'active'
-	| 'suspended'
-	| 'frozen'
-	| 'migration_read_only';
+export type TenantLifecycleCommand =
+	| 'suspend'
+	| 'resume'
+	| 'freeze'
+	| 'unfreeze'
+	| 'restore-validate';
 
 export interface TenantListResponse {
 	tenants: Tenant[];
@@ -93,7 +94,40 @@ export interface UpdateTenantRequest {
 	name?: string;
 	tenant_code?: string;
 	description?: string | null;
-	lifecycle_state?: OperatorMutableTenantLifecycleState;
+}
+
+export interface TenantLifecycleCommandRequest {
+	expected_state: Tenant['lifecycle_state'];
+	expected_updated_at: number;
+	reason: string;
+	break_glass?: boolean;
+}
+
+export interface TenantLifecycleCommandResponse {
+	job_id: string;
+	status: string;
+	tenant_id: string;
+	lifecycle_state: Tenant['lifecycle_state'];
+	validation_required: boolean;
+	idempotent_replay?: boolean;
+}
+
+export interface TenantLifecycleJob {
+	id: string;
+	status: string;
+	progress: {
+		stage?: string;
+		checks?: Array<{ id: string; status: string; evidence?: string }>;
+	} | null;
+	result: Record<string, unknown> | null;
+	config: { command?: TenantLifecycleCommand; reason?: string; source_state?: string } | null;
+	error_message: string | null;
+	attempt_count: number | null;
+	max_attempts: number | null;
+	next_run_at: number | null;
+	created_at: number;
+	updated_at: number;
+	completed_at: number | null;
 }
 
 // =============================================================================
@@ -172,6 +206,56 @@ export const adminTenantsAPI = {
 			throw new Error(error.error_description || error.message || 'Failed to update tenant');
 		}
 		return response.json();
+	},
+
+	async lifecycleCommand(
+		id: string,
+		command: TenantLifecycleCommand,
+		data: TenantLifecycleCommandRequest,
+		idempotencyKey = crypto.randomUUID()
+	): Promise<TenantLifecycleCommandResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/${command}`,
+			{
+				method: 'POST',
+				includeJsonContentType: true,
+				skipTenantHeader: true,
+				headers: { 'Idempotency-Key': idempotencyKey },
+				body: JSON.stringify(data)
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to change tenant lifecycle state'
+			);
+		}
+		return response.json();
+	},
+
+	async lifecycleJobs(id: string): Promise<TenantLifecycleJob[]> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/jobs`,
+			{ skipTenantHeader: true }
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to load lifecycle jobs');
+		}
+		const body = (await response.json()) as { jobs?: TenantLifecycleJob[] };
+		return body.jobs ?? [];
+	},
+
+	async retryLifecycleJob(id: string, jobId: string): Promise<void> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/jobs/${encodeURIComponent(jobId)}/retry`,
+			{ method: 'POST', skipTenantHeader: true }
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to retry lifecycle job');
+		}
 	},
 
 	/**

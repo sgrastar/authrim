@@ -118,6 +118,7 @@ import {
   type Phase1ErrorDetailUserAction,
 } from '@authrim/ar-lib-core';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
+import { verifyExternalIdJagSubjectToken } from './external-id-jag-verifier';
 import {
   extractDPoPProof,
   validateDPoPProof,
@@ -1101,10 +1102,6 @@ async function getSigningKeyFromKeyManager(
   // Cache miss: fetch from per-tenant KeyManager DO
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
-  }
-
-  if (!env.KEY_MANAGER_SECRET) {
-    throw new Error('KEY_MANAGER_SECRET not configured');
   }
 
   const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
@@ -5354,26 +5351,27 @@ async function handleTokenExchangeGrant(
 
     originalIssuer = subjectIssuer;
 
-    // For external IdP tokens, we need to fetch their JWKS
-    // Note: This is a simplified implementation; production would cache JWKS
-    log.info('ID-JAG: Accepting external IdP token', {
-      subjectIssuer,
-      subjectTokenKid,
-      action: 'TokenExchange',
-    });
-
-    // External IdP signature verification is deferred for trusted issuers
-    //
-    // Current behavior: External IdP tokens from `allowedIssuers` are accepted without
-    // signature verification. This is acceptable because:
-    // 1. allowedIssuers is explicitly configured by the admin
-    // 2. Token claims (iss, sub, aud, exp) are still validated
-    // 3. Token exchange policies apply regardless of signature verification
-    //
-    // Future enhancement: Implement JWKS discovery and caching for external IdPs
-    // - Fetch .well-known/openid-configuration from subjectIssuer
-    // - Cache JWKS with TTL
-    // - Verify signature using fetched keys
+    const externalAudiences = [client_id!, ...(typedClient.allowed_subject_token_clients || [])];
+    try {
+      subjectTokenPayload = (await verifyExternalIdJagSubjectToken({
+        token: subject_token,
+        issuer: subjectIssuer,
+        audiences: [...new Set(externalAudiences)],
+      })) as Record<string, unknown>;
+      log.info('ID-JAG: Verified external IdP subject token', {
+        subjectIssuer,
+        subjectTokenKid,
+        action: 'TokenExchange',
+      });
+    } catch (error) {
+      log.warn('ID-JAG: External subject token verification failed', {
+        subjectIssuer,
+        subjectTokenKid,
+        reason: error instanceof Error ? error.message : 'unknown_error',
+        action: 'TokenExchange',
+      });
+      return oauthError(c, 'invalid_grant', 'Subject token verification failed', 400);
+    }
   }
 
   // For non-ID-JAG requests or when verifying our own tokens
@@ -5387,8 +5385,8 @@ async function handleTokenExchangeGrant(
       : Promise.resolve(false),
   ]);
 
-  // Verify subject_token signature (issuer only, aud validated separately)
-  // Skip verification for ID-JAG with external IdP tokens (trusted via allowedIssuers)
+  // Verify first-party subject_token signature (aud validated separately).
+  // ID-JAG external tokens were verified against the issuer's discovered JWKS above.
   if (!isIdJagTokenRequest && publicKey) {
     try {
       // Verify signature and issuer only; audience is validated in the authorization check below
@@ -5458,7 +5456,9 @@ async function handleTokenExchangeGrant(
   // 7. Audience validation (Cross-tenant escalation prevention)
   // This is CRITICAL for security - prevents stealing tokens meant for other clients
   const subjectAud = subjectTokenPayload.aud as string | string[] | undefined;
-  const subjectClientId = subjectTokenPayload.client_id as string | undefined;
+  const subjectClientId =
+    (subjectTokenPayload.client_id as string | undefined) ??
+    (subjectTokenPayload.azp as string | undefined);
   const allowedSubjectClients = typedClient.allowed_subject_token_clients || [];
   const subjectAudArray = Array.isArray(subjectAud) ? subjectAud : subjectAud ? [subjectAud] : [];
 
@@ -5468,7 +5468,9 @@ async function handleTokenExchangeGrant(
 
   // Check 2: Is the subject_token's issuing client in our allowed list?
   const isAllowedSubjectClient =
-    allowedSubjectClients.length > 0 && allowedSubjectClients.includes(subjectClientId || '');
+    allowedSubjectClients.length > 0 &&
+    allowedSubjectClients.includes(subjectClientId || '') &&
+    subjectAudArray.includes(subjectClientId || '');
 
   // SECURITY: Reject if neither condition is met
   // - Client must be explicitly authorized via audience or allowed_subject_token_clients

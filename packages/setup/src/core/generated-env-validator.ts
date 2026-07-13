@@ -778,13 +778,6 @@ async function validateLoggingSecretMaterial(
     'OTP_HMAC_SECRET',
     isBase64UrlSecret
   );
-  await inspectSecretFile(
-    check,
-    join(keysDir, 'version_manager_secret.txt'),
-    'VERSION_MANAGER_SECRET',
-    isBase64UrlSecret
-  );
-
   return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
 }
 

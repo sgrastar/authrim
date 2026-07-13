@@ -153,7 +153,7 @@ export const ENCRYPTION_SETTINGS_META: Record<keyof EncryptionSettings, SettingM
     envKey: 'PII_ENCRYPTION_ALGORITHM',
     label: 'PII Encryption Algorithm',
     description: 'Algorithm for PII field encryption',
-    enum: ['AES-256-GCM', 'AES-256-CBC'],
+    enum: ['AES-256-GCM'],
     visibility: 'admin',
   },
   'encryption.pii_fields': {

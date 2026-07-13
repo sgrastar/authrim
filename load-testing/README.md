@@ -2,7 +2,7 @@
 project: Authrim
 lang: en
 date: 2026-01-19
-description: "Load testing framework for Authrim OIDC Provider using K6."
+description: 'Load testing framework for Authrim OIDC Provider using K6.'
 type: reference
 tags:
   - authrim
@@ -11,6 +11,7 @@ tags:
   - oidc
   - testing
 ---
+
 # Authrim Load Testing
 
 Load testing framework for Authrim OIDC Provider using K6.
@@ -18,6 +19,7 @@ Load testing framework for Authrim OIDC Provider using K6.
 > **See also**: [Testing Guide](../docs/getting-started/testing.md) for unit tests, E2E tests, conformance tests, and other test types.
 >
 > **Scope note**:
+>
 > - This folder is primarily for throughput / capacity benchmarking.
 > - Some benchmark or seed flows assume benchmark-only helpers or permissive preconditions that are not always available in a hardened deployed environment.
 > - For generated/deployed env validation against supported APIs only, use
@@ -210,6 +212,11 @@ CF_API_TOKEN=xxx node scripts/utils/report-cf-analytics.js \
 
 ## Available Benchmarks
 
+Admin seed and setup calls require a short-lived Admin Machine Access token in
+`ADMIN_MACHINE_ACCESS_TOKEN`. Issue it with explicit permissions for the Admin endpoints used by
+the selected seed or benchmark, scope it to `TENANT_ID`, and start the run before it expires. Static
+`ADMIN_API_SECRET` credentials are not supported.
+
 | Benchmark           | Endpoint                     | Seed Script              | K6 Script                               |
 | ------------------- | ---------------------------- | ------------------------ | --------------------------------------- |
 | Token Introspection | `POST /introspect`           | `seed-access-tokens.js`  | `test-introspect-benchmark.js`          |
@@ -228,7 +235,7 @@ These benchmarks share the same seed data (access tokens).
 ```bash
 # 1. Generate access tokens
 BASE_URL=https://your-authrim.example.com \
-CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz \
+CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz \
 TOKEN_COUNT=3000 \
 node scripts/seeds/seed-access-tokens.js
 
@@ -245,13 +252,13 @@ k6 run \
 ```bash
 # 1. Seed users
 BASE_URL=https://your-authrim.example.com \
-ADMIN_API_SECRET=zzz OTP_USER_COUNT=500 \
+ADMIN_MACHINE_ACCESS_TOKEN=zzz OTP_USER_COUNT=500 \
 node scripts/seeds/seed-otp-users.js
 
 # 2. Run benchmark (sessions created in setup phase)
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps200 \
   scripts/benchmarks/test-authorize-silent-benchmark.js
 ```
@@ -261,13 +268,13 @@ k6 run \
 ```bash
 # 1. Seed OTP users
 BASE_URL=https://your-authrim.example.com \
-ADMIN_API_SECRET=zzz OTP_USER_COUNT=500 \
+ADMIN_MACHINE_ACCESS_TOKEN=zzz OTP_USER_COUNT=500 \
 node scripts/seeds/seed-otp-users.js
 
 # 2. Run benchmark
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps50 \
   scripts/benchmarks/test-mail-otp-full-login-benchmark.js
 ```
@@ -283,7 +290,7 @@ only by transient auth mirror policy, then compare k6 latency with Cloudflare D1
 # D1 mirrors enabled, for shared-d1 or compatibility profiles
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps100 \
   --env STORAGE_PROFILE=shared-d1 \
   --env TRANSIENT_AUTH_MIRROR_MODE=d1-enabled \
@@ -292,7 +299,7 @@ k6 run \
 # D1 mirrors disabled or minimized, for tenant-d1/external-durable scale profiles
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps100 \
   --env STORAGE_PROFILE=tenant-d1 \
   --env TRANSIENT_AUTH_MIRROR_MODE=d1-disabled \
@@ -312,7 +319,7 @@ remain reusable.
 ```bash
 # 1. Generate refresh-token families
 BASE_URL=https://your-authrim.example.com \
-CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz COUNT=2000 \
+CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz COUNT=2000 \
 node scripts/seeds/seed-refresh-tokens.js
 
 # 2. Run audit-heavy benchmark
@@ -331,6 +338,7 @@ writes between audit profiles after each run.
 > **⚠️ Note (Jan 2026)**: The xk6-passkeys extension previously located at `extensions/xk6-passkeys/` has been removed due to 66 security vulnerabilities in its Go dependencies (go@1.23.0) with no available fixes. The extension was a fork of [corbado/xk6-passkeys](https://github.com/corbado/xk6-passkeys) with added `ImportCredential` support for credential serialization in k6's setup/teardown phases.
 >
 > **For future passkey load testing**:
+>
 > - Use the upstream [corbado/xk6-passkeys](https://github.com/corbado/xk6-passkeys) extension directly
 > - Or rebuild from the [descope/virtualwebauthn](https://github.com/descope/virtualwebauthn) library
 > - Original implementation: `passkeys.go` with iCloud Keychain AAGUID (`fbfc3007-154e-4ecc-8c0b-6e020557d7bd`)
@@ -343,13 +351,13 @@ writes between audit profiles after each run.
 
 # 2. Seed passkey users
 BASE_URL=https://your-authrim.example.com \
-ADMIN_API_SECRET=zzz PASSKEY_USER_COUNT=100 \
+ADMIN_MACHINE_ACCESS_TOKEN=zzz PASSKEY_USER_COUNT=100 \
 node scripts/seeds/seed-passkey-users.js
 
 # 3. Run benchmark
 ./bin/k6-passkeys run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps30 \
   scripts/benchmarks/test-passkey-full-login-benchmark.js
 ```
@@ -376,7 +384,7 @@ All seed scripts are in `scripts/seeds/`. Create a test client first via Admin A
 
 ```bash
 curl -X POST "https://your-authrim.example.com/api/admin/clients" \
-  -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
+  -H "Authorization: Bearer YOUR_ADMIN_MACHINE_ACCESS_TOKEN" \
   -H "X-Tenant-Id: default" \
   -H "Content-Type: application/json" \
   -d '{
@@ -391,13 +399,13 @@ curl -X POST "https://your-authrim.example.com/api/admin/clients" \
 
 ### Script Reference
 
-| Script                   | Required Env Vars                                            | Optional                                       | Description                             |
-| ------------------------ | ------------------------------------------------------------ | ---------------------------------------------- | --------------------------------------- |
-| `seed-access-tokens.js`  | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `TOKEN_COUNT` (1000), `CONCURRENCY` (20)       | Tokens for introspect/exchange/userinfo |
-| `seed-otp-users.js`      | `BASE_URL`, `ADMIN_API_SECRET`                               | `TENANT_ID` (`default`), `OTP_USER_COUNT` (500), `CONCURRENCY` (20)     | Users for OTP login / silent auth       |
-| `seed-passkey-users.js`  | `BASE_URL`, `ADMIN_API_SECRET`                               | `TENANT_ID` (`default`), `PASSKEY_USER_COUNT` (100), `CONCURRENCY` (10) | Users with passkey credentials          |
-| `seed-refresh-tokens.js` | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `COUNT` (120)                                  | Refresh tokens for rotation tests       |
-| `seed-authcodes.js`      | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `AUTH_CODE_COUNT` (200)                        | Authorization codes                     |
+| Script                   | Required Env Vars                                                      | Optional                                                                | Description                             |
+| ------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
+| `seed-access-tokens.js`  | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_MACHINE_ACCESS_TOKEN` | `TENANT_ID` (`default`), `TOKEN_COUNT` (1000), `CONCURRENCY` (20)       | Tokens for introspect/exchange/userinfo |
+| `seed-otp-users.js`      | `BASE_URL`, `ADMIN_MACHINE_ACCESS_TOKEN`                               | `TENANT_ID` (`default`), `OTP_USER_COUNT` (500), `CONCURRENCY` (20)     | Users for OTP login / silent auth       |
+| `seed-passkey-users.js`  | `BASE_URL`, `ADMIN_MACHINE_ACCESS_TOKEN`                               | `TENANT_ID` (`default`), `PASSKEY_USER_COUNT` (100), `CONCURRENCY` (10) | Users with passkey credentials          |
+| `seed-refresh-tokens.js` | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_MACHINE_ACCESS_TOKEN` | `TENANT_ID` (`default`), `COUNT` (120)                                  | Refresh tokens for rotation tests       |
+| `seed-authcodes.js`      | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_MACHINE_ACCESS_TOKEN` | `TENANT_ID` (`default`), `AUTH_CODE_COUNT` (200)                        | Authorization codes                     |
 
 **Token Mix** (`seed-access-tokens.js`): Valid 60%, Token Exchange 5%, Expired 12%, Revoked 12%, Wrong Audience 6%, Wrong Client 5%
 

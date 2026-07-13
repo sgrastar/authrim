@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ensureDownstreamIntrospectionClient } from '../core/downstream-introspection-client.js';
+import {
+  ensureDownstreamIntrospectionClient,
+  loadDownstreamIntrospectionClientSecrets,
+} from '../core/downstream-introspection-client.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 function textResponse(body: string, status: number): Response {
@@ -21,7 +24,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe('ensureDownstreamIntrospectionClient', () => {
   const fetchMock = vi.fn<typeof fetch>();
   let tempDir = '';
-  let adminApiSecretPath = '';
+  let adminBearerToken = '';
 
   beforeEach(async () => {
     vi.stubGlobal('fetch', fetchMock);
@@ -30,8 +33,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
     const testTempRoot = join(process.cwd(), '.tmp-tests');
     await mkdir(testTempRoot, { recursive: true });
     tempDir = await mkdtemp(join(testTempRoot, 'authrim-downstream-introspection-client-'));
-    adminApiSecretPath = join(tempDir, 'admin_api_secret.txt');
-    await writeFile(adminApiSecretPath, 'secret-token');
+    adminBearerToken = 'secret-token';
   });
 
   afterEach(async () => {
@@ -72,7 +74,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      adminApiSecretPath,
+      adminBearerToken,
       keysDir: tempDir,
       tenantId: 'default',
       onProgress: (message) => progress.push(message),
@@ -109,7 +111,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      adminApiSecretPath,
+      adminBearerToken,
       keysDir: tempDir,
       tenantId: 'default',
       maxRetries: 1,
@@ -169,7 +171,6 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
-      adminApiSecretPath,
       keysDir: tempDir,
       tenantId: 'default',
       onProgress: (message) => progress.push(message),
@@ -222,7 +223,6 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
     const result = await ensureDownstreamIntrospectionClient({
       apiBaseUrl: 'https://first.multi-tenant.authrim.com',
-      adminApiSecretPath,
       keysDir: tempDir,
       tenantId: 'first',
       onProgress: (message) => progress.push(message),
@@ -234,5 +234,187 @@ describe('ensureDownstreamIntrospectionClient', () => {
     expect(result.clientId).toBe('downstream-client-after-tenant-retry');
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
+  });
+
+  it('reuses stored credentials when the corresponding client still exists', async () => {
+    await writeFile(join(tempDir, 'downstream_grant_introspection_client_id.txt'), 'client-1\n');
+    await writeFile(
+      join(tempDir, 'downstream_grant_introspection_client_secret.txt'),
+      'secret-1\n'
+    );
+    fetchMock.mockResolvedValueOnce(jsonResponse({ client_id: 'client-1' }));
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      clientId: 'client-1',
+      clientSecret: 'secret-1',
+      alreadyExists: true,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('updates metadata and rotates the secret for a discovered system client', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          clients: [
+            {
+              client_id: 'existing-client',
+              client_name: 'Downstream Grant Introspection',
+              description: 'old description',
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ success: true }))
+      .mockResolvedValueOnce(
+        jsonResponse({ client_id: 'existing-client', client_secret: 'rotated-secret' })
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      clientId: 'existing-client',
+      clientSecret: 'rotated-secret',
+      alreadyExists: true,
+      rotatedSecret: true,
+    });
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'PUT', 'POST']);
+  });
+
+  it('returns explicit failures for missing machine keys and non-retryable API errors', async () => {
+    await expect(
+      ensureDownstreamIntrospectionClient({
+        apiBaseUrl: 'https://issuer.test',
+        keysDir: tempDir,
+        maxRetries: 1,
+      })
+    ).resolves.toMatchObject({ success: false, error: expect.stringContaining('keys not found') });
+
+    fetchMock.mockResolvedValueOnce(textResponse('forbidden', 403));
+    await expect(
+      ensureDownstreamIntrospectionClient({
+        apiBaseUrl: 'https://issuer.test',
+        adminBearerToken,
+        keysDir: tempDir,
+        maxRetries: 1,
+      })
+    ).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('Failed to check downstream introspection client (403)'),
+    });
+  });
+
+  it('loads deployable secrets only when both files contain values', async () => {
+    await expect(loadDownstreamIntrospectionClientSecrets(tempDir)).resolves.toBeNull();
+    await writeFile(join(tempDir, 'downstream_grant_introspection_client_id.txt'), 'client-1\n');
+    await expect(loadDownstreamIntrospectionClientSecrets(tempDir)).resolves.toBeNull();
+    await writeFile(join(tempDir, 'downstream_grant_introspection_client_secret.txt'), '  ');
+    await expect(loadDownstreamIntrospectionClientSecrets(tempDir)).resolves.toBeNull();
+    await writeFile(
+      join(tempDir, 'downstream_grant_introspection_client_secret.txt'),
+      'secret-1\n'
+    );
+    await expect(loadDownstreamIntrospectionClientSecrets(tempDir)).resolves.toEqual({
+      DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-1',
+      DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-1',
+    });
+  });
+
+  it('rotates an existing correctly-described client without an unnecessary update', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          clients: [
+            {
+              client_id: 'existing-client',
+              client_name: 'Downstream Grant Introspection',
+              description:
+                'System-managed confidential client used by Authrim for downstream grant introspection.',
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ client_id: 'existing-client', client_secret: 'rotated-secret' })
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+
+    expect(result).toMatchObject({ success: true, rotatedSecret: true });
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'POST']);
+  });
+
+  it('replaces stale stored credentials when the referenced client was deleted', async () => {
+    await writeFile(join(tempDir, 'downstream_grant_introspection_client_id.txt'), 'stale-client');
+    await writeFile(
+      join(tempDir, 'downstream_grant_introspection_client_secret.txt'),
+      'stale-secret'
+    );
+    fetchMock
+      .mockResolvedValueOnce(textResponse('not found', 404))
+      .mockResolvedValueOnce(jsonResponse({ clients: [] }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            client: {
+              client_id: 'replacement-client',
+              client_name: 'Downstream Grant Introspection',
+              client_secret: 'replacement-secret',
+            },
+          },
+          201
+        )
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      clientId: 'replacement-client',
+      alreadyExists: false,
+      rotatedSecret: false,
+    });
+  });
+
+  it('rejects successful API responses that omit generated credentials', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ clients: [] }))
+      .mockResolvedValueOnce(jsonResponse({ client: { client_id: 'missing-secret' } }, 201));
+
+    await expect(
+      ensureDownstreamIntrospectionClient({
+        apiBaseUrl: 'https://issuer.test',
+        adminBearerToken,
+        keysDir: tempDir,
+        maxRetries: 1,
+      })
+    ).resolves.toMatchObject({
+      success: false,
+      error: 'Downstream introspection client create response missing credentials',
+    });
   });
 });

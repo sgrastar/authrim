@@ -77,8 +77,8 @@ Options:
   --config <path>           Read a generated config.json directly
   --base-dir <path>         Override repository base directory
   --timeout-ms <n>          Request timeout per endpoint (default: 10000)
-  --admin-secret <secret>   Override ADMIN_API_SECRET inline
-  --admin-secret-file <p>   Read ADMIN_API_SECRET from a specific file
+  --admin-secret <token>    Use a short-lived scoped Admin Machine Access token inline
+  --admin-secret-file <p>   Read a scoped Admin Machine Access token from a file
   --json                    Emit JSON instead of checklist text
 `);
 }

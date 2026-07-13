@@ -226,6 +226,4 @@ describe('tenant-system OIDC tenant binding matrix', () => {
       } as never)
     ).resolves.toEqual({});
   });
-
-  it.todo('OIDC-010 should reject a challenge_id that belongs to a different tenant');
 });

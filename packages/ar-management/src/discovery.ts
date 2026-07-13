@@ -316,12 +316,8 @@ async function getCommonDiscoverUrl(env: Env): Promise<string | null> {
   return null;
 }
 
-function getDiscoveryGrantSecret(env: Env): string | null {
-  return env.KEY_MANAGER_SECRET || env.ADMIN_API_SECRET || env.OTP_HMAC_SECRET || null;
-}
-
 async function getDiscoveryGrantKey(env: Env): Promise<Uint8Array> {
-  const secret = getDiscoveryGrantSecret(env);
+  const secret = env.OTP_HMAC_SECRET;
   if (!secret) {
     throw new Error('Discovery grant secret is not configured');
   }
@@ -354,7 +350,7 @@ async function resolveGrantTargetLoginUrl(
     loginHint?: string;
   }
 ): Promise<string> {
-  const fallback = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  const fallback = await resolveTenantLoginUrl(env, tenantId);
   if (!options.returnTo || !options.expectedTenantId || options.expectedTenantId !== tenantId) {
     return appendLoginHint(fallback, options.loginHint);
   }
@@ -380,6 +376,25 @@ async function resolveGrantTargetLoginUrl(
   );
 
   return appendLoginHint(bindingAllowed ? parsedReturnTo.toString() : fallback, options.loginHint);
+}
+
+async function resolveTenantLoginUrl(env: Env, tenantId: string): Promise<string> {
+  const canonicalLoginUrl = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  if (!isSingleTenantMode(env) || env.LOGIN_UI_EXECUTION_HOST_MODE !== 'dedicated') {
+    return canonicalLoginUrl;
+  }
+
+  const uiConfig = await getUIConfig(env).catch(() => null);
+  const uiBaseUrl = uiConfig?.baseUrl || env.UI_URL;
+  if (!uiBaseUrl) {
+    return canonicalLoginUrl;
+  }
+
+  try {
+    return new URL('/login', uiBaseUrl).toString();
+  } catch {
+    return canonicalLoginUrl;
+  }
 }
 
 function appendLoginHint(url: string, loginHint?: string): string {
@@ -720,7 +735,7 @@ async function buildCandidate(
     tenant_code: tenant.tenant_code,
     display_name: branding.display_name,
     logo_url: branding.logo_url,
-    login_url: `${await getCanonicalTenantBaseUrlAsync(env, tenant.id)}/login`,
+    login_url: await resolveTenantLoginUrl(env, tenant.id),
     source,
   };
 }

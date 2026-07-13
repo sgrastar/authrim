@@ -106,11 +106,16 @@ describe('generateEnvVars - ar-auth', () => {
     const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
     const expected = scenario.expected.arAuthEnvVars;
     const expectedUiUrl = expectedLoginUiUrl(config);
+    const loginUiRunsOnIssuer =
+      config.urls?.loginUi?.sameAsApi === true || isMultiTenantConfigured(config);
     const expectedCookieSameSite =
-      config.urls?.loginUi?.sameAsApi === true ? 'Lax' : expected.COOKIE_SAME_SITE;
+      config.components?.loginUi && loginUiRunsOnIssuer ? 'Lax' : expected.COOKIE_SAME_SITE;
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(expectedUiUrl);
+    expect(vars['LOGIN_UI_EXECUTION_HOST_MODE']).toBe(
+      config.components?.loginUi ? (loginUiRunsOnIssuer ? 'issuer' : 'dedicated') : undefined
+    );
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
     expect(vars['COOKIE_SAME_SITE']).toBe(expectedCookieSameSite);
     expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));
@@ -294,6 +299,7 @@ describe('generateEnvVars - ar-router', () => {
 
     expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminProxyEnabled ? 'true' : 'false');
     expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
+    expect(vars['ENABLE_LOGIN_UI_PATH_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
     expect(vars['LOGIN_UI_URL']).toBe(expectedLoginUiUrl(config));
     expect(vars['LOGIN_UI_HOST_MODE']).toBe(expectedLoginUiHostMode(config));
 
@@ -305,7 +311,7 @@ describe('generateEnvVars - ar-router', () => {
       expect(vars['AR_ADMIN_UI_URL']).toBeUndefined();
     }
 
-    // AR_LOGIN_UI_URL is set when ar-router proxies Login UI routes.
+    // AR_LOGIN_UI_URL is set when Router owns Login UI paths.
     if (loginProxyEnabled) {
       const loginUiWorkerUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
       expect(vars['AR_LOGIN_UI_URL']).toBe(loginUiWorkerUrl ?? undefined);
@@ -431,8 +437,9 @@ describe('multi-tenant login UI canonical routing', () => {
 
     expect(authVars['UI_URL']).toBe('https://login.example.com');
     expect(samlVars['UI_URL']).toBe('https://login.example.com');
-    expect(authVars['COOKIE_SAME_SITE']).toBe('None');
+    expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
     expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
+    expect(routerVars['ENABLE_LOGIN_UI_PATH_PROXY']).toBe('true');
     expect(routerVars['LOGIN_UI_URL']).toBe('https://login.example.com');
     expect(routerVars['LOGIN_UI_HOST_MODE']).toBe('dedicated');
     expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.my-project.workers.dev');

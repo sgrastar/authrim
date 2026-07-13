@@ -697,7 +697,7 @@ async function hashFilter(value: Record<string, unknown>): Promise<string> {
 }
 
 function getLoggingCursorSecret(c: AdminContext): string | undefined {
-  return c.env.LOGGING_CURSOR_HMAC_SECRET || c.env.KEY_MANAGER_SECRET;
+  return c.env.LOGGING_CURSOR_HMAC_SECRET;
 }
 
 function getCursorSort(payload: LoggingCursorPayload): { createdAt: number; id: string } | null {

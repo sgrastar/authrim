@@ -20,7 +20,7 @@
  *   BASE_URL          - Target server (default: https://your-authrim.example.com)
  *   CLIENT_ID         - OAuth client ID (required)
  *   CLIENT_SECRET     - OAuth client secret (required)
- *   ADMIN_API_SECRET  - Admin API secret (required)
+ *   ADMIN_MACHINE_ACCESS_TOKEN  - Admin Machine Access token (required)
  *   TENANT_ID         - Tenant ID for admin API requests (optional)
  *   AUTH_CODE_COUNT   - Number of authorization codes to generate (default: 1000)
  *   USER_COUNT        - Number of users to use (default: all users)
@@ -39,7 +39,7 @@ const BASE_URL = process.env.BASE_URL || '';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://localhost:3000/callback';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const TENANT_ID = process.env.TENANT_ID || '';
 const AUTH_CODE_COUNT = Number.parseInt(process.env.AUTH_CODE_COUNT || '1000', 10);
 // USER_COUNT: Number of users to use (0 = use all users)
@@ -58,14 +58,14 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
   process.exit(1);
 }
 
-if (!ADMIN_API_SECRET) {
-  console.error('ADMIN_API_SECRET is required.');
+if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+  console.error('ADMIN_MACHINE_ACCESS_TOKEN is required.');
   process.exit(1);
 }
 
 const basicAuthHeader = `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`;
 const adminAuthHeader = {
-  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
 };
 
@@ -376,7 +376,7 @@ async function generateBatch(batchSize) {
 async function main() {
   setupSignalHandlers();
 
-  console.log("🚀 Parallel seed generator (pre-created users)");
+  console.log('🚀 Parallel seed generator (pre-created users)');
   console.log(`  BASE_URL        : ${BASE_URL}`);
   console.log(`  AUTH_CODE_COUNT : ${AUTH_CODE_COUNT} (new codes to generate)`);
   console.log(`  USER_COUNT      : ${USER_COUNT === 0 ? 'all' : USER_COUNT} (users to use)`);
@@ -448,7 +448,7 @@ async function main() {
   // Final save
   const totalTime = (Date.now() - startTime) / 1000;
   console.log('');
-  console.log("✅ Generation complete:");
+  console.log('✅ Generation complete:');
   console.log(`   New codes: ${newCodesCount}`);
   console.log(`   Total codes: ${allCodes.length}`);
   console.log(`   Errors: ${errorCount}`);

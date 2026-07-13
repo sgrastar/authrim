@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureLoginUiClient } from '../core/login-ui-client.js';
 import { buildBrowserClientMetadata } from '../core/browser-client-metadata.js';
@@ -22,7 +22,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe('ensureLoginUiClient', () => {
   const fetchMock = vi.fn<typeof fetch>();
   let tempDir = '';
-  let adminApiSecretPath = '';
+  let adminBearerToken = '';
 
   beforeEach(async () => {
     vi.stubGlobal('fetch', fetchMock);
@@ -31,8 +31,7 @@ describe('ensureLoginUiClient', () => {
     const testTempRoot = join(process.cwd(), '.tmp-tests');
     await mkdir(testTempRoot, { recursive: true });
     tempDir = await mkdtemp(join(testTempRoot, 'authrim-login-ui-client-'));
-    adminApiSecretPath = join(tempDir, 'admin_api_secret.txt');
-    await writeFile(adminApiSecretPath, 'secret-token');
+    adminBearerToken = 'secret-token';
   });
 
   afterEach(async () => {
@@ -70,7 +69,8 @@ describe('ensureLoginUiClient', () => {
     const resultPromise = ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
       loginUiUrl: 'https://single-ar-login-ui.workers.dev',
-      adminApiSecretPath,
+      keysDir: tempDir,
+      adminBearerToken,
       onProgress: (message) => progress.push(message),
       retryDelayMs: 1,
       maxRetries: 2,
@@ -102,7 +102,8 @@ describe('ensureLoginUiClient', () => {
     const result = await ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
       loginUiUrl: 'https://single-ar-login-ui.workers.dev',
-      adminApiSecretPath,
+      keysDir: tempDir,
+      adminBearerToken,
       tenantId: 'default',
       maxRetries: 1,
     });
@@ -114,7 +115,7 @@ describe('ensureLoginUiClient', () => {
     expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
   });
 
-  it('prefers setup machine private_key_jwt over legacy admin API secret', async () => {
+  it('uses setup machine private_key_jwt for Admin API access', async () => {
     const secrets = generateAllSecrets('login-ui-test-key');
     await saveKeysToDirectory(secrets, { targetDir: tempDir });
 
@@ -140,7 +141,7 @@ describe('ensureLoginUiClient', () => {
     const result = await ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
       loginUiUrl: 'https://single-ar-login-ui.workers.dev',
-      adminApiSecretPath,
+      keysDir: tempDir,
       tenantId: 'default',
       maxRetries: 1,
     });
@@ -204,7 +205,7 @@ describe('ensureLoginUiClient', () => {
     const result = await ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
       loginUiUrl: 'https://single-ar-login-ui.workers.dev',
-      adminApiSecretPath,
+      keysDir: tempDir,
       tenantId: 'default',
       onProgress: (message) => progress.push(message),
       retryDelayMs: 1,
@@ -262,7 +263,7 @@ describe('ensureLoginUiClient', () => {
       apiBaseUrl: 'https://base.example.test',
       apiBaseUrls: ['https://first.example.test', 'https://base.example.test'],
       loginUiUrl: 'https://login.example.test',
-      adminApiSecretPath,
+      keysDir: tempDir,
       tenantId: 'first',
       maxRetries: 1,
     });
@@ -307,7 +308,8 @@ describe('ensureLoginUiClient', () => {
       apiBaseUrl: 'https://base.example.test',
       apiBaseUrls: ['https://first.example.test'],
       loginUiUrl: 'https://login.example.test',
-      adminApiSecretPath,
+      keysDir: tempDir,
+      adminBearerToken,
       tenantId: 'first',
       maxRetries: 1,
     });
@@ -340,7 +342,8 @@ describe('ensureLoginUiClient', () => {
     await ensureLoginUiClient({
       apiBaseUrl: 'https://single-ar-router.example.workers.dev',
       loginUiUrl: 'https://login.example.test',
-      adminApiSecretPath,
+      keysDir: tempDir,
+      adminBearerToken,
       maxRetries: 1,
     });
 
@@ -366,6 +369,52 @@ describe('ensureLoginUiClient', () => {
       },
     });
     expect(createBody).not.toHaveProperty('dpop_bound_access_tokens');
+  });
+
+  it('updates Login UI callbacks and origins when the canonical issuer changes', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          clients: [
+            {
+              client_id: 'client-login-ui',
+              client_name: 'Login UI',
+              is_trusted: true,
+              redirect_uris: ['https://old-login.example.test/callback'],
+              token_endpoint_auth_method: 'none',
+              require_pkce: true,
+              browser_refresh_token_policy: 'disabled',
+              description:
+                'System-managed public OAuth client used by the built-in Authrim Login UI.',
+            },
+          ],
+          pagination: { total: 1 },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ client: { client_id: 'client-login-ui' } }));
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://auth.example.test',
+      loginUiUrl: 'https://auth.example.test',
+      keysDir: tempDir,
+      adminBearerToken,
+      maxRetries: 1,
+    });
+
+    expect(result).toEqual({ success: true, clientId: 'client-login-ui', alreadyExists: true });
+    const updateBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(updateBody.redirect_uris).toEqual([
+      'https://auth.example.test/callback',
+      'https://auth.example.test/reauth/callback',
+      'https://auth.example.test/device/callback',
+      'https://auth.example.test/ciba/callback',
+    ]);
+    expect(updateBody.web_origin_registry).toMatchObject({
+      origins: [{ origin: 'https://auth.example.test' }],
+    });
   });
 
   it('builds token_session browser client metadata with DPoP-bound refresh token opt-in', () => {

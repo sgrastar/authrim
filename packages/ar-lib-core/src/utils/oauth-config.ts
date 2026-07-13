@@ -309,6 +309,7 @@ interface CachedValue<T> {
  */
 export class OAuthConfigManager {
   private envConfig: OAuthConfig;
+  private runtimeEnv: Partial<Env>;
   private kv: KVNamespace | null;
   private cache: Map<ConfigName, CachedValue<number | boolean>> = new Map();
   private cacheTTL: number;
@@ -323,6 +324,7 @@ export class OAuthConfigManager {
     kv: KVNamespace | null = null,
     cacheTTL: number = DEFAULT_CONFIG_CACHE_TTL_MS
   ) {
+    this.runtimeEnv = env;
     this.envConfig = getConfigFromEnv(env);
     this.kv = kv;
     this.cacheTTL = cacheTTL;
@@ -633,7 +635,8 @@ export class OAuthConfigManager {
       }
     }
     // Read from env (CONSENT_GRANULAR_SCOPES)
-    const envValue = (this.envConfig as unknown as Record<string, string>).CONSENT_GRANULAR_SCOPES;
+    const envValue = (this.runtimeEnv as unknown as Record<string, string | undefined>)
+      .CONSENT_GRANULAR_SCOPES;
     return envValue?.toLowerCase() === 'true' || envValue === '1';
   }
 
@@ -653,7 +656,7 @@ export class OAuthConfigManager {
       }
     }
     // Read from env (CONSENT_EXPIRATION_ENABLED)
-    const envValue = (this.envConfig as unknown as Record<string, string>)
+    const envValue = (this.runtimeEnv as unknown as Record<string, string | undefined>)
       .CONSENT_EXPIRATION_ENABLED;
     return envValue?.toLowerCase() === 'true' || envValue === '1';
   }
@@ -678,7 +681,7 @@ export class OAuthConfigManager {
       }
     }
     // Read from env (CONSENT_DEFAULT_EXPIRATION_DAYS)
-    const envValue = (this.envConfig as unknown as Record<string, string>)
+    const envValue = (this.runtimeEnv as unknown as Record<string, string | undefined>)
       .CONSENT_DEFAULT_EXPIRATION_DAYS;
     if (envValue) {
       const parsed = parseInt(envValue, 10);
@@ -705,7 +708,7 @@ export class OAuthConfigManager {
       }
     }
     // Read from env (CONSENT_VERSIONING_ENABLED)
-    const envValue = (this.envConfig as unknown as Record<string, string>)
+    const envValue = (this.runtimeEnv as unknown as Record<string, string | undefined>)
       .CONSENT_VERSIONING_ENABLED;
     return envValue?.toLowerCase() === 'true' || envValue === '1';
   }

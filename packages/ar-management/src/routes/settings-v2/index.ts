@@ -843,7 +843,6 @@ settingsV2.use('/tenants/:tenantId/settings/:category', async (c, next) => {
   );
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/tenants/:tenantId/settings/:category'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -855,7 +854,6 @@ settingsV2.use('/clients/:clientId/settings', async (c, next) => {
   );
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/clients/:clientId/settings'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -864,7 +862,6 @@ settingsV2.use('/platform/settings/:category', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/platform/settings/:category'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -873,7 +870,6 @@ settingsV2.use('/settings/meta', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/meta'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -881,7 +877,6 @@ settingsV2.use('/settings/meta/:category', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/meta/:category'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -1836,7 +1831,6 @@ settingsV2.use('/settings/:category/history', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/:category/history'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -1844,7 +1838,6 @@ settingsV2.use('/settings/:category/history/:version', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/:category/history/:version'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -1854,7 +1847,6 @@ settingsV2.use('/settings/:category/rollback', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/:category/rollback'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -1862,7 +1854,6 @@ settingsV2.use('/settings/:category/current', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/:category/current'],
   })(c as unknown as RateLimitContext, next);
 });
 
@@ -1870,7 +1861,6 @@ settingsV2.use('/settings/:category/compare', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/settings/:category/compare'],
   })(c as unknown as RateLimitContext, next);
 });
 

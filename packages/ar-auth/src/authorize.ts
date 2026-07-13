@@ -169,13 +169,6 @@ function isOidcCertificationRedirectUri(value: unknown): boolean {
   }
 }
 
-function isOidcCertificationClient(clientMetadata?: { redirect_uris?: unknown } | null): boolean {
-  return (
-    Array.isArray(clientMetadata?.redirect_uris) &&
-    clientMetadata.redirect_uris.some(isOidcCertificationRedirectUri)
-  );
-}
-
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
   return splitScopes(responseType).includes('code');
 }
@@ -397,7 +390,23 @@ async function getUIRedirectTarget(
 }
 
 function shouldUseIssuerHostedUi(env: Env, issuerUiBaseUrl?: string | null): boolean {
-  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false' || !env.BASE_DOMAIN) {
+  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false') {
+    return false;
+  }
+
+  // Setup-generated deployments pin browser Login UI execution to the issuer.
+  // This preserves the primary tenant's Login UI origin when a custom-domain
+  // single-tenant deployment is later expanded to multi-tenant routing.
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'issuer') {
+    return true;
+  }
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'dedicated') {
+    return false;
+  }
+
+  // Legacy configurations used issuer-hosted Login UI only for multi-tenant
+  // deployments. Preserve that behavior until they opt in explicitly.
+  if (!env.BASE_DOMAIN) {
     return false;
   }
 
@@ -1207,6 +1216,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge_method?: string;
         claims?: string;
         response_mode?: string;
+        prompt?: string;
+        display?: string;
+        max_age?: number;
+        ui_locales?: string;
+        id_token_hint?: string;
+        login_hint?: string;
+        acr_values?: string;
         authorization_details?: string;
       } | null = null;
 
@@ -1268,7 +1284,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           code_challenge_method: consumed.code_challenge_method,
           claims: consumed.claims,
           authorization_details: consumed.authorization_details,
-          response_mode: undefined,
+          response_mode: consumed.response_mode,
+          prompt: consumed.prompt,
+          display: consumed.display,
+          max_age: consumed.max_age,
+          ui_locales: consumed.ui_locales,
+          id_token_hint: consumed.id_token_hint,
+          login_hint: consumed.login_hint,
+          acr_values: consumed.acr_values,
         };
       } catch {
         // RPC error (invalid/expired request_uri)
@@ -1297,6 +1320,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge_method?: string;
         claims?: string;
         response_mode?: string;
+        prompt?: string;
+        display?: string;
+        max_age?: number;
+        ui_locales?: string;
+        id_token_hint?: string;
+        login_hint?: string;
+        acr_values?: string;
         authorization_details?: string; // RFC 9396: Rich Authorization Requests
       } = parsedData;
 
@@ -1325,6 +1355,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         claimsRequestIntegrityProtected = true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
+        prompt = parData.prompt;
+        display = parData.display;
+        max_age = parData.max_age === undefined ? undefined : String(parData.max_age);
+        ui_locales = parData.ui_locales;
+        id_token_hint = parData.id_token_hint;
+        login_hint = parData.login_hint;
+        acr_values = parData.acr_values;
       } catch {
         return c.json(
           {
@@ -1751,7 +1788,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       'Invalid Client'
     );
   }
-  const useCertificationBuiltinForms = isOidcCertificationClient(clientMetadata);
+  // Certification behavior must be scoped to both an explicitly enabled
+  // conformance environment and the redirect URI used by this request. A client
+  // merely registering a certification URI must not turn its other flows into
+  // credential-accepting test flows.
+  const useCertificationBuiltinForms =
+    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(redirect_uri);
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
@@ -3488,7 +3530,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               tenantId,
               clientMetadata?.login_ui_url,
               getRequestIssuer(c),
-              isOidcCertificationClient(clientMetadata)
+              useCertificationBuiltinForms
             );
             if (consentTarget.type === 'redirect') {
               return c.redirect(consentTarget.url, 302);
@@ -4120,10 +4162,6 @@ async function getSigningKeyFromKeyManager(
   // Cache miss or version mismatch: fetch from per-tenant KeyManager DO
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
-  }
-
-  if (!env.KEY_MANAGER_SECRET) {
-    throw new Error('KEY_MANAGER_SECRET not configured');
   }
 
   const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
@@ -4848,14 +4886,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   const metadata = challengeData.metadata || {};
 
-  // Determine if this is an OIDC Conformance Test client
-  const client_id = metadata.client_id as string | undefined;
-  let isCertificationTest = false;
-
-  if (client_id) {
-    const clientMetadata = await getClientCached(c, c.env, client_id);
-    isCertificationTest = isOidcCertificationClient(clientMetadata);
-  }
+  // Never infer certification privileges from the client's registered URI set.
+  // The consumed challenge must itself target the certification service and the
+  // deployment must have explicitly enabled its built-in conformance forms.
+  const isCertificationTest =
+    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(metadata.redirect_uri);
 
   // Create a new user and session (stub - in production, verify credentials first)
   let userId: string;

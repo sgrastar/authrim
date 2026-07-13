@@ -402,9 +402,10 @@ describe('Authorization Handler', () => {
       expect(location).toContain('tenant_host=test.example.com');
     });
 
-    it('routes OIDC certification clients to built-in login without global conformance mode', async () => {
+    it('does not enable built-in login from a certification redirect URI alone', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -429,11 +430,10 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
-      const redirectUrl = new URL(location!, 'https://test.example.com');
-      expect(redirectUrl.pathname).toBe('/flow/login');
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin).toBe('https://client-login.example.com');
+      expect(redirectUrl.pathname).toBe('/login');
       expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
-      expect(location).not.toContain('login.example.com');
-      expect(location).not.toContain('client-login.example.com');
     });
 
     it('should keep authorization UI redirects on the tenant issuer host in multi-tenant mode', async () => {
@@ -467,6 +467,7 @@ describe('Authorization Handler', () => {
     it('should use UI_URL for separate Login UI redirects in single-tenant mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
 
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -481,6 +482,25 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://login.example.com/login');
       expect(redirectUrl.searchParams.get('challenge_id')).toBeTruthy();
       expect(redirectUrl.searchParams.get('tenant_host')).toBe('test.example.com');
+    });
+
+    it('should use the issuer for issuer-hosted single-tenant Login UI redirects', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
+
+      const response = await app.request(
+        'https://test.example.com/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      expect(new URL(location!).origin + new URL(location!).pathname).toBe(
+        'https://test.example.com/login'
+      );
     });
 
     it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {
@@ -548,6 +568,198 @@ describe('Authorization Handler', () => {
         max_age: '300',
         acr_values: 'urn:authrim:acr:mfa',
       });
+    });
+  });
+
+  describe('Authorization request validation matrix', () => {
+    const base =
+      '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid&state=test-state';
+
+    it.each(['-1', '1.5', 'abc', '+1', ' 1'])('rejects invalid max_age=%s', async (maxAge) => {
+      const response = await app.request(`${base}&max_age=${encodeURIComponent(maxAge)}`, {}, env);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_request',
+        error_description: 'max_age must be a non-negative integer',
+      });
+    });
+
+    it.each(['unsupported', 'query.invalid', 'fragment.invalid', 'form_post.invalid'])(
+      'rejects unsupported response_mode=%s',
+      async (mode) => {
+        const response = await app.request(`${base}&response_mode=${mode}`, {}, env);
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toContain('error=invalid_request');
+      }
+    );
+
+    it('rejects fragment mode for authorization-code-only responses', async () => {
+      const response = await app.request(`${base}&response_mode=fragment`, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it.each(['query', 'form_post', 'query.jwt', 'form_post.jwt', 'jwt'])(
+      'accepts response_mode=%s for code flow through request validation',
+      async (mode) => {
+        const response = await app.request(`${base}&response_mode=${mode}`, {}, env);
+        expect([200, 302]).toContain(response.status);
+        const text = await response.clone().text();
+        expect(text).not.toContain('Unsupported response_mode');
+        expect(response.headers.get('location') ?? '').not.toContain('error=invalid_request');
+      }
+    );
+
+    it('rejects prompt=none combined with interactive prompt values', async () => {
+      const response = await app.request(`${base}&prompt=none%20login`, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it('requires state when the OAuth CSRF setting is enabled', async () => {
+      env.ENABLE_STATE_REQUIRED = 'true';
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid',
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it.each([
+      '{',
+      '[]',
+      'null',
+      JSON.stringify({ userinfo: 'not-an-object' }),
+      JSON.stringify({ id_token: [] }),
+    ])('rejects malformed claims request %s', async (claims) => {
+      const response = await app.request(`${base}&claims=${encodeURIComponent(claims)}`, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('error=invalid_request');
+    });
+
+    it('preserves validated OIDC UX parameters in the login challenge', async () => {
+      const response = await app.request(
+        `${base}&max_age=0&acr_values=${encodeURIComponent('urn:mace:incommon:iap:silver urn:mace:incommon:iap:bronze')}&display=popup&ui_locales=ja%20en&login_hint=user%40example.com`,
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      const location = response.headers.get('location');
+      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
+        'challenge_id'
+      );
+      const challenge = getChallengeMap(env).get(challengeId!) as {
+        metadata?: Record<string, unknown>;
+      };
+      expect(challenge.metadata).toMatchObject({
+        max_age: '0',
+        acr_values: 'urn:mace:incommon:iap:silver urn:mace:incommon:iap:bronze',
+        display: 'popup',
+        ui_locales: 'ja en',
+        login_hint: 'user@example.com',
+      });
+    });
+
+    it('requires PAR by default when FAPI mode is enabled', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({ fapi: { enabled: true } })
+      );
+      const response = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error_description: expect.stringContaining('PAR is required'),
+      });
+    });
+
+    it('rejects public clients when FAPI explicitly disallows them', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({
+          fapi: { enabled: true, allowPublicClients: false },
+          oidc: { requirePar: false },
+        })
+      );
+      const response = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_client',
+        error_description: expect.stringContaining('Public clients'),
+      });
+    });
+
+    it('requires S256 PKCE for a confidential FAPI client', async () => {
+      mockGetClient.mockResolvedValueOnce({
+        client_id: 'test-client',
+        client_secret_hash: 'hash',
+        redirect_uris: ['https://example.com/callback'],
+        response_types: ['code'],
+        scope: 'openid',
+      });
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'system_settings',
+        JSON.stringify({ fapi: { enabled: true }, oidc: { requirePar: false } })
+      );
+      const response = await app.request(base, {}, env);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error_description: expect.stringContaining('PKCE with S256'),
+      });
+    });
+
+    it('continues with safe defaults when FAPI settings JSON is malformed', async () => {
+      await (env.SETTINGS as unknown as MockKVNamespace).put('system_settings', '{');
+      const response = await app.request(base, {}, env);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('/flow/login');
+    });
+
+    it('parses all supported form parameters without trusting non-string values', async () => {
+      const body = new URLSearchParams({
+        response_type: 'code',
+        client_id: 'test-client',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid profile',
+        state: 'post-state',
+        nonce: 'post-nonce',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        claims: JSON.stringify({ userinfo: { email: null } }),
+        authorization_details: '',
+        response_mode: 'query',
+        prompt: 'login',
+        max_age: '0',
+        id_token_hint: 'invalid.jwt.value',
+        acr_values: 'urn:mace:incommon:iap:bronze',
+        display: 'page',
+        ui_locales: 'ja en',
+        login_hint: 'user@example.com',
+        org_id: 'org-1',
+        acting_as: 'delegated-user',
+        error_uri: 'https://example.com/error',
+        cancel_uri: 'https://example.com/cancel',
+      });
+      const response = await app.request(
+        '/authorize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        },
+        env
+      );
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('/flow/login');
     });
   });
 
@@ -1017,8 +1229,8 @@ describe('Authorization Handler', () => {
       );
     });
 
-    it('allows prompt=none for logged-in OIDC certification clients without global conformance mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+    it('allows prompt=none for logged-in OIDC certification clients in conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'true';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -1430,6 +1642,43 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).has('login_challenge')).toBe(false);
     });
 
+    it('rejects certification stub login when conformance mode is disabled', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'false';
+      env.ENABLE_TEST_ENDPOINTS = 'false';
+      getChallengeMap(env).set('certification_login_challenge', {
+        id: 'certification_login_challenge',
+        type: 'login',
+        userId: 'anonymous',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://www.certification.openid.net/test/a/authrim/callback',
+          scope: 'openid',
+        },
+      });
+
+      const response = await app.request(
+        '/flow/login',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            challenge_id: 'certification_login_challenge',
+            username: 'attacker@example.com',
+            password: 'accepted-by-old-stub',
+          }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'access_denied',
+      });
+    });
+
     it('renders and processes built-in reauthentication confirmation', async () => {
       getChallengeMap(env).set('reauth_challenge', {
         id: 'reauth_challenge',
@@ -1563,8 +1812,8 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).size).toBe(0);
     });
 
-    it('routes OIDC certification clients to built-in consent without global conformance mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+    it('routes OIDC certification clients to built-in consent in conformance mode', async () => {
+      env.ENABLE_CONFORMANCE_MODE = 'true';
       env.UI_URL = 'https://login.example.com';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
@@ -1929,6 +2178,38 @@ describe('Authorization Handler', () => {
           authorizationDetails: authorizationDetails,
         })
       );
+    });
+
+    it('preserves security-sensitive authorization parameters from PAR', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+        'client.consent_required': false,
+      });
+      seedSession(env);
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_security_parameters';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'par-form-post',
+        response_mode: 'form_post',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('text/html');
+      const html = await response.text();
+      expect(html).toContain('name="code"');
+      expect(html).toContain('name="state" value="par-form-post"');
     });
 
     it('should return error when redirect_uri is missing and client has multiple redirect_uris', async () => {

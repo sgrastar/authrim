@@ -29,7 +29,7 @@
  *
  * Note: strictValidation=true must be set before running tests
  *   curl -X PUT https://your-authrim.example.com/api/admin/settings/introspection-validation \
- *     -H "Authorization: Bearer $ADMIN_API_SECRET" \
+ *     -H "Authorization: Bearer $ADMIN_MACHINE_ACCESS_TOKEN" \
  *     -H "Content-Type: application/json" \
  *     -d '{"strictValidation": true}'
  *
@@ -37,7 +37,7 @@
  *   BASE_URL             Target Authrim Worker URL (default: https://your-authrim.example.com)
  *   CLIENT_ID            Client ID (required)
  *   CLIENT_SECRET        Client secret (required)
- *   ADMIN_API_SECRET     Admin API secret (required)
+ *   ADMIN_MACHINE_ACCESS_TOKEN     Admin Machine Access token (required)
  *   TENANT_ID            Tenant ID for admin API requests (optional)
  *   TOKEN_COUNT          Total tokens to generate (default: 1000)
  *   CONCURRENCY          Parallel requests (default: 20)
@@ -46,7 +46,7 @@
  *   VERIFY_SAMPLE_SIZE   Sample size per category for verification (default: 5)
  *
  * Usage:
- *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node scripts/seed-access-tokens.js
+ *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz node scripts/seed-access-tokens.js
  *
  * ⚠️ Important: Regenerate seed data before each load test
  *   - Revoked token state is stored in server-side KV/DO
@@ -65,7 +65,7 @@ import { fileURLToPath } from 'node:url';
 const BASE_URL = process.env.BASE_URL || '';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const TENANT_ID = process.env.TENANT_ID || '';
 const TOKEN_COUNT = Number.parseInt(process.env.TOKEN_COUNT || '1000', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
@@ -115,13 +115,13 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
   process.exit(1);
 }
 
-if (!ADMIN_API_SECRET) {
-  console.error('❌ ADMIN_API_SECRET is required. Set environment variable.');
+if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+  console.error('❌ ADMIN_MACHINE_ACCESS_TOKEN is required. Set environment variable.');
   process.exit(1);
 }
 
 const adminAuthHeader = {
-  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
 };
 
@@ -936,7 +936,7 @@ async function main() {
   console.log('');
   console.log('⚠️  Remember to enable strictValidation before running the benchmark:');
   console.log(`   curl -X PUT ${BASE_URL}/api/admin/settings/introspection-validation \\`);
-  console.log('     -H "Authorization: Bearer \\$ADMIN_API_SECRET" \\');
+  console.log('     -H "Authorization: Bearer \\$ADMIN_MACHINE_ACCESS_TOKEN" \\');
   console.log('     -H "Content-Type: application/json" \\');
   console.log(`     -d '{"strictValidation": true}'`);
   console.log('');

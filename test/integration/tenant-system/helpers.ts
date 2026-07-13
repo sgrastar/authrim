@@ -175,6 +175,27 @@ class TenantSystemD1Database {
         .map(({ id: userId, tenant_id }) => ({ id: userId, tenant_id })) as T[];
     }
 
+    if (query.includes("FROM tenants WHERE tenant_code = ? AND lifecycle_state = 'active'")) {
+      const tenantCode = String(params[0] ?? '');
+      return this.data.tenants
+        .filter((tenant) => tenant.tenant_code === tenantCode && tenant.is_active === 1)
+        .map((tenant) => ({ ...tenant, lifecycle_state: 'active' })) as T[];
+    }
+
+    if (query.includes("FROM tenants WHERE id = ? AND lifecycle_state = 'active'")) {
+      const tenantId = String(params[0] ?? '');
+      return this.data.tenants
+        .filter((tenant) => tenant.id === tenantId && tenant.is_active === 1)
+        .map((tenant) => ({ ...tenant, lifecycle_state: 'active' })) as T[];
+    }
+
+    if (query.includes('FROM tenants') && query.includes("WHERE lifecycle_state = 'active'")) {
+      return this.data.tenants
+        .filter((tenant) => tenant.is_active === 1)
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((tenant) => ({ ...tenant, lifecycle_state: 'active' })) as T[];
+    }
+
     if (query.includes('FROM tenants WHERE tenant_code = ? AND is_active = 1')) {
       const tenantCode = String(params[0] ?? '');
       return this.data.tenants.filter(
@@ -348,6 +369,7 @@ export async function buildEnvForTopology(
   env.DEFAULT_TENANT_ID = 'first';
   env.PRIMARY_TENANT_ID = 'first';
   env.EMAIL_DOMAIN_HASH_SECRET = 'tenant-system-domain-hash-secret';
+  env.OTP_HMAC_SECRET = 'tenant-system-discovery-grant-secret';
 
   if (topology !== 'D1_single' && topology !== 'D2_mt_no_custom') {
     env.BASE_DOMAIN = commonHost;

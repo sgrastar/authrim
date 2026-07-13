@@ -7,6 +7,7 @@ import type {
 } from '../../db/adapter';
 import {
   createSessionPersistenceAdapter,
+  recordUserSessionRevocationEpoch,
   type SessionPersistenceRecord,
 } from '../session-persistence';
 
@@ -448,6 +449,19 @@ describe('session-persistence', () => {
     await persistence!.setUserSessionsRevokedAfter('shared-user', 1_750_000_000_456);
     await expect(persistence!.getUserSessionsRevokedAfter('shared-user')).resolves.toBe(
       1_750_000_000_456
+    );
+  });
+
+  it('records a shared revocation epoch for user-wide logout paths', async () => {
+    const adapter = new InMemorySessionAdapter();
+
+    await expect(
+      recordUserSessionRevocationEpoch(adapter, 'tenant-a', 'shared-user', 1_750_000_000_123)
+    ).resolves.toBe(1_750_000_000_123);
+
+    const persistence = createSessionPersistenceAdapter(adapter, 'session-store', 'tenant-a');
+    await expect(persistence!.getUserSessionsRevokedAfter('shared-user')).resolves.toBe(
+      1_750_000_000_123
     );
   });
 

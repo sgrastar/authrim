@@ -355,10 +355,6 @@ async function getTenantSigningKey(
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
   }
-  if (!env.KEY_MANAGER_SECRET) {
-    throw new Error('KEY_MANAGER_SECRET not configured');
-  }
-
   const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
   let keyData = await keyManager.getActiveKeyWithPrivateRpc();

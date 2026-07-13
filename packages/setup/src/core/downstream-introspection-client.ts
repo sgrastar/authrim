@@ -13,8 +13,9 @@ import {
 
 export interface DownstreamIntrospectionClientConfig {
   apiBaseUrl: string;
-  adminApiSecretPath?: string;
   keysDir: string;
+  /** Optional short-lived scoped Admin Machine Access token. */
+  adminBearerToken?: string;
   tenantId?: string;
   onProgress?: (message: string) => void;
   retryDelayMs?: number;
@@ -127,11 +128,6 @@ function getClientIdPath(keysDir: string): string {
 
 function getClientSecretPath(keysDir: string): string {
   return join(keysDir, CLIENT_SECRET_FILE);
-}
-
-async function readAdminApiSecret(secretPath: string): Promise<string> {
-  const secret = await readFile(secretPath, 'utf-8');
-  return secret.trim();
 }
 
 function buildAdminHeaders(adminBearerToken: string, tenantId?: string): Record<string, string> {
@@ -344,8 +340,8 @@ export async function ensureDownstreamIntrospectionClient(
 ): Promise<DownstreamIntrospectionClientResult> {
   const {
     apiBaseUrl,
-    adminApiSecretPath,
     keysDir,
+    adminBearerToken: providedAdminBearerToken,
     tenantId,
     onProgress,
     retryDelayMs = DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_BASE_DELAY_MS,
@@ -353,7 +349,7 @@ export async function ensureDownstreamIntrospectionClient(
   } = input;
 
   try {
-    let adminBearerToken: string | null = null;
+    let adminBearerToken: string | null = providedAdminBearerToken?.trim() || null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -367,14 +363,10 @@ export async function ensureDownstreamIntrospectionClient(
                 tenantId,
               })
             ).accessToken;
-          } else if (adminApiSecretPath && existsSync(adminApiSecretPath)) {
-            adminBearerToken = await readAdminApiSecret(adminApiSecretPath);
           } else {
             return {
               success: false,
-              error: adminApiSecretPath
-                ? `Admin API credential not found: ${adminApiSecretPath}`
-                : 'Admin API credential not found',
+              error: `Setup machine keys not found: ${keysDir}`,
             };
           }
         }
@@ -450,7 +442,7 @@ export async function ensureDownstreamIntrospectionClient(
           };
         }
 
-        adminBearerToken = null;
+        adminBearerToken = providedAdminBearerToken?.trim() || null;
         const delayMs = Math.min(
           retryDelayMs * attempt,
           DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS

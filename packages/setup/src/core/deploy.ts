@@ -100,6 +100,8 @@ export interface DeployOptions {
   random?: () => number;
   /** Optional cancellation signal. Gradual rollouts use it to roll traffic back on interruption. */
   signal?: AbortSignal;
+  /** Remove retired static bearer secrets after the replacement Worker code is live. */
+  cleanupLegacyStaticSecrets?: boolean;
 }
 
 export interface DeployResult {
@@ -124,6 +126,128 @@ export interface DeploymentSummary {
   startedAt: string;
   completedAt: string;
   duration: number;
+}
+
+const LEGACY_STATIC_SECRET_CLEANUP_PLAN: Partial<Record<WorkerComponent, readonly string[]>> = {
+  'ar-lib-core': ['KEY_MANAGER_SECRET', 'VERSION_MANAGER_SECRET'],
+  'ar-auth': ['ADMIN_API_SECRET', 'KEY_MANAGER_SECRET'],
+  'ar-token': ['ADMIN_API_SECRET', 'KEY_MANAGER_SECRET'],
+  'ar-management': ['KEY_MANAGER_SECRET', 'VERSION_MANAGER_SECRET'],
+};
+
+export interface LegacyStaticSecretCleanupFailure {
+  component: WorkerComponent;
+  error: string;
+}
+
+export interface LegacyStaticSecretCleanupResult {
+  failures: LegacyStaticSecretCleanupFailure[];
+  activeVersionIds: Partial<Record<WorkerComponent, string>>;
+}
+
+function parseWranglerSecretNames(stdout: unknown): Set<string> {
+  const parsed = JSON.parse(String(stdout)) as Array<{ name?: unknown }>;
+  return new Set(
+    parsed
+      .map((entry) => entry.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0)
+  );
+}
+
+/** Delete retired static bearer bindings only after their replacement Worker deployed successfully. */
+export async function cleanupLegacyStaticSecrets(
+  options: DeployOptions,
+  components: readonly WorkerComponent[]
+): Promise<LegacyStaticSecretCleanupResult> {
+  const failures: LegacyStaticSecretCleanupFailure[] = [];
+  const activeVersionIds: Partial<Record<WorkerComponent, string>> = {};
+  const throttle = makeThrottle(options);
+  const completedComponents = new Set(components);
+
+  await runBoundedPool(components, throttle, async (component) => {
+    const retiredNames = LEGACY_STATIC_SECRET_CLEANUP_PLAN[component];
+    if (!retiredNames || retiredNames.length === 0) {
+      return;
+    }
+
+    // KeyManager and VersionManager are shared providers. Keep their compatibility
+    // secrets during a partial rollout so an older caller can continue serving traffic.
+    if (
+      component === 'ar-lib-core' &&
+      !['ar-auth', 'ar-token', 'ar-management'].every((caller) =>
+        completedComponents.has(caller as WorkerComponent)
+      )
+    ) {
+      options.onProgress?.(
+        '  ↷ Deferred ar-lib-core legacy secret cleanup until all former callers are deployed'
+      );
+      return;
+    }
+
+    const packageDir = join(options.rootDir, 'packages', component);
+    if (!existsSync(packageDir)) {
+      return;
+    }
+
+    try {
+      const listed = await runWithAdaptiveRetry(
+        `Listing retired secrets for ${getWorkerName(options.env, component)}`,
+        options,
+        throttle,
+        () =>
+          execa(
+            'pnpm',
+            ['exec', 'wrangler', 'secret', 'list', ...getConfigArgs(options), '--env', options.env],
+            { cwd: packageDir, reject: true, cancelSignal: options.signal }
+          )
+      );
+      const existingNames = parseWranglerSecretNames(listed.stdout);
+      const namesToDelete = retiredNames.filter((name) => existingNames.has(name));
+      if (namesToDelete.length === 0) {
+        return;
+      }
+
+      await runWithAdaptiveRetry(
+        `Deleting retired secrets from ${getWorkerName(options.env, component)}`,
+        options,
+        throttle,
+        () =>
+          execa(
+            'pnpm',
+            ['exec', 'wrangler', 'secret', 'bulk', ...getConfigArgs(options), '--env', options.env],
+            {
+              cwd: packageDir,
+              reject: true,
+              cancelSignal: options.signal,
+              input: JSON.stringify(Object.fromEntries(namesToDelete.map((name) => [name, null]))),
+            }
+          )
+      );
+      for (const secretName of namesToDelete) {
+        options.onProgress?.(
+          `  ✓ Removed retired ${secretName} from ${getWorkerName(options.env, component)}`
+        );
+      }
+
+      // `wrangler secret bulk` creates and immediately deploys a new Worker version.
+      // Report that final active version instead of the pre-cleanup code version.
+      const context = await getWorkerDeploymentContext(component, options);
+      if (isDeployResult(context)) {
+        throw new Error(context.error || 'Failed to resolve Worker deployment context');
+      }
+      const snapshot = await readWorkerTrafficSnapshot(context, options, throttle);
+      if (snapshot.specs.length !== 1 || !snapshot.specs[0].endsWith('@100%')) {
+        throw new Error(
+          `Legacy secret cleanup did not finish on one active version: ${snapshot.specs.join(', ')}`
+        );
+      }
+      activeVersionIds[component] = snapshot.specs[0].split('@')[0];
+    } catch (error) {
+      failures.push({ component, error: sanitizeDeploymentErrorMessage(getErrorText(error)) });
+    }
+  });
+
+  return { failures, activeVersionIds };
 }
 
 export interface DeploymentCompletionState {
@@ -1732,6 +1856,27 @@ export async function deployAll(
         contexts.get(component)
       )
   );
+  if (!options.dryRun && options.cleanupLegacyStaticSecrets) {
+    const cleanupResult = await cleanupLegacyStaticSecrets(
+      options,
+      allResults.filter((result) => result.success).map((result) => result.component)
+    );
+    for (const result of allResults) {
+      const activeVersionId = cleanupResult.activeVersionIds[result.component];
+      if (activeVersionId) {
+        result.cloudflareVersionId = activeVersionId;
+        result.deployedAt = new Date().toISOString();
+      }
+    }
+    for (const failure of cleanupResult.failures) {
+      const result = allResults.find((candidate) => candidate.component === failure.component);
+      if (result) {
+        result.success = false;
+        result.trafficCommitted = true;
+        result.error = `Worker deployed, but legacy static secret cleanup failed: ${failure.error}`;
+      }
+    }
+  }
   const completedAt = new Date().toISOString();
   const successCount = allResults.filter((result) => result.success).length;
   const failedCount = allResults.length - successCount;

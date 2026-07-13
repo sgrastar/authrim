@@ -206,7 +206,6 @@ new_sqlite_classes = ["FlowStateStore"]
 
 # Environment variables
 [vars]
-KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 SHARED_TOML_EOF
         echo "  ✅ ar-lib-core/wrangler.${DEPLOY_ENV}.toml (Durable Objects)"
     fi
@@ -284,7 +283,6 @@ new_sqlite_classes = ["FlowStateStore"]
 
 # Environment variables
 [vars]
-KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 SHARED_TOML_EOF
 fi
 

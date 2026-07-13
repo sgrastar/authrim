@@ -6,6 +6,10 @@ import type {
   TransactionContext,
 } from '@authrim/ar-lib-core';
 import { DirectoryConnectorRelay } from '../directory-connector-relay';
+import {
+  buildDirectoryRelayAuthCanonical,
+  signDirectoryRelayCanonical,
+} from '../directory-relay-protocol';
 
 function createStorage() {
   const values = new Map<string, unknown>();
@@ -53,6 +57,7 @@ function createRelay(options: { connector?: Record<string, unknown> } = {}) {
     ctx,
     db,
     storage,
+    env,
   };
 }
 
@@ -85,6 +90,62 @@ function createAdapter(): DatabaseAdapter {
   };
 }
 
+function relayWebSocket(attachment: Record<string, unknown> | null) {
+  const sent: Array<Record<string, unknown>> = [];
+  const ws = {
+    deserializeAttachment: vi.fn(() => attachment),
+    send: vi.fn((value: string) => sent.push(JSON.parse(value) as Record<string, unknown>)),
+    close: vi.fn(),
+  };
+  return { ws: ws as unknown as WebSocket, sent, raw: ws };
+}
+
+const relayAttachment = {
+  connectionId: 'connection-1',
+  tenantId: 'tenant-a',
+  connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+  challengeId: 'challenge-1',
+  nonce: 'nonce-1',
+  challengeExpiresAt: Date.now() + 30_000,
+  connectedAt: Date.now(),
+};
+
+async function authResponse(overrides: Record<string, unknown> = {}) {
+  const timestamp = new Date().toISOString();
+  const base = {
+    type: 'auth.response',
+    protocol: 'authrim.wordwarden.relay.v1',
+    protocol_version: 1,
+    min_supported_version: 1,
+    tenant_id: 'tenant-a',
+    connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+    key_id: 'kid-active',
+    challenge_id: 'challenge-1',
+    nonce: 'nonce-1',
+    timestamp,
+    instance_id: 'wwi_1234567890123456789012',
+    display_name: 'Campus Relay',
+    version: '1.0.0',
+    started_at: '2026-06-24T00:00:00.000Z',
+    ...overrides,
+  };
+  const canonical = buildDirectoryRelayAuthCanonical({
+    tenantId: String(base.tenant_id),
+    connectorId: String(base.connector_id),
+    keyId: String(base.key_id),
+    protocolVersion: Number(base.protocol_version),
+    minSupportedVersion: Number(base.min_supported_version),
+    challengeId: String(base.challenge_id),
+    nonce: String(base.nonce),
+    timestamp: String(base.timestamp),
+  });
+  return {
+    ...base,
+    signature: await signDirectoryRelayCanonical(canonical, 'active-secret'),
+    ...overrides,
+  };
+}
+
 describe('DirectoryConnectorRelay', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -113,6 +174,191 @@ describe('DirectoryConnectorRelay', () => {
       protocol_version: 1,
       min_supported_version: 1,
     });
+  });
+
+  it('returns 404 for methods and paths outside the relay contract', async () => {
+    const { relay } = createRelay();
+    const response = await relay.fetch(new Request('https://directory-relay.internal/unknown'));
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'not_found' });
+  });
+
+  it('rejects malformed websocket messages without closing an otherwise usable socket', async () => {
+    const { relay } = createRelay();
+    const { ws, sent, raw } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(ws, '{');
+    await relay.webSocketMessage(ws, new Uint8Array([123]).buffer as ArrayBuffer);
+
+    expect(sent.map((message) => message.code)).toEqual(['invalid_json', 'invalid_json']);
+    expect(raw.close).not.toHaveBeenCalled();
+  });
+
+  it('closes clients that advertise an incompatible relay protocol', async () => {
+    const { relay } = createRelay();
+    const { ws, sent, raw } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify({
+        type: 'auth.response',
+        protocol: 'authrim.wordwarden.relay.v1',
+        protocol_version: 0,
+        min_supported_version: 2,
+      })
+    );
+
+    expect(sent[0]).toMatchObject({ code: 'incompatible_relay_protocol' });
+    expect(raw.close).toHaveBeenCalledWith(1008, 'incompatible relay protocol');
+  });
+
+  it('rejects unknown message types without disclosing connection state', async () => {
+    const { relay } = createRelay();
+    const { ws, sent } = relayWebSocket(relayAttachment);
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify({
+        type: 'admin.command',
+        protocol: 'authrim.wordwarden.relay.v1',
+        protocol_version: 1,
+        min_supported_version: 1,
+      })
+    );
+    expect(sent[0]).toMatchObject({ code: 'unknown_message_type' });
+  });
+
+  it('fails authentication when serialized connection state is missing or malformed', async () => {
+    const { relay } = createRelay();
+    const missing = relayWebSocket(null);
+    await relay.webSocketMessage(missing.ws, JSON.stringify(await authResponse()));
+    expect(missing.sent[0]).toMatchObject({ code: 'missing_connection_state' });
+    expect(missing.raw.close).toHaveBeenCalledWith(1011, 'missing connection state');
+
+    const malformed = relayWebSocket(relayAttachment);
+    malformed.raw.deserializeAttachment.mockImplementationOnce(() => {
+      throw new Error('corrupt attachment');
+    });
+    await relay.webSocketMessage(malformed.ws, JSON.stringify(await authResponse()));
+    expect(malformed.sent[0]).toMatchObject({ code: 'missing_connection_state' });
+  });
+
+  it.each([
+    ['tenant_id', 'tenant-b'],
+    ['connector_id', 'wwcon_OTHERCONNECTOR1234567890'],
+    ['challenge_id', 'challenge-other'],
+    ['nonce', 'nonce-other'],
+  ])('rejects authentication context substitution through %s', async (field, value) => {
+    const { relay, storage } = createRelay();
+    const { ws, sent, raw } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(ws, JSON.stringify(await authResponse({ [field]: value })));
+
+    expect(sent[0]).toMatchObject({ code: 'auth_context_mismatch' });
+    expect(raw.close).toHaveBeenCalledWith(1008, 'auth context mismatch');
+    expect(storage._values.get('auth-failure:tenant-a:wwcon_8K4M2Q9F7D3H6P1X')).toMatchObject({
+      count: 1,
+    });
+  });
+
+  it.each([
+    ['expired challenge', { challengeExpiresAt: Date.now() - 1 }, {}],
+    ['invalid timestamp', relayAttachment, { timestamp: 'not-a-date' }],
+    [
+      'timestamp outside the maximum window',
+      relayAttachment,
+      { timestamp: new Date(Date.now() - 10 * 60_000).toISOString() },
+    ],
+  ])('rejects stale authentication: %s', async (_label, attachment, overrides) => {
+    const { relay } = createRelay();
+    const { ws, sent, raw } = relayWebSocket({ ...relayAttachment, ...attachment });
+
+    await relay.webSocketMessage(ws, JSON.stringify(await authResponse(overrides)));
+
+    expect(sent[0]).toMatchObject({ code: 'stale_auth_challenge' });
+    expect(raw.close).toHaveBeenCalledWith(1008, 'stale auth challenge');
+  });
+
+  it('rejects a replayed authentication nonce before verifying the signature', async () => {
+    const { relay, storage } = createRelay();
+    await storage.put('used-nonce:tenant-a:wwcon_8K4M2Q9F7D3H6P1X:nonce-1', {
+      expiresAt: Date.now() + 30_000,
+    });
+    const { ws, sent } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(ws, JSON.stringify(await authResponse()));
+
+    expect(sent[0]).toMatchObject({ code: 'replayed_auth_challenge' });
+  });
+
+  it('deletes an expired nonce record and permits a fresh authentication', async () => {
+    const { relay, storage } = createRelay();
+    await storage.put('used-nonce:tenant-a:wwcon_8K4M2Q9F7D3H6P1X:nonce-1', {
+      expiresAt: Date.now() - 1,
+    });
+    const { ws, sent } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(ws, JSON.stringify(await authResponse()));
+
+    expect(sent.at(-1)).toMatchObject({ type: 'auth.ok', tenant_id: 'tenant-a' });
+    expect(storage.delete).toHaveBeenCalledWith(
+      'used-nonce:tenant-a:wwcon_8K4M2Q9F7D3H6P1X:nonce-1'
+    );
+  });
+
+  it.each([
+    ['unknown key', { key_id: 'kid-unknown' }],
+    ['invalid signature encoding', { signature: '<not-hex>' }],
+    ['wrong signature', { signature: '0'.repeat(64) }],
+  ])('fails closed for %s', async (_label, overrides) => {
+    const { relay } = createRelay();
+    const { ws, sent, raw } = relayWebSocket(relayAttachment);
+    const message = await authResponse(overrides);
+    if ('signature' in overrides) Object.assign(message, overrides);
+
+    await relay.webSocketMessage(ws, JSON.stringify(message));
+
+    expect(sent[0]).toMatchObject({ code: 'relay_auth_failed' });
+    expect(raw.close).toHaveBeenCalledWith(1008, 'relay authentication failed');
+  });
+
+  it('authenticates a signed connector, persists key state, and never stores the secret', async () => {
+    const { relay, storage } = createRelay();
+    const { ws, sent, raw } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(ws, JSON.stringify(await authResponse()));
+
+    expect(sent.at(-1)).toMatchObject({
+      type: 'auth.ok',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+    });
+    expect(raw.close).not.toHaveBeenCalled();
+    expect(storage._values.get('connection:connection-1')).toMatchObject({
+      authenticated: true,
+      tenantId: 'tenant-a',
+      keyId: 'kid-active',
+    });
+    expect(JSON.stringify([...storage._values.entries()])).not.toContain('active-secret');
+  });
+
+  it('blocks reconnects after the configured authentication failure threshold', async () => {
+    const { relay, storage } = createRelay({
+      connector: {
+        relay: {
+          auth_failure_rate_limit_per_minute: 1,
+          auth_failure_block_ms: 60_000,
+        },
+      },
+    });
+    const { ws } = relayWebSocket(relayAttachment);
+    const message = await authResponse({ signature: '0'.repeat(64) });
+    Object.assign(message, { signature: '0'.repeat(64) });
+    await relay.webSocketMessage(ws, JSON.stringify(message));
+
+    const blocked = storage._values.get('auth-failure:tenant-a:wwcon_8K4M2Q9F7D3H6P1X') as {
+      blockedUntil?: number;
+    };
+    expect(blocked.blockedUntil).toBeGreaterThan(Date.now());
   });
 
   it('records connector fleet registration when relay auth includes instance metadata', async () => {
@@ -476,6 +722,307 @@ describe('DirectoryConnectorRelay', () => {
     expect(eventRecord.events[0]).toMatchObject({
       code: 'relay_verify_error',
       retryable: false,
+    });
+  });
+
+  it.each(['verify.response', 'verify.error'])(
+    'rejects an unauthenticated %s message',
+    async (type) => {
+      const { relay } = createRelay();
+      const { ws, sent, raw } = relayWebSocket(relayAttachment);
+      const message =
+        type === 'verify.response'
+          ? {
+              type,
+              protocol: 'authrim.wordwarden.relay.v1',
+              protocol_version: 1,
+              min_supported_version: 1,
+              id: 'message-1',
+              request_id: 'request-1',
+              tenant_id: 'tenant-a',
+              connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+              result: 'failure',
+              directory_status: 'ok',
+            }
+          : {
+              type,
+              protocol: 'authrim.wordwarden.relay.v1',
+              protocol_version: 1,
+              min_supported_version: 1,
+              id: 'message-1',
+              error: { code: 'directory_rejected', retryable: false },
+            };
+
+      await relay.webSocketMessage(ws, JSON.stringify(message));
+
+      expect(sent[0]).toMatchObject({ code: 'unauthenticated' });
+      expect(raw.close).toHaveBeenCalledWith(1008, 'unauthenticated');
+    }
+  );
+
+  it.each(['verify.response', 'verify.error'])(
+    'does not accept an unknown request ID from an authenticated %s',
+    async (type) => {
+      const { relay, storage } = createRelay();
+      await storage.put('connection:connection-1', {
+        authenticated: true,
+        tenantId: 'tenant-a',
+        connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+        keyId: 'kid-active',
+        authenticatedAt: Date.now(),
+      });
+      const { ws, sent, raw } = relayWebSocket(relayAttachment);
+      const common = {
+        type,
+        protocol: 'authrim.wordwarden.relay.v1',
+        protocol_version: 1,
+        min_supported_version: 1,
+        id: 'unknown-message',
+      };
+      const message =
+        type === 'verify.response'
+          ? {
+              ...common,
+              request_id: 'request-1',
+              tenant_id: 'tenant-a',
+              connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+              result: 'failure',
+              directory_status: 'ok',
+            }
+          : { ...common, error: { code: 'directory_rejected', retryable: false } };
+
+      await relay.webSocketMessage(ws, JSON.stringify(message));
+
+      expect(sent[0]).toMatchObject({ code: 'unknown_request_id' });
+      expect(raw.close).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['request_id', 'request-other'],
+    ['tenant_id', 'tenant-b'],
+    ['connector_id', 'wwcon_OTHERCONNECTOR1234567890'],
+  ])('rejects a verify response with mismatched %s', async (field, value) => {
+    const { relay, storage } = createRelay();
+    await storage.put('connection:connection-1', {
+      authenticated: true,
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+      keyId: 'kid-active',
+      authenticatedAt: Date.now(),
+    });
+    const timeout = setTimeout(() => undefined, 1000);
+    const reject = vi.fn();
+    const internals = relay as unknown as {
+      pending: Map<string, Record<string, unknown>>;
+    };
+    internals.pending.set('message-1', {
+      resolve: vi.fn(),
+      reject,
+      timeout,
+      expiresAt: Date.now() + 1000,
+      requestId: 'request-1',
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+    });
+    const { ws, raw } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify({
+        type: 'verify.response',
+        protocol: 'authrim.wordwarden.relay.v1',
+        protocol_version: 1,
+        min_supported_version: 1,
+        id: 'message-1',
+        request_id: 'request-1',
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'failure',
+        directory_status: 'ok',
+        [field]: value,
+      })
+    );
+
+    clearTimeout(timeout);
+    expect(reject).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'relay_response_mismatch', retryable: false })
+    );
+    expect(raw.close).toHaveBeenCalledWith(1008, 'relay response mismatch');
+    expect(internals.pending.has('message-1')).toBe(false);
+  });
+
+  it('resolves a pending request only for an authenticated matching response', async () => {
+    const { relay, storage } = createRelay();
+    await storage.put('connection:connection-1', {
+      authenticated: true,
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+      keyId: 'kid-active',
+      authenticatedAt: Date.now(),
+    });
+    const timeout = setTimeout(() => undefined, 1000);
+    const resolve = vi.fn();
+    const internals = relay as unknown as { pending: Map<string, Record<string, unknown>> };
+    internals.pending.set('message-1', {
+      resolve,
+      reject: vi.fn(),
+      timeout,
+      expiresAt: Date.now() + 1000,
+      requestId: 'request-1',
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+    });
+    const { ws } = relayWebSocket(relayAttachment);
+    const message = {
+      type: 'verify.response',
+      protocol: 'authrim.wordwarden.relay.v1',
+      protocol_version: 1,
+      min_supported_version: 1,
+      id: 'message-1',
+      request_id: 'request-1',
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      result: 'success',
+      directory_status: 'ok',
+    };
+
+    await relay.webSocketMessage(ws, JSON.stringify(message));
+
+    clearTimeout(timeout);
+    expect(resolve).toHaveBeenCalledWith(message);
+    expect(internals.pending.has('message-1')).toBe(false);
+  });
+
+  it.each([
+    ['request_id', 'request-other'],
+    ['tenant_id', 'tenant-b'],
+    ['connector_id', 'wwcon_OTHERCONNECTOR1234567890'],
+  ])('rejects a verify error with mismatched optional %s', async (field, value) => {
+    const { relay, storage } = createRelay();
+    await storage.put('connection:connection-1', {
+      authenticated: true,
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+      keyId: 'kid-active',
+      authenticatedAt: Date.now(),
+    });
+    const timeout = setTimeout(() => undefined, 1000);
+    const reject = vi.fn();
+    const internals = relay as unknown as { pending: Map<string, Record<string, unknown>> };
+    internals.pending.set('message-1', {
+      resolve: vi.fn(),
+      reject,
+      timeout,
+      expiresAt: Date.now() + 1000,
+      requestId: 'request-1',
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+    });
+    const { ws, raw } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify({
+        type: 'verify.error',
+        protocol: 'authrim.wordwarden.relay.v1',
+        protocol_version: 1,
+        min_supported_version: 1,
+        id: 'message-1',
+        error: { code: 'directory_rejected', retryable: false },
+        [field]: value,
+      })
+    );
+
+    clearTimeout(timeout);
+    expect(reject).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'relay_response_mismatch', retryable: false })
+    );
+    expect(raw.close).toHaveBeenCalledWith(1008, 'relay response mismatch');
+  });
+
+  it('returns a stable error when forwarding to an authenticated socket throws', async () => {
+    const { relay, ctx, storage } = createRelay();
+    await storage.put('connection:connection-1', {
+      authenticated: true,
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+      keyId: 'kid-active',
+      authenticatedAt: Date.now(),
+    });
+    const socket = relayWebSocket(relayAttachment);
+    socket.raw.send.mockImplementationOnce(() => {
+      throw new Error('socket closed');
+    });
+    ctx.getWebSockets.mockReturnValue([socket.ws]);
+
+    const response = await relay.fetch(
+      new Request('https://directory-relay.internal/verify-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: 'request-1',
+          tenant_id: 'tenant-a',
+          connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+          username: 'alice',
+          password: 'secret',
+          attribute_names: ['mail'],
+        }),
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'relay_send_failed', retryable: true },
+    });
+  });
+
+  it('rejects all pending requests for the connector when its authenticated socket closes', async () => {
+    const { relay, storage } = createRelay();
+    await storage.put('connection:connection-1', {
+      authenticated: true,
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+      keyId: 'kid-active',
+      authenticatedAt: Date.now(),
+    });
+    const timeout = setTimeout(() => undefined, 1000);
+    const reject = vi.fn();
+    const internals = relay as unknown as { pending: Map<string, Record<string, unknown>> };
+    internals.pending.set('message-1', {
+      resolve: vi.fn(),
+      reject,
+      timeout,
+      expiresAt: Date.now() + 1000,
+      requestId: 'request-1',
+      tenantId: 'tenant-a',
+      connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
+    });
+    const { ws } = relayWebSocket(relayAttachment);
+
+    await relay.webSocketClose(ws);
+
+    clearTimeout(timeout);
+    expect(reject).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'relay_connection_closed', retryable: true })
+    );
+    expect(storage._values.has('connection:connection-1')).toBe(false);
+  });
+
+  it('validates required event query parameters and returns an empty event list', async () => {
+    const { relay } = createRelay();
+    const invalid = await relay.fetch(new Request('https://directory-relay.internal/events'));
+    expect(invalid.status).toBe(400);
+
+    const valid = await relay.fetch(
+      new Request(
+        'https://directory-relay.internal/events?tenant_id=tenant-a&connector_id=wwcon_8K4M2Q9F7D3H6P1X'
+      )
+    );
+    expect(await valid.json()).toMatchObject({
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      events: [],
     });
   });
 });

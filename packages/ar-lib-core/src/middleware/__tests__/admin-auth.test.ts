@@ -126,8 +126,6 @@ function createMockDB(
  */
 function createMockEnv(overrides: Partial<Env> = {}): Env {
   return {
-    ADMIN_API_SECRET: 'test-admin-secret',
-    KEY_MANAGER_SECRET: 'test-key-manager-secret',
     ISSUER_URL: 'https://test.example.com',
     DB: createMockDB(),
     ...overrides,
@@ -303,7 +301,7 @@ describe('adminAuthMiddleware', () => {
   });
 
   describe('Bearer Token Authentication', () => {
-    it('should reject legacy ADMIN_API_SECRET bearer authentication', async () => {
+    it('should reject a legacy unscoped static bearer token', async () => {
       const app = createTestApp(mockEnv);
 
       const request = new Request('http://localhost/api/admin/test', {
@@ -319,11 +317,8 @@ describe('adminAuthMiddleware', () => {
       expect(data.error).toBe('invalid_token');
     });
 
-    it('should reject legacy KEY_MANAGER_SECRET bearer fallback', async () => {
-      const env = createMockEnv({
-        ADMIN_API_SECRET: undefined,
-        KEY_MANAGER_SECRET: 'test-key-manager-secret',
-      });
+    it('should reject an internal component secret as Admin API authentication', async () => {
+      const env = createMockEnv();
       const app = createTestApp(env);
 
       const request = new Request('http://localhost/api/admin/test', {
@@ -356,11 +351,8 @@ describe('adminAuthMiddleware', () => {
       expect(data.error).toBe('invalid_token');
     });
 
-    it('should reject when no secrets are configured', async () => {
-      const env = createMockEnv({
-        ADMIN_API_SECRET: undefined,
-        KEY_MANAGER_SECRET: undefined,
-      });
+    it('should reject arbitrary bearer tokens when no machine credential matches', async () => {
+      const env = createMockEnv();
       const app = createTestApp(env);
 
       const request = new Request('http://localhost/api/admin/test', {
@@ -1307,7 +1299,7 @@ describe('adminAuthMiddleware', () => {
       expect(data.adminAuth.authMethod).toBe('session');
     });
 
-    it('should prefer valid session over legacy ADMIN_API_SECRET bearer auth', async () => {
+    it('should prefer a valid session over an invalid bearer token', async () => {
       const userId = 'admin-user-session-wins';
       const db = createMockDB({
         session: createValidSession(userId),

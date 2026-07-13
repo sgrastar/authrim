@@ -58,6 +58,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
+    recordUserSessionRevocationEpoch: vi.fn().mockResolvedValue(1_750_000_000_000),
   };
 });
 
@@ -71,6 +72,7 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   resolveLogoutTargetsFromSessionClientStore,
+  recordUserSessionRevocationEpoch,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -1019,7 +1021,7 @@ describe('Back-channel Logout', () => {
       consoleWarnSpy.mockRestore();
     });
 
-    it('should log warning when sid is not provided (sharded store limitation)', async () => {
+    it('should revoke all user sessions by epoch when sid is not provided', async () => {
       const { c } = createMockContext({
         method: 'POST',
         body: {
@@ -1028,8 +1030,6 @@ describe('Back-channel Logout', () => {
         headers: VALID_BACKCHANNEL_AUTH_HEADER,
       });
       mockValidBackchannelClient(c);
-
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -1047,10 +1047,11 @@ describe('Back-channel Logout', () => {
 
       // Should NOT call the sharded session store (no sid means cannot locate shard)
       expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
-      // Should log a warning about the sharded store limitation
-      expect(consoleWarnSpy).toHaveBeenCalled();
-
-      consoleWarnSpy.mockRestore();
+      expect(recordUserSessionRevocationEpoch).toHaveBeenCalledWith(
+        expect.anything(),
+        'default',
+        'user-123'
+      );
     });
   });
 

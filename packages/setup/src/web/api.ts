@@ -81,6 +81,7 @@ import {
   buildUrlsConfig,
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
+  resolveLoginUiExecutionOrigin,
   validateDomainRoutingConfig,
 } from '../core/url-config.js';
 import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
@@ -613,6 +614,10 @@ export function createApiRoutes(): Hono {
     c: Parameters<Parameters<typeof api.use>[1]>[0],
     next: () => Promise<void>
   ) => {
+    if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+      await next();
+      return;
+    }
     const token = c.req.header('X-Session-Token');
     if (!sessionToken || token !== sessionToken) {
       return c.json({ error: 'Invalid or missing session token' }, 401);
@@ -1322,6 +1327,7 @@ export function createApiRoutes(): Hono {
           existingComponents: WORKER_COMPONENTS.filter(
             (component) => lock.workers?.[component] !== undefined
           ),
+          cleanupLegacyStaticSecrets: true,
           onProgress: addProgress,
         };
         routerDeployOptions.existingComponents = await resolveExistingWorkerComponents(
@@ -2146,6 +2152,7 @@ export function createApiRoutes(): Hono {
             deploymentStrategy: 'auto',
             existingComponents,
             secrets: deploymentSecrets,
+            cleanupLegacyStaticSecrets: true,
             onProgress: addProgress,
             onError: (comp, error) => {
               addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -2453,17 +2460,12 @@ export function createApiRoutes(): Hono {
 
           let loginUiClientId: string | undefined;
           if (cfg?.components?.loginUi && !dryRun) {
-            const loginUiUrl =
-              cfg?.urls?.loginUi?.custom ||
-              cfg?.urls?.loginUi?.auto ||
-              `https://${env}-ar-login-ui.workers.dev`;
-            const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+            const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
 
             const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
             const clientResult = await ensureLoginUiClient({
               apiBaseUrl,
               loginUiUrl,
-              adminApiSecretPath,
               keysDir,
               tenantId: cfg?.tenant?.name,
               onProgress: addProgress,
@@ -2713,6 +2715,12 @@ export function createApiRoutes(): Hono {
       try {
         const body = await c.req.json();
         const { env, baseUrl } = body;
+
+        if (!env || !baseUrl) {
+          addProgress('Error: env and baseUrl are required');
+          return c.json({ success: false, error: 'env and baseUrl are required' }, 400);
+        }
+
         const baseDir = findAuthrimBaseDir(process.cwd());
 
         // Determine structure type
@@ -2751,11 +2759,6 @@ export function createApiRoutes(): Hono {
         addProgress(
           `Admin setup request: env=${env}, baseUrl=${resolvedBaseUrl}, structure=${resolved.type}`
         );
-
-        if (!env || !resolvedBaseUrl) {
-          addProgress('Error: env and baseUrl are required');
-          return c.json({ success: false, error: 'env and baseUrl are required' }, 400);
-        }
 
         addProgress('Setting up initial admin...');
         addProgress(`Looking for setup token at: ${tokenPath}`);
@@ -3571,6 +3574,7 @@ export function createApiRoutes(): Hono {
             (component) => lock.workers?.[component] !== undefined
           ),
           secrets: deploymentSecrets,
+          cleanupLegacyStaticSecrets: true,
           onProgress: addProgress,
           onError: (comp: string, error: Error) => {
             addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
@@ -3888,17 +3892,12 @@ export function createApiRoutes(): Hono {
                   );
                 }
 
-                const loginUiUrl =
-                  cfg?.urls?.loginUi?.custom ||
-                  cfg?.urls?.loginUi?.auto ||
-                  `https://${env}-ar-login-ui.workers.dev`;
-                const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
+                const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
 
                 const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
                 const clientResult = await ensureLoginUiClient({
                   apiBaseUrl,
                   loginUiUrl,
-                  adminApiSecretPath,
                   keysDir,
                   tenantId: cfg?.tenant?.name,
                   onProgress: addProgress,
@@ -4129,6 +4128,7 @@ export function createApiRoutes(): Hono {
               (component) => componentLock?.workers?.[component] !== undefined
             ),
             secrets: deploymentSecrets,
+            cleanupLegacyStaticSecrets: true,
             onProgress: addProgress,
           };
           if (!dryRun) {

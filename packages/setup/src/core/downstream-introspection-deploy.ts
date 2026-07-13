@@ -1,4 +1,4 @@
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { getWorkersSubdomain } from './cloudflare.js';
 import { deployWorker, type DeployOptions, type DeployResult } from './deploy.js';
 import {
@@ -112,7 +112,6 @@ export async function configureDownstreamIntrospectionDeployment(
     };
   }
 
-  const adminApiSecretPath = join(keysDir, 'admin_api_secret.txt');
   const apiBaseUrls = await resolveDownstreamIntrospectionApiBaseUrlCandidates(
     env,
     options.apiBaseUrl,
@@ -140,7 +139,6 @@ export async function configureDownstreamIntrospectionDeployment(
 
     const introspectionClientResult = await ensureDownstreamIntrospectionClient({
       apiBaseUrl,
-      adminApiSecretPath,
       keysDir,
       tenantId,
       maxRetries: 24,

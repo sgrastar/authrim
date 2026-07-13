@@ -60,6 +60,8 @@ import {
   consumeAuthState,
   cleanupExpiredStates,
   getStateExpiresAt,
+  getAuthStateCookieName,
+  matchesAuthStateCookie,
 } from '../utils/state';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -70,6 +72,23 @@ describe('Auth State Management', () => {
     // Reset mock implementations to defaults
     mockExecute.mockResolvedValue({ rowsAffected: 1 });
     mockQueryOne.mockResolvedValue(null);
+  });
+
+  describe('browser binding', () => {
+    it('uses a distinct non-plaintext cookie name for each state', async () => {
+      const first = await getAuthStateCookieName('state-one');
+      const second = await getAuthStateCookieName('state-two');
+
+      expect(first).toMatch(/^authrim_external_state_[a-f0-9]{64}$/);
+      expect(first).not.toContain('state-one');
+      expect(second).not.toBe(first);
+    });
+
+    it('requires the initiating browser cookie to match the callback state', () => {
+      expect(matchesAuthStateCookie('expected-state', 'expected-state')).toBe(true);
+      expect(matchesAuthStateCookie('expected-state', 'attacker-state')).toBe(false);
+      expect(matchesAuthStateCookie('expected-state', undefined)).toBe(false);
+    });
   });
 
   describe('storeAuthState', () => {

@@ -139,6 +139,10 @@ describe('generic admin job executor', () => {
     mockEmitRuntimeLogRecords.mockReset();
     mockEmitRuntimeLogRecords.mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] });
     mockTenantCoreAdapter.query.mockReset();
+    mockTenantCoreAdapter.queryOne.mockReset();
+    mockTenantCoreAdapter.execute.mockReset();
+    mockTenantCoreAdapter.queryOne.mockResolvedValue(null);
+    mockTenantCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockTenantPiiAdapter.query.mockReset();
     mockTenantCoreAdapter.query.mockResolvedValue([]);
     mockTenantPiiAdapter.query.mockResolvedValue([]);
@@ -232,6 +236,117 @@ describe('generic admin job executor', () => {
           }),
         ],
       })
+    );
+  });
+
+  it('completes lifecycle restore validation only after real storage and protocol probes', async () => {
+    const r2 = createMockR2Bucket();
+    const tenantSettings = JSON.stringify({
+      'tenant.allowed_identifiers': 'https://tenant-a.auth.example.com',
+    });
+    const kv = {
+      get: vi.fn(async () => tenantSettings),
+      delete: vi.fn(async () => undefined),
+    };
+    const tokenKv = {
+      list: vi.fn(async () => ({ keys: [] })),
+      get: vi.fn(async () => null),
+    };
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-lifecycle-restore',
+        tenant_id: 'tenant-a',
+        job_type: 'tenants/lifecycle-validation',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          command: 'restore-validate',
+          validation_kind: 'restore',
+          source_state: 'restore_pending',
+          target_state: 'active',
+          reason: 'restore completed',
+          idempotency_key: 'restore-key',
+          actor_id: 'admin-1',
+        }),
+        created_at: 1,
+        tenant_lifecycle_state: 'restore_validating',
+      },
+    ]);
+    mockAdapter.queryOne
+      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'restore_validating' })
+      .mockResolvedValueOnce({ ok: 1 })
+      .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-restore', tenant_id: 'tenant-a' })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ id: 'audit-1' })
+      .mockResolvedValueOnce({ updated_at: 10 });
+
+    await processPendingGenericAdminJobs(
+      {
+        BASE_DOMAIN: 'auth.example.com',
+        AUTHRIM_CONFIG: kv,
+        INITIAL_ACCESS_TOKENS: tokenKv,
+        EXPORT_ARTIFACTS: r2.bucket,
+        DB_ADMIN: mockTenantCoreAdapter,
+      } as never,
+      logger
+    );
+
+    expect(r2.put).toHaveBeenCalledOnce();
+    expect(kv.get).toHaveBeenCalledWith('settings:tenant:tenant-a:tenant');
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
+      expect.arrayContaining(['active', 'tenant-a', 'restore_validating'])
+    );
+    expect(mockTenantCoreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_audit_log'),
+      expect.arrayContaining(['tenant.lifecycle.validation_completed'])
+    );
+  });
+
+  it('keeps the safe lifecycle state and audits retry when a required probe fails', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-lifecycle-failure',
+        tenant_id: 'tenant-a',
+        job_type: 'tenants/lifecycle-validation',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          command: 'unfreeze',
+          validation_kind: 'unfreeze',
+          source_state: 'frozen',
+          target_state: 'active',
+          reason: 'incident resolved',
+          idempotency_key: 'unfreeze-key',
+          actor_id: 'admin-1',
+        }),
+        created_at: 1,
+        attempt_count: 0,
+        max_attempts: 3,
+        tenant_lifecycle_state: 'frozen',
+      },
+    ]);
+    mockAdapter.queryOne
+      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'frozen' })
+      .mockResolvedValueOnce({ ok: 1 })
+      .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-failure', tenant_id: 'tenant-a' });
+
+    await processPendingGenericAdminJobs(
+      { BASE_DOMAIN: 'auth.example.com', DB_ADMIN: mockTenantCoreAdapter } as never,
+      logger
+    );
+
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
+      expect.anything()
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'pending'"),
+      expect.arrayContaining([expect.stringContaining('kv_binding_missing'), 1, 3])
+    );
+    expect(mockTenantCoreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_audit_log'),
+      expect.arrayContaining(['tenant.lifecycle.validation_retry_scheduled'])
     );
   });
 

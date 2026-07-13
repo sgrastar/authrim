@@ -7,6 +7,9 @@ import {
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
   adminTenantUpdateHandler,
+  adminTenantSuspendHandler,
+  adminTenantResumeHandler,
+  adminTenantLifecycleJobRetryHandler,
   adminTenantsListHandler,
 } from '../admin-tenants';
 
@@ -55,6 +58,12 @@ const adapters = vi.hoisted(() => ({
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
+  ADMIN_PERMISSIONS: {
+    TENANT_LIFECYCLE_BREAK_GLASS: 'admin:tenants:lifecycle:break_glass',
+  },
+  hasAdminPermission: vi.fn((permissions: string[], required: string) =>
+    permissions.includes(required)
+  ),
   AR_ERROR_CODES: {
     ADMIN_RESOURCE_NOT_FOUND: 'admin_resource_not_found',
     ADMIN_INSUFFICIENT_PERMISSIONS: 'admin_insufficient_permissions',
@@ -214,13 +223,20 @@ function createContext(
   body: Record<string, unknown>,
   envOverrides: Partial<Env> = {},
   routeParams: Record<string, string> = {},
-  adminAuth: Record<string, unknown> = { adminId: 'platform-admin', roles: ['system_admin'] }
+  adminAuth: Record<string, unknown> = {
+    userId: 'platform-admin',
+    roles: ['system_admin'],
+    permissions: [],
+  }
 ) {
   const responseHeaders = new Headers();
   return {
     req: {
       json: vi.fn(async () => body),
       param: vi.fn((name: string) => routeParams[name]),
+      header: vi.fn((name: string) =>
+        name.toLowerCase() === 'idempotency-key' ? 'lifecycle-test-key' : undefined
+      ),
     },
     env: {
       BASE_DOMAIN: 'auth.example.com',
@@ -1066,7 +1082,7 @@ describe('tenant D1 pool tenant management', () => {
     expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'deleted' });
   });
 
-  it('allows operator lifecycle updates only for mutable lifecycle states', async () => {
+  it('requires dedicated commands for operator lifecycle updates', async () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'active' });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
@@ -1086,10 +1102,152 @@ describe('tenant D1 pool tenant management', () => {
     const response = await adminTenantUpdateHandler(
       createContext({ lifecycle_state: 'suspended' }, {}, { id: 'second' })
     );
-    const body = (await response.json()) as TenantRow;
+    expect(response.status).toBe(400);
+    expect(tenantRow).toMatchObject({ id: 'second', lifecycle_state: 'active' });
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('suspends an active tenant through a dedicated idempotent command', async () => {
+    let tenantRow = createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
+    adapters.defaultAdapter = createAdapter((sql, params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
+      if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
+        tenantRow = {
+          ...tenantRow,
+          lifecycle_state: String(params[0]),
+          updated_at: Number(params[1]),
+        };
+        return { rowsAffected: 1 };
+      }
+      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) {
+        return { rowsAffected: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const response = await adminTenantSuspendHandler(
+      createContext(
+        { expected_state: 'active', expected_updated_at: 10, reason: 'contract pause' },
+        {},
+        { id: 'second' }
+      )
+    );
+    const body = (await response.json()) as { lifecycle_state: string; status: string };
 
     expect(response.status).toBe(200);
-    expect(body).toMatchObject({ id: 'second', lifecycle_state: 'suspended' });
+    expect(body).toMatchObject({ lifecycle_state: 'suspended', status: 'completed' });
+    expect(tenantRow.lifecycle_state).toBe('suspended');
+    expect(tenantRow.updated_at).toBeGreaterThan(10);
+  });
+
+  it('queues resume validation without activating the tenant early', async () => {
+    let tenantRow = createTenantRow('second', { lifecycle_state: 'suspended', updated_at: 10 });
+    adapters.defaultAdapter = createAdapter((sql, params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
+      if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
+        tenantRow = { ...tenantRow, updated_at: Number(params[1]) };
+        return { rowsAffected: 1 };
+      }
+      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) {
+        return { rowsAffected: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const response = await adminTenantResumeHandler(
+      createContext(
+        { expected_state: 'suspended', expected_updated_at: 10, reason: 'service restored' },
+        {},
+        { id: 'second' }
+      )
+    );
+    const body = (await response.json()) as { lifecycle_state: string; status: string };
+
+    expect(response.status).toBe(202);
+    expect(body).toMatchObject({ lifecycle_state: 'suspended', status: 'pending' });
+    expect(tenantRow.lifecycle_state).toBe('suspended');
+  });
+
+  it('rejects stale lifecycle commands before writing a job', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
+        return createTenantRow('second', { lifecycle_state: 'active', updated_at: 11 });
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const response = await adminTenantSuspendHandler(
+      createContext(
+        { expected_state: 'active', expected_updated_at: 10, reason: 'contract pause' },
+        {},
+        { id: 'second' }
+      )
+    );
+
+    expect(response.status).toBe(409);
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects reuse of an idempotency key with a different payload', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) {
+        return {
+          id: 'existing-job',
+          status: 'completed',
+          progress: '{}',
+          config: JSON.stringify({
+            command: 'freeze',
+            source_state: 'active',
+            expected_updated_at: 10,
+            reason: 'security incident',
+            break_glass: false,
+          }),
+        };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const response = await adminTenantSuspendHandler(
+      createContext(
+        { expected_state: 'active', expected_updated_at: 10, reason: 'contract pause' },
+        {},
+        { id: 'second' }
+      )
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('idempotency_conflict');
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('requeues a failed lifecycle validation job with retry history preserved', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) {
+        return {
+          id: 'lifecycle-job-1',
+          status: 'failed',
+          config: JSON.stringify({ source_state: 'frozen', reason: 'incident resolved' }),
+        };
+      }
+      if (op === 'execute' && sql.includes('UPDATE admin_jobs')) return { rowsAffected: 1 };
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const response = await adminTenantLifecycleJobRetryHandler(
+      createContext({}, {}, { id: 'second', jobId: 'lifecycle-job-1' })
+    );
+    const body = (await response.json()) as { status: string; lifecycle_state: string };
+
+    expect(response.status).toBe(202);
+    expect(body).toMatchObject({ status: 'pending', lifecycle_state: 'frozen' });
+    expect(adapters.defaultAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'pending'"),
+      expect.arrayContaining(['lifecycle-job-1', 'second'])
+    );
   });
 
   it('rejects direct PATCH requests to internal lifecycle states', async () => {
@@ -1119,7 +1277,7 @@ describe('tenant D1 pool tenant management', () => {
     const body = (await response.json()) as { details?: { variables?: { reason?: string } } };
 
     expect(response.status).toBe(400);
-    expect(body.details?.variables?.reason).toBe('Lifecycle state requires a dedicated operation');
+    expect(body.details?.variables?.reason).toContain('lifecycle_state');
     expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
   });
 
@@ -1137,7 +1295,7 @@ describe('tenant D1 pool tenant management', () => {
     const body = (await response.json()) as { details?: { variables?: { reason?: string } } };
 
     expect(response.status).toBe(400);
-    expect(body.details?.variables?.reason).toBe('Cannot deactivate the default tenant');
+    expect(body.details?.variables?.reason).toContain('lifecycle_state');
     expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
   });
 

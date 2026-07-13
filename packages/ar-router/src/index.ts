@@ -66,6 +66,8 @@ interface Env {
   SERVICE_SITE_BINDING?: string;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
+  /** Enable Login UI paths on the issuer without proxying the API root (true/false) */
+  ENABLE_LOGIN_UI_PATH_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
   ENABLE_ADMIN_UI_PROXY?: string;
 }
@@ -76,7 +78,7 @@ const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
 const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
 const SERVICE_SITE_SETTINGS_CACHE_TTL_MS = 5_000;
 
-// Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
+// Login UI paths that should be proxied when the Login UI path proxy is enabled.
 const LOGIN_UI_PATHS = [
   '/discover',
   '/invite',
@@ -132,6 +134,13 @@ function isLoginUiBackendProxyRequest(request: Request): boolean {
 
 function isDedicatedLoginUiHostMode(env: Env): boolean {
   return env.LOGIN_UI_HOST_MODE !== 'shared';
+}
+
+function isLoginUiPathProxyEnabled(env: Env): boolean {
+  // ENABLE_LOGIN_UI_PROXY is retained as the backwards-compatible fallback for
+  // existing deployments. New setup output enables the path proxy separately so
+  // an issuer can serve /login without changing the API response at /.
+  return env.ENABLE_LOGIN_UI_PATH_PROXY === 'true' || env.ENABLE_LOGIN_UI_PROXY === 'true';
 }
 
 function normalizeForwardedHostHeader(value: string | null): string | null {
@@ -503,7 +512,7 @@ app.use('*', async (c, next) => {
     return next();
   }
 
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
     const accountPageSettings = await resolveAccountPageSettings(c);
     if (
       accountPageSettings.enabled &&
@@ -597,7 +606,7 @@ app.use('*', async (c, next) => {
     return null;
   };
 
-  return cors({
+  const result = await cors({
     origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: [
@@ -621,6 +630,14 @@ app.use('*', async (c, next) => {
     maxAge: 86400,
     credentials: allowCredentials,
   })(c, next);
+
+  // Backend Workers may return their own credentialed CORS header. When this
+  // router has no explicit origin allowlist, strip it after downstream handling
+  // so reflecting a public Origin can never become credentialed CORS.
+  if (!allowCredentials) {
+    c.res.headers.delete('Access-Control-Allow-Credentials');
+  }
+  return result;
 });
 
 app.use('*', async (c, next) => {
@@ -1230,15 +1247,6 @@ app.all('/external-idp/*', async (c) => {
 });
 
 /**
- * Internal endpoints - Route to OP_AUTH worker
- * - /_internal/warmup - Pre-heat Durable Objects (admin only)
- */
-app.all('/_internal/*', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_AUTH.fetch(request);
-});
-
-/**
  * Initial Admin Setup endpoints - Route to OP_AUTH worker
  * - /admin-init-setup - Initial admin setup page (one-time use, expires in 1 hour)
  * - /api/admin-init-setup/* - Setup API endpoints
@@ -1260,7 +1268,7 @@ app.all('/api/admin-init-setup/*', async (c) => {
  * Admin UI Proxy (ENABLE_ADMIN_UI_PROXY=true):
  * - /admin/* - Admin dashboard pages
  *
- * Login UI Proxy (ENABLE_LOGIN_UI_PROXY=true):
+ * Login UI path proxy (ENABLE_LOGIN_UI_PATH_PROXY=true):
  * - /discover, /invite, /login, /signup, /consent, /device, /ciba, /reauth, /verify-email-code, /error
  */
 
@@ -1308,7 +1316,7 @@ app.get('/admin', async (c) => {
 for (const uiPath of LOGIN_UI_PATHS) {
   // Handle exact path
   app.all(uiPath, async (c) => {
-    if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
       return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
     }
     return c.json(
@@ -1323,7 +1331,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
 
   // Handle paths with trailing content (e.g., /login/*, /signup/*)
   app.all(`${uiPath}/*`, async (c) => {
-    if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
       return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
     }
     return c.json(
@@ -1346,7 +1354,7 @@ app.get('/geo/*', async (c) => {
 
 // Login UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
 app.all(`${LOGIN_UI_ASSET_PREFIX}/*`, async (c) => {
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
@@ -1424,7 +1432,7 @@ app.all('*', async (c, next) => {
     return next();
   }
 
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);

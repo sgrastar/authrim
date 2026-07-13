@@ -144,6 +144,17 @@ describe('generateRoutes', () => {
     const libCoreConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
+    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
+
+    expect(authConfig.durable_objects?.bindings).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
+    );
+    expect(tokenConfig.durable_objects?.bindings).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
+    );
+    expect(managementConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
+    );
 
     expect(tokenConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
@@ -177,6 +188,19 @@ describe('generateRoutes', () => {
     expect(managementConfig.services).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
     ]);
+    expect(discoveryConfig.durable_objects?.bindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'KEY_MANAGER' })])
+    );
+    expect(discoveryConfig.services).toEqual([
+      {
+        binding: 'KEY_MANAGER_PUBLIC',
+        service: 'emailtest-ar-lib-core',
+        entrypoint: 'KeyManagerPublicEntrypoint',
+      },
+    ]);
+    expect(toToml(discoveryConfig, 'emailtest')).toContain(
+      'entrypoint = "KeyManagerPublicEntrypoint"'
+    );
     expect(tokenConfig.send_email).toBeUndefined();
     expect(libCoreConfig.vars.AUTH_CODE_EXPIRY).toBe('600');
     expect(authConfig.vars.EMAIL_FROM).toBe('noreply@example.com');

@@ -104,7 +104,7 @@ function createMockContext(options: MockContextOptions = {}) {
   });
   return {
     env: {
-      KEY_MANAGER_SECRET: 'cursor-secret',
+      LOGGING_CURSOR_HMAC_SECRET: 'cursor-secret',
       ...options.env,
     } as Env,
     req: {

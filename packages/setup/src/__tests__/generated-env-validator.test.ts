@@ -7,7 +7,10 @@ import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { KV_NAMESPACES, WORKER_COMPONENTS, getKVNamespaceName } from '../core/naming.js';
 import { buildResourceIdsFromLock, generateWranglerConfig, toToml } from '../core/wrangler.js';
-import { validateGeneratedEnvironment } from '../core/generated-env-validator.js';
+import {
+  resolveGeneratedEnvValidationTarget,
+  validateGeneratedEnvironment,
+} from '../core/generated-env-validator.js';
 
 const listD1DatabasesMock = vi.hoisted(() => vi.fn());
 const listKVNamespacesMock = vi.hoisted(() => vi.fn());
@@ -88,12 +91,9 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
     piiEncryptionKey: 'd'.repeat(64),
     objectEncryptionRootKey: 'b'.repeat(64),
     otpHmacSecret: 'fixture_otp_hmac_secret_1234567890',
-    versionManagerSecret: 'fixture_version_manager_secret_123',
     loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
     flowRuntimeHmacSecret: 'fixture_flow_runtime_secret_123',
     pluginEncryptionKey: 'c'.repeat(64),
-    adminApiSecret: 'fixture_admin_api_secret_123456',
-    keyManagerSecret: 'fixture_key_manager_secret_1234',
     setupToken: 'fixture_setup_token_1234567890',
   };
 }
@@ -327,6 +327,246 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(result.ok).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+  });
+
+  it('resolves validation targets from an environment or generated config path', async () => {
+    const root = await createFixtureRoot();
+    const generated = resolveGeneratedEnvValidationTarget({ baseDir: root, env: 'portable' });
+
+    expect(generated).toEqual({
+      baseDir: root,
+      env: 'portable',
+      configPath: join(root, '.authrim', 'portable', 'config.json'),
+    });
+    expect(resolveGeneratedEnvValidationTarget({ configPath: generated.configPath })).toEqual(
+      generated
+    );
+    expect(() => resolveGeneratedEnvValidationTarget({ baseDir: root })).toThrow(
+      'env_or_config_path_is_required'
+    );
+  });
+
+  it('returns focused failures when config or lock files are unavailable', async () => {
+    const root = await createFixtureRoot();
+    const missingConfig = await validateGeneratedEnvironment({ baseDir: root, env: 'portable' });
+
+    expect(missingConfig.ok).toBe(false);
+    expect(missingConfig.checks).toHaveLength(1);
+    expect(missingConfig.checks[0]).toMatchObject({ id: 'config', status: 'fail' });
+
+    const { env } = await writeGeneratedEnvironment(root);
+    await unlink(join(root, '.authrim', env, 'lock.json'));
+    const missingLock = await validateGeneratedEnvironment({ baseDir: root, env });
+
+    expect(missingLock.ok).toBe(false);
+    expect(missingLock.checks.map((check) => check.id)).toEqual(['config', 'lock']);
+    expect(missingLock.checks[1].status).toBe('fail');
+  });
+
+  it('reports invalid secret formats and a missing keys directory', async () => {
+    const first = await writeGeneratedEnvironment(await createFixtureRoot());
+    await writeFile(
+      join(first.root, '.authrim', first.env, 'keys', 'object_encryption_root_key.txt'),
+      'not-a-hex-key',
+      'utf-8'
+    );
+    const invalid = await validateGeneratedEnvironment({ baseDir: first.root, env: first.env });
+    expect(invalid.checks.find((check) => check.id === 'logging-secret-material')).toMatchObject({
+      status: 'fail',
+      details: expect.arrayContaining([expect.stringContaining('invalid format')]),
+    });
+
+    const second = await writeGeneratedEnvironment(await createFixtureRoot());
+    const { rm } = await import('node:fs/promises');
+    await rm(join(second.root, '.authrim', second.env, 'keys'), { recursive: true });
+    const missing = await validateGeneratedEnvironment({ baseDir: second.root, env: second.env });
+    expect(missing.checks.find((check) => check.id === 'logging-secret-material')).toMatchObject({
+      status: 'fail',
+      details: [expect.stringContaining('keys directory is missing')],
+    });
+  });
+
+  it('warns explicitly when R2 and queues are disabled without hiding valid output', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.features.r2 = { enabled: false };
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((check) => check.id === 'logging-r2-bindings')?.status).toBe('warn');
+    expect(result.checks.find((check) => check.id === 'logging-queue-bindings')?.status).toBe(
+      'warn'
+    );
+  });
+
+  it('rejects unresolved default profiles and missing required D1/KV bindings', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.profiles.defaults.residency = 'tenant:unknown';
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.d1.DB_PII;
+    delete lock.kv.AUTHRIM_CONFIG;
+    await writeFile(lockPath, JSON.stringify(lock, null, 2), 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+
+    expect(result.ok).toBe(false);
+    expect(result.checks.find((check) => check.id === 'default-profiles')?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('neither built-in nor a seeded profile')])
+    );
+    expect(result.checks.find((check) => check.id === 'lock-d1-bindings')?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('DB_PII is missing')])
+    );
+    expect(result.checks.find((check) => check.id === 'deploy-wranglers')?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('AUTHRIM_CONFIG namespace is missing')])
+    );
+  });
+
+  it('detects missing deploy and master Wrangler files', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    await unlink(join(root, 'packages', 'ar-auth', 'wrangler.toml'));
+    await unlink(join(root, '.authrim', env, 'wrangler', 'ar-token.toml'));
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+
+    expect(result.ok).toBe(false);
+    expect(result.checks.find((check) => check.id === 'deploy-wranglers')?.details).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('ar-auth: packages/ar-auth/wrangler.toml is missing'),
+      ])
+    );
+    expect(result.checks.find((check) => check.id === 'master-wranglers')?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('ar-token: master config is missing')])
+    );
+  });
+
+  it('rejects active seeded storage and audit profiles with unresolved database targets', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.profiles.defaults.storage = 'tenant:storage:broken';
+    config.profiles.defaults.audit = 'tenant:audit:broken';
+    config.profiles.seed.storage = [
+      {
+        id: 'tenant:storage:broken',
+        label: 'Broken storage',
+        slices: {
+          identity_core: { driver: 'd1', bindingRef: 'UNKNOWN_DB' },
+          identity_pii: { driver: 'postgres', connectionRef: 'missing-primary' },
+        },
+      },
+    ];
+    config.profiles.seed.audit = [
+      {
+        id: 'tenant:audit:broken',
+        label: 'Broken audit',
+        primary: { type: 'mysql', connectionRef: 'missing-audit' },
+        archive: { type: 'd1', bindingRef: 'UNKNOWN_DB' },
+      },
+    ];
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const compatibility = result.checks.find(
+      (check) => check.id === 'active-profile-compatibility'
+    );
+
+    expect(result.ok).toBe(false);
+    expect(compatibility?.details).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('UNKNOWN_DB is not a built-in D1 binding'),
+        expect.stringContaining('requires a configured Hyperdrive reference'),
+      ])
+    );
+  });
+
+  it('accepts active seeded profiles backed by built-in D1 and configured Hyperdrive', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
+      withHyperdriveReferences: true,
+    });
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.profiles.defaults.storage = 'tenant:storage:hybrid';
+    config.profiles.defaults.audit = 'tenant:audit:hybrid';
+    config.profiles.seed.storage = [
+      {
+        id: 'tenant:storage:hybrid',
+        label: 'Hybrid storage',
+        slices: {
+          identity_core: { driver: 'd1', bindingRef: 'DB' },
+          identity_pii: { driver: 'postgres', connectionRef: 'pii-primary' },
+        },
+      },
+    ];
+    config.profiles.seed.audit = [
+      {
+        id: 'tenant:audit:hybrid',
+        label: 'Hybrid audit',
+        primary: { type: 'postgres', connectionRef: 'core-primary' },
+        archive: { type: 'd1', bindingRef: 'DB_ADMIN' },
+      },
+    ];
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const compatibility = result.checks.find(
+      (check) => check.id === 'active-profile-compatibility'
+    );
+
+    expect(compatibility?.status).toBe('pass');
+    expect(compatibility?.details).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('HYPERDRIVE_PII_PRIMARY'),
+        expect.stringContaining('HYPERDRIVE_CORE_PRIMARY'),
+      ])
+    );
+  });
+
+  it('warns about unresolved non-default seed backends without rejecting the active defaults', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.profiles.seed.storage = [
+      {
+        id: 'tenant:storage:future',
+        label: 'Future storage',
+        slices: {
+          identity_core: { driver: 'postgres', connectionRef: 'future-core' },
+          identity_pii: { driver: 'mysql', bindingRef: 'FUTURE_MYSQL' },
+          custom_claims: { driver: 'd1', bindingRef: 'CUSTOM_DB' },
+        },
+      },
+    ];
+    config.profiles.seed.audit = [
+      {
+        id: 'tenant:audit:future',
+        label: 'Future audit',
+        primary: { type: 'postgres', connectionRef: 'future-audit' },
+        archive: { type: 'd1', bindingRef: 'CUSTOM_AUDIT_DB' },
+      },
+    ];
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const portability = result.checks.find((check) => check.id === 'seeded-profile-portability');
+
+    expect(result.ok).toBe(true);
+    expect(portability?.status).toBe('warn');
+    expect(portability?.details).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('connectionRef=future-core'),
+        expect.stringContaining('driver=mysql'),
+        expect.stringContaining('bindingRef=CUSTOM_DB'),
+        expect.stringContaining('connectionRef=future-audit'),
+        expect.stringContaining('bindingRef=CUSTOM_AUDIT_DB'),
+      ])
+    );
   });
 
   it('passes a queue-enabled environment with logging delivery queues', async () => {

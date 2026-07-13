@@ -784,6 +784,24 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.detail).toContain('No authorization header');
     });
 
+    it('does not treat reserved-looking user IDs as discovery routes', async () => {
+      for (const id of ['Schemas', 'ResourceTypes', 'ServiceProviderConfig']) {
+        const res = await app.fetch(
+          new Request(`http://localhost/scim/v2/Users/${id}`),
+          mockEnv as Env
+        );
+        expect(res.status).toBe(401);
+      }
+    });
+
+    it('only exempts GET requests to SCIM discovery routes', async () => {
+      const res = await app.fetch(
+        new Request('http://localhost/scim/v2/Schemas', { method: 'DELETE' }),
+        mockEnv as Env
+      );
+      expect(res.status).toBe(401);
+    });
+
     it('should reject request with non-Bearer token', async () => {
       const req = new Request('http://localhost/scim/v2/Users', {
         headers: {

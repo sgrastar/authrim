@@ -660,6 +660,27 @@ describe('Router Worker', () => {
       expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
     });
 
+    it('strips credentialed CORS headers returned by a backend without a router allowlist', async () => {
+      mockEnv.OP_AUTH.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ session_id: 'must-not-be-readable-cross-origin' }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Credentials': 'true',
+          },
+        })
+      );
+      const req = new Request('https://example.com/api/sessions/issue', {
+        method: 'POST',
+        headers: { Origin: 'https://attacker.example' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://attacker.example');
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+    });
+
     it('should allow whitelisted origin with credentials when ALLOWED_ORIGINS is set', async () => {
       const envWithOrigins = {
         ...mockEnv,
@@ -1128,6 +1149,32 @@ describe('Router Worker', () => {
       expect(new URL(proxiedRequest.url).pathname).toBe('/login');
       expect(new URL(proxiedRequest.url).search).toBe('?client_id=test');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
+    });
+
+    it('should serve canonical Login UI paths without replacing the API response at the Router root', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithIssuerLoginUiPaths = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PATH_PROXY: 'true',
+        ENABLE_LOGIN_UI_PROXY: 'false',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const loginResponse = await app.fetch(
+        new Request('https://test.example.com/login?client_id=test'),
+        envWithIssuerLoginUiPaths
+      );
+      expect(loginResponse.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const rootResponse = await app.fetch(
+        new Request('https://test.example.com/'),
+        envWithIssuerLoginUiPaths
+      );
+      expect(rootResponse.status).toBe(200);
+      expect(await rootResponse.json()).toMatchObject({ name: 'Authrim OIDC Provider' });
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('should proxy browser requests on the configured Login UI host to Login UI before API routing', async () => {

@@ -30,7 +30,6 @@ describe('generated server-surface smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(keysDir, 'admin_api_secret.txt'), 'admin-secret');
 
     const schemas: Array<Record<string, unknown>> = [];
     const routingRules: Array<Record<string, unknown>> = [];

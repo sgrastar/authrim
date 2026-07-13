@@ -2,5 +2,12 @@
 ---
 exclude:
   code:
-    - "packages/ar-admin-ui/src/i18n/*/**"
-    - "packages/ar-login-ui/src/i18n/*/**"
+    - 'packages/ar-admin-ui/src/i18n/*/**'
+    - 'packages/ar-login-ui/src/i18n/*/**'
+    # Test-only code uses deterministic credentials, keys, and adversarial inputs by design.
+    - 'packages/**/__tests__/**'
+    - 'packages/**/*.test.*'
+    - 'packages/**/*.spec.*'
+    - 'packages/**/src/test/**'
+    - 'test/**'
+    - 'test-e2e/**'

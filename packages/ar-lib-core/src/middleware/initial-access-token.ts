@@ -14,6 +14,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
 import { getDCRSetting } from '../utils/dcr-config';
+import { buildDOKey } from '../utils/tenant-context';
 import { getTenantIdFromContext } from './request-context';
 
 const log = createLogger().module('INITIAL-ACCESS-TOKEN');
@@ -25,6 +26,10 @@ interface TokenMetadata {
   single_use?: boolean;
   description?: string;
 }
+
+// Admin-created tokens expire within one year. Keeping the atomic claim for
+// much longer also protects against legacy or eventually consistent KV reads.
+const SINGLE_USE_CLAIM_WINDOW_SECONDS = 10 * 365 * 24 * 60 * 60;
 
 /**
  * Hash token for secure storage comparison using SHA-256
@@ -156,7 +161,31 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
       const metadata = tokenData as TokenMetadata;
 
       if (metadata.single_use) {
-        // Delete single-use token immediately using the hashed key
+        // KV cannot atomically consume a value. Serialize the claim through a
+        // token-specific Durable Object before deleting the eventually
+        // consistent KV entry, so concurrent requests cannot both proceed.
+        const limiterId = env.RATE_LIMITER.idFromName(
+          buildDOKey('iat-consume', tokenHash, tenantId)
+        );
+        const claim = await env.RATE_LIMITER.get(limiterId).incrementRpc('consume', {
+          windowSeconds: SINGLE_USE_CLAIM_WINDOW_SECONDS,
+          maxRequests: 1,
+        });
+
+        if (!claim.allowed) {
+          return c.json(
+            {
+              error: 'invalid_token',
+              error_description: 'The provided Initial Access Token has already been consumed',
+            },
+            401,
+            {
+              'WWW-Authenticate':
+                'Bearer realm="Dynamic Client Registration", error="invalid_token"',
+            }
+          );
+        }
+
         await env.INITIAL_ACCESS_TOKENS.delete(kvKey);
         log.info('Single-use Initial Access Token consumed', {
           tokenHash: tokenHash.substring(0, 10) + '...',

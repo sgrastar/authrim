@@ -68,8 +68,6 @@ import {
   checkSessionIframeHandler,
 } from './session-management';
 import { frontChannelLogoutHandler, backChannelLogoutHandler } from './logout';
-import { warmupHandler } from './warmup';
-import { configHandler } from './config';
 import { didAuthChallengeHandler, didAuthVerifyHandler } from './did-auth';
 import {
   didRegisterChallengeHandler,
@@ -389,14 +387,6 @@ app.get('/api/auth/health', (c) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-// DO Warmup endpoint - Pre-heat Durable Objects to eliminate cold start latency
-// Call before load testing or after deployment to warm all DO shards
-app.get('/_internal/warmup', warmupHandler);
-
-// Config endpoint - Debug shard configuration (KV, ENV, defaults)
-// Useful for diagnosing configuration mismatches
-app.get('/_internal/config', configHandler);
 
 // Authorization endpoint
 // OIDC Core 3.1.2.1: MUST support both GET and POST methods

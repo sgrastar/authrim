@@ -35,7 +35,7 @@ describe('tenant-system discovery grant matrix', () => {
     const app = createTenantSystemDiscoveryApp('first');
     const tenantHost = makeTenantHost('D3_custom_subdomain', 'first');
     const currentUrl = `https://${tenantHost}/login`;
-    const key = new TextEncoder().encode(`authrim.discovery_grant.v1:${env.KEY_MANAGER_SECRET}`);
+    const key = new TextEncoder().encode(`authrim.discovery_grant.v1:${env.OTP_HMAC_SECRET}`);
     const grant = await new SignJWT({
       tenant_id: 'first',
       target_url: currentUrl,

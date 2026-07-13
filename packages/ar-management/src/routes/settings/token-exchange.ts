@@ -28,7 +28,7 @@
  */
 
 import type { Context } from 'hono';
-import { getLogger, type Env } from '@authrim/ar-lib-core';
+import { getLogger, validateExternalUrl, type Env } from '@authrim/ar-lib-core';
 
 // Valid token types for Token Exchange
 const VALID_TOKEN_TYPES = ['access_token', 'jwt', 'id_token'] as const;
@@ -555,14 +555,32 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
             400
           );
         }
-        // Validate issuer is a valid URL
-        try {
-          new URL(issuer);
-        } catch {
+        const issuerValidationError = validateExternalUrl(issuer, {
+          requireHttps: true,
+          fieldName: 'ID-JAG issuer',
+        });
+        if (issuerValidationError) {
           return c.json(
             {
               error: 'invalid_value',
-              error_description: `Invalid issuer URL: ${issuer}`,
+              error_description: `Invalid issuer URL: ${issuerValidationError.error_description}`,
+            },
+            400
+          );
+        }
+
+        const parsedIssuer = new URL(issuer);
+        if (
+          parsedIssuer.username ||
+          parsedIssuer.password ||
+          parsedIssuer.search ||
+          parsedIssuer.hash
+        ) {
+          return c.json(
+            {
+              error: 'invalid_value',
+              error_description:
+                'Invalid issuer URL: credentials, query, and fragment are not allowed',
             },
             400
           );

@@ -10,7 +10,7 @@
  *   BASE_URL=https://auth.example.com \
  *   CLIENT_ID=client \
  *   CLIENT_SECRET=secret \
- *   ADMIN_API_SECRET=... \
+ *   ADMIN_MACHINE_ACCESS_TOKEN=... \
  *   COUNT=2000 \
  *   node load-testing/scripts/seeds/seed-refresh-tokens.js
  *

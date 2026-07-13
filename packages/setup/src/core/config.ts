@@ -29,7 +29,7 @@ const urlOrHostname = z
 export const UrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
   custom: urlOrHostname.nullable().optional(),
-  /** Auto-generated Workers URL */
+  /** Derived Workers.dev URL; reachable only when the generated deployment enables workers_dev. */
   auto: urlOrHostname.optional(),
   /** Cloudflare zone ID for custom domain (populated during setup) */
   zoneId: z.string().nullable().optional(),
@@ -40,7 +40,7 @@ export const UrlConfigSchema = z.object({
 export const UiUrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
   custom: urlOrHostname.nullable().optional(),
-  /** Auto-generated Workers URL */
+  /** Derived Workers.dev URL; reachable only when the generated deployment enables workers_dev. */
   auto: urlOrHostname.optional(),
   /**
    * Whether to serve this UI from the same domain as the API via proxy

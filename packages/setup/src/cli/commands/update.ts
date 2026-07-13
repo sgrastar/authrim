@@ -380,6 +380,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       (component) => lock.workers?.[component] !== undefined
     ),
     secrets: deploymentSecrets,
+    cleanupLegacyStaticSecrets: true,
     onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
     onError: (component, error) => {
       console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));

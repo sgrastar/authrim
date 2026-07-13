@@ -812,6 +812,51 @@ describe('Token Exchange Settings API - ID-JAG', () => {
       );
     });
 
+    it('should reject non-HTTPS or non-public issuer URLs', async () => {
+      for (const issuer of ['http://issuer.example.com', 'https://127.0.0.1']) {
+        const mockKV = createMockKV({});
+        const c = createMockContext({
+          method: 'PUT',
+          body: { idJag: { allowedIssuers: [issuer] } },
+          kv: mockKV,
+        });
+
+        await updateTokenExchangeConfig(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            error: 'invalid_value',
+            error_description: expect.stringContaining('Invalid issuer URL'),
+          }),
+          400
+        );
+      }
+    });
+
+    it('should reject issuer URLs containing query or fragment components', async () => {
+      for (const issuer of [
+        'https://issuer.example.com?jwks=attacker',
+        'https://issuer.example.com#fragment',
+      ]) {
+        const mockKV = createMockKV({});
+        const c = createMockContext({
+          method: 'PUT',
+          body: { idJag: { allowedIssuers: [issuer] } },
+          kv: mockKV,
+        });
+
+        await updateTokenExchangeConfig(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            error: 'invalid_value',
+            error_description: expect.stringContaining('Invalid issuer URL'),
+          }),
+          400
+        );
+      }
+    });
+
     it('should reject empty string in allowedIssuers', async () => {
       const mockKV = createMockKV({});
       const c = createMockContext({

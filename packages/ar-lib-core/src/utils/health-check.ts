@@ -96,6 +96,13 @@ async function checkKV(kv: KVNamespace): Promise<HealthCheckResult> {
 async function checkKeyManager(env: Env, tenantId: string): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
+    if (env.KEY_MANAGER_PUBLIC) {
+      await env.KEY_MANAGER_PUBLIC.getAllPublicKeys(tenantId);
+      return {
+        status: 'ok',
+        latencyMs: Date.now() - start,
+      };
+    }
     if (!env.KEY_MANAGER) {
       return {
         status: 'ok',
@@ -172,7 +179,7 @@ export function createReadinessHandler(options: HealthCheckOptions) {
       );
     }
 
-    if (options.checkKeyManager && env.KEY_MANAGER) {
+    if (options.checkKeyManager && (env.KEY_MANAGER_PUBLIC || env.KEY_MANAGER)) {
       checkPromises.push(
         checkKeyManager(env, getTenantIdFromContext(c)).then((result) => {
           checks.keyManager = result;
