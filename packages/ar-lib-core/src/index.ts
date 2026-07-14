@@ -307,6 +307,7 @@ export { errorResponse, redirectErrorResponse, determineFormat, createSerializer
 export {
   AuthrimError,
   RFCError,
+  errorHandler,
   errorMiddleware,
   createErrorFactoryFromContext,
   createErrorResponse,

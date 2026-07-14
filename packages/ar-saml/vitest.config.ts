@@ -6,6 +6,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    coverage: {
+      thresholds: {
+        branches: 75,
+      },
+    },
   },
   resolve: {
     alias: {

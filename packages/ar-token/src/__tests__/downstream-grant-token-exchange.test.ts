@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   mockValidateDPoPProof: vi.fn().mockResolvedValue({ valid: true, jkt: 'dpop-jkt' }),
   mockRequireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue({}),
   mockResolveElevationGrantSubjectToken: vi.fn(),
+  mockVerifyExternalIdJagSubjectToken: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -74,11 +75,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+vi.mock('../external-id-jag-verifier', () => ({
+  verifyExternalIdJagSubjectToken: mocks.mockVerifyExternalIdJagSubjectToken,
+}));
+
 import { tokenHandler } from '../token';
 
 describe('downstream elevation grant token exchange', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.mockGetSystemSettingsCached.mockReset().mockResolvedValue(null);
+    mocks.mockVerifyExternalIdJagSubjectToken.mockReset();
+    mocks.mockVerifyToken.mockReset().mockResolvedValue({});
+    mocks.mockIsTokenRevoked.mockReset().mockResolvedValue(false);
+    mocks.mockCreateAccessToken.mockReset().mockResolvedValue({
+      token: 'downstream-access-token',
+      jti: 'at-jti-1',
+    });
     mocks.mockValidateClientId.mockReturnValue({ valid: true });
     mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
     mocks.mockLoadTenantProfileCached.mockResolvedValue({
@@ -152,6 +165,798 @@ describe('downstream elevation grant token exchange', () => {
         type: 'user',
         id: 'user-1',
       },
+    });
+  });
+
+  describe('RFC 8693 validation matrix', () => {
+    const defaultBody = {
+      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      subject_token: 'subject-token',
+      subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      client_id: 'service-client-1',
+      client_secret: 'top-secret',
+      audience: 'https://service.example.com',
+    };
+
+    function request(
+      bodyOverrides: Record<string, unknown> = {},
+      envOverrides: Record<string, unknown> = {}
+    ) {
+      const body: Record<string, unknown> = { ...defaultBody, ...bodyOverrides };
+      for (const [key, value] of Object.entries(body)) {
+        if (value === undefined) delete body[key];
+      }
+      return tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: body as Record<string, string>,
+          env: {
+            ENABLE_TOKEN_EXCHANGE: 'true',
+            ...envOverrides,
+          },
+        })
+      );
+    }
+
+    async function expectOAuthError(
+      responsePromise: Promise<Response>,
+      status: number,
+      error: string,
+      description: string
+    ) {
+      const response = await responsePromise;
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+      expect(response.status).toBe(status);
+      expect(body).toEqual({ error, error_description: description });
+    }
+
+    async function createVerificationEnv() {
+      const actual =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      const keySet = await actual.generateKeySet('subject-kid-matrix');
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'subject-kid-matrix' });
+      return {
+        KEY_MANAGER: createMockDurableObjectNamespace({
+          rpcMethods: {
+            getActiveKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+              kid: 'subject-kid-matrix',
+              privatePEM: keySet.privatePEM,
+            }),
+            getAllPublicKeysRpc: vi.fn().mockResolvedValue([keySet.publicJWK]),
+          },
+        }),
+        PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
+      };
+    }
+
+    it('rejects token exchange when both environment and settings disable it', async () => {
+      await expectOAuthError(
+        request({}, { ENABLE_TOKEN_EXCHANGE: 'false' }),
+        400,
+        'unsupported_grant_type',
+        'Token Exchange is not enabled'
+      );
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+    });
+
+    it('uses cached settings to disable an environment-enabled exchange', async () => {
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        oidc: { tokenExchange: { enabled: false } },
+      });
+      await expectOAuthError(
+        request(),
+        400,
+        'unsupported_grant_type',
+        'Token Exchange is not enabled'
+      );
+    });
+
+    it('falls back to environment configuration when settings lookup fails', async () => {
+      mocks.mockGetSystemSettingsCached.mockRejectedValueOnce(new Error('KV unavailable'));
+      await expectOAuthError(
+        request({ subject_token: undefined }),
+        400,
+        'invalid_request',
+        'subject_token is required'
+      );
+    });
+
+    it('enforces the configured resource parameter limit', async () => {
+      await expectOAuthError(
+        request(
+          { resource: ['https://one.example', 'https://two.example'] },
+          { TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS: '1' }
+        ),
+        400,
+        'invalid_request',
+        'Too many resource parameters (max: 1)'
+      );
+    });
+
+    it('enforces the configured audience parameter limit', async () => {
+      await expectOAuthError(
+        request(
+          { audience: ['service-a', 'service-b'] },
+          { TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS: '1' }
+        ),
+        400,
+        'invalid_request',
+        'Too many audience parameters (max: 1)'
+      );
+    });
+
+    it('requires both subject token parameters before client lookup', async () => {
+      await expectOAuthError(
+        request({ subject_token: undefined }),
+        400,
+        'invalid_request',
+        'subject_token is required'
+      );
+      await expectOAuthError(
+        request({ subject_token_type: undefined }),
+        400,
+        'invalid_request',
+        'subject_token_type is required'
+      );
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+    });
+
+    it('rejects disallowed subject token types and refresh tokens even when configured', async () => {
+      await expectOAuthError(
+        request({ subject_token_type: 'urn:ietf:params:oauth:token-type:id_token' }),
+        400,
+        'invalid_request',
+        "subject_token_type 'urn:ietf:params:oauth:token-type:id_token' is not allowed. Allowed types: access_token"
+      );
+
+      await expectOAuthError(
+        request(
+          { subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token' },
+          { TOKEN_EXCHANGE_ALLOWED_TYPES: 'refresh_token' }
+        ),
+        400,
+        'invalid_request',
+        'refresh_token cannot be used as subject_token for security reasons'
+      );
+    });
+
+    it('rejects malformed Basic credentials instead of falling back to body credentials', async () => {
+      mocks.mockParseBasicAuth.mockReturnValueOnce({
+        success: false,
+        error: 'malformed_credentials',
+      });
+      await expectOAuthError(
+        request(),
+        401,
+        'invalid_client',
+        'Invalid Authorization header format'
+      );
+    });
+
+    it('rejects invalid and unknown clients with non-enumerating errors', async () => {
+      mocks.mockValidateClientId.mockReturnValueOnce({ valid: false, error: 'invalid client id' });
+      await expectOAuthError(request(), 401, 'invalid_client', 'invalid client id');
+
+      mocks.mockGetClientCached.mockResolvedValueOnce(null);
+      await expectOAuthError(request(), 401, 'invalid_client', 'Client authentication failed');
+    });
+
+    it('enforces tenant profile permission before verifying subject tokens', async () => {
+      mocks.mockLoadTenantProfileCached.mockResolvedValueOnce({
+        allows_token_exchange: false,
+        max_token_ttl_seconds: 3600,
+      });
+      await expectOAuthError(
+        request(),
+        403,
+        'unauthorized_client',
+        'token_exchange grant is not allowed for this tenant profile'
+      );
+      expect(mocks.mockParseToken).not.toHaveBeenCalled();
+    });
+
+    it('requires valid confidential client credentials', async () => {
+      mocks.mockVerifyClientSecretHash.mockResolvedValueOnce(false);
+      await expectOAuthError(request(), 401, 'invalid_client', 'Invalid client credentials');
+
+      mocks.mockGetClientCached.mockResolvedValueOnce({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        token_endpoint_auth_method: 'none',
+        token_exchange_allowed: true,
+      });
+      await expectOAuthError(
+        request({ client_secret: undefined }),
+        401,
+        'invalid_client',
+        'Client authentication is required for Token Exchange'
+      );
+    });
+
+    it('enforces per-client token exchange and delegation controls', async () => {
+      mocks.mockGetClientCached.mockResolvedValueOnce({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: false,
+      });
+      await expectOAuthError(
+        request(),
+        403,
+        'unauthorized_client',
+        'Client is not authorized for Token Exchange'
+      );
+
+      mocks.mockGetClientCached.mockResolvedValueOnce({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: true,
+        delegation_mode: 'none',
+      });
+      await expectOAuthError(
+        request(),
+        403,
+        'unauthorized_client',
+        'Token Exchange is disabled for this client'
+      );
+    });
+
+    it('rejects unsupported requested token types before parsing the subject token', async () => {
+      await expectOAuthError(
+        request({ requested_token_type: 'urn:ietf:params:oauth:token-type:refresh_token' }),
+        400,
+        'invalid_request',
+        'Only access_token and id-jag (when enabled) are supported as requested_token_type'
+      );
+      expect(mocks.mockParseToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed subject tokens and tokens without a key identifier', async () => {
+      mocks.mockParseToken.mockImplementationOnce(() => {
+        throw new Error('malformed JWT');
+      });
+      await expectOAuthError(request(), 400, 'invalid_request', 'Invalid subject_token format');
+
+      mocks.mockParseToken.mockReturnValueOnce({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseTokenHeader.mockReturnValueOnce({ alg: 'RS256' });
+      await expectOAuthError(
+        request(),
+        400,
+        'invalid_grant',
+        'Subject token is missing kid in header'
+      );
+    });
+
+    it('rejects expired, revoked, and cross-audience subject tokens', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValueOnce({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        exp: Math.floor(Date.now() / 1000) - 1,
+      });
+      await expectOAuthError(request({}, env), 400, 'invalid_grant', 'Subject token has expired');
+
+      mocks.mockParseToken.mockReturnValueOnce({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        jti: 'revoked-jti',
+      });
+      mocks.mockIsTokenRevoked.mockResolvedValueOnce(true);
+      await expectOAuthError(
+        request({}, env),
+        400,
+        'invalid_grant',
+        'Subject token has been revoked'
+      );
+
+      mocks.mockParseToken.mockReturnValueOnce({
+        sub: 'user-1',
+        aud: 'unrelated-client',
+        client_id: 'issuer-client',
+      });
+      await expectOAuthError(
+        request({}, env),
+        403,
+        'invalid_target',
+        'Client is not authorized to exchange this token'
+      );
+    });
+
+    it.each([
+      [
+        'ftp://service.example.com',
+        "resource 'ftp://service.example.com' must be an absolute URI with http or https scheme",
+      ],
+      [
+        'https://service.example.com/path#fragment',
+        "resource 'https://service.example.com/path#fragment' must not include a fragment component",
+      ],
+      ['not-an-absolute-uri', "resource 'not-an-absolute-uri' must be a valid absolute URI"],
+    ])('rejects invalid resource parameter %s', async (resource, description) => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      await expectOAuthError(
+        request({ audience: undefined, resource }, env),
+        400,
+        'invalid_request',
+        description
+      );
+    });
+
+    it('rejects allowed-resource violations after subject authorization', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      await expectOAuthError(
+        request({ audience: 'https://disallowed.example.com' }, env),
+        403,
+        'invalid_target',
+        'Requested audience/resource not allowed: https://disallowed.example.com'
+      );
+    });
+
+    it('requires actor_token_type and supports only access tokens as actors', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      await expectOAuthError(
+        request({ actor_token: 'actor-token' }, env),
+        400,
+        'invalid_request',
+        'actor_token_type is required when actor_token is provided'
+      );
+      await expectOAuthError(
+        request(
+          {
+            actor_token: 'actor-token',
+            actor_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+          },
+          env
+        ),
+        400,
+        'invalid_request',
+        'Only access_token is supported as actor_token_type'
+      );
+    });
+
+    it('rejects malformed actors and actors without kid or audience', async () => {
+      const env = await createVerificationEnv();
+      const subject = { sub: 'user-1', aud: 'service-client-1' };
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockImplementationOnce(() => {
+        throw new Error('bad actor');
+      });
+      await expectOAuthError(
+        request(
+          {
+            actor_token: 'actor-token',
+            actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          },
+          env
+        ),
+        400,
+        'invalid_request',
+        'Invalid actor_token format'
+      );
+
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({ sub: 'actor-1' });
+      mocks.mockParseTokenHeader
+        .mockReturnValueOnce({ kid: 'subject-kid-matrix' })
+        .mockReturnValueOnce({ alg: 'RS256' });
+      await expectOAuthError(
+        request(
+          {
+            actor_token: 'actor-token',
+            actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          },
+          env
+        ),
+        400,
+        'invalid_grant',
+        'Actor token is missing kid in header'
+      );
+
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({ sub: 'actor-1' });
+      mocks.mockParseTokenHeader.mockReturnValue({ kid: 'subject-kid-matrix' });
+      await expectOAuthError(
+        request(
+          {
+            actor_token: 'actor-token',
+            actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          },
+          env
+        ),
+        400,
+        'invalid_grant',
+        'Actor token must have an audience claim'
+      );
+    });
+
+    it('issues a downgraded delegated token with explicit actor and multiple targets', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockGetClientCached.mockResolvedValueOnce({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: true,
+        delegation_mode: 'delegation',
+        allowed_scopes: ['openid', 'profile_export'],
+        allowed_token_exchange_resources: [
+          'https://service.example.com',
+          'https://backup.example.com',
+        ],
+      });
+      mocks.mockParseToken
+        .mockReturnValueOnce({
+          sub: 'user-1',
+          aud: ['service-client-1'],
+          scope: 'openid profile_export admin',
+          act: { sub: 'prior-actor', client_id: 'prior-client' },
+        })
+        .mockReturnValueOnce({
+          sub: 'actor-1',
+          client_id: 'actor-client',
+          aud: ['service-client-1'],
+        });
+      mocks.mockParseTokenHeader.mockReturnValue({ kid: 'subject-kid-matrix' });
+
+      const response = await request(
+        {
+          scope: 'openid profile_export forbidden',
+          audience: ['https://service.example.com', 'https://backup.example.com'],
+          actor_token: 'actor-token',
+          actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        },
+        env
+      );
+      const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        access_token: 'downstream-access-token',
+        token_type: 'Bearer',
+        scope: 'openid profile_export',
+      });
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aud: ['https://service.example.com', 'https://backup.example.com'],
+          scope: 'openid profile_export',
+          act: {
+            sub: 'actor-1',
+            client_id: 'actor-client',
+            act: { sub: 'prior-actor', client_id: 'prior-client' },
+          },
+        }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        'region-jti-1'
+      );
+    });
+
+    it('requires ID-JAG to be enabled before accepting its requested token type', async () => {
+      await expectOAuthError(
+        request({ requested_token_type: 'urn:ietf:params:oauth:token-type:id-jag' }),
+        400,
+        'invalid_request',
+        'ID-JAG token type is not enabled. Enable it via Admin API.'
+      );
+    });
+
+    it('restricts ID-JAG to identity-bearing subject token types', async () => {
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        oidc: {
+          tokenExchange: {
+            enabled: true,
+            allowedSubjectTokenTypes: ['access_token'],
+            idJag: { enabled: true, allowedIssuers: ['https://idp.example.com'] },
+          },
+        },
+      });
+      await expectOAuthError(
+        request({ requested_token_type: 'urn:ietf:params:oauth:token-type:id-jag' }),
+        400,
+        'invalid_request',
+        'ID-JAG requires subject_token_type to be id_token, jwt, or saml2. Got: urn:ietf:params:oauth:token-type:access_token'
+      );
+    });
+
+    it('fails closed when ID-JAG issuer trust is missing or mismatched', async () => {
+      const idJagBody = {
+        requested_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
+        subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+      };
+      mocks.mockParseTokenHeader.mockReturnValue({ kid: 'external-kid' });
+
+      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+        oidc: {
+          tokenExchange: {
+            enabled: true,
+            allowedSubjectTokenTypes: ['id_token'],
+            idJag: { enabled: true, allowedIssuers: [] },
+          },
+        },
+      });
+      mocks.mockParseToken.mockReturnValueOnce({ sub: 'user-1' });
+      await expectOAuthError(
+        request(idJagBody),
+        400,
+        'invalid_grant',
+        'Subject token is missing issuer (iss) claim'
+      );
+
+      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+        oidc: {
+          tokenExchange: {
+            enabled: true,
+            allowedSubjectTokenTypes: ['id_token'],
+            idJag: { enabled: true, allowedIssuers: [] },
+          },
+        },
+      });
+      mocks.mockParseToken.mockReturnValueOnce({ sub: 'user-1', iss: 'https://idp.example.com' });
+      await expectOAuthError(
+        request(idJagBody),
+        400,
+        'invalid_grant',
+        'ID-JAG is enabled but no allowed issuers are configured. Configure allowedIssuers via Admin API.'
+      );
+
+      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+        oidc: {
+          tokenExchange: {
+            enabled: true,
+            allowedSubjectTokenTypes: ['id_token'],
+            idJag: { enabled: true, allowedIssuers: ['https://trusted.example.com'] },
+          },
+        },
+      });
+      mocks.mockParseToken.mockReturnValueOnce({ sub: 'user-1', iss: 'https://evil.example.com' });
+      await expectOAuthError(
+        request(idJagBody),
+        400,
+        'invalid_grant',
+        "Subject token issuer 'https://evil.example.com' is not in the allowed issuers list"
+      );
+    });
+
+    it('returns a generic ID-JAG error when external signature verification fails', async () => {
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        oidc: {
+          tokenExchange: {
+            enabled: true,
+            allowedSubjectTokenTypes: ['id_token'],
+            idJag: {
+              enabled: true,
+              allowedIssuers: ['https://idp.example.com'],
+            },
+          },
+        },
+      });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        iss: 'https://idp.example.com',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ kid: 'external-kid' });
+      mocks.mockVerifyExternalIdJagSubjectToken.mockRejectedValueOnce(
+        new Error('external signature invalid')
+      );
+
+      await expectOAuthError(
+        request({
+          requested_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
+          subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+        }),
+        400,
+        'invalid_grant',
+        'Subject token verification failed'
+      );
+    });
+
+    it('issues a short-lived ID-JAG token with preserved authentication context', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        oidc: {
+          tokenExchange: {
+            enabled: true,
+            allowedSubjectTokenTypes: ['id_token'],
+            idJag: {
+              enabled: true,
+              allowedIssuers: ['https://idp.example.com'],
+              maxTokenLifetime: 300,
+              includeTenantClaim: true,
+              requireConfidentialClient: true,
+            },
+          },
+        },
+      });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'external-user',
+        iss: 'https://idp.example.com',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ kid: 'external-kid' });
+      mocks.mockVerifyExternalIdJagSubjectToken.mockResolvedValue({
+        sub: 'external-user',
+        iss: 'https://idp.example.com',
+        aud: 'service-client-1',
+        scope: 'openid profile_export',
+        acr: 'urn:example:loa:2',
+        amr: ['pwd', 'otp'],
+      });
+
+      const response = await request(
+        {
+          requested_token_type: 'urn:ietf:params:oauth:token-type:id-jag',
+          subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+        },
+        env
+      );
+      const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.issued_token_type).toBe('urn:ietf:params:oauth:token-type:id-jag');
+      expect(body.expires_in).toBe(300);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sub: 'external-user',
+          original_issuer: 'https://idp.example.com',
+          tenant: 'tenant-a',
+          acr: 'urn:example:loa:2',
+          amr: ['pwd', 'otp'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        300,
+        'region-jti-1'
+      );
+    });
+
+    it('rejects actor tokens with invalid signatures, expiry, revocation, or audience', async () => {
+      const env = await createVerificationEnv();
+      const actorRequest = {
+        actor_token: 'actor-token',
+        actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      };
+      const subject = { sub: 'user-1', aud: 'service-client-1' };
+
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({
+        sub: 'actor-1',
+        aud: 'service-client-1',
+      });
+      mocks.mockVerifyToken.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('bad actor'));
+      await expectOAuthError(
+        request(actorRequest, env),
+        400,
+        'invalid_grant',
+        'Actor token verification failed'
+      );
+
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({
+        sub: 'actor-1',
+        aud: 'service-client-1',
+        exp: Math.floor(Date.now() / 1000) - 1,
+      });
+      await expectOAuthError(
+        request(actorRequest, env),
+        400,
+        'invalid_grant',
+        'Actor token has expired'
+      );
+
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({
+        sub: 'actor-1',
+        aud: 'service-client-1',
+        jti: 'revoked-actor',
+      });
+      mocks.mockIsTokenRevoked.mockResolvedValueOnce(true);
+      await expectOAuthError(
+        request(actorRequest, env),
+        400,
+        'invalid_grant',
+        'Actor token has been revoked'
+      );
+
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({
+        sub: 'actor-1',
+        aud: 'different-client',
+      });
+      await expectOAuthError(
+        request(actorRequest, env),
+        400,
+        'invalid_grant',
+        'Actor token audience does not match requesting client'
+      );
+    });
+
+    it('fails closed when exchanged access token creation fails', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockCreateAccessToken.mockRejectedValueOnce(new Error('signing failed'));
+      await expectOAuthError(
+        request({}, env),
+        500,
+        'server_error',
+        'Failed to create access token'
+      );
+    });
+
+    it('rejects invalid DPoP and binds valid DPoP to the exchanged token', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValueOnce({
+        valid: false,
+        error_description: 'invalid proof',
+      });
+      const invalidResponse = await request({}, env);
+      expect(invalidResponse.status).toBe(400);
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+
+      mocks.mockValidateDPoPProof.mockResolvedValueOnce({ valid: true, jkt: 'bound-jkt' });
+      const validResponse = await request({}, env);
+      const body = await parseJsonResponse<Record<string, unknown>>(validResponse);
+      expect(validResponse.status).toBe(200);
+      expect(body.token_type).toBe('DPoP');
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ cnf: { jkt: 'bound-jkt' } }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        'region-jti-1'
+      );
+    });
+
+    it('supports resource-only and combined resource/audience targets', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockGetClientCached.mockResolvedValue({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: true,
+        delegation_mode: 'impersonation',
+        allowed_scopes: ['openid'],
+        allowed_token_exchange_resources: [
+          'https://service.example.com',
+          'https://resource.example.com',
+        ],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        scope: 'openid',
+      });
+
+      const resourceOnly = await request(
+        { audience: undefined, resource: 'https://resource.example.com' },
+        env
+      );
+      expect(resourceOnly.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          aud: 'https://resource.example.com',
+          resource: 'https://resource.example.com',
+        }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        'region-jti-1'
+      );
+
+      const both = await request(
+        {
+          audience: 'https://service.example.com',
+          resource: 'https://resource.example.com',
+        },
+        env
+      );
+      expect(both.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          aud: ['https://service.example.com', 'https://resource.example.com'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        'region-jti-1'
+      );
     });
   });
 

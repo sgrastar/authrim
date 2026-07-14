@@ -170,4 +170,111 @@ describe('external ID-JAG subject token verification', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('requires at least one expected audience', async () => {
+    const signing = await createSigningFixture();
+    const token = await signSubjectToken(signing.privateKey);
+
+    await expect(
+      verifyExternalIdJagSubjectToken({ token, issuer: ISSUER, audiences: [] })
+    ).rejects.toThrow('requires an expected audience');
+  });
+
+  it('rejects missing key identifiers and unsupported signing algorithms before discovery', async () => {
+    const signing = await createSigningFixture();
+    const now = Math.floor(Date.now() / 1000);
+    const withoutKid = await new SignJWT({})
+      .setProtectedHeader({ alg: 'RS256' })
+      .setIssuer(ISSUER)
+      .setSubject('external-user')
+      .setAudience(AUDIENCE)
+      .setExpirationTime(now + 300)
+      .sign(signing.privateKey);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      verifyExternalIdJagSubjectToken({ token: withoutKid, issuer: ISSUER, audiences: [AUDIENCE] })
+    ).rejects.toThrow('missing kid');
+
+    const unsupported = `${Buffer.from(JSON.stringify({ alg: 'HS256', kid: KID })).toString(
+      'base64url'
+    )}.${Buffer.from('{}').toString('base64url')}.signature`;
+    await expect(
+      verifyExternalIdJagSubjectToken({ token: unsupported, issuer: ISSUER, audiences: [AUDIENCE] })
+    ).rejects.toThrow('unsupported signing algorithm');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [`https://user:password@idp.example.com`, 'credentials'],
+    [`${ISSUER}?tenant=one`, 'query'],
+    [`${ISSUER}#fragment`, 'fragment'],
+  ])('rejects an issuer URL containing %s data', async (issuer) => {
+    const signing = await createSigningFixture();
+    const token = await signSubjectToken(signing.privateKey);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      verifyExternalIdJagSubjectToken({ token, issuer, audiences: [AUDIENCE] })
+    ).rejects.toThrow(/without credentials, query, or fragment/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ issuer: 'https://different.example.com', jwks_uri: JWKS_URI }, /does not match/],
+    [{ issuer: ISSUER }, /missing jwks_uri/],
+  ])('rejects invalid discovery metadata %#', async (discovery, error) => {
+    const signing = await createSigningFixture();
+    const token = await signSubjectToken(signing.privateKey);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(discovery))
+    );
+
+    await expect(
+      verifyExternalIdJagSubjectToken({ token, issuer: ISSUER, audiences: [AUDIENCE] })
+    ).rejects.toThrow(error);
+  });
+
+  it.each([
+    [{ not_keys: [] }, /missing keys/],
+    [{ keys: [{ kid: KID }] }, /no usable keys/],
+  ])('rejects invalid JWKS payload %#', async (jwks, error) => {
+    const signing = await createSigningFixture();
+    const token = await signSubjectToken(signing.privateKey);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        return url.includes('openid-configuration')
+          ? Response.json({ issuer: ISSUER, jwks_uri: JWKS_URI })
+          : Response.json(jwks);
+      })
+    );
+
+    await expect(
+      verifyExternalIdJagSubjectToken({ token, issuer: ISSUER, audiences: [AUDIENCE] })
+    ).rejects.toThrow(error);
+  });
+
+  it('refreshes JWKS once and rejects ambiguous or non-verification keys', async () => {
+    const signing = await createSigningFixture();
+    const token = await signSubjectToken(signing.privateKey);
+    const unusable = { ...signing.publicJwk, use: 'enc', key_ops: ['encrypt'], alg: 'RS512' };
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      return url.includes('openid-configuration')
+        ? Response.json({ issuer: ISSUER, jwks_uri: JWKS_URI })
+        : Response.json({ keys: [unusable] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      verifyExternalIdJagSubjectToken({ token, issuer: ISSUER, audiences: [AUDIENCE] })
+    ).rejects.toThrow('signing key was not found');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });

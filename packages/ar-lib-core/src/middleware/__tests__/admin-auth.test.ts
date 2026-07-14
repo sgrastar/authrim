@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { adminAuthMiddleware } from '../admin-auth';
+import { adminAuthMiddleware, requireAdminPermissions, requireMfa } from '../admin-auth';
 import type { Env } from '../../types/env';
 
 /**
@@ -206,6 +206,7 @@ async function createMachineAccessFixture(
     credentialId?: string;
     scope?: string;
     displayName?: string;
+    payloadOverrides?: Record<string, unknown>;
   } = {}
 ) {
   const principalType = options.principalType ?? 'setup_tool';
@@ -234,6 +235,7 @@ async function createMachineAccessFixture(
     sender_constrained: false,
     scope,
     tenant_scope: tenantScope,
+    ...options.payloadOverrides,
   })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: 'admin-token-key' })
     .setIssuer('https://test.example.com')
@@ -652,6 +654,36 @@ describe('adminAuthMiddleware', () => {
       expect(data.error).toBe('invalid_token');
     });
 
+    it('should require both the BFF transport credential and an admin session', async () => {
+      const fixture = await createMachineAccessFixture(['default'], {
+        principalType: 'admin_ui_bff',
+        principalId: 'amp_admin_ui_bff',
+        clientId: 'admin-ui-bff',
+        credentialId: 'amk_admin_ui_bff',
+      });
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: {
+            Authorization: `Bearer ${fixture.token}`,
+            'X-Authrim-Admin-UI-Api-Mode': 'cross-site-proxy-bff',
+          },
+        })
+      );
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({
+        error_description: 'Admin UI BFF requests require a valid admin session.',
+      });
+    });
+
     it('should reject Admin machine tokens outside their tenant scope', async () => {
       const fixture = await createMachineAccessFixture(['other']);
       const db = createMockDB({
@@ -756,6 +788,243 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(403);
       expect(data.error).toBe('insufficient_permissions');
     });
+
+    it.each([
+      ['non-machine actor', { actor_type: 'admin' }],
+      ['missing actor id', { actor_id: '' }],
+      ['missing credential id', { credential_id: '' }],
+      ['non-string scope', { scope: ['admin:tenants.read'] }],
+    ])('should reject a signed machine token with %s claims', async (_label, payloadOverrides) => {
+      const fixture = await createMachineAccessFixture(['default'], { payloadOverrides });
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it.each([
+      ['unknown principal', false, true],
+      ['unknown credential', true, false],
+    ])('should reject a token for an %s', async (_label, includePrincipal, includeCredential) => {
+      const fixture = await createMachineAccessFixture(['default']);
+      const db = createMockDB({
+        machinePrincipal: includePrincipal ? fixture.machinePrincipal : null,
+        machineCredential: includeCredential ? fixture.machineCredential : null,
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('should reject a credential bound to a different machine principal', async () => {
+      const fixture = await createMachineAccessFixture(['default']);
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: { ...fixture.machineCredential, principal_id: 'amp_other' },
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('should accept a currently rotating credential with unchanged grants', async () => {
+      const fixture = await createMachineAccessFixture(['default'], {
+        scope: 'admin:clients.create',
+      });
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: { ...fixture.machineCredential, status: 'rotating' },
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it.each([
+      [
+        'all principal and credential scopes',
+        [{ scope_mode: 'all', tenant_id: null }],
+        [{ scope_mode: 'all', tenant_id: null }],
+        ['*'],
+      ],
+      [
+        'all principal scope narrowed by credential',
+        [{ scope_mode: 'all', tenant_id: null }],
+        [{ scope_mode: 'allow', tenant_id: 'default' }],
+        ['default'],
+      ],
+      [
+        'tenant principal scope with all credential scope',
+        [{ scope_mode: 'allow', tenant_id: 'default' }],
+        [{ scope_mode: 'all', tenant_id: null }],
+        ['default'],
+      ],
+    ])('should enforce %s', async (_label, principalScopes, credentialScopes, claimScope) => {
+      const fixture = await createMachineAccessFixture(claimScope);
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+        machinePrincipalTenantScopes: principalScopes,
+        machineCredentialTenantScopes: credentialScopes,
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should verify a machine token with the tenant key manager when no static JWK matches', async () => {
+      const fixture = await createMachineAccessFixture(['default']);
+      const getAllPublicKeysRpc = vi.fn().mockResolvedValue([fixture.publicJwk]);
+      const keyManager = {
+        idFromName: vi.fn().mockReturnValue('tenant-key-manager-id'),
+        get: vi.fn().mockReturnValue({ getAllPublicKeysRpc }),
+      };
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, KEY_MANAGER: keyManager as unknown as Env['KEY_MANAGER'] })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(keyManager.idFromName).toHaveBeenCalledWith('default-v3');
+      expect(getAllPublicKeysRpc).toHaveBeenCalledOnce();
+    });
+
+    it('should reject a token when the key manager has no key matching its kid', async () => {
+      const fixture = await createMachineAccessFixture(['default']);
+      const keyManager = {
+        idFromName: vi.fn().mockReturnValue('tenant-key-manager-id'),
+        get: vi.fn().mockReturnValue({ getAllPublicKeysRpc: vi.fn().mockResolvedValue([]) }),
+      };
+      const app = createTestApp(
+        createMockEnv({ KEY_MANAGER: keyManager as unknown as Env['KEY_MANAGER'] })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('should reject wildcard tenant claims unless the current grants are also global', async () => {
+      const fixture = await createMachineAccessFixture(['*']);
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+        machinePrincipalTenantScopes: [{ scope_mode: 'allow', tenant_id: 'default' }],
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('should reject credential permissions that do not intersect principal grants', async () => {
+      const fixture = await createMachineAccessFixture(['default'], {
+        scope: 'admin:clients.create',
+      });
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+        machinePrincipalPermissions: [{ permission: 'admin:tenants.read' }],
+        machineCredentialPermissions: [{ permission: 'admin:clients:*' }],
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('should ignore a malformed non-array tenant_scope claim without expanding access', async () => {
+      const fixture = await createMachineAccessFixture(['default'], {
+        payloadOverrides: { tenant_scope: 'default' },
+      });
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk) })
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+      const data = (await response.json()) as Record<string, any>;
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('access_denied');
+    });
   });
 
   describe('Session Authentication', () => {
@@ -783,6 +1052,118 @@ describe('adminAuthMiddleware', () => {
       expect(data.adminAuth.userId).toBe(userId);
       expect(data.adminAuth.authMethod).toBe('session');
       expect(data.adminAuth.roles).toContain('admin');
+    });
+
+    it('should enforce middleware MFA and permission requirements on a session', async () => {
+      const userId = 'admin-user-sensitive-operation';
+      const session = { ...createValidSession(userId), mfa_verified: 1 };
+      const roles = [
+        {
+          id: 'role_admin',
+          name: 'admin',
+          permissions_json: JSON.stringify(['admin:users:*']),
+          hierarchy_level: 80,
+          inherits_from: null,
+        },
+      ];
+      const db = createMockDB({
+        session,
+        adminUser: createValidAdminUser(userId),
+        roles,
+      });
+      const app = createTestApp(createMockEnv({ DB: db }), {
+        requireMfa: true,
+        requirePermissions: ['admin:users:write'],
+      });
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${VALID_SESSION_ID}` },
+        })
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should deny a session that has not satisfied a middleware MFA requirement', async () => {
+      const userId = 'admin-user-without-mfa';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+      const app = createTestApp(createMockEnv({ DB: db }), { requireMfa: true });
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${VALID_SESSION_ID}` },
+        })
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ error: 'mfa_required' });
+    });
+
+    it('should ignore malformed, non-array, and cyclic inherited role permissions safely', async () => {
+      const userId = 'admin-user-malformed-role';
+      const roles = [
+        {
+          id: 'role_admin',
+          name: 'admin',
+          permissions_json: JSON.stringify(['admin:users:read', 42]),
+          hierarchy_level: 80,
+          inherits_from: 'role_malformed',
+        },
+        {
+          id: 'role_malformed',
+          name: 'malformed',
+          permissions_json: '{bad json',
+          hierarchy_level: 70,
+          inherits_from: 'role_non_array',
+        },
+        {
+          id: 'role_non_array',
+          name: 'non_array',
+          permissions_json: JSON.stringify({ permission: 'admin:users:write' }),
+          hierarchy_level: 60,
+          inherits_from: 'role_admin',
+        },
+      ];
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles,
+      });
+      const app = createTestApp(createMockEnv({ DB: db }));
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${VALID_SESSION_ID}` },
+        })
+      );
+      const data = (await response.json()) as Record<string, any>;
+
+      expect(response.status).toBe(200);
+      expect(data.adminAuth.permissions).toEqual(['admin:users:read']);
+    });
+
+    it('should honor an explicit IP-check exemption for bootstrap routes', async () => {
+      const userId = 'admin-user-bootstrap';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+        ipAllowlistEntries: [{ ip_range: '203.0.113.9', ip_version: 4 }],
+      });
+      const app = createTestApp(createMockEnv({ DB: db }), { skipIpCheck: true });
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${VALID_SESSION_ID}` },
+        })
+      );
+
+      expect(response.status).toBe(200);
     });
 
     it('should allow sessions without a client IP when no IP allowlist entries exist', async () => {
@@ -858,6 +1239,70 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(403);
       expect(data.error).toBe('access_denied');
     });
+
+    it.each([
+      ['exact IPv4', '203.0.113.9', '203.0.113.9', 'CF-Connecting-IP'],
+      ['IPv4 CIDR', '203.0.113.0/24', '203.0.113.42', 'CF-Connecting-IP'],
+      ['compressed IPv6 CIDR', '2001:db8::/64', '2001:db8::42', 'CF-Connecting-IP'],
+      ['first forwarded address', '198.51.100.0/24', '198.51.100.20, 10.0.0.1', 'X-Forwarded-For'],
+    ])(
+      'should allow a session when the client matches the %s allowlist entry',
+      async (_label, ipRange, clientIp, headerName) => {
+        const userId = 'admin-user-ip-allowed';
+        const db = createMockDB({
+          session: createValidSession(userId),
+          adminUser: createValidAdminUser(userId),
+          roles: createAdminRoles(['admin']),
+          ipAllowlistEntries: [{ ip_range: ipRange, ip_version: ipRange.includes(':') ? 6 : 4 }],
+        });
+        const app = createTestApp(createMockEnv({ DB: db }));
+
+        const response = await app.fetch(
+          new Request('http://localhost/api/admin/test', {
+            headers: {
+              Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+              [headerName]: clientIp,
+            },
+          })
+        );
+
+        expect(response.status).toBe(200);
+      }
+    );
+
+    it.each([
+      ['outside IPv4 CIDR', '203.0.113.0/24', '203.0.114.1'],
+      ['IPv4 CIDR prefix above 32', '0.0.0.0/33', '203.0.113.9'],
+      ['non-numeric IPv4 suffix', '203.0.113.0/24', '203.0.113.9junk'],
+      ['malformed IPv6', '2001:db8::/32', '2001:db8::not-hex'],
+      ['IPv6 CIDR prefix above 128', '2001:db8::/129', '2001:db8::1'],
+      ['mixed IP versions', '2001:db8::/32', '203.0.113.9'],
+    ])(
+      'should deny a session for %s instead of weakening the allowlist',
+      async (_label, ipRange, clientIp) => {
+        const userId = 'admin-user-ip-denied';
+        const db = createMockDB({
+          session: createValidSession(userId),
+          adminUser: createValidAdminUser(userId),
+          roles: createAdminRoles(['admin']),
+          ipAllowlistEntries: [{ ip_range: ipRange, ip_version: ipRange.includes(':') ? 6 : 4 }],
+        });
+        const app = createTestApp(createMockEnv({ DB: db }));
+
+        const response = await app.fetch(
+          new Request('http://localhost/api/admin/test', {
+            headers: {
+              Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+              'CF-Connecting-IP': clientIp,
+            },
+          })
+        );
+        const data = (await response.json()) as Record<string, unknown>;
+
+        expect(response.status).toBe(403);
+        expect(data.error).toBe('access_denied');
+      }
+    );
 
     it('should reject X-Session-Id without the HttpOnly admin session cookie', async () => {
       const db = createMockDB({
@@ -1409,5 +1854,78 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(401);
     });
+  });
+});
+
+describe('admin authorization guards', () => {
+  function createGuardApp(
+    guard: ReturnType<typeof requireAdminPermissions> | ReturnType<typeof requireMfa>,
+    adminAuth?: Record<string, unknown>
+  ) {
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('/guard', async (c, next) => {
+      if (adminAuth) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c as any).set('adminAuth', adminAuth);
+      }
+      await next();
+    });
+    app.use('/guard', guard);
+    app.get('/guard', (c) => c.json({ success: true }));
+    return app;
+  }
+
+  it('requires an authenticated context before checking permissions', async () => {
+    const response = await createGuardApp(requireAdminPermissions(['admin:users:read'])).request(
+      '/guard'
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_token' });
+  });
+
+  it('denies an authenticated admin missing a required permission', async () => {
+    const response = await createGuardApp(requireAdminPermissions(['admin:users:write']), {
+      userId: 'admin-1',
+      permissions: ['admin:users:read'],
+    }).request('/guard');
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: 'insufficient_permissions' });
+  });
+
+  it('accepts wildcard permissions only when they cover every required permission', async () => {
+    const response = await createGuardApp(
+      requireAdminPermissions(['admin:users:read', 'admin:users:write']),
+      { userId: 'admin-1', permissions: ['admin:users:*'] }
+    ).request('/guard');
+
+    expect(response.status).toBe(200);
+  });
+
+  it('requires authentication before evaluating MFA state', async () => {
+    const response = await createGuardApp(requireMfa()).request('/guard');
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_token' });
+  });
+
+  it('denies a valid session that has not completed MFA', async () => {
+    const response = await createGuardApp(requireMfa(), {
+      userId: 'admin-1',
+      mfaVerified: false,
+    }).request('/guard');
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: 'mfa_required' });
+  });
+
+  it('continues only after MFA has been verified', async () => {
+    const response = await createGuardApp(requireMfa(), {
+      userId: 'admin-1',
+      mfaVerified: true,
+    }).request('/guard');
+
+    expect(response.status).toBe(200);
   });
 });

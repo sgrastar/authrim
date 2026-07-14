@@ -90,6 +90,12 @@ function createAccessDeniedResponse(requiredRoles: string[]): RBACErrorResponse 
   };
 }
 
+function assertRequiredRoles(roleNames: string[]): void {
+  if (roleNames.length === 0 || roleNames.some((role) => role.trim().length === 0)) {
+    throw new Error('RBAC middleware requires at least one non-empty role');
+  }
+}
+
 /**
  * Require a single role
  *
@@ -105,6 +111,7 @@ function createAccessDeniedResponse(requiredRoles: string[]): RBACErrorResponse 
  * ```
  */
 export function requireRole(roleName: string) {
+  assertRequiredRoles([roleName]);
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = getAdminAuth(c);
 
@@ -146,6 +153,7 @@ export function requireRole(roleName: string) {
  * ```
  */
 export function requireAnyRole(roleNames: string[]) {
+  assertRequiredRoles(roleNames);
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = getAdminAuth(c);
 
@@ -189,6 +197,7 @@ export function requireAnyRole(roleNames: string[]) {
  * ```
  */
 export function requireAllRoles(roleNames: string[]) {
+  assertRequiredRoles(roleNames);
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = getAdminAuth(c);
 

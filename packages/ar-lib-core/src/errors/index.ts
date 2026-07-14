@@ -168,6 +168,7 @@ export {
 export {
   AuthrimError,
   RFCError,
+  errorHandler,
   errorMiddleware,
   createErrorFactoryFromContext,
   createErrorResponse,

@@ -587,42 +587,38 @@ function ipMatches(ip: string, range: string): boolean {
 }
 
 /**
- * Check if an IP matches a CIDR range (IPv4 only for now)
+ * Check if an IP matches an IPv4 or IPv6 CIDR range.
  */
 function ipMatchesCidr(ip: string, cidr: string): boolean {
-  const [rangeIp, prefixLengthStr] = cidr.split('/');
-  const prefixLength = parseInt(prefixLengthStr, 10);
-
-  if (isNaN(prefixLength)) {
+  const cidrParts = cidr.split('/');
+  if (cidrParts.length !== 2 || !/^\d+$/.test(cidrParts[1])) {
     return false;
   }
+  const [rangeIp, prefixLengthStr] = cidrParts;
+  const prefixLength = Number(prefixLengthStr);
 
   // IPv4 handling
   if (!ip.includes(':') && !rangeIp.includes(':')) {
     const ipNum = ipv4ToNumber(ip);
     const rangeNum = ipv4ToNumber(rangeIp);
 
-    if (ipNum === null || rangeNum === null) {
+    if (ipNum === null || rangeNum === null || prefixLength < 0 || prefixLength > 32) {
       return false;
     }
 
-    const mask = (-1 << (32 - prefixLength)) >>> 0;
+    const mask = prefixLength === 0 ? 0 : (-1 << (32 - prefixLength)) >>> 0;
     return (ipNum & mask) === (rangeNum & mask);
   }
 
-  // IPv6 - simplified check (full implementation in repository)
+  // IPv6 handling. Parse both compressed and full notation and compare prefix bits.
   if (ip.includes(':') && rangeIp.includes(':')) {
-    // For now, just check prefix match
-    const ipParts = ip.split(':');
-    const rangeParts = rangeIp.split(':');
-    const partsToCheck = Math.ceil(prefixLength / 16);
-
-    for (let i = 0; i < partsToCheck && i < ipParts.length && i < rangeParts.length; i++) {
-      if (ipParts[i] !== rangeParts[i]) {
-        return false;
-      }
+    const ipNum = ipv6ToBigInt(ip);
+    const rangeNum = ipv6ToBigInt(rangeIp);
+    if (ipNum === null || rangeNum === null || prefixLength < 0 || prefixLength > 128) {
+      return false;
     }
-    return true;
+    const hostBits = BigInt(128 - prefixLength);
+    return ipNum >> hostBits === rangeNum >> hostBits;
   }
 
   return false;
@@ -639,14 +635,44 @@ function ipv4ToNumber(ip: string): number | null {
 
   let result = 0;
   for (const part of parts) {
-    const num = parseInt(part, 10);
-    if (isNaN(num) || num < 0 || num > 255) {
+    if (!/^\d{1,3}$/.test(part)) {
+      return null;
+    }
+    const num = Number(part);
+    if (num > 255) {
       return null;
     }
     result = (result << 8) | num;
   }
 
   return result >>> 0;
+}
+
+function ipv6ToBigInt(ip: string): bigint | null {
+  if (ip.includes('.') || ip.includes(':::') || (ip.match(/::/g) ?? []).length > 1) {
+    return null;
+  }
+
+  const compressed = ip.includes('::');
+  const [leftText, rightText = ''] = compressed ? ip.split('::') : [ip, ''];
+  const left = leftText ? leftText.split(':') : [];
+  const right = rightText ? rightText.split(':') : [];
+  if ((!compressed && left.length !== 8) || (compressed && left.length + right.length >= 8)) {
+    return null;
+  }
+
+  const groups = compressed
+    ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right]
+    : left;
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-fA-F]{1,4}$/.test(group))) {
+    return null;
+  }
+
+  let result = 0n;
+  for (const group of groups) {
+    result = (result << 16n) | BigInt(`0x${group}`);
+  }
+  return result;
 }
 
 function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string | null {

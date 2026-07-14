@@ -664,6 +664,151 @@ describe('buildSAMLAttributesFromMapping', () => {
       },
     ]);
   });
+
+  it('reads every supported identity-mapping source namespace without crossing data stores', () => {
+    const cases = [
+      ['authrim.profile', 'email', 'profile@example.test'],
+      ['authrim.claim', 'name', 'Profile Name'],
+      ['oidc.claim', 'email', 'profile@example.test'],
+      ['authrim.claims', 'department', 'engineering'],
+      ['claims', 'department', 'engineering'],
+      ['authrim.custom_claims', 'entitlement', 'licensed'],
+      ['custom_claims', 'entitlement', 'licensed'],
+      ['authrim.custom_fields', 'employeeNumber', 42],
+      ['custom_fields', 'employeeNumber', 42],
+      ['authrim.attributes', 'groups', ['admin', 'editor']],
+      ['attributes', 'groups', ['admin', 'editor']],
+      ['authrim.system', 'uid', 'user-123'],
+      ['authrim.system', 'email', 'profile@example.test'],
+      ['vendor.extension', 'name', 'Profile Name'],
+    ] as const;
+    const entries: FieldCatalogBundle['entries'] = [];
+    const edges = cases.map(([namespace, path], index) => {
+      const sourceId = `source.${index}`;
+      const destinationId = `destination.${index}`;
+      entries.push(
+        {
+          id: sourceId,
+          namespace,
+          path,
+          valueType: 'string',
+          cardinality: 'multi',
+          classification: 'internal',
+          targetType: 'canonical',
+        },
+        {
+          id: destinationId,
+          namespace: 'saml.attribute',
+          path: `urn:test:attribute:${index}`,
+          valueType: 'string',
+          cardinality: 'multi',
+          classification: 'internal',
+          targetType: 'destination-only',
+        }
+      );
+      return identityMappingEdge(
+        sourceId,
+        namespace,
+        path,
+        destinationId,
+        `urn:test:attribute:${index}`
+      );
+    });
+    const attributes = buildSAMLAttributesForSP(
+      {
+        id: 'user-123',
+        email: 'profile@example.test',
+        name: 'Profile Name',
+        claims: { department: 'engineering' },
+        customClaims: { entitlement: 'licensed' },
+        customFields: { employeeNumber: 42 },
+        attributes: { groups: ['admin', 'editor'] },
+      },
+      {
+        attributeMapping: {},
+        identityMapping: {
+          catalog: {
+            identity: {
+              id: 'namespace-matrix',
+              version: '1',
+              contentHash: 'namespace-matrix',
+              compatibilityRange: '^0.3.0',
+            },
+            entries,
+          },
+          edges,
+        },
+      }
+    );
+    expect(attributes).toHaveLength(cases.length);
+    expect(attributes[9]?.values).toEqual(['admin', 'editor']);
+    expect(attributes[11]?.values).toEqual(['user-123']);
+  });
+
+  it.each([
+    ['saml:persistent-nameid', 'saml:persistent-nameid'],
+    [' XS:BOOLEAN ', 'xs:boolean'],
+    ['xs:integer', 'xs:integer'],
+    ['xs:datetime', 'xs:dateTime'],
+    ['xs:anyuri', 'xs:anyURI'],
+    ['xs:string', 'xs:string'],
+    ['unsupported', undefined],
+    ['', undefined],
+  ] as const)('normalizes mapped SAML value type %s', (configured, expected) => {
+    const catalog = identityMappingSamlCatalog({ mailRequired: false });
+    catalog.entries.find((entry) => entry.id === 'field.saml.mail')!.valueType =
+      configured as never;
+    const attributes = buildSAMLAttributesForSP(
+      { id: 'user-123', email: 'user@example.test' },
+      {
+        attributeMapping: {},
+        identityMapping: {
+          catalog,
+          edges: [
+            identityMappingEdge(
+              'field.profile.email',
+              'authrim.profile',
+              'email',
+              'field.saml.mail',
+              'urn:oid:0.9.2342.19200300.100.1.3'
+            ),
+          ],
+        },
+      }
+    );
+    expect(attributes[0]?.valueType).toBe(expected);
+  });
+
+  it('resolves descriptors by destination path and namespace key and deduplicates required errors', () => {
+    const catalog = identityMappingSamlCatalog();
+    expect(() =>
+      buildSAMLAttributesForSP(
+        { id: 'user-123' },
+        {
+          attributeMapping: {},
+          identityMapping: {
+            catalog,
+            edges: [
+              identityMappingEdge(
+                'field.profile.email',
+                'authrim.profile',
+                'email',
+                'field.saml.mail',
+                'urn:oid:0.9.2342.19200300.100.1.3'
+              ),
+            ],
+            attributeDescriptors: {
+              'urn:oid:0.9.2342.19200300.100.1.3': { name: 'mail', required: true },
+              'saml.attribute:urn:oid:0.9.2342.19200300.100.1.3': {
+                name: 'mail',
+                required: true,
+              },
+            },
+          },
+        }
+      )
+    ).toThrow(MissingRequiredSAMLAttributeError);
+  });
 });
 
 function identityMappingSamlCatalog(options: { mailRequired?: boolean } = {}): FieldCatalogBundle {

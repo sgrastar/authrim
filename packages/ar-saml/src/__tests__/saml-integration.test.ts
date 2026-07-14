@@ -2379,15 +2379,18 @@ describe('SAML Integration', () => {
         put: vi.fn(),
       } as unknown as Env['STATE_STORE'];
 
-      await expect(
-        callIdPSLODirectly(
-          createMockLogoutResponse({
-            issuer: 'https://sp.example.com/saml',
-            inResponseTo: requestId,
-          }),
-          { tenantId: 'tenant-b' }
-        )
-      ).rejects.toThrow('LogoutResponse InResponseTo does not match an outbound LogoutRequest');
+      const response = await callIdPSLODirectly(
+        createMockLogoutResponse({
+          issuer: 'https://sp.example.com/saml',
+          inResponseTo: requestId,
+        }),
+        { tenantId: 'tenant-b' }
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_request',
+        error_code: 'AR130003',
+      });
       expect(stateStoreGet).toHaveBeenCalledWith(tenantBKey);
       expect(stateStoreGet).not.toHaveBeenCalledWith(tenantAKey);
       expect(stateStoreDelete).not.toHaveBeenCalled();

@@ -38,6 +38,7 @@ function createSettingsKV(records: Record<string, unknown> = {}) {
 function createMockContext(
   options: {
     body?: unknown;
+    bodyError?: Error;
     params?: Record<string, string>;
     settings?: Record<string, unknown>;
   } = {}
@@ -48,7 +49,9 @@ function createMockContext(
     env: { SETTINGS: settings } as unknown as Env,
     req: {
       param: (name: string) => options.params?.[name] ?? '',
-      json: vi.fn().mockResolvedValue(options.body),
+      json: options.bodyError
+        ? vi.fn().mockRejectedValue(options.bodyError)
+        : vi.fn().mockResolvedValue(options.body),
     },
     header: (name: string, value: string) => {
       headers.append(name, value);
@@ -203,5 +206,55 @@ describe('Account Page return transaction API', () => {
 
     expect(response.status).toBe(404);
     expect(body.error).toBe('account_page_disabled');
+  });
+
+  it('rejects a non-JSON return request', async () => {
+    const response = await createAccountReturnHandler(
+      createMockContext({ bodyError: new Error('invalid JSON') })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([[undefined], [42], ['https://evil.example/account'], ['javascript:alert(1)']])(
+    'rejects unsafe account return path %s',
+    async (path) => {
+      const response = await createAccountReturnHandler(createMockContext({ body: { path } }));
+
+      expect(response.status).toBe(400);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    }
+  );
+
+  it('returns not found when the consume id is absent', async () => {
+    const response = await consumeAccountReturnHandler(createMockContext());
+
+    expect(response.status).toBe(404);
+    expect(mockChallengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects an expired or replayed return transaction', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockRejectedValue(new Error('not found'));
+
+    const response = await consumeAccountReturnHandler(
+      createMockContext({ params: { id: 'expired' } })
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it.each([
+    [{ metadata: {} }],
+    [{ metadata: { path: '/admin/users' } }],
+    [{ metadata: { path: 42 } }],
+  ])('rejects stale or tampered consumed metadata %#', async (stored) => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValue(stored);
+
+    const response = await consumeAccountReturnHandler(
+      createMockContext({ params: { id: 'ret_001' } })
+    );
+
+    expect(response.status).toBe(400);
   });
 });

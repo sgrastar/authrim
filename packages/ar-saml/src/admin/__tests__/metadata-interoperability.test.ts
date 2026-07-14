@@ -465,6 +465,130 @@ describe('SAML metadata interoperability fixtures', () => {
   });
 });
 
+describe('SAML metadata parser rejection and fallback matrix', () => {
+  const md = SAML_NAMESPACES.MD;
+  const ds = SAML_NAMESPACES.DS;
+
+  it.each([
+    ['<root/>', 'missing EntityDescriptor'],
+    [`<md:EntityDescriptor xmlns:md="${md}"/>`, 'missing entityID'],
+    [
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id"><md:SPSSODescriptor/></md:EntityDescriptor>`,
+      'Service Provider',
+    ],
+    [
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id"><md:RoleDescriptor/></md:EntityDescriptor>`,
+      'missing IDPSSODescriptor',
+    ],
+    [
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id"><md:IDPSSODescriptor/></md:EntityDescriptor>`,
+      'no supported SSO',
+    ],
+  ])('rejects invalid IdP metadata: %s', (xml, message) => {
+    expect(() => parseIdPMetadata(xml)).toThrow(message);
+  });
+
+  it('parses post-only IdP metadata, optional SLO, default NameID, and deduplicated keys', () => {
+    const config = parseIdPMetadata(`
+      <md:EntityDescriptor xmlns:md="${md}" xmlns:ds="${ds}" entityID="https://idp.test/entity">
+        <md:IDPSSODescriptor>
+          <md:KeyDescriptor><ds:KeyInfo><ds:X509Data><ds:X509Certificate> CERT </ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>CERT</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:KeyDescriptor use="encryption"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>ENC</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.test/post"/>
+          <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.test/logout"/>
+        </md:IDPSSODescriptor>
+      </md:EntityDescriptor>`);
+    expect(config).toMatchObject({
+      ssoUrl: 'https://idp.test/post',
+      sloUrl: 'https://idp.test/logout',
+      allowedBindings: ['post'],
+      certificates: [expect.stringContaining('CERT')],
+    });
+    expect(config.nameIdFormat).toContain('emailAddress');
+  });
+
+  it.each([
+    ['<root/>', 'missing EntityDescriptor'],
+    [`<md:EntityDescriptor xmlns:md="${md}"/>`, 'missing entityID'],
+    [
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id"><md:IDPSSODescriptor/></md:EntityDescriptor>`,
+      'Identity Provider',
+    ],
+    [
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id"><md:RoleDescriptor/></md:EntityDescriptor>`,
+      'missing SPSSODescriptor',
+    ],
+    [
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id"><md:SPSSODescriptor><md:AssertionConsumerService Binding="unsupported" Location="https://sp.test/acs"/></md:SPSSODescriptor></md:EntityDescriptor>`,
+      'no supported ACS',
+    ],
+  ])('rejects invalid SP metadata: %s', (xml, message) => {
+    expect(() => parseSPMetadata(xml)).toThrow(message);
+  });
+
+  it('normalizes redirect ACS, indexes, duplicate defaults, key usage, and empty optional fields', () => {
+    const config = parseSPMetadata(
+      `
+      <md:EntityDescriptor xmlns:md="${md}" xmlns:ds="${ds}" entityID="https://sp.test/entity">
+        <md:SPSSODescriptor>
+          <md:KeyDescriptor><ds:KeyInfo><ds:X509Data><ds:X509Certificate>BOTH</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:KeyDescriptor use="signing"><ds:KeyInfo/></md:KeyDescriptor>
+          <md:KeyDescriptor use="encryption"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>   </ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://sp.test/acs/one" index="2"/>
+          <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://sp.test/acs/default" index="2" isDefault="true"/>
+          <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.test/acs/post" index="not-a-number"/>
+          <md:NameIDFormat> </md:NameIDFormat>
+          <md:SingleLogoutService Binding="unsupported" Location="https://sp.test/slo/unsupported"/>
+          <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.test/slo/post"/>
+        </md:SPSSODescriptor>
+      </md:EntityDescriptor>`,
+      'strict'
+    );
+    expect(config.acsUrl).toBe('https://sp.test/acs/post');
+    expect(config.acsServices).toEqual([
+      expect.objectContaining({
+        index: 2,
+        location: 'https://sp.test/acs/default',
+        isDefault: true,
+      }),
+    ]);
+    expect(config.sloBinding).toBe('post');
+    expect(config.certificates).toHaveLength(1);
+    expect(config.encryptionCertificates).toHaveLength(1);
+    expect(config.metadataNameIdFormats).toBeUndefined();
+  });
+
+  it('merges duplicate requested attributes and sanitizes unknown claim suggestions', () => {
+    const config = parseSPMetadata(`
+      <md:EntityDescriptor xmlns:md="${md}" entityID="https://sp.test/entity">
+        <md:SPSSODescriptor>
+          <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.test/acs" index="9007199254740992"/>
+          <md:AttributeConsumingService index="invalid">
+            <md:ServiceName></md:ServiceName>
+            <md:RequestedAttribute FriendlyName="ignored"/>
+            <md:RequestedAttribute Name="urn:example:custom value" FriendlyName=" custom value "/>
+            <md:RequestedAttribute Name="urn:example:custom value" FriendlyName=" custom value " isRequired="true"/>
+            <md:RequestedAttribute Name=":::"/>
+          </md:AttributeConsumingService>
+        </md:SPSSODescriptor>
+      </md:EntityDescriptor>`);
+    expect(config.acsServices).toEqual([]);
+    expect(config.metadataRequestedAttributes).toHaveLength(3);
+    expect(config.metadataAttributeReleasePolicySuggestion?.attributes).toEqual([
+      expect.objectContaining({ claim: 'custom_value', required: true }),
+      expect.objectContaining({ claim: 'samlAttribute', required: false }),
+    ]);
+  });
+
+  it('rejects invalid and expired validUntil but accepts a future value', () => {
+    const xml = (validUntil: string) =>
+      `<md:EntityDescriptor xmlns:md="${md}" entityID="id" validUntil="${validUntil}"><md:SPSSODescriptor><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.test/acs"/></md:SPSSODescriptor></md:EntityDescriptor>`;
+    expect(() => parseSPMetadata(xml('not-a-date'))).toThrow('invalid validUntil');
+    expect(parseSPMetadata(xml('2999-01-01T00:00:00Z')).entityId).toBe('id');
+  });
+});
+
 function createPreviewContext(body: unknown) {
   return {
     req: {
