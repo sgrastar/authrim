@@ -41,10 +41,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { listAccountConsentsHandler } from '../account-consents';
 
-function createMockContext(cookie?: string) {
+function createMockContext(cookie?: string, acceptLanguage?: string) {
   const headers = new Headers();
   const request = new Request('https://op.example.com/api/account/consents', {
-    headers: cookie ? { Cookie: cookie } : {},
+    headers: {
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(acceptLanguage ? { 'Accept-Language': acceptLanguage } : {}),
+    },
   });
   return {
     env: {} as Env,
@@ -220,5 +223,148 @@ describe('Account Page consents API', () => {
       ],
       total: 3,
     });
+  });
+
+  it('requires an account session before reading consent history', async () => {
+    const response = await listAccountConsentsHandler(createMockContext());
+
+    expect(response.status).toBe(401);
+    expect(mockCoreAdapter.query).not.toHaveBeenCalled();
+  });
+
+  it('normalizes revoked/denied records and omits malformed optional consent data', async () => {
+    mockCoreAdapter.query.mockReset();
+    mockCoreAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'statement-minimal',
+          statement_id: 'statement-1',
+          version_id: 'version-1',
+          version: '1',
+          status: 'withdrawn',
+          granted_at: null,
+          withdrawn_at: null,
+          expires_at: null,
+          client_id: null,
+          receipt_id: null,
+          updated_at: 10,
+          slug: null,
+          category: null,
+          title: null,
+          description: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'flow-revoked',
+          statement_id: 'statement-2',
+          version_id: 'version-2',
+          version: '2',
+          decision: 'accepted',
+          selected_value: null,
+          record_status: 'revoked',
+          granted_at: null,
+          withdrawn_at: 20,
+          expires_at: null,
+          client_id: null,
+          receipt_id: null,
+          updated_at: 20,
+          slug: null,
+          category: null,
+          title: null,
+          description: null,
+        },
+        {
+          id: 'flow-denied',
+          statement_id: 'statement-3',
+          version_id: 'version-3',
+          version: '3',
+          decision: 'rejected',
+          selected_value: 'no',
+          record_status: 'active',
+          granted_at: null,
+          withdrawn_at: null,
+          expires_at: null,
+          client_id: null,
+          receipt_id: null,
+          updated_at: 30,
+          slug: 'statement-three',
+          category: null,
+          title: null,
+          description: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'oauth-minimal',
+          client_id: 'client-1',
+          scope: 'openid  email ',
+          selected_scopes: '{bad json',
+          granted_at: 40,
+          expires_at: null,
+          privacy_policy_version: null,
+          tos_version: null,
+          consent_version: null,
+          client_name: null,
+          logo_uri: null,
+        },
+      ]);
+
+    const response = await listAccountConsentsHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_current', 'ja-JP, en;q=0.8')
+    );
+    const body = (await response.json()) as { consents: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(mockCoreAdapter.query).toHaveBeenCalledWith(expect.any(String), [
+      'ja',
+      'default',
+      'user-001',
+    ]);
+    expect(body.consents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'flow-revoked', status: 'withdrawn' }),
+        expect.objectContaining({ id: 'flow-denied', status: 'denied', selectedValue: 'no' }),
+        expect.objectContaining({ id: 'statement-minimal', title: 'statement-1' }),
+        expect.objectContaining({ id: 'oauth-minimal', scopes: ['openid', 'email'] }),
+      ])
+    );
+    const oauth = body.consents.find((consent) => consent.id === 'oauth-minimal');
+    expect(oauth).not.toHaveProperty('selectedScopes');
+    expect(oauth).not.toHaveProperty('policyVersions');
+  });
+
+  it.each([
+    ['non-array JSON', JSON.stringify({ scope: 'openid' })],
+    ['mixed array JSON', JSON.stringify(['openid', 42])],
+    ['empty value', null],
+  ])('omits selected scopes for %s', async (_label, selectedScopes) => {
+    mockCoreAdapter.query.mockReset();
+    mockCoreAdapter.query
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'oauth-1',
+          client_id: 'client-1',
+          scope: 'openid',
+          selected_scopes: selectedScopes,
+          granted_at: 1,
+          expires_at: null,
+          privacy_policy_version: null,
+          tos_version: null,
+          consent_version: null,
+          client_name: null,
+          logo_uri: null,
+        },
+      ]);
+
+    const response = await listAccountConsentsHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_current')
+    );
+    const body = (await response.json()) as { consents: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(body.consents[0]).not.toHaveProperty('selectedScopes');
   });
 });

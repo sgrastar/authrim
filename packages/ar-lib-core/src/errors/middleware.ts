@@ -5,10 +5,10 @@
  *
  * Usage:
  * ```ts
- * import { errorMiddleware } from '@authrim/ar-lib-core';
+ * import { errorHandler } from '@authrim/ar-lib-core';
  *
  * const app = new Hono();
- * app.use('*', errorMiddleware());
+ * app.onError(errorHandler());
  *
  * // Errors thrown with AR codes will be automatically serialized
  * app.get('/api/resource', (c) => {
@@ -138,7 +138,7 @@ async function getErrorConfig(
   format: ErrorResponseFormat;
   errorIdMode: ErrorIdMode;
 }> {
-  const env = c.env as {
+  const env = (c.env ?? {}) as {
     AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> };
   };
 
@@ -185,56 +185,60 @@ async function getErrorConfig(
  */
 export function errorMiddleware(options: ErrorMiddlewareOptions = {}): MiddlewareHandler {
   return async (c, next) => {
+    let caughtError: unknown;
     try {
       await next();
     } catch (error) {
-      // Get configuration
-      const config = await getErrorConfig(c, options);
+      caughtError = error;
+    }
 
-      // Create factory with configuration
-      const factory = new ErrorFactory({
-        locale: config.locale,
-        errorIdMode: config.errorIdMode,
-      });
-
-      let descriptor: ErrorDescriptor;
-
-      if (error instanceof AuthrimError) {
-        // Handle AuthrimError
-        descriptor = factory.create(error.code, {
-          variables: error.options.variables,
-          state: error.options.state,
-          extensions: error.options.extensions,
-        });
-      } else if (error instanceof RFCError) {
-        // Handle RFCError
-        descriptor = factory.createFromRFC(error.rfcError, error.status, error.detail);
-      } else {
-        // Handle unexpected errors
-        descriptor = factory.createInternalError();
-
-        // Call custom error handler if provided
-        if (options.onError) {
-          options.onError(error, c);
-        } else {
-          // Default error logging
-          log.error('Unhandled error', {}, error as Error);
-        }
-      }
-
-      // Determine response format
-      // Safe access to c.req.header - may not be a function in some test mocks
-      const acceptHeader =
-        typeof c.req?.header === 'function' ? c.req.header('accept') || null : null;
-      const responseFormat = determineFormat(c.req?.path, acceptHeader, config.format);
-
-      // Serialize and return response
-      return serializeError(descriptor, {
-        format: responseFormat,
-        baseUrl: options.baseUrl,
-      });
+    // Hono normally captures downstream exceptions in c.error instead of
+    // rethrowing them through middleware. Handle both forms so the configured
+    // Authrim response is not replaced by Hono's plain-text 500 response.
+    const error = caughtError ?? c.error;
+    if (error) {
+      return handleError(error, c, options);
     }
   };
+}
+
+async function handleError(
+  error: unknown,
+  c: Context,
+  options: ErrorMiddlewareOptions
+): Promise<Response> {
+  const config = await getErrorConfig(c, options);
+  const factory = new ErrorFactory({ locale: config.locale, errorIdMode: config.errorIdMode });
+  let descriptor: ErrorDescriptor;
+
+  if (error instanceof AuthrimError) {
+    descriptor = factory.create(error.code, {
+      variables: error.options.variables,
+      state: error.options.state,
+      extensions: error.options.extensions,
+    });
+  } else if (error instanceof RFCError) {
+    descriptor = factory.createFromRFC(error.rfcError, error.status, error.detail);
+  } else {
+    descriptor = factory.createInternalError();
+    if (options.onError) {
+      options.onError(error, c);
+    } else {
+      log.error('Unhandled error', {}, error as Error);
+    }
+  }
+
+  const acceptHeader = typeof c.req?.header === 'function' ? c.req.header('accept') || null : null;
+  const responseFormat = determineFormat(c.req?.path, acceptHeader, config.format);
+  return serializeError(descriptor, { format: responseFormat, baseUrl: options.baseUrl });
+}
+
+/**
+ * Create a Hono onError handler. Hono catches route exceptions at the app
+ * boundary, so applications should register this with `app.onError(...)`.
+ */
+export function errorHandler(options: ErrorMiddlewareOptions = {}) {
+  return (error: Error, c: Context): Promise<Response> => handleError(error, c, options);
 }
 
 /**

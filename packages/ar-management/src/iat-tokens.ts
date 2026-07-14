@@ -252,6 +252,10 @@ export async function adminIATRevokeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    if (!/^[0-9a-f]{64}$/u.test(tokenHash)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
     // Check if token exists
     const existing = await c.env.INITIAL_ACCESS_TOKENS.get(`iat:${tokenHash}`);
     if (!existing) {

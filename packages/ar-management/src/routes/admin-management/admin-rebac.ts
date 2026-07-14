@@ -11,6 +11,7 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   AdminRelationshipRepository,
   AdminRebacDefinitionRepository,
+  AdminUserRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -51,6 +52,15 @@ function getAdminAdapter(c: AdminContext) {
 function hasWritePermission(authContext: AdminAuthContext): boolean {
   const permissions = authContext.permissions || [];
   return hasAdminPermission(permissions, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE);
+}
+
+async function adminUserBelongsToTenant(
+  adapter: ReturnType<typeof getAdminAdapter>,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  const userRepo = new AdminUserRepository(adapter);
+  return (await userRepo.findByTenantAndId(tenantId, userId)) !== null;
 }
 
 /**
@@ -514,6 +524,7 @@ adminRebacRouter.get('/admins/:userId/relationships', async (c: AdminContext) =>
   try {
     const adapter = getAdminAdapter(c);
     const repo = new AdminRelationshipRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('userId')!;
     const relationshipType = c.req.query('type');
     const direction = c.req.query('direction') || 'both'; // from, to, both
@@ -521,6 +532,10 @@ adminRebacRouter.get('/admins/:userId/relationships', async (c: AdminContext) =>
     let from: typeof relationships = [];
     let to: typeof relationships = [];
     const relationships: Awaited<ReturnType<typeof repo.getRelationshipsFrom>> = [];
+
+    if (!(await adminUserBelongsToTenant(adapter, tenantId, userId))) {
+      return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+    }
 
     if (direction === 'from' || direction === 'both') {
       from = await repo.getRelationshipsFrom(userId, { relationshipType });
@@ -530,7 +545,7 @@ adminRebacRouter.get('/admins/:userId/relationships', async (c: AdminContext) =>
     }
 
     // Combine and deduplicate
-    const combined = [...from, ...to];
+    const combined = [...from, ...to].filter((relationship) => relationship.tenant_id === tenantId);
     const seen = new Set<string>();
     for (const rel of combined) {
       if (!seen.has(rel.id)) {
@@ -573,6 +588,10 @@ adminRebacRouter.post('/admins/:userId/relationships', async (c: AdminContext) =
       is_bidirectional?: boolean;
       metadata?: Record<string, unknown>;
     }>();
+
+    if (!(await adminUserBelongsToTenant(adapter, tenantId, userId))) {
+      return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+    }
 
     // Validate required fields
     if (!body.relationship_type || !body.to_id) {
@@ -634,7 +653,12 @@ adminRebacRouter.delete(
       const adapter = getAdminAdapter(c);
       const repo = new AdminRelationshipRepository(adapter);
       const tenantId = getTenantIdFromContext(c);
+      const userId = c.req.param('userId')!;
       const relationshipId = c.req.param('relationshipId')!;
+
+      if (!(await adminUserBelongsToTenant(adapter, tenantId, userId))) {
+        return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+      }
 
       // Check if relationship exists and belongs to this tenant
       const existing = await repo.getRelationship(relationshipId);
@@ -644,6 +668,10 @@ adminRebacRouter.delete(
 
       // Tenant boundary check - prevent IDOR
       if (existing.tenant_id !== tenantId) {
+        return c.json({ error: 'not_found', message: 'Relationship not found' }, 404);
+      }
+
+      if (existing.from_id !== userId && existing.to_id !== userId) {
         return c.json({ error: 'not_found', message: 'Relationship not found' }, 404);
       }
 

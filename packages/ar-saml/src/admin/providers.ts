@@ -1745,7 +1745,12 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     const metadataUrl = resolvedMetadata.metadataUrl;
     const existingConfig = JSON.parse(existing.config_json) as SAMLIdPConfig | SAMLSPConfig;
     const previousAnalysis = buildPreviousMetadataAnalysis(existingConfig);
-    const currentAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
+    let currentAnalysis: SAMLMetadataAnalysis;
+    try {
+      currentAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
+    } catch (error) {
+      throw toSAMLMetadataValidationError(error);
+    }
     const refreshStatus = buildSAMLMetadataRefreshStatus(previousAnalysis, currentAnalysis);
     let newConfig: SAMLIdPConfig | SAMLSPConfig;
 
@@ -1923,7 +1928,12 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     }
 
     const previousAnalysis = buildPreviousMetadataAnalysis(existingConfig);
-    const currentAnalysis = analyzeSAMLMetadata(metadataXml);
+    let currentAnalysis: SAMLMetadataAnalysis;
+    try {
+      currentAnalysis = analyzeSAMLMetadata(metadataXml);
+    } catch (error) {
+      throw toSAMLMetadataValidationError(error);
+    }
     const refreshStatus = buildSAMLMetadataRefreshStatus(previousAnalysis, currentAnalysis);
     const now = Date.now();
 
@@ -3173,7 +3183,7 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
           });
         }
       }
-      if (!acsUrl || isDefault === 'true') {
+      if (!acsUrl || isDefault === 'true' || !allowedBindings.has('post')) {
         acsUrl = location || '';
       }
       allowedBindings.add('post');

@@ -124,4 +124,57 @@ describe('Account Page operation history API', () => {
       },
     ]);
   });
+
+  it('requires an authenticated account session before querying audit data', async () => {
+    const response = await listAccountOperationsHandler(createMockContext());
+
+    expect(response.status).toBe(401);
+    expect(mockCoreAdapter.query).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [undefined, 50],
+    ['0', 50],
+    ['not-a-number', 50],
+    ['25', 25],
+  ])('normalizes operation limit %s to %s', async (limit, expected) => {
+    mockCoreAdapter.query.mockResolvedValue([]);
+    const response = await listAccountOperationsHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        query: limit === undefined ? {} : { limit },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCoreAdapter.query).toHaveBeenCalledWith(expect.any(String), [
+      'default',
+      'user-001',
+      expected,
+    ]);
+  });
+
+  it.each([[null], ['not-json'], ['[]'], ['null']])(
+    'omits unsafe or malformed metadata %s',
+    async (metadataJson) => {
+      mockCoreAdapter.query.mockResolvedValue([
+        {
+          id: 'audit-unsafe',
+          action: 'account.session.revoked',
+          resource_type: null,
+          resource_id: null,
+          metadata_json: metadataJson,
+          created_at: 1,
+        },
+      ]);
+
+      const response = await listAccountOperationsHandler(
+        createMockContext({ cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current' })
+      );
+      const body = (await response.json()) as { operations: Array<Record<string, unknown>> };
+
+      expect(response.status).toBe(200);
+      expect(body.operations[0]).not.toHaveProperty('metadata');
+    }
+  );
 });

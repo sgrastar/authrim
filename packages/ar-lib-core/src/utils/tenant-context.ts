@@ -12,7 +12,7 @@
  */
 
 import type { Env } from '../types/env';
-import { isMultiTenantEnabled, validateHostHeader, extractSubdomain } from './issuer';
+import { validateHostHeader } from './issuer';
 
 /**
  * Default tenant ID used in single-tenant mode.
@@ -307,6 +307,9 @@ export function getAuthCodeShardIndex(
   clientId: string,
   shardCount: number = DEFAULT_CODE_SHARD_COUNT
 ): number {
+  if (!Number.isInteger(shardCount) || shardCount <= 0) {
+    throw new Error('Invalid shard count: must be a positive integer');
+  }
   const key = `${userId}:${clientId}`;
   const hash = fnv1a32(key);
   return hash % shardCount;
@@ -343,10 +346,10 @@ export function parseShardedAuthCode(
   const shardPart = code.substring(0, underscorePos);
   const opaquePart = code.substring(underscorePos + 1);
 
-  const shardIndex = parseInt(shardPart, 10);
-  if (isNaN(shardIndex) || shardIndex < 0) {
+  if (!/^\d+$/.test(shardPart) || !opaquePart) {
     return null;
   }
+  const shardIndex = Number(shardPart);
 
   return {
     shardIndex,

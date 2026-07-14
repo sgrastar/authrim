@@ -12,6 +12,7 @@ const {
   mockTotpRepo,
   mockRuntimeUserStore,
   mockRateLimiter,
+  mockPasskeyRepo,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -55,6 +56,7 @@ const {
       findById: vi.fn(),
     },
     mockRateLimiter: rateLimiter,
+    mockPasskeyRepo: { findByUserId: vi.fn() },
   };
 });
 
@@ -70,6 +72,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
+    PasskeyRepository: vi.fn(function PasskeyRepositoryMock() {
+      return mockPasskeyRepo;
+    }),
   };
 });
 
@@ -84,6 +89,9 @@ import {
   completeAccountTotpReauthHandler,
   createAccountTotpOptionsHandler,
   deleteAccountTotpCredentialHandler,
+  listAccountTotpCredentialsHandler,
+  regenerateAccountTotpBackupCodesHandler,
+  updateAccountTotpCredentialHandler,
 } from '../account-totp';
 
 const encryptionKey = '00'.repeat(32);
@@ -102,15 +110,20 @@ const baseSession = {
 function createMockContext(
   options: {
     body?: unknown;
+    bodyError?: Error;
     settings?: Record<string, unknown>;
+    rawSettings?: Record<string, string>;
     env?: Partial<Env>;
+    cookie?: string | null;
   } = {}
 ) {
   const headers = new Headers();
+  const cookie =
+    options.cookie === null
+      ? undefined
+      : (options.cookie ?? 'authrim_session=g1%3Aapac%3A3%3Asession_current');
   const request = new Request('https://op.example.com/api/account/totp', {
-    headers: {
-      Cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
-    },
+    headers: cookie ? { Cookie: cookie } : {},
   });
   return {
     env: {
@@ -124,6 +137,9 @@ function createMockContext(
       },
       SETTINGS: {
         get: vi.fn(async (key: string) => {
+          if (options.rawSettings?.[key] !== undefined) {
+            return options.rawSettings[key];
+          }
           const value = options.settings?.[key];
           return value === undefined ? null : JSON.stringify(value);
         }),
@@ -136,7 +152,9 @@ function createMockContext(
       raw: request,
       header: (name: string) => request.headers.get(name) ?? undefined,
       param: vi.fn(),
-      json: vi.fn().mockResolvedValue(options.body),
+      json: options.bodyError
+        ? vi.fn().mockRejectedValue(options.bodyError)
+        : vi.fn().mockResolvedValue(options.body),
     },
     header: (name: string, value: string) => {
       headers.append(name, value);
@@ -175,6 +193,7 @@ describe('Account Page TOTP API', () => {
     });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
     mockRateLimiter.incrementRpc.mockResolvedValue({ allowed: true, retryAfter: 0 });
+    mockPasskeyRepo.findByUserId.mockResolvedValue([]);
     mockTotpRepo.create.mockImplementation(async (input) => ({
       id: 'totp-001',
       tenant_id: 'default',
@@ -587,5 +606,710 @@ describe('Account Page TOTP API', () => {
     });
     expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
     expect(mockSessionStore.updateSessionDataRpc).not.toHaveBeenCalled();
+  });
+
+  it('lists sanitized credentials and only backup-code counts', async () => {
+    mockTotpRepo.findByUserId.mockResolvedValue([
+      {
+        id: 'totp-001',
+        user_id: 'user-001',
+        secret_encrypted: 'must-not-leak',
+        label: 'Phone',
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        window: 1,
+        status: 'active',
+        created_at: 1,
+        activated_at: 2,
+        last_used_at: null,
+      },
+    ]);
+    mockTotpRepo.listBackupCodes.mockResolvedValue([
+      { id: 'b1', code_hash: 'secret', used_at: null },
+      { id: 'b2', code_hash: 'secret', used_at: 10 },
+    ]);
+
+    const response = await listAccountTotpCredentialsHandler(createMockContext());
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(body.credentials[0]).not.toHaveProperty('secret_encrypted');
+    expect(body.backup_codes).toEqual({ total: 2, remaining: 1 });
+  });
+
+  it.each([
+    [{}, 400],
+    [{ label: 'x'.repeat(101) }, 400],
+  ])('rejects invalid TOTP rename payload %#', async (body, status) => {
+    const context = createMockContext({ body });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await updateAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(status);
+    expect(mockTotpRepo.rename).not.toHaveBeenCalled();
+  });
+
+  it('does not rename another user TOTP credential', async () => {
+    mockTotpRepo.findById.mockResolvedValue({ id: 'totp-001', user_id: 'other' });
+    const context = createMockContext({ body: { label: 'New' } });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await updateAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(404);
+    expect(mockTotpRepo.rename).not.toHaveBeenCalled();
+  });
+
+  it('renames an owned TOTP credential and records only changed fields', async () => {
+    const credential = {
+      id: 'totp-001',
+      user_id: 'user-001',
+      label: 'Old',
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      window: 1,
+      status: 'active',
+      created_at: 1,
+      activated_at: 2,
+      last_used_at: null,
+    };
+    mockTotpRepo.findById.mockResolvedValue(credential);
+    mockTotpRepo.rename.mockResolvedValue({ ...credential, label: 'New' });
+    const context = createMockContext({ body: { label: ' New ' } });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await updateAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockTotpRepo.rename).toHaveBeenCalledWith('totp-001', 'user-001', 'New');
+  });
+
+  it('deletes an owned pending credential without demanding authentication proof', async () => {
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-pending',
+      user_id: 'user-001',
+      status: 'pending',
+      label: 'Pending',
+    });
+    mockTotpRepo.delete.mockResolvedValue(true);
+    const context = createMockContext();
+    context.req.param = vi.fn(() => 'totp-pending');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockTotpRepo.delete).toHaveBeenCalledWith('totp-pending', 'user-001');
+    expect(mockTotpRepo.consumeBackupCode).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when deleting an unknown or cross-user credential', async () => {
+    mockTotpRepo.findById.mockResolvedValue(null);
+    const context = createMockContext();
+    context.req.param = vi.fn(() => 'missing');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(404);
+    expect(mockTotpRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects backup-code regeneration when no active TOTP credential exists', async () => {
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([]);
+
+    const response = await regenerateAccountTotpBackupCodesHandler(createMockContext());
+
+    expect(response.status).toBe(404);
+    expect(mockTotpRepo.replaceBackupCodes).not.toHaveBeenCalled();
+  });
+
+  it('regenerates one-time backup codes after recent passkey authentication', async () => {
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+    mockTotpRepo.replaceBackupCodes.mockResolvedValue([]);
+
+    const response = await regenerateAccountTotpBackupCodesHandler(createMockContext());
+    const body = (await response.json()) as { backup_codes: string[] };
+
+    expect(response.status).toBe(200);
+    expect(body.backup_codes).toHaveLength(10);
+    expect(mockTotpRepo.replaceBackupCodes).toHaveBeenCalled();
+  });
+
+  it('uses enrollment defaults for malformed optional JSON but rejects oversized labels', async () => {
+    const malformedResponse = await createAccountTotpOptionsHandler(
+      createMockContext({
+        bodyError: new Error('bad json'),
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': true,
+          },
+        },
+      })
+    );
+    expect(malformedResponse.status).toBe(201);
+    expect(mockTotpRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Authenticator app' })
+    );
+
+    mockTotpRepo.create.mockClear();
+    const oversizedResponse = await createAccountTotpOptionsHandler(
+      createMockContext({
+        body: { label: 'x'.repeat(101) },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': true,
+          },
+        },
+      })
+    );
+    expect(oversizedResponse.status).toBe(400);
+    expect(mockTotpRepo.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['malformed JSON', undefined, new Error('bad json'), 400],
+    ['missing fields', {}, undefined, 400],
+  ])('rejects activation with %s', async (_label, body, bodyError, status) => {
+    const response = await activateAccountTotpCredentialHandler(
+      createMockContext({ body, bodyError })
+    );
+
+    expect(response.status).toBe(status);
+    expect(mockTotpRepo.findById).not.toHaveBeenCalled();
+  });
+
+  it('does not activate an unknown, cross-user, or already-active credential', async () => {
+    for (const credential of [
+      null,
+      { id: 'totp-001', user_id: 'other', status: 'pending' },
+      { id: 'totp-001', user_id: 'user-001', status: 'active' },
+    ]) {
+      mockTotpRepo.findById.mockResolvedValueOnce(credential);
+      const response = await activateAccountTotpCredentialHandler(
+        createMockContext({
+          body: { credential_id: 'totp-001', code: '123456' },
+          settings: {
+            'settings:tenant:default:authentication-methods': {
+              'authentication-methods.totp.login_enabled': true,
+            },
+          },
+        })
+      );
+      expect(response.status).toBe(404);
+    }
+    expect(mockTotpRepo.activate).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid activation code without mutating pending state', async () => {
+    const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      secret_encrypted: encrypted.encrypted,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      window: 1,
+      status: 'pending',
+    });
+
+    const response = await activateAccountTotpCredentialHandler(
+      createMockContext({
+        body: { credential_id: 'totp-001', code: '000000' },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockTotpRepo.activate).not.toHaveBeenCalled();
+  });
+
+  it('reports a concurrent activation state change as conflict', async () => {
+    const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
+    const profile: TotpProfile = { algorithm: 'SHA1', digits: 6, period: 30, window: 1 };
+    const code = await generateTotpCode(
+      secret,
+      profile,
+      getTotpTimeStep(Date.now(), profile.period)
+    );
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      secret_encrypted: encrypted.encrypted,
+      ...profile,
+      status: 'pending',
+    });
+    mockTotpRepo.activate.mockResolvedValue(null);
+
+    const response = await activateAccountTotpCredentialHandler(
+      createMockContext({
+        body: { credential_id: 'totp-001', code },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(mockTotpRepo.replaceBackupCodes).not.toHaveBeenCalled();
+  });
+
+  it('reports a concurrent pending-credential deletion as not found', async () => {
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-pending',
+      user_id: 'user-001',
+      status: 'pending',
+    });
+    mockTotpRepo.delete.mockResolvedValue(false);
+    const context = createMockContext();
+    context.req.param = vi.fn(() => 'totp-pending');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(404);
+  });
+
+  it.each([
+    ['malformed JSON', undefined, new Error('bad json'), 400],
+    ['missing code', {}, undefined, 400],
+  ])('rejects TOTP reauthentication with %s', async (_label, body, bodyError, status) => {
+    const response = await completeAccountTotpReauthHandler(createMockContext({ body, bodyError }));
+
+    expect(response.status).toBe(status);
+    expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
+  });
+
+  it('rejects TOTP reauthentication when the method is disabled', async () => {
+    const response = await completeAccountTotpReauthHandler(
+      createMockContext({
+        body: { code: '123456' },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.reauth_enabled': false,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid TOTP reauthentication code', async () => {
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([]);
+    const response = await completeAccountTotpReauthHandler(
+      createMockContext({
+        body: { code: '123456' },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.reauth_enabled': true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockSessionStore.updateSessionDataRpc).not.toHaveBeenCalled();
+  });
+
+  it('allows deleting one of multiple active TOTP credentials after recent TOTP auth', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['totp'] },
+    });
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+      label: 'Primary',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([
+      { id: 'totp-001', user_id: 'user-001' },
+      { id: 'totp-002', user_id: 'user-001' },
+    ]);
+    mockTotpRepo.delete.mockResolvedValue(true);
+    const context = createMockContext();
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockRateLimiter.incrementRpc).not.toHaveBeenCalled();
+  });
+
+  it('accepts a passkey as the remaining login method after TOTP deletion', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['totp'] },
+    });
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+      label: 'Primary',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+    mockPasskeyRepo.findByUserId.mockResolvedValue([{ id: 'passkey-1' }]);
+    mockTotpRepo.delete.mockResolvedValue(true);
+    const context = createMockContext({ body: {} });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockPasskeyRepo.findByUserId).toHaveBeenCalledWith('user-001');
+  });
+
+  it('blocks deletion of the last active login method', async () => {
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+      label: 'Only method',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+    mockPasskeyRepo.findByUserId.mockResolvedValue([]);
+    mockRuntimeUserStore.findById.mockResolvedValue({ email: null, email_verified: 0 });
+    const context = createMockContext({
+      settings: {
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.passkey.login_enabled': false,
+          'authentication-methods.email_otp.login_enabled': false,
+        },
+      },
+    });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(400);
+    expect(mockTotpRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('requires a valid proof when deleting active TOTP without TOTP/passkey reauth', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['email_otp'] },
+    });
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+      label: 'Primary',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([
+      { id: 'totp-001', user_id: 'user-001' },
+      { id: 'totp-002', user_id: 'user-001' },
+    ]);
+    const context = createMockContext({ body: {} });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(400);
+    expect(mockTotpRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('consumes a valid backup code once as deletion proof', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['email_otp'] },
+    });
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+      label: 'Primary',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([
+      { id: 'totp-001', user_id: 'user-001' },
+      { id: 'totp-002', user_id: 'user-001' },
+    ]);
+    mockTotpRepo.consumeBackupCode.mockResolvedValue({ id: 'backup-1' });
+    mockTotpRepo.delete.mockResolvedValue(true);
+    const context = createMockContext({ body: { backup_code: 'ABCD-EFGH-IJKL' } });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockTotpRepo.consumeBackupCode).toHaveBeenCalledWith('user-001', expect.any(String));
+  });
+
+  it('rate limits backup-code regeneration before checking a TOTP code', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['email_otp'] },
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+    mockRateLimiter.incrementRpc.mockResolvedValue({ allowed: false, retryAfter: 30 });
+
+    const response = await regenerateAccountTotpBackupCodesHandler(
+      createMockContext({ body: { code: '123456' } })
+    );
+
+    expect(response.status).toBe(429);
+    expect(mockTotpRepo.replaceBackupCodes).not.toHaveBeenCalled();
+  });
+
+  it('returns server error when reauthentication cannot update the session', async () => {
+    const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
+    const profile: TotpProfile = { algorithm: 'SHA1', digits: 6, period: 30, window: 1 };
+    const step = getTotpTimeStep(Date.now(), 30);
+    const code = await generateTotpCode(secret, profile, step);
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([
+      {
+        id: 'totp-001',
+        user_id: 'user-001',
+        secret_encrypted: encrypted.encrypted,
+        last_used_time_step: null,
+        ...profile,
+      },
+    ]);
+    mockSessionStore.updateSessionDataRpc.mockResolvedValue(null);
+
+    const response = await completeAccountTotpReauthHandler(
+      createMockContext({
+        body: { code },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.reauth_enabled': true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(500);
+  });
+
+  it('requires an account session before listing TOTP credentials', async () => {
+    const response = await listAccountTotpCredentialsHandler(createMockContext({ cookie: null }));
+
+    expect(response.status).toBe(401);
+    expect(mockTotpRepo.findByUserId).not.toHaveBeenCalled();
+  });
+
+  it('requires recent authentication before enrollment', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 301, amr: ['passkey'] },
+    });
+
+    const response = await createAccountTotpOptionsHandler(createMockContext());
+
+    expect(response.status).toBe(403);
+    expect(mockTotpRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts string feature flags and falls back from malformed profile settings', async () => {
+    const key = 'settings:tenant:default:authentication-methods';
+    const response = await createAccountTotpOptionsHandler(
+      createMockContext({
+        body: {},
+        settings: {
+          [key]: {
+            'authentication-methods.totp.enabled': 'true',
+            'authentication-methods.totp.account_link_enabled': 'true',
+            'authentication-methods.totp.login_enabled': 'false',
+          },
+        },
+        env: { PII_ENCRYPTION_KEY_VERSION: 'invalid', ISSUER_URL: 'not a url' },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockTotpRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ secret_key_version: 1, algorithm: 'SHA1' })
+    );
+  });
+
+  it('falls back safely when authentication-method settings contain malformed JSON', async () => {
+    const key = 'settings:tenant:default:authentication-methods';
+    const response = await createAccountTotpOptionsHandler(
+      createMockContext({ rawSettings: { [key]: '{bad json' } })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockTotpRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('uses preferred username then user id when email is absent', async () => {
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({ preferred_username: 'preferred-user' });
+    const first = await createAccountTotpOptionsHandler(
+      createMockContext({
+        body: {},
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': true,
+          },
+        },
+        env: { ISSUER_URL: undefined },
+      })
+    );
+    expect(first.status).toBe(201);
+    expect(((await first.json()) as { otpauth_uri: string }).otpauth_uri).toContain(
+      'preferred-user'
+    );
+
+    mockRuntimeUserStore.findById.mockResolvedValueOnce(null);
+    const second = await createAccountTotpOptionsHandler(
+      createMockContext({
+        body: {},
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': true,
+          },
+        },
+      })
+    );
+    expect(second.status).toBe(201);
+    expect(((await second.json()) as { otpauth_uri: string }).otpauth_uri).toContain('user-001');
+  });
+
+  it('rejects deletion proof when backup-code hashing is unavailable', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['email_otp'] },
+    });
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([
+      { id: 'totp-001', user_id: 'user-001' },
+      { id: 'totp-002', user_id: 'user-001' },
+    ]);
+    const context = createMockContext({
+      body: { backup_code: 'ABCD-EFGH-IJKL' },
+      env: { OTP_HMAC_SECRET: undefined },
+    });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(400);
+    expect(mockTotpRepo.consumeBackupCode).not.toHaveBeenCalled();
+  });
+
+  it('returns a configuration error when regenerating backup codes without HMAC secret', async () => {
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+
+    const response = await regenerateAccountTotpBackupCodesHandler(
+      createMockContext({ env: { OTP_HMAC_SECRET: undefined } })
+    );
+
+    expect(response.status).toBe(500);
+    expect(mockTotpRepo.replaceBackupCodes).not.toHaveBeenCalled();
+  });
+
+  it('returns the requested label when rename succeeds but repository reread is unavailable', async () => {
+    const credential = {
+      id: 'totp-001',
+      user_id: 'user-001',
+      label: 'Old',
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      window: 1,
+      status: 'active',
+      created_at: 1,
+      activated_at: 2,
+      last_used_at: null,
+    };
+    mockTotpRepo.findById.mockResolvedValue(credential);
+    mockTotpRepo.rename.mockResolvedValue(null);
+    const context = createMockContext({ body: { label: 'New' } });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await updateAccountTotpCredentialHandler(context);
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(body.credential.label).toBe('New');
+  });
+
+  it('allows verified email OTP as the remaining login method', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['totp'] },
+    });
+    mockTotpRepo.findById.mockResolvedValue({
+      id: 'totp-001',
+      user_id: 'user-001',
+      status: 'active',
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+    mockRuntimeUserStore.findById.mockResolvedValue({
+      id: 'user-001',
+      email: 'person@example.com',
+      email_verified: 1,
+    });
+    mockTotpRepo.delete.mockResolvedValue(true);
+    const context = createMockContext({
+      bodyError: new Error('empty body'),
+      settings: {
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.passkey.login_enabled': false,
+          'authentication-methods.email_otp.login_enabled': true,
+        },
+      },
+    });
+    context.req.param = vi.fn(() => 'totp-001');
+
+    const response = await deleteAccountTotpCredentialHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockRuntimeUserStore.findById).toHaveBeenCalledWith('user-001');
+  });
+
+  it('rejects activation when account enrollment is disabled', async () => {
+    const response = await activateAccountTotpCredentialHandler(
+      createMockContext({
+        body: { credential_id: 'totp-001', code: '123456' },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.login_enabled': false,
+            'authentication-methods.totp.account_link_enabled': false,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockTotpRepo.findById).not.toHaveBeenCalled();
+  });
+
+  it('requires proof before regenerating backup codes after email-only authentication', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValue({
+      ...baseSession,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: Math.floor(Date.now() / 1000) - 60, amr: ['email_otp'] },
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([{ id: 'totp-001', user_id: 'user-001' }]);
+
+    const response = await regenerateAccountTotpBackupCodesHandler(createMockContext({ body: {} }));
+
+    expect(response.status).toBe(400);
+    expect(mockTotpRepo.replaceBackupCodes).not.toHaveBeenCalled();
   });
 });

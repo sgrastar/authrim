@@ -63,7 +63,14 @@ import {
   storeSAMLOutboundLogoutRequest,
   SAMLLogoutResponseCorrelationError,
 } from '../idp/slo-state';
-import { assertSAMLRelayStateSize } from '../common/relay-state';
+import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
+
+class SAMLLogoutMessageValidationError extends Error {
+  constructor() {
+    super('Invalid SAML logout message');
+    this.name = 'SAMLLogoutMessageValidationError';
+  }
+}
 
 /**
  * Handle SP Single Logout (both POST and GET)
@@ -76,12 +83,15 @@ export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Respon
 
   try {
     if (method === 'GET') {
-      return handleRedirectBinding(c, env, issuerUrl);
+      return await handleRedirectBinding(c, env, issuerUrl);
     } else {
-      return handlePostBinding(c, env, issuerUrl);
+      return await handlePostBinding(c, env, issuerUrl);
     }
   } catch (error) {
     log.error('SP SLO Error', { method }, error as Error);
+    if (isSAMLLogoutMessageValidationError(error)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -101,8 +111,10 @@ async function handlePostBinding(
   assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
-    const xml = decodePostBindingMessage(samlRequest, 'SAML LogoutRequest');
-    const logoutRequest = parseLogoutRequestXml(xml);
+    const xml = parseSAMLLogoutMessage(() =>
+      decodePostBindingMessage(samlRequest, 'SAML LogoutRequest')
+    );
+    const logoutRequest = parseSAMLLogoutMessage(() => parseLogoutRequestXml(xml));
     return processLogoutRequest(c, env, issuerUrl, {
       logoutRequest,
       relayState,
@@ -110,7 +122,7 @@ async function handlePostBinding(
       xml,
     });
   } else if (samlResponse) {
-    const logoutResponse = parseLogoutResponsePost(samlResponse);
+    const logoutResponse = parseSAMLLogoutMessage(() => parseLogoutResponsePost(samlResponse));
     return processLogoutResponse(c, env, logoutResponse, relayState, samlResponse);
   } else {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -134,8 +146,10 @@ async function handleRedirectBinding(
   assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
-    const xml = inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest');
-    const logoutRequest = parseLogoutRequestXml(xml);
+    const xml = parseSAMLLogoutMessage(() =>
+      inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest')
+    );
+    const logoutRequest = parseSAMLLogoutMessage(() => parseLogoutRequestXml(xml));
     return processLogoutRequest(c, env, issuerUrl, {
       logoutRequest,
       relayState,
@@ -149,7 +163,7 @@ async function handleRedirectBinding(
       },
     });
   } else if (samlResponse) {
-    const logoutResponse = parseLogoutResponseRedirect(samlResponse);
+    const logoutResponse = parseSAMLLogoutMessage(() => parseLogoutResponseRedirect(samlResponse));
     return processLogoutResponse(c, env, logoutResponse, relayState);
   } else {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -277,7 +291,7 @@ async function processLogoutResponse(
         });
       } catch (error) {
         log.error('LogoutResponse signature verification failed', {}, error as Error);
-        // Log but continue - some IdPs may not sign LogoutResponses
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
   }
@@ -357,21 +371,35 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: st
   const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
 
   if (issueInstant.getTime() > now.getTime() + skewMs) {
-    throw new Error('LogoutRequest IssueInstant is in the future');
+    throw new SAMLLogoutMessageValidationError();
   }
 
   if (now.getTime() - issueInstant.getTime() > maxAge + skewMs) {
-    throw new Error('LogoutRequest has expired');
+    throw new SAMLLogoutMessageValidationError();
   }
 
   // Validate Destination if present
   if (logoutRequest.destination) {
     const expectedDestination = `${issuerUrl}/saml/sp/slo`;
     if (logoutRequest.destination !== expectedDestination) {
-      // SECURITY: Do not expose endpoint URLs in error message
-      throw new Error('Invalid Destination in SAML LogoutRequest');
+      throw new SAMLLogoutMessageValidationError();
     }
   }
+}
+
+function parseSAMLLogoutMessage<T>(parse: () => T): T {
+  try {
+    return parse();
+  } catch {
+    throw new SAMLLogoutMessageValidationError();
+  }
+}
+
+function isSAMLLogoutMessageValidationError(error: unknown): boolean {
+  return (
+    error instanceof SAMLLogoutMessageValidationError ||
+    error instanceof SAMLRelayStateTooLargeError
+  );
 }
 
 /**
@@ -449,7 +477,7 @@ async function sendLogoutResponse(
   },
   cookieHeader: string
 ): Promise<Response> {
-  const { inResponseTo, statusCode, statusMessage, relayState, binding } = options;
+  const { inResponseTo, statusCode, statusMessage, relayState } = options;
 
   const destination = idpConfig.sloUrl || idpConfig.ssoUrl;
   const responseId = generateSAMLId();
