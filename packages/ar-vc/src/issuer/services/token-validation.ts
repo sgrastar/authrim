@@ -26,7 +26,11 @@ export interface TokenValidationResult {
   valid: boolean;
   userId?: string;
   tenantId?: string;
+  credentialConfigurationId?: string;
+  /** Deprecated internal alias retained until all repository callers use the explicit name. */
   vct?: string;
+  jti?: string;
+  offerId?: string;
   claims?: Record<string, unknown>;
   holderBinding?: { kty: string; crv: string; x: string; y?: string };
   error?: string;
@@ -63,9 +67,33 @@ interface VCIAccessTokenPayload {
   tenant_id?: string;
   credential_configuration_id?: string;
   credential_claims?: Record<string, unknown>;
+  offer_id?: string;
   cnf?: {
     jwk?: { kty: string; crv: string; x: string; y?: string };
   };
+}
+
+function isValidPublicEcJwk(jwk: JWTHeader['jwk'], algorithm: string): boolean {
+  const expectedCurve: Record<string, string> = {
+    ES256: 'P-256',
+    ES384: 'P-384',
+    ES512: 'P-521',
+  };
+  return (
+    !!jwk &&
+    jwk.kty === 'EC' &&
+    jwk.crv === expectedCurve[algorithm] &&
+    typeof jwk.x === 'string' &&
+    jwk.x.length > 0 &&
+    typeof jwk.y === 'string' &&
+    jwk.y.length > 0 &&
+    !Object.prototype.hasOwnProperty.call(jwk, 'd')
+  );
+}
+
+function resolveCNonceExpiry(env: Env): number {
+  const parsed = Number(env.C_NONCE_EXPIRY_SECONDS);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 3600 ? parsed : 300;
 }
 
 function resolveExpectedIssuerIdentifier(
@@ -136,20 +164,20 @@ export async function validateVCIAccessToken(
       expectedIssuerOverride
     );
     // Allow issuer to be URL or DID format
-    if (!payload.iss || (!payload.iss.includes('authrim') && payload.iss !== expectedIssuer)) {
+    if (payload.iss !== expectedIssuer) {
       return { valid: false, error: 'Invalid issuer' };
     }
 
     // Validate audience (should include this VCI endpoint)
     const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    const _vciAudience = `${expectedIssuer}/vci`; // Reserved for strict audience check
-    if (!aud.some((a) => a.includes('vci') || a === expectedIssuer)) {
+    const vciAudience = `${expectedIssuer}/vci`;
+    if (!aud.some((a) => a === vciAudience || a === expectedIssuer)) {
       return { valid: false, error: 'Invalid audience' };
     }
 
     // Check scope for credential issuance
     const scopes = payload.scope?.split(' ') || [];
-    if (!scopes.includes('openid') && !scopes.includes('credential')) {
+    if (!scopes.includes('credential')) {
       return { valid: false, error: 'Missing required scope' };
     }
 
@@ -173,13 +201,18 @@ export async function validateVCIAccessToken(
 
     // Extract holder binding (cnf claim)
     const holderBinding = payload.cnf?.jwk;
+    if (holderBinding && !isValidPublicEcJwk(holderBinding, header.alg)) {
+      return { valid: false, error: 'Invalid holder binding' };
+    }
 
     return {
       valid: true,
       userId: payload.sub,
       tenantId,
+      credentialConfigurationId: payload.credential_configuration_id,
       vct: payload.credential_configuration_id,
-      claims: payload.credential_claims || {},
+      jti: payload.jti,
+      offerId: payload.offer_id,
       holderBinding,
     };
   } catch (error) {
@@ -211,7 +244,7 @@ async function verifyTokenSignature(
       expectedIssuerOverride
     );
 
-    if (payload.iss === expectedIssuer || payload.iss.includes('authrim')) {
+    if (payload.iss === expectedIssuer) {
       // Get public key from KeyManager
       const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
       const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
@@ -314,6 +347,9 @@ export async function validateProofOfPossession(
     if (!holderPublicKey) {
       return { valid: false, error: 'Missing holder public key in JWT header' };
     }
+    if (!isValidPublicEcJwk(holderPublicKey, header.alg)) {
+      return { valid: false, error: 'Invalid holder public key' };
+    }
 
     // Validate audience (should be the issuer identifier)
     if (payload.aud !== expectedAudience) {
@@ -358,6 +394,19 @@ export async function validateProofOfPossession(
       valid: false,
       error: 'Proof validation failed',
     };
+  }
+}
+
+/** Decode only the routing nonce from a proof. Cryptographic validation must follow. */
+export function decodeVCIProofNonce(proofJwt: string): string | null {
+  if (!proofJwt || proofJwt.length > MAX_VCI_PROOF_JWT_SIZE) return null;
+  const parts = proofJwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(decodeBase64Url(parts[1])) as { nonce?: unknown };
+    return typeof payload.nonce === 'string' && payload.nonce.length <= 512 ? payload.nonce : null;
+  } catch {
+    return null;
   }
 }
 
@@ -427,8 +476,7 @@ export async function getOrCreateCNonce(
   userId: string
 ): Promise<{ nonce: string; expiresIn: number }> {
   const kvKey = `cnonce:${userId}`;
-  const parsedExpiresIn = parseInt(env.C_NONCE_EXPIRY_SECONDS || '300', 10);
-  const expiresIn = Number.isNaN(parsedExpiresIn) || parsedExpiresIn <= 0 ? 300 : parsedExpiresIn;
+  const expiresIn = resolveCNonceExpiry(env);
 
   // Try to get existing nonce
   const existing = await env.AUTHRIM_CONFIG.get(kvKey);

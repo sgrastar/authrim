@@ -366,6 +366,19 @@ describe('loadDeploySecretsFromKeys', () => {
       FLOW_RUNTIME_HMAC_SECRET: 'auth-secret',
     });
   });
+
+  it('loads the same profile-contract secret for Management and VC deployment', async () => {
+    const keysDir = createTempRoot();
+    writeFileSync(join(keysDir, 'vc_profile_contract_hmac_secret.txt'), 'shared-contract-secret');
+    writeFileSync(join(keysDir, 'vc_evidence_hmac_secret.txt'), 'evidence-secret');
+
+    await expect(
+      loadDeploySecretsFromKeys(keysDir, ['ar-management', 'ar-vc'])
+    ).resolves.toMatchObject({
+      VC_PROFILE_CONTRACT_HMAC_SECRET: 'shared-contract-secret',
+      VC_EVIDENCE_HMAC_SECRET: 'evidence-secret',
+    });
+  });
 });
 
 describe('cleanupLegacyStaticSecrets', () => {

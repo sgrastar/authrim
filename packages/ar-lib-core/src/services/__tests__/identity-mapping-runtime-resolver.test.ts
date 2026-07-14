@@ -127,6 +127,42 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
       },
     });
   });
+
+  it('keeps issuance and verification mappings separate for a credential profile', async () => {
+    const adapter = new ResolverAdapter({
+      activations: [
+        activationRow('activation-issuance', {
+          kind: 'tenant',
+          id: 'tenant_a',
+          protocol: 'vc',
+          role: 'issuer',
+          credentialProfileId: 'employee-card',
+          credentialConfigurationId: 'EmployeeCredential',
+          direction: 'issuance',
+        }),
+        activationRow('activation-verification', {
+          kind: 'tenant',
+          id: 'tenant_a',
+          protocol: 'vc',
+          role: 'issuer',
+          credentialProfileId: 'employee-card',
+          credentialConfigurationId: 'EmployeeCredential',
+          direction: 'verification',
+        }),
+      ],
+    });
+
+    const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+      tenantId: 'tenant_a',
+      protocol: 'vc',
+      role: 'issuer',
+      credentialProfileId: 'employee-card',
+      credentialConfigurationId: 'EmployeeCredential',
+      direction: 'issuance',
+    });
+
+    expect(binding?.id).toBe('activation-issuance');
+  });
 });
 
 interface ResolverAdapterInput {
@@ -262,6 +298,7 @@ function activationRow(
     field_mapping_hash: `${fieldMappingVersionId}_hash`,
     field_mapping_compatibility_range: '^0.3.0',
     catalog_version_id: 'catalog_version_1',
+    snapshot_hash: `${fieldMappingVersionId}_snapshot_hash`,
     catalog_version_label: '2026-06-06',
     catalog_bundle_hash: 'catalog_hash',
     catalog_compatibility_range: '^0.3.0',

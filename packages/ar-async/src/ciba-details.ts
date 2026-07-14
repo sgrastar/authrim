@@ -16,8 +16,13 @@ import {
   buildDOInstanceName,
   parseCIBARequestId,
   getCIBARequestStoreById,
+  isMockAuthEnabled,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import {
+  cibaRequestMatchesAuthenticatedUser,
+  getAuthenticatedAsyncUser,
+} from './authenticated-session';
 
 /**
  * GET /api/ciba/request/:auth_req_id
@@ -62,6 +67,12 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
+    if (!authenticatedUser && !mockAuthEnabled) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    }
+
     // Get CIBA request metadata from CIBARequestStore
     const parsedCibaId = parseCIBARequestId(authReqId);
     const cibaRequestStore = parsedCibaId
@@ -86,6 +97,10 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
 
     if (!metadata) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    if (authenticatedUser && !cibaRequestMatchesAuthenticatedUser(metadata, authenticatedUser)) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Enrich with client metadata from KV cache (with D1 fallback)

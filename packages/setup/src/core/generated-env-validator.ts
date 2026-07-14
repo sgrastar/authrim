@@ -745,13 +745,13 @@ async function validateLoggingSecretMaterial(
 ): Promise<ValidationCheck> {
   const check = makeCheck(
     'logging-secret-material',
-    'generated keys include logging, OTP, and encryption secrets'
+    'generated keys include logging, OTP, VC, and encryption secrets'
   );
   const keysDir = resolveKeysDirectory(baseDir, env, envPaths, config, keysBaseDir);
 
   if (!existsSync(keysDir)) {
     pushDetail(check, 'fail', `keys directory is missing: ${keysDir}`);
-    return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
+    return finishCheck(check, 'generated keys include logging, OTP, VC, and encryption secrets');
   }
 
   await inspectSecretFile(
@@ -778,7 +778,25 @@ async function validateLoggingSecretMaterial(
     'OTP_HMAC_SECRET',
     isBase64UrlSecret
   );
-  return finishCheck(check, 'generated keys include logging, OTP, and encryption secrets');
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'vc_transaction_code_hmac_secret.txt'),
+    'VC_TRANSACTION_CODE_HMAC_SECRET',
+    isBase64UrlSecret
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'vc_evidence_hmac_secret.txt'),
+    'VC_EVIDENCE_HMAC_SECRET',
+    isBase64UrlSecret
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'vc_profile_contract_hmac_secret.txt'),
+    'VC_PROFILE_CONTRACT_HMAC_SECRET',
+    isBase64UrlSecret
+  );
+  return finishCheck(check, 'generated keys include logging, OTP, VC, and encryption secrets');
 }
 
 async function validateDeployWranglers(

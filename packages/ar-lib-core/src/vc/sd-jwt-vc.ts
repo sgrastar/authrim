@@ -254,6 +254,31 @@ export async function createSDJWTVC(
   kid: string,
   options: SDJWTVCCreateOptions
 ): Promise<SDJWTVC> {
+  return createSDJWTVCWithSigner(
+    claims,
+    issuer,
+    async (payload) =>
+      new SignJWT(payload as JWTPayload)
+        .setProtectedHeader({
+          alg: algorithm,
+          typ: 'dc+sd-jwt',
+          kid,
+        })
+        .sign(privateKey),
+    options
+  );
+}
+
+/**
+ * Create an SD-JWT VC while delegating issuer-JWT signing to a key boundary.
+ * The callback receives the completed payload but never exposes private key material.
+ */
+export async function createSDJWTVCWithSigner(
+  claims: Record<string, unknown>,
+  issuer: string,
+  signIssuerJwt: (payload: SDJWTVCPayload) => Promise<string>,
+  options: SDJWTVCCreateOptions
+): Promise<SDJWTVC> {
   const { vct, selectiveDisclosureClaims, holderBinding, expiresAt, notBefore, status, jti } =
     options;
 
@@ -312,14 +337,7 @@ export async function createSDJWTVC(
     payload.status = status;
   }
 
-  // Sign the JWT with dc+sd-jwt type
-  const issuerJwt = await new SignJWT(payload as JWTPayload)
-    .setProtectedHeader({
-      alg: algorithm,
-      typ: 'dc+sd-jwt',
-      kid,
-    })
-    .sign(privateKey);
+  const issuerJwt = await signIssuerJwt(payload);
 
   // Combine JWT and disclosures
   const disclosureStrings = disclosures.map((d) => d.encoded);

@@ -633,7 +633,7 @@ export function getRequestContext(c: Context<{ Bindings: Env }>): RequestContext
  * @param c - Hono context
  * @returns Logger instance
  */
-export function getLogger(c: Context<{ Bindings: Env }>): Logger {
+export function getLogger<TBindings extends object>(c: Context<{ Bindings: TBindings }>): Logger {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const logger = (c as any).get('logger');
   if (logger) {

@@ -39,6 +39,17 @@ export interface AttributeVerification extends BaseEntity {
   mapped_attribute_ids: string | null; // JSON array
   verified_at: number;
   expires_at: number | null;
+  credential_profile_id: string | null;
+  credential_profile_version_id: string | null;
+  mapping_version_id: string | null;
+  mapping_snapshot_hash: string | null;
+  policy_version: string | null;
+  evidence_fingerprint: string | null;
+  status_checked_at: number | null;
+  status_fresh_until: number | null;
+  revalidate_after: number | null;
+  invalidated_at: number | null;
+  invalidation_reason: string | null;
 }
 
 /**
@@ -58,6 +69,15 @@ export interface CreateAttributeVerificationInput {
   status_valid: boolean;
   mapped_attribute_ids?: string[];
   expires_at?: number | null;
+  credential_profile_id?: string | null;
+  credential_profile_version_id?: string | null;
+  mapping_version_id?: string | null;
+  mapping_snapshot_hash?: string | null;
+  policy_version?: string | null;
+  evidence_fingerprint?: string | null;
+  status_checked_at?: number | null;
+  status_fresh_until?: number | null;
+  revalidate_after?: number | null;
 }
 
 /**
@@ -94,6 +114,17 @@ export class AttributeVerificationRepository extends BaseRepository<AttributeVer
         'mapped_attribute_ids',
         'verified_at',
         'expires_at',
+        'credential_profile_id',
+        'credential_profile_version_id',
+        'mapping_version_id',
+        'mapping_snapshot_hash',
+        'policy_version',
+        'evidence_fingerprint',
+        'status_checked_at',
+        'status_fresh_until',
+        'revalidate_after',
+        'invalidated_at',
+        'invalidation_reason',
       ],
     });
   }
@@ -124,6 +155,17 @@ export class AttributeVerificationRepository extends BaseRepository<AttributeVer
         : null,
       verified_at: now,
       expires_at: input.expires_at ?? null,
+      credential_profile_id: input.credential_profile_id ?? null,
+      credential_profile_version_id: input.credential_profile_version_id ?? null,
+      mapping_version_id: input.mapping_version_id ?? null,
+      mapping_snapshot_hash: input.mapping_snapshot_hash ?? null,
+      policy_version: input.policy_version ?? null,
+      evidence_fingerprint: input.evidence_fingerprint ?? null,
+      status_checked_at: input.status_checked_at ?? null,
+      status_fresh_until: input.status_fresh_until ?? null,
+      revalidate_after: input.revalidate_after ?? null,
+      invalidated_at: null,
+      invalidation_reason: null,
       created_at: now,
       updated_at: now,
     };
@@ -133,8 +175,11 @@ export class AttributeVerificationRepository extends BaseRepository<AttributeVer
         id, tenant_id, user_id, vp_request_id, issuer_did, credential_type,
         format, verification_result, holder_binding_verified, issuer_trusted,
         status_valid, mapped_attribute_ids, verified_at, expires_at,
+        credential_profile_id, credential_profile_version_id, mapping_version_id,
+        mapping_snapshot_hash, policy_version, evidence_fingerprint, status_checked_at,
+        status_fresh_until, revalidate_after, invalidated_at, invalidation_reason,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
@@ -152,11 +197,70 @@ export class AttributeVerificationRepository extends BaseRepository<AttributeVer
       verification.mapped_attribute_ids,
       verification.verified_at,
       verification.expires_at,
+      verification.credential_profile_id,
+      verification.credential_profile_version_id,
+      verification.mapping_version_id,
+      verification.mapping_snapshot_hash,
+      verification.policy_version,
+      verification.evidence_fingerprint,
+      verification.status_checked_at,
+      verification.status_fresh_until,
+      verification.revalidate_after,
+      verification.invalidated_at,
+      verification.invalidation_reason,
       verification.created_at,
       verification.updated_at,
     ]);
 
     return verification;
+  }
+
+  async invalidateVerification(
+    tenantId: string,
+    verificationId: string,
+    reason: string
+  ): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const result = await this.adapter.execute(
+      `UPDATE attribute_verifications
+          SET invalidated_at = ?, invalidation_reason = ?, status_valid = 0, updated_at = ?
+        WHERE tenant_id = ? AND id = ? AND invalidated_at IS NULL`,
+      [now, reason.slice(0, 200), now, tenantId, verificationId]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  async invalidateStaleForUser(tenantId: string, userId: string, now: number): Promise<number> {
+    const result = await this.adapter.execute(
+      `UPDATE attribute_verifications
+          SET invalidated_at = ?, invalidation_reason = 'evidence_stale',
+              status_valid = 0, updated_at = ?
+        WHERE tenant_id = ? AND user_id = ? AND invalidated_at IS NULL
+          AND (verification_result <> 'verified' OR holder_binding_verified <> 1
+            OR issuer_trusted <> 1 OR status_valid <> 1
+            OR (expires_at IS NOT NULL AND expires_at <= ?)
+            OR (revalidate_after IS NOT NULL AND revalidate_after <= ?)
+            OR (status_fresh_until IS NOT NULL AND status_fresh_until <= ?))`,
+      [now, now, tenantId, userId, now, now, now]
+    );
+    return result.rowsAffected;
+  }
+
+  async invalidateUntrustedForUser(tenantId: string, userId: string, now: number): Promise<number> {
+    const result = await this.adapter.execute(
+      `UPDATE attribute_verifications
+          SET invalidated_at = ?, invalidation_reason = 'issuer_trust_changed',
+              issuer_trusted = 0, updated_at = ?
+        WHERE tenant_id = ? AND user_id = ? AND invalidated_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM trusted_issuers ti
+             WHERE ti.tenant_id = attribute_verifications.tenant_id
+               AND ti.issuer_did = attribute_verifications.issuer_did
+               AND ti.status = 'active'
+          )`,
+      [now, now, tenantId, userId]
+    );
+    return result.rowsAffected;
   }
 
   /**

@@ -29,6 +29,8 @@ export default defineConfig({
 		presetTypography(), // Typography utilities
 		presetWebFonts({
 			provider: 'google',
+			// Keep builds deterministic/offline; browsers load the generated @import URL.
+			inlineImports: false,
 			fonts: {
 				// Display font for headings
 				display: 'Plus Jakarta Sans:400,500,600,700,800',

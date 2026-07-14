@@ -87,6 +87,18 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getMissingRequiredDeploySecrets(authSecrets, ['ar-auth'])).toEqual([]);
   });
 
+  it('requires every VC security secret for a first VC deployment', () => {
+    const vcSecrets = Object.fromEntries(
+      getSecretNamesForWorker('ar-vc')
+        .filter((name) => name !== 'VC_PROFILE_CONTRACT_HMAC_SECRET')
+        .map((name) => [name, 'configured'])
+    );
+
+    expect(getMissingRequiredDeploySecrets(vcSecrets, ['ar-vc'])).toEqual([
+      'VC_PROFILE_CONTRACT_HMAC_SECRET',
+    ]);
+  });
+
   it('keeps discovery to public JWKS fallback only', () => {
     expect(getSecretNamesForWorker('ar-discovery')).toEqual(['PUBLIC_JWK_JSON']);
   });
@@ -126,6 +138,21 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-management')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
     expect(getSecretNamesForWorker('ar-token')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
     expect(getSecretNamesForWorker('ar-router')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
+  });
+
+  it('uploads the transaction-code HMAC secret only to the VC worker', () => {
+    expect(getSecretNamesForWorker('ar-vc')).toContain('VC_TRANSACTION_CODE_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain('VC_TRANSACTION_CODE_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain(
+      'VC_TRANSACTION_CODE_HMAC_SECRET'
+    );
+  });
+
+  it('shares only the profile-contract secret between Management and VC', () => {
+    expect(getSecretNamesForWorker('ar-management')).toContain('VC_PROFILE_CONTRACT_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-vc')).toContain('VC_PROFILE_CONTRACT_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-vc')).toContain('VC_EVIDENCE_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain('VC_EVIDENCE_HMAC_SECRET');
   });
 
   it('uploads TOTP and OTP secret material only to auth-capable workers', () => {

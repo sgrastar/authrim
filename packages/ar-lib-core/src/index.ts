@@ -26,6 +26,8 @@ export * from './types/jwk';
 export * from './types/did';
 export * from './types/openid4vp';
 export * from './types/openid4vci';
+export * from './types/vc-service';
+export * from './types/credential-profile';
 
 // Phase A-6: Logout Types
 export * from './types/logout';
@@ -131,6 +133,8 @@ export * from './utils/totp-backup-codes';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/server-flow-execution';
+export * from './services/active-access-token-protected-resource';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';

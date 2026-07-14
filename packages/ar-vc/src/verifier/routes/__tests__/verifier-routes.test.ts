@@ -9,8 +9,52 @@ import { verifierMetadataRoute } from '../metadata';
 import { vpAuthorizeRoute } from '../authorize';
 import { vpResponseRoute } from '../response';
 import { vpRequestStatusRoute } from '../request-status';
+import { vpRequestObjectRoute } from '../request-object';
+import { initiateAttributeVerification } from '../attribute-verify';
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../../types';
+
+const verifierCoreMocks = vi.hoisted(() => ({
+  findClient: vi.fn(),
+  introspectToken: vi.fn(),
+}));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
+    ClientRepository: class {
+      findByClientId = verifierCoreMocks.findClient;
+    },
+    AttributeVerificationRepository: class {
+      createVerification = vi.fn().mockResolvedValue(undefined);
+    },
+    introspectTokenFromContext: verifierCoreMocks.introspectToken,
+  };
+});
+
+describe('Attribute elevation authentication boundary', () => {
+  it('rejects a decoded-looking but unverified bearer token before profile or DO access', async () => {
+    verifierCoreMocks.introspectToken.mockResolvedValueOnce({
+      valid: false,
+      error: { error: 'invalid_token', error_description: 'Invalid signature' },
+    });
+    const c = createMockContext({
+      req: {
+        method: 'POST',
+        header: vi.fn((name: string) =>
+          name === 'Authorization' ? 'Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.' : undefined
+        ),
+        json: vi.fn().mockResolvedValue({ credential_profile_id: 'profile-1' }),
+      },
+    });
+    const response = await initiateAttributeVerification(c);
+    expect(response.status).toBe(401);
+    expect(verifierCoreMocks.introspectToken).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(c.env.VP_REQUEST_STORE.get).not.toHaveBeenCalled();
+  });
+});
 
 // Mock vp-verifier service
 vi.mock('../../services/vp-verifier', () => ({
@@ -20,6 +64,7 @@ vi.mock('../../services/vp-verifier', () => ({
 // Mock crypto utilities
 vi.mock('../../../utils/crypto', () => ({
   generateSecureNonce: vi.fn().mockResolvedValue('mock-nonce-12345'),
+  sha256Base64url: vi.fn(async (value: string) => `hash:${value}`),
 }));
 
 // Helper to create mock context
@@ -98,6 +143,7 @@ const createMockContext = (
         headers: { 'Content-Type': 'application/json' },
       });
     }),
+    header: vi.fn(),
     // Mock get method for getLogger and tenant context
     get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant-1' : undefined)),
   } as unknown as Context<{ Bindings: Env }>;
@@ -119,6 +165,9 @@ describe('Verifier Metadata Route', () => {
     expect(data.vp_formats_supported).toHaveProperty('dc+sd-jwt');
     expect(data.vp_formats_supported).toHaveProperty('mso_mdoc');
     expect(data.dcql_supported).toBe(true);
+    expect(
+      (data as { client_id_schemes_supported?: string[] }).client_id_schemes_supported
+    ).toEqual(['pre-registered']);
   });
 
   it('uses the request host as verifier identifier even when VERIFIER_IDENTIFIER is configured', async () => {
@@ -134,9 +183,93 @@ describe('Verifier Metadata Route', () => {
   });
 });
 
+describe('VP Request Object Route', () => {
+  it('returns the stored wallet request without the status capability', async () => {
+    const id = 'g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000';
+    const mockStub = {
+      fetch: vi.fn().mockResolvedValue(
+        Response.json({
+          id,
+          tenantId: 'tenant-1',
+          clientId: 'client-1',
+          nonce: 'nonce-1',
+          responseUri: 'https://authrim.com/vp/response',
+          responseMode: 'direct_post',
+          presentationDefinition: { id: 'pd-1', input_descriptors: [] },
+          status: 'pending',
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 60_000,
+        })
+      ),
+    };
+    const c = createMockContext({
+      req: { param: vi.fn().mockReturnValue(id) },
+      env: {
+        VP_REQUEST_STORE: {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
+          get: vi.fn().mockReturnValue(mockStub),
+        } as unknown as DurableObjectNamespace,
+      },
+    });
+
+    const response = await vpRequestObjectRoute(c);
+    const data = (await response.json()) as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    expect(data).toMatchObject({
+      client_id: 'client-1',
+      client_id_scheme: 'pre-registered',
+      nonce: 'nonce-1',
+      state: id,
+      response_uri: 'https://authrim.com/vp/response',
+    });
+    expect(data).not.toHaveProperty('status_token');
+    expect(data).not.toHaveProperty('verifiedClaims');
+  });
+
+  it('does not return terminal or expired requests to wallets', async () => {
+    const id = 'g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000';
+    const mockStub = {
+      fetch: vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ id, status: 'verified', expiresAt: Date.now() + 60_000 })
+        ),
+    };
+    const c = createMockContext({
+      req: { param: vi.fn().mockReturnValue(id) },
+      env: {
+        VP_REQUEST_STORE: {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
+          get: vi.fn().mockReturnValue(mockStub),
+        } as unknown as DurableObjectNamespace,
+      },
+    });
+    expect((await vpRequestObjectRoute(c)).status).toBe(404);
+  });
+});
+
 describe('VP Authorize Route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    verifierCoreMocks.findClient.mockResolvedValue({ client_id: 'client-1' });
+  });
+
+  it('rejects an unknown pre-registered client before creating state', async () => {
+    verifierCoreMocks.findClient.mockResolvedValue(null);
+    const c = createMockContext({
+      req: {
+        json: vi.fn().mockResolvedValue({
+          client_id: 'unknown-client',
+          client_id_scheme: 'pre-registered',
+          presentation_definition: { id: 'pd-1', input_descriptors: [] },
+        }),
+      },
+    });
+
+    const response = await vpAuthorizeRoute(c);
+    const data = (await response.json()) as { error: string };
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('invalid_client');
   });
 
   it('should create VP authorization request', async () => {
@@ -167,6 +300,7 @@ describe('VP Authorize Route', () => {
     const data = (await response.json()) as {
       request_id: string;
       request_uri: string;
+      status_token: string;
       nonce: string;
       expires_in: number;
     };
@@ -174,9 +308,15 @@ describe('VP Authorize Route', () => {
     expect(response.status).toBe(200);
     expect(data.request_id).toBeDefined();
     expect(data.request_uri).toContain('/vp/request/');
+    expect(data.status_token).toBe('mock-nonce-12345');
     expect(data.nonce).toBe('mock-nonce-12345');
     expect(data.expires_in).toBe(300);
     expect(mockStub.fetch).toHaveBeenCalled();
+    const storedRequest = (await (mockStub.fetch.mock.calls[0][0] as Request).clone().json()) as {
+      statusTokenHash?: string;
+    };
+    expect(storedRequest.statusTokenHash).toBeDefined();
+    expect(storedRequest.statusTokenHash).not.toBe(data.status_token);
   });
 
   it('should accept request without tenant_id and use context tenant', async () => {
@@ -333,8 +473,10 @@ describe('VP Response Route', () => {
     const mockStub = {
       fetch: vi
         .fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify(vpRequest))) // /get
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }))), // /update
+        .mockResolvedValueOnce(
+          Response.json({ reserved: true, reservationId: 'reservation-1', request: vpRequest })
+        )
+        .mockResolvedValue(Response.json({ completed: true })),
     };
 
     const c = createMockContext({
@@ -356,13 +498,14 @@ describe('VP Response Route', () => {
     const response = await vpResponseRoute(c);
     const data = (await response.json()) as {
       success: boolean;
-      disclosed_claims: object;
+      verified_claim_names: string[];
       haip_compliant: boolean;
     };
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.disclosed_claims).toEqual({ given_name: 'John', family_name: 'Doe' });
+    expect(data.verified_claim_names).toEqual(['given_name', 'family_name']);
+    expect(data).not.toHaveProperty('disclosed_claims');
     expect(data.haip_compliant).toBe(true);
   });
 
@@ -405,7 +548,7 @@ describe('VP Response Route', () => {
   });
 
   it('should reject expired request', async () => {
-    const vpRequest: VPRequestState = {
+    const _vpRequest: VPRequestState = {
       id: VALID_REQUEST_ID,
       tenantId: 'tenant-1',
       clientId: 'client-1',
@@ -420,8 +563,8 @@ describe('VP Response Route', () => {
     const mockStub = {
       fetch: vi
         .fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify(vpRequest)))
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+        .mockResolvedValueOnce(Response.json({ reserved: false, reason: 'expired' }))
+        .mockResolvedValue(Response.json({ completed: true })),
     };
 
     const c = createMockContext({
@@ -474,8 +617,10 @@ describe('VP Response Route', () => {
     const mockStub = {
       fetch: vi
         .fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify(vpRequest)))
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+        .mockResolvedValueOnce(
+          Response.json({ reserved: true, reservationId: 'reservation-1', request: vpRequest })
+        )
+        .mockResolvedValue(Response.json({ completed: true })),
     };
 
     const c = createMockContext({
@@ -522,8 +667,10 @@ describe('VP Response Route', () => {
     const mockStub = {
       fetch: vi
         .fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify(vpRequest)))
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+        .mockResolvedValueOnce(
+          Response.json({ reserved: true, reservationId: 'reservation-1', request: vpRequest })
+        )
+        .mockResolvedValue(Response.json({ failed: true })),
     };
 
     const c = createMockContext({
@@ -566,6 +713,12 @@ describe('VP Request Status Route', () => {
   // Region-sharded VP request ID format: g{gen}:{region}:{shard}:vp_{uuid}
   const VALID_REQUEST_ID = 'g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000';
   const NOT_FOUND_REQUEST_ID = 'g1:apac:5:vp_nonexistent-uuid';
+  const statusRequest = (id: string) => ({
+    param: vi.fn().mockReturnValue(id),
+    header: vi.fn((name: string) =>
+      name === 'Authorization' ? 'Bearer status-capability' : undefined
+    ),
+  });
 
   it('should return pending request status', async () => {
     const vpRequest = {
@@ -580,9 +733,7 @@ describe('VP Request Status Route', () => {
     };
 
     const c = createMockContext({
-      req: {
-        param: vi.fn().mockReturnValue(VALID_REQUEST_ID),
-      },
+      req: statusRequest(VALID_REQUEST_ID),
       env: {
         VP_REQUEST_STORE: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
@@ -606,13 +757,13 @@ describe('VP Request Status Route', () => {
     expect(data.expires_at).toBeDefined();
   });
 
-  it('should return verified status with claims', async () => {
+  it('should return verified status with claim names but never values', async () => {
     const vpRequest = {
       id: VALID_REQUEST_ID,
       status: 'verified',
       createdAt: Date.now(),
       expiresAt: Date.now() + 300000,
-      verifiedClaims: { given_name: 'John', family_name: 'Doe' },
+      verifiedClaimNames: ['given_name', 'family_name'],
     };
 
     const mockStub = {
@@ -620,9 +771,7 @@ describe('VP Request Status Route', () => {
     };
 
     const c = createMockContext({
-      req: {
-        param: vi.fn().mockReturnValue(VALID_REQUEST_ID),
-      },
+      req: statusRequest(VALID_REQUEST_ID),
       env: {
         VP_REQUEST_STORE: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
@@ -635,12 +784,13 @@ describe('VP Request Status Route', () => {
     const data = (await response.json()) as {
       request_id: string;
       status: string;
-      verified_claims: object;
+      verified_claim_names: string[];
     };
 
     expect(response.status).toBe(200);
     expect(data.status).toBe('verified');
-    expect(data.verified_claims).toEqual({ given_name: 'John', family_name: 'Doe' });
+    expect(data.verified_claim_names).toEqual(['given_name', 'family_name']);
+    expect(data).not.toHaveProperty('verified_claims');
   });
 
   it('should return failed status with error', async () => {
@@ -658,9 +808,7 @@ describe('VP Request Status Route', () => {
     };
 
     const c = createMockContext({
-      req: {
-        param: vi.fn().mockReturnValue(VALID_REQUEST_ID),
-      },
+      req: statusRequest(VALID_REQUEST_ID),
       env: {
         VP_REQUEST_STORE: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
@@ -693,9 +841,7 @@ describe('VP Request Status Route', () => {
     };
 
     const c = createMockContext({
-      req: {
-        param: vi.fn().mockReturnValue(NOT_FOUND_REQUEST_ID),
-      },
+      req: statusRequest(NOT_FOUND_REQUEST_ID),
       env: {
         VP_REQUEST_STORE: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
@@ -728,9 +874,7 @@ describe('VP Request Status Route', () => {
     };
 
     const c = createMockContext({
-      req: {
-        param: vi.fn().mockReturnValue(VALID_REQUEST_ID),
-      },
+      req: statusRequest(VALID_REQUEST_ID),
       env: {
         VP_REQUEST_STORE: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
@@ -762,11 +906,21 @@ describe('VP Request Status Route', () => {
     expect(data.error_description).toContain('required');
   });
 
-  it('should return 500 for invalid request ID format', async () => {
+  it('should reject status polling without its bearer capability', async () => {
     const c = createMockContext({
       req: {
-        param: vi.fn().mockReturnValue('invalid-format-request-id'),
+        param: vi.fn().mockReturnValue(VALID_REQUEST_ID),
+        header: vi.fn().mockReturnValue(undefined),
       },
+    });
+
+    const response = await vpRequestStatusRoute(c);
+    expect(response.status).toBe(400);
+  });
+
+  it('should return 500 for invalid request ID format', async () => {
+    const c = createMockContext({
+      req: statusRequest('invalid-format-request-id'),
     });
 
     const response = await vpRequestStatusRoute(c);

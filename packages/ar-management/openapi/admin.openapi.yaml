@@ -26136,6 +26136,137 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/credential-profiles:
+    get:
+      tags: [Verifiable Credentials]
+      operationId: listCredentialProfiles
+      summary: List tenant credential profiles
+      responses:
+        '200':
+          description: Credential profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential_profiles]
+                properties:
+                  credential_profiles:
+                    type: array
+                    items: { $ref: '#/components/schemas/CredentialProfile' }
+    post:
+      tags: [Verifiable Credentials]
+      operationId: createCredentialProfile
+      summary: Create a draft credential profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profile_key, display_name]
+              properties:
+                profile_key: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' }
+                display_name: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Credential profile created. }
+        '409': { description: Invalid or duplicate profile. }
+  /api/admin/credential-profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Verifiable Credentials]
+      operationId: getCredentialProfile
+      summary: Get a credential profile and its versions
+      responses:
+        '200': { description: Credential profile and versions. }
+        '404': { description: Credential profile not found. }
+    patch:
+      tags: [Verifiable Credentials]
+      operationId: updateCredentialProfile
+      summary: Update profile metadata or disable a profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: [string, 'null'], maxLength: 2000 }
+                lifecycle_state: { type: string, enum: [draft, disabled] }
+      responses:
+        '200': { description: Credential profile updated. }
+        '400': { description: Invalid lifecycle or metadata update. }
+        '404': { description: Credential profile not found. }
+  /api/admin/credential-profiles/{id}/versions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Verifiable Credentials]
+      operationId: createCredentialProfileVersion
+      summary: Create an immutable credential profile draft version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CredentialProfileVersionInput' }
+      responses:
+        '201': { description: Draft version created. }
+        '400': { description: Invalid version. }
+  /api/admin/credential-profiles/{id}/versions/{versionId}/publish:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: versionId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Verifiable Credentials]
+      operationId: publishCredentialProfileVersion
+      summary: Validate dependencies and publish a pinned profile snapshot
+      responses:
+        '200': { description: Profile version published. }
+        '409': { description: A Flow, mapping, claim, or credential configuration is not publishable. }
+  /api/admin/credential-profiles/{id}/offers:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Verifiable Credentials]
+      operationId: createCredentialOfferFromProfile
+      summary: Create a one-time credential offer from canonical user data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string }
+      responses:
+        '201':
+          description: Credential offer created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CredentialOfferResult' }
+        '409': { description: Published profile or pinned mapping could not be applied. }
 components:
   securitySchemes:
     adminBearer:
@@ -39250,6 +39381,44 @@ components:
             created_at: 1770000000000
             updated_at: 1770000000000
   schemas:
+    CredentialProfile:
+      type: object
+      required: [id, tenant_id, profile_key, display_name, lifecycle_state]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        profile_key: { type: string }
+        display_name: { type: string }
+        description: { type: [string, 'null'] }
+        lifecycle_state: { type: string, enum: [draft, published, disabled] }
+        current_published_version_id: { type: [string, 'null'] }
+    CredentialProfileVersionInput:
+      type: object
+      required: [credential_configuration_id, issuance_flow_id, issuance_mapping_set_id, claim_allowlist]
+      properties:
+        credential_configuration_id: { type: string }
+        issuance_flow_id: { type: string }
+        verification_flow_id: { type: [string, 'null'] }
+        issuance_mapping_set_id: { type: string }
+        verification_mapping_set_id: { type: [string, 'null'] }
+        claim_allowlist:
+          type: array
+          minItems: 1
+          maxItems: 128
+          uniqueItems: true
+          items: { type: string }
+        offer_ttl_seconds: { type: integer, minimum: 60, maximum: 900, default: 300 }
+        maximum_attribute_age_seconds: { type: integer, minimum: 60, maximum: 2592000, default: 86400 }
+        transaction_code_required: { type: boolean, default: false }
+    CredentialOfferResult:
+      type: object
+      required: [offerId, credentialOfferUri, expiresAt, claimManifestHash]
+      properties:
+        offerId: { type: string }
+        credentialOfferUri: { type: string, format: uri }
+        expiresAt: { type: integer }
+        claimManifestHash: { type: string }
+        transactionCode: { type: string, writeOnly: true }
     JsonObject:
       type: object
       additionalProperties: true

@@ -124,6 +124,16 @@ describe('generateAllSecrets', () => {
     expect(secrets.otpHmacSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
     expect(secrets.flowRuntimeHmacSecret).toBeDefined();
+    expect(secrets.vcTransactionCodeHmacSecret).toBeDefined();
+    expect(secrets.vcEvidenceHmacSecret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(secrets.vcProfileContractHmacSecret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(
+      new Set([
+        secrets.vcTransactionCodeHmacSecret,
+        secrets.vcEvidenceHmacSecret,
+        secrets.vcProfileContractHmacSecret,
+      ]).size
+    ).toBe(3);
     expect(secrets.pluginEncryptionKey).toBeDefined();
     expect(secrets.setupToken).toBeDefined();
   });
@@ -194,6 +204,9 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_evidence_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_profile_contract_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
@@ -291,9 +304,12 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(13);
+    expect(result.createdFiles).toHaveLength(16);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_evidence_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_profile_contract_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
@@ -335,8 +351,18 @@ describe('ensureSupplementalKeyFiles', () => {
       })
     );
 
+    const staleMetadata = JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8'));
+    delete staleMetadata.files.vcEvidenceHmacSecret;
+    delete staleMetadata.files.vcProfileContractHmacSecret;
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify(staleMetadata));
+
     const secondResult = await ensureSupplementalKeyFiles(keysDir);
     expect(secondResult.createdFiles).toHaveLength(0);
+    const repairedMetadata = JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8'));
+    expect(repairedMetadata.files.vcEvidenceHmacSecret).toContain('vc_evidence_hmac_secret.txt');
+    expect(repairedMetadata.files.vcProfileContractHmacSecret).toContain(
+      'vc_profile_contract_hmac_secret.txt'
+    );
   });
 
   it('removes legacy static secret files and metadata references', async () => {
@@ -418,6 +444,12 @@ describe('generateWranglerSecretCommands', () => {
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/flow_runtime_hmac_secret.txt)" | wrangler secret put FLOW_RUNTIME_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/vc_evidence_hmac_secret.txt)" | wrangler secret put VC_EVIDENCE_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/vc_profile_contract_hmac_secret.txt)" | wrangler secret put VC_PROFILE_CONTRACT_HMAC_SECRET --env dev'
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/plugin_encryption_key.txt)" | wrangler secret put PLUGIN_ENCRYPTION_KEY --env dev'

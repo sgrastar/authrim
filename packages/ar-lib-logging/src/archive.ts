@@ -154,9 +154,15 @@ export function isArchiveLogRecordV1(value: unknown): value is ArchiveLogRecordV
     typeof candidate.id === 'string' &&
     typeof candidate.tenant_key === 'string' &&
     typeof candidate.log_type === 'string' &&
-    typeof candidate.plane === 'string' &&
+    (candidate.plane === 'archive' || candidate.plane === 'external_sink') &&
     typeof candidate.time === 'string' &&
-    typeof candidate.summary === 'object'
+    !Number.isNaN(Date.parse(candidate.time)) &&
+    ['debug', 'info', 'warn', 'error', 'critical'].includes(candidate.severity ?? '') &&
+    typeof candidate.type === 'string' &&
+    typeof candidate.source === 'string' &&
+    !!candidate.summary &&
+    typeof candidate.summary === 'object' &&
+    !Array.isArray(candidate.summary)
   );
 }
 

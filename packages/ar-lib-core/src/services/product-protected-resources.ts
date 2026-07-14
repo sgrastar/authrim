@@ -17,6 +17,13 @@ export const PRODUCT_PROTECTED_RESOURCE_DEFINITIONS: Record<
     defaultDetailClasses: ['profile_export'],
     servicePackage: '@authrim/ar-userinfo',
   },
+  verified_attribute: {
+    resourceClass: 'verified_attribute',
+    defaultAudience: 'svc://op-vc/attribute-elevation',
+    routePathTemplate: '/vp/attributes',
+    defaultDetailClasses: ['verified_attribute_write'],
+    servicePackage: '@authrim/ar-vc',
+  },
 };
 
 export function getProductProtectedResourceDefinition(

@@ -142,8 +142,8 @@ async function readJsonConfig(
   const raw = await env.SETTINGS?.get(key);
   if (!raw) return {};
   try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return decryptConfigIfNeeded(env, parsed as Record<string, unknown>);
   } catch {
     return {};

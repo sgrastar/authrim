@@ -37,8 +37,7 @@ interface Service {
  * Returns Authrim's DID document (did:web).
  */
 export async function didDocumentRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC');
+  const log = getLogger(c).module('VC');
   const issuerDid = getRequestIssuerIdentifier(c);
   const baseUrl = getRequestIssuerUrl(c);
 

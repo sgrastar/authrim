@@ -710,6 +710,13 @@ export const ADMIN_PERMISSIONS = {
   SECURITY_WRITE: 'admin:security:write',
   SECURITY_ALL: 'admin:security:*',
 
+  // Verifiable Credential control plane
+  VC_CREDENTIAL_PROFILES_READ: 'admin:vc:credential_profiles:read',
+  VC_CREDENTIAL_PROFILES_WRITE: 'admin:vc:credential_profiles:write',
+  VC_CREDENTIAL_PROFILES_PUBLISH: 'admin:vc:credential_profiles:publish',
+  VC_CREDENTIAL_OFFERS_CREATE: 'admin:vc:credential_offers:create',
+  VC_ALL: 'admin:vc:*',
+
   // Policy control plane
   POLICY_SIMULATE: 'admin:policy:simulate',
   POLICY_REBAC_WRITE: 'admin:policy:rebac:write',

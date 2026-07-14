@@ -1720,12 +1720,7 @@ describe('Policy API - Input Validation', () => {
     expect(res.status).toBe(400);
   });
 
-  // NOTE: This test requires proper D1 mock injection.
-  // The D1Adapter is instantiated inside route handlers, and the vi.mock
-  // setup doesn't properly intercept these instances. Core functionality
-  // is already tested by 50+ passing tests in this file.
-  // TODO: Refactor route handlers to accept injected adapters for better testability
-  it.skip('should accept valid allowed tenant policy keys', async () => {
+  it('should accept valid allowed tenant policy keys', async () => {
     mockIsValidTransition.mockReturnValue(true);
 
     const mockKV = createMockKV({
@@ -1756,9 +1751,7 @@ describe('Policy API - Input Validation', () => {
     expect(res.status).toBe(200);
   });
 
-  // NOTE: Same D1 mock injection issue as above.
-  // TODO: Refactor route handlers to accept injected adapters for better testability
-  it.skip('should accept valid allowed client profile keys', async () => {
+  it('should accept valid allowed client profile keys', async () => {
     mockD1AdapterQueryOne.mockResolvedValue({
       client_id: 'client-123',
       tenant_id: 'test-tenant',

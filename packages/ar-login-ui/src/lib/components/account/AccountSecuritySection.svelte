@@ -1,5 +1,4 @@
 <script lang="ts">
-	import QRCode from 'qrcode';
 	import { Button, Card, Input } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import { isTotpDeleteProofReady } from '$lib/account/totp-proof';
@@ -110,7 +109,8 @@
 			totpQrDataUrl = '';
 			return;
 		}
-		QRCode.toDataURL(uri, { margin: 1, width: 192 })
+		import('qrcode')
+			.then(({ toDataURL }) => toDataURL(uri, { margin: 1, width: 192 }))
 			.then((value) => {
 				if (totpEnrollment?.otpauthUri === uri) {
 					totpQrDataUrl = value;

@@ -31,7 +31,7 @@ export async function verifierMetadataRoute(c: Context<{ Bindings: Env }>): Prom
     },
 
     // Supported client ID schemes
-    client_id_schemes_supported: ['pre-registered', 'did', 'redirect_uri'],
+    client_id_schemes_supported: ['pre-registered'],
 
     // Response types
     response_types_supported: ['vp_token'],

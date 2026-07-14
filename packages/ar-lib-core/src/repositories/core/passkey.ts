@@ -312,13 +312,15 @@ export class PasskeyRepository {
       return null;
     }
 
+    if (!Number.isInteger(newCounter) || newCounter < 0) {
+      throw new Error(`Invalid counter: ${newCounter} must be a non-negative integer.`);
+    }
+
     // WebAuthn counter validation:
     // - If both counters are 0, the authenticator doesn't support counters (valid)
-    // - If new counter is 0 and current is non-zero, authenticator switched to non-counter mode (suspicious but allowed)
     // - If new counter > current, normal increment (valid)
-    // - If new counter > 0 and new counter <= current, possible cloned authenticator (REJECT)
-    const isCounterSupported = existing.counter > 0 || newCounter > 0;
-    if (isCounterSupported && newCounter > 0 && newCounter <= existing.counter) {
+    // - Once a positive counter is observed, rollback to zero or a stale value is rejected
+    if (existing.counter > 0 && newCounter <= existing.counter) {
       throw new Error(
         `Invalid counter: new counter (${newCounter}) must be greater than current (${existing.counter}). Possible cloned authenticator.`
       );

@@ -17,7 +17,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import { importPKCS8, type JWK } from 'jose';
+import { importPKCS8, SignJWT, type JWK, type JWTPayload } from 'jose';
 import { generateKeySet } from '../utils/keys';
 import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-keys';
 import { timingSafeEqual } from '../utils/crypto';
@@ -94,6 +94,31 @@ interface StoredECKey {
   expiresAt?: number;
   revokedAt?: number;
   revokedReason?: string;
+}
+
+export interface SignVCIAccessTokenInput {
+  tenantId: string;
+  userId: string;
+  offerId: string;
+  credentialConfigurationId: string;
+  issuer: string;
+  expiresInSeconds?: number;
+}
+
+export interface SignVCIAccessTokenResult {
+  token: string;
+  kid: string;
+  jti: string;
+}
+
+export interface SignSDJWTIssuerResult {
+  token: string;
+  kid: string;
+}
+
+export interface SignStatusListCredentialResult {
+  token: string;
+  kid: string;
 }
 
 interface StoredSecretVersion {
@@ -418,6 +443,125 @@ export class KeyManager extends DurableObject<Env> {
    */
   async getActiveECKeyWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
     return this.getActiveECKey(algorithm);
+  }
+
+  /** Sign the narrowly defined VCI access-token contract without exporting key material. */
+  async signVCIAccessTokenRpc(input: SignVCIAccessTokenInput): Promise<SignVCIAccessTokenResult> {
+    const tenantId = input.tenantId?.trim();
+    const userId = input.userId?.trim();
+    const offerId = input.offerId?.trim();
+    const configurationId = input.credentialConfigurationId?.trim();
+    const issuer = input.issuer?.trim();
+    if (
+      !tenantId ||
+      tenantId.length > 128 ||
+      !userId ||
+      userId.length > 256 ||
+      !offerId ||
+      offerId.length > 512 ||
+      !configurationId ||
+      configurationId.length > 256 ||
+      !issuer ||
+      issuer.length > 2048
+    ) {
+      throw new Error('invalid_vci_access_token_signing_input');
+    }
+    const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 3600, 60), 3600);
+    const activeKey = await this.getActiveECKey('ES256');
+    if (!activeKey) throw new Error('vci_access_token_signing_key_unavailable');
+    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+    const now = Math.floor(Date.now() / 1000);
+    const jti = crypto.randomUUID();
+    const token = await new SignJWT({
+      tenant_id: tenantId,
+      offer_id: offerId,
+      credential_configuration_id: configurationId,
+      scope: 'credential',
+    })
+      .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: activeKey.kid })
+      .setSubject(userId)
+      .setIssuedAt(now)
+      .setJti(jti)
+      .setExpirationTime(now + expiresIn)
+      .setIssuer(issuer)
+      .setAudience(issuer)
+      .sign(privateKey);
+    return { token, kid: activeKey.kid, jti };
+  }
+
+  /** Sign a bounded SD-JWT VC issuer payload without exporting the EC private key. */
+  async signSDJWTIssuerRpc(payload: JWTPayload): Promise<SignSDJWTIssuerResult> {
+    const now = Math.floor(Date.now() / 1000);
+    const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
+    const vct = typeof payload.vct === 'string' ? payload.vct.trim() : '';
+    const encodedPayload = JSON.stringify(payload);
+    const disclosureHashes = payload._sd;
+    if (
+      !issuer ||
+      issuer.length > 2048 ||
+      !vct ||
+      vct.length > 512 ||
+      typeof payload.iat !== 'number' ||
+      Math.abs(payload.iat - now) > 300 ||
+      payload._sd_alg !== 'sha-256' ||
+      encodedPayload.length > 64 * 1024 ||
+      (disclosureHashes !== undefined &&
+        (!Array.isArray(disclosureHashes) ||
+          disclosureHashes.length > 128 ||
+          disclosureHashes.some((value) => typeof value !== 'string' || value.length > 128)))
+    ) {
+      throw new Error('invalid_sd_jwt_issuer_signing_input');
+    }
+    const activeKey = await this.getActiveECKey('ES256');
+    if (!activeKey) throw new Error('sd_jwt_issuer_signing_key_unavailable');
+    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+    const token = await new SignJWT(payload)
+      .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
+      .sign(privateKey);
+    return { token, kid: activeKey.kid };
+  }
+
+  /** Sign the fixed Bitstring Status List JWT contract without exporting key material. */
+  async signStatusListCredentialRpc(payload: JWTPayload): Promise<SignStatusListCredentialResult> {
+    const now = Math.floor(Date.now() / 1000);
+    const vc = payload.vc as
+      | {
+          type?: unknown;
+          credentialSubject?: {
+            type?: unknown;
+            statusPurpose?: unknown;
+            encodedList?: unknown;
+          };
+        }
+      | undefined;
+    const subject = vc?.credentialSubject;
+    const encodedPayload = JSON.stringify(payload);
+    if (
+      typeof payload.iss !== 'string' ||
+      !payload.iss.startsWith('did:web:') ||
+      typeof payload.sub !== 'string' ||
+      !payload.sub.startsWith('https://') ||
+      typeof payload.iat !== 'number' ||
+      Math.abs(payload.iat - now) > 300 ||
+      typeof payload.exp !== 'number' ||
+      payload.exp <= now ||
+      payload.exp > now + 86400 ||
+      !Array.isArray(vc?.type) ||
+      !vc.type.includes('BitstringStatusListCredential') ||
+      subject?.type !== 'BitstringStatusList' ||
+      !['revocation', 'suspension'].includes(String(subject.statusPurpose)) ||
+      typeof subject.encodedList !== 'string' ||
+      encodedPayload.length > 4 * 1024 * 1024
+    ) {
+      throw new Error('invalid_status_list_signing_input');
+    }
+    const activeKey = await this.getActiveECKey('ES256');
+    if (!activeKey) throw new Error('status_list_signing_key_unavailable');
+    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+    const token = await new SignJWT(payload)
+      .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
+      .sign(privateKey);
+    return { token, kid: activeKey.kid };
   }
 
   /**

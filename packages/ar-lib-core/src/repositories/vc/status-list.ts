@@ -121,19 +121,19 @@ export class D1StatusListRepository implements IStatusListRepository {
   async incrementUsedCount(tenantId: string, listId: string): Promise<number> {
     const now = new Date().toISOString();
 
-    // D1 doesn't support RETURNING, so we need two queries
-    await this.adapter.execute(
-      'UPDATE status_lists SET used_count = used_count + 1, updated_at = ? WHERE tenant_id = ? AND public_id = ?',
+    // A single statement is required here. Splitting UPDATE and SELECT allows two
+    // concurrent issuers to observe the same final count and allocate the same index.
+    const result = await this.adapter.queryOne<{ used_count: number }>(
+      `UPDATE status_lists
+          SET used_count = used_count + 1, updated_at = ?
+        WHERE tenant_id = ? AND public_id = ?
+          AND state = 'active' AND used_count < capacity
+        RETURNING used_count`,
       [now, tenantId, listId]
     );
 
-    const result = await this.adapter.queryOne<{ used_count: number }>(
-      'SELECT used_count FROM status_lists WHERE tenant_id = ? AND public_id = ?',
-      [tenantId, listId]
-    );
-
     if (!result) {
-      throw new Error(`Status list not found: ${listId}`);
+      throw new Error(`Status list not found, inactive, or full: ${listId}`);
     }
 
     return result.used_count;
@@ -170,6 +170,9 @@ export class D1StatusListRepository implements IStatusListRepository {
    * Archive old sealed lists
    */
   async archiveSealedLists(tenantId: string, olderThanDays: number = 365): Promise<number> {
+    if (!Number.isFinite(olderThanDays) || olderThanDays < 0) {
+      return 0;
+    }
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
     const cutoffIso = cutoffDate.toISOString();

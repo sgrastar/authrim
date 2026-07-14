@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import { exportPKCS8, generateKeyPair } from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
 
 // Mock all functions at module level using vi.hoisted to survive vi.restoreAllMocks()
@@ -53,6 +54,8 @@ const mockCreateCustomClaimSchemaResolverFromSources = vi.hoisted(() =>
     resolveClaimsForTarget: vi.fn().mockResolvedValue({ claims: {} }),
   })
 );
+const mockApplyOIDCIdentityMapping = vi.hoisted(() => vi.fn());
+const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() => vi.fn());
 
 // Mock the shared module
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -74,6 +77,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     loadFeatureConfig: mockLoadFeatureConfig,
     resolveCustomClaimRuntimeSourcesFromEnv: mockResolveCustomClaimRuntimeSourcesFromEnv,
     createCustomClaimSchemaResolverFromSources: mockCreateCustomClaimSchemaResolverFromSources,
+    applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
+    enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent,
   };
 });
 
@@ -88,6 +93,8 @@ import {
   validateJWEOptions,
   getCachedUser,
   getCachedUserCore,
+  OIDCAttributeReleaseConsentRequiredError,
+  OIDCIdentityMappingRuntimeError,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -255,6 +262,10 @@ describe('UserInfo Endpoint', () => {
     mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
       resolveClaimsForTarget: vi.fn().mockResolvedValue({ claims: {} }),
     });
+    mockApplyOIDCIdentityMapping.mockImplementation(async (input: { claims: unknown }) => ({
+      claims: input.claims,
+    }));
+    mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue(undefined);
   });
 
   describe('Token Validation', () => {
@@ -1078,7 +1089,159 @@ describe('UserInfo Endpoint', () => {
     });
   });
 
+  describe('Identity mapping and claim release consent', () => {
+    function prepareClientBoundRequest() {
+      const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile email',
+          client_id: 'client-123',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue({ client_id: 'client-123' } as never);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+      return c;
+    }
+
+    it('replaces released claims with the mapped claim set', async () => {
+      const c = prepareClientBoundRequest();
+      mockApplyOIDCIdentityMapping.mockResolvedValue({
+        claims: { sub: 'pairwise-subject', department: 'security' },
+      });
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith({
+        sub: 'pairwise-subject',
+        department: 'security',
+      });
+      expect(mockEnforceOIDCAttributeReleaseConsent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subjectId: 'user-123',
+          claims: { sub: 'pairwise-subject', department: 'security' },
+        })
+      );
+    });
+
+    it.each([
+      [
+        new OIDCIdentityMappingRuntimeError('invalid mapping', {
+          code: 'invalid_mapping',
+          clientId: 'client-123',
+        }),
+        400,
+        'invalid_client_metadata',
+      ],
+      [new Error('mapping store unavailable'), 500, 'server_error'],
+    ])('fails closed when identity mapping fails', async (error, status, code) => {
+      const c = prepareClientBoundRequest();
+      mockApplyOIDCIdentityMapping.mockRejectedValue(error);
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: code }), status);
+      expect(mockEnforceOIDCAttributeReleaseConsent).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        ['release.attribute_consent.attribute_set_changed'],
+        'User consent is required because the UserInfo claim set has changed',
+      ],
+      [
+        ['release.attribute_consent.every_time'],
+        'User consent is required for this UserInfo claim release',
+      ],
+      [
+        ['release.attribute_consent.missing'],
+        'User consent is required before releasing UserInfo claims',
+      ],
+    ])('returns a stable consent_required response for reason %s', async (reasonCodes, message) => {
+      const c = prepareClientBoundRequest();
+      mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(
+        new OIDCAttributeReleaseConsentRequiredError({
+          claimSetHash: 'hash',
+          reasonCodes,
+          consentMode: 'once',
+          claimNames: ['email'],
+        })
+      );
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'consent_required',
+          error_description: message,
+        },
+        403
+      );
+      expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    });
+
+    it('masks unexpected consent service failures', async () => {
+      const c = prepareClientBoundRequest();
+      mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(new Error('database unavailable'));
+
+      await userinfoHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to evaluate claim release consent',
+        },
+        500
+      );
+    });
+  });
+
   describe('JWE Encryption', () => {
+    it('signs responses and refreshes the per-tenant key cache only after version rotation', async () => {
+      const { privateKey } = await generateKeyPair('RS256', { extractable: true });
+      const privatePEM = await exportPKCS8(privateKey);
+      const getActiveKeyWithPrivateRpc = vi
+        .fn()
+        .mockResolvedValue({ kid: 'signing-key-1', privatePEM });
+      let version = 'v1';
+      const configGet = vi.fn().mockImplementation(async () => version);
+
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+        env: {
+          AUTHRIM_CONFIG: { get: configGet } as unknown as KVNamespace,
+          KEY_MANAGER: {
+            idFromName: vi.fn().mockReturnValue('key-manager-id'),
+            get: vi.fn().mockReturnValue({ getActiveKeyWithPrivateRpc }),
+          } as unknown as Env['KEY_MANAGER'],
+        },
+      });
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: {
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'signed-client',
+        },
+      });
+      vi.mocked(getClient).mockResolvedValue({
+        client_id: 'signed-client',
+        userinfo_signed_response_alg: 'RS256',
+      } as never);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      await userinfoHandler(c);
+      await userinfoHandler(c);
+      expect(getActiveKeyWithPrivateRpc).toHaveBeenCalledTimes(1);
+      expect(c.body).toHaveBeenCalledWith(expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/));
+
+      version = 'v2';
+      await userinfoHandler(c);
+      expect(getActiveKeyWithPrivateRpc).toHaveBeenCalledTimes(2);
+      expect(configGet).toHaveBeenCalledWith('v1:key-version:default');
+    });
+
     it('should return encrypted response when client requires encryption', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },

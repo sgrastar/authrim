@@ -17,10 +17,12 @@ import {
   getTenantIdFromContext,
   type Logger,
 } from '@authrim/ar-lib-core';
-import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
-import { generateSecureNonce } from '../../utils/crypto';
-import { SignJWT, importJWK } from 'jose';
-import { getRequestIssuerIdentifier } from '../../request-identifiers';
+import {
+  getCredentialOfferStoreById,
+  parsePreAuthorizedCode,
+} from '../../utils/credential-offer-sharding';
+import { hashTransactionCode, sha256Base64url } from '../../utils/crypto';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
  * Grant type for pre-authorized code
@@ -34,8 +36,7 @@ const PRE_AUTHORIZED_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:pre-authoriz
  * Exchanges pre-authorized_code for access token.
  */
 export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-ISSUER');
+  const log = getLogger(c).module('VC-ISSUER');
   try {
     // Parse form-urlencoded body
     const contentType = c.req.header('Content-Type') || '';
@@ -62,7 +63,7 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
       c,
       log,
       formData as unknown as Record<string, string>,
-      getRequestIssuerIdentifier(c)
+      getRequestIssuerUrl(c)
     );
   } catch (error) {
     log.error('VCI token request failed', {}, error as Error);
@@ -94,53 +95,38 @@ async function handlePreAuthorizedCodeGrant(
 
   // Look up the credential offer by pre-authorized code
   // The pre-authorized code contains the offer ID for routing
-  const offerInfo = await lookupOfferByCode(
+  const reservation = await reserveOfferByCode(
     c.env,
     log,
     preAuthorizedCode,
+    txCode,
     getTenantIdFromContext(c)
   );
-  if (!offerInfo) {
+  if (!reservation) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
-
-  // Validate tx_code if required
-  if (offerInfo.txCode && offerInfo.txCode !== txCode) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  const offerInfo = reservation.offer;
+  let accessToken: string;
+  try {
+    accessToken = await generateVCIAccessToken(
+      c.env,
+      { ...offerInfo, offerId: reservation.offerId },
+      issuerIdentifier
+    );
+  } catch (error) {
+    await releaseOfferReservation(c.env, reservation, log);
+    throw error;
   }
-
-  // Check offer status
-  if (offerInfo.status !== 'pending') {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  if (!(await completeOfferReservation(c.env, reservation))) {
+    await releaseOfferReservation(c.env, reservation, log);
+    throw new Error('Credential offer reservation completion failed');
   }
-
-  // Check expiration
-  if (Date.now() > offerInfo.expiresAt) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
-  }
-
-  // Generate access token
-  const accessToken = await generateVCIAccessToken(c.env, offerInfo, issuerIdentifier);
-
-  // Generate c_nonce
-  const cNonce = await generateSecureNonce();
-  const cNonceExpiresIn = parseInt(c.env.C_NONCE_EXPIRY_SECONDS || '300', 10);
-
-  // Store c_nonce for credential request validation
-  await c.env.AUTHRIM_CONFIG.put(`cnonce:${offerInfo.userId}`, cNonce, {
-    expirationTtl: cNonceExpiresIn,
-  });
-
-  // Mark offer as accepted
-  await updateOfferStatus(c.env, log, offerInfo.offerId, 'accepted', offerInfo.tenantId);
 
   // Build response per OpenID4VCI spec
   const response: VCITokenResponse = {
     access_token: accessToken,
     token_type: 'Bearer',
     expires_in: 3600, // 1 hour
-    c_nonce: cNonce,
-    c_nonce_expires_in: cNonceExpiresIn,
     authorization_details: [
       {
         type: 'openid_credential',
@@ -151,103 +137,112 @@ async function handlePreAuthorizedCodeGrant(
 
   // Validate response format before returning
   validateTokenResponse(response);
-
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
   return c.json(response);
 }
 
 /**
  * Look up credential offer by pre-authorized code
  */
-async function lookupOfferByCode(
+async function reserveOfferByCode(
   env: Env,
   log: Logger,
   preAuthorizedCode: string,
+  txCode: string | undefined,
   tenantId: string
 ): Promise<{
   offerId: string;
-  userId: string;
   tenantId: string;
-  credentialConfigurationId: string;
-  claims: Record<string, unknown>;
-  txCode?: string;
-  status: string;
-  expiresAt: number;
+  reservationId: string;
+  offer: {
+    userId: string;
+    tenantId: string;
+    credentialConfigurationId: string;
+    claims: Record<string, unknown>;
+  };
 } | null> {
   try {
-    // The pre-authorized code format: {offerId}:{secret}
-    // Extract offer ID from the code
-    const parts = preAuthorizedCode.split(':');
-    if (parts.length < 2) {
-      log.error('Invalid pre-authorized code format');
-      return null;
-    }
-
-    // Reconstruct offer ID (may have colons in the sharded format)
-    const offerId = parts.slice(0, -1).join(':');
-
-    // Get the offer from Durable Object
+    const parsedCode = parsePreAuthorizedCode(preAuthorizedCode);
+    if (!parsedCode) return null;
+    const offerId = parsedCode.offerId;
     const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
-    const response = await stub.fetch(new Request('https://internal/get'));
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const offer = (await response.json()) as {
-      id: string;
-      userId: string;
-      tenantId: string;
-      credentialConfigurationId: string;
-      preAuthorizedCode: string;
-      txCode?: string;
-      claims: Record<string, unknown>;
-      status: string;
-      expiresAt: number;
+    const txCodeHash = txCode
+      ? await hashTransactionCode(env.VC_TRANSACTION_CODE_HMAC_SECRET, tenantId, offerId, txCode)
+      : undefined;
+    const response = await stub.fetch(
+      new Request('https://internal/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: offerId,
+          tenantId,
+          preAuthorizedCodeHash: await sha256Base64url(preAuthorizedCode),
+          txCodeHash,
+          now: Date.now(),
+        }),
+      })
+    );
+    if (!response.ok) return null;
+    const result = (await response.json()) as {
+      reserved: boolean;
+      reservationId?: string;
+      offer?: {
+        userId: string;
+        tenantId: string;
+        credentialConfigurationId: string;
+        claims: Record<string, unknown>;
+      };
     };
-
-    // Verify the pre-authorized code matches
-    if (offer.preAuthorizedCode !== preAuthorizedCode) {
-      log.error('Pre-authorized code mismatch');
-      return null;
-    }
-
-    return {
-      offerId: offer.id,
-      userId: offer.userId,
-      tenantId: offer.tenantId,
-      credentialConfigurationId: offer.credentialConfigurationId,
-      claims: offer.claims,
-      txCode: offer.txCode,
-      status: offer.status,
-      expiresAt: offer.expiresAt,
-    };
+    if (!result.reserved || !result.reservationId || !result.offer) return null;
+    return { offerId, tenantId, reservationId: result.reservationId, offer: result.offer };
   } catch (error) {
-    log.error('Failed to lookup offer by code', {}, error as Error);
+    log.error('Failed to reserve offer by code', {}, error as Error);
     return null;
   }
 }
 
-/**
- * Update credential offer status
- */
-async function updateOfferStatus(
+async function completeOfferReservation(
   env: Env,
-  log: Logger,
-  offerId: string,
-  status: string,
-  tenantId: string
+  reservation: { offerId: string; tenantId: string; reservationId: string }
+): Promise<boolean> {
+  const { stub } = getCredentialOfferStoreById(env, reservation.offerId, reservation.tenantId);
+  const response = await stub.fetch(
+    new Request('https://internal/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: reservation.offerId,
+        tenantId: reservation.tenantId,
+        reservationId: reservation.reservationId,
+        claimsExpiresAt: Date.now() + 3600 * 1000,
+      }),
+    })
+  );
+  const result = response.ok ? ((await response.json()) as { completed: boolean }) : null;
+  return result?.completed === true;
+}
+
+async function releaseOfferReservation(
+  env: Env,
+  reservation: { offerId: string; tenantId: string; reservationId: string },
+  log: Logger
 ): Promise<void> {
   try {
-    const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
+    const { stub } = getCredentialOfferStoreById(env, reservation.offerId, reservation.tenantId);
     await stub.fetch(
-      new Request('https://internal/update', {
+      new Request('https://internal/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({
+          id: reservation.offerId,
+          tenantId: reservation.tenantId,
+          reservationId: reservation.reservationId,
+        }),
       })
     );
   } catch (error) {
-    log.error('Failed to update offer status', { status }, error as Error);
+    log.error('Failed to release credential offer reservation', {}, error as Error);
   }
 }
 
@@ -256,64 +251,36 @@ async function updateOfferStatus(
  *
  * Creates a JWT access token for the credential endpoint.
  */
-async function generateVCIAccessToken(
+export async function generateVCIAccessToken(
   env: Env,
   offerInfo: {
     userId: string;
     tenantId: string;
     credentialConfigurationId: string;
-    claims: Record<string, unknown>;
+    offerId: string;
   },
   issuer: string
 ): Promise<string> {
-  // Get signing key from KeyManager
   const doId = env.KEY_MANAGER.idFromName(`${offerInfo.tenantId}-v3`);
-  const stub = env.KEY_MANAGER.get(doId);
-
-  const keyResponse = await stub.fetch(new Request('https://internal/ec/active/ES256'));
-  if (!keyResponse.ok) {
-    throw new Error('Failed to get signing key');
-  }
-
-  const keyData = (await keyResponse.json()) as {
-    kid: string;
-    publicKeyJwk: Record<string, unknown>;
-    algorithm: string;
+  const stub = env.KEY_MANAGER.get(doId) as unknown as {
+    signVCIAccessTokenRpc(input: {
+      tenantId: string;
+      userId: string;
+      offerId: string;
+      credentialConfigurationId: string;
+      issuer: string;
+      expiresInSeconds: number;
+    }): Promise<{ token: string }>;
   };
-
-  // Get private key for signing
-  const privateKeyResponse = await stub.fetch(
-    new Request('https://internal/internal/ec/active-with-private/ES256')
-  );
-  if (!privateKeyResponse.ok) {
-    throw new Error('Failed to get private key');
-  }
-
-  const privateKeyData = (await privateKeyResponse.json()) as {
-    kid: string;
-    privateKeyJwk: Record<string, unknown>;
-    algorithm: string;
-  };
-
-  const privateKey = await importJWK(privateKeyData.privateKeyJwk, 'ES256');
-
-  const now = Math.floor(Date.now() / 1000);
-
-  const token = await new SignJWT({
-    sub: offerInfo.userId,
-    tenant_id: offerInfo.tenantId,
-    credential_configuration_id: offerInfo.credentialConfigurationId,
-    claims: offerInfo.claims,
-    scope: 'openid_credential',
-  })
-    .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: keyData.kid })
-    .setIssuedAt(now)
-    .setExpirationTime(now + 3600)
-    .setIssuer(issuer)
-    .setAudience(issuer)
-    .sign(privateKey);
-
-  return token;
+  const result = await stub.signVCIAccessTokenRpc({
+    tenantId: offerInfo.tenantId,
+    userId: offerInfo.userId,
+    offerId: offerInfo.offerId,
+    credentialConfigurationId: offerInfo.credentialConfigurationId,
+    issuer,
+    expiresInSeconds: 3600,
+  });
+  return result.token;
 }
 
 /**

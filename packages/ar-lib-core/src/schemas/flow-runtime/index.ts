@@ -11,9 +11,16 @@ export const FLOW_RUNTIME_INTERACTION_TTL_SECONDS = 600 as const;
 
 export type FlowRuntimeMode = 'draft' | 'preview' | 'runtime' | 'export';
 
-export type FlowKind = 'login' | 'registration' | 'approve' | 'account' | `custom:${string}`;
+export type FlowKind =
+  | 'login'
+  | 'registration'
+  | 'approve'
+  | 'account'
+  | 'credential_issuance'
+  | 'attribute_elevation'
+  | `custom:${string}`;
 
-export type FlowAssignmentTargetType = 'tenant' | 'oidc_client' | 'saml_sp';
+export type FlowAssignmentTargetType = 'tenant' | 'oidc_client' | 'saml_sp' | 'credential_profile';
 
 export type FlowRuntimeJsonPrimitive = string | number | boolean | null;
 export type FlowRuntimeJsonValue =
@@ -41,6 +48,10 @@ export type FlowRuntimeComponent =
   | 'account_action'
   | 'completion'
   | 'condition'
+  | 'credential_claims'
+  | 'credential_offer'
+  | 'credential_presentation'
+  | 'verified_attribute'
   | `custom:${string}`;
 
 export type FlowStandardNodeType =
@@ -53,11 +64,21 @@ export type FlowStandardNodeType =
   | 'consent'
   | 'account_action'
   | 'complete'
-  | 'condition';
+  | 'condition'
+  | 'credential_claims'
+  | 'credential_offer'
+  | 'credential_presentation'
+  | 'verified_attribute';
 
 export type FlowNodeType = FlowStandardNodeType | `custom:${string}`;
 
-export type FlowNodeCategory = 'control' | 'decision' | 'input' | 'authentication' | 'consent';
+export type FlowNodeCategory =
+  | 'control'
+  | 'decision'
+  | 'input'
+  | 'authentication'
+  | 'consent'
+  | 'system';
 
 export interface FlowNodeDefinition {
   type: FlowStandardNodeType;
@@ -175,6 +196,50 @@ export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
     default_render: false,
     output_handles: 'dynamic',
     required_config_keys: ['conditions'],
+  },
+  {
+    type: 'credential_claims',
+    label: 'Resolve Credential Claims',
+    runtime_component: 'credential_claims',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['resolved', 'rejected'],
+    required_config_keys: ['credential_profile_ref'],
+  },
+  {
+    type: 'credential_offer',
+    label: 'Create Credential Offer',
+    runtime_component: 'credential_offer',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['created', 'failed'],
+    required_config_keys: ['credential_profile_ref'],
+  },
+  {
+    type: 'credential_presentation',
+    label: 'Verify Credential Presentation',
+    runtime_component: 'credential_presentation',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['verified', 'rejected'],
+    required_config_keys: ['credential_profile_ref'],
+  },
+  {
+    type: 'verified_attribute',
+    label: 'Commit Verified Attributes',
+    runtime_component: 'verified_attribute',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['committed', 'rejected'],
+    required_config_keys: ['credential_profile_ref'],
   },
 ];
 

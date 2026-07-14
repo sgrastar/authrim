@@ -15,6 +15,7 @@ import {
   pluginContextMiddleware,
   createPluginLoader,
   idempotencyMiddleware,
+  requiredIdempotencyMiddleware,
   ensureDatabaseAdapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -286,6 +287,15 @@ import {
   adminFlowAssignmentUpsertHandler,
   adminFlowAssignmentDeleteHandler,
 } from './admin-flows';
+import {
+  adminCredentialProfilesListHandler,
+  adminCredentialProfileCreateHandler,
+  adminCredentialProfileGetHandler,
+  adminCredentialProfileUpdateHandler,
+  adminCredentialProfileVersionCreateHandler,
+  adminCredentialProfilePublishHandler,
+  adminCredentialOfferCreateHandler,
+} from './admin-credential-profiles';
 import {
   adminScreenCreateHandler,
   adminScreenDeleteHandler,
@@ -2288,6 +2298,23 @@ app.get('/api/admin/flows/:id/export', adminFlowExportHandler);
 app.get('/api/admin/flow-assignments', adminFlowAssignmentsListHandler);
 app.put('/api/admin/flow-assignments', adminFlowAssignmentUpsertHandler);
 app.delete('/api/admin/flow-assignments', adminFlowAssignmentDeleteHandler);
+
+// Credential Profile control plane. Offer creation is idempotent because it
+// materializes a one-time bearer capability and must not be duplicated on retry.
+app.get('/api/admin/credential-profiles', adminCredentialProfilesListHandler);
+app.post('/api/admin/credential-profiles', adminCredentialProfileCreateHandler);
+app.get('/api/admin/credential-profiles/:id', adminCredentialProfileGetHandler);
+app.patch('/api/admin/credential-profiles/:id', adminCredentialProfileUpdateHandler);
+app.post('/api/admin/credential-profiles/:id/versions', adminCredentialProfileVersionCreateHandler);
+app.post(
+  '/api/admin/credential-profiles/:id/versions/:versionId/publish',
+  adminCredentialProfilePublishHandler
+);
+app.post(
+  '/api/admin/credential-profiles/:id/offers',
+  requiredIdempotencyMiddleware({ ttlSeconds: 900 }),
+  adminCredentialOfferCreateHandler
+);
 
 // Screen profiles used by Flow form nodes.
 app.get(

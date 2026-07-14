@@ -183,6 +183,16 @@ export async function updateCheckApiAuditSetting(c: Context) {
       );
     }
 
+    if (name === 'CHECK_API_AUDIT_RETENTION_DAYS' && !Number.isInteger(value)) {
+      return c.json(
+        {
+          error: 'invalid_value',
+          error_description: `${name} must be an integer`,
+        },
+        400
+      );
+    }
+
     // Range validation
     if (metadata.min !== undefined && value < metadata.min) {
       return c.json(

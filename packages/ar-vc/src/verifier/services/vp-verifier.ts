@@ -120,6 +120,7 @@ export async function verifyVPToken(
     // SECURITY: Status List JWT signature is verified to prevent MITM attacks
     let statusValid = true;
     const statusInfo = extractStatusInfo(payload);
+    const statusCheckedAt = Date.now();
 
     if (statusInfo) {
       try {
@@ -208,6 +209,10 @@ export async function verifyVPToken(
       holderBindingVerified,
       issuerTrusted,
       statusValid,
+      credentialExpiresAt:
+        typeof payload.exp === 'number' ? Math.max(0, payload.exp * 1000) : undefined,
+      statusCheckedAt,
+      statusFreshUntil: statusInfo ? statusCheckedAt + 5 * 60 * 1000 : statusCheckedAt,
       errors,
       warnings,
       haipCompliant: haipResult.haipCompliant,

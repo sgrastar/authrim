@@ -13,6 +13,7 @@ import type { PresentationDefinition, DCQLQuery } from '@authrim/ar-lib-core';
 export interface Env {
   // D1 Database
   DB: D1Database;
+  DB_ADMIN?: D1Database;
 
   // KV Namespace (same as other packages for shared config)
   AUTHRIM_CONFIG: KVNamespace;
@@ -21,12 +22,14 @@ export interface Env {
   VP_REQUEST_STORE: DurableObjectNamespace;
   CREDENTIAL_OFFER_STORE: DurableObjectNamespace;
   KEY_MANAGER: DurableObjectNamespace;
+  RATE_LIMITER?: DurableObjectNamespace;
 
   // Service Bindings
   POLICY_SERVICE: Fetcher;
 
   // Verifier Environment Variables
   VERIFIER_IDENTIFIER: string;
+  VC_ATTRIBUTE_ELEVATION_AUDIENCE?: string;
   HAIP_POLICY_VERSION: string;
   VP_REQUEST_EXPIRY_SECONDS: string;
   NONCE_EXPIRY_SECONDS: string;
@@ -35,6 +38,10 @@ export interface Env {
   ISSUER_IDENTIFIER: string;
   CREDENTIAL_OFFER_EXPIRY_SECONDS: string;
   C_NONCE_EXPIRY_SECONDS: string;
+  VC_TRANSACTION_CODE_HMAC_SECRET?: string;
+  VC_EVIDENCE_HMAC_SECRET?: string;
+  VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
+  RATE_LIMIT_PROFILE?: string;
 }
 
 // =============================================================================
@@ -112,12 +119,21 @@ export interface VPRequestState {
 
   /** User ID (for authenticated attribute verification) */
   userId?: string;
+  credentialProfileId?: string;
+  credentialProfileVersionId?: string;
+  verificationFlowVersionId?: string;
+  verificationMappingVersionId?: string;
+  verificationMappingSnapshotHash?: string;
+  maximumAttributeAgeSeconds?: number;
 
   /** Nonce for replay protection */
   nonce: string;
 
   /** State parameter */
   state?: string;
+
+  /** Digest of the bearer capability used only for status polling. */
+  statusTokenHash?: string;
 
   /** Presentation definition */
   presentationDefinition?: PresentationDefinition | object;
@@ -134,11 +150,8 @@ export interface VPRequestState {
   /** Request status */
   status: VPRequestStatus;
 
-  /** Received VP token */
-  vpToken?: string;
-
-  /** Verified claims (after successful verification) */
-  verifiedClaims?: Record<string, unknown>;
+  /** Names of verified claims. Values are deliberately never persisted. */
+  verifiedClaimNames?: string[];
 
   /** Error code (if failed) */
   errorCode?: string;
@@ -153,7 +166,7 @@ export interface VPRequestState {
   expiresAt: number;
 }
 
-export type VPRequestStatus = 'pending' | 'received' | 'verified' | 'failed' | 'expired';
+export type VPRequestStatus = 'pending' | 'processing' | 'verified' | 'failed' | 'expired';
 
 // =============================================================================
 // Verification Result
@@ -186,6 +199,9 @@ export interface VPVerificationResult {
 
   /** Whether credential status is valid */
   statusValid: boolean;
+  credentialExpiresAt?: number;
+  statusCheckedAt?: number;
+  statusFreshUntil?: number;
 
   /** Verification errors */
   errors: string[];
