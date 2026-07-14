@@ -134,6 +134,17 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   const clientRegistrationTokenPermission = requireClientRegistrationTokenPermission();
   const externalProviderPermission = requireExternalProviderPermission();
   const externalTokenRefreshPermission = requireExternalTokenRefreshPermission();
+  const vcProfilePermission: AdminPermissionMiddleware = async (c, next) => {
+    const path = new URL(c.req.url).pathname;
+    const permission = path.endsWith('/offers')
+      ? ADMIN_PERMISSIONS.VC_CREDENTIAL_OFFERS_CREATE
+      : path.endsWith('/publish')
+        ? ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_PUBLISH
+        : c.req.method === 'GET'
+          ? ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ
+          : ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE;
+    return requireAdminPermissions([permission])(c, next);
+  };
 
   app.use('/api/admin/users', userPermission);
   app.use('/api/admin/users/*', userPermission);
@@ -166,4 +177,6 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/external-providers/*', externalProviderPermission);
   app.use('/api/admin/external-token-refresh', externalTokenRefreshPermission);
   app.use('/api/admin/external-token-refresh/*', externalTokenRefreshPermission);
+  app.use('/api/admin/credential-profiles', vcProfilePermission);
+  app.use('/api/admin/credential-profiles/*', vcProfilePermission);
 }

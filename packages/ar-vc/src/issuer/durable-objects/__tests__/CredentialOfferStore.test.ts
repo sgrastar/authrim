@@ -31,13 +31,36 @@ class MemoryVciSql {
     const q = query.replace(/\s+/g, ' ').trim();
     if (q.startsWith('CREATE TABLE') || q.startsWith('CREATE INDEX')) return cursor() as never;
     if (q.startsWith('INSERT INTO credential_offers')) {
-      const [id, tenant, user, configuration, claims, codeHash, txHash, max, created, expires] = p;
+      const [
+        id,
+        tenant,
+        user,
+        profileId,
+        profileVersion,
+        profileSnapshotHash,
+        configuration,
+        mappingVersion,
+        mappingHash,
+        manifestHash,
+        claims,
+        codeHash,
+        txHash,
+        max,
+        created,
+        expires,
+      ] = p;
       if (this.offers.has(String(id))) throw new Error('duplicate');
       this.offers.set(String(id), {
         id,
         tenant_id: tenant,
         user_id: user,
+        credential_profile_id: profileId,
+        credential_profile_version: profileVersion,
+        credential_profile_snapshot_hash: profileSnapshotHash,
         credential_configuration_id: configuration,
+        mapping_version_id: mappingVersion,
+        mapping_snapshot_hash: mappingHash,
+        claim_manifest_hash: manifestHash,
         claims_json: claims,
         code_hash: codeHash,
         tx_code_hash: txHash,
@@ -223,7 +246,13 @@ describe('CredentialOfferStore security state machine', () => {
     id,
     tenantId: 'tenant-a',
     userId: 'user-a',
+    credentialProfileId: 'profile-a',
+    credentialProfileVersion: 1,
+    credentialProfileSnapshotHash: 'abcdefghijklmnopqrstuvwxyzABCDEFG_1234567890-efgh',
     credentialConfigurationId: 'AuthrimIdentityCredential',
+    mappingVersionId: 'mapping-v1',
+    mappingSnapshotHash: 'abcdefghijklmnopqrstuvwxyzABCDEFG_1234567890-abcd',
+    claimManifestHash: 'manifest-hash',
     claims: { given_name: 'Alice' },
     preAuthorizedCodeHash: `hash-${id}`,
     createdAt: 1_000,

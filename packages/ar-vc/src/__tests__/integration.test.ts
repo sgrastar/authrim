@@ -74,7 +74,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
 
 // Import after mocking
 import {
-  extractNormalizedAttributes,
   linkVerificationToUser,
   getUserVerifiedAttributes,
   hasVerifiedAttribute,
@@ -192,65 +191,6 @@ describe('E2E: VP Verification Flow', () => {
     mockTrustedIssuerRepo = createMockTrustedIssuerRepo();
   });
 
-  describe('Attribute Extraction', () => {
-    it('should extract and normalize identity claims', () => {
-      const claims = {
-        given_name: 'John',
-        family_name: 'Doe',
-        email: 'john@example.com',
-        birthdate: '1990-01-15',
-      };
-
-      const attributes = extractNormalizedAttributes(claims);
-
-      expect(attributes).toHaveLength(4);
-      expect(attributes.find((a) => a.name === 'verified_given_name')?.value).toBe('John');
-      expect(attributes.find((a) => a.name === 'verified_family_name')?.value).toBe('Doe');
-      expect(attributes.find((a) => a.name === 'verified_email')?.value).toBe('john@example.com');
-    });
-
-    it('should normalize boolean age claims', () => {
-      const claims = {
-        age_over_18: true,
-        age_over_21: false,
-      };
-
-      const attributes = extractNormalizedAttributes(claims);
-
-      expect(attributes.find((a) => a.name === 'verified_age_over_18')?.value).toBe('true');
-      expect(attributes.find((a) => a.name === 'verified_age_over_21')?.value).toBe('false');
-    });
-
-    it('should flatten nested address claims', () => {
-      const claims = {
-        address: {
-          country: 'JP',
-          region: 'Tokyo',
-          locality: 'Shibuya',
-        },
-      };
-
-      const attributes = extractNormalizedAttributes(claims);
-
-      expect(attributes.find((a) => a.name === 'verified_country')?.value).toBe('JP');
-      expect(attributes.find((a) => a.name === 'verified_region')?.value).toBe('Tokyo');
-      expect(attributes.find((a) => a.name === 'verified_locality')?.value).toBe('Shibuya');
-    });
-
-    it('should skip unmapped claims for data minimization', () => {
-      const claims = {
-        given_name: 'John',
-        custom_claim: 'should-be-skipped',
-        internal_id: 12345,
-      };
-
-      const attributes = extractNormalizedAttributes(claims);
-
-      expect(attributes).toHaveLength(1);
-      expect(attributes[0].name).toBe('verified_given_name');
-    });
-  });
-
   describe('VP Verification', () => {
     it('should verify VP token structure', async () => {
       // Note: Full VP verification requires complex mocking of @authrim/ar-lib-core
@@ -302,7 +242,23 @@ describe('E2E: VP Verification Flow', () => {
         mockAttributeRepo,
         vpRequest,
         verificationResult,
-        'user-123'
+        'user-123',
+        {
+          attributes: [
+            { name: 'verified_age_over_18', value: 'true', originalClaim: 'age_over_18' },
+            { name: 'verified_country', value: 'JP', originalClaim: 'address.country' },
+          ],
+          expiresAt: Date.now() + 60_000,
+          revalidateAfter: Date.now() + 30_000,
+          credentialProfileId: 'profile-1',
+          credentialProfileVersionId: 'profile-version-1',
+          mappingVersionId: 'mapping-version-1',
+          mappingSnapshotHash: 'mapping-snapshot-1',
+          policyVersion: 'haip-1',
+          evidenceFingerprint: 'evidence-fingerprint-1',
+          statusCheckedAt: Date.now(),
+          statusFreshUntil: Date.now() + 30_000,
+        }
       );
 
       expect(result.success).toBe(true);
@@ -464,64 +420,5 @@ describe('E2E: VCI Issuance Flow', () => {
 
     expect(offerData.credential_issuer).toBe('https://authrim.com');
     expect(offerData.grants['urn:ietf:params:oauth:grant-type:pre-authorized_code']).toBeDefined();
-  });
-});
-
-describe('E2E: Complete Attribute Verification Scenario', () => {
-  it('should complete full age verification flow', async () => {
-    // Scenario: User wants to access age-restricted content
-    // 1. User is already logged in (authenticated via Passkey)
-    // 2. User initiates age verification
-    // 3. Wallet presents age_over_18 VC
-    // 4. VC is verified and attribute is stored
-    // 5. User can now access restricted content
-
-    // Step 1: User is authenticated (userId: 'user-123', tenantId: 'tenant-1')
-
-    // Step 2-3: Wallet presents VP with age credential
-    const disclosedClaims = {
-      age_over_18: true,
-      given_name: 'John',
-    };
-
-    // Step 4: Extract and normalize attributes
-    const normalizedAttributes = extractNormalizedAttributes(disclosedClaims);
-
-    expect(normalizedAttributes).toContainEqual({
-      name: 'verified_age_over_18',
-      value: 'true',
-      originalClaim: 'age_over_18',
-    });
-
-    // Step 5: Verify attribute is available for policy check
-    // In production, ABAC would use: attribute_equals('verified_age_over_18', 'true')
-    const ageAttribute = normalizedAttributes.find((a) => a.name === 'verified_age_over_18');
-    expect(ageAttribute?.value).toBe('true');
-
-    // User can now access age-restricted content
-    const canAccessContent = ageAttribute?.value === 'true';
-    expect(canAccessContent).toBe(true);
-  });
-
-  it('should complete country verification flow', async () => {
-    // Scenario: Service requires JP residence verification
-    const disclosedClaims = {
-      address: {
-        country: 'JP',
-        region: 'Tokyo',
-      },
-    };
-
-    const normalizedAttributes = extractNormalizedAttributes(disclosedClaims);
-
-    expect(normalizedAttributes).toContainEqual({
-      name: 'verified_country',
-      value: 'JP',
-      originalClaim: 'address.country',
-    });
-
-    // Policy check: attribute_equals('verified_country', 'JP')
-    const countryAttribute = normalizedAttributes.find((a) => a.name === 'verified_country');
-    expect(countryAttribute?.value).toBe('JP');
   });
 });

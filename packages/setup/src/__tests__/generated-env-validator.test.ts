@@ -93,6 +93,9 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
     otpHmacSecret: 'fixture_otp_hmac_secret_1234567890',
     loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
     flowRuntimeHmacSecret: 'fixture_flow_runtime_secret_123',
+    vcTransactionCodeHmacSecret: 't'.repeat(43),
+    vcEvidenceHmacSecret: 'e'.repeat(43),
+    vcProfileContractHmacSecret: 'p'.repeat(43),
     pluginEncryptionKey: 'c'.repeat(64),
     setupToken: 'fixture_setup_token_1234567890',
   };
@@ -629,6 +632,23 @@ describe('validateGeneratedEnvironment', () => {
     expect(secretCheck?.status).toBe('fail');
     expect(secretCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('OTP_HMAC_SECRET')])
+    );
+  });
+
+  it.each([
+    ['vc_evidence_hmac_secret.txt', 'VC_EVIDENCE_HMAC_SECRET'],
+    ['vc_profile_contract_hmac_secret.txt', 'VC_PROFILE_CONTRACT_HMAC_SECRET'],
+  ])('fails when generated VC key material %s is missing', async (fileName, secretName) => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    await unlink(join(root, '.authrim', env, 'keys', fileName));
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const secretCheck = result.checks.find((check) => check.id === 'logging-secret-material');
+
+    expect(result.ok).toBe(false);
+    expect(secretCheck?.status).toBe('fail');
+    expect(secretCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining(secretName)])
     );
   });
 

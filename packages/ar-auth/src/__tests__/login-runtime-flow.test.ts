@@ -825,6 +825,17 @@ describe('LoginUI runtime Flow handlers', () => {
     resetAdapter();
   });
 
+  it('never coerces VC server-side flow kinds into a login flow', async () => {
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'credential_issuance' } })
+    );
+    const data = await readJson(response);
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('unsupported_flow_kind');
+    expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+  });
+
   it('creates an interaction from the tenant default published Flow assignment', async () => {
     const { response, data } = await startInteraction();
 

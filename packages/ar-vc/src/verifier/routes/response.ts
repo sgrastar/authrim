@@ -11,10 +11,8 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, VPRequestState, VPVerificationResult } from '../../types';
+import type { Env, VPRequestState } from '../../types';
 import {
-  resolveAuthCorePersistenceAdapterFromEnv,
-  AttributeVerificationRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -131,8 +129,6 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Update the request with the result
     if (verificationResult.verified) {
-      // Persist the durable verification evidence before making the request terminal.
-      await storeAttributeVerification(c.env, vpRequest, verificationResult);
       const completeResponse = await stub.fetch(
         new Request('https://internal/complete', {
           method: 'POST',
@@ -141,7 +137,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
             id: requestId,
             tenantId,
             reservationId: reservation.reservationId,
-            verifiedClaims: verificationResult.disclosedClaims,
+            verifiedClaimNames: Object.keys(verificationResult.disclosedClaims ?? {}),
           }),
         })
       );
@@ -154,7 +150,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
       return c.json({
         success: true,
         request_id: requestId,
-        disclosed_claims: verificationResult.disclosedClaims,
+        verified_claim_names: Object.keys(verificationResult.disclosedClaims ?? {}),
         haip_compliant: verificationResult.haipCompliant,
       });
     } else {
@@ -198,34 +194,4 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
     log.error('VP response processing failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
-}
-
-/**
- * Store attribute verification record in database
- * Note: Raw VC is NOT stored (data minimization)
- */
-async function storeAttributeVerification(
-  env: Env,
-  vpRequest: VPRequestState,
-  result: VPVerificationResult
-): Promise<void> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    `vc-vp-response:${vpRequest.tenantId}`,
-    { tenantId: vpRequest.tenantId }
-  );
-  const verificationRepo = new AttributeVerificationRepository(adapter);
-
-  await verificationRepo.createVerification({
-    tenant_id: vpRequest.tenantId,
-    user_id: null, // user_id - to be linked later
-    vp_request_id: vpRequest.id,
-    issuer_did: result.issuerDid || '',
-    credential_type: result.credentialType || '',
-    format: result.format || 'dc+sd-jwt',
-    verification_result: result.verified ? 'verified' : 'failed',
-    holder_binding_verified: result.holderBindingVerified || false,
-    issuer_trusted: result.issuerTrusted || false,
-    status_valid: result.statusValid || false,
-  });
 }

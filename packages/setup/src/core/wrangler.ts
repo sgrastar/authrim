@@ -266,7 +266,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'CHALLENGE_STORE',
   ],
   'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE'],
-  'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER'],
+  'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };
 
 const COMPONENT_LOCAL_DO_BINDINGS: Partial<
@@ -274,8 +274,8 @@ const COMPONENT_LOCAL_DO_BINDINGS: Partial<
 > = {
   'ar-auth': [{ name: 'DIRECTORY_CONNECTOR_RELAY', className: 'DirectoryConnectorRelay' }],
   'ar-vc': [
-    { name: 'CREDENTIAL_OFFER_STORE', className: 'CredentialOfferStore' },
-    { name: 'VP_REQUEST_STORE', className: 'VPRequestStore' },
+    { name: 'CREDENTIAL_OFFER_STORE', className: 'CredentialOfferStoreV2' },
+    { name: 'VP_REQUEST_STORE', className: 'VPRequestStoreV2' },
   ],
 };
 
@@ -570,12 +570,28 @@ export function generateWranglerConfig(
       };
     }
     if (localDOBindings.length > 0) {
-      wranglerConfig.migrations = [
-        {
-          tag: `${component}-local-v1`,
-          new_sqlite_classes: localDOBindings.map((binding) => binding.className),
-        },
-      ];
+      wranglerConfig.migrations =
+        component === 'ar-vc'
+          ? [
+              {
+                tag: 'ar-vc-local-v1',
+                new_sqlite_classes: ['CredentialOfferStore', 'VPRequestStore'],
+              },
+              {
+                tag: 'ar-vc-local-v2',
+                new_sqlite_classes: ['CredentialOfferStoreV2'],
+              },
+              {
+                tag: 'ar-vc-local-v3',
+                new_sqlite_classes: ['VPRequestStoreV2'],
+              },
+            ]
+          : [
+              {
+                tag: `${component}-local-v1`,
+                new_sqlite_classes: localDOBindings.map((binding) => binding.className),
+              },
+            ];
     }
   }
 
@@ -704,6 +720,13 @@ export function generateWranglerConfig(
 
   if (component === 'ar-auth' || component === 'ar-management') {
     wranglerConfig.services = [{ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` }];
+    if (component === 'ar-management' && config.components.vc === true) {
+      wranglerConfig.services.push({
+        binding: 'VC_ISSUER',
+        service: `${env}-ar-vc`,
+        entrypoint: 'VCIssuerEntrypoint',
+      });
+    }
   }
 
   // Service Bindings for ar-router (required for routing to other workers)
@@ -974,6 +997,10 @@ export function generateEnvVars(
     vars['VC_ENABLED'] = 'true';
   }
 
+  if (component === 'ar-vc') {
+    vars['VC_ATTRIBUTE_ELEVATION_AUDIENCE'] = 'svc://op-vc/attribute-elevation';
+  }
+
   if (component === 'ar-discovery') {
     vars['ASYNC_ENABLED'] = 'true';
   }
@@ -1034,6 +1061,12 @@ export function generateEnvVars(
   }
   if (componentSecrets.includes('VC_TRANSACTION_CODE_HMAC_SECRET')) {
     vars['VC_TRANSACTION_CODE_HMAC_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('VC_EVIDENCE_HMAC_SECRET')) {
+    vars['VC_EVIDENCE_HMAC_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('VC_PROFILE_CONTRACT_HMAC_SECRET')) {
+    vars['VC_PROFILE_CONTRACT_HMAC_SECRET'] = ''; // Set via secret
   }
 
   // ar-router: UI proxy configuration

@@ -20,7 +20,13 @@ export interface CredentialOfferRecord {
   id: string;
   tenantId: string;
   userId: string;
+  credentialProfileId: string;
+  credentialProfileVersion: number;
+  credentialProfileSnapshotHash: string;
   credentialConfigurationId: string;
+  mappingVersionId: string;
+  mappingSnapshotHash: string;
+  claimManifestHash: string;
   claims: Record<string, unknown>;
   txCodeRequired: boolean;
   status: CredentialOfferStatus;
@@ -34,7 +40,13 @@ export interface CreateCredentialOfferInput {
   id: string;
   tenantId: string;
   userId: string;
+  credentialProfileId: string;
+  credentialProfileVersion: number;
+  credentialProfileSnapshotHash: string;
   credentialConfigurationId: string;
+  mappingVersionId: string;
+  mappingSnapshotHash: string;
+  claimManifestHash: string;
   claims?: Record<string, unknown>;
   preAuthorizedCodeHash: string;
   txCodeHash?: string;
@@ -83,7 +95,13 @@ interface OfferRow {
   id: string;
   tenant_id: string;
   user_id: string;
+  credential_profile_id: string;
+  credential_profile_version: number;
+  credential_profile_snapshot_hash: string;
   credential_configuration_id: string;
+  mapping_version_id: string;
+  mapping_snapshot_hash: string;
+  claim_manifest_hash: string;
   claims_json: string;
   code_hash: string;
   tx_code_hash: string | null;
@@ -121,7 +139,13 @@ function offerFromRow(row: OfferRow): CredentialOfferRecord {
     id: row.id,
     tenantId: row.tenant_id,
     userId: row.user_id,
+    credentialProfileId: row.credential_profile_id,
+    credentialProfileVersion: row.credential_profile_version,
+    credentialProfileSnapshotHash: row.credential_profile_snapshot_hash,
     credentialConfigurationId: row.credential_configuration_id,
+    mappingVersionId: row.mapping_version_id,
+    mappingSnapshotHash: row.mapping_snapshot_hash,
+    claimManifestHash: row.claim_manifest_hash,
     claims: JSON.parse(row.claims_json) as Record<string, unknown>,
     txCodeRequired: row.tx_code_hash !== null,
     status: row.status,
@@ -132,7 +156,7 @@ function offerFromRow(row: OfferRow): CredentialOfferRecord {
   };
 }
 
-export class CredentialOfferStore extends DurableObject<Env> {
+export class CredentialOfferStoreV2 extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env?: Env) {
     super(ctx, env ?? ({} as Env));
     void ctx.blockConcurrencyWhile(async () => {
@@ -146,7 +170,13 @@ export class CredentialOfferStore extends DurableObject<Env> {
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
+        credential_profile_id TEXT NOT NULL,
+        credential_profile_version INTEGER NOT NULL,
+        credential_profile_snapshot_hash TEXT NOT NULL,
         credential_configuration_id TEXT NOT NULL,
+        mapping_version_id TEXT NOT NULL,
+        mapping_snapshot_hash TEXT NOT NULL,
+        claim_manifest_hash TEXT NOT NULL,
         claims_json TEXT NOT NULL,
         code_hash TEXT NOT NULL,
         tx_code_hash TEXT,
@@ -180,23 +210,46 @@ export class CredentialOfferStore extends DurableObject<Env> {
     const id = required(input.id, 'offer_id');
     const tenantId = required(input.tenantId, 'tenant_id');
     const userId = required(input.userId, 'user_id');
+    const credentialProfileId = required(input.credentialProfileId, 'credential_profile_id');
+    if (
+      !Number.isSafeInteger(input.credentialProfileVersion) ||
+      input.credentialProfileVersion < 1
+    ) {
+      throw new Error('vci_invalid_credential_profile_version');
+    }
     const configurationId = required(
       input.credentialConfigurationId,
       'credential_configuration_id'
     );
+    const credentialProfileSnapshotHash = required(
+      input.credentialProfileSnapshotHash,
+      'credential_profile_snapshot_hash'
+    );
+    const mappingVersionId = required(input.mappingVersionId, 'mapping_version_id');
+    const mappingSnapshotHash = required(input.mappingSnapshotHash, 'mapping_snapshot_hash');
+    const claimManifestHash = required(input.claimManifestHash, 'claim_manifest_hash');
     const codeHash = required(input.preAuthorizedCodeHash, 'code_hash');
     if (input.expiresAt <= input.createdAt) throw new Error('vci_invalid_offer_expiry');
     const maxAttempts = Math.min(Math.max(input.maxAttempts ?? 5, 1), 10);
 
     this.ctx.storage.sql.exec(
       `INSERT INTO credential_offers
-       (id, tenant_id, user_id, credential_configuration_id, claims_json, code_hash,
-        tx_code_hash, status, failed_attempts, max_attempts, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+       (id, tenant_id, user_id, credential_profile_id, credential_profile_version,
+        credential_profile_snapshot_hash,
+        credential_configuration_id, mapping_version_id, mapping_snapshot_hash,
+        claim_manifest_hash, claims_json, code_hash, tx_code_hash, status,
+        failed_attempts, max_attempts, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
       id,
       tenantId,
       userId,
+      credentialProfileId,
+      input.credentialProfileVersion,
+      credentialProfileSnapshotHash,
       configurationId,
+      mappingVersionId,
+      mappingSnapshotHash,
+      claimManifestHash,
       JSON.stringify(input.claims ?? {}),
       codeHash,
       input.txCodeHash ?? null,
@@ -565,3 +618,6 @@ export class CredentialOfferStore extends DurableObject<Env> {
       );
   }
 }
+
+/** Retained solely so the previous Durable Object class migration remains valid. */
+export class CredentialOfferStore extends CredentialOfferStoreV2 {}

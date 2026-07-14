@@ -10,6 +10,7 @@ import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
 import type { JWK } from 'jose';
+import type { VCIssuerServiceBinding } from './vc-service';
 
 export interface KeyManagerPublicServiceBinding {
   getAllPublicKeys(tenantId: string): Promise<JWK[]>;
@@ -112,6 +113,9 @@ export interface Env {
   // Service Bindings (Worker-to-Worker communication)
   KEY_MANAGER_PUBLIC?: KeyManagerPublicServiceBinding; // Public-key-only KeyManager RPC facade
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
+  VC_ISSUER?: VCIssuerServiceBinding; // Least-privilege credential-offer creation facade
+  VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
+  VC_ATTRIBUTE_ELEVATION_AUDIENCE?: string;
   EMAIL?: EmailServiceBinding; // Cloudflare Email Service send_email binding
 
   // ============================================================

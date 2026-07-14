@@ -177,16 +177,22 @@ describe('generateRoutes', () => {
         expect.objectContaining({ name: 'RATE_LIMITER', script_name: 'emailtest-ar-lib-core' }),
         expect.objectContaining({
           name: 'CREDENTIAL_OFFER_STORE',
-          class_name: 'CredentialOfferStore',
+          class_name: 'CredentialOfferStoreV2',
         }),
-        expect.objectContaining({ name: 'VP_REQUEST_STORE', class_name: 'VPRequestStore' }),
+        expect.objectContaining({ name: 'VP_REQUEST_STORE', class_name: 'VPRequestStoreV2' }),
       ])
     );
     expect(vcConfig.migrations?.[0]?.new_sqlite_classes).toEqual([
       'CredentialOfferStore',
       'VPRequestStore',
     ]);
+    expect(vcConfig.migrations?.[1]?.new_sqlite_classes).toEqual(['CredentialOfferStoreV2']);
+    expect(vcConfig.migrations?.[2]?.new_sqlite_classes).toEqual(['VPRequestStoreV2']);
     expect(vcConfig.vars.VC_TRANSACTION_CODE_HMAC_SECRET).toBe('');
+    expect(vcConfig.vars.VC_EVIDENCE_HMAC_SECRET).toBe('');
+    expect(vcConfig.vars.VC_PROFILE_CONTRACT_HMAC_SECRET).toBe('');
+    expect(vcConfig.vars.VC_ATTRIBUTE_ELEVATION_AUDIENCE).toBe('svc://op-vc/attribute-elevation');
+    expect(managementConfig.vars.VC_PROFILE_CONTRACT_HMAC_SECRET).toBe('');
     expect(managementConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -204,6 +210,19 @@ describe('generateRoutes', () => {
     expect(managementConfig.services).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
     ]);
+    expect(toToml(managementConfig, 'emailtest')).not.toContain(
+      'entrypoint = "VCIssuerEntrypoint"'
+    );
+    const vcEnabledManagement = generateWranglerConfig(
+      'ar-management',
+      { ...config, components: { ...config.components, vc: true } },
+      resourceIds
+    );
+    expect(vcEnabledManagement.services).toContainEqual({
+      binding: 'VC_ISSUER',
+      service: 'emailtest-ar-vc',
+      entrypoint: 'VCIssuerEntrypoint',
+    });
     expect(discoveryConfig.durable_objects?.bindings ?? []).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'KEY_MANAGER' })])
     );

@@ -15,6 +15,12 @@ interface VPRequestRow {
   tenant_id: string;
   client_id: string;
   user_id: string | null;
+  credential_profile_id: string | null;
+  credential_profile_version_id: string | null;
+  verification_flow_version_id: string | null;
+  verification_mapping_version_id: string | null;
+  verification_mapping_snapshot_hash: string | null;
+  maximum_attribute_age_seconds: number | null;
   nonce: string;
   status_token_hash: string;
   presentation_definition_json: string | null;
@@ -25,7 +31,7 @@ interface VPRequestRow {
   response_fingerprint: string | null;
   reservation_id: string | null;
   lease_expires_at: number | null;
-  verified_claims_json: string | null;
+  verified_claim_names_json: string | null;
   error_code: string | null;
   error_description: string | null;
   created_at: number;
@@ -52,6 +58,12 @@ function requestFromRow(row: VPRequestRow): VPRequestState {
     tenantId: row.tenant_id,
     clientId: row.client_id,
     userId: row.user_id ?? undefined,
+    credentialProfileId: row.credential_profile_id ?? undefined,
+    credentialProfileVersionId: row.credential_profile_version_id ?? undefined,
+    verificationFlowVersionId: row.verification_flow_version_id ?? undefined,
+    verificationMappingVersionId: row.verification_mapping_version_id ?? undefined,
+    verificationMappingSnapshotHash: row.verification_mapping_snapshot_hash ?? undefined,
+    maximumAttributeAgeSeconds: row.maximum_attribute_age_seconds ?? undefined,
     nonce: row.nonce,
     state: row.id,
     presentationDefinition: parseJsonObject(row.presentation_definition_json),
@@ -59,8 +71,8 @@ function requestFromRow(row: VPRequestRow): VPRequestState {
     responseUri: row.response_uri,
     responseMode: row.response_mode,
     status: row.status,
-    verifiedClaims: row.verified_claims_json
-      ? (JSON.parse(row.verified_claims_json) as Record<string, unknown>)
+    verifiedClaimNames: row.verified_claim_names_json
+      ? (JSON.parse(row.verified_claim_names_json) as string[])
       : undefined,
     errorCode: row.error_code ?? undefined,
     errorDescription: row.error_description ?? undefined,
@@ -99,28 +111,21 @@ function extractRequestedClaimNames(row: VPRequestRow): Set<string> {
   return new Set([...names].slice(0, 64));
 }
 
-function minimizeVerifiedClaims(
-  claims: Record<string, unknown> | undefined,
+function minimizeVerifiedClaimNames(
+  claimNames: string[] | undefined,
   allowedClaimNames: Set<string>
-): Record<string, string | number | boolean | null> | undefined {
-  if (!claims) return undefined;
-  const minimized: Record<string, string | number | boolean | null> = {};
-  for (const [name, value] of Object.entries(claims).slice(0, 64)) {
+): string[] | undefined {
+  if (!claimNames) return undefined;
+  const minimized: string[] = [];
+  for (const name of claimNames.slice(0, 64)) {
     if (!allowedClaimNames.has(name)) continue;
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(name)) continue;
-    if (
-      value === null ||
-      typeof value === 'boolean' ||
-      (typeof value === 'number' && Number.isFinite(value)) ||
-      (typeof value === 'string' && value.length <= 2048)
-    ) {
-      minimized[name] = value as string | number | boolean | null;
-    }
+    if (!minimized.includes(name)) minimized.push(name);
   }
-  return minimized;
+  return minimized.length > 0 ? minimized : undefined;
 }
 
-export class VPRequestStore extends DurableObject<Env> {
+export class VPRequestStoreV2 extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env?: Env) {
     super(ctx, env ?? ({} as Env));
     void ctx.blockConcurrencyWhile(async () => {
@@ -135,6 +140,12 @@ export class VPRequestStore extends DurableObject<Env> {
         tenant_id TEXT NOT NULL,
         client_id TEXT NOT NULL,
         user_id TEXT,
+        credential_profile_id TEXT,
+        credential_profile_version_id TEXT,
+        verification_flow_version_id TEXT,
+        verification_mapping_version_id TEXT,
+        verification_mapping_snapshot_hash TEXT,
+        maximum_attribute_age_seconds INTEGER,
         nonce TEXT NOT NULL UNIQUE,
         status_token_hash TEXT NOT NULL,
         presentation_definition_json TEXT,
@@ -145,7 +156,7 @@ export class VPRequestStore extends DurableObject<Env> {
         response_fingerprint TEXT UNIQUE,
         reservation_id TEXT,
         lease_expires_at INTEGER,
-        verified_claims_json TEXT,
+        verified_claim_names_json TEXT,
         error_code TEXT,
         error_description TEXT,
         created_at INTEGER NOT NULL,
@@ -162,13 +173,22 @@ export class VPRequestStore extends DurableObject<Env> {
     if (input.status !== 'pending') throw new Error('vp_invalid_initial_status');
     this.ctx.storage.sql.exec(
       `INSERT INTO vp_requests
-       (id, tenant_id, client_id, user_id, nonce, status_token_hash, presentation_definition_json,
+       (id, tenant_id, client_id, user_id, credential_profile_id, credential_profile_version_id,
+        verification_flow_version_id,
+        verification_mapping_version_id, verification_mapping_snapshot_hash,
+        maximum_attribute_age_seconds, nonce, status_token_hash, presentation_definition_json,
         dcql_query_json, response_uri, response_mode, status, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       id,
       tenantId,
       required(input.clientId, 'client_id'),
       input.userId ?? null,
+      input.credentialProfileId ?? null,
+      input.credentialProfileVersionId ?? null,
+      input.verificationFlowVersionId ?? null,
+      input.verificationMappingVersionId ?? null,
+      input.verificationMappingSnapshotHash ?? null,
+      input.maximumAttributeAgeSeconds ?? null,
       required(input.nonce, 'nonce'),
       required(input.statusTokenHash ?? '', 'status_token_hash'),
       input.presentationDefinition ? JSON.stringify(input.presentationDefinition) : null,
@@ -303,23 +323,23 @@ export class VPRequestStore extends DurableObject<Env> {
     id: string;
     tenantId: string;
     reservationId: string;
-    verifiedClaims?: Record<string, unknown>;
+    verifiedClaimNames?: string[];
   }): boolean {
     const row = this.getRow(
       required(input.id, 'request_id'),
       required(input.tenantId, 'tenant_id')
     );
     if (!row) return false;
-    const minimizedClaims = minimizeVerifiedClaims(
-      input.verifiedClaims,
+    const minimizedClaimNames = minimizeVerifiedClaimNames(
+      input.verifiedClaimNames,
       extractRequestedClaimNames(row)
     );
     const cursor = this.ctx.storage.sql.exec(
       `UPDATE vp_requests SET status = 'verified', reservation_id = NULL,
-       lease_expires_at = NULL, verified_claims_json = ?, error_code = NULL,
+       lease_expires_at = NULL, verified_claim_names_json = ?, error_code = NULL,
        error_description = NULL WHERE id = ? AND tenant_id = ? AND status = 'processing'
        AND reservation_id = ?`,
-      minimizedClaims ? JSON.stringify(minimizedClaims) : null,
+      minimizedClaimNames ? JSON.stringify(minimizedClaimNames) : null,
       required(input.id, 'request_id'),
       required(input.tenantId, 'tenant_id'),
       required(input.reservationId, 'reservation_id')
@@ -457,3 +477,6 @@ export class VPRequestStore extends DurableObject<Env> {
       );
   }
 }
+
+/** Retained solely so the previous Durable Object class migration remains valid. */
+export class VPRequestStore extends VPRequestStoreV2 {}

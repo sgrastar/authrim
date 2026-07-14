@@ -820,6 +820,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
+      '@authrim/ar-lib-field-mapping':
+        specifier: workspace:*
+        version: link:../ar-lib-field-mapping
       hono:
         specifier: 4.12.29
         version: 4.12.29

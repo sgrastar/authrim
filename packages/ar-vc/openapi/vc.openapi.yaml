@@ -274,6 +274,54 @@ paths:
           $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/ListId'
+  /vp/initiate:
+    post:
+      tags: [OpenID4VP]
+      summary: Initiate profile-controlled attribute verification
+      security: [{ attributeBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_profile_id]
+              properties:
+                credential_profile_id: { type: string }
+      responses:
+        '200': { description: Wallet authorization request created. }
+        '401': { description: Access token is invalid, inactive, or has the wrong audience. }
+        '403': { description: Access token lacks the vc.attribute scope. }
+        '409': { description: The pinned profile mapping is unavailable. }
+  /vp/attribute-response:
+    post:
+      tags: [OpenID4VP]
+      summary: Verify a presentation and persist minimized mapped attributes
+      description: The active access token is revalidated immediately before persistence.
+      security: [{ attributeBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vp_token, state]
+              properties:
+                vp_token: { type: string }
+                state: { type: string }
+                presentation_submission: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Policy-ready attributes were verified and persisted. }
+        '401': { description: Access token is invalid or inactive. }
+        '403': { description: Access-token subject does not own the request. }
+  /vp/attributes:
+    get:
+      tags: [OpenID4VP]
+      summary: Read currently valid verified attributes
+      security: [{ attributeBearer: [] }]
+      responses:
+        '200': { description: Non-expired, non-invalidated and status-fresh attributes. }
+        '401': { description: Access token is invalid or inactive. }
 components:
   parameters:
     Id:
@@ -433,6 +481,11 @@ components:
           schema:
             $ref: '#/components/schemas/StatusListJson'
   securitySchemes:
+    attributeBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Active Authrim access token with the vc.attribute scope and verifier audience.
     vpStatusBearer:
       type: http
       scheme: bearer
@@ -685,9 +738,10 @@ components:
         request_id:
           type: string
           example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
-        disclosed_claims:
-          type: object
-          additionalProperties: true
+        verified_claim_names:
+          type: array
+          items:
+            type: string
           example:
             email: user@example.com
             age_over_18: true
@@ -721,9 +775,10 @@ components:
           type: string
           format: date-time
           example: 2026-02-03T04:05:00.000Z
-        verified_claims:
-          type: object
-          additionalProperties: true
+        verified_claim_names:
+          type: array
+          items:
+            type: string
           example:
             email: user@example.com
         error:

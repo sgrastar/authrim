@@ -55,6 +55,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `016_core_directory_auth.sql` | Directory identity links, connector fleet, directory-auth migration/compliance tables, release channels, and object catalog classes. |
 | `017_core_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
 | `018_repair_device_code_client_foreign_key.sql` | Repairs tenant-scoped device-code client foreign keys. |
+| `019_vc_verification_evidence.sql` | Adds minimized VC verification evidence, freshness/invalidation metadata, and the VC attribute scope. |
 
 ## Current Admin Files
 
@@ -70,6 +71,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `008_persistent_identifier_profiles.sql` | Persistent identifier profiles and values. |
 | `009_directory_auth_object_catalog_classes.sql` | Directory-auth object catalog classes. |
 | `010_repair_approval_object_catalog_foreign_key.sql` | Repairs approval foreign keys after the object catalog rebuild. |
+| `011_vc_credential_profiles.sql` | Adds versioned Credential Profiles that pin VC flows and field mappings. |
 
 ## Current PII Files
 
@@ -88,6 +90,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `005_external_directory_auth.sql` | Directory identity links, connector fleet, and release channel metadata. |
 | `006_external_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
 | `007_external_totp_credentials.sql` | TOTP credentials and backup codes. |
+| `008_external_vc_verification_evidence.sql` | Adds VC verification evidence, freshness metadata, and the VC attribute scope for external PostgreSQL. |
 
 ## Commands
 

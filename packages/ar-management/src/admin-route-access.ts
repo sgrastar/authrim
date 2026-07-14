@@ -660,6 +660,41 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity field mapping'
   ),
+  readOnly(
+    '/api/admin/credential-profiles',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
+    'credential profiles'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE,
+    'credential profiles'
+  ),
+  readOnly(
+    '/api/admin/credential-profiles/:id',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
+    'credential profile'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE,
+    'credential profile'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id/versions',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE,
+    'credential profile versions'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id/versions/:versionId/publish',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_PUBLISH,
+    'credential profile publication'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id/offers',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_OFFERS_CREATE,
+    'credential offer creation'
+  ),
   ...byMethod(
     '/api/admin/flows',
     ADMIN_PERMISSIONS.SETTINGS_READ,

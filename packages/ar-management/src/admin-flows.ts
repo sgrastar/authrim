@@ -115,12 +115,20 @@ interface UpdateFlowBody {
   status?: FlowStatus;
 }
 
-const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve', 'account']);
+const STANDARD_FLOW_KINDS = new Set<FlowKind>([
+  'login',
+  'registration',
+  'approve',
+  'account',
+  'credential_issuance',
+  'attribute_elevation',
+]);
 const FLOW_STATUSES = new Set<FlowStatus>(['draft', 'published', 'disabled']);
 const FLOW_ASSIGNMENT_TARGET_TYPES = new Set<FlowAssignmentTargetType>([
   'tenant',
   'oidc_client',
   'saml_sp',
+  'credential_profile',
 ]);
 
 function asBaseContext(c: AdminContext): BaseContext {

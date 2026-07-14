@@ -63,7 +63,7 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
       status: string;
       createdAt: number;
       expiresAt: number;
-      verifiedClaims?: Record<string, unknown>;
+      verifiedClaimNames?: string[];
       errorCode?: string;
       errorDescription?: string;
     };
@@ -80,9 +80,9 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
       expires_at: new Date(vpRequest.expiresAt).toISOString(),
     };
 
-    // Include verified claims if available
-    if (vpRequest.status === 'verified' && vpRequest.verifiedClaims) {
-      result.verified_claims = vpRequest.verifiedClaims;
+    // Claim values are deliberately not persisted; only non-PII names are exposed.
+    if (vpRequest.status === 'verified' && vpRequest.verifiedClaimNames) {
+      result.verified_claim_names = vpRequest.verifiedClaimNames;
     }
 
     // Include error if failed

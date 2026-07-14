@@ -20,47 +20,6 @@ import { createLogger } from '@authrim/ar-lib-core';
 const log = createLogger().module('VC-ATTR-MAPPER');
 
 /**
- * Mapping from VC claims to normalized attribute names
- */
-const CLAIM_MAPPINGS: Record<string, string> = {
-  // Identity claims
-  given_name: 'verified_given_name',
-  family_name: 'verified_family_name',
-  birthdate: 'verified_birthdate',
-  email: 'verified_email',
-
-  // Age verification
-  age_over_18: 'verified_age_over_18',
-  age_over_21: 'verified_age_over_21',
-  age_over_65: 'verified_age_over_65',
-
-  // Address claims
-  'address.country': 'verified_country',
-  'address.region': 'verified_region',
-  'address.locality': 'verified_locality',
-  country: 'verified_country',
-
-  // Organization claims
-  org_name: 'verified_org_name',
-  org_id: 'verified_org_id',
-
-  // Qualification claims
-  qualification_type: 'verified_qualification_type',
-  license_number: 'verified_license_number',
-};
-
-/**
- * Claims that should be stored as boolean
- */
-const BOOLEAN_CLAIMS = new Set([
-  'age_over_18',
-  'age_over_21',
-  'age_over_65',
-  'email_verified',
-  'phone_number_verified',
-]);
-
-/**
  * Normalized attribute with its metadata
  */
 export interface NormalizedAttribute {
@@ -86,76 +45,19 @@ export interface AttributeMappingResult {
   errors: string[];
 }
 
-/**
- * Extract and normalize claims from VP verification result
- */
-export function extractNormalizedAttributes(
-  disclosedClaims: Record<string, unknown>
-): NormalizedAttribute[] {
-  const attributes: NormalizedAttribute[] = [];
-
-  for (const [claimName, claimValue] of Object.entries(disclosedClaims)) {
-    // Skip null/undefined values
-    if (claimValue === null || claimValue === undefined) {
-      continue;
-    }
-
-    // Handle nested address claims
-    if (claimName === 'address' && typeof claimValue === 'object') {
-      const address = claimValue as Record<string, unknown>;
-      for (const [addrField, addrValue] of Object.entries(address)) {
-        const mappedName = CLAIM_MAPPINGS[`address.${addrField}`];
-        if (mappedName && addrValue !== null && addrValue !== undefined) {
-          // Only accept primitive string/number/boolean values
-          if (
-            typeof addrValue !== 'string' &&
-            typeof addrValue !== 'number' &&
-            typeof addrValue !== 'boolean'
-          ) {
-            continue;
-          }
-          const stringValue = typeof addrValue === 'string' ? addrValue : String(addrValue);
-          attributes.push({
-            name: mappedName,
-            value: stringValue,
-            originalClaim: `address.${addrField}`,
-          });
-        }
-      }
-      continue;
-    }
-
-    // Look up mapping for this claim
-    const mappedName = CLAIM_MAPPINGS[claimName];
-    if (!mappedName) {
-      // Skip unmapped claims (data minimization)
-      continue;
-    }
-
-    // Normalize value
-    let normalizedValue: string;
-    if (BOOLEAN_CLAIMS.has(claimName)) {
-      normalizedValue = claimValue === true || claimValue === 'true' ? 'true' : 'false';
-    } else if (typeof claimValue === 'object') {
-      // Skip complex objects that aren't address
-      continue;
-    } else if (typeof claimValue === 'string') {
-      normalizedValue = claimValue;
-    } else if (typeof claimValue === 'number' || typeof claimValue === 'boolean') {
-      normalizedValue = String(claimValue);
-    } else {
-      // Skip unsupported types
-      continue;
-    }
-
-    attributes.push({
-      name: mappedName,
-      value: normalizedValue,
-      originalClaim: claimName,
-    });
-  }
-
-  return attributes;
+export interface AttributePersistencePolicy {
+  /** Output of the published verification field-mapping snapshot. */
+  attributes: NormalizedAttribute[];
+  expiresAt: number;
+  revalidateAfter: number;
+  credentialProfileId: string;
+  credentialProfileVersionId: string;
+  mappingVersionId: string;
+  mappingSnapshotHash: string;
+  policyVersion: string;
+  evidenceFingerprint: string;
+  statusCheckedAt: number;
+  statusFreshUntil: number;
 }
 
 /**
@@ -175,13 +77,15 @@ export async function storeUserVerifiedAttributes(
   userId: string,
   tenantId: string,
   verificationResult: VPVerificationResult,
-  verificationId: string
+  verificationId: string,
+  policy?: AttributePersistencePolicy
 ): Promise<AttributeMappingResult> {
   const errors: string[] = [];
   const attributeIds: string[] = [];
 
-  // Extract normalized attributes
-  const attributes = extractNormalizedAttributes(verificationResult.disclosedClaims || {});
+  // Only published mapping output is persistence-eligible. Raw disclosed claims
+  // and the legacy fixed claim-name map are never used on this path.
+  const attributes = policy?.attributes ?? [];
 
   if (attributes.length === 0) {
     return {
@@ -194,9 +98,6 @@ export async function storeUserVerifiedAttributes(
 
   const issuerDid = verificationResult.issuerDid || '';
 
-  // Calculate expiry (default: 90 days)
-  const defaultExpiry = Date.now() + 90 * 24 * 60 * 60 * 1000;
-
   // Use repository for upsert operations
   for (const attr of attributes) {
     try {
@@ -208,7 +109,8 @@ export async function storeUserVerifiedAttributes(
         source_type: 'vc',
         issuer_did: issuerDid,
         verification_id: verificationId,
-        expires_at: defaultExpiry,
+        expires_at: policy?.expiresAt ?? null,
+        revalidate_after: policy?.revalidateAfter ?? null,
       });
 
       attributeIds.push(result.id);
@@ -285,7 +187,8 @@ export async function linkVerificationToUser(
   attributeRepo: UserVerifiedAttributeRepository,
   vpRequest: VPRequestState,
   verificationResult: VPVerificationResult,
-  userId: string
+  userId: string,
+  policy?: AttributePersistencePolicy
 ): Promise<AttributeMappingResult> {
   // First, store the attribute verification record
   const verification = await verificationRepo.createVerification({
@@ -299,6 +202,16 @@ export async function linkVerificationToUser(
     holder_binding_verified: verificationResult.holderBindingVerified || false,
     issuer_trusted: verificationResult.issuerTrusted || false,
     status_valid: verificationResult.statusValid || false,
+    credential_profile_id: policy?.credentialProfileId,
+    credential_profile_version_id: policy?.credentialProfileVersionId,
+    mapping_version_id: policy?.mappingVersionId,
+    mapping_snapshot_hash: policy?.mappingSnapshotHash,
+    policy_version: policy?.policyVersion,
+    evidence_fingerprint: policy?.evidenceFingerprint,
+    status_checked_at: policy?.statusCheckedAt,
+    status_fresh_until: policy?.statusFreshUntil,
+    revalidate_after: policy?.revalidateAfter,
+    expires_at: policy?.expiresAt,
   });
 
   // Then store the normalized attributes
@@ -307,6 +220,7 @@ export async function linkVerificationToUser(
     userId,
     vpRequest.tenantId,
     verificationResult,
-    verification.id
+    verification.id,
+    policy
   );
 }

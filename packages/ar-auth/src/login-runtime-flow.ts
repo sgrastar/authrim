@@ -660,14 +660,14 @@ async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<bo
   return cacheValue(await getFeatureFlag('ENABLE_LOGIN_RUNTIME_FLOW', env, false));
 }
 
-function normalizeFlowKind(value: unknown): FlowKind {
+function normalizeFlowKind(value: unknown): FlowKind | null {
   if (typeof value === 'string' && STANDARD_FLOW_KINDS.has(value as FlowKind)) {
     return value as FlowKind;
   }
   if (typeof value === 'string' && value.startsWith('custom:')) {
     return value as FlowKind;
   }
-  return 'login';
+  return value === undefined || value === null ? 'login' : null;
 }
 
 function resolveTarget(body: StartRequest): ResolvedTarget | null {
@@ -3467,6 +3467,15 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const flowKind = timeRuntimeStartValue(timing, 'normalize_flow', () =>
     normalizeFlowKind(body.flow_kind)
   );
+  if (!flowKind) {
+    writeRuntimeStartTiming(c, timing, { result: 'error', error: 'unsupported_flow_kind' });
+    return jsonError(
+      c,
+      400,
+      'unsupported_flow_kind',
+      'This flow kind is not executed by the LoginUI runtime'
+    );
+  }
   const requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
     createRequestContext(target, body)
   );

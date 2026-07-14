@@ -10,10 +10,14 @@ import { vpAuthorizeRoute } from '../authorize';
 import { vpResponseRoute } from '../response';
 import { vpRequestStatusRoute } from '../request-status';
 import { vpRequestObjectRoute } from '../request-object';
+import { initiateAttributeVerification } from '../attribute-verify';
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../../types';
 
-const verifierCoreMocks = vi.hoisted(() => ({ findClient: vi.fn() }));
+const verifierCoreMocks = vi.hoisted(() => ({
+  findClient: vi.fn(),
+  introspectToken: vi.fn(),
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -25,7 +29,31 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AttributeVerificationRepository: class {
       createVerification = vi.fn().mockResolvedValue(undefined);
     },
+    introspectTokenFromContext: verifierCoreMocks.introspectToken,
   };
+});
+
+describe('Attribute elevation authentication boundary', () => {
+  it('rejects a decoded-looking but unverified bearer token before profile or DO access', async () => {
+    verifierCoreMocks.introspectToken.mockResolvedValueOnce({
+      valid: false,
+      error: { error: 'invalid_token', error_description: 'Invalid signature' },
+    });
+    const c = createMockContext({
+      req: {
+        method: 'POST',
+        header: vi.fn((name: string) =>
+          name === 'Authorization' ? 'Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.' : undefined
+        ),
+        json: vi.fn().mockResolvedValue({ credential_profile_id: 'profile-1' }),
+      },
+    });
+    const response = await initiateAttributeVerification(c);
+    expect(response.status).toBe(401);
+    expect(verifierCoreMocks.introspectToken).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(c.env.VP_REQUEST_STORE.get).not.toHaveBeenCalled();
+  });
 });
 
 // Mock vp-verifier service
@@ -470,13 +498,14 @@ describe('VP Response Route', () => {
     const response = await vpResponseRoute(c);
     const data = (await response.json()) as {
       success: boolean;
-      disclosed_claims: object;
+      verified_claim_names: string[];
       haip_compliant: boolean;
     };
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.disclosed_claims).toEqual({ given_name: 'John', family_name: 'Doe' });
+    expect(data.verified_claim_names).toEqual(['given_name', 'family_name']);
+    expect(data).not.toHaveProperty('disclosed_claims');
     expect(data.haip_compliant).toBe(true);
   });
 
@@ -728,13 +757,13 @@ describe('VP Request Status Route', () => {
     expect(data.expires_at).toBeDefined();
   });
 
-  it('should return verified status with claims', async () => {
+  it('should return verified status with claim names but never values', async () => {
     const vpRequest = {
       id: VALID_REQUEST_ID,
       status: 'verified',
       createdAt: Date.now(),
       expiresAt: Date.now() + 300000,
-      verifiedClaims: { given_name: 'John', family_name: 'Doe' },
+      verifiedClaimNames: ['given_name', 'family_name'],
     };
 
     const mockStub = {
@@ -755,12 +784,13 @@ describe('VP Request Status Route', () => {
     const data = (await response.json()) as {
       request_id: string;
       status: string;
-      verified_claims: object;
+      verified_claim_names: string[];
     };
 
     expect(response.status).toBe(200);
     expect(data.status).toBe('verified');
-    expect(data.verified_claims).toEqual({ given_name: 'John', family_name: 'Doe' });
+    expect(data.verified_claim_names).toEqual(['given_name', 'family_name']);
+    expect(data).not.toHaveProperty('verified_claims');
   });
 
   it('should return failed status with error', async () => {

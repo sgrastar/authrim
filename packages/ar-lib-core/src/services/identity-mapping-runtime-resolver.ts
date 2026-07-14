@@ -26,6 +26,9 @@ export interface RuntimeIdentityMappingResolutionContext {
   partnerEntityId?: string;
   clientId?: string;
   providerId?: string;
+  credentialProfileId?: string;
+  credentialConfigurationId?: string;
+  direction?: 'issuance' | 'verification' | string;
 }
 
 export interface RuntimeIdentityMappingBinding {
@@ -33,6 +36,7 @@ export interface RuntimeIdentityMappingBinding {
   tenantId: string;
   fieldMappingSetId: string;
   fieldMappingVersionId: string;
+  mappingSnapshotHash: string;
   catalog: FieldCatalogBundle;
   edges: MappingRuleEdge[];
   transforms: MappingTransformStep[];
@@ -57,6 +61,7 @@ interface ActiveActivationRow {
   catalog_version_label: string | null;
   catalog_bundle_hash: string | null;
   catalog_compatibility_range: string | null;
+  snapshot_hash: string;
 }
 
 interface CatalogEntryRow {
@@ -131,6 +136,7 @@ export async function resolveRuntimeIdentityMappingBinding(
     tenantId: selected.tenant_id,
     fieldMappingSetId: selected.field_mapping_set_id,
     fieldMappingVersionId: selected.field_mapping_version_id,
+    mappingSnapshotHash: selected.snapshot_hash,
     catalog: {
       identity: {
         id: selected.catalog_version_id,
@@ -207,6 +213,7 @@ async function loadActiveActivationRows(
             v.field_mapping_hash,
             v.compatibility_range AS field_mapping_compatibility_range,
             s.catalog_version_id,
+            s.snapshot_hash,
             cv.version_label AS catalog_version_label,
             cv.bundle_hash AS catalog_bundle_hash,
             cv.compatibility_range AS catalog_compatibility_range
@@ -268,6 +275,17 @@ function activationScore(
     ],
     [readString(scope.clientId) ?? readString(scope.client_id), context.clientId, 16],
     [readString(scope.providerId) ?? readString(scope.provider_id), context.providerId, 16],
+    [
+      readString(scope.credentialProfileId) ?? readString(scope.credential_profile_id),
+      context.credentialProfileId,
+      32,
+    ],
+    [
+      readString(scope.credentialConfigurationId) ?? readString(scope.credential_configuration_id),
+      context.credentialConfigurationId,
+      64,
+    ],
+    [readString(scope.direction), context.direction, 128],
   ];
 
   for (const [scopeValue, contextValue, weight] of checks) {

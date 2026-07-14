@@ -31,6 +31,12 @@ class MemoryVpSql {
         tenant,
         client,
         user,
+        profileId,
+        profileVersionId,
+        verificationFlowVersionId,
+        mappingVersionId,
+        mappingSnapshotHash,
+        maximumAttributeAgeSeconds,
         nonce,
         statusTokenHash,
         pd,
@@ -45,6 +51,12 @@ class MemoryVpSql {
         tenant_id: tenant,
         client_id: client,
         user_id: user,
+        credential_profile_id: profileId,
+        credential_profile_version_id: profileVersionId,
+        verification_flow_version_id: verificationFlowVersionId,
+        verification_mapping_version_id: mappingVersionId,
+        verification_mapping_snapshot_hash: mappingSnapshotHash,
+        maximum_attribute_age_seconds: maximumAttributeAgeSeconds,
         nonce,
         status_token_hash: statusTokenHash,
         presentation_definition_json: pd,
@@ -55,7 +67,7 @@ class MemoryVpSql {
         response_fingerprint: null,
         reservation_id: null,
         lease_expires_at: null,
-        verified_claims_json: null,
+        verified_claim_names_json: null,
         error_code: null,
         error_description: null,
         created_at: created,
@@ -110,7 +122,7 @@ class MemoryVpSql {
       )
         return cursor() as never;
       row.status = 'verified';
-      row.verified_claims_json = p[0];
+      row.verified_claim_names_json = p[0];
       row.reservation_id = null;
       row.lease_expires_at = null;
       return cursor([], 1) as never;
@@ -288,16 +300,12 @@ describe('VPRequestStore security state machine', () => {
           id: 'request-a',
           tenantId: 'tenant-a',
           reservationId: result.reservationId,
-          verifiedClaims: {
-            age_over_18: true,
-            email: 'unrequested@example.com',
-            nested_profile: { secret: 'not-stored' },
-          },
+          verifiedClaimNames: ['age_over_18', 'email', 'nested_profile'],
         })
       ).toBe(true);
     expect(
-      store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-a', now: 3_000 })?.verifiedClaims
-    ).toEqual({ age_over_18: true });
+      store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-a', now: 3_000 })?.verifiedClaimNames
+    ).toEqual(['age_over_18']);
   });
 
   it('expires before reserving and rejects cross-tenant lookup', () => {

@@ -13,6 +13,7 @@ import type { PresentationDefinition, DCQLQuery } from '@authrim/ar-lib-core';
 export interface Env {
   // D1 Database
   DB: D1Database;
+  DB_ADMIN?: D1Database;
 
   // KV Namespace (same as other packages for shared config)
   AUTHRIM_CONFIG: KVNamespace;
@@ -28,6 +29,7 @@ export interface Env {
 
   // Verifier Environment Variables
   VERIFIER_IDENTIFIER: string;
+  VC_ATTRIBUTE_ELEVATION_AUDIENCE?: string;
   HAIP_POLICY_VERSION: string;
   VP_REQUEST_EXPIRY_SECONDS: string;
   NONCE_EXPIRY_SECONDS: string;
@@ -37,6 +39,8 @@ export interface Env {
   CREDENTIAL_OFFER_EXPIRY_SECONDS: string;
   C_NONCE_EXPIRY_SECONDS: string;
   VC_TRANSACTION_CODE_HMAC_SECRET?: string;
+  VC_EVIDENCE_HMAC_SECRET?: string;
+  VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
   RATE_LIMIT_PROFILE?: string;
 }
 
@@ -115,6 +119,12 @@ export interface VPRequestState {
 
   /** User ID (for authenticated attribute verification) */
   userId?: string;
+  credentialProfileId?: string;
+  credentialProfileVersionId?: string;
+  verificationFlowVersionId?: string;
+  verificationMappingVersionId?: string;
+  verificationMappingSnapshotHash?: string;
+  maximumAttributeAgeSeconds?: number;
 
   /** Nonce for replay protection */
   nonce: string;
@@ -140,8 +150,8 @@ export interface VPRequestState {
   /** Request status */
   status: VPRequestStatus;
 
-  /** Verified claims (after successful verification) */
-  verifiedClaims?: Record<string, unknown>;
+  /** Names of verified claims. Values are deliberately never persisted. */
+  verifiedClaimNames?: string[];
 
   /** Error code (if failed) */
   errorCode?: string;
@@ -189,6 +199,9 @@ export interface VPVerificationResult {
 
   /** Whether credential status is valid */
   statusValid: boolean;
+  credentialExpiresAt?: number;
+  statusCheckedAt?: number;
+  statusFreshUntil?: number;
 
   /** Verification errors */
   errors: string[];

@@ -30,6 +30,7 @@ import {
   // Health Check
   createHealthCheckHandlers,
   getLogger,
+  createActiveAccessTokenProtectedResourceMiddleware,
 } from '@authrim/ar-lib-core';
 import type { Env } from './types';
 
@@ -39,6 +40,11 @@ import { vpAuthorizeRoute } from './verifier/routes/authorize';
 import { vpResponseRoute } from './verifier/routes/response';
 import { vpRequestStatusRoute } from './verifier/routes/request-status';
 import { vpRequestObjectRoute } from './verifier/routes/request-object';
+import {
+  initiateAttributeVerification,
+  attributeVerifyResponse,
+  getAttributes,
+} from './verifier/routes/attribute-verify';
 
 // Issuer routes
 import { issuerMetadataRoute } from './issuer/routes/metadata';
@@ -85,6 +91,20 @@ app.use('/vci/credential', (c, next) =>
   applyRateLimit(c as never, next, 'strict', ['/vci/credential'])
 );
 app.use('/vp/response', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vp/response']));
+app.use('/vp/attribute-response', (c, next) =>
+  applyRateLimit(c as never, next, 'strict', ['/vp/attribute-response'])
+);
+app.use('/vp/initiate', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vp/initiate']));
+app.use('/vp/attributes', (c, next) =>
+  applyRateLimit(c as never, next, 'moderate', ['/vp/attributes'])
+);
+const attributeProtectedResource = createActiveAccessTokenProtectedResourceMiddleware({
+  audience: (c) => c.env.VC_ATTRIBUTE_ELEVATION_AUDIENCE ?? 'svc://op-vc/attribute-elevation',
+  requiredScopes: ['vc.attribute'],
+});
+app.use('/vp/initiate', attributeProtectedResource as never);
+app.use('/vp/attribute-response', attributeProtectedResource as never);
+app.use('/vp/attributes', attributeProtectedResource as never);
 app.use('/vci/nonce', (c, next) => applyRateLimit(c as never, next, 'moderate', ['/vci/nonce']));
 app.use('/vp/authorize', (c, next) =>
   applyRateLimit(c as never, next, 'moderate', ['/vp/authorize'])
@@ -151,6 +171,12 @@ app.get('/vp/request/:id', vpRequestObjectRoute);
 // Request status (for polling)
 app.get('/vp/requests/:id', vpRequestStatusRoute);
 
+// Authenticated attribute elevation. All three routes use the shared token
+// introspector; the response rechecks the active subject before persistence.
+app.post('/vp/initiate', initiateAttributeVerification);
+app.post('/vp/attribute-response', attributeVerifyResponse);
+app.get('/vp/attributes', getAttributes);
+
 // =============================================================================
 // OpenID4VCI Issuer Endpoints
 // =============================================================================
@@ -205,8 +231,12 @@ app.notFound((c) => {
 // Durable Object Exports
 // =============================================================================
 
-export { VPRequestStore } from './verifier/durable-objects/VPRequestStore';
-export { CredentialOfferStore } from './issuer/durable-objects/CredentialOfferStore';
+export { VPRequestStore, VPRequestStoreV2 } from './verifier/durable-objects/VPRequestStore';
+export {
+  CredentialOfferStore,
+  CredentialOfferStoreV2,
+} from './issuer/durable-objects/CredentialOfferStore';
+export { VCIssuerEntrypoint } from './entrypoints/VCIssuerEntrypoint';
 // Re-export KeyManager from shared for EC key management
 export { KeyManager } from '@authrim/ar-lib-core';
 
