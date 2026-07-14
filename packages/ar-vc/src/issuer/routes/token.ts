@@ -118,6 +118,7 @@ async function handlePreAuthorizedCodeGrant(
     throw error;
   }
   if (!(await completeOfferReservation(c.env, reservation))) {
+    await releaseOfferReservation(c.env, reservation, log);
     throw new Error('Credential offer reservation completion failed');
   }
 
