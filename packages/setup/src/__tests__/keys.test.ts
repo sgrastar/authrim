@@ -291,9 +291,10 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(13);
+    expect(result.createdFiles).toHaveLength(14);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);

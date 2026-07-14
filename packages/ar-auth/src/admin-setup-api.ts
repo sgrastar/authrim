@@ -733,7 +733,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
     const tenantId = getDefaultTenantId(c.env);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'admin_passkey');
     const expiresAt = now + sessionTtl.milliseconds;
-    const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+    const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
 
     try {
       await adminSessionRepo.createSession({

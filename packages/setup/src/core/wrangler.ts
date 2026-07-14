@@ -266,13 +266,17 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'CHALLENGE_STORE',
   ],
   'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE'],
-  'ar-vc': ['KEY_MANAGER'],
+  'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER'],
 };
 
 const COMPONENT_LOCAL_DO_BINDINGS: Partial<
   Record<WorkerComponent, Array<{ name: string; className: string }>>
 > = {
   'ar-auth': [{ name: 'DIRECTORY_CONNECTOR_RELAY', className: 'DirectoryConnectorRelay' }],
+  'ar-vc': [
+    { name: 'CREDENTIAL_OFFER_STORE', className: 'CredentialOfferStore' },
+    { name: 'VP_REQUEST_STORE', className: 'VPRequestStore' },
+  ],
 };
 
 const COMPONENT_EXTERNAL_DO_BINDINGS: Partial<
@@ -1027,6 +1031,9 @@ export function generateEnvVars(
   }
   if (componentSecrets.includes('FLOW_RUNTIME_HMAC_SECRET')) {
     vars['FLOW_RUNTIME_HMAC_SECRET'] = ''; // Set via secret
+  }
+  if (componentSecrets.includes('VC_TRANSACTION_CODE_HMAC_SECRET')) {
+    vars['VC_TRANSACTION_CODE_HMAC_SECRET'] = ''; // Set via secret
   }
 
   // ar-router: UI proxy configuration

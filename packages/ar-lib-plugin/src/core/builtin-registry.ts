@@ -66,6 +66,12 @@ export interface RegisterBuiltinOptions {
 const PLUGINS_REGISTRY_KEY = 'plugins:registry';
 const PLUGINS_SCHEMA_PREFIX = 'plugins:schema:';
 
+function parseRegistry(data: string): Record<string, PluginRegistryEntry> {
+  const parsed = JSON.parse(data) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  return parsed as Record<string, PluginRegistryEntry>;
+}
+
 // =============================================================================
 // Builtin Plugins
 // =============================================================================
@@ -143,7 +149,7 @@ export async function registerBuiltinPlugins(
   try {
     const data = await kv.get(PLUGINS_REGISTRY_KEY);
     if (data) {
-      registry = JSON.parse(data);
+      registry = parseRegistry(data);
     }
   } catch {
     log('Failed to parse existing registry, starting fresh');
@@ -240,7 +246,7 @@ export async function needsBuiltinRegistration(kv: KVNamespace): Promise<boolean
       return true;
     }
 
-    const registry: Record<string, PluginRegistryEntry> = JSON.parse(data);
+    const registry = parseRegistry(data);
     const plugins = getBuiltinPlugins();
 
     for (const plugin of plugins) {

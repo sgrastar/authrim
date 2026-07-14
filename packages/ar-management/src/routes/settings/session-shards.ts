@@ -12,6 +12,12 @@ import {
  */
 const SESSION_SHARDS_KV_KEY = 'session_shards';
 
+function parseShardCount(value: string | undefined | null): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 256 ? parsed : null;
+}
+
 /**
  * GET /api/admin/settings/session-shards
  * Get current session shard count settings
@@ -26,15 +32,15 @@ const SESSION_SHARDS_KV_KEY = 'session_shards';
 export async function getSessionShards(c: Context<{ Bindings: Env }>) {
   const kvValue = await c.env.AUTHRIM_CONFIG?.get(SESSION_SHARDS_KV_KEY);
   const envValue = c.env.AUTHRIM_SESSION_SHARDS;
-  const defaultValue = DEFAULT_SESSION_SHARD_COUNT.toString();
-
-  const current = kvValue || envValue || defaultValue;
+  const parsedKvValue = parseShardCount(kvValue);
+  const parsedEnvValue = parseShardCount(envValue);
+  const current = parsedKvValue ?? parsedEnvValue ?? DEFAULT_SESSION_SHARD_COUNT;
 
   return c.json({
-    current: parseInt(current, 10),
-    source: kvValue ? 'kv' : envValue ? 'env' : 'default',
-    kv_value: kvValue ? parseInt(kvValue, 10) : null,
-    env_value: envValue ? parseInt(envValue, 10) : null,
+    current,
+    source: parsedKvValue !== null ? 'kv' : parsedEnvValue !== null ? 'env' : 'default',
+    kv_value: parsedKvValue,
+    env_value: parsedEnvValue,
     default_value: DEFAULT_SESSION_SHARD_COUNT,
   });
 }

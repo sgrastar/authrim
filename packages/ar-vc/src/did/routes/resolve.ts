@@ -110,8 +110,7 @@ interface DIDResolutionResult {
  * Supports did:web and did:key methods.
  */
 export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC');
+  const log = getLogger(c).module('VC');
   try {
     const did = c.req.param('did');
 

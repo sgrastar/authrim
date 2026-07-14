@@ -245,6 +245,10 @@ function createApp(options?: {
     subjectUserId: string;
     update: CustomerProfileUpdateInput;
   }) => Promise<ProtectedCustomerProfileResource | null>;
+  profileOverrides?: Partial<ProtectedCustomerProfileResource>;
+  validateDelegatedWriteActorImpl?: () => Promise<
+    { actorId: string; claims: Record<string, unknown> } | Response
+  >;
 }) {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
@@ -280,6 +284,7 @@ function createApp(options?: {
       country: 'JP',
     },
     updatedAt: 1700000000,
+    ...options?.profileOverrides,
   };
 
   app.route(
@@ -304,13 +309,16 @@ function createApp(options?: {
         }
         return sampleProfile;
       },
-      validateDelegatedWriteActor: async () => ({
-        actorId:
-          typeof options?.delegatedActorClaims?.sub === 'string'
-            ? options.delegatedActorClaims.sub
-            : 'actor-1',
-        claims: options?.delegatedActorClaims ?? { sub: 'actor-1' },
-      }),
+      validateDelegatedWriteActor: async () =>
+        options?.validateDelegatedWriteActorImpl
+          ? options.validateDelegatedWriteActorImpl()
+          : {
+              actorId:
+                typeof options?.delegatedActorClaims?.sub === 'string'
+                  ? options.delegatedActorClaims.sub
+                  : 'actor-1',
+              claims: options?.delegatedActorClaims ?? { sub: 'actor-1' },
+            },
       async updateProfile({ subjectUserId, update }) {
         if (options?.updateProfileImpl) {
           return options.updateProfileImpl({ subjectUserId, update });
@@ -897,5 +905,216 @@ describe('protected customer profile route', () => {
       error_description:
         'Product-specific downstream elevation grant tokens are not accepted for standard delegated write.',
     });
+  });
+
+  it('masks malformed, short, and absent PII without leaking profile structure', async () => {
+    const app = createApp({
+      profileOverrides: {
+        name: '',
+        givenName: 'A',
+        familyName: null,
+        preferredUsername: null,
+        email: 'not-an-email',
+        phoneNumber: '1234',
+        address: null,
+      },
+    });
+    const response = await app.request('http://localhost/api/protected/customer-profiles/user-1', {
+      headers: { Authorization: `Bearer ${createGrantToken()}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      profile: {
+        name: null,
+        given_name: '*',
+        family_name: null,
+        preferred_username: null,
+        email: '***',
+        phone_number: '****',
+        address: null,
+      },
+    });
+  });
+
+  it.each([
+    ['non-object input', null, 'input must be an object', 'input'],
+    ['array input', [], 'input must be an object', 'input'],
+    ['empty input', {}, 'input must include at least one profile field', 'input'],
+    ['null email', { email: null }, 'input.email must be a non-empty string', 'input.email'],
+    ['blank email', { email: '   ' }, 'input.email must be a non-empty string', 'input.email'],
+    [
+      'non-string profile field',
+      { phone_number: 123 },
+      'input.phone_number must be a string or null',
+      'input.phone_number',
+    ],
+    [
+      'non-object address',
+      { address: 'Tokyo' },
+      'input.address must be an object or null',
+      'input.address',
+    ],
+    [
+      'non-string address field',
+      { address: { locality: 123 } },
+      'input.locality must be a string or null',
+      'input.locality',
+    ],
+  ])('rejects %s before issuing Step-Up', async (_label, input, message, field) => {
+    const { env } = createDelegatedWriteEnv();
+    const response = await createApp().request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `invalid-${String(_label).replaceAll(' ', '-')}`,
+        },
+        body: JSON.stringify({ input }),
+      },
+      env
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: message,
+      field,
+    });
+  });
+
+  it('normalizes every supported delegated profile field and address member', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const input = {
+      email: 'new@example.com',
+      phone_number: '+819011112222',
+      name: 'New Name',
+      given_name: 'New',
+      family_name: 'Name',
+      middle_name: 'Middle',
+      nickname: 'NN',
+      preferred_username: 'new-user',
+      picture: 'https://example.com/picture.png',
+      website: 'https://example.com',
+      gender: 'unspecified',
+      birthdate: '2001-02-03',
+      locale: 'ja-JP',
+      zoneinfo: 'Asia/Tokyo',
+      address: {
+        formatted: '1 Test Street',
+        street_address: '1 Test Street',
+        locality: 'Tokyo',
+        region: 'Tokyo',
+        postal_code: '100-0001',
+        country: 'JP',
+      },
+    };
+    const receipt = await issueDelegatedWriteReceipt({
+      env,
+      subjectUserId: 'user-1',
+      idempotencyKey: 'all-fields',
+      bodyInput: input,
+    });
+    let captured: CustomerProfileUpdateInput | undefined;
+    const response = await createApp({
+      updateProfileImpl: async ({ update }) => {
+        captured = update;
+        return sampleProfileForTest;
+      },
+    }).request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'all-fields',
+          'Authrim-Step-Up-Receipt': receipt,
+        },
+        body: JSON.stringify({ input }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const { address, ...directFields } = input;
+    expect(captured).toEqual({
+      ...directFields,
+      address_formatted: input.address.formatted,
+      address_street_address: input.address.street_address,
+      address_locality: input.address.locality,
+      address_region: input.address.region,
+      address_postal_code: input.address.postal_code,
+      address_country: address.country,
+    });
+  });
+
+  it('returns not_found without exposing whether a delegated subject exists', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const input = { name: 'Updated' };
+    const receipt = await issueDelegatedWriteReceipt({
+      env,
+      subjectUserId: 'user-404',
+      idempotencyKey: 'missing-profile',
+      bodyInput: input,
+    });
+    const response = await createApp({ updateProfileImpl: async () => null }).request(
+      'http://localhost/api/protected/customer-profiles/users/user-404',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer actor-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'missing-profile',
+          'Authrim-Step-Up-Receipt': receipt,
+        },
+        body: JSON.stringify({ input }),
+      },
+      env
+    );
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: 'not_found' });
+  });
+
+  it('propagates delegated actor authentication failures before Step-Up', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const response = await createApp({
+      validateDelegatedWriteActorImpl: async () =>
+        new Response(JSON.stringify({ error: 'invalid_token' }), { status: 401 }),
+    }).request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer invalid',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'invalid-actor',
+        },
+        body: JSON.stringify({ input: { name: 'Updated' } }),
+      },
+      env
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it('rejects token_use elevation credentials as delegated actor tokens', async () => {
+    const { env } = createDelegatedWriteEnv();
+    const response = await createApp({
+      delegatedActorClaims: { sub: 'actor-1', token_use: 'elevation_grant_subject' },
+    }).request(
+      'http://localhost/api/protected/customer-profiles/users/user-1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer elevation-token',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'token-use-elevation',
+        },
+        body: JSON.stringify({ input: { name: 'Updated' } }),
+      },
+      env
+    );
+    expect(response.status).toBe(403);
   });
 });

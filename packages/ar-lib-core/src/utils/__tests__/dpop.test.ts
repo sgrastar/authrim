@@ -296,9 +296,13 @@ describe('DPoP Utilities', () => {
 
     it('rejects a tampered signature without exposing verification details', async () => {
       const signed = await proof();
+      const [header, payload, encodedSignature] = signed.split('.');
+      const signature = base64url.decode(encodedSignature);
+      signature[0] ^= 0x01;
+      const tampered = `${header}.${payload}.${base64url.encode(signature)}`;
       await expect(
         validateDPoPProof(
-          `${signed.slice(0, -1)}x`,
+          tampered,
           'POST',
           'https://api.example/token',
           undefined,

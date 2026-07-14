@@ -1,5 +1,4 @@
 <script lang="ts">
-	import QRCode from 'qrcode';
 	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
@@ -187,7 +186,8 @@
 			totpQrDataUrl = '';
 			return;
 		}
-		QRCode.toDataURL(uri, { margin: 1, width: 192 })
+		import('qrcode')
+			.then(({ toDataURL }) => toDataURL(uri, { margin: 1, width: 192 }))
 			.then((value) => {
 				if (totpSignup?.otpauthUri === uri) {
 					totpQrDataUrl = value;

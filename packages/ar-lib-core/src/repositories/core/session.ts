@@ -484,6 +484,9 @@ export class SessionRepository {
    * @returns Number of deleted sessions
    */
   async cleanupExpiredOlderThan(maxAgeMs: number): Promise<number> {
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+      return 0;
+    }
     const cutoff = getCurrentTimestamp() - maxAgeMs;
     const sql = 'DELETE FROM sessions WHERE tenant_id = ? AND expires_at <= ?';
     const result = await this.adapter.execute(sql, [this.tenantId, cutoff]);

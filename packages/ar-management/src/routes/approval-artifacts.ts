@@ -339,7 +339,7 @@ approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({
       );
     }
 
-    const adminSessionRepo = new AdminSessionRepository(state.adapter);
+    const adminSessionRepo = new AdminSessionRepository(state.adapter, state.request.tenant_id);
     await adminSessionRepo.setMfaVerified(adminAuth.sessionId);
 
     return c.json({

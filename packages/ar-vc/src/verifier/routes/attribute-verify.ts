@@ -33,6 +33,7 @@ import {
 const standaloneLog = createLogger().module('VC-ATTR-VERIFY');
 import { verifyVPToken } from '../services/vp-verifier';
 import { linkVerificationToUser, getUserVerifiedAttributes } from '../services/attribute-mapper';
+import { sha256Base64url } from '../../utils/crypto';
 
 interface AttributeVerifyRequest {
   /** VP token (SD-JWT VC with KB-JWT) */
@@ -67,8 +68,7 @@ interface InitiateVerificationRequest {
 export async function initiateAttributeVerification(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-VERIFIER');
+  const log = getLogger(c).module('VC-VERIFIER');
   try {
     // Extract user info from access token
     const authHeader = c.req.header('Authorization');
@@ -164,8 +164,10 @@ export async function initiateAttributeVerification(
  * Links verified attributes to the user's account.
  */
 export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-VERIFIER');
+  const log = getLogger(c).module('VC-VERIFIER');
+  let reservation:
+    | { stub: DurableObjectStub; id: string; tenantId: string; reservationId: string }
+    | undefined;
   try {
     // Parse form data or JSON
     let body: AttributeVerifyRequest;
@@ -194,35 +196,52 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Get VP request from Durable Object
-    const { stub } = getVPRequestStoreById(c.env, body.state, getTenantIdFromContext(c));
-
-    const requestResponse = await stub.fetch(new Request('https://internal/get'));
-    if (!requestResponse.ok) {
-      return c.json({ error: 'invalid_request', error_description: 'VP request not found' }, 400);
-    }
-
-    const vpRequest = (await requestResponse.json()) as VPRequestState & { userId?: string };
-
-    // Validate request state
-    if (vpRequest.status !== 'pending') {
-      return c.json(
-        { error: 'invalid_request', error_description: `VP request is ${vpRequest.status}` },
-        400
-      );
-    }
-
-    if (Date.now() > vpRequest.expiresAt) {
-      await stub.fetch(
-        new Request('https://internal/update-status', {
-          method: 'POST',
-          body: JSON.stringify({ status: 'expired' }),
+    const tenantId = getTenantIdFromContext(c);
+    const { stub } = getVPRequestStoreById(c.env, body.state, tenantId);
+    const reserveResponse = await stub.fetch(
+      new Request('https://internal/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: body.state,
+          tenantId,
+          responseFingerprint: await sha256Base64url(body.vp_token),
+          now: Date.now(),
+        }),
+      })
+    );
+    const reserveResult = reserveResponse.ok
+      ? ((await reserveResponse.json()) as {
+          reserved: boolean;
+          reservationId?: string;
+          request?: VPRequestState & { userId?: string };
         })
-      );
-      return c.json({ error: 'invalid_request', error_description: 'VP request has expired' }, 400);
+      : null;
+    if (!reserveResult?.reserved || !reserveResult.reservationId || !reserveResult.request) {
+      return c.json({ error: 'invalid_request', error_description: 'VP request unavailable' }, 400);
     }
+    const vpRequest = reserveResult.request;
+    reservation = {
+      stub,
+      id: body.state,
+      tenantId,
+      reservationId: reserveResult.reservationId,
+    };
 
     // Check that this is an authenticated request (has userId)
     if (!vpRequest.userId) {
+      await stub.fetch(
+        new Request('https://internal/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: body.state,
+            tenantId,
+            reservationId: reservation.reservationId,
+          }),
+        })
+      );
+      reservation = undefined;
       return c.json(
         {
           error: 'invalid_request',
@@ -240,17 +259,24 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     });
 
     if (!verificationResult.verified) {
-      await stub.fetch(
-        new Request('https://internal/update', {
+      const failResponse = await stub.fetch(
+        new Request('https://internal/fail', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            status: 'failed',
+            id: body.state,
+            tenantId,
+            reservationId: reservation.reservationId,
             errorCode: 'verification_failed',
             errorDescription: verificationResult.errors.join('; '),
           }),
         })
       );
+      const failed = failResponse.ok
+        ? ((await failResponse.json()) as { failed?: boolean }).failed
+        : false;
+      if (!failed) throw new Error('vp_attribute_failure_transition_failed');
+      reservation = undefined;
 
       return c.json(
         {
@@ -278,17 +304,23 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
     );
 
     // Update VP request status
-    await stub.fetch(
-      new Request('https://internal/update', {
+    const completeResponse = await stub.fetch(
+      new Request('https://internal/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          status: 'verified',
-          vpToken: body.vp_token, // Store for audit (will be cleaned up)
+          id: body.state,
+          tenantId,
+          reservationId: reservation.reservationId,
           verifiedClaims: verificationResult.disclosedClaims,
         }),
       })
     );
+    const completed = completeResponse.ok
+      ? ((await completeResponse.json()) as { completed?: boolean }).completed
+      : false;
+    if (!completed) throw new Error('vp_attribute_completion_failed');
+    reservation = undefined;
 
     return c.json({
       success: true,
@@ -297,6 +329,21 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
       haip_compliant: verificationResult.haipCompliant,
     });
   } catch (error) {
+    if (reservation) {
+      await reservation.stub
+        .fetch(
+          new Request('https://internal/release', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: reservation.id,
+              tenantId: reservation.tenantId,
+              reservationId: reservation.reservationId,
+            }),
+          })
+        )
+        .catch(() => undefined);
+    }
     log.error('Attribute verification response processing failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
@@ -317,8 +364,7 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
  * Requires: Authorization header with valid access token
  */
 export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-VERIFIER');
+  const log = getLogger(c).module('VC-VERIFIER');
   try {
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {

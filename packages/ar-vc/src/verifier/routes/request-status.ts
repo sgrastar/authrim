@@ -18,15 +18,15 @@ import {
   getLogger,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { sha256Base64url } from '../../utils/crypto';
 
 /**
- * GET /vp/request/:id
+ * GET /vp/requests/:id
  *
  * Returns the current status of a VP request.
  */
 export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-VERIFIER');
+  const log = getLogger(c).module('VC-VERIFIER');
   try {
     const requestId = c.req.param('id');
 
@@ -35,12 +35,24 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
         variables: { field: 'id' },
       });
     }
+    const authorization = c.req.header('Authorization');
+    if (!authorization?.startsWith('Bearer ') || authorization.length <= 7) {
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+    }
+    const statusTokenHash = await sha256Base64url(authorization.slice(7));
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Request ID format: g{gen}:{region}:{shard}:vp_{uuid}
     const { stub } = getVPRequestStoreById(c.env, requestId, getTenantIdFromContext(c));
 
-    const response = await stub.fetch(new Request('https://internal/get'));
+    const tenantId = getTenantIdFromContext(c);
+    const response = await stub.fetch(
+      new Request('https://internal/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: requestId, tenantId, statusTokenHash }),
+      })
+    );
 
     if (!response.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -56,21 +68,8 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
       errorDescription?: string;
     };
 
-    // Check expiration
     if (vpRequest.status === 'pending' && Date.now() > vpRequest.expiresAt) {
-      // Update status to expired
-      await stub.fetch(
-        new Request('https://internal/update-status', {
-          method: 'POST',
-          body: JSON.stringify({ status: 'expired' }),
-        })
-      );
-
-      return c.json({
-        request_id: requestId,
-        status: 'expired',
-        expires_at: new Date(vpRequest.expiresAt).toISOString(),
-      });
+      vpRequest.status = 'expired';
     }
 
     // Build response based on status
@@ -92,6 +91,8 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
       result.error_description = vpRequest.errorDescription;
     }
 
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(result);
   } catch (error) {
     log.error('VP request status check failed', {}, error as Error);

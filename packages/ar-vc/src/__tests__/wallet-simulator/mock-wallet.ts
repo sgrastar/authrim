@@ -470,7 +470,10 @@ export class MockWallet {
       // Filter disclosures to only those requested
       return disclosures.filter((disclosure) => {
         try {
-          const decoded = JSON.parse(atob(disclosure.replace(/-/g, '+').replace(/_/g, '/')));
+          const decoded: unknown = JSON.parse(
+            atob(disclosure.replace(/-/g, '+').replace(/_/g, '/'))
+          );
+          if (!Array.isArray(decoded) || typeof decoded[1] !== 'string') return false;
           const claimName = decoded[1]; // [salt, claim_name, claim_value]
           return (
             requestedPaths.has(claimName) || requestedPaths.has(`credentialSubject.${claimName}`)

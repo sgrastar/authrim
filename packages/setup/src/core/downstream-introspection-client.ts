@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   fetchWithTimeout,
@@ -310,9 +310,15 @@ async function writeClientCredentials(
   clientId: string,
   clientSecret: string
 ): Promise<void> {
-  await mkdir(keysDir, { recursive: true });
-  await writeFile(getClientIdPath(keysDir), `${clientId}\n`, 'utf-8');
-  await writeFile(getClientSecretPath(keysDir), `${clientSecret}\n`, 'utf-8');
+  await mkdir(keysDir, { recursive: true, mode: 0o700 });
+  await chmod(keysDir, 0o700);
+
+  const clientIdPath = getClientIdPath(keysDir);
+  const clientSecretPath = getClientSecretPath(keysDir);
+  await writeFile(clientIdPath, `${clientId}\n`, { encoding: 'utf-8', mode: 0o600 });
+  await chmod(clientIdPath, 0o600);
+  await writeFile(clientSecretPath, `${clientSecret}\n`, { encoding: 'utf-8', mode: 0o600 });
+  await chmod(clientSecretPath, 0o600);
 }
 
 async function readStoredCredentials(keysDir: string): Promise<{

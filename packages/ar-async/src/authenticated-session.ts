@@ -91,3 +91,17 @@ export function cibaLoginHintMatchesAuthenticatedUser(
 
   return normalized === user.sub.toLowerCase() || normalized === user.userId.toLowerCase();
 }
+
+export function cibaRequestMatchesAuthenticatedUser(
+  request: { resolved_subject_id?: string; login_hint?: string },
+  user: AuthenticatedAsyncUser
+): boolean {
+  if (
+    request.resolved_subject_id &&
+    request.resolved_subject_id !== user.userId &&
+    request.resolved_subject_id !== user.sub
+  ) {
+    return false;
+  }
+  return cibaLoginHintMatchesAuthenticatedUser(request.login_hint, user);
+}

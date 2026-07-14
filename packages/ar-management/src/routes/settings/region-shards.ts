@@ -126,7 +126,11 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
   }
 
   // Basic field validation
-  if (typeof body.totalShards !== 'number' || body.totalShards <= 0) {
+  if (
+    typeof body.totalShards !== 'number' ||
+    !Number.isInteger(body.totalShards) ||
+    body.totalShards <= 0
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 

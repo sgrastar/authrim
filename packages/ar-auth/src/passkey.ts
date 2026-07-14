@@ -910,7 +910,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     if (runtimeUser?.account_type === 'admin' && c.env.DB_ADMIN) {
       try {
         const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'passkey-admin');
-        const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+        const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
 
         // Get client IP from Cloudflare header
         const clientIp =

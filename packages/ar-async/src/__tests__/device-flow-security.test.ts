@@ -68,6 +68,29 @@ describe('Device Flow Security', () => {
   });
 
   describe('Client Validation', () => {
+    it('allows a registered public client with the default scope and external UI', async () => {
+      mockGetClient.mockResolvedValue({ client_id: 'public-device-client' });
+      const mockContext = {
+        req: {
+          parseBody: vi.fn().mockResolvedValue({ client_id: 'public-device-client' }),
+          raw: new Request('https://auth.example.com/device_authorization', { method: 'POST' }),
+        },
+        json: vi.fn().mockImplementation((data, status) => {
+          return new Response(JSON.stringify(data), { status });
+        }),
+        env: mockEnv,
+      } as any;
+
+      const response = await deviceAuthorizationHandler(mockContext);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        verification_uri: 'https://ui.example.com/device',
+        verification_uri_complete: expect.stringMatching(
+          /^https:\/\/ui\.example\.com\/device\?user_code=[A-Z0-9-]+$/
+        ),
+      });
+    });
+
     it('should reject request with missing client_id', async () => {
       const mockContext = {
         req: {

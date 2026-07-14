@@ -128,6 +128,14 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-router')).not.toContain('FLOW_RUNTIME_HMAC_SECRET');
   });
 
+  it('uploads the transaction-code HMAC secret only to the VC worker', () => {
+    expect(getSecretNamesForWorker('ar-vc')).toContain('VC_TRANSACTION_CODE_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-auth')).not.toContain('VC_TRANSACTION_CODE_HMAC_SECRET');
+    expect(getSecretNamesForWorker('ar-management')).not.toContain(
+      'VC_TRANSACTION_CODE_HMAC_SECRET'
+    );
+  });
+
   it('uploads TOTP and OTP secret material only to auth-capable workers', () => {
     expect(getSecretNamesForWorker('ar-auth')).toContain('OTP_HMAC_SECRET');
     expect(getSecretNamesForWorker('ar-auth')).toContain('PII_ENCRYPTION_KEY');

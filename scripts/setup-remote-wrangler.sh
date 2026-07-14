@@ -1256,6 +1256,11 @@ class_name = "KeyManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"
 
 [[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "${DEPLOY_ENV}-ar-lib-core"
+
+[[durable_objects.bindings]]
 name = "VERSION_MANAGER"
 class_name = "VersionManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"

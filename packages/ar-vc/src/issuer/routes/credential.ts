@@ -7,7 +7,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
-  createSDJWTVC,
+  createSDJWTVCWithSigner,
   type SDJWTVCCreateOptions,
   IssuedCredentialRepository,
   D1StatusListRepository,
@@ -24,26 +24,27 @@ import {
   resolveUserStoreRuntimeSourcesFromEnv,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
-import { generateSecureNonce } from '../../utils/crypto';
+import { sha256Base64url } from '../../utils/crypto';
 import { createVCConfigManager } from '../../utils/vc-config';
-import { importPKCS8 } from 'jose';
-import { validateVCIAccessToken, validateProofOfPossession } from '../services/token-validation';
+import type { JWTPayload } from 'jose';
+import {
+  decodeVCIProofNonce,
+  validateVCIAccessToken,
+  validateProofOfPossession,
+} from '../services/token-validation';
 import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
+import { getCredentialOfferStoreByProofNonce } from '../../utils/credential-offer-sharding';
+import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
 
 interface CredentialRequest {
-  format: string;
-  credential_configuration_id?: string;
-  vct?: string;
-  proof?: {
-    proof_type: string;
-    jwt?: string;
+  credential_configuration_id: string;
+  proofs: {
+    jwt?: string[];
   };
 }
 
 interface CredentialResponse {
-  credential?: string;
-  c_nonce?: string;
-  c_nonce_expires_in?: number;
+  credentials?: string[];
   transaction_id?: string;
 }
 
@@ -53,27 +54,21 @@ interface CredentialResponse {
  * @throws Error if response format is invalid
  */
 function validateCredentialResponse(response: CredentialResponse): void {
-  // At least one of credential or transaction_id must be present
-  if (!response.credential && !response.transaction_id) {
-    throw new Error('Response must contain either credential or transaction_id');
+  if (!response.credentials && !response.transaction_id) {
+    throw new Error('Response must contain either credentials or transaction_id');
   }
 
-  // Validate credential format if present
-  if (response.credential !== undefined) {
-    if (typeof response.credential !== 'string' || response.credential.length === 0) {
-      throw new Error('credential must be a non-empty string');
+  if (response.credentials !== undefined) {
+    if (!Array.isArray(response.credentials) || response.credentials.length === 0) {
+      throw new Error('credentials must be a non-empty array');
     }
-
-    // Validate SD-JWT format (should have ~ separators for disclosures)
-    const parts = response.credential.split('~');
-    if (parts.length < 1) {
-      throw new Error('Invalid SD-JWT format');
-    }
-
-    // Validate issuer JWT format (header.payload.signature)
-    const jwtParts = parts[0].split('.');
-    if (jwtParts.length !== 3) {
-      throw new Error('Invalid JWT format in credential');
+    for (const credential of response.credentials) {
+      if (typeof credential !== 'string' || credential.length === 0) {
+        throw new Error('credentials entries must be non-empty strings');
+      }
+      if (credential.split('~')[0].split('.').length !== 3) {
+        throw new Error('Invalid JWT format in credential');
+      }
     }
   }
 
@@ -81,35 +76,6 @@ function validateCredentialResponse(response: CredentialResponse): void {
   if (response.transaction_id !== undefined) {
     if (typeof response.transaction_id !== 'string' || response.transaction_id.length === 0) {
       throw new Error('transaction_id must be a non-empty string');
-    }
-  }
-
-  // Validate c_nonce format if present
-  if (response.c_nonce !== undefined) {
-    if (typeof response.c_nonce !== 'string' || response.c_nonce.length === 0) {
-      throw new Error('c_nonce must be a non-empty string');
-    }
-
-    // Minimum nonce length for security (128 bits = ~22 base64 chars)
-    if (response.c_nonce.length < 16) {
-      throw new Error('c_nonce must be at least 16 characters');
-    }
-  }
-
-  // Validate c_nonce_expires_in format if present
-  if (response.c_nonce_expires_in !== undefined) {
-    if (typeof response.c_nonce_expires_in !== 'number') {
-      throw new Error('c_nonce_expires_in must be a number');
-    }
-
-    if (response.c_nonce_expires_in <= 0) {
-      throw new Error('c_nonce_expires_in must be a positive integer');
-    }
-
-    // Maximum expiry time check (1 hour)
-    const maxExpiry = 3600;
-    if (response.c_nonce_expires_in > maxExpiry) {
-      throw new Error(`c_nonce_expires_in must not exceed ${maxExpiry} seconds`);
     }
   }
 }
@@ -120,10 +86,12 @@ function validateCredentialResponse(response: CredentialResponse): void {
  * Issues a credential to the wallet.
  */
 export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-ISSUER');
+  const log = getLogger(c).module('VC-ISSUER');
   const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
   const requestIssuerUrl = getRequestIssuerUrl(c);
+  let nonceReservation:
+    | { stub: DurableObjectStub; nonceId: string; tenantId: string; reservationId: string }
+    | undefined;
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -137,7 +105,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const tokenResult = await validateVCIAccessToken(
       c.env,
       accessToken,
-      requestIssuerIdentifier,
+      requestIssuerUrl,
       getTenantIdFromContext(c)
     );
 
@@ -152,43 +120,74 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     if (!tokenResult.userId || !tokenResult.tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
+    const tenantId = tokenResult.tenantId;
 
     const body = await c.req.json<CredentialRequest>();
 
-    // Validate format
-    if (body.format !== 'dc+sd-jwt') {
+    if (
+      !body.credential_configuration_id ||
+      body.credential_configuration_id !== tokenResult.credentialConfigurationId
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.VC_UNSUPPORTED_FORMAT);
     }
-
-    // Get expected c_nonce from KV (stored during token request)
-    const expectedNonce = await c.env.AUTHRIM_CONFIG.get(`cnonce:${tokenResult.userId}`);
-    const expectedAudience = requestIssuerIdentifier;
-
-    // Verify proof of possession if provided
-    let holderBinding = tokenResult.holderBinding;
-    if (body.proof) {
-      if (!expectedNonce) {
-        return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
-      }
-
-      const proofResult = await validateProofOfPossession(
-        c.env,
-        body.proof,
-        expectedNonce,
-        expectedAudience
-      );
-      if (!proofResult.valid) {
-        return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
-      }
-
-      // Use holder key from proof if not in token
-      if (proofResult.holderPublicKey && !holderBinding) {
-        holderBinding = proofResult.holderPublicKey;
-      }
-
-      // Consume the nonce (single use)
-      await c.env.AUTHRIM_CONFIG.delete(`cnonce:${tokenResult.userId}`);
+    const proofJwts = body.proofs?.jwt;
+    if (!Array.isArray(proofJwts) || proofJwts.length !== 1 || typeof proofJwts[0] !== 'string') {
+      return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
     }
+    const proofJwt = proofJwts[0];
+    const expectedNonce = decodeVCIProofNonce(proofJwt);
+    if (!expectedNonce || !tokenResult.jti) {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'invalid_nonce' }, 400);
+    }
+    const expectedAudience = requestIssuerUrl;
+
+    let holderBinding = tokenResult.holderBinding;
+    const proofResult = await validateProofOfPossession(
+      c.env,
+      { proof_type: 'jwt', jwt: proofJwt },
+      expectedNonce,
+      expectedAudience
+    );
+    if (!proofResult.valid) {
+      return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
+    }
+    if (proofResult.holderPublicKey && !holderBinding) holderBinding = proofResult.holderPublicKey;
+
+    let nonceStore: ReturnType<typeof getCredentialOfferStoreByProofNonce>;
+    try {
+      nonceStore = getCredentialOfferStoreByProofNonce(c.env, expectedNonce, tokenResult.tenantId);
+    } catch {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'invalid_nonce' }, 400);
+    }
+    const reserveResponse = await nonceStore.stub.fetch(
+      new Request('https://internal/nonce/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: nonceStore.nonceId,
+          tenantId: tokenResult.tenantId,
+          nonceHash: await sha256Base64url(expectedNonce),
+          proofFingerprint: await sha256Base64url(proofJwt),
+          accessTokenJti: tokenResult.jti,
+          now: Date.now(),
+        }),
+      })
+    );
+    const reserveResult = reserveResponse.ok
+      ? ((await reserveResponse.json()) as { reserved: boolean; reservationId?: string })
+      : null;
+    if (!reserveResult?.reserved || !reserveResult.reservationId) {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'invalid_nonce' }, 400);
+    }
+    nonceReservation = {
+      stub: nonceStore.stub,
+      nonceId: nonceStore.nonceId,
+      tenantId: tokenResult.tenantId,
+      reservationId: reserveResult.reservationId,
+    };
 
     const vcConfig = createVCConfigManager(c.env);
     if ((await vcConfig.isHolderBindingRequired()) && !holderBinding) {
@@ -196,7 +195,12 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Get user claims from token result
-    const claims = tokenResult.claims || {};
+    const claims = await loadOfferClaims(c.env, {
+      offerId: tokenResult.offerId,
+      tenantId: tokenResult.tenantId,
+      userId: tokenResult.userId,
+      credentialConfigurationId: body.credential_configuration_id,
+    });
 
     // Custom Claim Schema: merge is_vc_claim=1 claims + collect PII names for SD-JWT
     let vcPiiClaimNames: string[] = [];
@@ -246,10 +250,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Get issuer key from KeyManager
-    const issuerKey = await getIssuerKey(c.env, tokenResult.tenantId);
-
-    // Determine VCT (from request or token)
-    const vct = body.vct || tokenResult.vct || 'https://authrim.com/credentials/identity/v1';
+    const vct = resolveVct(body.credential_configuration_id);
 
     // Initialize repositories
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
@@ -270,7 +271,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       type: 'BitstringStatusListEntry',
       statusPurpose: 'revocation',
       statusListIndex: index,
-      statusListCredential: `${requestIssuerUrl}/vci/status/${listId}`,
+      statusListCredential: `${requestIssuerUrl}/vci/status-lists/${listId}`,
     };
 
     // Create SD-JWT VC with credentialStatus
@@ -280,36 +281,19 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       holderBinding,
     };
 
-    const sdjwtvc = await createSDJWTVC(
+    const sdjwtvc = await createSDJWTVCWithSigner(
       { ...claims, credentialStatus },
       requestIssuerIdentifier,
-      issuerKey.privateKey,
-      'ES256',
-      issuerKey.kid,
+      (payload) => signSDJWTIssuer(c.env, tenantId, payload),
       options
     );
 
-    // Generate new c_nonce
-    const cNonce = await generateSecureNonce();
-    // SECURITY: Guard against NaN from invalid environment variable
-    const DEFAULT_C_NONCE_EXPIRY = 300;
-    const parsedExpiry = parseInt(c.env.C_NONCE_EXPIRY_SECONDS || '', 10);
-    const cNonceExpiresIn =
-      Number.isNaN(parsedExpiry) || parsedExpiry <= 0 ? DEFAULT_C_NONCE_EXPIRY : parsedExpiry;
-
     const response: CredentialResponse = {
-      credential: sdjwtvc.combined,
-      c_nonce: cNonce,
-      c_nonce_expires_in: cNonceExpiresIn,
+      credentials: [sdjwtvc.combined],
     };
 
     // Validate response format before returning
     validateCredentialResponse(response);
-
-    // Store new c_nonce for next request
-    await c.env.AUTHRIM_CONFIG.put(`cnonce:${tokenResult.userId}`, cNonce, {
-      expirationTtl: cNonceExpiresIn,
-    });
 
     // Store issued credential record with status list info
     await issuedCredentialRepo.createCredential({
@@ -325,45 +309,100 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       holder_binding: holderBinding ? holderBinding : null,
     });
 
+    const completeResponse = await nonceReservation.stub.fetch(
+      new Request('https://internal/nonce/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: nonceReservation.nonceId,
+          tenantId: nonceReservation.tenantId,
+          reservationId: nonceReservation.reservationId,
+        }),
+      })
+    );
+    const completion = completeResponse.ok
+      ? ((await completeResponse.json()) as { completed: boolean })
+      : null;
+    if (!completion?.completed) throw new Error('vci_nonce_completion_failed');
+    nonceReservation = undefined;
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(response);
   } catch (error) {
+    if (nonceReservation) {
+      await nonceReservation.stub
+        .fetch(
+          new Request('https://internal/nonce/release', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: nonceReservation.nonceId,
+              tenantId: nonceReservation.tenantId,
+              reservationId: nonceReservation.reservationId,
+            }),
+          })
+        )
+        .catch(() => undefined);
+    }
     log.error('Credential issuance failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
 
-/**
- * Get issuer signing key from KeyManager
- */
-async function getIssuerKey(
+async function loadOfferClaims(
   env: Env,
-  tenantId: string
-): Promise<{ privateKey: CryptoKey; kid: string }> {
-  const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-  const stub = env.KEY_MANAGER.get(doId);
-
-  // Use internal endpoint to get private key
-  const response = await stub.fetch(
-    new Request('https://internal/internal/ec/active-with-private/ES256')
-  );
-
-  if (!response.ok) {
-    throw new Error('Failed to get issuer key');
+  input: {
+    offerId?: string;
+    tenantId: string;
+    userId: string;
+    credentialConfigurationId: string;
   }
-
-  const keyData = (await response.json()) as {
-    kid: string;
-    algorithm: string;
-    privatePEM: string;
+): Promise<Record<string, unknown>> {
+  if (!input.offerId) throw new Error('vci_access_token_missing_offer_id');
+  const { stub } = getCredentialOfferStoreById(env, input.offerId, input.tenantId);
+  const response = await stub.fetch(
+    new Request(
+      `https://internal/get?id=${encodeURIComponent(input.offerId)}&tenant_id=${encodeURIComponent(input.tenantId)}`
+    )
+  );
+  if (!response.ok) throw new Error('vci_offer_not_found');
+  const offer = (await response.json()) as {
+    userId: string;
+    credentialConfigurationId: string;
+    claims: Record<string, unknown>;
+    status: string;
+    expiresAt: number;
   };
+  if (
+    offer.status !== 'consumed' ||
+    offer.expiresAt <= Date.now() ||
+    offer.userId !== input.userId ||
+    offer.credentialConfigurationId !== input.credentialConfigurationId
+  ) {
+    throw new Error('vci_offer_binding_mismatch');
+  }
+  return { ...offer.claims };
+}
 
-  // Import the EC private key from PEM format
-  const privateKey = await importPKCS8(keyData.privatePEM, keyData.algorithm);
-
-  return {
-    privateKey,
-    kid: keyData.kid,
+function resolveVct(configurationId: string): string {
+  const configurations: Record<string, string> = {
+    AuthrimIdentityCredential: 'https://authrim.com/credentials/identity/v1',
+    AuthrimAgeVerification: 'https://authrim.com/credentials/age-verification/v1',
   };
+  const vct = configurations[configurationId];
+  if (!vct) throw new Error('vci_unsupported_credential_configuration');
+  return vct;
+}
+
+/**
+ * Sign within KeyManager so private key material never crosses the DO boundary.
+ */
+async function signSDJWTIssuer(env: Env, tenantId: string, payload: JWTPayload): Promise<string> {
+  const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
+  const stub = env.KEY_MANAGER.get(doId) as unknown as {
+    signSDJWTIssuerRpc(input: JWTPayload): Promise<{ token: string }>;
+  };
+  return (await stub.signSDJWTIssuerRpc(payload)).token;
 }
 
 /**

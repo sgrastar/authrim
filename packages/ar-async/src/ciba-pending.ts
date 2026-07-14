@@ -15,8 +15,13 @@ import {
   getClient,
   createAuthContextFromHono,
   buildDOInstanceName,
+  isMockAuthEnabled,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import {
+  cibaLoginHintMatchesAuthenticatedUser,
+  getAuthenticatedAsyncUser,
+} from './authenticated-session';
 
 /**
  * GET /api/ciba/pending
@@ -57,31 +62,28 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     'X-Authrim-Tenant-Id': tenantId,
   };
   try {
-    // User identification for CIBA pending requests
-    //
-    // Security Note: This endpoint accepts user identification via query parameters
-    // for development/testing purposes. In production deployments:
-    //
-    // 1. Configure authentication middleware on this route
-    // 2. Extract user_id from the authenticated session:
-    //    const sessionUser = await getAuthenticatedUser(c);
-    //    const userId = sessionUser?.sub;
-    // 3. Reject requests without valid session authentication
-    //
-    // The current implementation logs a warning when using query parameter auth.
-
     const loginHint = c.req.query('login_hint');
     const userId = c.req.query('user_id');
-
-    // Security warning: query parameter user_id is only for development
-    if (userId && !loginHint) {
-      log.warn(
-        'CIBA pending: user_id from query parameter (development mode). Production should use session authentication.',
-        { hasLoginHint: !!loginHint }
-      );
+    const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
+    if (!authenticatedUser && !mockAuthEnabled) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
-    if (!loginHint && !userId) {
+    if (
+      authenticatedUser &&
+      ((loginHint && !cibaLoginHintMatchesAuthenticatedUser(loginHint, authenticatedUser)) ||
+        (userId && userId !== authenticatedUser.userId && userId !== authenticatedUser.sub))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+
+    const effectiveLoginHint =
+      loginHint ??
+      (authenticatedUser?.email ? authenticatedUser.email : undefined) ??
+      (authenticatedUser ? `sub:${authenticatedUser.sub}` : undefined) ??
+      (userId ? `sub:${userId}` : undefined);
+    if (!effectiveLoginHint) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'login_hint or user_id' },
       });
@@ -93,27 +95,13 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     );
     const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
 
-    // Use login_hint if provided, otherwise fall back to user_id
-    let getResponse: Response;
-    if (loginHint) {
-      getResponse = await cibaRequestStore.fetch(
-        new Request('https://internal/get-by-login-hint', {
-          method: 'POST',
-          headers: internalHeaders,
-          body: JSON.stringify({ login_hint: loginHint }),
-        })
-      );
-    } else {
-      // If only user_id is provided, construct a query for all requests
-      // For now, use login_hint endpoint with user_id as sub
-      getResponse = await cibaRequestStore.fetch(
-        new Request('https://internal/get-by-login-hint', {
-          method: 'POST',
-          headers: internalHeaders,
-          body: JSON.stringify({ login_hint: `sub:${userId}` }),
-        })
-      );
-    }
+    const getResponse = await cibaRequestStore.fetch(
+      new Request('https://internal/get-by-login-hint', {
+        method: 'POST',
+        headers: internalHeaders,
+        body: JSON.stringify({ login_hint: effectiveLoginHint }),
+      })
+    );
 
     if (!getResponse.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

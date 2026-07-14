@@ -145,6 +145,7 @@ describe('generateRoutes', () => {
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
     const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
+    const vcConfig = generateWranglerConfig('ar-vc', config, resourceIds);
 
     expect(authConfig.durable_objects?.bindings).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
@@ -171,6 +172,21 @@ describe('generateRoutes', () => {
       ])
     );
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
+    expect(vcConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'RATE_LIMITER', script_name: 'emailtest-ar-lib-core' }),
+        expect.objectContaining({
+          name: 'CREDENTIAL_OFFER_STORE',
+          class_name: 'CredentialOfferStore',
+        }),
+        expect.objectContaining({ name: 'VP_REQUEST_STORE', class_name: 'VPRequestStore' }),
+      ])
+    );
+    expect(vcConfig.migrations?.[0]?.new_sqlite_classes).toEqual([
+      'CredentialOfferStore',
+      'VPRequestStore',
+    ]);
+    expect(vcConfig.vars.VC_TRANSACTION_CODE_HMAC_SECRET).toBe('');
     expect(managementConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

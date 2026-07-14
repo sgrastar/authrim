@@ -21,6 +21,7 @@ export interface Env {
   VP_REQUEST_STORE: DurableObjectNamespace;
   CREDENTIAL_OFFER_STORE: DurableObjectNamespace;
   KEY_MANAGER: DurableObjectNamespace;
+  RATE_LIMITER?: DurableObjectNamespace;
 
   // Service Bindings
   POLICY_SERVICE: Fetcher;
@@ -35,6 +36,8 @@ export interface Env {
   ISSUER_IDENTIFIER: string;
   CREDENTIAL_OFFER_EXPIRY_SECONDS: string;
   C_NONCE_EXPIRY_SECONDS: string;
+  VC_TRANSACTION_CODE_HMAC_SECRET?: string;
+  RATE_LIMIT_PROFILE?: string;
 }
 
 // =============================================================================
@@ -119,6 +122,9 @@ export interface VPRequestState {
   /** State parameter */
   state?: string;
 
+  /** Digest of the bearer capability used only for status polling. */
+  statusTokenHash?: string;
+
   /** Presentation definition */
   presentationDefinition?: PresentationDefinition | object;
 
@@ -133,9 +139,6 @@ export interface VPRequestState {
 
   /** Request status */
   status: VPRequestStatus;
-
-  /** Received VP token */
-  vpToken?: string;
 
   /** Verified claims (after successful verification) */
   verifiedClaims?: Record<string, unknown>;
@@ -153,7 +156,7 @@ export interface VPRequestState {
   expiresAt: number;
 }
 
-export type VPRequestStatus = 'pending' | 'received' | 'verified' | 'failed' | 'expired';
+export type VPRequestStatus = 'pending' | 'processing' | 'verified' | 'failed' | 'expired';
 
 // =============================================================================
 // Verification Result

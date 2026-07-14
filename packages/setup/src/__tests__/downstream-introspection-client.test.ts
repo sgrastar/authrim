@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ensureDownstreamIntrospectionClient,
@@ -293,6 +293,43 @@ describe('ensureDownstreamIntrospectionClient', () => {
       rotatedSecret: true,
     });
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'PUT', 'POST']);
+  });
+
+  it('restricts generated credentials even when replacing permissive files', async () => {
+    const clientIdPath = join(tempDir, 'downstream_grant_introspection_client_id.txt');
+    const clientSecretPath = join(tempDir, 'downstream_grant_introspection_client_secret.txt');
+    await chmod(tempDir, 0o755);
+    await writeFile(clientIdPath, 'old-client\n', { mode: 0o644 });
+    await writeFile(clientSecretPath, 'old-secret\n', { mode: 0o644 });
+
+    fetchMock
+      .mockResolvedValueOnce(textResponse('not found', 404))
+      .mockResolvedValueOnce(jsonResponse({ clients: [] }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            client: {
+              client_id: 'replacement-client',
+              client_name: 'Downstream Grant Introspection',
+              client_secret: 'replacement-secret',
+            },
+          },
+          201
+        )
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect((await stat(tempDir)).mode & 0o777).toBe(0o700);
+    expect((await stat(clientIdPath)).mode & 0o777).toBe(0o600);
+    expect((await stat(clientSecretPath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(clientSecretPath, 'utf-8')).toBe('replacement-secret\n');
   });
 
   it('returns explicit failures for missing machine keys and non-retryable API errors', async () => {

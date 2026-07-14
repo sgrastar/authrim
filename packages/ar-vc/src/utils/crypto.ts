@@ -39,3 +39,35 @@ export async function sha256Base64url(data: string): Promise<string> {
     .replace(/\//g, '_')
     .replace(/[=]+$/, '');
 }
+
+/** HMAC verifier for low-entropy transaction codes. */
+export async function hmacSha256Base64url(
+  secret: string | undefined,
+  data: string
+): Promise<string> {
+  if (new TextEncoder().encode(secret).byteLength < 32) {
+    throw new Error('VC transaction-code HMAC secret must contain at least 32 bytes');
+  }
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  const bytes = new Uint8Array(signature);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+export async function hashTransactionCode(
+  secret: string | undefined,
+  tenantId: string,
+  offerId: string,
+  transactionCode: string
+): Promise<string> {
+  return hmacSha256Base64url(secret, `${tenantId}\u0000${offerId}\u0000${transactionCode}`);
+}

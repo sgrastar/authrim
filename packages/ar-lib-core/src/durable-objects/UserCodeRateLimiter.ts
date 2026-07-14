@@ -21,10 +21,15 @@ interface FailedAttempt {
   blockedUntil?: number;
 }
 
+interface PersistedRateLimiterState {
+  attempts: FailedAttempt[];
+}
+
 export class UserCodeRateLimiter {
   private state: DurableObjectState;
   private env: Env;
   private attempts: Map<string, FailedAttempt> = new Map();
+  private initialized = false;
   private readonly log: Logger = createLogger().module('UserCodeRateLimiter');
 
   // Rate limiting configuration
@@ -37,7 +42,21 @@ export class UserCodeRateLimiter {
     this.env = env;
 
     // Schedule cleanup alarm
-    this.state.storage.setAlarm(Date.now() + UserCodeRateLimiter.CLEANUP_INTERVAL_MS);
+    void this.state.storage.setAlarm(Date.now() + UserCodeRateLimiter.CLEANUP_INTERVAL_MS);
+  }
+
+  private async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    const stored = await this.state.storage.get<PersistedRateLimiterState>('state');
+    if (stored) {
+      this.attempts = new Map(stored.attempts.map((attempt) => [attempt.ip, attempt]));
+    }
+    this.initialized = true;
+  }
+
+  private async persist(): Promise<void> {
+    await this.state.storage.put('state', { attempts: [...this.attempts.values()] });
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -45,6 +64,8 @@ export class UserCodeRateLimiter {
     const path = url.pathname;
 
     try {
+      await this.initialize();
+
       // Check if IP is rate limited
       if (path === '/check' && request.method === 'POST') {
         const { ip } = (await request.json()) as { ip: string };
@@ -72,7 +93,9 @@ export class UserCodeRateLimiter {
       // Reset attempts (after successful verification)
       if (path === '/reset' && request.method === 'POST') {
         const { ip } = (await request.json()) as { ip: string };
-        this.attempts.delete(ip);
+        if (this.attempts.delete(ip)) {
+          await this.persist();
+        }
 
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -183,12 +206,15 @@ export class UserCodeRateLimiter {
 
       this.attempts.set(ip, attempt);
     }
+
+    await this.persist();
   }
 
   /**
    * Cleanup expired rate limit records
    */
   async alarm(): Promise<void> {
+    await this.initialize();
     const now = Date.now();
     const hourAgo = now - 60 * 60 * 1000;
     let cleaned = 0;
@@ -208,6 +234,7 @@ export class UserCodeRateLimiter {
 
     if (cleaned > 0) {
       this.log.info('Cleaned up expired rate limit records', { count: cleaned });
+      await this.persist();
     }
 
     // Schedule next cleanup

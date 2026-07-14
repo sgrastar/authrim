@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateSecureNonce, generateRandomString, sha256Base64url } from '../crypto';
+import {
+  generateSecureNonce,
+  generateRandomString,
+  hashTransactionCode,
+  sha256Base64url,
+} from '../crypto';
 
 describe('generateSecureNonce', () => {
   it('should generate a hex string of correct length', async () => {
@@ -35,6 +40,25 @@ describe('generateSecureNonce', () => {
 
     expect(nonce16).toHaveLength(32); // 16 bytes = 32 hex
     expect(nonce64).toHaveLength(128); // 64 bytes = 128 hex
+  });
+});
+
+describe('hashTransactionCode', () => {
+  const secret = '0123456789abcdef0123456789abcdef';
+
+  it('binds a transaction-code verifier to tenant and offer', async () => {
+    const base = await hashTransactionCode(secret, 'tenant-a', 'offer-a', '123456');
+    await expect(hashTransactionCode(secret, 'tenant-b', 'offer-a', '123456')).resolves.not.toBe(
+      base
+    );
+    await expect(hashTransactionCode(secret, 'tenant-a', 'offer-b', '123456')).resolves.not.toBe(
+      base
+    );
+  });
+
+  it('fails closed when the deployment secret is absent or too short', async () => {
+    await expect(hashTransactionCode(undefined, 'tenant-a', 'offer-a', '123456')).rejects.toThrow();
+    await expect(hashTransactionCode('short', 'tenant-a', 'offer-a', '123456')).rejects.toThrow();
   });
 });
 

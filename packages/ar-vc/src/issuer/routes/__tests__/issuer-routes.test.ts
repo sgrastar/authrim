@@ -9,6 +9,7 @@ import { issuerMetadataRoute } from '../metadata';
 import { credentialOfferRoute } from '../offer';
 import { credentialRoute } from '../credential';
 import { deferredCredentialRoute } from '../deferred';
+import { vciNonceRoute } from '../nonce';
 import type { Context } from 'hono';
 import type { Env } from '../../../types';
 
@@ -29,11 +30,26 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    createSDJWTVC: vi.fn().mockResolvedValue({
-      combined: 'header.payload.signature~disclosure1~disclosure2~',
-      issuerSignedJwt: 'header.payload.signature',
-      disclosures: ['disclosure1', 'disclosure2'],
-    }),
+    createSDJWTVCWithSigner: vi.fn(
+      async (
+        _claims: Record<string, unknown>,
+        issuer: string,
+        signer: (payload: Record<string, unknown>) => Promise<string>,
+        options: { vct: string }
+      ) => {
+        const issuerJwt = await signer({
+          iss: issuer,
+          vct: options.vct,
+          iat: Math.floor(Date.now() / 1000),
+          _sd_alg: 'sha-256',
+        });
+        return {
+          combined: `${issuerJwt}~disclosure1~disclosure2~`,
+          issuerSignedJwt: issuerJwt,
+          disclosures: ['disclosure1', 'disclosure2'],
+        };
+      }
+    ),
     loadFeatureConfig: vi.fn().mockResolvedValue({ enabled: false }),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
     D1Adapter: class {
@@ -77,6 +93,9 @@ interface TokenValidationResult {
   tenantId?: string;
   error?: string;
   vct?: string;
+  credentialConfigurationId?: string;
+  jti?: string;
+  offerId?: string;
   claims?: Record<string, unknown>;
   holderBinding?: {
     jwk?: object;
@@ -88,6 +107,7 @@ interface TokenValidationResult {
 const tokenValidationMocks = vi.hoisted(() => ({
   mockValidateVCIAccessToken: vi.fn(),
   mockValidateProofOfPossession: vi.fn(),
+  mockDecodeVCIProofNonce: vi.fn(),
 }));
 const mockValidateVCIAccessToken = tokenValidationMocks.mockValidateVCIAccessToken as ReturnType<
   typeof vi.fn<() => Promise<TokenValidationResult>>
@@ -107,11 +127,13 @@ vi.mock('../../services/token-validation', () => ({
   validateVCIAccessToken: (): Promise<TokenValidationResult> =>
     tokenValidationMocks.mockValidateVCIAccessToken() as Promise<TokenValidationResult>,
   validateProofOfPossession: tokenValidationMocks.mockValidateProofOfPossession,
+  decodeVCIProofNonce: tokenValidationMocks.mockDecodeVCIProofNonce,
 }));
 
 // Mock crypto utilities
 vi.mock('../../../utils/crypto', () => ({
   generateSecureNonce: vi.fn().mockResolvedValue('mock-c-nonce-12345'),
+  sha256Base64url: vi.fn(async (value: string) => `digest-${value.length}`),
 }));
 
 // Helper to create mock context
@@ -132,6 +154,7 @@ const createMockContext = (
   };
 
   const mockKeyManagerStub = {
+    signSDJWTIssuerRpc: vi.fn().mockResolvedValue({ token: 'header.payload.signature' }),
     fetch: vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -198,6 +221,7 @@ const createMockContext = (
         headers: { 'Content-Type': 'application/json' },
       });
     }),
+    header: vi.fn(),
     // Mock get method for getLogger
     get: vi.fn().mockReturnValue(undefined),
   } as unknown as Context<{ Bindings: Env }>;
@@ -210,13 +234,15 @@ describe('Issuer Metadata Route', () => {
     const data = (await response.json()) as {
       credential_issuer: string;
       credential_endpoint: string;
+      nonce_endpoint: string;
       deferred_credential_endpoint: string;
       credential_configurations_supported: Record<string, object>;
     };
 
     expect(response.status).toBe(200);
-    expect(data.credential_issuer).toBe('did:web:authrim.com');
+    expect(data.credential_issuer).toBe('https://authrim.com');
     expect(data.credential_endpoint).toContain('/vci/credential');
+    expect(data.nonce_endpoint).toContain('/vci/nonce');
     expect(data.deferred_credential_endpoint).toContain('/vci/deferred');
     expect(data.credential_configurations_supported).toBeDefined();
   });
@@ -262,7 +288,36 @@ describe('Issuer Metadata Route', () => {
     const response = await issuerMetadataRoute(c);
     const data = (await response.json()) as { credential_issuer: string };
 
-    expect(data.credential_issuer).toBe('did:web:tenant1.example.com');
+    expect(data.credential_issuer).toBe('https://tenant1.example.com');
+  });
+});
+
+describe('VCI Nonce Route', () => {
+  it('stores only the nonce digest in the routed coordinator', async () => {
+    let storedBody: Record<string, unknown> | undefined;
+    const stub = {
+      fetch: vi.fn(async (request: Request) => {
+        storedBody = (await request.json()) as Record<string, unknown>;
+        return Response.json({ created: true }, { status: 201 });
+      }),
+    };
+    const c = createMockContext({
+      env: {
+        AUTHRIM_CONFIG: { get: vi.fn().mockResolvedValue(null) } as unknown as KVNamespace,
+        CREDENTIAL_OFFER_STORE: {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'nonce-do' }),
+          get: vi.fn().mockReturnValue(stub),
+        } as unknown as DurableObjectNamespace,
+      },
+    });
+
+    const response = await vciNonceRoute(c);
+    const data = (await response.json()) as { c_nonce: string };
+
+    expect(response.status).toBe(200);
+    expect(data.c_nonce).toMatch(/^g\d+:[a-z0-9-]+:\d+:cn_.+\.[A-Za-z0-9_-]+$/);
+    expect(storedBody?.nonceHash).toBe(`digest-${data.c_nonce.length}`);
+    expect(JSON.stringify(storedBody)).not.toContain(data.c_nonce);
   });
 });
 
@@ -273,13 +328,15 @@ describe('Credential Offer Route', () => {
 
   // Region-sharded offer ID format: g{gen}:{region}:{shard}:co_{uuid}
   const VALID_OFFER_ID = 'g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000';
-  const NOT_FOUND_OFFER_ID = 'g1:apac:5:co_nonexistent-uuid';
+  const VALID_OFFER_REFERENCE = `${VALID_OFFER_ID}.offer-secret-abcdefghijklmnopqrstuvwxyz`;
+  const NOT_FOUND_OFFER_ID =
+    'g1:apac:5:co_nonexistent-uuid.offer-secret-abcdefghijklmnopqrstuvwxyz';
 
   it('should return credential offer', async () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
-      preAuthorizedCode: 'pre-auth-code-123',
+      txCodeRequired: false,
       status: 'pending',
       expiresAt: Date.now() + 600000,
     };
@@ -290,7 +347,7 @@ describe('Credential Offer Route', () => {
 
     const c = createMockContext({
       req: {
-        param: vi.fn().mockReturnValue(VALID_OFFER_ID),
+        param: vi.fn().mockReturnValue(VALID_OFFER_REFERENCE),
       },
       env: {
         CREDENTIAL_OFFER_STORE: {
@@ -308,7 +365,7 @@ describe('Credential Offer Route', () => {
     };
 
     expect(response.status).toBe(200);
-    expect(data.credential_issuer).toBe('did:web:authrim.com');
+    expect(data.credential_issuer).toBe('https://authrim.com');
     expect(data.credential_configuration_ids).toContain('AuthrimIdentityCredential');
     expect(data.grants).toBeDefined();
   });
@@ -317,7 +374,7 @@ describe('Credential Offer Route', () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
-      preAuthorizedCode: 'pre-auth-code-456',
+      txCodeRequired: false,
       status: 'pending',
       expiresAt: Date.now() + 600000,
     };
@@ -328,7 +385,7 @@ describe('Credential Offer Route', () => {
 
     const c = createMockContext({
       req: {
-        param: vi.fn().mockReturnValue(VALID_OFFER_ID),
+        param: vi.fn().mockReturnValue(VALID_OFFER_REFERENCE),
       },
       env: {
         CREDENTIAL_OFFER_STORE: {
@@ -350,15 +407,14 @@ describe('Credential Offer Route', () => {
     expect(data.grants['urn:ietf:params:oauth:grant-type:pre-authorized_code']).toBeDefined();
     expect(
       data.grants['urn:ietf:params:oauth:grant-type:pre-authorized_code']['pre-authorized_code']
-    ).toBe('pre-auth-code-456');
+    ).toBe(VALID_OFFER_REFERENCE);
   });
 
   it('should include tx_code when PIN is required', async () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
-      preAuthorizedCode: 'pre-auth-code-789',
-      txCode: '123456',
+      txCodeRequired: true,
       status: 'pending',
       expiresAt: Date.now() + 600000,
     };
@@ -369,7 +425,7 @@ describe('Credential Offer Route', () => {
 
     const c = createMockContext({
       req: {
-        param: vi.fn().mockReturnValue(VALID_OFFER_ID),
+        param: vi.fn().mockReturnValue(VALID_OFFER_REFERENCE),
       },
       env: {
         CREDENTIAL_OFFER_STORE: {
@@ -446,7 +502,7 @@ describe('Credential Offer Route', () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
-      preAuthorizedCode: 'pre-auth-code-123',
+      txCodeRequired: false,
       status: 'pending',
       expiresAt: Date.now() - 100000, // Expired
     };
@@ -457,7 +513,7 @@ describe('Credential Offer Route', () => {
 
     const c = createMockContext({
       req: {
-        param: vi.fn().mockReturnValue(VALID_OFFER_ID),
+        param: vi.fn().mockReturnValue(VALID_OFFER_REFERENCE),
       },
       env: {
         CREDENTIAL_OFFER_STORE: {
@@ -476,12 +532,12 @@ describe('Credential Offer Route', () => {
     expect(data.error_description).toContain('invalid');
   });
 
-  it('should return 400 when offer is already claimed', async () => {
+  it('should return 400 when offer is already consumed', async () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
-      preAuthorizedCode: 'pre-auth-code-123',
-      status: 'claimed',
+      txCodeRequired: false,
+      status: 'consumed',
       expiresAt: Date.now() + 600000,
     };
 
@@ -491,7 +547,7 @@ describe('Credential Offer Route', () => {
 
     const c = createMockContext({
       req: {
-        param: vi.fn().mockReturnValue(VALID_OFFER_ID),
+        param: vi.fn().mockReturnValue(VALID_OFFER_REFERENCE),
       },
       env: {
         CREDENTIAL_OFFER_STORE: {
@@ -520,14 +576,17 @@ describe('Credential Offer Route', () => {
     const response = await credentialOfferRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(500);
-    expect(data.error).toBe('server_error');
+    expect(response.status).toBe(404);
+    expect(data.error).toBe('invalid_request');
     // ErrorFactory returns standardized message for internal errors
     expect(data.error_description).toBeDefined();
   });
 });
 
 describe('Credential Route', () => {
+  const PROOF_NONCE =
+    'g1:apac:3:cn_550e8400-e29b-41d4-a716-446655440000.abcdefghijklmnopqrstuvwxyzABCDEF';
+
   beforeEach(() => {
     vi.clearAllMocks();
     routeCoreMocks.allocateIndex.mockResolvedValue({
@@ -536,6 +595,7 @@ describe('Credential Route', () => {
       index: 42,
     });
     routeCoreMocks.createCredential.mockResolvedValue(undefined);
+    tokenValidationMocks.mockDecodeVCIProofNonce.mockReturnValue(PROOF_NONCE);
     // Reset mock to default invalid response (no token provided tests should fail auth)
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: false,
@@ -634,31 +694,24 @@ describe('Credential Route', () => {
     expect(parseBody).not.toHaveBeenCalled();
   });
 
-  it('should reject proof requests when no c_nonce is stored for the user', async () => {
+  it('should reject a proof that does not carry a routable nonce', async () => {
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: true,
       userId: 'user-123',
       tenantId: 'tenant-1',
+      credentialConfigurationId: 'AuthrimIdentityCredential',
+      jti: 'token-jti',
+      offerId: 'g1:apac:3:co_offer-123',
       claims: {},
     });
-    const kvGet = vi.fn().mockResolvedValue(null);
-    const kvDelete = vi.fn().mockResolvedValue(undefined);
+    tokenValidationMocks.mockDecodeVCIProofNonce.mockReturnValue(null);
 
     const c = createMockContext({
-      env: {
-        AUTHRIM_CONFIG: {
-          get: kvGet,
-          delete: kvDelete,
-        } as unknown as KVNamespace,
-      },
       req: {
         header: vi.fn().mockReturnValue('Bearer valid-token'),
         json: vi.fn().mockResolvedValue({
-          format: 'dc+sd-jwt',
-          proof: {
-            proof_type: 'jwt',
-            jwt: 'proof.jwt',
-          },
+          credential_configuration_id: 'AuthrimIdentityCredential',
+          proofs: { jwt: ['proof.jwt'] },
         }),
       },
     });
@@ -667,41 +720,29 @@ describe('Credential Route', () => {
     const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_proof');
-    expect(kvGet).toHaveBeenCalledWith('cnonce:user-123');
+    expect(data.error).toBe('invalid_nonce');
     expect(mockValidateProofOfPossession).not.toHaveBeenCalled();
-    expect(kvDelete).not.toHaveBeenCalled();
   });
 
-  it('should reject invalid proof of possession without consuming the stored c_nonce', async () => {
+  it('should reject an invalid proof before reserving its nonce', async () => {
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: true,
       userId: 'user-123',
       tenantId: 'tenant-1',
+      credentialConfigurationId: 'AuthrimIdentityCredential',
+      jti: 'token-jti',
       claims: {},
     });
     mockValidateProofOfPossession.mockResolvedValue({
       valid: false,
       error: 'Invalid nonce',
     });
-    const kvGet = vi.fn().mockResolvedValue('stored-c-nonce');
-    const kvDelete = vi.fn().mockResolvedValue(undefined);
-
     const c = createMockContext({
-      env: {
-        AUTHRIM_CONFIG: {
-          get: kvGet,
-          delete: kvDelete,
-        } as unknown as KVNamespace,
-      },
       req: {
         header: vi.fn().mockReturnValue('Bearer valid-token'),
         json: vi.fn().mockResolvedValue({
-          format: 'dc+sd-jwt',
-          proof: {
-            proof_type: 'jwt',
-            jwt: 'proof.jwt',
-          },
+          credential_configuration_id: 'AuthrimIdentityCredential',
+          proofs: { jwt: ['proof.jwt'] },
         }),
       },
     });
@@ -714,74 +755,76 @@ describe('Credential Route', () => {
     expect(mockValidateProofOfPossession).toHaveBeenCalledWith(
       c.env,
       { proof_type: 'jwt', jwt: 'proof.jwt' },
-      'stored-c-nonce',
-      'did:web:authrim.com'
+      PROOF_NONCE,
+      'https://authrim.com'
     );
-    expect(kvDelete).not.toHaveBeenCalled();
   });
 
-  it('should issue a credential, rotate c_nonce, and store issuance metadata', async () => {
+  it('should reserve one proof nonce and issue the final credentials array', async () => {
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: true,
       userId: 'user-123',
       tenantId: 'tenant-1',
-      vct: 'https://authrim.com/credentials/identity/v1',
-      claims: {
-        given_name: 'Alice',
-        email: 'alice@example.com',
-      },
+      credentialConfigurationId: 'AuthrimIdentityCredential',
+      jti: 'token-jti',
+      offerId: 'g1:apac:3:co_offer-123',
     });
     mockValidateProofOfPossession.mockResolvedValue({
       valid: true,
       holderPublicKey: { kty: 'EC', crv: 'P-256', x: 'holder-x' },
     });
-    const kvGet = vi.fn().mockResolvedValue('stored-c-nonce');
-    const kvPut = vi.fn().mockResolvedValue(undefined);
-    const kvDelete = vi.fn().mockResolvedValue(undefined);
+    const nonceStub = {
+      fetch: vi.fn(async (request: Request) => {
+        const path = new URL(request.url).pathname;
+        if (path === '/nonce/reserve') {
+          return Response.json({ reserved: true, reservationId: 'nonce-reservation' });
+        }
+        if (path === '/nonce/complete') return Response.json({ completed: true });
+        if (path === '/get') {
+          return Response.json({
+            userId: 'user-123',
+            credentialConfigurationId: 'AuthrimIdentityCredential',
+            claims: { given_name: 'Alice', email: 'alice@example.com' },
+            status: 'consumed',
+            expiresAt: Date.now() + 60_000,
+          });
+        }
+        return Response.json({ released: true });
+      }),
+    };
 
     const c = createMockContext({
       env: {
-        AUTHRIM_CONFIG: {
-          get: kvGet,
-          put: kvPut,
-          delete: kvDelete,
-        } as unknown as KVNamespace,
+        CREDENTIAL_OFFER_STORE: {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'nonce-do-id' }),
+          get: vi.fn().mockReturnValue(nonceStub),
+        } as unknown as DurableObjectNamespace,
       },
       req: {
         header: vi.fn().mockReturnValue('Bearer valid-token'),
         json: vi.fn().mockResolvedValue({
-          format: 'dc+sd-jwt',
-          proof: {
-            proof_type: 'jwt',
-            jwt: 'proof.jwt',
-          },
+          credential_configuration_id: 'AuthrimIdentityCredential',
+          proofs: { jwt: ['proof.jwt'] },
         }),
       },
     });
 
     const response = await credentialRoute(c);
     const data = (await response.json()) as {
-      credential: string;
-      c_nonce: string;
-      c_nonce_expires_in: number;
+      credentials: string[];
     };
 
     expect(response.status).toBe(200);
     expect(data).toEqual({
-      credential: 'header.payload.signature~disclosure1~disclosure2~',
-      c_nonce: 'mock-c-nonce-12345',
-      c_nonce_expires_in: 300,
+      credentials: ['header.payload.signature~disclosure1~disclosure2~'],
     });
     expect(mockValidateProofOfPossession).toHaveBeenCalledWith(
       c.env,
       { proof_type: 'jwt', jwt: 'proof.jwt' },
-      'stored-c-nonce',
-      'did:web:authrim.com'
+      PROOF_NONCE,
+      'https://authrim.com'
     );
-    expect(kvDelete).toHaveBeenCalledWith('cnonce:user-123');
-    expect(kvPut).toHaveBeenCalledWith('cnonce:user-123', 'mock-c-nonce-12345', {
-      expirationTtl: 300,
-    });
+    expect(nonceStub.fetch).toHaveBeenCalledTimes(3);
     expect(routeCoreMocks.allocateIndex).toHaveBeenCalledWith('tenant-1', 'revocation');
     expect(routeCoreMocks.createCredential).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -944,8 +987,6 @@ describe('Deferred Credential Route', () => {
       status: 'deferred',
     });
 
-    const mockKVPut = vi.fn().mockResolvedValue(undefined);
-
     const c = createMockContext({
       req: {
         header: vi.fn().mockReturnValue('Bearer valid-token'),
@@ -953,23 +994,14 @@ describe('Deferred Credential Route', () => {
           transaction_id: 'tx-123',
         }),
       },
-      env: {
-        AUTHRIM_CONFIG: {
-          put: mockKVPut,
-        } as unknown as KVNamespace,
-      },
     });
 
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as {
-      credential: string;
-      c_nonce: string;
-      c_nonce_expires_in: number;
+      credentials: string[];
     };
 
     expect(response.status).toBe(200);
-    expect(data.credential).toBe('header.payload.signature~disclosure1~disclosure2~');
-    expect(data.c_nonce).toBeDefined();
-    expect(data.c_nonce_expires_in).toBeDefined();
+    expect(data.credentials).toEqual(['header.payload.signature~disclosure1~disclosure2~']);
   });
 });

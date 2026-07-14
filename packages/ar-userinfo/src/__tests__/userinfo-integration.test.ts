@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
 import app from '../index';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -40,6 +41,11 @@ const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
   })
 );
 const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
+const { privateKey: testSigningPrivateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+});
 
 // Mock shared module
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -155,23 +161,18 @@ function createMockEnv(): Env {
       prepare: vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue(sampleUser),
+          all: vi.fn().mockResolvedValue({ results: [] }),
+          run: vi.fn().mockResolvedValue({ success: true }),
         }),
       }),
     } as unknown as D1Database,
     KEY_MANAGER: {
       idFromName: vi.fn().mockReturnValue('key-manager-id'),
       get: vi.fn().mockReturnValue({
-        fetch: vi.fn().mockResolvedValue(
-          new Response(
-            JSON.stringify({
-              kid: 'key-1',
-              privatePEM: `-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDHwHQhYcTQ1O0M
------END PRIVATE KEY-----`,
-            }),
-            { status: 200 }
-          )
-        ),
+        getActiveKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+          kid: 'key-1',
+          privatePEM: testSigningPrivateKey,
+        }),
       }),
     } as unknown as DurableObjectNamespace,
     KEY_MANAGER_SECRET: 'test-secret',
@@ -552,9 +553,24 @@ describe('UserInfo Integration Tests', () => {
 
       const res = await app.fetch(req, mockEnv);
 
-      // Encrypted response may fail due to mock key, but we verify the flow attempted encryption
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/jwt');
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      expect(await res.text()).toBe(
+        'eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ.encrypted.iv.ciphertext.tag'
+      );
       expect(isUserInfoEncryptionRequired).toHaveBeenCalled();
       expect(getClientPublicKey).toHaveBeenCalled();
+      expect(encryptJWT).toHaveBeenCalledWith(
+        expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
+        expect.objectContaining({ kid: 'client-key-1' }),
+        {
+          alg: 'RSA-OAEP',
+          enc: 'A256GCM',
+          cty: 'JWT',
+          kid: 'client-key-1',
+        }
+      );
     });
 
     it('should return 400 when encryption is required but client has no public key', async () => {
@@ -633,8 +649,10 @@ describe('UserInfo Integration Tests', () => {
 
       const res = await app.fetch(req, mockEnv);
 
-      // Signing will fail due to mock key, but we verify the path was taken
-      // In real tests with proper keys, this would return Content-Type: application/jwt
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/jwt');
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      expect((await res.text()).split('.')).toHaveLength(3);
       expect(getClient).toHaveBeenCalledWith(mockEnv, 'client-123');
     });
   });

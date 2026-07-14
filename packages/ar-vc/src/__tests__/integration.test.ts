@@ -64,7 +64,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
         }),
       };
     }),
-    createSDJWTVC: vi.fn().mockResolvedValue({
+    createSDJWTVCWithSigner: vi.fn().mockResolvedValue({
       combined: 'mock-sd-jwt-vc~disclosure1~disclosure2~',
       issuerSignedJwt: 'mock-jwt',
       disclosures: ['disclosure1', 'disclosure2'],
@@ -449,7 +449,7 @@ describe('E2E: VCI Issuance Flow', () => {
 
     // For unit testing, we verify the individual components work
     const offerData = {
-      credential_issuer: 'did:web:authrim.com',
+      credential_issuer: 'https://authrim.com',
       credential_configuration_ids: ['AuthrimIdentityCredential'],
       grants: {
         'urn:ietf:params:oauth:grant-type:pre-authorized_code': {
@@ -462,7 +462,7 @@ describe('E2E: VCI Issuance Flow', () => {
       },
     };
 
-    expect(offerData.credential_issuer).toBe('did:web:authrim.com');
+    expect(offerData.credential_issuer).toBe('https://authrim.com');
     expect(offerData.grants['urn:ietf:params:oauth:grant-type:pre-authorized_code']).toBeDefined();
   });
 });
