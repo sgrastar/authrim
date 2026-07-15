@@ -50,7 +50,7 @@
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"packages/**/*.ts\"",
     "format:check": "prettier --check \"packages/**/*.ts\"",
-    "security:audit": "pnpm audit --audit-level=high",
+    "security:audit": "pnpm --package=pnpm@11.4.0 dlx pnpm --pm-on-fail=ignore audit --audit-level=high",
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts",
     "migrate:create": "tsx scripts/create-migration.ts",
