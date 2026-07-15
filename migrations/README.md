@@ -56,6 +56,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `017_core_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
 | `018_repair_device_code_client_foreign_key.sql` | Repairs tenant-scoped device-code client foreign keys. |
 | `019_vc_verification_evidence.sql` | Adds minimized VC verification evidence, freshness/invalidation metadata, and the VC attribute scope. |
+| `020_flow_assignment_credential_profiles.sql` | Extends Flow assignments with credential-profile targets without modifying the applied Flow baseline. |
 
 ## Current Admin Files
 
@@ -91,6 +92,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `006_external_flow_runtime.sql` | Flow runtime contract, interaction context, templates, and unique assignments. |
 | `007_external_totp_credentials.sql` | TOTP credentials and backup codes. |
 | `008_external_vc_verification_evidence.sql` | Adds VC verification evidence, freshness metadata, and the VC attribute scope for external PostgreSQL. |
+| `009_external_flow_assignment_credential_profiles.sql` | Extends external PostgreSQL Flow assignments with credential-profile targets. |
 
 ## Commands
 
@@ -102,6 +104,6 @@ DEPLOY_ENV=test node scripts/ci-run-migrations.mjs
 pnpm --filter @authrim/setup test -- src/__tests__/cloudflare-migration-status.test.ts
 ```
 
-When adding a new feature migration, prefer extending the appropriate category
-file during preview releases. If a release guarantees in-place upgrades, add a
-new migration file instead of changing already-applied files.
+Applied migration files are immutable because the setup runner verifies their
+recorded checksums. Add a new sequential migration for every schema change,
+including preview environments and consolidated baseline corrections.

@@ -330,6 +330,12 @@ describe('buildRecordMigrationSql', () => {
 });
 
 describe('calculateD1MigrationChecksum', () => {
+  it('keeps the applied core Flow runtime migration immutable', () => {
+    expect(calculateD1MigrationChecksum(join(rootMigrationsDir, '017_core_flow_runtime.sql'))).toBe(
+      '508ca3d8fcdf84a5a53ef050068d92f29ca4585f819d7c35975dffd154929b36'
+    );
+  });
+
   it('changes when rendered migration SQL changes', () => {
     const dir = mkdtempSync(join(tmpdir(), 'authrim-migration-checksum-'));
     const file = join(dir, '001_test.sql');
@@ -413,6 +419,22 @@ describe('migration seed SQL portability', () => {
     expect(sql).toContain('device_secret_revoke_trust_groups TEXT');
     expect(sql).toContain('device_secret_introspection_enabled INTEGER');
     expect(sql).toContain('device_secret_introspection_trust_groups TEXT');
+  });
+
+  it('extends Flow assignment targets in follow-up migrations instead of baselines', () => {
+    const coreBaseline = readMigration('017_core_flow_runtime.sql');
+    const coreExtension = readMigration('020_flow_assignment_credential_profiles.sql');
+    const postgresBaseline = readMigration('external/postgres/006_external_flow_runtime.sql');
+    const postgresExtension = readMigration(
+      'external/postgres/009_external_flow_assignment_credential_profiles.sql'
+    );
+
+    expect(coreBaseline).not.toContain("'credential_profile'");
+    expect(postgresBaseline).not.toContain("'credential_profile'");
+    expect(coreExtension).toContain("'credential_profile'");
+    expect(postgresExtension).toContain("'credential_profile'");
+    expect(postgresExtension).toContain('flow_assignments_target_type_check');
+    expect(postgresExtension).toContain('flow_assignments_target_id_check');
   });
 
   it('keeps Admin role assignment scope normalization independent from timestamp columns', () => {
@@ -921,6 +943,145 @@ INSERT INTO screens (
             "SELECT COUNT(*) FROM screens WHERE tenant_id = 'default';"
           )
         ).toBe('0');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'upgrades existing Flow assignments for credential profiles without losing constraints',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-flow-assignment-migration-'));
+      const dbPath = join(tempDir, 'test.db');
+      const extensionMigration = '020_flow_assignment_credential_profiles.sql';
+      const migrationsBeforeExtension = activeCoreMigrationFiles().filter(
+        (migrationFile) => migrationFile !== extensionMigration
+      );
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, migrationsBeforeExtension);
+        const assignmentCountBefore = readSqlite(
+          sqlite3Path,
+          dbPath,
+          'SELECT COUNT(*) FROM flow_assignments;'
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [extensionMigration]);
+
+        expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM flow_assignments;')).toBe(
+          assignmentCountBefore
+        );
+
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+INSERT INTO flow_assignments (
+  id, tenant_id, target_type, target_id, flow_kind, flow_id, enabled, created_at, updated_at
+) VALUES (
+  'credential-profile-assignment',
+  'default',
+  'credential_profile',
+  'credential-profile-1',
+  'credential_issuance',
+  'flow-default-login-no-consent',
+  1,
+  100,
+  100
+);`
+        );
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT target_type || ':' || target_id
+               FROM flow_assignments
+              WHERE id = 'credential-profile-assignment';`
+          )
+        ).toBe('credential_profile:credential-profile-1');
+
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `INSERT INTO flow_assignments (
+  id, tenant_id, target_type, target_id, flow_kind, flow_id, created_at, updated_at
+) VALUES (
+  'credential-profile-missing-target',
+  'default',
+  'credential_profile',
+  NULL,
+  'credential_issuance',
+  'flow-default-login-no-consent',
+  100,
+  100
+);`
+          )
+        ).toThrow();
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `INSERT INTO flow_assignments (
+  id, tenant_id, target_type, target_id, flow_kind, flow_id, created_at, updated_at
+) VALUES (
+  'credential-profile-duplicate',
+  'default',
+  'credential_profile',
+  'credential-profile-1',
+  'credential_issuance',
+  'flow-default-login-no-consent',
+  100,
+  100
+);`
+          )
+        ).toThrow();
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `INSERT INTO flow_assignments (
+  id, tenant_id, target_type, target_id, flow_kind, flow_id, created_at, updated_at
+) VALUES (
+  'unsupported-target-assignment',
+  'default',
+  'unsupported',
+  'target-1',
+  'credential_issuance',
+  'flow-default-login-no-consent',
+  100,
+  100
+);`
+          )
+        ).toThrow();
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `PRAGMA foreign_keys = ON;
+INSERT INTO flow_assignments (
+  id, tenant_id, target_type, target_id, flow_kind, flow_id, created_at, updated_at
+) VALUES (
+  'missing-flow-assignment',
+  'default',
+  'credential_profile',
+  'credential-profile-2',
+  'credential_issuance',
+  'missing-flow',
+  100,
+  100
+);`
+          )
+        ).toThrow();
+        expect(findInvalidForeignKeyReferences(sqlite3Path, dbPath)).toEqual([]);
+        expect(readSqlite(sqlite3Path, dbPath, 'PRAGMA foreign_key_check;')).toBe('');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
