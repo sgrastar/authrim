@@ -85,9 +85,7 @@ CREATE TABLE IF NOT EXISTS flow_versions (
 CREATE TABLE IF NOT EXISTS flow_assignments (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  target_type TEXT NOT NULL CHECK (
-    target_type IN ('tenant', 'oidc_client', 'saml_sp', 'credential_profile')
-  ),
+  target_type TEXT NOT NULL CHECK (target_type IN ('tenant', 'oidc_client', 'saml_sp')),
   target_id TEXT,
   flow_kind TEXT NOT NULL,
   flow_id TEXT NOT NULL,
@@ -96,7 +94,7 @@ CREATE TABLE IF NOT EXISTS flow_assignments (
   updated_at BIGINT NOT NULL,
   CHECK (
     (target_type = 'tenant' AND target_id IS NULL)
-    OR (target_type IN ('oidc_client', 'saml_sp', 'credential_profile') AND target_id IS NOT NULL)
+    OR (target_type IN ('oidc_client', 'saml_sp') AND target_id IS NOT NULL)
   ),
   CONSTRAINT flow_assignments_flow_fk FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE
 );
