@@ -165,10 +165,15 @@ describe('client-config update handler', () => {
     expect(body.client_name).toBe('Smoke Client Updated');
 
     expect(adapter.execute).toHaveBeenCalledTimes(1);
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE tenant_id = ? AND client_id = ?'),
+      expect.any(Array)
+    );
     const executeParams = (adapter.execute as ReturnType<typeof vi.fn>).mock
       .calls[0]?.[1] as unknown[];
     expect(executeParams).toBeDefined();
     expect(executeParams.some((value) => value === undefined)).toBe(false);
+    expect(executeParams.slice(-2)).toEqual(['default', 'client-123']);
 
     const requestCache = mocked.getRequestCache.mock.results[0]?.value as {
       clients: Map<string, unknown>;
@@ -280,5 +285,28 @@ describe('client-config update handler', () => {
     const body = (await res.json()) as { error: string; error_description: string };
     expect(body.error).toBe('invalid_client_metadata');
     expect(body.error_description).toContain('internal addresses');
+  });
+
+  it('rejects unsupported JARM signing metadata before persistence', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        authorization_signed_response_alg: 'HS256',
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: expect.stringContaining('authorization_signed_response_alg'),
+    });
+    expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
   });
 });

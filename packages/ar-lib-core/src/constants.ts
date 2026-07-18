@@ -295,6 +295,12 @@ export const ALLOWED_ASYMMETRIC_ALGS = [
 export const ALLOWED_DPOP_ALGS = ['ES256', 'PS256', 'EdDSA'] as const;
 
 /**
+ * FAPI 2.0 Message Signing algorithms that provide non-repudiation.
+ * RS256 is deliberately excluded by the Final profile.
+ */
+export const FAPI2_MESSAGE_SIGNING_ALGS = ['ES256', 'PS256', 'EdDSA'] as const;
+
+/**
  * HTTP Status Codes (commonly used in OIDC)
  */
 export const HTTP_STATUS = {

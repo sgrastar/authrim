@@ -3,6 +3,7 @@ import {
   getPublishedOIDCSigningAlgorithms,
   resolveIDTokenSigningAlgorithm,
   resolveUserInfoSigningAlgorithm,
+  resolveAuthorizationResponseSigningAlgorithm,
 } from '../oidc-signing';
 
 describe('OIDC signing policy', () => {
@@ -20,6 +21,22 @@ describe('OIDC signing policy', () => {
     expect(() =>
       resolveUserInfoSigningAlgorithm({ userinfo_signed_response_alg: 'RS512' }, false)
     ).toThrow('Unsupported UserInfo signing algorithm');
+  });
+
+  it('defaults JARM to RS256 but permits a profile default and a client ES256 choice', () => {
+    expect(resolveAuthorizationResponseSigningAlgorithm({})).toBe('RS256');
+    expect(resolveAuthorizationResponseSigningAlgorithm({}, 'ES256')).toBe('ES256');
+    expect(
+      resolveAuthorizationResponseSigningAlgorithm(
+        { authorization_signed_response_alg: 'ES256' },
+        'RS256'
+      )
+    ).toBe('ES256');
+    expect(() =>
+      resolveAuthorizationResponseSigningAlgorithm({
+        authorization_signed_response_alg: 'PS256',
+      })
+    ).toThrow('Unsupported authorization response signing algorithm');
   });
 
   it('advertises only algorithms backed by matching public JWKS keys', () => {

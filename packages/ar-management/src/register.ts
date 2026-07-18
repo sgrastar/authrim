@@ -44,6 +44,9 @@ import {
   // Write-Through cache for client metadata
   putClient,
   CanonicalRuntimeUserStore,
+  SUPPORTED_JWE_ALG,
+  SUPPORTED_JWE_ENC,
+  FAPI2_MESSAGE_SIGNING_ALGS,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -553,6 +556,24 @@ function validateRegistrationRequest(
   }
 
   if (
+    data.request_object_signing_alg !== undefined &&
+    ![
+      'none',
+      'RS256',
+      ...FAPI2_MESSAGE_SIGNING_ALGS,
+    ].includes(data.request_object_signing_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'request_object_signing_alg must be one of: none, RS256, ES256, PS256, EdDSA',
+      },
+    };
+  }
+
+  if (
     data.userinfo_signed_response_alg !== undefined &&
     data.userinfo_signed_response_alg !== 'none' &&
     !isOIDCSigningAlgorithm(data.userinfo_signed_response_alg)
@@ -562,6 +583,60 @@ function validateRegistrationRequest(
       error: {
         error: 'invalid_client_metadata',
         error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+      },
+    };
+  }
+
+  if (
+    data.authorization_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(data.authorization_signed_response_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'authorization_signed_response_alg must be one of: RS256, ES256',
+      },
+    };
+  }
+  if (
+    data.authorization_encrypted_response_alg !== undefined &&
+    !SUPPORTED_JWE_ALG.includes(
+      data.authorization_encrypted_response_alg as (typeof SUPPORTED_JWE_ALG)[number]
+    )
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: `authorization_encrypted_response_alg must be one of: ${SUPPORTED_JWE_ALG.join(', ')}`,
+      },
+    };
+  }
+  if (
+    data.authorization_encrypted_response_enc !== undefined &&
+    !SUPPORTED_JWE_ENC.includes(
+      data.authorization_encrypted_response_enc as (typeof SUPPORTED_JWE_ENC)[number]
+    )
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: `authorization_encrypted_response_enc must be one of: ${SUPPORTED_JWE_ENC.join(', ')}`,
+      },
+    };
+  }
+  if (
+    (data.authorization_encrypted_response_alg === undefined) !==
+    (data.authorization_encrypted_response_enc === undefined)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'authorization_encrypted_response_alg and authorization_encrypted_response_enc must be provided together',
       },
     };
   }
@@ -1049,6 +1124,8 @@ async function storeClient(
       userinfo_signed_response_alg,
       id_token_signed_response_alg,
       request_object_signing_alg,
+      authorization_signed_response_alg,
+      authorization_encrypted_response_alg, authorization_encrypted_response_enc,
       post_logout_redirect_uris,
       backchannel_logout_uri, backchannel_logout_session_required,
       frontchannel_logout_uri, frontchannel_logout_session_required,
@@ -1060,7 +1137,7 @@ async function storeClient(
       client_credentials_allowed, allowed_scopes, default_scope,
       require_pkce,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -1106,6 +1183,9 @@ async function storeClient(
       metadata.userinfo_signed_response_alg || null,
       metadata.id_token_signed_response_alg || null,
       metadata.request_object_signing_alg || null,
+      metadata.authorization_signed_response_alg || null,
+      metadata.authorization_encrypted_response_alg || null,
+      metadata.authorization_encrypted_response_enc || null,
       metadata.post_logout_redirect_uris
         ? JSON.stringify(metadata.post_logout_redirect_uris)
         : null,
@@ -1347,6 +1427,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // RFC 9101 (JAR): Request Object signing algorithm
     if (request.request_object_signing_alg)
       response.request_object_signing_alg = request.request_object_signing_alg;
+    if (request.authorization_signed_response_alg)
+      response.authorization_signed_response_alg = request.authorization_signed_response_alg;
+    if (request.authorization_encrypted_response_alg)
+      response.authorization_encrypted_response_alg = request.authorization_encrypted_response_alg;
+    if (request.authorization_encrypted_response_enc)
+      response.authorization_encrypted_response_enc = request.authorization_encrypted_response_enc;
     if (request.claims_parameter_policy)
       response.claims_parameter_policy = request.claims_parameter_policy;
     if (request.asc_enabled !== undefined) response.asc_enabled = request.asc_enabled;

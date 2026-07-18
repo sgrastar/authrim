@@ -14,6 +14,17 @@ export interface CertificationProfile {
       requireDpop: boolean;
       allowPublicClients: boolean;
       clientAssertionAudience?: 'issuer';
+      messageSigning?: {
+        enabled: boolean;
+        requireSignedRequestObject: boolean;
+        requireJarm: boolean;
+        requestObjectSigningAlgorithms: Array<'ES256' | 'PS256' | 'EdDSA'>;
+        authorizationSigningAlgorithms: Array<'RS256' | 'ES256'>;
+        defaultAuthorizationSigningAlgorithm: 'RS256' | 'ES256';
+        maxRequestObjectAgeSeconds: number;
+        maxRequestObjectLifetimeSeconds: number;
+        clockSkewSeconds: number;
+      };
     };
     oidc: {
       requirePar: boolean;
@@ -194,6 +205,37 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
         responseTypesSupported: ['code'],
         tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
         allowNoneAlgorithm: false, // Security: Reject 'none' algorithm
+      },
+    },
+  },
+
+  'fapi-2-message-signing-dpop': {
+    name: 'FAPI 2.0 Message Signing + DPoP',
+    description:
+      'FAPI 2.0 Security Profile Final with signed authorization requests and JARM',
+    settings: {
+      fapi: {
+        enabled: true,
+        requireDpop: true,
+        allowPublicClients: false,
+        clientAssertionAudience: 'issuer',
+        messageSigning: {
+          enabled: true,
+          requireSignedRequestObject: true,
+          requireJarm: true,
+          requestObjectSigningAlgorithms: ['ES256', 'PS256', 'EdDSA'],
+          authorizationSigningAlgorithms: ['ES256'],
+          defaultAuthorizationSigningAlgorithm: 'ES256',
+          maxRequestObjectAgeSeconds: 3600,
+          maxRequestObjectLifetimeSeconds: 3600,
+          clockSkewSeconds: 10,
+        },
+      },
+      oidc: {
+        requirePar: true,
+        responseTypesSupported: ['code'],
+        tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
+        allowNoneAlgorithm: false,
       },
     },
   },

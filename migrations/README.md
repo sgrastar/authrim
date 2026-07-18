@@ -58,6 +58,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `019_vc_verification_evidence.sql` | Adds minimized VC verification evidence, freshness/invalidation metadata, and the VC attribute scope. |
 | `020_flow_assignment_credential_profiles.sql` | Extends Flow assignments with credential-profile targets without modifying the applied Flow baseline. |
 | `021_remove_legacy_ai_grants.sql` | Removes the unenforced legacy core AI Grant table; Admin Agent grants move to DB_ADMIN. |
+| `022_oauth_client_jarm_metadata.sql` | Adds RFC 9102 JARM signing and encryption preferences to tenant-scoped OAuth clients. |
 
 ## Current Admin Files
 

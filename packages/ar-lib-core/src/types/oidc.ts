@@ -315,6 +315,10 @@ export interface ClientRegistrationRequest {
   id_token_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
+  // JARM (JWT-Secured Authorization Response Mode) - RFC 9102
+  authorization_signed_response_alg?: string;
+  authorization_encrypted_response_alg?: string;
+  authorization_encrypted_response_enc?: string;
   // Claims parameter and ASC client settings (Authrim extension)
   claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
   asc_enabled?: boolean;

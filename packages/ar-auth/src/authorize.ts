@@ -68,6 +68,8 @@ import {
   hasSAORulesForTarget,
   normalizeAttributeReleaseConsentPolicy,
   getTenantSystemSettings,
+  resolveAuthorizationResponseSigningAlgorithm,
+  type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
@@ -113,6 +115,7 @@ import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 
 // NIST SP 800-63-4 Assurance Levels
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -1927,6 +1930,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     allowPublicClients?: boolean;
     /** Strict DPoP enforcement mode */
     strictDPoP?: boolean;
+    messageSigning?: FAPI2MessageSigningConfig;
   }
   interface OIDCConfig {
     requirePar?: boolean;
@@ -2308,6 +2312,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       responseMode: response_mode,
       responseType: response_type,
       clientId: validClientId,
+      messageSigning: fapiConfig.messageSigning,
       errorUri: validatedErrorUri,
     });
 
@@ -2490,6 +2495,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         'response_mode=fragment is not compatible with response_type=code'
       );
     }
+  }
+
+  if (
+    fapiConfig.messageSigning?.requireJarm &&
+    (!response_mode || (!response_mode.includes('.jwt') && response_mode !== 'jwt'))
+  ) {
+    return sendError('invalid_request', 'A JARM response_mode is required for this FAPI profile');
   }
 
   // Validate claims parameter (optional, per OIDC Core 5.5)
@@ -4259,7 +4271,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       baseMode = includesIdToken || includesToken ? 'fragment' : 'query';
     }
 
-    return await createJARMResponse(c, validRedirectUri, responseParams, baseMode, validClientId);
+    return await createJARMResponse(
+      c,
+      validRedirectUri,
+      responseParams,
+      baseMode,
+      validClientId,
+      fapiConfig.messageSigning
+    );
   }
 
   // Handle response based on response_mode (traditional non-JWT modes)
@@ -4281,10 +4300,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
  */
 async function getSigningKeyFromKeyManager(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
-  const cached = signingKeyCache.get(tenantId);
+  const cacheKey = `${tenantId}:${algorithm}`;
+  const cached = signingKeyCache.get(cacheKey);
 
   // Check cache — if within TTL, verify KV version to detect emergency rotation
   if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
@@ -4305,20 +4326,11 @@ async function getSigningKeyFromKeyManager(
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Try to get active key via RPC
-  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
+  const keyData = await keyManager.getActiveOIDCSigningKeyWithPrivateRpc(algorithm);
 
   if (keyData) {
     moduleLogger.debug('Active key response', {
       action: 'key_manager_active',
-      hasKid: !!keyData.kid,
-      hasPrivatePEM: !!keyData.privatePEM,
-      pemLength: keyData.privatePEM?.length,
-    });
-  } else {
-    moduleLogger.debug('No active key, rotating', { action: 'key_manager_rotate' });
-    keyData = await keyManager.rotateKeysWithPrivateRpc();
-    moduleLogger.debug('Rotated key', {
-      action: 'key_manager_rotated',
       hasKid: !!keyData.kid,
       hasPrivatePEM: !!keyData.privatePEM,
       pemLength: keyData.privatePEM?.length,
@@ -4351,13 +4363,13 @@ async function getSigningKeyFromKeyManager(
   });
 
   // Import private key (expensive operation: 5-7ms)
-  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  const privateKey = await importPKCS8(keyData.privatePEM, algorithm);
 
   // Fetch current version for cache coherence
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
+  signingKeyCache.set(cacheKey, { privateKey, kid: keyData.kid, timestamp: now, version });
   return { privateKey, kid: keyData.kid };
 }
 
@@ -4377,6 +4389,7 @@ interface ErrorRedirectOptions {
   responseMode?: string;
   responseType?: string | null;
   clientId?: string;
+  messageSigning?: FAPI2MessageSigningConfig;
   // Custom Redirect URIs (Authrim Extension)
   errorUri?: string;
   cancelUri?: string;
@@ -4435,7 +4448,14 @@ async function redirectWithError(
 
   if (isJARM) {
     if (options?.clientId) {
-      return await createJARMResponse(c, targetUri, params, baseMode || 'query', options.clientId);
+      return await createJARMResponse(
+        c,
+        targetUri,
+        params,
+        baseMode || 'query',
+        options.clientId,
+        options.messageSigning
+      );
     }
     moduleLogger.warn(
       'JARM error response requested but client_id unavailable; falling back to base mode',
@@ -4606,7 +4626,8 @@ async function createJARMResponse(
   redirectUri: string,
   params: Record<string, string>,
   baseMode: string,
-  clientId: string
+  clientId: string,
+  messageSigning?: FAPI2MessageSigningConfig
 ): Promise<Response> {
   try {
     // Get client metadata to check for encryption requirements (request-level cached)
@@ -4625,32 +4646,31 @@ async function createJARMResponse(
       ...params, // Include all response parameters
     };
 
-    // Get server's signing key
-    const privateKeyPem = c.env.PRIVATE_KEY_PEM;
-    if (!privateKeyPem) {
-      throw new Error('Server private key not configured');
+    const tenantId = getTenantIdFromContext(c);
+    const defaultSigningAlgorithm =
+      messageSigning?.enabled && messageSigning.defaultAuthorizationSigningAlgorithm
+        ? messageSigning.defaultAuthorizationSigningAlgorithm
+        : 'RS256';
+    const signingAlgorithm = resolveAuthorizationResponseSigningAlgorithm(
+      client,
+      defaultSigningAlgorithm
+    );
+    if (
+      messageSigning?.enabled &&
+      messageSigning.authorizationSigningAlgorithms &&
+      !messageSigning.authorizationSigningAlgorithms.includes(signingAlgorithm)
+    ) {
+      throw new Error('Client authorization response signing algorithm is not allowed by tenant');
     }
-
-    const privateKey = await importPKCS8(privateKeyPem, 'RS256');
-
-    // Get key ID from KV or use default
-    let kid = 'default';
-    try {
-      if (c.env.KV) {
-        const signingKey = (await c.env.KV.get('keys:signing', 'json')) as { kid: string } | null;
-        if (signingKey?.kid) {
-          kid = signingKey.kid;
-        }
-      }
-    } catch (error) {
-      moduleLogger.warn('Failed to get signing key ID, using default', {
-        action: 'signing_key_id_fallback',
-      });
-    }
+    const { privateKey, kid } = await getSigningKeyFromKeyManager(
+      c.env,
+      tenantId,
+      signingAlgorithm
+    );
 
     // Sign the JWT
     const jwt = await new SignJWT(payload)
-      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .setProtectedHeader({ alg: signingAlgorithm, typ: 'oauth-authz-resp+jwt', kid })
       .sign(privateKey);
 
     let responseToken = jwt;

@@ -5,6 +5,7 @@ export type OIDCSigningAlgorithm = (typeof OIDC_SIGNING_ALGORITHMS)[number];
 
 export const DEFAULT_ID_TOKEN_SIGNING_ALGORITHM: OIDCSigningAlgorithm = 'RS256';
 export const DEFAULT_USERINFO_SIGNING_ALGORITHM = 'none' as const;
+export const DEFAULT_AUTHORIZATION_RESPONSE_SIGNING_ALGORITHM: OIDCSigningAlgorithm = 'RS256';
 
 export function isOIDCSigningAlgorithm(value: unknown): value is OIDCSigningAlgorithm {
   return (
@@ -38,6 +39,20 @@ export function resolveUserInfoSigningAlgorithm(
   }
   if (!isOIDCSigningAlgorithm(configured)) {
     throw new Error('Unsupported UserInfo signing algorithm');
+  }
+  return configured;
+}
+
+export function resolveAuthorizationResponseSigningAlgorithm(
+  metadata: { authorization_signed_response_alg?: unknown },
+  defaultAlgorithm: OIDCSigningAlgorithm = DEFAULT_AUTHORIZATION_RESPONSE_SIGNING_ALGORITHM
+): OIDCSigningAlgorithm {
+  const configured = metadata.authorization_signed_response_alg;
+  if (configured === undefined || configured === null || configured === '') {
+    return defaultAlgorithm;
+  }
+  if (!isOIDCSigningAlgorithm(configured)) {
+    throw new Error('Unsupported authorization response signing algorithm');
   }
   return configured;
 }

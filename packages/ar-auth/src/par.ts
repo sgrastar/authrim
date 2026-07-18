@@ -32,29 +32,36 @@ import {
   verifyClientSecretHash,
   getTokenFormat,
   parseToken,
+  parseTokenHeader,
   isInternalUrl,
+  safeFetchJson,
   validateAuthorizationDetails,
   // Logging
   getLogger,
   getTenantIdFromContext,
   isSigningJWK,
   getTenantSystemSettings,
+  FAPI2_MESSAGE_SIGNING_ALGS,
 } from '@authrim/ar-lib-core';
 import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
-import { jwtVerify, compactDecrypt, importJWK, createRemoteJWKSet } from 'jose';
+import { jwtVerify, compactDecrypt, importJWK } from 'jose';
+import {
+  type FAPI2MessageSigningConfig,
+  validateFAPI2MessageSigningRequestObjectClaims,
+} from './fapi-message-signing';
 
-const REQUEST_OBJECT_SIGNING_ALGORITHMS = ['RS256'];
+const LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS = ['RS256'];
 
 /**
  * PAR request parameters interface
  */
 interface PARRequestParams {
   client_id: string;
-  response_type: string;
-  redirect_uri: string;
-  scope: string;
+  response_type?: string;
+  redirect_uri?: string;
+  scope?: string;
   state?: string | undefined;
   nonce?: string | undefined;
   code_challenge?: string | undefined;
@@ -72,6 +79,12 @@ interface PARRequestParams {
   authorization_details?: string | undefined; // RFC 9396: Rich Authorization Requests
 }
 
+interface CompletePARRequestParams extends PARRequestParams {
+  response_type: string;
+  redirect_uri: string;
+  scope: string;
+}
+
 /**
  * Validate PAR request parameters
  */
@@ -81,25 +94,17 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
   const redirect_uri = formData.redirect_uri;
   const scope = formData.scope;
 
-  // Validate required parameters
+  // client_id is needed before the request object can be verified. The remaining
+  // required authorization parameters may legally exist only inside a signed JAR.
   if (!client_id || typeof client_id !== 'string') {
     throw new RFCError('invalid_request', 400, 'client_id is required');
-  }
-  if (!response_type || typeof response_type !== 'string') {
-    throw new RFCError('invalid_request', 400, 'response_type is required');
-  }
-  if (!redirect_uri || typeof redirect_uri !== 'string') {
-    throw new RFCError('invalid_request', 400, 'redirect_uri is required');
-  }
-  if (!scope || typeof scope !== 'string') {
-    throw new RFCError('invalid_request', 400, 'scope is required');
   }
 
   return {
     client_id,
-    response_type,
-    redirect_uri,
-    scope,
+    response_type: typeof response_type === 'string' ? response_type : undefined,
+    redirect_uri: typeof redirect_uri === 'string' ? redirect_uri : undefined,
+    scope: typeof scope === 'string' ? scope : undefined,
     state: typeof formData.state === 'string' ? formData.state : undefined,
     nonce: typeof formData.nonce === 'string' ? formData.nonce : undefined,
     code_challenge:
@@ -125,6 +130,18 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
   };
 }
 
+function assertCompletePARParams(params: PARRequestParams): asserts params is CompletePARRequestParams {
+  if (!params.response_type) {
+    throw new RFCError('invalid_request', 400, 'response_type is required');
+  }
+  if (!params.redirect_uri) {
+    throw new RFCError('invalid_request', 400, 'redirect_uri is required');
+  }
+  if (!params.scope) {
+    throw new RFCError('invalid_request', 400, 'scope is required');
+  }
+}
+
 function selectRequestObjectSigningKey(
   jwks: { keys?: unknown },
   alg: string,
@@ -134,8 +151,11 @@ function selectRequestObjectSigningKey(
     return undefined;
   }
 
-  return (jwks.keys as JWK[]).find((key) => {
+  const candidates = (jwks.keys as JWK[]).filter((key) => {
     if (!isSigningJWK(key)) {
+      return false;
+    }
+    if (key.key_ops && !key.key_ops.includes('verify')) {
       return false;
     }
     if (kid && key.kid !== kid) {
@@ -146,6 +166,10 @@ function selectRequestObjectSigningKey(
     }
     return true;
   });
+  if (kid) {
+    return candidates[0];
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /**
@@ -219,6 +243,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       requirePrivateKeyJwt?: boolean;
       maxRequestUriExpiry?: number;
       clientAssertionAudience?: 'issuer';
+      messageSigning?: FAPI2MessageSigningConfig;
     } = {};
     let oidcConfig: {
       parExpiry?: number;
@@ -311,10 +336,6 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         }
       }
 
-      // FAPI 2.0: Require PKCE with S256
-      if (!params.code_challenge || params.code_challenge_method !== 'S256') {
-        throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
-      }
     }
 
     // =========================================================================
@@ -322,11 +343,29 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // If 'request' parameter is present, parse JWT request object
     // =========================================================================
     const requestParam = formData.request as string | undefined;
+    const messageSigningConfig = fapiConfig.messageSigning;
+    const messageSigningEnabled = messageSigningConfig?.enabled === true;
+    const requestObjectSigningAlgorithms = messageSigningEnabled
+      ? (messageSigningConfig.requestObjectSigningAlgorithms ?? [
+          ...FAPI2_MESSAGE_SIGNING_ALGS,
+        ])
+      : LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS;
+
+    if (messageSigningConfig?.requireSignedRequestObject && !requestParam) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'A signed request object is required for this FAPI profile',
+        },
+        400
+      );
+    }
 
     if (requestParam) {
       try {
         let requestObjectClaims: Record<string, unknown> | undefined;
         let requestProcessed = false;
+        let requestCryptographicallySigned = false;
 
         // Check if request is JWE (encrypted) or JWT (signed)
         let tokenFormat = getTokenFormat(requestParam);
@@ -369,10 +408,20 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
             // Check inner format
             tokenFormat = getTokenFormat(jwtRequest);
-            if (tokenFormat === 'jwe') {
-              // Try to parse as plain JSON (unsecured request object inside JWE)
+            if (tokenFormat === 'unknown' && jwtRequest.trimStart().startsWith('{')) {
+              // A directly encrypted JSON request object has JWE integrity protection,
+              // but it is not a client signature and is therefore rejected by the
+              // Message Signing profile below.
               requestObjectClaims = JSON.parse(jwtRequest) as Record<string, unknown>;
               requestProcessed = true;
+            } else if (tokenFormat !== 'jwt') {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'Decrypted request object must be a JWT or JSON object',
+                },
+                400
+              );
             }
           } catch (decryptError) {
             log.error(
@@ -392,12 +441,20 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
         // Process JWT/JWS if not already processed
         if (!requestProcessed) {
-          const parsed = parseToken(jwtRequest);
-          const header = parsed?.header as { alg?: string; kid?: string } | undefined;
+          const header = parseTokenHeader(jwtRequest);
           const alg = header?.alg;
 
           // Handle unsigned request objects (alg=none)
           if (alg === 'none') {
+            if (messageSigningEnabled) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'Unsigned request objects are not allowed for FAPI Message Signing',
+                },
+                400
+              );
+            }
             // SECURITY: Block alg=none in production
             const environment = c.env.ENVIRONMENT || c.env.NODE_ENV || 'production';
             const isProduction = environment === 'production';
@@ -438,7 +495,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             });
             requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
           } else {
-            if (!alg || !REQUEST_OBJECT_SIGNING_ALGORITHMS.includes(alg)) {
+            if (!alg || !requestObjectSigningAlgorithms.includes(alg)) {
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -448,10 +505,23 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               );
             }
 
+            if (
+              clientMetadata.request_object_signing_alg &&
+              clientMetadata.request_object_signing_alg !== alg
+            ) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description:
+                    'Request object algorithm does not match the registered client metadata',
+                },
+                400
+              );
+            }
+
             // Signed request object - verify using client's public key
             // Get client's public key from JWKS or jwks_uri
             let cryptoKey: CryptoKey | undefined;
-            let jwksKeyGetter: ReturnType<typeof createRemoteJWKSet> | undefined;
 
             if (clientMetadata.jwks) {
               // Use embedded JWKS
@@ -496,10 +566,46 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                 );
               }
 
-              jwksKeyGetter = createRemoteJWKSet(jwksUri);
+              try {
+                const jwks = await safeFetchJson<{ keys?: unknown }>(jwksUri.toString(), {
+                  timeoutMs: 5000,
+                  maxResponseSize: 256 * 1024,
+                  redirect: 'error',
+                });
+                const key = selectRequestObjectSigningKey(jwks, alg, header.kid);
+                if (!key) {
+                  return c.json(
+                    {
+                      error: 'invalid_request_object',
+                      error_description: 'No suitable signing key found in client jwks_uri',
+                    },
+                    400
+                  );
+                }
+                const imported = await importJWK(key, alg);
+                if (imported instanceof Uint8Array) {
+                  return c.json(
+                    {
+                      error: 'invalid_request_object',
+                      error_description: 'Invalid key format in client JWKS',
+                    },
+                    400
+                  );
+                }
+                cryptoKey = imported as CryptoKey;
+              } catch (error) {
+                log.error('Failed to fetch client jwks_uri', { action: 'jwks_fetch' }, error as Error);
+                return c.json(
+                  {
+                    error: 'invalid_request_object',
+                    error_description: 'Failed to fetch client jwks_uri',
+                  },
+                  400
+                );
+              }
             }
 
-            if (!cryptoKey && !jwksKeyGetter) {
+            if (!cryptoKey) {
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -511,21 +617,33 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             }
 
             try {
-              // jwtVerify has two overloads: one for CryptoKey, one for getKey function
-              // We need to call them separately to satisfy TypeScript
               const verifyOptions = {
                 issuer: params.client_id, // RFC 9101: iss MUST be client_id
                 audience: issuer, // RFC 9101: aud MUST be OP issuer
-                algorithms: REQUEST_OBJECT_SIGNING_ALGORITHMS,
+                algorithms: requestObjectSigningAlgorithms,
+                ...(messageSigningEnabled
+                  ? { clockTolerance: messageSigningConfig?.clockSkewSeconds ?? 10 }
+                  : {}),
               };
 
-              let payload: Record<string, unknown>;
-              if (cryptoKey) {
-                const result = await jwtVerify(jwtRequest, cryptoKey, verifyOptions);
-                payload = result.payload as Record<string, unknown>;
-              } else {
-                const result = await jwtVerify(jwtRequest, jwksKeyGetter!, verifyOptions);
-                payload = result.payload as Record<string, unknown>;
+              const result = await jwtVerify(jwtRequest, cryptoKey, verifyOptions);
+              const payload = result.payload as Record<string, unknown>;
+              requestCryptographicallySigned = true;
+
+              if (messageSigningEnabled) {
+                const claimError = validateFAPI2MessageSigningRequestObjectClaims(payload, {
+                  maxAgeSeconds: messageSigningConfig?.maxRequestObjectAgeSeconds,
+                  maxLifetimeSeconds: messageSigningConfig?.maxRequestObjectLifetimeSeconds,
+                });
+                if (claimError) {
+                  return c.json(
+                    {
+                      error: 'invalid_request_object',
+                      error_description: claimError,
+                    },
+                    400
+                  );
+                }
               }
               requestObjectClaims = payload;
             } catch (verifyError) {
@@ -541,8 +659,27 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           }
         }
 
+        if (messageSigningConfig?.requireSignedRequestObject && !requestCryptographicallySigned) {
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description: 'A signed request object is required for this FAPI profile',
+            },
+            400
+          );
+        }
+
         // Merge request object claims into params (request object takes precedence)
         if (requestObjectClaims) {
+          if (requestObjectClaims.request_uri !== undefined) {
+            return c.json(
+              {
+                error: 'request_uri_not_supported',
+                error_description: 'request_uri is not supported inside a PAR request object',
+              },
+              400
+            );
+          }
           // RFC 9101: Certain parameters in the request object override query/form params
           if (requestObjectClaims.response_type)
             params.response_type = requestObjectClaims.response_type as string;
@@ -607,6 +744,17 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           400
         );
       }
+    }
+
+    // Validate the effective authorization request after JAR claims have been
+    // merged. Signed PAR requests do not duplicate these values in the form body.
+    assertCompletePARParams(params);
+
+    if (
+      fapiConfig.enabled &&
+      (!params.code_challenge || params.code_challenge_method !== 'S256')
+    ) {
+      throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
     }
 
     // =========================================================================

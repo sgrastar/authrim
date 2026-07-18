@@ -91,6 +91,17 @@ export interface CachedSystemSettings {
     profile?: string;
     enabled?: boolean;
     requireDpop?: boolean;
+    messageSigning?: {
+      enabled?: boolean;
+      requireSignedRequestObject?: boolean;
+      requireJarm?: boolean;
+      requestObjectSigningAlgorithms?: string[];
+      authorizationSigningAlgorithms?: Array<'RS256' | 'ES256'>;
+      defaultAuthorizationSigningAlgorithm?: 'RS256' | 'ES256';
+      maxRequestObjectAgeSeconds?: number;
+      maxRequestObjectLifetimeSeconds?: number;
+      clockSkewSeconds?: number;
+    };
   };
   [key: string]: unknown;
 }

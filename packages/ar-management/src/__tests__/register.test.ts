@@ -210,7 +210,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(59);
+      expect(args).toHaveLength(62);
       expect(args).toContain('https://id.example.com');
     });
 
@@ -240,7 +240,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(59);
+      expect(args).toHaveLength(62);
       expect(args).toContain('https://api.example.com/');
       expect(args).not.toContain('https://id.example.com');
     });
@@ -513,6 +513,10 @@ describe('Dynamic Client Registration Handler', () => {
     it.each([
       ['id_token_signed_response_alg', 'PS256'],
       ['userinfo_signed_response_alg', 'RS512'],
+      ['request_object_signing_alg', 'HS256'],
+      ['authorization_signed_response_alg', 'PS256'],
+      ['authorization_encrypted_response_alg', 'dir'],
+      ['authorization_encrypted_response_enc', 'A128CBC-HS256'],
     ])('rejects unsupported %s values', async (field, value) => {
       const res = await app.request(
         '/register',
@@ -551,6 +555,35 @@ describe('Dynamic Client Registration Handler', () => {
         id_token_signed_response_alg: 'ES256',
         userinfo_signed_response_alg: 'ES256',
       });
+    });
+
+    it('stores and returns FAPI Message Signing and JARM client metadata', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            request_object_signing_alg: 'ES256',
+            authorization_signed_response_alg: 'ES256',
+            authorization_encrypted_response_alg: 'RSA-OAEP',
+            authorization_encrypted_response_enc: 'A256GCM',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        request_object_signing_alg: 'ES256',
+        authorization_signed_response_alg: 'ES256',
+        authorization_encrypted_response_alg: 'RSA-OAEP',
+        authorization_encrypted_response_enc: 'A256GCM',
+      });
+      expect(getLastBindArgs(mockEnv)).toEqual(
+        expect.arrayContaining(['ES256', 'RSA-OAEP', 'A256GCM'])
+      );
     });
   });
 

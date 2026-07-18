@@ -26,6 +26,7 @@ import {
   getCacheTTL,
   PREDEFINED_TRANSFORMED_CLAIMS,
   getTenantSystemSettings,
+  FAPI2_MESSAGE_SIGNING_ALGS,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import {
@@ -74,6 +75,13 @@ interface OIDCConfig {
 interface FAPIConfig {
   /** FAPI 2.0 Security Profile enabled */
   enabled?: boolean;
+  messageSigning?: {
+    enabled?: boolean;
+    requireSignedRequestObject?: boolean;
+    requireJarm?: boolean;
+    requestObjectSigningAlgorithms?: string[];
+    authorizationSigningAlgorithms?: OIDCSigningAlgorithm[];
+  };
 }
 
 // Cache for metadata to improve performance
@@ -259,6 +267,19 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 
   // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
   const requirePar = fapiConfig.enabled ? true : oidcConfig.requirePar || false;
+  const messageSigningEnabled = fapiConfig.messageSigning?.enabled === true;
+  const requestObjectSigningAlgorithms = messageSigningEnabled
+    ? (fapiConfig.messageSigning?.requestObjectSigningAlgorithms ?? [
+        ...FAPI2_MESSAGE_SIGNING_ALGS,
+      ])
+    : oidcConfig.allowNoneAlgorithm
+      ? ['RS256', 'none']
+      : ['RS256'];
+  const authorizationSigningAlgorithms = messageSigningEnabled
+    ? (fapiConfig.messageSigning?.authorizationSigningAlgorithms ?? ['ES256']).filter((algorithm) =>
+        publishedSigningAlgorithms.includes(algorithm)
+      )
+    : publishedSigningAlgorithms;
   const responseTypesSupported = oidcConfig.responseTypesSupported || [
     'code',
     'id_token',
@@ -399,22 +420,23 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
-    request_object_signing_alg_values_supported: oidcConfig.allowNoneAlgorithm
-      ? ['RS256', 'none']
-      : ['RS256'],
+    request_object_signing_alg_values_supported: requestObjectSigningAlgorithms,
     request_object_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     request_object_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // JARM (JWT-Secured Authorization Response Mode) support
-    response_modes_supported: [
-      'query',
-      'fragment',
-      'form_post',
-      'query.jwt',
-      'fragment.jwt',
-      'form_post.jwt',
-      'jwt',
-    ],
-    authorization_signing_alg_values_supported: ['RS256'],
+    response_modes_supported:
+      messageSigningEnabled && fapiConfig.messageSigning?.requireJarm
+        ? ['query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt']
+        : [
+            'query',
+            'fragment',
+            'form_post',
+            'query.jwt',
+            'fragment.jwt',
+            'form_post.jwt',
+            'jwt',
+          ],
+    authorization_signing_alg_values_supported: authorizationSigningAlgorithms,
     authorization_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     authorization_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // RFC 7516: JWE (JSON Web Encryption) support

@@ -948,6 +948,9 @@ export async function getClient(
     id_token_signed_response_alg: string | null;
     userinfo_signed_response_alg: string | null;
     request_object_signing_alg: string | null;
+    authorization_signed_response_alg: string | null;
+    authorization_encrypted_response_alg: string | null;
+    authorization_encrypted_response_enc: string | null;
     is_trusted: number | null;
     skip_consent: number | null;
     allow_claims_without_scope: number | null;
@@ -1075,6 +1078,11 @@ export async function getClient(
     id_token_signed_response_alg: result.id_token_signed_response_alg ?? undefined,
     userinfo_signed_response_alg: result.userinfo_signed_response_alg ?? undefined,
     request_object_signing_alg: result.request_object_signing_alg ?? undefined,
+    authorization_signed_response_alg: result.authorization_signed_response_alg ?? undefined,
+    authorization_encrypted_response_alg:
+      result.authorization_encrypted_response_alg ?? undefined,
+    authorization_encrypted_response_enc:
+      result.authorization_encrypted_response_enc ?? undefined,
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,

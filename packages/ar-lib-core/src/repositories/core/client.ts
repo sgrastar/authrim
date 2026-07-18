@@ -146,6 +146,9 @@ export interface OAuthClient {
   // OIDC response signing
   id_token_signed_response_alg: string | null;
   userinfo_signed_response_alg: string | null;
+  authorization_signed_response_alg: string | null;
+  authorization_encrypted_response_alg: string | null;
+  authorization_encrypted_response_enc: string | null;
 
   // ==========================================================================
   // OIDC Logout Support (Back-Channel & Front-Channel Logout)
@@ -256,6 +259,9 @@ export interface CreateClientInput {
   backchannel_user_code_parameter?: boolean;
   id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
+  authorization_signed_response_alg?: string | null;
+  authorization_encrypted_response_alg?: string | null;
+  authorization_encrypted_response_enc?: string | null;
   // OIDC Logout
   backchannel_logout_uri?: string | null;
   backchannel_logout_session_required?: boolean;
@@ -340,6 +346,9 @@ export interface UpdateClientInput {
   backchannel_user_code_parameter?: boolean;
   id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
+  authorization_signed_response_alg?: string | null;
+  authorization_encrypted_response_alg?: string | null;
+  authorization_encrypted_response_enc?: string | null;
   // OIDC Logout
   backchannel_logout_uri?: string | null;
   backchannel_logout_session_required?: boolean;
@@ -509,6 +518,9 @@ export class ClientRepository {
       backchannel_user_code_parameter: input.backchannel_user_code_parameter ?? false,
       id_token_signed_response_alg: input.id_token_signed_response_alg ?? null,
       userinfo_signed_response_alg: input.userinfo_signed_response_alg ?? null,
+      authorization_signed_response_alg: input.authorization_signed_response_alg ?? null,
+      authorization_encrypted_response_alg: input.authorization_encrypted_response_alg ?? null,
+      authorization_encrypted_response_enc: input.authorization_encrypted_response_enc ?? null,
       // OIDC Logout
       backchannel_logout_uri: input.backchannel_logout_uri ?? null,
       backchannel_logout_session_required: input.backchannel_logout_session_required ?? false,
@@ -556,6 +568,8 @@ export class ClientRepository {
         backchannel_token_delivery_mode, backchannel_client_notification_endpoint,
         backchannel_authentication_request_signing_alg, backchannel_user_code_parameter,
         id_token_signed_response_alg, userinfo_signed_response_alg,
+        authorization_signed_response_alg, authorization_encrypted_response_alg,
+        authorization_encrypted_response_enc,
         backchannel_logout_uri, backchannel_logout_session_required,
         frontchannel_logout_uri, frontchannel_logout_session_required,
         allowed_redirect_origins,
@@ -563,7 +577,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -631,6 +645,9 @@ export class ClientRepository {
         client.backchannel_user_code_parameter ? 1 : 0,
         client.id_token_signed_response_alg,
         client.userinfo_signed_response_alg,
+        client.authorization_signed_response_alg,
+        client.authorization_encrypted_response_alg,
+        client.authorization_encrypted_response_enc,
         client.backchannel_logout_uri,
         client.backchannel_logout_session_required ? 1 : 0,
         client.frontchannel_logout_uri,
@@ -945,6 +962,18 @@ export class ClientRepository {
     if (input.id_token_signed_response_alg !== undefined) {
       updates.push('id_token_signed_response_alg = ?');
       params.push(input.id_token_signed_response_alg);
+    }
+    if (input.authorization_signed_response_alg !== undefined) {
+      updates.push('authorization_signed_response_alg = ?');
+      params.push(input.authorization_signed_response_alg);
+    }
+    if (input.authorization_encrypted_response_alg !== undefined) {
+      updates.push('authorization_encrypted_response_alg = ?');
+      params.push(input.authorization_encrypted_response_alg);
+    }
+    if (input.authorization_encrypted_response_enc !== undefined) {
+      updates.push('authorization_encrypted_response_enc = ?');
+      params.push(input.authorization_encrypted_response_enc);
     }
     // OIDC Logout
     if (input.backchannel_logout_uri !== undefined) {

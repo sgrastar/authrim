@@ -35,6 +35,8 @@ import {
   getTenantIdFromContext,
   validateWebhookUrl,
   GRANT_TYPES,
+  SUPPORTED_JWE_ALG,
+  SUPPORTED_JWE_ENC,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -173,6 +175,47 @@ function validateUpdateRequest(
     return {
       error: 'invalid_client_metadata',
       error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+    };
+  }
+  if (
+    body.authorization_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(body.authorization_signed_response_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'authorization_signed_response_alg must be one of: RS256, ES256',
+    };
+  }
+  if (
+    body.authorization_encrypted_response_alg !== undefined &&
+    !SUPPORTED_JWE_ALG.includes(
+      body.authorization_encrypted_response_alg as (typeof SUPPORTED_JWE_ALG)[number]
+    )
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: `authorization_encrypted_response_alg must be one of: ${SUPPORTED_JWE_ALG.join(', ')}`,
+    };
+  }
+  if (
+    body.authorization_encrypted_response_enc !== undefined &&
+    !SUPPORTED_JWE_ENC.includes(
+      body.authorization_encrypted_response_enc as (typeof SUPPORTED_JWE_ENC)[number]
+    )
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: `authorization_encrypted_response_enc must be one of: ${SUPPORTED_JWE_ENC.join(', ')}`,
+    };
+  }
+  if (
+    (body.authorization_encrypted_response_alg === undefined) !==
+    (body.authorization_encrypted_response_enc === undefined)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description:
+        'authorization_encrypted_response_alg and authorization_encrypted_response_enc must be provided together',
     };
   }
 
@@ -443,6 +486,12 @@ function buildClientResponse(
     response.id_token_signed_response_alg = client.id_token_signed_response_alg as string;
   if (client.request_object_signing_alg)
     response.request_object_signing_alg = client.request_object_signing_alg as string;
+  if (client.authorization_signed_response_alg)
+    response.authorization_signed_response_alg = client.authorization_signed_response_alg;
+  if (client.authorization_encrypted_response_alg)
+    response.authorization_encrypted_response_alg = client.authorization_encrypted_response_alg;
+  if (client.authorization_encrypted_response_enc)
+    response.authorization_encrypted_response_enc = client.authorization_encrypted_response_enc;
   if (client.post_logout_redirect_uris)
     response.post_logout_redirect_uris = client.post_logout_redirect_uris as string[];
   if (client.backchannel_logout_uri)
@@ -651,6 +700,9 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           id_token_signed_response_alg = ?,
           userinfo_signed_response_alg = ?,
           request_object_signing_alg = ?,
+          authorization_signed_response_alg = ?,
+          authorization_encrypted_response_alg = ?,
+          authorization_encrypted_response_enc = ?,
           post_logout_redirect_uris = ?,
           backchannel_logout_uri = ?,
           backchannel_logout_session_required = ?,
@@ -659,7 +711,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           initiate_login_uri = ?,
           login_ui_url = ?,
           updated_at = ?
-        WHERE client_id = ?
+        WHERE tenant_id = ? AND client_id = ?
         `,
         [
           // Basic client info
@@ -702,6 +754,18 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
             body.request_object_signing_alg,
             existingClient.request_object_signing_alg as string | null | undefined
           ),
+          coalesceNullable(
+            body.authorization_signed_response_alg,
+            existingClient.authorization_signed_response_alg
+          ),
+          coalesceNullable(
+            body.authorization_encrypted_response_alg,
+            existingClient.authorization_encrypted_response_alg
+          ),
+          coalesceNullable(
+            body.authorization_encrypted_response_enc,
+            existingClient.authorization_encrypted_response_enc
+          ),
           // Logout URIs
           serializeField(body.post_logout_redirect_uris, existingClient.post_logout_redirect_uris),
           coalesceNullable(
@@ -738,6 +802,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           // Timestamp
           now,
           // WHERE clause
+          tenantId,
           clientId,
         ]
       );
