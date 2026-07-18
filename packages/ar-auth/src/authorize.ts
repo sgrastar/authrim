@@ -70,6 +70,7 @@ import {
   getTenantSystemSettings,
   resolveAuthorizationResponseSigningAlgorithm,
   selectJWEEncryptionKey,
+  setBoundedMapEntry,
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
@@ -265,6 +266,7 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 60000; // 60 seconds
+const MAX_SIGNING_KEY_CACHE_ENTRIES = 128;
 
 // ===== SettingsManager Caching for Performance Optimization =====
 // Cache SettingsManager instance to avoid recreating it on every request
@@ -1943,7 +1945,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let fapiConfig: FAPIConfig = {};
   let oidcConfig: OIDCConfig = {};
   try {
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    });
     if (settings) {
       fapiConfig = settings.fapi || {};
       oidcConfig = settings.oidc || {};
@@ -1954,7 +1958,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       { action: 'fapi_settings_load' },
       error as Error
     );
-    // Continue with default values (FAPI disabled)
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Security profile settings are temporarily unavailable',
+      },
+      503
+    );
   }
 
   // OAuth 2.0 Section 3.1.2.3: Handle redirect_uri based on registration
@@ -4370,7 +4380,12 @@ async function getSigningKeyFromKeyManager(
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(cacheKey, { privateKey, kid: keyData.kid, timestamp: now, version });
+  setBoundedMapEntry(
+    signingKeyCache,
+    cacheKey,
+    { privateKey, kid: keyData.kid, timestamp: now, version },
+    MAX_SIGNING_KEY_CACHE_ENTRIES
+  );
   return { privateKey, kid: keyData.kid };
 }
 

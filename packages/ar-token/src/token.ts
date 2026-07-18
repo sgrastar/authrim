@@ -38,7 +38,6 @@ import {
   getClientCached,
   loadTenantProfileCached,
   getSystemSettingsCached,
-  getTenantSystemSettings,
   requireDedicatedAdminDatabaseAdapter,
   resolveElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
@@ -59,6 +58,7 @@ import {
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
   FAPI2_MESSAGE_SIGNING_ALGS,
+  setBoundedMapEntry,
 } from '@authrim/ar-lib-core';
 import {
   resolveIDTokenSigningAlgorithm,
@@ -177,6 +177,13 @@ const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callba
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
 type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
+class SecurityProfileSettingsUnavailableError extends Error {
+  constructor() {
+    super('Security profile settings are temporarily unavailable');
+    this.name = 'SecurityProfileSettingsUnavailableError';
+  }
+}
 
 async function loadOIDCClaimsUser(
   c: Context<{ Bindings: Env }>,
@@ -573,7 +580,7 @@ function oauthError(
   c: Context<{ Bindings: Env }>,
   error: string,
   errorDescription: string,
-  status: 400 | 401 | 403 | 500 = 400
+  status: 400 | 401 | 403 | 500 | 503 = 400
 ): Response {
   // Set cache control headers (RFC 6749 Section 5.2)
   c.header('Cache-Control', 'no-store');
@@ -821,8 +828,7 @@ async function isDPoPRequiredForTokenRequest(
 ): Promise<boolean> {
   let fapiRequiresDpop = false;
   try {
-    const tenantId = (clientMetadata.tenant_id as string | undefined) || getTenantIdFromContext(c);
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
     if (settings) {
       const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
@@ -831,6 +837,7 @@ async function isDPoPRequiredForTokenRequest(
     getLogger(c)
       .module('TOKEN')
       .error('Failed to load FAPI settings for DPoP', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
   }
 
   const requestPath = new URL(c.req.url).pathname;
@@ -846,7 +853,12 @@ async function isDPoPRequiredForTokenRequest(
 async function resolveClientAssertionValidationOptions(
   c: Context<{ Bindings: Env }>
 ): Promise<ClientAssertionValidationOptions | undefined> {
-  const settings = await getSystemSettingsCached(c, c.env);
+  let settings: { fapi?: { enabled?: boolean } } | null;
+  try {
+    settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+  } catch {
+    throw new SecurityProfileSettingsUnavailableError();
+  }
   if (settings?.fapi?.enabled !== true) {
     return undefined;
   }
@@ -857,6 +869,39 @@ async function resolveClientAssertionValidationOptions(
     allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS],
     clockSkewSeconds: 60,
   };
+}
+
+async function resolveTokenClientAuthenticationPolicy(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: ClientMetadata,
+  clientAssertion: string | undefined,
+  clientAssertionType: string | undefined
+): Promise<
+  | { ok: true; assertionOptions: ClientAssertionValidationOptions | undefined }
+  | { ok: false; response: Response }
+> {
+  const assertionOptions = await resolveClientAssertionValidationOptions(c);
+  if (!assertionOptions) {
+    return { ok: true, assertionOptions };
+  }
+
+  if (
+    clientMetadata.token_endpoint_auth_method !== 'private_key_jwt' ||
+    !clientAssertion ||
+    clientAssertionType !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
+    return {
+      ok: false,
+      response: oauthError(
+        c,
+        'invalid_client',
+        'The active FAPI profile requires private_key_jwt client authentication',
+        401
+      ),
+    };
+  }
+
+  return { ok: true, assertionOptions };
 }
 
 // ===== Module-level Logger for Helper Functions =====
@@ -885,6 +930,7 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - safe with 24h rotation overlap
+const MAX_TENANT_KEY_CACHE_ENTRIES = 128;
 
 // ===== JWKS (Public Key) Caching for Refresh Token Verification =====
 // Per-tenant Map cache for JWKS (avoids KeyManager DO hop on every refresh token request)
@@ -978,11 +1024,16 @@ async function getVerificationKeyFromJWKS(
       const envKeys = new Map<string, CryptoKey>();
       envKeys.set(keyKid, importedKey);
 
-      cachedJWKSMap.set(tenantId, {
-        keys: envKeys,
-        fetchedAt: now,
-        source: 'env',
-      });
+      setBoundedMapEntry(
+        cachedJWKSMap,
+        tenantId,
+        {
+          keys: envKeys,
+          fetchedAt: now,
+          source: 'env',
+        },
+        MAX_TENANT_KEY_CACHE_ENTRIES
+      );
 
       // If kid is specified and doesn't match env key, we have a problem
       // This means rotation happened but env wasn't updated
@@ -1041,11 +1092,16 @@ async function getVerificationKeyFromJWKS(
   }
 
   // Update per-tenant cache
-  cachedJWKSMap.set(tenantId, {
-    keys: newKeys,
-    fetchedAt: now,
-    source: 'do',
-  });
+  setBoundedMapEntry(
+    cachedJWKSMap,
+    tenantId,
+    {
+      keys: newKeys,
+      fetchedAt: now,
+      source: 'do',
+    },
+    MAX_TENANT_KEY_CACHE_ENTRIES
+  );
 
   // Return requested key or first key
   if (kid) {
@@ -1179,7 +1235,12 @@ async function getSigningKeyFromKeyManager(
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(cacheKey, { privateKey, kid: keyData.kid, timestamp: now, version });
+  setBoundedMapEntry(
+    signingKeyCache,
+    cacheKey,
+    { privateKey, kid: keyData.kid, timestamp: now, version },
+    MAX_TENANT_KEY_CACHE_ENTRIES
+  );
   moduleLogger.debug('Signing key cached', {
     kid: keyData.kid,
     ttlMs: KEY_CACHE_TTL,
@@ -1276,26 +1337,39 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
 
   const grant_type = formData.grant_type;
 
-  // Route to appropriate handler based on grant_type
-  if (grant_type === 'refresh_token') {
-    return await handleRefreshTokenGrant(c, formData);
-  } else if (grant_type === 'authorization_code') {
-    return await handleAuthorizationCodeGrant(c, formData);
-  } else if (grant_type === DIRECT_AUTH_FINISH_GRANT_TYPE) {
-    return await handleDirectAuthFinishGrant(c, formData);
-  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
-    return await handleJWTBearerGrant(c, formData);
-  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
-    return await handleDeviceCodeGrant(c, formData);
-  } else if (grant_type === 'urn:openid:params:grant-type:ciba') {
-    return await handleCIBAGrant(c, formData);
-  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:token-exchange') {
-    // RFC 8693: Token Exchange (Feature Flag controlled)
-    // Reuse the initially parsed body so multi-value params are preserved.
-    return await handleTokenExchangeGrant(c, formData, parsedBody);
-  } else if (grant_type === 'client_credentials') {
-    // RFC 6749 Section 4.4: Client Credentials Grant
-    return await handleClientCredentialsGrant(c, formData);
+  try {
+    // Route to appropriate handler based on grant_type
+    if (grant_type === 'refresh_token') {
+      return await handleRefreshTokenGrant(c, formData);
+    } else if (grant_type === 'authorization_code') {
+      return await handleAuthorizationCodeGrant(c, formData);
+    } else if (grant_type === DIRECT_AUTH_FINISH_GRANT_TYPE) {
+      return await handleDirectAuthFinishGrant(c, formData);
+    } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
+      return await handleJWTBearerGrant(c, formData);
+    } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
+      return await handleDeviceCodeGrant(c, formData);
+    } else if (grant_type === 'urn:openid:params:grant-type:ciba') {
+      return await handleCIBAGrant(c, formData);
+    } else if (grant_type === 'urn:ietf:params:oauth:grant-type:token-exchange') {
+      // RFC 8693: Token Exchange (Feature Flag controlled)
+      // Reuse the initially parsed body so multi-value params are preserved.
+      return await handleTokenExchangeGrant(c, formData, parsedBody);
+    } else if (grant_type === 'client_credentials') {
+      // RFC 6749 Section 4.4: Client Credentials Grant
+      return await handleClientCredentialsGrant(c, formData);
+    }
+  } catch (error) {
+    if (error instanceof SecurityProfileSettingsUnavailableError) {
+      log.error('Security profile settings unavailable', { grantType: grant_type });
+      return oauthError(
+        c,
+        'temporarily_unavailable',
+        'Security profile settings are temporarily unavailable',
+        503
+      );
+    }
+    throw error;
   }
 
   // If grant_type is not supported
@@ -1518,7 +1592,7 @@ async function handleAuthorizationCodeGrant(
   // DPoP requirement (FAPI 2.0 / sender-constrained tokens) - request-level cached
   let fapiRequiresDpop = false;
   try {
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
     if (settings) {
       const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
@@ -1526,6 +1600,7 @@ async function handleAuthorizationCodeGrant(
     }
   } catch (error) {
     log.error('Failed to load FAPI settings for DPoP', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
   }
 
   // Client-level DPoP mode (disabled | critical_only | all)
@@ -1605,6 +1680,48 @@ async function handleAuthorizationCodeGrant(
     }
 
     dpopJkt = dpopValidation.jkt;
+  }
+
+  // Authenticate the client before atomically consuming the authorization code. Otherwise an
+  // attacker with a leaked code could invalidate it using deliberately bad client credentials.
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    clientMetadata as unknown as ClientMetadata,
+    client_assertion,
+    client_assertion_type
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
+  if (
+    client_assertion &&
+    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
+    const assertionValidation = await validateClientAssertion(
+      client_assertion,
+      `${getRequestIssuer(c)}/token`,
+      clientMetadata as unknown as ClientMetadata,
+      clientAuthenticationPolicy.assertionOptions
+    );
+
+    if (!assertionValidation.valid) {
+      log.error('Client assertion validation failed', {
+        errorDescription: assertionValidation.error_description,
+      });
+      return oauthError(
+        c,
+        assertionValidation.error || 'invalid_client',
+        'Client assertion validation failed',
+        401
+      );
+    }
+  } else if (clientMetadata.client_secret_hash) {
+    const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
+    if (!client_secret || !(await verifyClientSecretHash(client_secret, storedHash))) {
+      return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+    }
+  } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
+    return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
   }
 
   // Consume authorization code using AuthorizationCodeStore Durable Object
@@ -1815,44 +1932,6 @@ async function handleAuthorizationCodeGrant(
 
     log.debug('Authorization code binding verified successfully', { action: 'DPoP' });
   }
-
-  // Client authentication verification
-  // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
-  if (
-    client_assertion &&
-    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
-  ) {
-    // private_key_jwt or client_secret_jwt authentication
-    const assertionValidation = await validateClientAssertion(
-      client_assertion,
-      `${getRequestIssuer(c)}/token`,
-      clientMetadata as unknown as import('@authrim/ar-lib-core').ClientMetadata,
-      await resolveClientAssertionValidationOptions(c)
-    );
-
-    if (!assertionValidation.valid) {
-      // Security: Log detailed error but return generic message to prevent information leakage
-      log.error('Client assertion validation failed', {
-        errorDescription: assertionValidation.error_description,
-      });
-      return oauthError(
-        c,
-        assertionValidation.error || 'invalid_client',
-        'Client assertion validation failed',
-        401
-      );
-    }
-  } else if (clientMetadata.client_secret_hash) {
-    // client_secret_basic or client_secret_post authentication
-    // Security: Verify client secret against stored SHA-256 hash
-    const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
-    if (!client_secret || !(await verifyClientSecretHash(client_secret, storedHash))) {
-      return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
-    }
-  } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
-    return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
-  }
-  // Public clients (no client_secret_hash and no client_assertion) are allowed
 
   // Load private key for signing tokens from KeyManager
   // NOTE: Key loading moved BEFORE code deletion to avoid losing code on key loading failure
@@ -2468,11 +2547,7 @@ async function handleAuthorizationCodeGrant(
       }
 
       // Get client's public key for encryption
-      const publicKey = await getClientPublicKey(
-        clientMetadata,
-        undefined,
-        alg as JWEAlgorithm
-      );
+      const publicKey = await getClientPublicKey(clientMetadata, undefined, alg as JWEAlgorithm);
       if (!publicKey) {
         log.error('Client requires encryption but no public key available', {});
         return c.json(
@@ -2915,15 +2990,25 @@ async function handleRefreshTokenGrant(
   // not received or persisted. Non-FAPI tenants keep Authrim's rotation default.
   let prohibitRefreshTokenRotation = false;
   try {
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
     const fapi = (settings?.fapi || {}) as { enabled?: boolean };
     prohibitRefreshTokenRotation = fapi.enabled === true;
   } catch (error) {
     log.error('Failed to load FAPI refresh-token policy', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
   }
 
   // Client authentication verification
   // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    typedClient,
+    client_assertion,
+    client_assertion_type
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
   if (
     client_assertion &&
     client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
@@ -2933,7 +3018,7 @@ async function handleRefreshTokenGrant(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
       typedClient,
-      await resolveClientAssertionValidationOptions(c)
+      clientAuthenticationPolicy.assertionOptions
     );
 
     if (!assertionValidation.valid) {
@@ -5265,6 +5350,15 @@ async function handleTokenExchangeGrant(
     typedClient.token_endpoint_auth_method === 'none';
 
   // 3. Authenticate client
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    typedClient,
+    client_assertion,
+    client_assertion_type
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
   if (isNativeSSOPublicClientAuthException) {
     if (nativeSSOChannel !== 'native') {
       return oauthError(
@@ -5312,7 +5406,7 @@ async function handleTokenExchangeGrant(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
       typedClient,
-      await resolveClientAssertionValidationOptions(c)
+      clientAuthenticationPolicy.assertionOptions
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
@@ -7041,6 +7135,15 @@ async function handleClientCredentialsGrant(
   }
 
   // 2. Authenticate client (client_credentials REQUIRES authentication)
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    typedClient,
+    client_assertion,
+    client_assertion_type
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
   if (
     client_assertion &&
     client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
@@ -7049,7 +7152,7 @@ async function handleClientCredentialsGrant(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
       typedClient,
-      await resolveClientAssertionValidationOptions(c)
+      clientAuthenticationPolicy.assertionOptions
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage

@@ -50,11 +50,7 @@ export type JWEEncryption = (typeof SUPPORTED_JWE_ENC)[number];
  * When several rotation keys are eligible, each key must have a distinct `kid` so the recipient
  * can identify the key used from the JWE protected header.
  */
-export function selectJWEEncryptionKey(
-  keys: unknown,
-  alg: JWEAlgorithm,
-  kid?: string
-): JWK | null {
+export function selectJWEEncryptionKey(keys: unknown, alg: JWEAlgorithm, kid?: string): JWK | null {
   if (!Array.isArray(keys)) {
     return null;
   }
@@ -90,23 +86,18 @@ export function selectJWEEncryptionKey(
     }
 
     if (key.kty === 'EC') {
-      return (
-        typeof key.crv === 'string' &&
-        typeof key.x === 'string' &&
-        typeof key.y === 'string'
-      );
+      return typeof key.crv === 'string' && typeof key.x === 'string' && typeof key.y === 'string';
     }
     return (
-      key.kty === 'OKP' &&
-      (key.crv === 'X25519' || key.crv === 'X448') &&
-      typeof key.x === 'string'
+      key.kty === 'OKP' && (key.crv === 'X25519' || key.crv === 'X448') && typeof key.x === 'string'
     );
   });
 
   const exactAlgorithmMatches = candidates.filter((key) => key.alg === alg);
-  const eligible = exactAlgorithmMatches.length > 0
-    ? exactAlgorithmMatches
-    : candidates.filter((key) => key.alg === undefined);
+  const eligible =
+    exactAlgorithmMatches.length > 0
+      ? exactAlgorithmMatches
+      : candidates.filter((key) => key.alg === undefined);
 
   if (eligible.length === 0) {
     return null;

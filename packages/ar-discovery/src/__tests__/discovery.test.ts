@@ -327,6 +327,12 @@ describe('Discovery Handler', () => {
 
       const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256']);
+      expect(metadata.token_endpoint_auth_signing_alg_values_supported).toEqual([
+        'RS256',
+        'ES256',
+        'PS256',
+        'EdDSA',
+      ]);
     });
 
     it('advertises ES256 only when a purpose-compatible key is published', async () => {

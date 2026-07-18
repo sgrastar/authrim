@@ -1081,10 +1081,8 @@ export async function getClient(
     userinfo_signed_response_alg: result.userinfo_signed_response_alg ?? undefined,
     request_object_signing_alg: result.request_object_signing_alg ?? undefined,
     authorization_signed_response_alg: result.authorization_signed_response_alg ?? undefined,
-    authorization_encrypted_response_alg:
-      result.authorization_encrypted_response_alg ?? undefined,
-    authorization_encrypted_response_enc:
-      result.authorization_encrypted_response_enc ?? undefined,
+    authorization_encrypted_response_alg: result.authorization_encrypted_response_alg ?? undefined,
+    authorization_encrypted_response_enc: result.authorization_encrypted_response_enc ?? undefined,
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,

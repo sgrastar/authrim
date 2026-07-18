@@ -30,6 +30,7 @@ import {
   OIDCIdentityMappingRuntimeError,
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
+  setBoundedMapEntry,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
@@ -49,6 +50,7 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 60000; // 60 seconds
+const MAX_SIGNING_KEY_CACHE_ENTRIES = 128;
 
 /**
  * Get signing key from KeyManager with per-tenant caching.
@@ -94,7 +96,12 @@ async function getSigningKeyFromKeyManager(
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(cacheKey, { privateKey, kid: keyData.kid, timestamp: now, version });
+  setBoundedMapEntry(
+    signingKeyCache,
+    cacheKey,
+    { privateKey, kid: keyData.kid, timestamp: now, version },
+    MAX_SIGNING_KEY_CACHE_ENTRIES
+  );
   return { privateKey, kid: keyData.kid };
 }
 
@@ -388,11 +395,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get client's public key for encryption
-    const publicKey = await getClientPublicKey(
-      clientMetadata,
-      undefined,
-      alg as JWEAlgorithm
-    );
+    const publicKey = await getClientPublicKey(clientMetadata, undefined, alg as JWEAlgorithm);
     if (!publicKey) {
       log.error('Client requires UserInfo encryption but no public key available', { client_id });
       return c.json(

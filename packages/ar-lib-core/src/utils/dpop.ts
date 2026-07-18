@@ -14,6 +14,8 @@ import { timingSafeEqual } from './crypto';
 import { createLogger } from './logger';
 
 const log = createLogger().module('DPOP');
+const MAX_DPOP_PROOF_SIZE_BYTES = 16 * 1024;
+const MAX_DPOP_SEGMENT_SIZE_BYTES = 8 * 1024;
 
 interface DPoPHeader {
   typ: string;
@@ -51,6 +53,14 @@ export async function validateDPoPProof(
       };
     }
 
+    if (new TextEncoder().encode(dpopProof).byteLength > MAX_DPOP_PROOF_SIZE_BYTES) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP proof is too large',
+      };
+    }
+
     // Parse JWT header without verification first to extract JWK
     const parts = dpopProof.split('.');
     if (parts.length !== 3) {
@@ -58,6 +68,17 @@ export async function validateDPoPProof(
         valid: false,
         error: 'invalid_dpop_proof',
         error_description: 'DPoP proof must be a valid JWT',
+      };
+    }
+    if (
+      parts.some(
+        (segment) => new TextEncoder().encode(segment).byteLength > MAX_DPOP_SEGMENT_SIZE_BYTES
+      )
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP proof segment is too large',
       };
     }
 
@@ -118,8 +139,45 @@ export async function validateDPoPProof(
       };
     }
 
+    if (jwk.use !== undefined && jwk.use !== 'sig') {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP JWK must be intended for signatures',
+      };
+    }
+    if (
+      jwk.key_ops !== undefined &&
+      (!Array.isArray(jwk.key_ops) ||
+        !jwk.key_ops.includes('verify') ||
+        jwk.key_ops.some((operation) => operation !== 'verify'))
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP JWK key operations must only permit signature verification',
+      };
+    }
+    if (jwk.alg !== undefined && jwk.alg !== header.alg) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP JWK algorithm does not match the proof algorithm',
+      };
+    }
+
     // Ensure JWK does not contain private key material
-    if (jwk.d || jwk.p || jwk.q || jwk.dp || jwk.dq || jwk.qi) {
+    const keyWithPrivateParameters = jwk as JWK & { oth?: unknown };
+    if (
+      jwk.d ||
+      jwk.p ||
+      jwk.q ||
+      jwk.dp ||
+      jwk.dq ||
+      jwk.qi ||
+      keyWithPrivateParameters.oth ||
+      jwk.k
+    ) {
       return {
         valid: false,
         error: 'invalid_dpop_proof',

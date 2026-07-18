@@ -184,7 +184,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
       oidc: {
         requirePar: true,
         responseTypesSupported: ['code'],
-        tokenEndpointAuthMethodsSupported: ['private_key_jwt', 'client_secret_jwt'],
+        tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
         allowNoneAlgorithm: false, // Security: Reject 'none' algorithm
       },
     },
@@ -211,8 +211,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
 
   'fapi-2-message-signing-dpop': {
     name: 'FAPI 2.0 Message Signing + DPoP',
-    description:
-      'FAPI 2.0 Security Profile Final with signed authorization requests and JARM',
+    description: 'FAPI 2.0 Security Profile Final with signed authorization requests and JARM',
     settings: {
       fapi: {
         enabled: true,

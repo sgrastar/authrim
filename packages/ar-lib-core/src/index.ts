@@ -581,3 +581,5 @@ export type {
   ScreenSettings,
   ScreenValueType,
 } from './types/screens';
+
+export { setBoundedMapEntry } from './utils/bounded-cache';

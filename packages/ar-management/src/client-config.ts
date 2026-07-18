@@ -37,8 +37,9 @@ import {
   GRANT_TYPES,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  CLIENT_ASSERTION_SIGNING_ALGS,
   FAPI2_MESSAGE_SIGNING_ALGS,
-  getSystemSettingsCached,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -168,11 +169,13 @@ function validateUpdateRequest(
   }
   if (
     body.token_endpoint_auth_signing_alg !== undefined &&
-    !isOIDCSigningAlgorithm(body.token_endpoint_auth_signing_alg)
+    !CLIENT_ASSERTION_SIGNING_ALGS.includes(
+      body.token_endpoint_auth_signing_alg as (typeof CLIENT_ASSERTION_SIGNING_ALGS)[number]
+    )
   ) {
     return {
       error: 'invalid_client_metadata',
-      error_description: 'token_endpoint_auth_signing_alg must be one of: RS256, ES256',
+      error_description: `token_endpoint_auth_signing_alg must be one of: ${CLIENT_ASSERTION_SIGNING_ALGS.join(', ')}`,
     };
   }
   if (
@@ -669,7 +672,17 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       return c.json(validationError, 400);
     }
 
-    const systemSettings = await getSystemSettingsCached(c, c.env);
+    const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    })) as {
+      fapi?: {
+        enabled?: boolean;
+        messageSigning?: {
+          enabled?: boolean;
+          authorizationSigningAlgorithms?: string[];
+        };
+      };
+    } | null;
     if (
       systemSettings?.fapi?.enabled === true &&
       body.token_endpoint_auth_signing_alg &&
@@ -686,6 +699,23 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
         400
       );
     }
+    const messageSigning = systemSettings?.fapi?.messageSigning;
+    if (
+      messageSigning?.enabled === true &&
+      body.authorization_signed_response_alg &&
+      !(messageSigning.authorizationSigningAlgorithms ?? ['ES256']).includes(
+        body.authorization_signed_response_alg
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'authorization_signed_response_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
 
     // Fetch existing client
     const existingClient = await getClientCached(c, c.env, clientId);
@@ -696,6 +726,20 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           error_description: 'Client not found',
         },
         404
+      );
+    }
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      (body.token_endpoint_auth_method ?? existingClient.token_endpoint_auth_method) !==
+        'private_key_jwt'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_method must be private_key_jwt for the active FAPI profile',
+        },
+        400
       );
     }
 

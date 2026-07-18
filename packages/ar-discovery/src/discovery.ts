@@ -27,6 +27,8 @@ import {
   PREDEFINED_TRANSFORMED_CLAIMS,
   getTenantSystemSettings,
   FAPI2_MESSAGE_SIGNING_ALGS,
+  CLIENT_ASSERTION_SIGNING_ALGS,
+  setBoundedMapEntry,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import {
@@ -87,6 +89,7 @@ interface FAPIConfig {
 // Cache for metadata to improve performance
 // Key: tenantId:settingsHash, Value: metadata
 const metadataCache = new Map<string, OIDCProviderMetadata>();
+const MAX_METADATA_CACHE_ENTRIES = 100;
 
 export function clearDiscoveryMetadataCache(): void {
   metadataCache.clear();
@@ -141,7 +144,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   let currentSettingsJson = '';
 
   try {
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    });
     currentSettingsJson = settings ? JSON.stringify(settings) : '';
     if (settings) {
       oidcConfig = settings.oidc || {};
@@ -163,7 +168,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     }
   } catch (error) {
     log.error('Failed to load settings from KV', { tenantId }, error as Error);
-    // Continue with default values
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Security profile settings are temporarily unavailable',
+      },
+      503
+    );
   }
 
   // HTTPS request_uri support status
@@ -269,9 +280,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const requirePar = fapiConfig.enabled ? true : oidcConfig.requirePar || false;
   const messageSigningEnabled = fapiConfig.messageSigning?.enabled === true;
   const requestObjectSigningAlgorithms = messageSigningEnabled
-    ? (fapiConfig.messageSigning?.requestObjectSigningAlgorithms ?? [
-        ...FAPI2_MESSAGE_SIGNING_ALGS,
-      ])
+    ? (fapiConfig.messageSigning?.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS])
     : oidcConfig.allowNoneAlgorithm
       ? ['RS256', 'none']
       : ['RS256'];
@@ -406,16 +415,18 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'phone_number_verified',
     ],
     // Dynamic token endpoint auth methods based on OIDC config
-    token_endpoint_auth_methods_supported: oidcConfig.tokenEndpointAuthMethodsSupported || [
-      'client_secret_basic',
-      'client_secret_post',
-      'client_secret_jwt',
-      'private_key_jwt',
-      'none',
-    ],
+    token_endpoint_auth_methods_supported: fapiConfig.enabled
+      ? ['private_key_jwt']
+      : oidcConfig.tokenEndpointAuthMethodsSupported || [
+          'client_secret_basic',
+          'client_secret_post',
+          'client_secret_jwt',
+          'private_key_jwt',
+          'none',
+        ],
     token_endpoint_auth_signing_alg_values_supported: fapiConfig.enabled
       ? [...FAPI2_MESSAGE_SIGNING_ALGS]
-      : ['RS256', 'ES256'],
+      : [...CLIENT_ASSERTION_SIGNING_ALGS],
     code_challenge_methods_supported: ['S256'],
     // RFC 9449: DPoP (Demonstrating Proof of Possession) support
     dpop_signing_alg_values_supported: [...ALLOWED_DPOP_ALGS],
@@ -429,15 +440,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     response_modes_supported:
       messageSigningEnabled && fapiConfig.messageSigning?.requireJarm
         ? ['query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt']
-        : [
-            'query',
-            'fragment',
-            'form_post',
-            'query.jwt',
-            'fragment.jwt',
-            'form_post.jwt',
-            'jwt',
-          ],
+        : ['query', 'fragment', 'form_post', 'query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt'],
     authorization_signing_alg_values_supported: authorizationSigningAlgorithms,
     authorization_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     authorization_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
@@ -517,12 +520,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   };
 
   // Update in-memory cache (with size limit to prevent memory issues)
-  if (metadataCache.size > 100) {
-    // Simple LRU: clear oldest entries when cache gets too large
-    const keysToDelete = Array.from(metadataCache.keys()).slice(0, 50);
-    keysToDelete.forEach((key) => metadataCache.delete(key));
-  }
-  metadataCache.set(cacheKey, metadata);
+  setBoundedMapEntry(metadataCache, cacheKey, metadata, MAX_METADATA_CACHE_ENTRIES);
 
   // =========================================================================
   // Phase 2: Store in KV cache (best-effort, don't block response)

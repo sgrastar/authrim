@@ -46,8 +46,9 @@ import {
   CanonicalRuntimeUserStore,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  CLIENT_ASSERTION_SIGNING_ALGS,
   FAPI2_MESSAGE_SIGNING_ALGS,
-  getSystemSettingsCached,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -568,24 +569,22 @@ function validateRegistrationRequest(
 
   if (
     data.token_endpoint_auth_signing_alg !== undefined &&
-    !isOIDCSigningAlgorithm(data.token_endpoint_auth_signing_alg)
+    !CLIENT_ASSERTION_SIGNING_ALGS.includes(
+      data.token_endpoint_auth_signing_alg as (typeof CLIENT_ASSERTION_SIGNING_ALGS)[number]
+    )
   ) {
     return {
       valid: false,
       error: {
         error: 'invalid_client_metadata',
-        error_description: 'token_endpoint_auth_signing_alg must be one of: RS256, ES256',
+        error_description: `token_endpoint_auth_signing_alg must be one of: ${CLIENT_ASSERTION_SIGNING_ALGS.join(', ')}`,
       },
     };
   }
 
   if (
     data.request_object_signing_alg !== undefined &&
-    ![
-      'none',
-      'RS256',
-      ...FAPI2_MESSAGE_SIGNING_ALGS,
-    ].includes(data.request_object_signing_alg)
+    !['none', 'RS256', ...FAPI2_MESSAGE_SIGNING_ALGS].includes(data.request_object_signing_alg)
   ) {
     return {
       valid: false,
@@ -1307,7 +1306,31 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     const request = validation.data;
-    const systemSettings = await getSystemSettingsCached(c, c.env);
+    const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    })) as {
+      fapi?: {
+        enabled?: boolean;
+        messageSigning?: {
+          enabled?: boolean;
+          requestObjectSigningAlgorithms?: string[];
+          authorizationSigningAlgorithms?: string[];
+        };
+      };
+    } | null;
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      (request.token_endpoint_auth_method ?? 'client_secret_basic') !== 'private_key_jwt'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_method must be private_key_jwt for the active FAPI profile',
+        },
+        400
+      );
+    }
     if (
       systemSettings?.fapi?.enabled === true &&
       request.token_endpoint_auth_signing_alg &&
@@ -1336,8 +1359,23 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       return c.json(
         {
           error: 'invalid_client_metadata',
+          error_description: 'request_object_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+    if (
+      messageSigning?.enabled === true &&
+      request.authorization_signed_response_alg &&
+      !(messageSigning.authorizationSigningAlgorithms ?? ['ES256']).includes(
+        request.authorization_signed_response_alg
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
           error_description:
-            'request_object_signing_alg is not allowed by the active FAPI profile',
+            'authorization_signed_response_alg is not allowed by the active FAPI profile',
         },
         400
       );

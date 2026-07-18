@@ -137,6 +137,8 @@ interface RequestCache {
   systemSettings: CachedSystemSettings | null;
   /** System settings fetched flag (to distinguish null value from not-fetched) */
   systemSettingsFetched: boolean;
+  /** The settings read failed; strict security-profile callers must not treat this as disabled. */
+  systemSettingsReadFailed: boolean;
   /** Cache statistics */
   stats: RequestCacheStats;
 }
@@ -166,6 +168,7 @@ export function getRequestCache(c: Context<{ Bindings: Env }>): RequestCache {
       tenantFeatureFlagsFetched: new Set(),
       systemSettings: null,
       systemSettingsFetched: false,
+      systemSettingsReadFailed: false,
       stats: {
         clientHit: 0,
         clientMiss: 0,
@@ -306,13 +309,17 @@ export async function loadTenantProfileCached(
  */
 export async function getSystemSettingsCached(
   c: Context<{ Bindings: Env }>,
-  env: Env
+  env: Env,
+  options: { failOnError?: boolean } = {}
 ): Promise<CachedSystemSettings | null> {
   const cache = getRequestCache(c);
 
   // Check request-level cache
   if (cache.systemSettingsFetched) {
     cache.stats.systemSettingsHit++;
+    if (options.failOnError && cache.systemSettingsReadFailed) {
+      throw new Error('Tenant system settings are unavailable');
+    }
     return cache.systemSettings;
   }
 
@@ -321,13 +328,18 @@ export async function getSystemSettingsCached(
 
   try {
     const tenantId = getTenantIdFromRequestCacheContext(c);
-    cache.systemSettings = (await getTenantSystemSettings(
-      env.SETTINGS,
-      tenantId
-    )) as CachedSystemSettings | null;
-  } catch {
+    cache.systemSettings = (await getTenantSystemSettings(env.SETTINGS, tenantId, {
+      failOnError: true,
+    })) as CachedSystemSettings | null;
+    cache.systemSettingsReadFailed = false;
+  } catch (error) {
     // Parse error or KV error - treat as no settings
     cache.systemSettings = null;
+    cache.systemSettingsReadFailed = true;
+    if (options.failOnError) {
+      cache.systemSettingsFetched = true;
+      throw error;
+    }
   }
 
   cache.systemSettingsFetched = true;

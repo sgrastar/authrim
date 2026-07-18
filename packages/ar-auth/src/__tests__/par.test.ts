@@ -250,6 +250,33 @@ describe('PAR Handler', () => {
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
 
+  it('fails closed when tenant security profile settings cannot be read', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockRejectedValue(new Error('KV unavailable')),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'temporarily_unavailable',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('redacts RFC error details from PAR logs in production', async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
@@ -837,6 +864,65 @@ describe('PAR Handler', () => {
     expect(mockImportJWK).not.toHaveBeenCalled();
     expect(mockJwtVerify).not.toHaveBeenCalled();
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects request-object keys whose key type does not match the JWS algorithm', async () => {
+    mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'confused-key' });
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      jwks: {
+        keys: [
+          {
+            kty: 'RSA',
+            kid: 'confused-key',
+            alg: 'ES256',
+            use: 'sig',
+            n: 'test-modulus',
+            e: 'AQAB',
+          },
+        ],
+      },
+    });
+    const c = createMockContext({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: {
+        client_id: 'client-123',
+        client_assertion: 'client-assertion',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request: 'signed-request-object',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockImplementation(async (key: string) =>
+            key.includes('certification-profile')
+              ? JSON.stringify({
+                  fapi: {
+                    enabled: true,
+                    messageSigning: {
+                      enabled: true,
+                      requestObjectSigningAlgorithms: ['ES256'],
+                    },
+                  },
+                })
+              : null
+          ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request_object',
+      error_description: 'No suitable signing key found in client jwks',
+    });
+    expect(mockImportJWK).not.toHaveBeenCalled();
+    expect(mockJwtVerify).not.toHaveBeenCalled();
   });
 
   it('stores sanitized authorization_details when RAR is enabled', async () => {

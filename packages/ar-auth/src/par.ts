@@ -130,7 +130,9 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
   };
 }
 
-function assertCompletePARParams(params: PARRequestParams): asserts params is CompletePARRequestParams {
+function assertCompletePARParams(
+  params: PARRequestParams
+): asserts params is CompletePARRequestParams {
   if (!params.response_type) {
     throw new RFCError('invalid_request', 400, 'response_type is required');
   }
@@ -164,7 +166,25 @@ function selectRequestObjectSigningKey(
     if (key.alg && key.alg !== alg) {
       return false;
     }
-    return true;
+    if (alg === 'ES256') {
+      return (
+        key.kty === 'EC' &&
+        key.crv === 'P-256' &&
+        typeof key.x === 'string' &&
+        typeof key.y === 'string'
+      );
+    }
+    if (alg === 'PS256' || alg === 'RS256') {
+      return key.kty === 'RSA' && typeof key.n === 'string' && typeof key.e === 'string';
+    }
+    if (alg === 'EdDSA') {
+      return (
+        key.kty === 'OKP' &&
+        (key.crv === 'Ed25519' || key.crv === 'Ed448') &&
+        typeof key.x === 'string'
+      );
+    }
+    return false;
   });
   if (kid) {
     return candidates[0];
@@ -254,7 +274,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     try {
       const settings = await getTenantSystemSettings(
         c.env.SETTINGS,
-        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c)
+        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
+        { failOnError: true }
       );
       if (settings) {
         fapiConfig = settings.fapi || {};
@@ -262,7 +283,11 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       }
     } catch (error) {
       log.error('Failed to load settings from KV', { action: 'settings_load' }, error as Error);
-      // Continue with default values
+      throw new RFCError(
+        'temporarily_unavailable',
+        503,
+        'Security profile settings are temporarily unavailable'
+      );
     }
 
     // =========================================================================
@@ -285,9 +310,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           additionalAudiences:
             fapiConfig.clientAssertionAudience === 'issuer' ? [] : [`${issuer}/token`],
           clockSkewSeconds: 60,
-          ...(fapiConfig.enabled
-            ? { allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS] }
-            : {}),
+          ...(fapiConfig.enabled ? { allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS] } : {}),
         }
       );
 
@@ -338,7 +361,6 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           );
         }
       }
-
     }
 
     // =========================================================================
@@ -349,9 +371,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     const messageSigningConfig = fapiConfig.messageSigning;
     const messageSigningEnabled = messageSigningConfig?.enabled === true;
     const requestObjectSigningAlgorithms = messageSigningEnabled
-      ? (messageSigningConfig.requestObjectSigningAlgorithms ?? [
-          ...FAPI2_MESSAGE_SIGNING_ALGS,
-        ])
+      ? (messageSigningConfig.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS])
       : LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS;
 
     if (messageSigningConfig?.requireSignedRequestObject && !requestParam) {
@@ -453,7 +473,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               return c.json(
                 {
                   error: 'invalid_request_object',
-                  error_description: 'Unsigned request objects are not allowed for FAPI Message Signing',
+                  error_description:
+                    'Unsigned request objects are not allowed for FAPI Message Signing',
                 },
                 400
               );
@@ -597,7 +618,11 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                 }
                 cryptoKey = imported as CryptoKey;
               } catch (error) {
-                log.error('Failed to fetch client jwks_uri', { action: 'jwks_fetch' }, error as Error);
+                log.error(
+                  'Failed to fetch client jwks_uri',
+                  { action: 'jwks_fetch' },
+                  error as Error
+                );
                 return c.json(
                   {
                     error: 'invalid_request_object',
@@ -753,10 +778,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // merged. Signed PAR requests do not duplicate these values in the form body.
     assertCompletePARParams(params);
 
-    if (
-      fapiConfig.enabled &&
-      (!params.code_challenge || params.code_challenge_method !== 'S256')
-    ) {
+    if (fapiConfig.enabled && (!params.code_challenge || params.code_challenge_method !== 'S256')) {
       throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
     }
 

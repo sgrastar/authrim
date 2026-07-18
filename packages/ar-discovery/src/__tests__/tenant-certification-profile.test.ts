@@ -60,7 +60,9 @@ describe('tenant-scoped certification profiles', () => {
     const standard = (await defaultResponse.json()) as OIDCProviderMetadata;
 
     expect(fapi.require_pushed_authorization_requests).toBe(true);
+    expect(fapi.token_endpoint_auth_methods_supported).toEqual(['private_key_jwt']);
     expect(standard.require_pushed_authorization_requests).toBe(false);
+    expect(standard.token_endpoint_auth_methods_supported).toContain('client_secret_basic');
     expect(fapi.response_types_supported).toEqual(['code']);
     expect(fapi.grant_types_supported).not.toContain('implicit');
     expect(standard.response_types_supported).toContain('code id_token token');
@@ -142,5 +144,33 @@ describe('tenant-scoped certification profiles', () => {
       'jwt',
     ]);
     expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
+  });
+
+  it('does not downgrade discovery metadata when profile settings are unavailable', async () => {
+    const env = {
+      BASE_DOMAIN: 'example.com',
+      DEFAULT_TENANT_ID: 'default',
+      SETTINGS: {
+        get: vi.fn().mockRejectedValue(new Error('KV unavailable')),
+      },
+      PUBLIC_JWK_JSON: JSON.stringify({
+        kty: 'RSA',
+        use: 'sig',
+        alg: 'RS256',
+        kid: 'test-kid',
+        n: 'test-modulus',
+        e: 'AQAB',
+      }),
+    } as unknown as Env;
+
+    const response = await createApp('fapi2').fetch(
+      new Request('https://fapi2.example.com/.well-known/openid-configuration'),
+      env
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'temporarily_unavailable',
+    });
   });
 });

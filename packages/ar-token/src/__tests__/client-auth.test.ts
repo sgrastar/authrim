@@ -3061,6 +3061,45 @@ describe('Client Authentication Tests', () => {
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects client-secret downgrade before consuming a code in FAPI mode', async () => {
+      const client = createPrivateKeyJwtClient();
+      const authCodeData = createAuthCodeData();
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        fapi: { enabled: true, requireDpop: true },
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+      mocks.mockParseBasicAuth.mockReturnValue({ success: false });
+      const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: consumeCodeRpcMock,
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(401);
+      await expect(parseJsonResponse(response)).resolves.toMatchObject({
+        error: 'invalid_client',
+        error_description: expect.stringContaining('private_key_jwt'),
+      });
+      expect(mocks.mockVerifyClientSecretHash).not.toHaveBeenCalled();
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
     });
 
     it('should reject malformed Basic auth header', async () => {
@@ -3381,8 +3420,7 @@ describe('Client Authentication Tests', () => {
             code: 'valid-auth-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
-            client_assertion_type:
-              'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
             client_assertion: clientAssertion,
           },
           env: mockEnv,
@@ -4444,7 +4482,7 @@ describe('Client Authentication Tests', () => {
       };
     }
 
-    it('honors settings overrides and falls back to the environment on settings failure', async () => {
+    it('honors settings overrides and fails closed when profile state is unavailable', async () => {
       const client = setupM2MClient();
       mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
         oidc: { clientCredentials: { enabled: false } },
@@ -4456,9 +4494,13 @@ describe('Client Authentication Tests', () => {
         error_description: 'Client Credentials grant is not enabled',
       });
 
-      mocks.mockGetSystemSettingsCached.mockRejectedValueOnce(new Error('settings unavailable'));
+      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('settings unavailable'));
       const fallback = await requestM2M(client);
-      expect(fallback.response.status).toBe(200);
+      expect(fallback.response.status).toBe(503);
+      expect(fallback.body).toMatchObject({
+        error: 'temporarily_unavailable',
+      });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
 
     it('rejects malformed assertions and Authorization headers before client lookup', async () => {

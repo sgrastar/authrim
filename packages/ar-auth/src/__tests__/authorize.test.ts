@@ -935,11 +935,13 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('error_description')).toContain('PKCE with S256');
     });
 
-    it('continues with safe defaults when FAPI settings JSON is malformed', async () => {
+    it('fails closed when security profile settings JSON is malformed', async () => {
       await (env.SETTINGS as unknown as MockKVNamespace).put('system_settings', '{');
       const response = await app.request(base, {}, env);
-      expect(response.status).toBe(302);
-      expect(response.headers.get('location')).toContain('/flow/login');
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'temporarily_unavailable',
+      });
     });
 
     it('parses all supported form parameters without trusting non-string values', async () => {

@@ -1363,7 +1363,7 @@ describe('Security-Critical Tests', () => {
 
     describe('DPoP Authorization Code Binding', () => {
       it('should reject when DPoP JKT does not match authorization code binding', async () => {
-        const client = createFAPIClient();
+        const client = createConfidentialClient();
         const authCodeData = createDPoPBoundAuthCodeData({
           dpopJkt: 'original-jkt-from-authorization',
         });
@@ -1391,6 +1391,7 @@ describe('Security-Critical Tests', () => {
             code: 'dpop-bound-auth-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1425,6 +1426,7 @@ describe('Security-Critical Tests', () => {
             code: 'dpop-bound-auth-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1560,6 +1562,7 @@ describe('Security-Critical Tests', () => {
             code: 'already-used-code',
             redirect_uri: 'https://app.example.com/callback',
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1595,6 +1598,7 @@ describe('Security-Critical Tests', () => {
             code: 'replayed-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1766,7 +1770,7 @@ describe('Security-Critical Tests', () => {
       });
 
       it('should not rotate refresh tokens for a FAPI 2.0 tenant', async () => {
-        const client = createConfidentialClient();
+        const client = createFAPIClient({ dpop_bound_access_tokens: false });
         const refreshTokenPayload = createRefreshTokenPayload({
           client_id: client.client_id,
         });
@@ -1795,7 +1799,8 @@ describe('Security-Critical Tests', () => {
             grant_type: 'refresh_token',
             refresh_token: refreshTokenJWT,
             client_id: client.client_id,
-            client_secret: 'valid-secret',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'valid-client-assertion',
           },
           env: mockEnv,
         });

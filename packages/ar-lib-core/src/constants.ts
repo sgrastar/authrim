@@ -286,7 +286,15 @@ export const ALLOWED_ASYMMETRIC_ALGS = [
   'PS256',
   'PS384',
   'PS512',
+  'EdDSA',
 ] as const;
+
+/**
+ * Client assertion algorithms accepted for private_key_jwt authentication.
+ * Keep this separate from OP response-signing algorithms: the client owns the
+ * assertion key and FAPI permits PS256 and EdDSA in addition to ES256.
+ */
+export const CLIENT_ASSERTION_SIGNING_ALGS = ['RS256', 'ES256', 'PS256', 'EdDSA'] as const;
 
 /**
  * Allowed DPoP signing algorithms for Phase 1.

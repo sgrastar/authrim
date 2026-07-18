@@ -25,16 +25,26 @@ export function buildTenantSystemSettingsKey(tenantId: string): string {
   return `settings:tenant:${tenantId}:${TENANT_SYSTEM_SETTINGS_CATEGORY}`;
 }
 
-function parseSettingsObject(raw: string | null): Record<string, unknown> {
+function parseSettingsObject(raw: string | null, failOnError = false): Record<string, unknown> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    if (failOnError) {
+      throw new TypeError('Tenant system settings must be a JSON object');
+    }
+    return {};
+  } catch (error) {
+    if (failOnError) throw error;
     return {};
   }
+}
+
+export interface TenantSystemSettingsReadOptions {
+  /** Propagate KV and malformed-JSON errors so security profiles can fail closed. */
+  failOnError?: boolean;
 }
 
 /**
@@ -46,7 +56,8 @@ function parseSettingsObject(raw: string | null): Record<string, unknown> {
  */
 export async function getTenantSystemSettings(
   kv: KVNamespace | undefined,
-  tenantId: string
+  tenantId: string,
+  options: TenantSystemSettingsReadOptions = {}
 ): Promise<Record<string, unknown> | null> {
   if (!kv) return null;
 
@@ -57,10 +68,11 @@ export async function getTenantSystemSettings(
     ]);
     if (!globalRaw && !tenantRaw) return null;
     return {
-      ...parseSettingsObject(globalRaw),
-      ...parseSettingsObject(tenantRaw),
+      ...parseSettingsObject(globalRaw, options.failOnError),
+      ...parseSettingsObject(tenantRaw, options.failOnError),
     };
-  } catch {
+  } catch (error) {
+    if (options.failOnError) throw error;
     return null;
   }
 }

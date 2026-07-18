@@ -315,6 +315,19 @@ describe('DPoP Utilities', () => {
       [{ jwk: undefined }, 'jwk header'],
       [{ jwk: {} }, 'kty'],
       [{ jwk: { kty: 'EC', d: 'private' } }, 'private key material'],
+      [{ jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', use: 'enc' } }, 'intended for signatures'],
+      [
+        { jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', key_ops: ['sign'] } },
+        'signature verification',
+      ],
+      [
+        { jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', key_ops: ['verify', 'sign'] } },
+        'only permit signature verification',
+      ],
+      [
+        { jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', alg: 'PS256' } },
+        'algorithm does not match',
+      ],
       [{ jwk: { kty: 'EC', crv: 'P-256', x: 'bad', y: 'bad' } }, 'Invalid JWK'],
     ])('rejects unsafe protected header %#', async (header, message) => {
       const encodedHeader = base64url.encode(
@@ -332,6 +345,28 @@ describe('DPoP Utilities', () => {
           'tenant-a'
         )
       ).resolves.toMatchObject({ error_description: expect.stringContaining(message) });
+    });
+
+    it('rejects oversized proofs before JOSE parsing or storage', async () => {
+      const store = namespace();
+      const oversized = `${'a'.repeat(9 * 1024)}.payload.signature`;
+
+      await expect(
+        validateDPoPProof(
+          oversized,
+          'POST',
+          'https://api.example/token',
+          undefined,
+          store as never,
+          'client-1',
+          'tenant-a'
+        )
+      ).resolves.toMatchObject({
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: expect.stringContaining('segment is too large'),
+      });
+      expect(store.fetch).not.toHaveBeenCalled();
     });
 
     it('rejects a tampered signature without exposing verification details', async () => {

@@ -290,6 +290,7 @@ describe('client-config update handler', () => {
   it('rejects unsupported JARM signing metadata before persistence', async () => {
     mocked.getClientCached.mockResolvedValueOnce({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       registration_access_token_hash: 'token-hash',
     });
     const c = createMockContext({
@@ -297,6 +298,46 @@ describe('client-config update handler', () => {
         client_id: 'client-123',
         redirect_uris: ['https://example.com/callback'],
         authorization_signed_response_alg: 'HS256',
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: expect.stringContaining('authorization_signed_response_alg'),
+    });
+    expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
+  });
+
+  it('rejects JARM signing metadata excluded by the active Message Signing profile', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        authorization_signed_response_alg: 'RS256',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockImplementation(async (key: string) =>
+            key.includes('certification-profile')
+              ? JSON.stringify({
+                  fapi: {
+                    enabled: true,
+                    messageSigning: {
+                      enabled: true,
+                      authorizationSigningAlgorithms: ['ES256'],
+                    },
+                  },
+                })
+              : null
+          ),
+        } as unknown as KVNamespace,
       },
     });
 
@@ -332,6 +373,85 @@ describe('client-config update handler', () => {
     });
     expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
   });
+
+  it('rejects changing a FAPI client to secret-based token authentication', async () => {
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      },
+      env: {
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockImplementation(async (key: string) =>
+              key.includes('certification-profile')
+                ? JSON.stringify({ fapi: { enabled: true } })
+                : null
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: expect.stringContaining('private_key_jwt'),
+    });
+    expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
+  });
+
+  it.each(['RS256', 'ES256', 'PS256', 'EdDSA'])(
+    'accepts %s as client assertion signing metadata on update',
+    async (algorithm) => {
+      const adapter = createMockAdapter();
+      mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+      const storedClient = {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        registration_access_token_hash: 'token-hash',
+      };
+      mocked.getClientCached
+        .mockResolvedValueOnce(storedClient)
+        .mockResolvedValueOnce(storedClient)
+        .mockResolvedValueOnce({
+          ...storedClient,
+          token_endpoint_auth_signing_alg: algorithm,
+        });
+
+      const c = createMockContext({
+        body: {
+          client_id: 'client-123',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'private_key_jwt',
+          token_endpoint_auth_signing_alg: algorithm,
+        },
+      });
+
+      const res = await clientConfigUpdateHandler(c);
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        token_endpoint_auth_signing_alg: algorithm,
+      });
+      expect(adapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('token_endpoint_auth_signing_alg = ?'),
+        expect.arrayContaining([algorithm])
+      );
+    }
+  );
 
   it('rejects ambiguous client key sources before persistence', async () => {
     mocked.getClientCached.mockResolvedValueOnce({

@@ -21,8 +21,8 @@ describe('FAPI 2.0 Message Signing request object claims', () => {
     [{ nbf: now, exp: now }, 'exp claim must be later than nbf'],
     [{ nbf: 1.5, exp: now + 60 }, 'nbf claim is required'],
   ])('rejects invalid claims %#', (claims, expected) => {
-    expect(
-      validateFAPI2MessageSigningRequestObjectClaims(claims, { nowSeconds: now })
-    ).toContain(expected);
+    expect(validateFAPI2MessageSigningRequestObjectClaims(claims, { nowSeconds: now })).toContain(
+      expected
+    );
   });
 });

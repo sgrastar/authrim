@@ -1113,9 +1113,7 @@
 					login_ui_url: settingsEditForm.login_ui_url?.trim()
 						? settingsEditForm.login_ui_url.trim()
 						: null,
-					id_token_signed_response_alg: settingsEditForm.id_token_signing_alg as
-						| 'RS256'
-						| 'ES256',
+					id_token_signed_response_alg: settingsEditForm.id_token_signing_alg as 'RS256' | 'ES256',
 					userinfo_signed_response_alg: settingsEditForm.userinfo_signed_response_alg as
 						| 'none'
 						| 'RS256'
@@ -3559,14 +3557,9 @@
 								{#if isEditing}
 									<select class="form-select" bind:value={settingsEditForm.jwt_bearer_signing_alg}>
 										<option value="RS256">RS256</option>
-										<option value="RS384">RS384</option>
-										<option value="RS512">RS512</option>
 										<option value="ES256">ES256</option>
-										<option value="ES384">ES384</option>
-										<option value="ES512">ES512</option>
 										<option value="PS256">PS256</option>
-										<option value="PS384">PS384</option>
-										<option value="PS512">PS512</option>
+										<option value="EdDSA">EdDSA</option>
 									</select>
 									<p class="form-hint">
 										{$LL.admin_client_detail_jwt_bearer_signing_alg_hint()}
@@ -3593,14 +3586,9 @@
 										bind:value={settingsEditForm.token_endpoint_auth_signing_alg}
 									>
 										<option value="RS256">RS256</option>
-										<option value="RS384">RS384</option>
-										<option value="RS512">RS512</option>
 										<option value="ES256">ES256</option>
-										<option value="ES384">ES384</option>
-										<option value="ES512">ES512</option>
 										<option value="PS256">PS256</option>
-										<option value="PS384">PS384</option>
-										<option value="PS512">PS512</option>
+										<option value="EdDSA">EdDSA</option>
 									</select>
 									<p class="form-hint">
 										{$LL.admin_client_detail_token_endpoint_auth_signing_alg_hint()}

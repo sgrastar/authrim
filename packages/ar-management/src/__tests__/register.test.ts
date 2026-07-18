@@ -580,6 +580,30 @@ describe('Dynamic Client Registration Handler', () => {
       });
     });
 
+    it.each(['RS256', 'ES256', 'PS256', 'EdDSA'])(
+      'accepts and returns %s for private_key_jwt client authentication',
+      async (algorithm) => {
+        const res = await app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              redirect_uris: ['https://example.com/callback'],
+              token_endpoint_auth_method: 'private_key_jwt',
+              token_endpoint_auth_signing_alg: algorithm,
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(201);
+        await expect(res.json()).resolves.toMatchObject({
+          token_endpoint_auth_signing_alg: algorithm,
+        });
+      }
+    );
+
     it('stores and returns FAPI Message Signing and JARM client metadata', async () => {
       const res = await app.request(
         '/register',
@@ -609,6 +633,69 @@ describe('Dynamic Client Registration Handler', () => {
       expect(getLastBindArgs(mockEnv)).toEqual(
         expect.arrayContaining(['ES256', 'RSA-OAEP', 'A256GCM'])
       );
+    });
+
+    it('rejects a JARM signing algorithm excluded by the active Message Signing profile', async () => {
+      mockKVStore.set(
+        'settings:tenant:default:certification-profile',
+        JSON.stringify({
+          fapi: {
+            enabled: true,
+            messageSigning: {
+              enabled: true,
+              authorizationSigningAlgorithms: ['ES256'],
+            },
+          },
+        })
+      );
+      mockEnv.SETTINGS = createMockKV();
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'private_key_jwt',
+            authorization_signed_response_alg: 'RS256',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('authorization_signed_response_alg'),
+      });
+    });
+
+    it('rejects secret-based client authentication in an active FAPI profile', async () => {
+      mockKVStore.set(
+        'settings:tenant:default:certification-profile',
+        JSON.stringify({ fapi: { enabled: true } })
+      );
+      mockEnv.SETTINGS = createMockKV();
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'client_secret_basic',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('private_key_jwt'),
+      });
     });
   });
 
