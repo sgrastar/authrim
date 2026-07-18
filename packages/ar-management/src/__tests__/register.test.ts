@@ -210,7 +210,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(62);
+      expect(args).toHaveLength(63);
       expect(args).toContain('https://id.example.com');
     });
 
@@ -240,7 +240,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(62);
+      expect(args).toHaveLength(63);
       expect(args).toContain('https://api.example.com/');
       expect(args).not.toContain('https://id.example.com');
     });
@@ -510,7 +510,30 @@ describe('Dynamic Client Registration Handler', () => {
   });
 
   describe('Validation - OIDC response signing algorithms', () => {
+    it('rejects ambiguous client key sources', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            jwks: { keys: [] },
+            jwks_uri: 'https://client.example.com/jwks.json',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: 'jwks and jwks_uri must not both be provided',
+      });
+    });
+
     it.each([
+      ['token_endpoint_auth_signing_alg', 'HS256'],
       ['id_token_signed_response_alg', 'PS256'],
       ['userinfo_signed_response_alg', 'RS512'],
       ['request_object_signing_alg', 'HS256'],
@@ -565,6 +588,7 @@ describe('Dynamic Client Registration Handler', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_signing_alg: 'ES256',
             request_object_signing_alg: 'ES256',
             authorization_signed_response_alg: 'ES256',
             authorization_encrypted_response_alg: 'RSA-OAEP',
@@ -576,6 +600,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
       await expect(res.json()).resolves.toMatchObject({
+        token_endpoint_auth_signing_alg: 'ES256',
         request_object_signing_alg: 'ES256',
         authorization_signed_response_alg: 'ES256',
         authorization_encrypted_response_alg: 'RSA-OAEP',

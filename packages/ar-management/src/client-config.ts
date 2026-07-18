@@ -37,6 +37,8 @@ import {
   GRANT_TYPES,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  FAPI2_MESSAGE_SIGNING_ALGS,
+  getSystemSettingsCached,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -158,6 +160,21 @@ function isCharArrayLike(value: unknown): boolean {
 function validateUpdateRequest(
   body: Partial<ClientMetadata>
 ): { error: string; error_description: string } | null {
+  if (body.jwks !== undefined && body.jwks_uri !== undefined) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'jwks and jwks_uri must not both be provided',
+    };
+  }
+  if (
+    body.token_endpoint_auth_signing_alg !== undefined &&
+    !isOIDCSigningAlgorithm(body.token_endpoint_auth_signing_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'token_endpoint_auth_signing_alg must be one of: RS256, ES256',
+    };
+  }
   if (
     body.id_token_signed_response_alg !== undefined &&
     !isOIDCSigningAlgorithm(body.id_token_signed_response_alg)
@@ -469,6 +486,8 @@ function buildClientResponse(
   if (client.response_types) response.response_types = client.response_types as string[];
   if (client.token_endpoint_auth_method)
     response.token_endpoint_auth_method = client.token_endpoint_auth_method as string;
+  if (client.token_endpoint_auth_signing_alg)
+    response.token_endpoint_auth_signing_alg = client.token_endpoint_auth_signing_alg;
   if (client.scope) response.scope = client.scope as string;
   if (client.contacts) response.contacts = client.contacts as string[];
   if (client.logo_uri) response.logo_uri = client.logo_uri as string;
@@ -650,6 +669,24 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       return c.json(validationError, 400);
     }
 
+    const systemSettings = await getSystemSettingsCached(c, c.env);
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      body.token_endpoint_auth_signing_alg &&
+      !FAPI2_MESSAGE_SIGNING_ALGS.includes(
+        body.token_endpoint_auth_signing_alg as (typeof FAPI2_MESSAGE_SIGNING_ALGS)[number]
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+
     // Fetch existing client
     const existingClient = await getClientCached(c, c.env, clientId);
     if (!existingClient) {
@@ -697,6 +734,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           jwks = ?,
           subject_type = ?,
           sector_identifier_uri = ?,
+          token_endpoint_auth_signing_alg = ?,
           id_token_signed_response_alg = ?,
           userinfo_signed_response_alg = ?,
           request_object_signing_alg = ?,
@@ -742,6 +780,10 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
             existingClient.sector_identifier_uri as string | null | undefined
           ),
           // Algorithm preferences
+          coalesceNullable(
+            body.token_endpoint_auth_signing_alg,
+            existingClient.token_endpoint_auth_signing_alg
+          ),
           coalesceNullable(
             body.id_token_signed_response_alg,
             existingClient.id_token_signed_response_alg as string | null | undefined

@@ -309,4 +309,51 @@ describe('client-config update handler', () => {
     });
     expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
   });
+
+  it('rejects unsupported client assertion signing metadata before persistence', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_signing_alg: 'HS256',
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: expect.stringContaining('token_endpoint_auth_signing_alg'),
+    });
+    expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous client key sources before persistence', async () => {
+    mocked.getClientCached.mockResolvedValueOnce({
+      client_id: 'client-123',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        jwks: { keys: [] },
+        jwks_uri: 'https://client.example.com/jwks.json',
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: 'jwks and jwks_uri must not both be provided',
+    });
+    expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
+  });
 });

@@ -660,6 +660,77 @@ describe('PAR Handler', () => {
     expect(mockStoreRequestRpc).toHaveBeenCalled();
   });
 
+  it('rejects request_uri inside a signed FAPI Message Signing request object', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const signingKey = {
+      kty: 'EC',
+      crv: 'P-256',
+      x: 'x',
+      y: 'y',
+      kid: 'message-signing-key',
+      alg: 'ES256',
+      use: 'sig',
+    };
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      request_object_signing_alg: 'ES256',
+      jwks: { keys: [signingKey] },
+    });
+    mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'message-signing-key' });
+    mockJwtVerify.mockResolvedValue({
+      payload: {
+        iss: 'client-123',
+        aud: 'https://op.example.com',
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        request_uri: 'urn:ietf:params:oauth:request_uri:nested',
+        nbf: now,
+        exp: now + 300,
+      },
+    });
+    const c = createMockContext({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: {
+        client_id: 'client-123',
+        client_assertion: 'client-assertion',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        request: 'signed-request-object',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockImplementation(async (key: string) =>
+            key.includes('certification-profile')
+              ? JSON.stringify({
+                  fapi: {
+                    enabled: true,
+                    messageSigning: {
+                      enabled: true,
+                      requireSignedRequestObject: true,
+                      requestObjectSigningAlgorithms: ['ES256'],
+                    },
+                  },
+                })
+              : null
+          ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'request_uri_not_supported',
+      error_description: 'request_uri is not supported inside a PAR request object',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('rejects a FAPI Message Signing request object without mandatory time claims', async () => {
     const signingKey = {
       kty: 'EC',

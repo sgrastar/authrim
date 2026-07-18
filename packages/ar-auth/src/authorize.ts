@@ -69,12 +69,13 @@ import {
   normalizeAttributeReleaseConsentPolicy,
   getTenantSystemSettings,
   resolveAuthorizationResponseSigningAlgorithm,
+  selectJWEEncryptionKey,
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
 import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
-import { isSigningJWK, isEncryptionJWK } from '@authrim/ar-lib-core';
+import { isSigningJWK } from '@authrim/ar-lib-core';
 import { safeFetch, safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
@@ -4691,13 +4692,16 @@ async function createJARMResponse(
         Array.isArray(client.jwks.keys)
       ) {
         // Find encryption key
-        const encKey = (client.jwks.keys as PublicJWK[]).find((key) => isEncryptionJWK(key));
+        const encKey = selectJWEEncryptionKey(
+          client.jwks.keys,
+          client.authorization_encrypted_response_alg as JWEAlgorithm
+        );
 
         if (!encKey) {
           throw new Error('No suitable encryption key found in client jwks');
         }
 
-        clientPublicKeyJWK = encKey;
+        clientPublicKeyJWK = encKey as PublicJWK;
       } else if (client.jwks_uri && typeof client.jwks_uri === 'string') {
         // SSRF protection: Block requests to internal addresses
         if (isInternalUrl(client.jwks_uri)) {
@@ -4708,14 +4712,18 @@ async function createJARMResponse(
         const jwks = await safeFetchJson<JWKS>(client.jwks_uri, {
           timeoutMs: 5000,
           maxResponseSize: 256 * 1024,
+          redirect: 'error',
         });
-        const encKey = jwks.keys.find((key) => isEncryptionJWK(key));
+        const encKey = selectJWEEncryptionKey(
+          jwks.keys,
+          client.authorization_encrypted_response_alg as JWEAlgorithm
+        );
 
         if (!encKey) {
           throw new Error('No suitable encryption key found in client jwks_uri');
         }
 
-        clientPublicKeyJWK = encKey;
+        clientPublicKeyJWK = encKey as PublicJWK;
       } else {
         throw new Error('Client requested encryption but no public key available');
       }
@@ -4729,6 +4737,7 @@ async function createJARMResponse(
           alg: client.authorization_encrypted_response_alg as JWEAlgorithm,
           enc: client.authorization_encrypted_response_enc as JWEEncryption,
           cty: 'JWT',
+          ...(clientPublicKeyJWK.kid ? { kid: clientPublicKeyJWK.kid } : {}),
         }
       );
     }

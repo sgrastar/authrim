@@ -278,10 +278,26 @@ components:
           type: boolean
         authorization_response_iss_parameter_supported:
           type: boolean
+        request_parameter_supported:
+          type: boolean
+        request_uri_parameter_supported:
+          type: boolean
         response_types_supported:
           type: array
           items:
             type: string
+        response_modes_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - query
+              - fragment
+              - form_post
+              - query.jwt
+              - fragment.jwt
+              - form_post.jwt
+              - jwt
         grant_types_supported:
           type: array
           items:
@@ -308,6 +324,60 @@ components:
             enum:
               - RS256
               - ES256
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+        token_endpoint_auth_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - RS256
+              - ES256
+        request_object_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - none
+              - RS256
+              - ES256
+              - PS256
+              - EdDSA
+        authorization_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - RS256
+              - ES256
+        authorization_encryption_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - RSA-OAEP
+              - RSA-OAEP-256
+              - ECDH-ES
+              - ECDH-ES+A128KW
+              - ECDH-ES+A192KW
+              - ECDH-ES+A256KW
+        authorization_encryption_enc_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - A128GCM
+              - A192GCM
+              - A256GCM
+              - A128CBC-HS256
+              - A192CBC-HS384
+              - A256CBC-HS512
+        dpop_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
         code_challenge_methods_supported:
           type: array
           items:

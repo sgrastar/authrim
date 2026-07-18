@@ -3338,7 +3338,68 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockValidateClientAssertion).toHaveBeenCalledWith(
         clientAssertion,
         expect.stringContaining('/token'),
-        expect.anything()
+        expect.anything(),
+        undefined
+      );
+    });
+
+    it('should apply issuer-only audience and non-RS FAPI algorithms at the token endpoint', async () => {
+      const client = createPrivateKeyJwtClient();
+      const authCodeData = createAuthCodeData();
+      const clientAssertion = createTestJWT(
+        { alg: 'ES256', kid: 'client-key-001' },
+        {
+          iss: client.client_id,
+          sub: client.client_id,
+          aud: 'https://auth.example.com',
+          exp: Math.floor(Date.now() / 1000) + 300,
+        }
+      );
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        fapi: { enabled: true, requireDpop: true },
+      });
+      mocks.mockParseToken.mockReturnValue({ iss: client.client_id, sub: client.client_id });
+      mocks.mockValidateClientAssertion.mockResolvedValue({
+        valid: true,
+        client_id: client.client_id,
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+      mocks.mockParseBasicAuth.mockReturnValue({ success: false });
+
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_assertion_type:
+              'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: clientAssertion,
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockValidateClientAssertion).toHaveBeenCalledWith(
+        clientAssertion,
+        'https://auth.example.com/token',
+        expect.anything(),
+        {
+          audiencePolicy: 'issuer-only',
+          issuer: 'https://auth.example.com',
+          allowedAlgorithms: ['ES256', 'PS256', 'EdDSA'],
+          clockSkewSeconds: 60,
+        }
       );
     });
 

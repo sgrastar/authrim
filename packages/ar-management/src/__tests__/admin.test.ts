@@ -444,6 +444,7 @@ function createOAuthClientRow(
     jwks: null,
     subject_type: null,
     sector_identifier_uri: null,
+    token_endpoint_auth_signing_alg: null,
     id_token_signed_response_alg: null,
     userinfo_signed_response_alg: null,
     request_object_signing_alg: null,

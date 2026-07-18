@@ -58,6 +58,7 @@ import {
   OIDCIdentityMappingRuntimeError,
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
+  FAPI2_MESSAGE_SIGNING_ALGS,
 } from '@authrim/ar-lib-core';
 import {
   resolveIDTokenSigningAlgorithm,
@@ -119,6 +120,7 @@ import {
   type DeviceInstallation,
   type DeviceSecret,
   type NativeSSOErrorDetailCode,
+  type ClientAssertionValidationOptions,
   type Phase1ErrorDetailSeverity,
   type Phase1ErrorDetailUserAction,
 } from '@authrim/ar-lib-core';
@@ -839,6 +841,22 @@ async function isDPoPRequiredForTokenRequest(
   );
 
   return fapiRequiresDpop || clientRequiresDpop;
+}
+
+async function resolveClientAssertionValidationOptions(
+  c: Context<{ Bindings: Env }>
+): Promise<ClientAssertionValidationOptions | undefined> {
+  const settings = await getSystemSettingsCached(c, c.env);
+  if (settings?.fapi?.enabled !== true) {
+    return undefined;
+  }
+
+  return {
+    audiencePolicy: 'issuer-only',
+    issuer: getRequestIssuer(c),
+    allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS],
+    clockSkewSeconds: 60,
+  };
 }
 
 // ===== Module-level Logger for Helper Functions =====
@@ -1808,7 +1826,8 @@ async function handleAuthorizationCodeGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      clientMetadata as unknown as import('@authrim/ar-lib-core').ClientMetadata
+      clientMetadata as unknown as import('@authrim/ar-lib-core').ClientMetadata,
+      await resolveClientAssertionValidationOptions(c)
     );
 
     if (!assertionValidation.valid) {
@@ -2449,7 +2468,11 @@ async function handleAuthorizationCodeGrant(
       }
 
       // Get client's public key for encryption
-      const publicKey = await getClientPublicKey(clientMetadata);
+      const publicKey = await getClientPublicKey(
+        clientMetadata,
+        undefined,
+        alg as JWEAlgorithm
+      );
       if (!publicKey) {
         log.error('Client requires encryption but no public key available', {});
         return c.json(
@@ -2909,7 +2932,8 @@ async function handleRefreshTokenGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      typedClient
+      typedClient,
+      await resolveClientAssertionValidationOptions(c)
     );
 
     if (!assertionValidation.valid) {
@@ -4722,7 +4746,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   // Encrypt ID token if required
   if (isIDTokenEncryptionRequired(clientMetadata)) {
-    const clientPublicKey = await getClientPublicKey(clientMetadata);
+    const alg = clientMetadata.id_token_encrypted_response_alg as JWEAlgorithm;
+    const enc = clientMetadata.id_token_encrypted_response_enc as JWEEncryption;
+    const clientPublicKey = await getClientPublicKey(clientMetadata, undefined, alg);
 
     if (!clientPublicKey) {
       return c.json(
@@ -4733,9 +4759,6 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         500
       );
     }
-
-    const alg = clientMetadata.id_token_encrypted_response_alg as JWEAlgorithm;
-    const enc = clientMetadata.id_token_encrypted_response_enc as JWEEncryption;
 
     if (!validateJWEOptions(alg, enc)) {
       return c.json(
@@ -5288,7 +5311,8 @@ async function handleTokenExchangeGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      typedClient
+      typedClient,
+      await resolveClientAssertionValidationOptions(c)
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
@@ -7024,7 +7048,8 @@ async function handleClientCredentialsGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      typedClient
+      typedClient,
+      await resolveClientAssertionValidationOptions(c)
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage

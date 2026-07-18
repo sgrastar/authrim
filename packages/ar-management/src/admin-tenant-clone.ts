@@ -108,6 +108,7 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
   'backchannel_user_code_parameter',
   'jwks',
   'jwks_uri',
+  'token_endpoint_auth_signing_alg',
   'userinfo_signed_response_alg',
   'post_logout_redirect_uris',
   'allowed_redirect_origins',

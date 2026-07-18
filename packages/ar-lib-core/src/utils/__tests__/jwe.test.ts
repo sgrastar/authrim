@@ -10,6 +10,7 @@ import {
   isIDTokenEncryptionRequired,
   isUserInfoEncryptionRequired,
   getClientPublicKey,
+  selectJWEEncryptionKey,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
 } from '../jwe';
@@ -224,6 +225,31 @@ describe('JWE Utilities', () => {
       expect(key).toEqual(ecPublicKey);
     });
 
+    it('should select an embedded encryption key matching the requested algorithm', async () => {
+      const metadata = {
+        jwks: {
+          keys: [
+            { ...ecPublicKey, use: 'enc' },
+            { ...rsaPublicKey, use: 'enc' },
+          ],
+        },
+      };
+
+      const key = await getClientPublicKey(metadata, undefined, 'RSA-OAEP');
+
+      expect(key).toMatchObject({ kty: 'RSA', kid: 'rsa-test-key', alg: 'RSA-OAEP' });
+    });
+
+    it('should reject a decrypt-only key when selecting a key for encryption', async () => {
+      const metadata = {
+        jwks: {
+          keys: [{ ...rsaPublicKey, use: 'enc', key_ops: ['decrypt'] }],
+        },
+      };
+
+      await expect(getClientPublicKey(metadata, undefined, 'RSA-OAEP')).resolves.toBeNull();
+    });
+
     it('should return null when key not found', async () => {
       const metadata = {
         jwks: {
@@ -239,6 +265,61 @@ describe('JWE Utilities', () => {
       const metadata = {};
       const key = await getClientPublicKey(metadata);
       expect(key).toBeNull();
+    });
+  });
+
+  describe('selectJWEEncryptionKey', () => {
+    it('selects a key matching the requested algorithm and key type', () => {
+      const selected = selectJWEEncryptionKey(
+        [
+          { ...ecPublicKey, use: 'enc', alg: 'ECDH-ES' },
+          { ...rsaPublicKey, use: 'enc', alg: 'RSA-OAEP' },
+        ],
+        'RSA-OAEP'
+      );
+
+      expect(selected).toMatchObject({ kid: 'rsa-test-key', kty: 'RSA', alg: 'RSA-OAEP' });
+    });
+
+    it('rejects signing and decrypt-only keys', () => {
+      expect(
+        selectJWEEncryptionKey(
+          [
+            { ...rsaPublicKey, use: 'sig' },
+            { ...rsaPublicKey, use: 'enc', key_ops: ['decrypt'] },
+          ],
+          'RSA-OAEP'
+        )
+      ).toBeNull();
+    });
+
+    it('rejects an RSA key for ECDH-ES and an EC key for RSA-OAEP', () => {
+      expect(selectJWEEncryptionKey([rsaPublicKey], 'ECDH-ES')).toBeNull();
+      expect(selectJWEEncryptionKey([ecPublicKey], 'RSA-OAEP')).toBeNull();
+    });
+
+    it('supports deterministic key rotation when every candidate has a distinct kid', () => {
+      const selected = selectJWEEncryptionKey(
+        [
+          { ...rsaPublicKey, kid: 'rotation-b', use: 'enc' },
+          { ...rsaPublicKey, kid: 'rotation-a', use: 'enc' },
+        ],
+        'RSA-OAEP'
+      );
+
+      expect(selected?.kid).toBe('rotation-a');
+    });
+
+    it('fails closed when multiple matching keys cannot be identified uniquely', () => {
+      expect(
+        selectJWEEncryptionKey(
+          [
+            { ...rsaPublicKey, kid: undefined, use: 'enc' },
+            { ...rsaPublicKey, kid: undefined, use: 'enc' },
+          ],
+          'RSA-OAEP'
+        )
+      ).toBeNull();
     });
   });
 

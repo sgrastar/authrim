@@ -363,6 +363,59 @@ components:
           type: string
         token_endpoint_auth_method:
           type: string
+        token_endpoint_auth_signing_alg:
+          type: string
+          enum:
+            - RS256
+            - ES256
+        id_token_signed_response_alg:
+          type: string
+          default: RS256
+          enum:
+            - RS256
+            - ES256
+        userinfo_signed_response_alg:
+          type: string
+          default: none
+          enum:
+            - none
+            - RS256
+            - ES256
+        request_object_signing_alg:
+          type: string
+          enum:
+            - none
+            - RS256
+            - ES256
+            - PS256
+            - EdDSA
+        authorization_signed_response_alg:
+          type: string
+          default: RS256
+          description: JWS algorithm used for JWT-secured authorization responses (JARM).
+          enum:
+            - RS256
+            - ES256
+        authorization_encrypted_response_alg:
+          type: string
+          description: JWE key-management algorithm used to encrypt JARM responses.
+          enum:
+            - RSA-OAEP
+            - RSA-OAEP-256
+            - ECDH-ES
+            - ECDH-ES+A128KW
+            - ECDH-ES+A192KW
+            - ECDH-ES+A256KW
+        authorization_encrypted_response_enc:
+          type: string
+          description: JWE content-encryption algorithm used to encrypt JARM responses.
+          enum:
+            - A128GCM
+            - A192GCM
+            - A256GCM
+            - A128CBC-HS256
+            - A192CBC-HS384
+            - A256CBC-HS512
         require_pkce:
           type: boolean
         client_credentials_allowed:
@@ -430,6 +483,55 @@ components:
             format: uri
         require_pkce:
           type: boolean
+        token_endpoint_auth_method:
+          type: string
+        token_endpoint_auth_signing_alg:
+          type: string
+          enum:
+            - RS256
+            - ES256
+        id_token_signed_response_alg:
+          type: string
+          enum:
+            - RS256
+            - ES256
+        userinfo_signed_response_alg:
+          type: string
+          enum:
+            - none
+            - RS256
+            - ES256
+        request_object_signing_alg:
+          type: string
+          enum:
+            - none
+            - RS256
+            - ES256
+            - PS256
+            - EdDSA
+        authorization_signed_response_alg:
+          type: string
+          enum:
+            - RS256
+            - ES256
+        authorization_encrypted_response_alg:
+          type: string
+          enum:
+            - RSA-OAEP
+            - RSA-OAEP-256
+            - ECDH-ES
+            - ECDH-ES+A128KW
+            - ECDH-ES+A192KW
+            - ECDH-ES+A256KW
+        authorization_encrypted_response_enc:
+          type: string
+          enum:
+            - A128GCM
+            - A192GCM
+            - A256GCM
+            - A128CBC-HS256
+            - A192CBC-HS384
+            - A256CBC-HS512
     BatchRevokeRequest:
       type: object
       required:

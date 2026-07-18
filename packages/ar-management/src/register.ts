@@ -47,6 +47,7 @@ import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
   FAPI2_MESSAGE_SIGNING_ALGS,
+  getSystemSettingsCached,
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
@@ -337,6 +338,16 @@ function validateRegistrationRequest(
     }
   }
 
+  if (data.jwks !== undefined && data.jwks_uri !== undefined) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'jwks and jwks_uri must not both be provided',
+      },
+    };
+  }
+
   // Validate contacts (must be array of strings)
   if (data.contacts !== undefined) {
     if (!Array.isArray(data.contacts)) {
@@ -551,6 +562,19 @@ function validateRegistrationRequest(
       error: {
         error: 'invalid_client_metadata',
         error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+      },
+    };
+  }
+
+  if (
+    data.token_endpoint_auth_signing_alg !== undefined &&
+    !isOIDCSigningAlgorithm(data.token_endpoint_auth_signing_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'token_endpoint_auth_signing_alg must be one of: RS256, ES256',
       },
     };
   }
@@ -1116,7 +1140,7 @@ async function storeClient(
       browser_public_client_mode, browser_refresh_token_policy,
       native_sso_enabled, native_channel_allowed, allowed_channels,
       subject_type, sector_identifier_uri,
-      token_endpoint_auth_method, is_trusted, skip_consent,
+      token_endpoint_auth_method, token_endpoint_auth_signing_alg, is_trusted, skip_consent,
       allow_claims_without_scope,
       claims_parameter_policy, asc_enabled, asc_protected_request_required,
       asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
@@ -1137,7 +1161,7 @@ async function storeClient(
       client_credentials_allowed, allowed_scopes, default_scope,
       require_pkce,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -1167,6 +1191,7 @@ async function storeClient(
       metadata.subject_type || 'public',
       metadata.sector_identifier_uri || null,
       metadata.token_endpoint_auth_method || 'client_secret_basic',
+      metadata.token_endpoint_auth_signing_alg || null,
       metadata.is_trusted ? 1 : 0,
       metadata.skip_consent ? 1 : 0,
       metadata.allow_claims_without_scope ? 1 : 0,
@@ -1282,6 +1307,41 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     const request = validation.data;
+    const systemSettings = await getSystemSettingsCached(c, c.env);
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      request.token_endpoint_auth_signing_alg &&
+      !FAPI2_MESSAGE_SIGNING_ALGS.includes(
+        request.token_endpoint_auth_signing_alg as (typeof FAPI2_MESSAGE_SIGNING_ALGS)[number]
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+
+    const messageSigning = systemSettings?.fapi?.messageSigning;
+    if (
+      messageSigning?.enabled === true &&
+      request.request_object_signing_alg &&
+      !(messageSigning.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS]).includes(
+        request.request_object_signing_alg
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'request_object_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
 
     // OIDC Core 8.1: Validate pairwise subject type configuration
     // If pairwise subject type is used with multiple redirect URIs that have different hosts,
@@ -1395,6 +1455,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       require_pkce: requirePkce,
       application_type: applicationType,
     };
+
+    if (request.token_endpoint_auth_signing_alg)
+      response.token_endpoint_auth_signing_alg = request.token_endpoint_auth_signing_alg;
 
     // Include optional fields if provided
     if (request.client_name) response.client_name = request.client_name;

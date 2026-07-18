@@ -65,6 +65,57 @@ export interface ClientAssertionValidationOptions {
   additionalAudiences?: string[];
   /** Allowed positive clock skew for nbf, in seconds. Default: 0. */
   clockSkewSeconds?: number;
+  /**
+   * Explicit JWS algorithm allowlist for the calling security profile.
+   * FAPI callers use this to exclude RS256 and other algorithms that are valid in generic OIDC.
+   */
+  allowedAlgorithms?: readonly string[];
+}
+
+function isVerificationKeyForAlgorithm(key: JWK, algorithm: string): boolean {
+  if (key.use !== undefined && key.use !== 'sig') {
+    return false;
+  }
+  if (Array.isArray(key.key_ops) && !key.key_ops.includes('verify')) {
+    return false;
+  }
+  if (key.alg !== undefined && key.alg !== algorithm) {
+    return false;
+  }
+
+  if (algorithm.startsWith('RS') || algorithm.startsWith('PS')) {
+    return key.kty === 'RSA' && typeof key.n === 'string' && typeof key.e === 'string';
+  }
+  if (algorithm.startsWith('ES')) {
+    const expectedCurve =
+      algorithm === 'ES256' ? 'P-256' : algorithm === 'ES384' ? 'P-384' : 'P-521';
+    return (
+      key.kty === 'EC' &&
+      key.crv === expectedCurve &&
+      typeof key.x === 'string' &&
+      typeof key.y === 'string'
+    );
+  }
+  if (algorithm === 'EdDSA') {
+    return (
+      key.kty === 'OKP' &&
+      (key.crv === 'Ed25519' || key.crv === 'Ed448') &&
+      typeof key.x === 'string'
+    );
+  }
+  return false;
+}
+
+function selectClientAssertionVerificationKey(
+  keys: JWK[],
+  algorithm: string,
+  kid?: string
+): JWK | undefined {
+  const candidates = keys.filter((key) => isVerificationKeyForAlgorithm(key, algorithm));
+  if (kid) {
+    return candidates.find((key) => key.kid === kid);
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export interface OAuthClientAuthenticationParams {
@@ -237,6 +288,7 @@ export async function validateClientAssertion(
     issuer,
     additionalAudiences = [],
     clockSkewSeconds = 0,
+    allowedAlgorithms = ALLOWED_ASYMMETRIC_ALGS,
   } = options;
 
   try {
@@ -291,6 +343,23 @@ export async function validateClientAssertion(
         valid: false,
         error: 'invalid_client',
         error_description: 'Unsigned client assertions (alg=none) are not allowed',
+      };
+    }
+    if (!allowedAlgorithms.includes(header.alg)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm is not allowed',
+      };
+    }
+    if (
+      client.token_endpoint_auth_signing_alg &&
+      client.token_endpoint_auth_signing_alg !== header.alg
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm does not match client metadata',
       };
     }
 
@@ -408,22 +477,7 @@ export async function validateClientAssertion(
       };
     }
 
-    // Step 7: Get public key for signature verification
-    // Helper function to find key by kid (RFC 7517 Section 4.5)
-    const findKeyByKid = (keys: JWK[], targetKid?: string): JWK | undefined => {
-      if (targetKid) {
-        // Find key with matching kid
-        const matchingKey = keys.find((k) => k.kid === targetKid);
-        if (matchingKey) {
-          return matchingKey;
-        }
-        // If kid is specified but not found, return undefined (will trigger error)
-        return undefined;
-      }
-      // If no kid specified, use first key (backward compatibility)
-      return keys[0];
-    };
-
+    // Step 7: Get a verification key matching kid, algorithm, key type, and intended use.
     let publicKey: JWK | null = null;
     let jwksKeys: JWK[] = [];
 
@@ -449,6 +503,7 @@ export async function validateClientAssertion(
           },
           timeoutMs: 5000,
           maxResponseSize: 256 * 1024,
+          redirect: 'error',
         });
         if (jwks.keys && jwks.keys.length > 0) {
           jwksKeys = jwks.keys;
@@ -456,17 +511,11 @@ export async function validateClientAssertion(
         }
       } catch (fetchError) {
         log.error('Failed to fetch JWKS from URI', {}, fetchError as Error);
-        // If jwks_uri fetch fails but we have embedded jwks, fall back to it
-        if (client.jwks?.keys && client.jwks.keys.length > 0) {
-          log.warn('Falling back to embedded JWKS');
-          jwksKeys = client.jwks.keys as JWK[];
-        } else {
-          return {
-            valid: false,
-            error: 'invalid_client',
-            error_description: 'Failed to fetch client JWKS from jwks_uri',
-          };
-        }
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Failed to fetch client JWKS from jwks_uri',
+        };
       }
     } else if (client.jwks?.keys && client.jwks.keys.length > 0) {
       // Use embedded JWKS only if jwks_uri is not provided
@@ -485,7 +534,7 @@ export async function validateClientAssertion(
         })),
       });
 
-      const foundKey = findKeyByKid(jwksKeys, kid);
+      const foundKey = selectClientAssertionVerificationKey(jwksKeys, header.alg, kid);
       if (foundKey) {
         publicKey = foundKey;
         log.debug('Selected key', { kid: foundKey.kid, kty: foundKey.kty });
@@ -505,7 +554,7 @@ export async function validateClientAssertion(
 
     // Step 8: Verify JWT signature
     // SECURITY: Use algorithm whitelist to prevent algorithm confusion attacks
-    const cryptoKey = await importJWK(publicKey, publicKey.alg || 'RS256');
+    const cryptoKey = await importJWK(publicKey, header.alg);
 
     // Build acceptable audiences array based on options
     // - Token endpoint URL (RFC 7523 recommended)
@@ -519,7 +568,7 @@ export async function validateClientAssertion(
     await jwtVerify(assertion, cryptoKey, {
       issuer: client.client_id,
       audience: acceptableAudiences,
-      algorithms: [...ALLOWED_ASYMMETRIC_ALGS],
+      algorithms: [...allowedAlgorithms],
       clockTolerance: Math.max(0, clockSkewSeconds),
     });
 

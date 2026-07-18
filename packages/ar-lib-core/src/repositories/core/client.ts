@@ -108,6 +108,7 @@ export interface OAuthClient {
 
   // Authentication
   token_endpoint_auth_method: TokenEndpointAuthMethod;
+  token_endpoint_auth_signing_alg: string | null;
   jwks: string | null; // JSON object
   jwks_uri: string | null;
 
@@ -228,6 +229,7 @@ export interface CreateClientInput {
   subject_type?: SubjectType;
   sector_identifier_uri?: string | null;
   token_endpoint_auth_method?: TokenEndpointAuthMethod;
+  token_endpoint_auth_signing_alg?: string | null;
   jwks?: Record<string, unknown> | null;
   jwks_uri?: string | null;
   is_trusted?: boolean;
@@ -302,6 +304,7 @@ export interface UpdateClientInput {
   subject_type?: SubjectType;
   sector_identifier_uri?: string | null;
   token_endpoint_auth_method?: TokenEndpointAuthMethod;
+  token_endpoint_auth_signing_alg?: string | null;
   jwks?: Record<string, unknown> | null;
   jwks_uri?: string | null;
   is_trusted?: boolean;
@@ -478,6 +481,7 @@ export class ClientRepository {
       subject_type: input.subject_type || 'public',
       sector_identifier_uri: input.sector_identifier_uri ?? null,
       token_endpoint_auth_method: input.token_endpoint_auth_method || 'client_secret_basic',
+      token_endpoint_auth_signing_alg: input.token_endpoint_auth_signing_alg ?? null,
       jwks: input.jwks ? JSON.stringify(input.jwks) : null,
       jwks_uri: input.jwks_uri ?? null,
       is_trusted: input.is_trusted ?? false,
@@ -556,7 +560,7 @@ export class ClientRepository {
         redirect_uris, grant_types, response_types, scope,
         logo_uri, client_uri, policy_uri, tos_uri, contacts,
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
-        token_endpoint_auth_method, jwks, jwks_uri,
+        token_endpoint_auth_method, token_endpoint_auth_signing_alg, jwks, jwks_uri,
         is_trusted, skip_consent, allow_claims_without_scope,
         claims_parameter_policy, identity_mapping, attribute_release_consent,
         asc_enabled, asc_protected_request_required,
@@ -577,7 +581,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -617,6 +621,7 @@ export class ClientRepository {
         client.subject_type,
         client.sector_identifier_uri,
         client.token_endpoint_auth_method,
+        client.token_endpoint_auth_signing_alg,
         client.jwks,
         client.jwks_uri,
         client.is_trusted ? 1 : 0,
@@ -762,6 +767,10 @@ export class ClientRepository {
     if (input.token_endpoint_auth_method !== undefined) {
       updates.push('token_endpoint_auth_method = ?');
       params.push(input.token_endpoint_auth_method);
+    }
+    if (input.token_endpoint_auth_signing_alg !== undefined) {
+      updates.push('token_endpoint_auth_signing_alg = ?');
+      params.push(input.token_endpoint_auth_signing_alg);
     }
     if (input.jwks !== undefined) {
       updates.push('jwks = ?');

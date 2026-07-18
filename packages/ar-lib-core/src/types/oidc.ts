@@ -283,6 +283,8 @@ export interface ClientRegistrationRequest {
     | 'client_secret_jwt'
     | 'private_key_jwt'
     | 'none';
+  /** JWS algorithm registered for private_key_jwt/client_secret_jwt authentication. */
+  token_endpoint_auth_signing_alg?: string;
   // Grant types and response types
   grant_types?: string[];
   response_types?: string[];
@@ -378,6 +380,7 @@ export interface ClientRegistrationResponse {
   software_id?: string;
   software_version?: string;
   token_endpoint_auth_method?: string;
+  token_endpoint_auth_signing_alg?: string;
   grant_types?: string[];
   response_types?: string[];
   require_pkce?: boolean;

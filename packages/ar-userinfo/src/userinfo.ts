@@ -388,7 +388,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get client's public key for encryption
-    const publicKey = await getClientPublicKey(clientMetadata);
+    const publicKey = await getClientPublicKey(
+      clientMetadata,
+      undefined,
+      alg as JWEAlgorithm
+    );
     if (!publicKey) {
       log.error('Client requires UserInfo encryption but no public key available', { client_id });
       return c.json(

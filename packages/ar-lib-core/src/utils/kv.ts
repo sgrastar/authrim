@@ -936,6 +936,7 @@ export async function getClient(
     response_types: string;
     scope: string | null;
     token_endpoint_auth_method: string | null;
+    token_endpoint_auth_signing_alg: string | null;
     contacts: string | null;
     logo_uri: string | null;
     client_uri: string | null;
@@ -1066,6 +1067,7 @@ export async function getClient(
     response_types: normalizeStringArray(result.response_types, ['code']),
     scope: result.scope ?? undefined,
     token_endpoint_auth_method: result.token_endpoint_auth_method ?? undefined,
+    token_endpoint_auth_signing_alg: result.token_endpoint_auth_signing_alg ?? undefined,
     contacts: normalizeOptionalStringArray(result.contacts),
     logo_uri: result.logo_uri ?? undefined,
     client_uri: result.client_uri ?? undefined,

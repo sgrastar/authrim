@@ -285,6 +285,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           additionalAudiences:
             fapiConfig.clientAssertionAudience === 'issuer' ? [] : [`${issuer}/token`],
           clockSkewSeconds: 60,
+          ...(fapiConfig.enabled
+            ? { allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS] }
+            : {}),
         }
       );
 

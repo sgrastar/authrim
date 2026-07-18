@@ -332,6 +332,37 @@ describe('Client Authentication', () => {
       expect(result.valid).toBe(false);
       expect(result.error_description).toContain('alg=none');
     });
+
+    it('should enforce a caller-provided security-profile algorithm allowlist', async () => {
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint);
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client, {
+        allowedAlgorithms: ['ES256', 'PS256', 'EdDSA'],
+      });
+
+      expect(result).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm is not allowed',
+      });
+    });
+
+    it('should enforce the signing algorithm registered in client metadata', async () => {
+      const client = {
+        ...createClientWithJWKS(clientId),
+        token_endpoint_auth_signing_alg: 'ES256',
+      } as ClientMetadata;
+      const assertion = await createClientAssertion(clientId, tokenEndpoint);
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm does not match client metadata',
+      });
+    });
   });
 
   describe('Required Claims Validation', () => {
@@ -742,7 +773,7 @@ describe('Client Authentication', () => {
       expectJwksFetch(client.jwks_uri);
     });
 
-    it('should fall back to embedded jwks when jwks_uri fetch fails', async () => {
+    it('should fail closed instead of using stale embedded jwks when jwks_uri fetch fails', async () => {
       // Client has BOTH jwks and jwks_uri, but jwks_uri is unreachable
       const client = createClientWithJWKS(clientId);
       client.jwks_uri = 'https://client.example.com/.well-known/jwks.json';
@@ -753,8 +784,11 @@ describe('Client Authentication', () => {
       const assertion = await createClientAssertion(clientId, tokenEndpoint);
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
-      // Should succeed because it falls back to embedded jwks
-      expect(result.valid).toBe(true);
+      expect(result).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Failed to fetch client JWKS from jwks_uri',
+      });
       expectJwksFetch(client.jwks_uri);
     });
   });
@@ -1019,7 +1053,7 @@ describe('Client Authentication', () => {
       expectJwksFetch(client.jwks_uri);
     });
 
-    it('should use first key when no kid is specified in assertion', async () => {
+    it('should reject an ambiguous assertion when no kid is specified', async () => {
       // Create multiple keys but don't specify kid in assertion
       const secondKeyPair = await generateKeyPair('RS256');
       const secondPublicJwk = await exportJWK(secondKeyPair.publicKey);
@@ -1042,7 +1076,11 @@ describe('Client Authentication', () => {
 
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
-      expect(result.valid).toBe(true);
+      expect(result).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'No matching public key found for client signature verification',
+      });
     });
 
     it('should fail when kid specified but JWKS has multiple keys without matching kid', async () => {

@@ -129,6 +129,11 @@ describe('tenant-scoped certification profiles', () => {
       'PS256',
       'EdDSA',
     ]);
+    expect(metadata.token_endpoint_auth_signing_alg_values_supported).toEqual([
+      'ES256',
+      'PS256',
+      'EdDSA',
+    ]);
     expect(metadata.authorization_signing_alg_values_supported).toEqual(['ES256']);
     expect(metadata.response_modes_supported).toEqual([
       'query.jwt',

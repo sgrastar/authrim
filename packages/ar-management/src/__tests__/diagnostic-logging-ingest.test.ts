@@ -79,6 +79,7 @@ function createClient(overrides: Partial<OAuthClient> = {}): OAuthClient {
     backchannel_client_notification_endpoint: null,
     backchannel_authentication_request_signing_alg: null,
     backchannel_user_code_parameter: false,
+    token_endpoint_auth_signing_alg: null,
     id_token_signed_response_alg: null,
     userinfo_signed_response_alg: null,
     authorization_signed_response_alg: null,
