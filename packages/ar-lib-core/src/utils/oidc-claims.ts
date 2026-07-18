@@ -131,26 +131,9 @@ export function parseClaimsRequest(claims?: string): ClaimsEvaluationResult & {
   }
 
   const root = parsed as Record<string, unknown>;
-  const validSections = new Set(['userinfo', 'id_token', '_asc']);
-  const sections = Object.keys(root);
-
-  for (const section of sections) {
-    if (!validSections.has(section)) {
-      return {
-        ok: false,
-        error: 'invalid_request',
-        error_description: `Invalid claims section: ${section}. Must be one of: userinfo, id_token, _asc`,
-      };
-    }
-  }
-
-  if (!sections.some((section) => section === 'userinfo' || section === 'id_token')) {
-    return {
-      ok: false,
-      error: 'invalid_request',
-      error_description: 'claims parameter must contain at least one of: userinfo, id_token',
-    };
-  }
+  // OIDC Core 5.5 requires members that are not understood to be ignored. Only
+  // validate sections implemented by Authrim; extension members must not turn an
+  // otherwise valid authorization request into an error.
 
   const userinfo = validateClaimSection(root.userinfo, 'userinfo');
   if (!userinfo.ok) return userinfo;

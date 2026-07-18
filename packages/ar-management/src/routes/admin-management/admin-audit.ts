@@ -67,6 +67,24 @@ function buildAuditActorView(
   const metadataActorType = getMetadataString(metadata, 'admin_actor_type');
   const machinePrincipalId = getMetadataString(metadata, 'admin_machine_principal_id');
 
+  if (metadataActorType === 'agent') {
+    const actorId = getMetadataString(metadata, 'admin_actor_id');
+    const clientId = getMetadataString(metadata, 'admin_agent_client_id');
+    return {
+      actor_type: 'agent',
+      actor_id: actorId,
+      actor_display_name: clientId || actorId || 'Agent',
+      delegator_id: getMetadataString(metadata, 'admin_delegator_id') || log.admin_user_id,
+      agent_client_id: clientId,
+      agent_mode: getMetadataString(metadata, 'admin_agent_mode'),
+      agent_assurance: getMetadataString(metadata, 'admin_agent_assurance'),
+      agent_grant_id: getMetadataString(metadata, 'admin_agent_grant_id'),
+      agent_grant_generation: metadata?.admin_agent_grant_generation ?? null,
+      agent_consent_version: metadata?.admin_agent_consent_version ?? null,
+      agent_correlation_id: getMetadataString(metadata, 'admin_agent_correlation_id'),
+    };
+  }
+
   if (metadataActorType === 'machine' || machinePrincipalId) {
     const clientId = getMetadataString(metadata, 'admin_machine_client_id');
     const principalType = getMetadataString(metadata, 'admin_machine_principal_type');
@@ -107,7 +125,7 @@ function buildAuditActorView(
  * GET /api/admin/admin-audit-log
  * List Admin audit log entries with pagination and filtering
  */
-adminAuditRouter.get('/', async (c) => {
+export async function listAdminAuditLogs(c: AdminContext) {
   try {
     const adapter = getAdminAdapter(c);
     const auditRepo = new AdminAuditLogRepository(adapter);
@@ -192,7 +210,9 @@ adminAuditRouter.get('/', async (c) => {
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
-});
+}
+
+adminAuditRouter.get('/', listAdminAuditLogs);
 
 /**
  * GET /api/admin/admin-audit-log/:id

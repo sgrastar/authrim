@@ -168,12 +168,6 @@ export {
 } from './identity';
 
 // AI Grant repository (Human Auth / AI Ephemeral Auth Two-Layer Model)
-export {
-  AIGrantRepository,
-  type AIGrant,
-  type AIGrantCreateInput,
-  type AIGrantUpdateInput,
-} from './ai-grant';
 
 // VC repositories (Phase 9)
 export {

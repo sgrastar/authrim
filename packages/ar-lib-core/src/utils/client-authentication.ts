@@ -47,12 +47,75 @@ export interface ClientAssertionValidationResult {
  */
 export interface ClientAssertionValidationOptions {
   /**
+   * Accepted audience policy. FAPI 2.0 Security Profile Final requires exactly one string
+   * containing the authorization server issuer identifier.
+   * Default: endpoint-or-issuer (backward-compatible RFC 7523/OIDC interoperability mode)
+   */
+  audiencePolicy?: 'endpoint-or-issuer' | 'issuer-only';
+  /**
    * Whether to accept Issuer ID as a valid audience value (in addition to token endpoint URL).
    * RFC 7523 Section 3 recommends the token endpoint URL, but OIDC Core and industry practice
    * also accept the Issuer ID for interoperability (Google, Microsoft, Okta, Auth0, Keycloak).
    * Default: true (industry standard)
    */
   acceptIssuerIdAsAudience?: boolean;
+  /** Explicit authorization server issuer, for endpoints other than `/token` (for example PAR). */
+  issuer?: string;
+  /** Additional endpoint URLs accepted as audience values. */
+  additionalAudiences?: string[];
+  /** Allowed positive clock skew for nbf, in seconds. Default: 0. */
+  clockSkewSeconds?: number;
+  /**
+   * Explicit JWS algorithm allowlist for the calling security profile.
+   * FAPI callers use this to exclude RS256 and other algorithms that are valid in generic OIDC.
+   */
+  allowedAlgorithms?: readonly string[];
+}
+
+function isVerificationKeyForAlgorithm(key: JWK, algorithm: string): boolean {
+  if (key.use !== undefined && key.use !== 'sig') {
+    return false;
+  }
+  if (Array.isArray(key.key_ops) && !key.key_ops.includes('verify')) {
+    return false;
+  }
+  if (key.alg !== undefined && key.alg !== algorithm) {
+    return false;
+  }
+
+  if (algorithm.startsWith('RS') || algorithm.startsWith('PS')) {
+    return key.kty === 'RSA' && typeof key.n === 'string' && typeof key.e === 'string';
+  }
+  if (algorithm.startsWith('ES')) {
+    const expectedCurve =
+      algorithm === 'ES256' ? 'P-256' : algorithm === 'ES384' ? 'P-384' : 'P-521';
+    return (
+      key.kty === 'EC' &&
+      key.crv === expectedCurve &&
+      typeof key.x === 'string' &&
+      typeof key.y === 'string'
+    );
+  }
+  if (algorithm === 'EdDSA') {
+    return (
+      key.kty === 'OKP' &&
+      (key.crv === 'Ed25519' || key.crv === 'Ed448') &&
+      typeof key.x === 'string'
+    );
+  }
+  return false;
+}
+
+function selectClientAssertionVerificationKey(
+  keys: JWK[],
+  algorithm: string,
+  kid?: string
+): JWK | undefined {
+  const candidates = keys.filter((key) => isVerificationKeyForAlgorithm(key, algorithm));
+  if (kid) {
+    return candidates.find((key) => key.kid === kid);
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export interface OAuthClientAuthenticationParams {
@@ -109,8 +172,22 @@ export function parseOAuthClientAuthenticationParams(
 
   const basicAuth = parseBasicAuth(params.authorizationHeader);
   if (basicAuth.success) {
-    clientId = clientId || basicAuth.credentials.username;
-    clientSecret = clientSecret || basicAuth.credentials.password;
+    if (clientAssertion || clientSecret) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Multiple client authentication methods are not allowed',
+      };
+    }
+    if (clientId && !timingSafeEqual(clientId, basicAuth.credentials.username)) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Client authentication failed',
+      };
+    }
+    clientId = basicAuth.credentials.username;
+    clientSecret = basicAuth.credentials.password;
   } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
     return {
       ok: false,
@@ -205,7 +282,14 @@ export async function validateClientAssertion(
   options: ClientAssertionValidationOptions = {}
 ): Promise<ClientAssertionValidationResult> {
   // Default: Accept Issuer ID as audience (industry standard for interoperability)
-  const { acceptIssuerIdAsAudience = true } = options;
+  const {
+    audiencePolicy = 'endpoint-or-issuer',
+    acceptIssuerIdAsAudience = true,
+    issuer,
+    additionalAudiences = [],
+    clockSkewSeconds = 0,
+    allowedAlgorithms = ALLOWED_ASYMMETRIC_ALGS,
+  } = options;
 
   try {
     const sizeError = validateAssertionSize(assertion);
@@ -261,6 +345,23 @@ export async function validateClientAssertion(
         error_description: 'Unsigned client assertions (alg=none) are not allowed',
       };
     }
+    if (!allowedAlgorithms.includes(header.alg)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm is not allowed',
+      };
+    }
+    if (
+      client.token_endpoint_auth_signing_alg &&
+      client.token_endpoint_auth_signing_alg !== header.alg
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm does not match client metadata',
+      };
+    }
 
     // Decode payload
     const payloadBase64 = parts[1];
@@ -310,20 +411,39 @@ export async function validateClientAssertion(
     // RFC 7523 Section 3 recommends token endpoint URL, but OIDC Core and industry practice
     // also accept the Issuer ID (token endpoint without /token suffix)
     // See: https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication
-    const issuerUrl = tokenEndpoint.replace(/\/token$/, '');
+    const issuerUrl = issuer || tokenEndpoint.replace(/\/token$/, '');
     const normalizedIssuer = normalizeUrl(issuerUrl);
+    const normalizedAdditionalAudiences = additionalAudiences.map(normalizeUrl);
+
+    if (audiencePolicy === 'issuer-only' && Array.isArray(claims.aud)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Audience must be the authorization server issuer identifier',
+      };
+    }
 
     const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
 
     // SECURITY: Use timing-safe comparison to prevent timing attacks on audience values
     const audienceMatches = audiences.some((aud) => {
       const normalizedAud = normalizeUrl(aud);
+      if (audiencePolicy === 'issuer-only') {
+        return timingSafeEqual(normalizedAud, normalizedIssuer);
+      }
       // Check if audience matches token endpoint URL (RFC 7523 recommended)
       if (timingSafeEqual(normalizedAud, normalizedEndpoint)) {
         return true;
       }
       // Also accept Issuer ID if option is enabled (industry standard for interoperability)
       if (acceptIssuerIdAsAudience && timingSafeEqual(normalizedAud, normalizedIssuer)) {
+        return true;
+      }
+      if (
+        normalizedAdditionalAudiences.some((acceptedAudience) =>
+          timingSafeEqual(normalizedAud, acceptedAudience)
+        )
+      ) {
         return true;
       }
       return false;
@@ -349,7 +469,7 @@ export async function validateClientAssertion(
     }
 
     // Step 6: Verify not before time (if present)
-    if (claims.nbf && claims.nbf > now) {
+    if (claims.nbf && claims.nbf > now + Math.max(0, clockSkewSeconds)) {
       return {
         valid: false,
         error: 'invalid_client',
@@ -357,22 +477,7 @@ export async function validateClientAssertion(
       };
     }
 
-    // Step 7: Get public key for signature verification
-    // Helper function to find key by kid (RFC 7517 Section 4.5)
-    const findKeyByKid = (keys: JWK[], targetKid?: string): JWK | undefined => {
-      if (targetKid) {
-        // Find key with matching kid
-        const matchingKey = keys.find((k) => k.kid === targetKid);
-        if (matchingKey) {
-          return matchingKey;
-        }
-        // If kid is specified but not found, return undefined (will trigger error)
-        return undefined;
-      }
-      // If no kid specified, use first key (backward compatibility)
-      return keys[0];
-    };
-
+    // Step 7: Get a verification key matching kid, algorithm, key type, and intended use.
     let publicKey: JWK | null = null;
     let jwksKeys: JWK[] = [];
 
@@ -398,6 +503,7 @@ export async function validateClientAssertion(
           },
           timeoutMs: 5000,
           maxResponseSize: 256 * 1024,
+          redirect: 'error',
         });
         if (jwks.keys && jwks.keys.length > 0) {
           jwksKeys = jwks.keys;
@@ -405,17 +511,11 @@ export async function validateClientAssertion(
         }
       } catch (fetchError) {
         log.error('Failed to fetch JWKS from URI', {}, fetchError as Error);
-        // If jwks_uri fetch fails but we have embedded jwks, fall back to it
-        if (client.jwks?.keys && client.jwks.keys.length > 0) {
-          log.warn('Falling back to embedded JWKS');
-          jwksKeys = client.jwks.keys as JWK[];
-        } else {
-          return {
-            valid: false,
-            error: 'invalid_client',
-            error_description: 'Failed to fetch client JWKS from jwks_uri',
-          };
-        }
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Failed to fetch client JWKS from jwks_uri',
+        };
       }
     } else if (client.jwks?.keys && client.jwks.keys.length > 0) {
       // Use embedded JWKS only if jwks_uri is not provided
@@ -434,7 +534,7 @@ export async function validateClientAssertion(
         })),
       });
 
-      const foundKey = findKeyByKid(jwksKeys, kid);
+      const foundKey = selectClientAssertionVerificationKey(jwksKeys, header.alg, kid);
       if (foundKey) {
         publicKey = foundKey;
         log.debug('Selected key', { kid: foundKey.kid, kty: foundKey.kty });
@@ -454,19 +554,22 @@ export async function validateClientAssertion(
 
     // Step 8: Verify JWT signature
     // SECURITY: Use algorithm whitelist to prevent algorithm confusion attacks
-    const cryptoKey = await importJWK(publicKey, publicKey.alg || 'RS256');
+    const cryptoKey = await importJWK(publicKey, header.alg);
 
     // Build acceptable audiences array based on options
     // - Token endpoint URL (RFC 7523 recommended)
     // - Issuer ID (if acceptIssuerIdAsAudience is enabled - industry standard)
-    const acceptableAudiences = acceptIssuerIdAsAudience
-      ? [normalizedEndpoint, normalizedIssuer]
-      : [normalizedEndpoint];
+    const acceptableAudiences = [
+      normalizedEndpoint,
+      ...(acceptIssuerIdAsAudience ? [normalizedIssuer] : []),
+      ...normalizedAdditionalAudiences,
+    ];
 
     await jwtVerify(assertion, cryptoKey, {
       issuer: client.client_id,
       audience: acceptableAudiences,
-      algorithms: [...ALLOWED_ASYMMETRIC_ALGS],
+      algorithms: [...allowedAlgorithms],
+      clockTolerance: Math.max(0, clockSkewSeconds),
     });
 
     // All validations passed

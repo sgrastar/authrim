@@ -84,8 +84,6 @@ export const TENANT_TABLES_TO_DELETE = [
   'access_reviews',
   // Jobs
   'admin_jobs',
-  // AI
-  'ai_grants',
   // Attributes
   'attribute_verifications',
   'verified_attributes',
@@ -276,6 +274,27 @@ interface TenantD1ProvisioningInput {
 
 type TenantD1ProvisioningResult =
   | { ok: true; tenant: TenantRow }
+  | { ok: false; response: Response };
+
+export interface TenantProvisionInput {
+  id: string;
+  tenantCode: string;
+  name: string;
+  description: string | null;
+  /** Keep the tenant hidden from runtime resolution until activateProvisionedTenant() succeeds. */
+  deferActivation?: boolean;
+}
+
+export type TenantProvisionResult =
+  | {
+      ok: true;
+      tenant: ReturnType<typeof formatTenant>;
+      provisioning?: {
+        mode: 'tenant-d1-preallocated-pool';
+        slot_id: string;
+        smoke_test: 'passed';
+      };
+    }
   | { ok: false; response: Response };
 
 // =============================================================================
@@ -986,6 +1005,7 @@ async function runTenantD1PoolProvisioning(
   options: {
     failureStage: string;
     deleteTenantRowBeforeTenantDbWrite: boolean;
+    deferActivation?: boolean;
   }
 ): Promise<TenantD1ProvisioningResult> {
   const nowTs = Math.floor(Date.now() / 1000);
@@ -1074,18 +1094,22 @@ async function runTenantD1PoolProvisioning(
       result: 'succeeded',
     });
 
-    await adapter.execute(
-      "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ?",
-      [nowTs, input.id]
-    );
+    if (!options.deferActivation) {
+      await adapter.execute(
+        "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ?",
+        [nowTs, input.id]
+      );
+    }
     await activateTenantDatabaseSlot(adminAdapter, slot.slot_id, input.id);
+    // Delete stale positive entries too: deferred tenants must be re-evaluated as provisioning.
     await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id);
     await recordTenantSlotAudit(adminAdapter, {
       tenantId: input.id,
       slotId: slot.slot_id,
       stage: 'activation',
       actor,
-      result: 'succeeded',
+      result: options.deferActivation ? 'skipped' : 'succeeded',
+      metadata: options.deferActivation ? { reason: 'deferred_for_tenant_clone' } : null,
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
@@ -1141,6 +1165,358 @@ async function runTenantD1PoolProvisioning(
     [input.id]
   );
   return { ok: true, tenant: tenant! };
+}
+
+/**
+ * Provision a tenant through the same storage, contract, settings, and signing-key path used by
+ * the public create endpoint. The caller owns authorization, request validation, and audit events.
+ */
+export async function provisionTenant(
+  c: Context<{ Bindings: Env }>,
+  input: TenantProvisionInput
+): Promise<TenantProvisionResult> {
+  const adapter = createAdapter(c);
+  const existing = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
+    input.id,
+  ]);
+  if (existing) {
+    return {
+      ok: false,
+      response: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'id', reason: 'Tenant ID already exists' },
+      }),
+    };
+  }
+
+  const existingTenantCode = await adapter.queryOne<{ id: string }>(
+    'SELECT id FROM tenants WHERE tenant_code = ?',
+    [input.tenantCode]
+  );
+  if (existingTenantCode) {
+    return {
+      ok: false,
+      response: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'tenant_code', reason: 'Tenant code already exists' },
+      }),
+    };
+  }
+
+  const nowTs = Math.floor(Date.now() / 1000);
+  if (isTenantD1PoolMode(c.env)) {
+    const actor = getAdminActorId(c);
+    const adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-d1-slot-create');
+    const slot = await reserveTenantDatabaseSlot(adminAdapter, input.id, actor);
+    if (!slot) {
+      return {
+        ok: false,
+        response: c.json(
+          {
+            error: 'tenant_d1_slot_exhausted',
+            message: 'No preallocated tenant D1 slots are available',
+            current_capacity: await adminAdapter
+              .queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM tenant_database_slots')
+              .then((row) => row?.total ?? 0)
+              .catch(() => 0),
+            available_slots: 0,
+            required_additional_slots: 1,
+          },
+          409
+        ),
+      };
+    }
+
+    const provisioning = await runTenantD1PoolProvisioning(
+      c,
+      adapter,
+      adminAdapter,
+      input,
+      slot,
+      actor,
+      {
+        failureStage: 'provisioning',
+        deleteTenantRowBeforeTenantDbWrite: true,
+        deferActivation: input.deferActivation,
+      }
+    );
+    if (!provisioning.ok) return provisioning;
+
+    return {
+      ok: true,
+      tenant: formatTenant(provisioning.tenant),
+      provisioning: {
+        mode: 'tenant-d1-preallocated-pool',
+        slot_id: slot.slot_id,
+        smoke_test: 'passed',
+      },
+    };
+  }
+
+  const tenantKey = createOpaqueTenantKey();
+  await adapter.execute(
+    `INSERT INTO tenants (
+       id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
+       default_tenant_guard, created_at, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+    [
+      input.id,
+      input.tenantCode,
+      tenantKey,
+      input.name,
+      input.description,
+      input.deferActivation ? 'provisioning' : 'active',
+      getDefaultTenantGuard(false),
+      nowTs,
+      nowTs,
+    ]
+  );
+
+  const contractKey = buildContractKey(c.env, 'tenant', input.id);
+  try {
+    await c.env.AUTHRIM_CONFIG!.put(
+      contractKey,
+      JSON.stringify(buildDefaultTenantContract(input.id))
+    );
+    await seedTenantDefaultSettings(c, input.id);
+    await initTenantKeyManager(c.env.KEY_MANAGER, input.id);
+    // Delete stale positive entries too: deferred tenants must be re-evaluated as provisioning.
+    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id);
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-TENANTS');
+    log.error('Tenant provisioning failed - rolling back', { tenantId: input.id }, error as Error);
+    await Promise.allSettled([
+      adapter.execute('DELETE FROM tenants WHERE id = ?', [input.id]),
+      adapter.execute('DELETE FROM custom_claim_schemas WHERE tenant_id = ?', [input.id]),
+      c.env.AUTHRIM_CONFIG?.delete(contractKey),
+      c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${input.id}:tenant`),
+      c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${input.id}`),
+      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:login-ui`),
+      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:tenant-discovery-ui`),
+      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:authentication-methods`),
+      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:directory-connectors`),
+      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:login-entry`),
+    ]);
+    return { ok: false, response: await createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR) };
+  }
+
+  const created = await adapter.queryOne<TenantRow>(
+    'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+    [input.id]
+  );
+  if (!created) {
+    return { ok: false, response: await createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR) };
+  }
+  return { ok: true, tenant: formatTenant(created) };
+}
+
+/** Publish a fully prepared tenant only after every clone side effect and audit write succeeded. */
+export async function activateProvisionedTenant(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<ReturnType<typeof formatTenant>> {
+  const nowTs = Math.floor(Date.now() / 1000);
+  const platformAdapter = createAdapter(c);
+  const tenantAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+
+  await tenantAdapter.execute(
+    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
+    [nowTs, tenantId]
+  );
+  if (isTenantD1PoolMode(c.env)) {
+    const adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-clone-activation');
+    const slot = await adminAdapter.queryOne<{ slot_id: string }>(
+      'SELECT slot_id FROM tenant_database_slots WHERE assigned_tenant_id = ? LIMIT 1',
+      [tenantId]
+    );
+    if (!slot) throw new Error('tenant_clone_slot_missing');
+    await recordTenantSlotAudit(adminAdapter, {
+      tenantId,
+      slotId: slot.slot_id,
+      stage: 'activation',
+      actor: getAdminActorId(c),
+      result: 'succeeded',
+      metadata: { operation: 'tenant_clone' },
+    });
+  }
+  await platformAdapter.execute(
+    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
+    [nowTs, tenantId]
+  );
+  await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, tenantId);
+
+  const activated = await platformAdapter.queryOne<TenantRow>(
+    'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
+    [tenantId]
+  );
+  if (!activated || activated.lifecycle_state !== 'active') {
+    throw new Error('tenant_clone_activation_failed');
+  }
+  return formatTenant(activated);
+}
+
+/** Ensure a retried clone never resumes issuance with a signing key from an earlier failed attempt. */
+export async function rotateProvisionedTenantSigningKey(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<void> {
+  const keyManager = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
+  await keyManager.rotateKeysRpc();
+}
+
+async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Promise<void> {
+  if (!kv) return;
+  let cursor: string | undefined;
+  const keys: string[] = [];
+  do {
+    const page = await kv.list({ prefix, cursor, limit: 1000 });
+    keys.push(...page.keys.map((key) => key.name));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  for (let offset = 0; offset < keys.length; offset += 25) {
+    await Promise.all(keys.slice(offset, offset + 25).map((key) => kv.delete(key)));
+  }
+}
+
+export interface TenantRollbackResult {
+  ok: boolean;
+  failures: string[];
+}
+
+/** Compensate a failed clone and report every artifact that could not be removed. */
+export async function rollbackProvisionedTenant(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<TenantRollbackResult> {
+  const platformAdapter = createAdapter(c);
+  const tenantAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const failures: string[] = [];
+  const safeExecute = async (
+    label: string,
+    adapter: DatabaseAdapter,
+    sql: string,
+    params: unknown[]
+  ): Promise<void> => {
+    try {
+      await adapter.execute(sql, params);
+    } catch {
+      failures.push(label);
+    }
+  };
+
+  // Preserve child-before-parent order for adapters that enforce foreign keys.
+  await safeExecute(
+    'role_assignment_rules',
+    tenantAdapter,
+    'DELETE FROM role_assignment_rules WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute(
+    'role_assignments',
+    tenantAdapter,
+    'DELETE FROM role_assignments WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute('user_roles', tenantAdapter, 'DELETE FROM user_roles WHERE tenant_id = ?', [
+    tenantId,
+  ]);
+  await safeExecute('roles', tenantAdapter, 'DELETE FROM roles WHERE tenant_id = ?', [tenantId]);
+  await safeExecute(
+    'webhook_configs',
+    tenantAdapter,
+    'DELETE FROM webhook_configs WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute(
+    'client_consent_overrides',
+    tenantAdapter,
+    'DELETE FROM client_consent_overrides WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute(
+    'client_trust_policies',
+    tenantAdapter,
+    'DELETE FROM client_trust_policies WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute(
+    'web_origin_registry',
+    tenantAdapter,
+    'DELETE FROM web_origin_registry WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute(
+    'oauth_clients',
+    tenantAdapter,
+    'DELETE FROM oauth_clients WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute(
+    'custom_claim_schemas',
+    tenantAdapter,
+    'DELETE FROM custom_claim_schemas WHERE tenant_id = ?',
+    [tenantId]
+  );
+  await safeExecute('tenant_database_row', tenantAdapter, 'DELETE FROM tenants WHERE id = ?', [
+    tenantId,
+  ]);
+  await safeExecute('platform_tenant_row', platformAdapter, 'DELETE FROM tenants WHERE id = ?', [
+    tenantId,
+  ]);
+
+  const cleanupTasks: Array<[string, Promise<unknown> | undefined]> = [
+    ['tenant_settings', deleteKvPrefix(c.env.SETTINGS, `settings:tenant:${tenantId}:`)],
+    ['client_settings', deleteKvPrefix(c.env.SETTINGS, `settings:client:${tenantId}:`)],
+    [
+      'client_contracts',
+      deleteKvPrefix(
+        c.env.AUTHRIM_CONFIG,
+        `${c.env.ENVIRONMENT || 'dev'}:contract:client:${tenantId}:`
+      ),
+    ],
+    ['tenant_contract', c.env.AUTHRIM_CONFIG?.delete(buildContractKey(c.env, 'tenant', tenantId))],
+    [
+      'tenant_identity_settings',
+      c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${tenantId}:tenant`),
+    ],
+    ['tenant_exists_cache', c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${tenantId}`)],
+  ];
+  const cleanupResults = await Promise.allSettled(cleanupTasks.map(([, task]) => task));
+  cleanupResults.forEach((result, index) => {
+    if (result.status === 'rejected') failures.push(cleanupTasks[index]![0]);
+  });
+
+  if (isTenantD1PoolMode(c.env)) {
+    let adminAdapter: DatabaseAdapter | null = null;
+    try {
+      adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-clone-rollback');
+    } catch {
+      failures.push('tenant_database_adapter');
+    }
+    if (adminAdapter) {
+      let slot: { slot_id: string } | null = null;
+      try {
+        slot = await adminAdapter.queryOne<{ slot_id: string }>(
+          'SELECT slot_id FROM tenant_database_slots WHERE assigned_tenant_id = ? LIMIT 1',
+          [tenantId]
+        );
+      } catch {
+        failures.push('tenant_database_slot_lookup');
+      }
+      if (slot) {
+        try {
+          await releaseTenantDatabaseSlot(adminAdapter, slot.slot_id, 'reset_required');
+        } catch {
+          failures.push('tenant_database_slot');
+        }
+      }
+      try {
+        await cleanupTenantD1ProvisioningArtifacts(c, adminAdapter, tenantId);
+      } catch {
+        failures.push('tenant_database_registry');
+      }
+    }
+  }
+  return { ok: failures.length === 0, failures };
 }
 
 // =============================================================================
@@ -1259,157 +1635,28 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
 
     const { id, name, description } = parseResult.data;
     const tenantCode = parseResult.data.tenant_code || id;
-    const adapter = createAdapter(c);
-
-    // Check id availability
-    const existing = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
+    const provisioned = await provisionTenant(c, {
       id,
-    ]);
+      tenantCode,
+      name,
+      description: description ?? null,
+    });
+    if (!provisioned.ok) return provisioned.response;
 
-    if (existing) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'id', reason: 'Tenant ID already exists' },
-      });
-    }
-
-    const existingTenantCode = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM tenants WHERE tenant_code = ?',
-      [tenantCode]
-    );
-
-    if (existingTenantCode) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'tenant_code', reason: 'Tenant code already exists' },
-      });
-    }
-
-    const nowTs = Math.floor(Date.now() / 1000);
-
-    if (isTenantD1PoolMode(c.env)) {
-      const actor = getAdminActorId(c);
-      const adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-d1-slot-create');
-      const slot = await reserveTenantDatabaseSlot(adminAdapter, id, actor);
-      if (!slot) {
-        return c.json(
-          {
-            error: 'tenant_d1_slot_exhausted',
-            message: 'No preallocated tenant D1 slots are available',
-            current_capacity: await adminAdapter
-              .queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM tenant_database_slots')
-              .then((row) => row?.total ?? 0)
-              .catch(() => 0),
-            available_slots: 0,
-            required_additional_slots: 1,
-          },
-          409
-        );
-      }
-
-      const provisioning = await runTenantD1PoolProvisioning(
-        c,
-        adapter,
-        adminAdapter,
-        {
-          id,
-          tenantCode,
-          name,
-          description: description ?? null,
-        },
-        slot,
-        actor,
-        {
-          failureStage: 'provisioning',
-          deleteTenantRowBeforeTenantDbWrite: true,
-        }
-      );
-      if (!provisioning.ok) {
-        return provisioning.response;
-      }
-
-      await createAuditLogFromContext(c, 'tenant.created', 'tenant', id, {
-        name,
-        tenant_code: tenantCode,
-        description: description ?? null,
-        tenant_d1_slot_id: slot.slot_id,
-      });
-
-      return c.json(
-        {
-          ...formatTenant(provisioning.tenant),
-          provisioning: {
-            mode: 'tenant-d1-preallocated-pool',
-            slot_id: slot.slot_id,
-            smoke_test: 'passed',
-          },
-        },
-        201
-      );
-    }
-
-    const tenantKey = createOpaqueTenantKey();
-    await adapter.execute(
-      `INSERT INTO tenants (
-         id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
-         default_tenant_guard, created_at, updated_at
-       )
-       VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)`,
-      [
-        id,
-        tenantCode,
-        tenantKey,
-        name,
-        description ?? null,
-        getDefaultTenantGuard(false),
-        nowTs,
-        nowTs,
-      ]
-    );
-
-    const created = await adapter.queryOne<TenantRow>(
-      'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
-      [id]
-    );
-
-    // Provisioning — all-or-nothing (hard-fail with compensation on error)
-    const contractKey = buildContractKey(c.env, 'tenant', id);
-    try {
-      // 1. Write TenantContract to KV
-      await c.env.AUTHRIM_CONFIG!.put(contractKey, JSON.stringify(buildDefaultTenantContract(id)));
-      // 2. Seed per-tenant KV settings (allowed_origins, login-ui, tenant-discovery-ui,
-      // authentication-methods, directory-connectors, login-entry)
-      await seedTenantDefaultSettings(c, id);
-      // 3. Initialize KeyManager DO (idempotent — only rotates if no active key yet)
-      await initTenantKeyManager(c.env.KEY_MANAGER, id);
-      // 4. Invalidate tenant-exists cache so request-context middleware sees the new tenant
-      await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
-    } catch (error) {
-      const log = getLogger(c).module('ADMIN-TENANTS');
-      log.error('Tenant provisioning failed — rolling back', { tenantId: id }, error as Error);
-      // Compensation: best-effort cleanup of all written state
-      await Promise.allSettled([
-        adapter.execute('DELETE FROM tenants WHERE id = ?', [id]),
-        adapter.execute('DELETE FROM custom_claim_schemas WHERE tenant_id = ?', [id]),
-        c.env.AUTHRIM_CONFIG?.delete(contractKey),
-        c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
-        c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
-        c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
-        c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
-        c.env.SETTINGS?.delete(`settings:tenant:${id}:authentication-methods`),
-        c.env.SETTINGS?.delete(`settings:tenant:${id}:directory-connectors`),
-        c.env.SETTINGS?.delete(`settings:tenant:${id}:login-entry`),
-        // KeyManager DO cleanup is not possible (no delete/reset RPC) — orphaned DO is harmless
-      ]);
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
-    // Audit log written AFTER successful provisioning
     await createAuditLogFromContext(c, 'tenant.created', 'tenant', id, {
       name,
       tenant_code: tenantCode,
       description: description ?? null,
+      ...(provisioned.provisioning ? { tenant_d1_slot_id: provisioned.provisioning.slot_id } : {}),
     });
 
-    return c.json(formatTenant(created!), 201);
+    return c.json(
+      {
+        ...provisioned.tenant,
+        ...(provisioned.provisioning ? { provisioning: provisioned.provisioning } : {}),
+      },
+      201
+    );
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
     log.error('Failed to create tenant', {}, error as Error);

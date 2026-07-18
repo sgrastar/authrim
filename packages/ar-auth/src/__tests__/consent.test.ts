@@ -11,6 +11,12 @@ import type { Env } from '@authrim/ar-lib-core/types/env';
 import { getConsentItemsForScreen, processConsentItemDecisions } from '@authrim/ar-lib-core';
 import { consentGetHandler, consentPostHandler } from '../consent';
 
+const mockRedirectWithError = vi.hoisted(() => vi.fn());
+
+vi.mock('../authorize', () => ({
+  redirectWithError: mockRedirectWithError,
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -190,6 +196,14 @@ describe('Consent Handlers', () => {
     vi.clearAllMocks();
     vi.mocked(getConsentItemsForScreen).mockResolvedValue([]);
     vi.mocked(processConsentItemDecisions).mockResolvedValue(undefined);
+    mockRedirectWithError.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: {
+          Location: 'https://example.com/callback?response=signed-jarm',
+        },
+      })
+    );
   });
 
   afterEach(() => {
@@ -645,17 +659,141 @@ describe('Consent Handlers', () => {
       );
     });
 
+    it('returns a JARM-secured access_denied response when JWT response mode was requested', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'consent-challenge-jarm',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          response_type: 'code',
+          response_mode: 'jwt',
+          scope: 'openid',
+          state: 'test-state',
+        },
+      });
+
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-jarm', approved: false },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        env: {
+          SETTINGS: {
+            get: vi.fn().mockResolvedValue(
+              JSON.stringify({
+                fapi: {
+                  messageSigning: {
+                    enabled: true,
+                    requireJarm: true,
+                    authorizationSigningAlgorithms: ['ES256'],
+                  },
+                },
+              })
+            ),
+          },
+        },
+      });
+
+      await consentPostHandler(c);
+
+      expect(mockRedirectWithError).toHaveBeenCalledWith(
+        c,
+        'https://example.com/callback',
+        'access_denied',
+        'User denied the consent request',
+        'test-state',
+        expect.objectContaining({
+          responseMode: 'jwt',
+          responseType: 'code',
+          clientId: 'test-client',
+          isUserCancellation: true,
+          messageSigning: expect.objectContaining({ enabled: true, requireJarm: true }),
+        })
+      );
+      expect(c.json).toHaveBeenCalledWith({
+        redirect_url: 'https://example.com/callback?response=signed-jarm',
+      });
+    });
+
+    it('does not downgrade a JARM denial when client metadata is incomplete', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'consent-challenge-jarm-no-client',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          redirect_uri: 'https://example.com/callback',
+          response_type: 'code',
+          response_mode: 'jwt',
+          scope: 'openid',
+          state: 'test-state',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-jarm-no-client', approved: false },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'server_error',
+      });
+      expect(mockRedirectWithError).not.toHaveBeenCalled();
+      expect(c.redirect).not.toHaveBeenCalled();
+    });
+
+    it('does not downgrade a JARM denial when security settings are unavailable', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'consent-challenge-jarm-settings-down',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          response_type: 'code',
+          response_mode: 'jwt',
+          scope: 'openid',
+          state: 'test-state',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-jarm-settings-down', approved: false },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        env: {
+          SETTINGS: {
+            get: vi.fn().mockRejectedValue(new Error('KV unavailable')),
+          },
+        },
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'temporarily_unavailable',
+      });
+      expect(mockRedirectWithError).not.toHaveBeenCalled();
+      expect(c.redirect).not.toHaveBeenCalled();
+    });
+
     it('should save consent and redirect on approval', async () => {
       const challengeStore = createMockChallengeStore({
         id: 'consent-challenge-123',
         type: 'consent',
         userId: 'user-123',
         metadata: {
+          response_type: 'code',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile',
           state: 'test-state',
-          response_type: 'code',
         },
       });
 
@@ -685,6 +823,11 @@ describe('Consent Handlers', () => {
         userId: 'user-123',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          authorization_request: expect.objectContaining({
+            response_type: 'code',
+            client_id: 'test-client',
+            scope: 'openid profile',
+          }),
         },
       });
     });
@@ -715,11 +858,11 @@ describe('Consent Handlers', () => {
         type: 'consent',
         userId: 'user-123',
         metadata: {
+          response_type: 'code',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile',
           state: 'test-state',
-          response_type: 'code',
         },
       });
       const mockDB = createMockDB({
@@ -946,6 +1089,7 @@ describe('Consent Handlers', () => {
         type: 'consent',
         userId: 'user-123',
         metadata: {
+          response_type: 'code',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile',
@@ -968,9 +1112,12 @@ describe('Consent Handlers', () => {
       await consentPostHandler(c);
 
       const response = c.json.mock.calls[0][0] as { redirect_url: string };
-      expect(new URL(response.redirect_url, 'https://example.com').searchParams.get('scope')).toBe(
-        'openid'
+      const confirmationId = new URL(response.redirect_url, 'https://example.com').searchParams.get(
+        '_consent_confirmation_challenge'
       );
+      expect(challengeStore._challenges.get(confirmationId!)?.metadata).toMatchObject({
+        authorization_request: expect.objectContaining({ scope: 'openid' }),
+      });
     });
 
     it('uses cancel_uri only for denial and preserves acting-as state', async () => {

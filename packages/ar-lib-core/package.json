@@ -22,6 +22,11 @@
       "import": "./dist/types/*.js",
       "default": "./src/types/*.ts"
     },
+    "./db/adapter": {
+      "import": "./dist/db/adapter.js",
+      "types": "./dist/db/adapter.d.ts",
+      "default": "./src/db/adapter.ts"
+    },
     "./middleware/*": {
       "import": "./dist/middleware/*.js",
       "default": "./src/middleware/*.ts"

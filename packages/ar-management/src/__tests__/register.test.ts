@@ -43,7 +43,7 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
   };
 });
 
-import { registerHandler } from '../register';
+import { buildConformanceTestUserId, registerHandler } from '../register';
 
 // Helper to create mock D1Database
 function createMockDB() {
@@ -210,7 +210,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(56);
+      expect(args).toHaveLength(63);
       expect(args).toContain('https://id.example.com');
     });
 
@@ -240,7 +240,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(56);
+      expect(args).toHaveLength(63);
       expect(args).toContain('https://api.example.com/');
       expect(args).not.toContain('https://id.example.com');
     });
@@ -506,6 +506,196 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.registration_client_uri).toMatch(
         /^https:\/\/acme\.oidc\.example\.com\/clients\//
       );
+    });
+  });
+
+  describe('Validation - OIDC response signing algorithms', () => {
+    it('rejects ambiguous client key sources', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            jwks: { keys: [] },
+            jwks_uri: 'https://client.example.com/jwks.json',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: 'jwks and jwks_uri must not both be provided',
+      });
+    });
+
+    it.each([
+      ['token_endpoint_auth_signing_alg', 'HS256'],
+      ['id_token_signed_response_alg', 'PS256'],
+      ['userinfo_signed_response_alg', 'RS512'],
+      ['request_object_signing_alg', 'HS256'],
+      ['authorization_signed_response_alg', 'PS256'],
+      ['authorization_encrypted_response_alg', 'dir'],
+      ['authorization_encrypted_response_enc', 'A128CBC-HS256'],
+    ])('rejects unsupported %s values', async (field, value) => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            [field]: value,
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: 'invalid_client_metadata' });
+    });
+
+    it('accepts ES256 for ID Token and signed UserInfo responses', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            id_token_signed_response_alg: 'ES256',
+            userinfo_signed_response_alg: 'ES256',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        id_token_signed_response_alg: 'ES256',
+        userinfo_signed_response_alg: 'ES256',
+      });
+    });
+
+    it.each(['RS256', 'ES256', 'PS256', 'EdDSA'])(
+      'accepts and returns %s for private_key_jwt client authentication',
+      async (algorithm) => {
+        const res = await app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              redirect_uris: ['https://example.com/callback'],
+              token_endpoint_auth_method: 'private_key_jwt',
+              token_endpoint_auth_signing_alg: algorithm,
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(201);
+        await expect(res.json()).resolves.toMatchObject({
+          token_endpoint_auth_signing_alg: algorithm,
+        });
+      }
+    );
+
+    it('stores and returns FAPI Message Signing and JARM client metadata', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_signing_alg: 'ES256',
+            request_object_signing_alg: 'ES256',
+            authorization_signed_response_alg: 'ES256',
+            authorization_encrypted_response_alg: 'RSA-OAEP',
+            authorization_encrypted_response_enc: 'A256GCM',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        token_endpoint_auth_signing_alg: 'ES256',
+        request_object_signing_alg: 'ES256',
+        authorization_signed_response_alg: 'ES256',
+        authorization_encrypted_response_alg: 'RSA-OAEP',
+        authorization_encrypted_response_enc: 'A256GCM',
+      });
+      expect(getLastBindArgs(mockEnv)).toEqual(
+        expect.arrayContaining(['ES256', 'RSA-OAEP', 'A256GCM'])
+      );
+    });
+
+    it('rejects a JARM signing algorithm excluded by the active Message Signing profile', async () => {
+      mockKVStore.set(
+        'settings:tenant:default:certification-profile',
+        JSON.stringify({
+          fapi: {
+            enabled: true,
+            messageSigning: {
+              enabled: true,
+              authorizationSigningAlgorithms: ['ES256'],
+            },
+          },
+        })
+      );
+      mockEnv.SETTINGS = createMockKV();
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'private_key_jwt',
+            authorization_signed_response_alg: 'RS256',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('authorization_signed_response_alg'),
+      });
+    });
+
+    it('rejects secret-based client authentication in an active FAPI profile', async () => {
+      mockKVStore.set(
+        'settings:tenant:default:certification-profile',
+        JSON.stringify({ fapi: { enabled: true } })
+      );
+      mockEnv.SETTINGS = createMockKV();
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'client_secret_basic',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('private_key_jwt'),
+      });
     });
   });
 
@@ -998,10 +1188,16 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error_description).toContain('grant_types must be an array');
     });
 
-    it('should reject unsupported grant_type', async () => {
+    it('should register a private_key_jwt client for client_credentials', async () => {
       const requestBody = {
         redirect_uris: ['https://example.com/callback'],
-        grant_types: ['authorization_code', 'client_credentials'],
+        grant_types: ['client_credentials'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        client_credentials_allowed: true,
+        allowed_scopes: ['fapi'],
+        default_scope: 'fapi',
+        default_resource: 'https://api.example.com/resource',
+        jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'sig-1' }] },
       };
 
       const res = await app.request(
@@ -1016,11 +1212,34 @@ describe('Dynamic Client Registration Handler', () => {
         mockEnv
       );
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(201);
 
       const json = (await res.json()) as RegistrationResponse;
-      expect(json.error).toBe('invalid_client_metadata');
-      expect(json.error_description).toContain('Unsupported grant_type');
+      expect(json.grant_types).toEqual(['client_credentials']);
+      expect(json.client_credentials_allowed).toBe(true);
+      expect(json.allowed_scopes).toEqual(['fapi']);
+    });
+
+    it('rejects client_credentials without its explicit safety opt-in', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            grant_types: ['client_credentials'],
+            token_endpoint_auth_method: 'private_key_jwt',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('client_credentials_allowed'),
+      });
     });
   });
 
@@ -1568,5 +1787,13 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('internal addresses');
     });
+  });
+});
+
+describe('conformance test user tenant isolation', () => {
+  it('keeps the legacy ID for the default tenant and scopes other tenant IDs', () => {
+    expect(buildConformanceTestUserId('default')).toBe('user-oidc-conformance-test');
+    expect(buildConformanceTestUserId('fapi2')).toBe('user-oidc-conformance-test-fapi2');
+    expect(buildConformanceTestUserId('primary', 'primary')).toBe('user-oidc-conformance-test');
   });
 });

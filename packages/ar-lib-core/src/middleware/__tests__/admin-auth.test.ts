@@ -67,8 +67,8 @@ function createMockDB(
     machinePrincipalPermissions = [
       { permission: 'admin:tenants.read' },
       { permission: 'admin:clients.create' },
-      { permission: 'admin:ai_grants:read' },
-      { permission: 'admin:ai_grants:create' },
+      { permission: 'admin:agent_grants:read' },
+      { permission: 'admin:agent_grants:write' },
     ],
     machineCredentialPermissions = [],
     machinePrincipalTenantScopes = [{ scope_mode: 'allow', tenant_id: 'default' }],
@@ -303,6 +303,87 @@ describe('adminAuthMiddleware', () => {
   });
 
   describe('Bearer Token Authentication', () => {
+    it('accepts a fully verified owner-package bearer context without weakening session-only mode', async () => {
+      const authenticateBearer = vi.fn().mockResolvedValue({
+        userId: 'admin-user-123',
+        actorType: 'agent',
+        actorId: 'client:client-1',
+        clientId: 'client-1',
+        authMethod: 'bearer',
+        roles: [],
+        tenantId: 'default',
+        tenantScope: ['default'],
+        permissions: ['admin:users:read'],
+        hierarchyLevel: 0,
+        mfaVerified: false,
+      });
+      const app = createTestApp(mockEnv, {
+        authenticateBearer,
+        requirePermissions: ['admin:users:read'],
+      });
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: 'Bearer agent-downscope-token' },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(authenticateBearer).toHaveBeenCalledOnce();
+      await expect(response.json()).resolves.toMatchObject({
+        adminAuth: { actorType: 'agent', actorId: 'client:client-1' },
+      });
+    });
+
+    it('reuses an already verified in-process context in nested admin routers', async () => {
+      const authenticateBearer = vi.fn().mockResolvedValue({
+        userId: 'admin-user-123',
+        actorType: 'agent',
+        actorId: 'client:client-1',
+        authMethod: 'bearer',
+        roles: [],
+        tenantId: 'default',
+        tenantScope: ['default'],
+        permissions: ['admin:users:read'],
+      });
+      const app = new Hono<{ Bindings: Env }>();
+      app.use('/api/admin/*', adminAuthMiddleware({ authenticateBearer }));
+      app.use('/api/admin/*', adminAuthMiddleware({ requirePermissions: ['admin:users:read'] }));
+      app.get('/api/admin/test', (c) => c.json({ ok: true }));
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: 'Bearer agent-downscope-token' },
+        }),
+        mockEnv
+      );
+
+      expect(response.status).toBe(200);
+      expect(authenticateBearer).toHaveBeenCalledOnce();
+    });
+
+    it('does not allow a machine bearer token to replace the actor in session-only mode', async () => {
+      const fixture = await createMachineAccessFixture(['default']);
+      const db = createMockDB({
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+      });
+      const env = createMockEnv({
+        DB: db,
+        PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk),
+      });
+      const app = createTestApp(env, { sessionOnly: true });
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: `Bearer ${fixture.token}` },
+        })
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_token' });
+    });
+
     it('should reject a legacy unscoped static bearer token', async () => {
       const app = createTestApp(mockEnv);
 
@@ -486,7 +567,7 @@ describe('adminAuthMiddleware', () => {
           principalId: `amp_${principalType}`,
           clientId: `${principalType}-admin`,
           credentialId: `amk_${principalType}`,
-          scope: 'admin:ai_grants:read admin:ai_grants:create',
+          scope: 'admin:agent_grants:read admin:agent_grants:write',
           displayName: `${principalType} Admin`,
         });
         const db = createMockDB({
@@ -516,7 +597,7 @@ describe('adminAuthMiddleware', () => {
           principalType,
           credentialId: `amk_${principalType}`,
           authMethod: 'machine_access_token',
-          permissions: ['admin:ai_grants:read', 'admin:ai_grants:create'],
+          permissions: ['admin:agent_grants:read', 'admin:agent_grants:write'],
         });
       }
     });
@@ -1784,6 +1865,18 @@ describe('adminAuthMiddleware', () => {
       // RFC 6750: invalid_token is the standard error code for Bearer token failures
       expect(data.error).toBe('invalid_token');
       expect(data.error_description).toContain('Admin authentication required');
+    });
+
+    it('supports an explicit browser login redirect without changing the default API response', async () => {
+      const app = createTestApp(mockEnv, {
+        unauthenticatedRedirect: (c) =>
+          c.req.method === 'GET' ? '/admin/login?return_to=%2Foauth%2Fauthorize' : undefined,
+      });
+
+      const response = await app.fetch(new Request('http://localhost/api/admin/test'));
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toBe('/admin/login?return_to=%2Foauth%2Fauthorize');
     });
   });
 

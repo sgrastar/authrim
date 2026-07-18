@@ -64,6 +64,10 @@ describe('getSecretTargetWorkers', () => {
 });
 
 describe('SECRET_UPLOAD_PLAN', () => {
+  it('uses the dedicated Agent elevation key in both the challenge and target owners', () => {
+    expect(getSecretNamesForWorker('ar-agent-access')).toContain('AGENT_ELEVATION_ENCRYPTION_KEY');
+    expect(getSecretNamesForWorker('ar-management')).toContain('AGENT_ELEVATION_ENCRYPTION_KEY');
+  });
   it('fails fresh Workers only for missing required secrets', () => {
     expect(
       getMissingRequiredDeploySecrets(

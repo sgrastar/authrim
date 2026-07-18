@@ -936,6 +936,7 @@ export async function getClient(
     response_types: string;
     scope: string | null;
     token_endpoint_auth_method: string | null;
+    token_endpoint_auth_signing_alg: string | null;
     contacts: string | null;
     logo_uri: string | null;
     client_uri: string | null;
@@ -948,6 +949,9 @@ export async function getClient(
     id_token_signed_response_alg: string | null;
     userinfo_signed_response_alg: string | null;
     request_object_signing_alg: string | null;
+    authorization_signed_response_alg: string | null;
+    authorization_encrypted_response_alg: string | null;
+    authorization_encrypted_response_enc: string | null;
     is_trusted: number | null;
     skip_consent: number | null;
     allow_claims_without_scope: number | null;
@@ -1063,6 +1067,7 @@ export async function getClient(
     response_types: normalizeStringArray(result.response_types, ['code']),
     scope: result.scope ?? undefined,
     token_endpoint_auth_method: result.token_endpoint_auth_method ?? undefined,
+    token_endpoint_auth_signing_alg: result.token_endpoint_auth_signing_alg ?? undefined,
     contacts: normalizeOptionalStringArray(result.contacts),
     logo_uri: result.logo_uri ?? undefined,
     client_uri: result.client_uri ?? undefined,
@@ -1075,6 +1080,9 @@ export async function getClient(
     id_token_signed_response_alg: result.id_token_signed_response_alg ?? undefined,
     userinfo_signed_response_alg: result.userinfo_signed_response_alg ?? undefined,
     request_object_signing_alg: result.request_object_signing_alg ?? undefined,
+    authorization_signed_response_alg: result.authorization_signed_response_alg ?? undefined,
+    authorization_encrypted_response_alg: result.authorization_encrypted_response_alg ?? undefined,
+    authorization_encrypted_response_enc: result.authorization_encrypted_response_enc ?? undefined,
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,

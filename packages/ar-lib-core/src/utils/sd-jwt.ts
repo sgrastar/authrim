@@ -125,6 +125,8 @@ export interface SDJWTCreateOptions {
   hashAlgorithm?: 'sha-256';
   /** Add holder binding with JWK */
   holderBinding?: JWK;
+  /** JWS algorithm used for the issuer-signed JWT */
+  algorithm?: 'RS256' | 'ES256';
 }
 
 // =============================================================================
@@ -286,7 +288,12 @@ export async function createSDJWT(
   kid: string,
   options: SDJWTCreateOptions
 ): Promise<SDJWT> {
-  const { selectiveDisclosureClaims, hashAlgorithm = 'sha-256', holderBinding } = options;
+  const {
+    selectiveDisclosureClaims,
+    hashAlgorithm = 'sha-256',
+    holderBinding,
+    algorithm = 'RS256',
+  } = options;
 
   const disclosures: SDJWTDisclosure[] = [];
   const sdHashes: string[] = [];
@@ -324,7 +331,7 @@ export async function createSDJWT(
 
   // Sign the JWT
   const jwt = await new SignJWT(payload as JWTPayload)
-    .setProtectedHeader({ alg: 'RS256', typ: 'sd+jwt', kid })
+    .setProtectedHeader({ alg: algorithm, typ: 'sd+jwt', kid })
     .sign(privateKey);
 
   // Combine JWT and disclosures
@@ -354,7 +361,8 @@ export async function createSDJWTIDToken(
   claims: Record<string, unknown>,
   privateKey: CryptoKey,
   kid: string,
-  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate']
+  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate'],
+  algorithm: 'RS256' | 'ES256' = 'RS256'
 ): Promise<SDJWT> {
   // Required OIDC claims that must not be selective
   const requiredClaims = ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'auth_time', 'acr', 'amr'];
@@ -366,6 +374,7 @@ export async function createSDJWTIDToken(
 
   return createSDJWT(claims, privateKey, kid, {
     selectiveDisclosureClaims: allowedSelectiveClaims,
+    algorithm,
   });
 }
 

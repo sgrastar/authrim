@@ -1,0 +1,232 @@
+openapi: 3.2.0
+info:
+  title: Authrim Agent Access API
+  version: 0.3.3
+  summary: Authenticated MCP Streamable HTTP endpoint.
+  description: Public HTTP contract owned by `@authrim/ar-agent-access`.
+servers:
+  - url: https://{tenant_domain}
+    variables:
+      tenant_domain:
+        default: auth.example.com
+tags:
+  - name: Health
+  - name: MCP
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      operationId: getAgentAccessHealth
+      summary: Return Agent Access Worker health.
+      responses:
+        '200':
+          $ref: '#/components/responses/Health'
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getAgentAccessLiveness
+      summary: Return liveness status.
+      responses:
+        '200':
+          $ref: '#/components/responses/Health'
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getAgentAccessReadiness
+      summary: Return readiness status.
+      responses:
+        '200':
+          $ref: '#/components/responses/Health'
+  /mcp:
+    parameters:
+      - $ref: '#/components/parameters/McpProtocolVersion'
+      - $ref: '#/components/parameters/McpSessionId'
+    post:
+      tags: [MCP]
+      operationId: sendMcpMessage
+      summary: Send an MCP JSON-RPC message over Streamable HTTP.
+      security:
+        - oauth2: [agent:read]
+        - dpop: []
+      parameters:
+        - $ref: '#/components/parameters/DpopProof'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: JSON-RPC response or server-sent event stream.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcEnvelope'
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/ProtocolError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    get:
+      tags: [MCP]
+      operationId: openMcpEventStream
+      summary: Open or resume the stateful MCP server event stream.
+      security:
+        - oauth2: [agent:read]
+        - dpop: []
+      parameters:
+        - $ref: '#/components/parameters/DpopProof'
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: MCP server-sent event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/ProtocolError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [MCP]
+      operationId: terminateMcpSession
+      summary: Terminate the identified MCP session.
+      security:
+        - oauth2: [agent:read]
+        - dpop: []
+      parameters:
+        - $ref: '#/components/parameters/DpopProof'
+      responses:
+        '200':
+          description: Session terminated.
+        '204':
+          description: Session terminated without a response body.
+        '400':
+          $ref: '#/components/responses/ProtocolError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth/admin-agent/authorize
+          tokenUrl: /oauth/admin-agent/token
+          scopes:
+            agent:read: Read Agent Access resources and invoke delegated read tools.
+            agent:write: Invoke delegated write tools.
+            agent:execute: Execute an approved Agent Access plan.
+    dpop:
+      type: http
+      scheme: DPoP
+      description: RFC 9449 sender-constrained access token.
+  parameters:
+    McpProtocolVersion:
+      name: MCP-Protocol-Version
+      in: header
+      required: false
+      description: MCP revision. When absent, the server applies the 2025-03-26 fallback rule.
+      schema:
+        type: string
+        enum: [2025-03-26, 2025-06-18, 2025-11-25]
+    McpSessionId:
+      name: MCP-Session-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    DpopProof:
+      name: DPoP
+      in: header
+      required: false
+      description: Required when the access token declares DPoP binding.
+      schema:
+        type: string
+  schemas:
+    JsonRpcEnvelope:
+      type: object
+      additionalProperties: true
+      properties:
+        jsonrpc:
+          type: string
+          const: '2.0'
+        id:
+          type: [string, integer, 'null']
+    Error:
+      type: object
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+  responses:
+    Health:
+      description: Worker health response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [status, service]
+            properties:
+              status:
+                type: string
+                const: ok
+              service:
+                type: string
+                const: ar-agent-access
+    ProtocolError:
+      description: Invalid Streamable HTTP or MCP version contract.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonRpcEnvelope'
+    Unauthorized:
+      description: Missing or invalid access token.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Origin or delegated authorization is not allowed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Agent MCP is disabled or the session does not exist.
+    Unavailable:
+      description: Live authorization state is unavailable; the request fails closed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

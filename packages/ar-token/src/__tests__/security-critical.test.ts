@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import { exportPKCS8, generateKeyPair } from 'jose';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   createMockEnv,
@@ -205,6 +206,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
     getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
+    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
     // Token operations
     createAccessToken: mocks.mockCreateAccessToken,
     createIDToken: mocks.mockCreateIDToken,
@@ -494,6 +496,52 @@ describe('Security-Critical Tests', () => {
   });
 
   describe('Storage portability wiring', () => {
+    it('uses the client-selected ES256 key for ID Token signing', async () => {
+      const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+      const privatePEM = await exportPKCS8(privateKey);
+      const client = createConfidentialClient({
+        require_pkce: false,
+        id_token_signed_response_alg: 'ES256',
+      });
+      const authCodeData = createAuthCodeData({ userId: 'user-001', scope: 'openid profile' });
+      const keyManagerStub = mockEnv.KEY_MANAGER.get(
+        mockEnv.KEY_MANAGER.idFromName('default-v3')
+      ) as unknown as Record<string, unknown>;
+      Object.assign(keyManagerStub, {
+        getActiveOIDCSigningKeyWithPrivateRpc: vi
+          .fn()
+          .mockResolvedValue({ kid: 'oidc-es256-token', privatePEM }),
+      });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'authorization_code',
+          code: 'valid-auth-code',
+          redirect_uri: authCodeData.redirectUri,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.anything(),
+        'oidc-es256-token',
+        expect.any(Number),
+        'ES256'
+      );
+    });
+
     it('uses the runtime-resolved core adapter for authorization_code RBAC and policy lookups', async () => {
       const client = createConfidentialClient({ require_pkce: false });
       const authCodeData = createAuthCodeData({
@@ -561,6 +609,58 @@ describe('Security-Critical Tests', () => {
         authCodeData.userId,
         authCodeData.scope,
         expect.any(Object)
+      );
+    });
+
+    it('uses tenant-scoped RBAC claim settings when issuing authorization_code tokens', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({
+        userId: 'user-tenant-rbac',
+        scope: 'openid profile',
+      });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockValidateGrantType.mockReturnValue({ valid: true });
+      mocks.mockValidateAuthCode.mockReturnValue({ valid: true });
+      mocks.mockValidateClientId.mockReturnValue({ valid: true });
+      mocks.mockValidateRedirectUri.mockReturnValue({ valid: true });
+      mockEnv.AUTHRIM_CONFIG.get = vi.fn(async (key: string) =>
+        key === 'settings:tenant:default:tokens'
+          ? JSON.stringify({
+              'tokens.rbac_access_token_claims': 'roles,org_id',
+              'tokens.rbac_id_token_claims': 'none',
+            })
+          : null
+      );
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const ctx = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'authorization_code',
+          code: 'valid-auth-code',
+          redirect_uri: authCodeData.redirectUri,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
+        expect.anything(),
+        authCodeData.userId,
+        expect.objectContaining({ claimsConfig: 'roles,org_id', tenantId: 'default' })
+      );
+      expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
+        expect.anything(),
+        authCodeData.userId,
+        expect.objectContaining({ claimsConfig: 'none', tenantId: 'default' })
       );
     });
 
@@ -1263,7 +1363,7 @@ describe('Security-Critical Tests', () => {
 
     describe('DPoP Authorization Code Binding', () => {
       it('should reject when DPoP JKT does not match authorization code binding', async () => {
-        const client = createFAPIClient();
+        const client = createConfidentialClient();
         const authCodeData = createDPoPBoundAuthCodeData({
           dpopJkt: 'original-jkt-from-authorization',
         });
@@ -1291,6 +1391,7 @@ describe('Security-Critical Tests', () => {
             code: 'dpop-bound-auth-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1325,6 +1426,7 @@ describe('Security-Critical Tests', () => {
             code: 'dpop-bound-auth-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1460,6 +1562,7 @@ describe('Security-Critical Tests', () => {
             code: 'already-used-code',
             redirect_uri: 'https://app.example.com/callback',
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1495,6 +1598,7 @@ describe('Security-Critical Tests', () => {
             code: 'replayed-code',
             redirect_uri: authCodeData.redirectUri,
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });
@@ -1663,6 +1767,50 @@ describe('Security-Critical Tests', () => {
 
         expect(response.status).toBe(200);
         expect(body.refresh_token).toBe(refreshTokenJWT);
+      });
+
+      it('should not rotate refresh tokens for a FAPI 2.0 tenant', async () => {
+        const client = createFAPIClient({ dpop_bound_access_tokens: false });
+        const refreshTokenPayload = createRefreshTokenPayload({
+          client_id: client.client_id,
+        });
+        const refreshTokenJWT = createTestRefreshTokenJWT({
+          client_id: client.client_id,
+        });
+        const rotateRpcMock = vi.fn();
+        mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+          rotateRpc: rotateRpcMock,
+        });
+
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({
+          fapi: { enabled: true, requireDpop: false },
+        });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: refreshTokenPayload.sub,
+          scope: refreshTokenPayload.scope,
+          client_id: refreshTokenPayload.client_id,
+        });
+
+        const ctx = createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'refresh_token',
+            refresh_token: refreshTokenJWT,
+            client_id: client.client_id,
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'valid-client-assertion',
+          },
+          env: mockEnv,
+        });
+
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{ refresh_token: string }>(response);
+
+        expect(response.status).toBe(200);
+        expect(body.refresh_token).toBe(refreshTokenJWT);
+        expect(rotateRpcMock).not.toHaveBeenCalled();
       });
 
       it('should require DPoP proof for DPoP-bound refresh tokens', async () => {

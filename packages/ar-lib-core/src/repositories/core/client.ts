@@ -108,6 +108,7 @@ export interface OAuthClient {
 
   // Authentication
   token_endpoint_auth_method: TokenEndpointAuthMethod;
+  token_endpoint_auth_signing_alg: string | null;
   jwks: string | null; // JSON object
   jwks_uri: string | null;
 
@@ -143,8 +144,12 @@ export interface OAuthClient {
   backchannel_authentication_request_signing_alg: string | null;
   backchannel_user_code_parameter: boolean;
 
-  // UserInfo response signing
+  // OIDC response signing
+  id_token_signed_response_alg: string | null;
   userinfo_signed_response_alg: string | null;
+  authorization_signed_response_alg: string | null;
+  authorization_encrypted_response_alg: string | null;
+  authorization_encrypted_response_enc: string | null;
 
   // ==========================================================================
   // OIDC Logout Support (Back-Channel & Front-Channel Logout)
@@ -224,6 +229,7 @@ export interface CreateClientInput {
   subject_type?: SubjectType;
   sector_identifier_uri?: string | null;
   token_endpoint_auth_method?: TokenEndpointAuthMethod;
+  token_endpoint_auth_signing_alg?: string | null;
   jwks?: Record<string, unknown> | null;
   jwks_uri?: string | null;
   is_trusted?: boolean;
@@ -253,7 +259,11 @@ export interface CreateClientInput {
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
   backchannel_user_code_parameter?: boolean;
+  id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
+  authorization_signed_response_alg?: string | null;
+  authorization_encrypted_response_alg?: string | null;
+  authorization_encrypted_response_enc?: string | null;
   // OIDC Logout
   backchannel_logout_uri?: string | null;
   backchannel_logout_session_required?: boolean;
@@ -294,6 +304,7 @@ export interface UpdateClientInput {
   subject_type?: SubjectType;
   sector_identifier_uri?: string | null;
   token_endpoint_auth_method?: TokenEndpointAuthMethod;
+  token_endpoint_auth_signing_alg?: string | null;
   jwks?: Record<string, unknown> | null;
   jwks_uri?: string | null;
   is_trusted?: boolean;
@@ -336,7 +347,11 @@ export interface UpdateClientInput {
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
   backchannel_user_code_parameter?: boolean;
+  id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
+  authorization_signed_response_alg?: string | null;
+  authorization_encrypted_response_alg?: string | null;
+  authorization_encrypted_response_enc?: string | null;
   // OIDC Logout
   backchannel_logout_uri?: string | null;
   backchannel_logout_session_required?: boolean;
@@ -354,6 +369,14 @@ export interface UpdateClientInput {
   // OIDC Dynamic Client Registration
   initiate_login_uri?: string | null;
   login_ui_url?: string | null;
+}
+
+export interface ClientUpdateOptions {
+  /**
+   * Apply the update only while the stored row is still the version that was read.
+   * This is used by Agent plans to close the read/validate/write TOCTOU window.
+   */
+  expectedUpdatedAt?: number;
 }
 
 /**
@@ -458,6 +481,7 @@ export class ClientRepository {
       subject_type: input.subject_type || 'public',
       sector_identifier_uri: input.sector_identifier_uri ?? null,
       token_endpoint_auth_method: input.token_endpoint_auth_method || 'client_secret_basic',
+      token_endpoint_auth_signing_alg: input.token_endpoint_auth_signing_alg ?? null,
       jwks: input.jwks ? JSON.stringify(input.jwks) : null,
       jwks_uri: input.jwks_uri ?? null,
       is_trusted: input.is_trusted ?? false,
@@ -496,7 +520,11 @@ export class ClientRepository {
       backchannel_authentication_request_signing_alg:
         input.backchannel_authentication_request_signing_alg ?? null,
       backchannel_user_code_parameter: input.backchannel_user_code_parameter ?? false,
+      id_token_signed_response_alg: input.id_token_signed_response_alg ?? null,
       userinfo_signed_response_alg: input.userinfo_signed_response_alg ?? null,
+      authorization_signed_response_alg: input.authorization_signed_response_alg ?? null,
+      authorization_encrypted_response_alg: input.authorization_encrypted_response_alg ?? null,
+      authorization_encrypted_response_enc: input.authorization_encrypted_response_enc ?? null,
       // OIDC Logout
       backchannel_logout_uri: input.backchannel_logout_uri ?? null,
       backchannel_logout_session_required: input.backchannel_logout_session_required ?? false,
@@ -532,7 +560,7 @@ export class ClientRepository {
         redirect_uris, grant_types, response_types, scope,
         logo_uri, client_uri, policy_uri, tos_uri, contacts,
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
-        token_endpoint_auth_method, jwks, jwks_uri,
+        token_endpoint_auth_method, token_endpoint_auth_signing_alg, jwks, jwks_uri,
         is_trusted, skip_consent, allow_claims_without_scope,
         claims_parameter_policy, identity_mapping, attribute_release_consent,
         asc_enabled, asc_protected_request_required,
@@ -543,7 +571,9 @@ export class ClientRepository {
         default_resource,
         backchannel_token_delivery_mode, backchannel_client_notification_endpoint,
         backchannel_authentication_request_signing_alg, backchannel_user_code_parameter,
-        userinfo_signed_response_alg,
+        id_token_signed_response_alg, userinfo_signed_response_alg,
+        authorization_signed_response_alg, authorization_encrypted_response_alg,
+        authorization_encrypted_response_enc,
         backchannel_logout_uri, backchannel_logout_session_required,
         frontchannel_logout_uri, frontchannel_logout_session_required,
         allowed_redirect_origins,
@@ -551,7 +581,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -591,6 +621,7 @@ export class ClientRepository {
         client.subject_type,
         client.sector_identifier_uri,
         client.token_endpoint_auth_method,
+        client.token_endpoint_auth_signing_alg,
         client.jwks,
         client.jwks_uri,
         client.is_trusted ? 1 : 0,
@@ -617,7 +648,11 @@ export class ClientRepository {
         client.backchannel_client_notification_endpoint,
         client.backchannel_authentication_request_signing_alg,
         client.backchannel_user_code_parameter ? 1 : 0,
+        client.id_token_signed_response_alg,
         client.userinfo_signed_response_alg,
+        client.authorization_signed_response_alg,
+        client.authorization_encrypted_response_alg,
+        client.authorization_encrypted_response_enc,
         client.backchannel_logout_uri,
         client.backchannel_logout_session_required ? 1 : 0,
         client.frontchannel_logout_uri,
@@ -651,13 +686,18 @@ export class ClientRepository {
   /**
    * Update a client
    */
-  async update(clientId: string, input: UpdateClientInput): Promise<OAuthClient | null> {
+  async update(
+    clientId: string,
+    input: UpdateClientInput,
+    options: ClientUpdateOptions = {}
+  ): Promise<OAuthClient | null> {
     const existing = await this.findByClientId(clientId);
     if (!existing) {
       return null;
     }
 
-    const now = getCurrentTimestamp();
+    // Keep the version monotonic even when two writes occur in the same millisecond.
+    const now = Math.max(getCurrentTimestamp(), existing.updated_at + 1);
     const updates: string[] = ['updated_at = ?'];
     const params: unknown[] = [now];
 
@@ -727,6 +767,10 @@ export class ClientRepository {
     if (input.token_endpoint_auth_method !== undefined) {
       updates.push('token_endpoint_auth_method = ?');
       params.push(input.token_endpoint_auth_method);
+    }
+    if (input.token_endpoint_auth_signing_alg !== undefined) {
+      updates.push('token_endpoint_auth_signing_alg = ?');
+      params.push(input.token_endpoint_auth_signing_alg);
     }
     if (input.jwks !== undefined) {
       updates.push('jwks = ?');
@@ -924,6 +968,22 @@ export class ClientRepository {
       updates.push('userinfo_signed_response_alg = ?');
       params.push(input.userinfo_signed_response_alg);
     }
+    if (input.id_token_signed_response_alg !== undefined) {
+      updates.push('id_token_signed_response_alg = ?');
+      params.push(input.id_token_signed_response_alg);
+    }
+    if (input.authorization_signed_response_alg !== undefined) {
+      updates.push('authorization_signed_response_alg = ?');
+      params.push(input.authorization_signed_response_alg);
+    }
+    if (input.authorization_encrypted_response_alg !== undefined) {
+      updates.push('authorization_encrypted_response_alg = ?');
+      params.push(input.authorization_encrypted_response_alg);
+    }
+    if (input.authorization_encrypted_response_enc !== undefined) {
+      updates.push('authorization_encrypted_response_enc = ?');
+      params.push(input.authorization_encrypted_response_enc);
+    }
     // OIDC Logout
     if (input.backchannel_logout_uri !== undefined) {
       updates.push('backchannel_logout_uri = ?');
@@ -977,11 +1037,19 @@ export class ClientRepository {
     }
 
     params.push(this.tenantId, clientId);
+    const versionCondition = options.expectedUpdatedAt === undefined ? '' : ' AND updated_at = ?';
+    if (options.expectedUpdatedAt !== undefined) {
+      params.push(options.expectedUpdatedAt);
+    }
 
-    await this.adapter.execute(
-      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?`,
+    const result = await this.adapter.execute(
+      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?${versionCondition}`,
       params
     );
+
+    if (result.rowsAffected === 0) {
+      return null;
+    }
 
     return this.findByClientId(clientId);
   }

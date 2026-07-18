@@ -577,6 +577,15 @@
 
 			{#snippet actions()}
 				<div class="tenant-detail-actions">
+					{#if !singleTenantMode && tenantOperational}
+						<a
+							class="btn btn-secondary"
+							href={`/admin/tenants/clone?source=${encodeURIComponent(currentTenant.id)}`}
+						>
+							<i class="i-ph-copy"></i>
+							{$LL.admin_tenants_clone_action()}
+						</a>
+					{/if}
 					{#if !currentTenant.is_default && tenantOperational}
 						<button
 							class="btn btn-secondary"

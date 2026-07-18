@@ -39,6 +39,21 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
   app.put('/api/admin/settings', (c) => c.json({ ok: true }));
+  app.patch('/api/admin/tenants/tenant-a/settings/assurance', (c) => c.json({ ok: true }));
+  app.patch('/api/admin/tenants/tenant-a/settings/security', (c) => c.json({ ok: true }));
+  app.patch('/api/admin/tenants/tenant-a/settings/tokens', (c) => c.json({ ok: true }));
+  app.patch('/api/admin/tenants/tenant-a/settings/oauth', (c) => c.json({ ok: true }));
+  app.patch('/api/admin/tenants/tenant-a/settings/session', (c) => c.json({ ok: true }));
+  app.patch('/api/admin/tenants/tenant-a/settings/login-ui', (c) => c.json({ ok: true }));
+  app.post('/api/admin/tenants/tenant-a/clone', (c) => c.json({ ok: true }));
+  app.post('/api/admin/clients', (c) => c.json({ ok: true }));
+  app.put('/api/admin/clients/client-1', (c) => c.json({ ok: true }));
+  app.post('/api/admin/clients/client-1/regenerate-secret', (c) => c.json({ ok: true }));
+  app.post('/api/admin/policies/simulate', (c) => c.json({ ok: true }));
+  app.post('/api/admin/flows/flow-1/validate', (c) => c.json({ ok: true }));
+  app.post('/api/admin/flows/flow-1/compile', (c) => c.json({ ok: true }));
+  app.post('/api/admin/flows/flow-1/publish', (c) => c.json({ ok: true }));
+  app.get('/api/admin/agent-grants/eligible-permissions', (c) => c.json({ ok: true }));
   app.post('/api/admin/undocumented', (c) => c.json({ ok: true }));
   app.get('/api/admin/consent-policies', (c) => c.json({ ok: true }));
   app.post('/api/admin/consent-policies', (c) => c.json({ ok: true }));
@@ -116,6 +131,100 @@ describe('declared admin route access', () => {
     expect(allowedTotpReset.status).toBe(200);
     expect(deniedUpdateSettings.status).toBe(403);
     expect(allowedUpdateSettings.status).toBe(200);
+  });
+
+  it('requires grant write permission for the grant eligibility helper', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.AGENT_GRANTS_READ]);
+    const writer = createHarness([ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE]);
+
+    await expect(
+      reader.request('/api/admin/agent-grants/eligible-permissions')
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      writer.request('/api/admin/agent-grants/eligible-permissions')
+    ).resolves.toMatchObject({ status: 200 });
+
+    expect(
+      findAdminRouteAccessRule('GET', '/api/admin/agent-grants/eligible-permissions')?.permissions
+    ).toEqual([ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE]);
+  });
+
+  it('uses category-specific permissions for Agent-exposed tenant setting writes', async () => {
+    const securityWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE]);
+
+    await expect(
+      securityWriter.request('/api/admin/tenants/tenant-a/settings/security', { method: 'PATCH' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      securityWriter.request('/api/admin/tenants/tenant-a/settings/assurance', {
+        method: 'PATCH',
+      })
+    ).resolves.toMatchObject({ status: 403 });
+    expect(
+      findAdminRouteAccessRule('PATCH', '/api/admin/tenants/tenant-a/settings/tokens')?.permissions
+    ).toEqual([ADMIN_PERMISSIONS.SETTINGS_TOKEN_EXCHANGE_UPDATE]);
+    expect(
+      findAdminRouteAccessRule('PATCH', '/api/admin/tenants/tenant-a/settings/oauth')?.permissions
+    ).toEqual([ADMIN_PERMISSIONS.SETTINGS_OAUTH_UPDATE]);
+    expect(
+      findAdminRouteAccessRule('PATCH', '/api/admin/tenants/tenant-a/settings/session')?.permissions
+    ).toEqual([ADMIN_PERMISSIONS.SETTINGS_SESSION_UPDATE]);
+    expect(
+      findAdminRouteAccessRule('PATCH', '/api/admin/tenants/tenant-a/settings/login-ui')
+        ?.permissions
+    ).toEqual([ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE]);
+  });
+
+  it('keeps tenant cloning on the platform-admin tenant administration boundary', async () => {
+    const tenantWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE], ['tenant_admin']);
+    const lifecycleWriter = createHarness(
+      [ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD],
+      ['system_admin']
+    );
+
+    await expect(
+      tenantWriter.request('/api/admin/tenants/tenant-a/clone', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      lifecycleWriter.request('/api/admin/tenants/tenant-a/clone', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+
+    const rule = findAdminRouteAccessRule('POST', '/api/admin/tenants/tenant-a/clone');
+    expect(rule?.permissions).toEqual([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]);
+    expect(rule?.roles).toBeUndefined();
+  });
+
+  it('uses operation-specific client, policy simulation, and Flow permissions', async () => {
+    const clientUpdater = createHarness([ADMIN_PERMISSIONS.CLIENTS_UPDATE]);
+    const simulator = createHarness([ADMIN_PERMISSIONS.POLICY_SIMULATE]);
+    const flowValidator = createHarness([ADMIN_PERMISSIONS.FLOWS_VALIDATE]);
+    const flowPublisher = createHarness([ADMIN_PERMISSIONS.FLOWS_PUBLISH]);
+
+    expect(findAdminRouteAccessRule('POST', '/api/admin/clients')?.permissions).toEqual([
+      ADMIN_PERMISSIONS.CLIENTS_CREATE,
+    ]);
+
+    await expect(
+      clientUpdater.request('/api/admin/clients/client-1', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      clientUpdater.request('/api/admin/clients', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      clientUpdater.request('/api/admin/clients/client-1/regenerate-secret', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      simulator.request('/api/admin/policies/simulate', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      flowValidator.request('/api/admin/flows/flow-1/validate', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      flowValidator.request('/api/admin/flows/flow-1/publish', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      flowPublisher.request('/api/admin/flows/flow-1/publish', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
   });
 
   it('keeps role assignment removal on roles write permission for existing admins', async () => {

@@ -52,6 +52,13 @@ import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
 import { isTenantScopedAdminPath } from './admin-tenant-access';
+import { authenticateAgentDownscopeBearer } from './agent-downscope-auth';
+import {
+  isAgentElevationRecoveryCron,
+  processScheduledAgentElevationRecovery,
+} from './agent-elevation-recovery';
+import { processScheduledAgentTokenRevocations } from './agent-token-revocation';
+import { processScheduledAgentPayloadRetention } from './agent-payload-retention';
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -317,13 +324,6 @@ import {
 } from './admin-access-trace';
 import { adminAccessControlStatsHandler } from './admin-access-control-stats';
 import {
-  adminAIGrantsListHandler,
-  adminAIGrantGetHandler,
-  adminAIGrantCreateHandler,
-  adminAIGrantUpdateHandler,
-  adminAIGrantRevokeHandler,
-} from './ai-grants';
-import {
   adminJobsListHandler,
   adminJobGetHandler,
   adminJobResultHandler,
@@ -368,8 +368,8 @@ import {
   adminSettingsDiffHandler,
   adminSettingsSchemaHandler,
   adminSettingsValidateHandler,
-  adminTenantCloneHandler,
 } from './admin-settings-meta';
+import { adminTenantCloneHandler } from './admin-tenant-clone';
 import { adminTenantInfoHandler } from './admin-info';
 import {
   adminRuntimeProfileDefaultsHandler,
@@ -896,43 +896,6 @@ import {
   updateDirectoryAuthTenantPolicyHandler,
 } from './routes/directory-auth';
 
-const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
-
-function requireAiGrantAdminAccess(requiredPermission: string) {
-  return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
-      | AdminAuthContext
-      | undefined;
-
-    if (!authContext) {
-      return c.json(
-        {
-          error: 'invalid_token',
-          error_description: 'Authentication required. Please authenticate first.',
-        },
-        401
-      );
-    }
-
-    if (authContext.authMethod === 'machine_access_token') {
-      const permissions = authContext.permissions || [];
-      if (hasAdminPermission(permissions, requiredPermission)) {
-        return next();
-      }
-
-      return c.json(
-        {
-          error: 'insufficient_permissions',
-          error_description: 'You do not have the required permissions for this operation.',
-        },
-        403
-      );
-    }
-
-    return requireAnyRole(AI_GRANTS_ADMIN_ROLES)(c, next);
-  };
-}
-
 function requireClientManagementPermission() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const method = c.req.method.toUpperCase();
@@ -1325,7 +1288,10 @@ app.use('/api/admin/*', csrfProtectionMiddleware());
 // Admin authentication middleware - applies to ALL /api/admin/* routes
 // Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
 // Note: /api/admin/auth/* routes are handled by ar-auth via ar-router
-app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
+app.use(
+  '/api/admin/*',
+  adminAuthMiddleware({ plane: 'tenant', authenticateBearer: authenticateAgentDownscopeBearer })
+);
 
 // Body size limit for Admin API - prevents DoS attacks via large payloads
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
@@ -1533,7 +1499,20 @@ app.use('/api/admin/tenants/:tenantId/*', requireSupportedTenantParam('tenantId'
 app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
-app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
+app.post(
+  '/api/admin/tenants/:id/clone',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware(profile)(c, next);
+  },
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantCloneHandler
+);
 app.post('/api/admin/tenants/:id/provisioning/retry', adminTenantProvisioningRetryHandler);
 app.post('/api/admin/tenants/:id/provisioning/cleanup', adminTenantProvisioningCleanupHandler);
 app.post(
@@ -2388,50 +2367,6 @@ app.use(
 
 // Access Control Hub endpoints
 app.get('/api/admin/access-control/stats', adminAccessControlStatsHandler);
-
-// =============================================================================
-// AI Grants (Human Auth / AI Ephemeral Auth Two-Layer Model)
-// =============================================================================
-// Manages grants that authorize AI principals (agents, tools, services) to act
-// on behalf of users or systems. Used for MCP integration and AI-to-AI delegation.
-// Rate limited with RateLimitProfiles.moderate.
-// AuthZ: Human admins require system_admin/distributor_admin; machine callers
-// require scoped Admin Machine Access permissions such as admin:ai_grants:*.
-
-// Rate limiting for AI Grants endpoints
-app.use('/api/admin/ai-grants', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/admin/ai-grants'],
-  })(c, next);
-});
-
-app.get(
-  '/api/admin/ai-grants',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_READ),
-  adminAIGrantsListHandler
-);
-app.get(
-  '/api/admin/ai-grants/:id',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_READ),
-  adminAIGrantGetHandler
-);
-app.post(
-  '/api/admin/ai-grants',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_CREATE),
-  adminAIGrantCreateHandler
-);
-app.put(
-  '/api/admin/ai-grants/:id',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_UPDATE),
-  adminAIGrantUpdateHandler
-);
-app.delete(
-  '/api/admin/ai-grants/:id',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_REVOKE),
-  adminAIGrantRevokeHandler
-);
 
 // =============================================================================
 // Policy ↔ Identity Integration (Phase 8.1)
@@ -3724,8 +3659,15 @@ async function deleteExpiredTenantRows(
  * crons = ["0 * * * *"]  # Hourly
  */
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
-  const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   const log = createLogger().module('SCHEDULED');
+  if (isAgentElevationRecoveryCron(event.cron)) {
+    await processScheduledAgentElevationRecovery(env, log);
+    await processScheduledAgentTokenRevocations(env, log);
+    await processScheduledAgentPayloadRetention(env, log);
+    return;
+  }
+
+  const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   log.info('Scheduled maintenance job started', { timestamp: new Date().toISOString() });
 
   // Register builtin plugins (idempotent - skips if already registered)

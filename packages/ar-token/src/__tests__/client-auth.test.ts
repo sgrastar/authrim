@@ -188,6 +188,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
     getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
+    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
     getChallengeStoreByChallengeId: mocks.mockGetChallengeStoreByChallengeId,
     createAccessToken: mocks.mockCreateAccessToken,
     createIDToken: mocks.mockCreateIDToken,
@@ -1374,6 +1375,8 @@ describe('Client Authentication Tests', () => {
         tenantId: 'default',
         clientId: client.client_id,
         codeVerifier,
+        expectedAuthorizationServer: 'default',
+        expectedSubjectType: 'end_user',
       });
     });
 
@@ -1699,7 +1702,8 @@ describe('Client Authentication Tests', () => {
         }),
         expect.anything(),
         expect.any(String),
-        expect.any(Number)
+        expect.any(Number),
+        'RS256'
       );
     });
   });
@@ -3057,6 +3061,45 @@ describe('Client Authentication Tests', () => {
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects client-secret downgrade before consuming a code in FAPI mode', async () => {
+      const client = createPrivateKeyJwtClient();
+      const authCodeData = createAuthCodeData();
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        fapi: { enabled: true, requireDpop: true },
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+      mocks.mockParseBasicAuth.mockReturnValue({ success: false });
+      const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: consumeCodeRpcMock,
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(401);
+      await expect(parseJsonResponse(response)).resolves.toMatchObject({
+        error: 'invalid_client',
+        error_description: expect.stringContaining('private_key_jwt'),
+      });
+      expect(mocks.mockVerifyClientSecretHash).not.toHaveBeenCalled();
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
     });
 
     it('should reject malformed Basic auth header', async () => {
@@ -3334,7 +3377,67 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockValidateClientAssertion).toHaveBeenCalledWith(
         clientAssertion,
         expect.stringContaining('/token'),
-        expect.anything()
+        expect.anything(),
+        undefined
+      );
+    });
+
+    it('should apply issuer-only audience and non-RS FAPI algorithms at the token endpoint', async () => {
+      const client = createPrivateKeyJwtClient();
+      const authCodeData = createAuthCodeData();
+      const clientAssertion = createTestJWT(
+        { alg: 'ES256', kid: 'client-key-001' },
+        {
+          iss: client.client_id,
+          sub: client.client_id,
+          aud: 'https://auth.example.com',
+          exp: Math.floor(Date.now() / 1000) + 300,
+        }
+      );
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        fapi: { enabled: true, requireDpop: true },
+      });
+      mocks.mockParseToken.mockReturnValue({ iss: client.client_id, sub: client.client_id });
+      mocks.mockValidateClientAssertion.mockResolvedValue({
+        valid: true,
+        client_id: client.client_id,
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+      mocks.mockParseBasicAuth.mockReturnValue({ success: false });
+
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: clientAssertion,
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockValidateClientAssertion).toHaveBeenCalledWith(
+        clientAssertion,
+        'https://auth.example.com/token',
+        expect.anything(),
+        {
+          audiencePolicy: 'issuer-only',
+          issuer: 'https://auth.example.com',
+          allowedAlgorithms: ['ES256', 'PS256', 'EdDSA'],
+          clockSkewSeconds: 60,
+        }
       );
     });
 
@@ -4379,7 +4482,7 @@ describe('Client Authentication Tests', () => {
       };
     }
 
-    it('honors settings overrides and falls back to the environment on settings failure', async () => {
+    it('honors settings overrides and fails closed when profile state is unavailable', async () => {
       const client = setupM2MClient();
       mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
         oidc: { clientCredentials: { enabled: false } },
@@ -4391,9 +4494,13 @@ describe('Client Authentication Tests', () => {
         error_description: 'Client Credentials grant is not enabled',
       });
 
-      mocks.mockGetSystemSettingsCached.mockRejectedValueOnce(new Error('settings unavailable'));
+      mocks.mockGetSystemSettingsCached.mockRejectedValue(new Error('settings unavailable'));
       const fallback = await requestM2M(client);
-      expect(fallback.response.status).toBe(200);
+      expect(fallback.response.status).toBe(503);
+      expect(fallback.body).toMatchObject({
+        error: 'temporarily_unavailable',
+      });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
 
     it('rejects malformed assertions and Authorization headers before client lookup', async () => {
@@ -4688,10 +4795,55 @@ describe('Client Authentication Tests', () => {
       );
     });
 
+    it('optionally sender-constrains an Admin machine token for Mode B use', async () => {
+      mockAdminMachineAccess();
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-mode-b',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'mode-b-jkt' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:clients.create',
+          },
+          env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+        })
+      );
+      const body = await parseJsonResponse<{ token_type?: string }>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.token_type).toBe('DPoP');
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sender_constrained: true,
+          cnf: { jkt: 'mode-b-jkt' },
+        }),
+        expect.anything(),
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
     it('limits Admin API machine token scope to the principal and credential permission intersection', async () => {
       mockAdminMachineAccess({
-        principalPermissions: ['admin:ai_grants:*', 'admin:sessions:read'],
-        credentialPermissions: ['admin:ai_grants:create', 'admin:sessions:*'],
+        principalPermissions: ['admin:agent_grants:*', 'admin:sessions:read'],
+        credentialPermissions: ['admin:agent_grants:write', 'admin:sessions:*'],
       });
       mocks.mockParseToken.mockReturnValue({
         iss: 'setup-tool',
@@ -4714,7 +4866,7 @@ describe('Client Authentication Tests', () => {
             client_assertion: 'header.payload.signature',
             audience: 'authrim:admin-api',
             scope:
-              'admin:ai_grants:create admin:ai_grants:delete admin:sessions:read admin:sessions:revoke',
+              'admin:agent_grants:write admin:agent_grants:revoke admin:sessions:read admin:sessions:revoke',
           },
           env: {
             ...mockEnv,
@@ -4726,12 +4878,12 @@ describe('Client Authentication Tests', () => {
 
       expect(response.status).toBe(200);
       expect(body.access_token).toBe('mock-access-token');
-      expect(body.scope).toBe('admin:ai_grants:create admin:sessions:read');
+      expect(body.scope).toBe('admin:agent_grants:write admin:sessions:read');
       expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
         expect.objectContaining({
           aud: 'authrim:admin-api',
           sub: 'machine:amp_setup',
-          scope: 'admin:ai_grants:create admin:sessions:read',
+          scope: 'admin:agent_grants:write admin:sessions:read',
           tenant_scope: ['default'],
         }),
         expect.anything(),
@@ -4839,7 +4991,7 @@ describe('Client Authentication Tests', () => {
         credentialId: 'amk_mcp_admin',
         credentialKid: 'mcp-admin-2026-05',
         displayName: 'MCP Admin Server',
-        principalPermissions: ['admin:ai_grants:*'],
+        principalPermissions: ['admin:agent_grants:*'],
         principalTenantScopes: [{ scope_mode: 'allow', tenant_id: '*' }],
       });
       mocks.mockParseToken.mockReturnValue({
@@ -4865,7 +5017,7 @@ describe('Client Authentication Tests', () => {
             client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
             client_assertion: 'header.payload.signature',
             audience: 'authrim:admin-api',
-            scope: 'admin:ai_grants:create admin:ai_grants:read',
+            scope: 'admin:agent_grants:write admin:agent_grants:read',
           },
           env: {
             ...mockEnv,
@@ -4884,7 +5036,7 @@ describe('Client Authentication Tests', () => {
           credential_id: 'amk_mcp_admin',
           client_id: 'mcp-admin-server',
           client_auth_method: 'private_key_jwt',
-          scope: 'admin:ai_grants:create admin:ai_grants:read',
+          scope: 'admin:agent_grants:write admin:agent_grants:read',
           tenant_scope: ['*'],
         }),
         expect.anything(),
@@ -4902,7 +5054,7 @@ describe('Client Authentication Tests', () => {
         credentialId: 'amk_ai_admin_agent',
         credentialKid: 'ai-admin-agent-2026-05',
         displayName: 'AI Admin Agent',
-        principalPermissions: ['admin:ai_grants:*'],
+        principalPermissions: ['admin:agent_grants:*'],
       });
       mocks.mockParseToken.mockReturnValue({
         iss: 'ai-admin-agent',
@@ -4927,7 +5079,7 @@ describe('Client Authentication Tests', () => {
             client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
             client_assertion: 'header.payload.signature',
             audience: 'authrim:admin-api',
-            scope: 'admin:ai_grants:update',
+            scope: 'admin:agent_grants:write',
           },
           env: {
             ...mockEnv,
@@ -4946,7 +5098,7 @@ describe('Client Authentication Tests', () => {
           credential_id: 'amk_ai_admin_agent',
           client_id: 'ai-admin-agent',
           client_auth_method: 'private_key_jwt',
-          scope: 'admin:ai_grants:update',
+          scope: 'admin:agent_grants:write',
           tenant_scope: ['default'],
         }),
         expect.anything(),

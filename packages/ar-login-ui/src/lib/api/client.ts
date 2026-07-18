@@ -1184,11 +1184,12 @@ export const emailCodeAPI = {
  * Auth API - TOTP
  */
 export const totpAPI = {
-	async startLogin(data: { identifier: string }) {
+	async startLogin(data: { identifier?: string; authorizationChallengeId?: string }) {
 		return apiFetch<{ challenge_id: string; expires_in: number }>('/api/auth/totp/login/start', {
 			method: 'POST',
 			body: JSON.stringify({
-				identifier: data.identifier
+				identifier: data.identifier,
+				authorization_challenge_id: data.authorizationChallengeId
 			})
 		});
 	},

@@ -39,6 +39,7 @@ const createMockEnv = () => ({
   OP_TOKEN: createMockFetcher('OP_TOKEN'),
   OP_USERINFO: createMockFetcher('OP_USERINFO'),
   OP_MANAGEMENT: createMockFetcher('OP_MANAGEMENT'),
+  OP_AGENT_ACCESS: createMockFetcher('OP_AGENT_ACCESS'),
   OP_ASYNC: createMockFetcher('OP_ASYNC'),
   OP_SAML: createMockFetcher('OP_SAML'),
   EXTERNAL_IDP: createMockFetcher('EXTERNAL_IDP'),
@@ -87,6 +88,54 @@ describe('Router Worker', () => {
   });
 
   describe('Path Routing', () => {
+    describe('Agent Access MCP route', () => {
+      it('forwards the complete Streamable HTTP request to its owner Worker', async () => {
+        const req = new Request('https://first.example.com/mcp', {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer token',
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json',
+            'mcp-protocol-version': '2025-11-25',
+          },
+          body: '{"jsonrpc":"2.0","id":1,"method":"initialize"}',
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ worker: 'OP_AGENT_ACCESS', path: '/mcp' });
+        expect(mockEnv.OP_AGENT_ACCESS.fetch).toHaveBeenCalledOnce();
+      });
+
+      it('returns 404 when the optional binding is absent', async () => {
+        const env = { ...mockEnv, OP_AGENT_ACCESS: undefined };
+        const res = await app.fetch(new Request('https://first.example.com/mcp'), env);
+        expect(res.status).toBe(404);
+      });
+
+      it('copies immutable Service Binding response headers before outer middleware runs', async () => {
+        const immutableResponse = await fetch(
+          'data:application/json,%7B%22status%22%3A%22disabled%22%7D'
+        );
+        expect(() => immutableResponse.headers.set('x-test', 'value')).toThrow();
+        const env = {
+          ...mockEnv,
+          OP_AGENT_ACCESS: { fetch: vi.fn(async () => immutableResponse) },
+        };
+
+        const res = await app.fetch(
+          new Request('https://first.example.com/mcp', {
+            headers: { accept: 'text/event-stream' },
+          }),
+          env
+        );
+
+        expect(res.status).toBe(200);
+        await expect(res.json()).resolves.toEqual({ status: 'disabled' });
+        expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      });
+    });
+
     describe('OP_DISCOVERY routes', () => {
       it('should route /.well-known/openid-configuration to OP_DISCOVERY', async () => {
         const req = new Request('https://example.com/.well-known/openid-configuration');
@@ -174,6 +223,27 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route Admin Agent PAR and browser authorization to OP_AUTH', async () => {
+        const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/par', { method: 'POST' }),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/authorize?request_uri=test'),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/authorize', {
+            method: 'POST',
+            headers: { Origin: 'https://example.com' },
+          }),
+          env
+        );
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(3);
       });
 
       it('should route /api/auth/* to OP_AUTH', async () => {
@@ -268,6 +338,30 @@ describe('Router Worker', () => {
     describe('OP_TOKEN routes', () => {
       it('should route POST /token to OP_TOKEN', async () => {
         const req = new Request('https://example.com/token', { method: 'POST' });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_TOKEN.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route POST /oauth/admin-agent/token to OP_TOKEN', async () => {
+        const req = new Request('https://example.com/oauth/admin-agent/token', {
+          method: 'POST',
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_TOKEN.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route DPoP-authenticated Mode B delegation without browser Origin', async () => {
+        const req = new Request('https://example.com/oauth/admin-agent/delegation', {
+          method: 'POST',
+          headers: {
+            Authorization: 'DPoP machine-access-token',
+            DPoP: 'proof-jwt',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'grant_id=grant-1&scope=agent%3Aread',
+        });
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_TOKEN.fetch).toHaveBeenCalledTimes(1);

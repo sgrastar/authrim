@@ -29,6 +29,8 @@ import { createLogger, type Logger } from '../utils/logger';
  * PAR request data
  */
 export interface PARRequestData {
+  /** Authorization Server journey that owns this request. Defaults to the end-user journey. */
+  authorization_server?: 'default' | 'admin_agent';
   tenant_id: string;
   client_id: string;
   redirect_uri: string;
@@ -51,6 +53,8 @@ export interface PARRequestData {
   dpop_jkt?: string;
   // RFC 9396: Rich Authorization Requests
   authorization_details?: string;
+  /** RFC 8707 target resource, when the journey requires an exact resource binding. */
+  resource?: string;
   createdAt?: number;
   expiresAt?: number;
   consumed?: boolean;
@@ -72,6 +76,9 @@ export interface ConsumePARRequest {
   requestUri: string;
   tenant_id: string;
   client_id: string; // Must match the client_id in stored data
+  /** Defaults to `default`, preventing normal authorize from consuming Admin Agent PAR. */
+  expected_authorization_server?: 'default' | 'admin_agent';
+  expected_resource?: string;
 }
 
 /**
@@ -255,6 +262,7 @@ export class PARRequestStore extends DurableObject<Env> {
     const now = Date.now();
     const data: PARRequestData = {
       ...request.data,
+      authorization_server: request.data.authorization_server ?? 'default',
       createdAt: now,
       expiresAt: now + request.ttl * 1000,
       consumed: false,
@@ -300,6 +308,17 @@ export class PARRequestStore extends DurableObject<Env> {
     // Client ID mismatch
     if (data.client_id !== request.client_id) {
       throw new Error('Invalid request_uri: client_id mismatch');
+    }
+
+    // Authorization journey mismatch. Validate before marking consumed so a request cannot be
+    // burned by presenting it to the wrong endpoint.
+    const authorizationServer = data.authorization_server ?? 'default';
+    if (authorizationServer !== (request.expected_authorization_server ?? 'default')) {
+      throw new Error('Invalid request_uri: authorization server mismatch');
+    }
+
+    if (request.expected_resource !== undefined && data.resource !== request.expected_resource) {
+      throw new Error('Invalid request_uri: resource mismatch');
     }
 
     // Already consumed

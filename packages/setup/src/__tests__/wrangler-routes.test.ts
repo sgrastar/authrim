@@ -146,6 +146,8 @@ describe('generateRoutes', () => {
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
     const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
     const vcConfig = generateWranglerConfig('ar-vc', config, resourceIds);
+    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
     expect(authConfig.durable_objects?.bindings).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
@@ -156,6 +158,7 @@ describe('generateRoutes', () => {
     expect(managementConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
     );
+    expect(managementConfig.triggers).toEqual({ crons: ['* * * * *', '0 */6 * * *'] });
 
     expect(tokenConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
@@ -237,6 +240,36 @@ describe('generateRoutes', () => {
       'entrypoint = "KeyManagerPublicEntrypoint"'
     );
     expect(tokenConfig.send_email).toBeUndefined();
+    expect(agentAccessConfig.main).toBe('src/platform/cloudflare/worker.ts');
+    expect(agentAccessConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'AGENT_ACCESS_MCP',
+          class_name: 'AgentAccessMcpAgent',
+        }),
+        expect.objectContaining({
+          name: 'DPOP_JTI_STORE',
+          script_name: 'emailtest-ar-lib-core',
+        }),
+      ])
+    );
+    expect(agentAccessConfig.migrations?.[0]).toMatchObject({
+      tag: 'ar-agent-access-local-v1',
+      new_sqlite_classes: ['AgentAccessMcpAgent'],
+    });
+    expect(agentAccessConfig.services).toEqual([
+      { binding: 'OP_MANAGEMENT', service: 'emailtest-ar-management' },
+      { binding: 'OP_DISCOVERY', service: 'emailtest-ar-discovery' },
+      {
+        binding: 'AGENT_DOWNSCOPE',
+        service: 'emailtest-ar-token',
+        entrypoint: 'AgentDownscopeEntrypoint',
+      },
+    ]);
+    expect(routerConfig.services).toContainEqual({
+      binding: 'OP_AGENT_ACCESS',
+      service: 'emailtest-ar-agent-access',
+    });
     expect(libCoreConfig.vars.AUTH_CODE_EXPIRY).toBe('600');
     expect(authConfig.vars.EMAIL_FROM).toBe('noreply@example.com');
     expect(authConfig.vars.EMAIL_FROM_NAME).toBe('Authrim');
@@ -622,6 +655,7 @@ describe('generateRoutes', () => {
 
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
     const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
@@ -636,6 +670,15 @@ describe('generateRoutes', () => {
     );
     expect(managementConfig.kv_namespaces).toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+    );
+    expect(agentAccessConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'DB' }),
+        expect.objectContaining({ binding: 'DB_ADMIN' }),
+      ])
+    );
+    expect(agentAccessConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TDB_EXAMPLE_ABC123_CORE' })])
     );
     expect(asyncConfig.d1_databases).toBeUndefined();
     expect(routerConfig.d1_databases).toBeUndefined();
@@ -1473,8 +1516,22 @@ id = "kv-id"
       },
     };
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
+    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
 
     expect(routerConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        { binding: 'SETTINGS', id: 'kv-settings' },
+        { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
+      ])
+    );
+    expect(discoveryConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        { binding: 'SETTINGS', id: 'kv-settings' },
+        { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
+      ])
+    );
+    expect(agentAccessConfig.kv_namespaces).toEqual(
       expect.arrayContaining([
         { binding: 'SETTINGS', id: 'kv-settings' },
         { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },

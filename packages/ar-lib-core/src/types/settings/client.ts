@@ -337,11 +337,12 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
   },
   'client.userinfo_signed_response_alg': {
     key: 'client.userinfo_signed_response_alg',
-    type: 'string',
+    type: 'enum',
     default: 'none',
     envKey: 'CLIENT_USERINFO_SIGNED_RESPONSE_ALG',
     label: 'UserInfo Signed Response Alg',
     description: 'Algorithm for signed UserInfo responses (none, RS256, ES256)',
+    enum: ['none', 'RS256', 'ES256'],
     visibility: 'admin',
   },
 
@@ -730,18 +731,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_ID_TOKEN_SIGNING_ALG',
     label: 'ID Token Signing Algorithm',
     description: 'Algorithm for signing ID tokens',
-    enum: [
-      'RS256',
-      'RS384',
-      'RS512',
-      'ES256',
-      'ES384',
-      'ES512',
-      'PS256',
-      'PS384',
-      'PS512',
-      'EdDSA',
-    ],
+    enum: ['RS256', 'ES256'],
     visibility: 'public',
   },
   'client.id_token_encrypted_response_alg': {

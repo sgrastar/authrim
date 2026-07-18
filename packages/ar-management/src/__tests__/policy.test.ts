@@ -607,6 +607,32 @@ describe('Policy API - Tenant Policy', () => {
       expect(body.message).toContain('Invalid profile type');
     });
 
+    it('allows ai_ephemeral when enabled by this tenant certification profile', async () => {
+      const mockKV = createMockKV({
+        getValues: {
+          'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
+          'settings:tenant:test-tenant:certification-profile': {
+            oidc: { aiEphemeralAuth: { enabled: true } },
+          },
+        },
+      });
+      const { app } = createApp({ kv: mockKV });
+
+      const res = await app.request('/api/admin/tenant-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          policy: { profile: 'ai_ephemeral' },
+          ifMatch: '1',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await parseJson(res)).toMatchObject({
+        policy: { profile: 'ai_ephemeral', version: 2 },
+      });
+    });
+
     it('should track status changes in history', async () => {
       mockIsValidTransition.mockReturnValue(true);
 

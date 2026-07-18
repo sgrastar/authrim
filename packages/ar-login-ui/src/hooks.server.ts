@@ -35,6 +35,9 @@ interface ServiceBinding {
 
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH = 32;
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH = 4096;
+// Keep this aligned with VALIDATION_LIMITS.CLIENT_ID_MAX_LENGTH in ar-lib-core.
+// DCR-generated client identifiers are intentionally longer than 128 characters.
+const CLIENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -398,7 +401,7 @@ export async function fetchLoginChallengeThemeTargetForPageRequest(
 		}
 		const data = (await response.json()) as { client?: { client_id?: unknown } };
 		const clientId = typeof data.client?.client_id === 'string' ? data.client.client_id.trim() : '';
-		if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(clientId)) {
+		if (!CLIENT_ID_PATTERN.test(clientId)) {
 			return { challengeId, valid: false, clientId: null };
 		}
 		return { challengeId, valid: true, clientId };

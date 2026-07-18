@@ -79,6 +79,7 @@ import {
   type AuditActor,
   createAuditLogEntry,
   createLogger,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -517,10 +518,25 @@ const policyRouter = new Hono<{
   Bindings: Env;
 }>();
 
-// RBAC: Require system_admin or org_admin role for all policy operations
-// Note: adminAuthMiddleware is already applied at the parent router level
+// RBAC: Require a Policy Admin role for Policy API operations only.
+//
+// This router is mounted at `/api/admin`. A wildcard middleware here would also run for
+// unrelated routes that are registered after this sub-router (for example Agent-safe read
+// operations). Keep the guard explicitly scoped to the paths owned by this router.
+// Note: adminAuthMiddleware is already applied at the parent router level.
 const policyAdminRoles = ['system_admin', 'org_admin', 'admin'];
-policyRouter.use('*', requireAnyRole(policyAdminRoles));
+for (const path of [
+  '/tenant-policy',
+  '/tenant-policy/*',
+  '/clients/:clientId/profile',
+  '/clients/:clientId/profile/validate',
+  '/clients/:clientId/apply-preset',
+  '/client-profile-presets',
+  '/effective-policy',
+  '/effective-policy/options',
+]) {
+  policyRouter.use(path, requireAnyRole(policyAdminRoles));
+}
 
 // =============================================================================
 // Tenant Policy Routes
@@ -639,11 +655,9 @@ policyRouter.put('/tenant-policy', async (c) => {
         // Check feature flag (KV > env > default: false)
         let aiEphemeralEnabled = false;
         try {
-          const settingsJson = await c.env.SETTINGS?.get('system_settings');
-          if (settingsJson) {
-            const settings = JSON.parse(settingsJson);
-            aiEphemeralEnabled = settings.oidc?.aiEphemeralAuth?.enabled ?? false;
-          }
+          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+          const oidc = settings?.oidc as { aiEphemeralAuth?: { enabled?: boolean } } | undefined;
+          aiEphemeralEnabled = oidc?.aiEphemeralAuth?.enabled ?? false;
         } catch {
           // Fall back to env
         }

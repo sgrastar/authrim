@@ -62,6 +62,12 @@ export interface AdminAuthOptions {
   plane?: 'tenant' | 'platform';
 
   /**
+   * Optional same-origin login redirect for browser GET journeys. The caller owns validation of
+   * the returned location. API and mutation routes should leave this unset.
+   */
+  unauthenticatedRedirect?: (c: Context<{ Bindings: Env }>) => string | undefined;
+
+  /**
    * Required roles for access. User must have at least one of these roles.
    * Default: ['super_admin', 'security_admin', 'admin', 'support', 'viewer']
    */
@@ -84,6 +90,25 @@ export interface AdminAuthOptions {
    * Require MFA to be verified for this session (default: false)
    */
   requireMfa?: boolean;
+
+  /**
+   * Require an Admin UI session to establish the actor (default: false).
+   *
+   * This is intended for browser authorization journeys such as Admin Agent OAuth. A scoped
+   * machine bearer token may still be used as BFF transport authentication, but it can never
+   * replace the human admin session as the primary actor.
+   */
+  sessionOnly?: boolean;
+
+  /**
+   * Optional owner-package verifier for a signed bearer token type that ar-lib-core must not
+   * depend on directly. The callback must fully verify the token and return a bounded context.
+   */
+  authenticateBearer?: (
+    c: Context<{ Bindings: Env }>,
+    token: string,
+    tenantId: string
+  ) => Promise<AdminAuthContext | null>;
 }
 
 function parsePermissionsJson(value: string): string[] {
@@ -383,6 +408,8 @@ async function authenticateSession(
       admin_user_id: string;
       expires_at: number;
       mfa_verified: number;
+      mfa_verified_at: number | null;
+      created_at: number;
     }>('SELECT * FROM admin_sessions WHERE id = ? AND expires_at > ?', [sessionId, now]);
 
     if (!session) {
@@ -512,6 +539,10 @@ async function authenticateSession(
       permissions: Array.from(allPermissions),
       hierarchyLevel: maxHierarchyLevel,
       mfaVerified: Boolean(session.mfa_verified),
+      authenticationTimeMs:
+        session.mfa_verified_at && session.mfa_verified_at > session.created_at
+          ? session.mfa_verified_at
+          : session.created_at,
       sessionId: session.id,
       tenantScope: hasGlobalScope ? ['*'] : [session.tenant_id],
     };
@@ -722,7 +753,13 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
   ];
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    let authContext: AdminAuthContext | null = null;
+    const existingAuthContext = (c as unknown as { get?: (key: string) => unknown }).get?.(
+      'adminAuth'
+    );
+    let authContext: AdminAuthContext | null =
+      existingAuthContext && typeof existingAuthContext === 'object'
+        ? (existingAuthContext as AdminAuthContext)
+        : null;
     const effectivePlane = isPlatformAdminSessionStatusPath(c.req.path) ? 'platform' : plane;
     const authHeader = c.req.header('Authorization');
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
@@ -837,7 +874,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
       };
     }
 
-    if (!authContext && bearerToken) {
+    if (!options.sessionOnly && !authContext && bearerToken) {
       const tokenTenantId =
         effectivePlane === 'tenant'
           ? resolveAdminRequestTenantId(c)
@@ -853,7 +890,14 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
           400
         );
       }
-      authContext = await authenticateMachineAccessToken(c, bearerToken, tokenTenantId);
+      if (options.authenticateBearer) {
+        try {
+          authContext = await options.authenticateBearer(c, bearerToken, tokenTenantId);
+        } catch {
+          authContext = null;
+        }
+      }
+      authContext ??= await authenticateMachineAccessToken(c, bearerToken, tokenTenantId);
       if (authContext?.principalType === 'admin_ui_bff') {
         return c.json(
           {
@@ -867,6 +911,8 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
 
     // Authentication failed
     if (!authContext) {
+      const redirectLocation = options.unauthenticatedRedirect?.(c);
+      if (redirectLocation) return c.redirect(redirectLocation, 302);
       return c.json(
         {
           error: 'invalid_token',
@@ -1031,6 +1077,13 @@ export function requireAdminPermissions(permissions: string[]) {
     );
 
     if (!hasAllPermissions) {
+      log.warn('Admin permission middleware denied request', {
+        method: c.req.method,
+        path: new URL(c.req.url).pathname,
+        authMethod: authContext.authMethod,
+        requiredPermissions: permissions,
+        actualPermissions: userPermissions,
+      });
       return c.json(
         {
           error: 'insufficient_permissions',

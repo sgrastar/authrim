@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
   requestContextMiddleware,
   requireSystemAdmin,
 } from '@authrim/ar-lib-core';
 import { adminTenantPolicyMiddleware } from '../admin-tenant-policy';
-import { isTenantScopedAdminPath } from '../admin-tenant-access';
+import {
+  hasPlatformTenantManagementAuthority,
+  isTenantScopedAdminPath,
+} from '../admin-tenant-access';
 
 function createMockDB(options: { tenantRow?: { id: string } | null } = {}) {
   const { tenantRow = null } = options;
@@ -102,6 +105,27 @@ function buildPlatformGuardApp(roles: string[]) {
 }
 
 describe('adminTenantPolicyMiddleware', () => {
+  it('does not treat global tenant scope as a clone permission for machine actors', () => {
+    const machine = {
+      userId: 'machine-1',
+      authMethod: 'machine_access_token',
+      roles: [],
+      tenantId: 'default',
+      tenantScope: ['*'],
+      permissions: ['admin:tenants.read'],
+    } satisfies AdminAuthContext;
+
+    expect(hasPlatformTenantManagementAuthority(machine, 'admin:tenants:lifecycle:standard')).toBe(
+      false
+    );
+    expect(
+      hasPlatformTenantManagementAuthority(
+        { ...machine, permissions: ['admin:tenants:lifecycle:standard'] },
+        'admin:tenants:lifecycle:standard'
+      )
+    ).toBe(true);
+  });
+
   it('identifies tenant-scoped admin subresources that are managed by tenant admins', () => {
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/directory-auth/overview')).toBe(
       true

@@ -195,6 +195,23 @@ function getAdminActorAuditMetadata(
     };
   }
 
+  if (adminAuth.actorType === 'agent') {
+    return {
+      admin_actor_type: 'agent',
+      admin_actor_id: adminAuth.actorId ?? adminAuth.userId,
+      admin_auth_method: adminAuth.authMethod,
+      admin_delegator_id: adminAuth.userId,
+      admin_agent_client_id: adminAuth.clientId,
+      admin_agent_mode: adminAuth.agentMode,
+      admin_agent_assurance: adminAuth.agentAssurance,
+      admin_agent_grant_id: adminAuth.agentGrantId,
+      admin_agent_grant_generation: adminAuth.agentGrantGeneration,
+      admin_agent_consent_version: adminAuth.agentConsentVersion,
+      admin_agent_source_token_jti: adminAuth.sourceTokenJti,
+      admin_agent_correlation_id: adminAuth.correlationId,
+    };
+  }
+
   const actorMetadata: Record<string, unknown> = {
     admin_actor_type: 'admin_user',
     admin_actor_id: adminAuth.actorId ?? adminAuth.userId,

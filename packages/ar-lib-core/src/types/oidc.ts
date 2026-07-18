@@ -33,6 +33,8 @@ export interface OIDCProviderMetadata {
   // RFC 9126: PAR (Pushed Authorization Requests)
   pushed_authorization_request_endpoint?: string;
   require_pushed_authorization_requests?: boolean;
+  // RFC 9207: Authorization Server Issuer Identification
+  authorization_response_iss_parameter_supported?: boolean;
   // RFC 9449: DPoP (Demonstrating Proof of Possession)
   dpop_signing_alg_values_supported?: string[];
   // RFC 9101 (JAR): Request Object support
@@ -275,7 +277,14 @@ export interface ClientRegistrationRequest {
   software_id?: string;
   software_version?: string;
   // Token endpoint authentication
-  token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post' | 'none';
+  token_endpoint_auth_method?:
+    | 'client_secret_basic'
+    | 'client_secret_post'
+    | 'client_secret_jwt'
+    | 'private_key_jwt'
+    | 'none';
+  /** JWS algorithm registered for private_key_jwt/client_secret_jwt authentication. */
+  token_endpoint_auth_signing_alg?: string;
   // Grant types and response types
   grant_types?: string[];
   response_types?: string[];
@@ -284,6 +293,16 @@ export interface ClientRegistrationRequest {
   application_type?: 'web' | 'native';
   // Scopes
   scope?: string;
+  /** Authrim extension for explicitly enabling RFC 6749 client_credentials. */
+  client_credentials_allowed?: boolean;
+  /** Allowed scopes for machine-to-machine access tokens. */
+  allowed_scopes?: string[];
+  /** Default scope for client_credentials when scope is omitted. */
+  default_scope?: string;
+  /** Default audience for access tokens when audience/resource is omitted. */
+  default_audience?: string;
+  /** Default RFC 8707 resource target. */
+  default_resource?: string;
   // Subject type (OIDC Core 8)
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string;
@@ -298,6 +317,10 @@ export interface ClientRegistrationRequest {
   id_token_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
+  // JARM (JWT-Secured Authorization Response Mode) - RFC 9102
+  authorization_signed_response_alg?: string;
+  authorization_encrypted_response_alg?: string;
+  authorization_encrypted_response_enc?: string;
   // Claims parameter and ASC client settings (Authrim extension)
   claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
   asc_enabled?: boolean;
@@ -357,6 +380,7 @@ export interface ClientRegistrationResponse {
   software_id?: string;
   software_version?: string;
   token_endpoint_auth_method?: string;
+  token_endpoint_auth_signing_alg?: string;
   grant_types?: string[];
   response_types?: string[];
   require_pkce?: boolean;

@@ -58,6 +58,7 @@ export interface Client {
 	asc_allowed_transformed_claims?: string[] | null;
 	login_ui_url?: string | null;
 	id_token_signed_response_alg?: string;
+	userinfo_signed_response_alg?: string;
 	require_pkce?: boolean;
 	token_exchange_allowed?: boolean;
 	allowed_subject_token_clients?: string[];
@@ -65,6 +66,7 @@ export interface Client {
 	delegation_mode?: 'none' | 'delegation' | 'impersonation';
 	client_credentials_allowed?: boolean;
 	allowed_scopes?: string[];
+	requestable_scopes?: string[];
 	default_scope?: string | null;
 	default_audience?: string | null;
 	access_token_ttl?: number;
@@ -136,6 +138,7 @@ export interface CreateClientInput {
 	delegation_mode?: 'none' | 'delegation' | 'impersonation';
 	client_credentials_allowed?: boolean;
 	allowed_scopes?: string[];
+	requestable_scopes?: string[];
 	default_scope?: string;
 	default_audience?: string;
 	access_token_ttl?: number;
@@ -170,11 +173,14 @@ export interface UpdateClientInput {
 	delegation_mode?: 'none' | 'delegation' | 'impersonation';
 	client_credentials_allowed?: boolean;
 	allowed_scopes?: string[];
+	requestable_scopes?: string[];
 	default_scope?: string | null;
 	default_audience?: string | null;
 	access_token_ttl?: number;
 	refresh_token_ttl?: number;
 	web_origin_registry?: WebOriginRegistry | null;
+	id_token_signed_response_alg?: 'RS256' | 'ES256';
+	userinfo_signed_response_alg?: 'none' | 'RS256' | 'ES256';
 }
 
 export interface ClientUsage {

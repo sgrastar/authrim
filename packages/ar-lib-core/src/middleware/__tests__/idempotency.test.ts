@@ -189,4 +189,165 @@ describe('idempotency middleware', () => {
     expect(mockAdapter.queryOne).not.toHaveBeenCalled();
     expect(mockAdapter.execute).not.toHaveBeenCalled();
   });
+
+  it('keeps identical keys on different UUID resource paths isolated', async () => {
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use('/actions/*', requiredIdempotencyMiddleware());
+    app.post('/actions/:actionId/complete', (c) =>
+      c.json({ actionId: c.req.param('actionId') }, 201)
+    );
+    const request = (actionId: string) =>
+      app.request(
+        `/actions/${actionId}/complete`,
+        {
+          method: 'POST',
+          headers: { 'Idempotency-Key': 'idem-key-001' },
+          body: JSON.stringify({ method: 'totp' }),
+        },
+        mockEnv
+      );
+
+    await request('11111111-1111-4111-8111-111111111111');
+    await request('22222222-2222-4222-8222-222222222222');
+
+    const firstKey = (mockAdapter.queryOne.mock.calls[0]?.[1] as unknown[])[0];
+    const secondKey = (mockAdapter.queryOne.mock.calls[1]?.[1] as unknown[])[0];
+    expect(firstKey).not.toBe(secondKey);
+  });
+
+  it('fails closed before mutation when required idempotency storage is unavailable', async () => {
+    mockAdapter.queryOne.mockRejectedValueOnce(new Error('D1 unavailable'));
+    let handlerCalls = 0;
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use('/protected', requiredIdempotencyMiddleware({ failClosedOnStorageError: true }));
+    app.post('/protected', (c) => {
+      handlerCalls += 1;
+      return c.json({ ok: true }, 201);
+    });
+
+    const res = await app.request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-key-001' },
+        body: JSON.stringify({ action: 'write' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(handlerCalls).toBe(0);
+  });
+
+  it('atomically reserves a required idempotency key before invoking the handler', async () => {
+    let handlerCalls = 0;
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use(
+      '/protected',
+      requiredIdempotencyMiddleware({ reserveBeforeExecution: true, redactFields: [] })
+    );
+    app.post('/protected', (c) => {
+      handlerCalls += 1;
+      return c.json({ ok: true, name: 'Destination' }, 201);
+    });
+
+    const res = await app.request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-key-001' },
+        body: JSON.stringify({ action: 'write' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(201);
+    expect(handlerCalls).toBe(1);
+    expect(String(mockAdapter.execute.mock.calls[0]?.[0])).toContain(
+      'INSERT INTO idempotency_keys'
+    );
+    expect(String(mockAdapter.execute.mock.calls[1]?.[0])).toContain('response_status = 425');
+    expect(mockAdapter.execute.mock.calls[1]?.[1]).toContain(
+      JSON.stringify({ ok: true, name: 'Destination' })
+    );
+  });
+
+  it('does not run a concurrent handler after another request reserves the same key', async () => {
+    const body = JSON.stringify({ action: 'write' });
+    mockAdapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 'idempotency-key-001',
+      body_hash: await hashBody(body),
+      response_status: 425,
+      response_body: JSON.stringify({ error: 'idempotency_in_progress' }),
+    });
+    mockAdapter.execute.mockRejectedValueOnce(
+      new Error('D1_ERROR: UNIQUE constraint failed: idempotency_keys.id')
+    );
+    let handlerCalls = 0;
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use('/protected', requiredIdempotencyMiddleware({ reserveBeforeExecution: true }));
+    app.post('/protected', (c) => {
+      handlerCalls += 1;
+      return c.json({ ok: true }, 201);
+    });
+
+    const res = await app.request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-key-001' },
+        body,
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(425);
+    expect(res.headers.get('Retry-After')).toBe('2');
+    expect(handlerCalls).toBe(0);
+  });
+
+  it('stores the terminal error response after a reserved handler fails', async () => {
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use('/protected', requiredIdempotencyMiddleware({ reserveBeforeExecution: true }));
+    app.post('/protected', () => {
+      throw new Error('handler failed');
+    });
+
+    const res = await app.request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-key-001' },
+        body: JSON.stringify({ action: 'write' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(500);
+    const finalization = mockAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('UPDATE idempotency_keys')
+    );
+    expect(finalization?.[1]).toContain(500);
+  });
 });

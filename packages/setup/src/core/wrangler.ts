@@ -143,7 +143,7 @@ function collectConfiguredHyperdriveBindings(
 }
 
 function shouldAttachConfiguredHyperdriveBindings(component: WorkerComponent): boolean {
-  return component !== 'ar-router';
+  return component !== 'ar-router' && component !== 'ar-agent-access';
 }
 
 function collectD1DatabaseBindings(
@@ -154,13 +154,21 @@ function collectD1DatabaseBindings(
     return [];
   }
 
-  const builtins = D1_DATABASES.map((db) => ({
-    binding: db.binding,
-    database_name: resourceIds.d1[db.binding]?.name || '',
-    database_id: resourceIds.d1[db.binding]?.id || '',
-  })).filter((db) => db.database_id);
+  const selectedDatabases =
+    component === 'ar-agent-access'
+      ? D1_DATABASES.filter(
+          (database) => database.binding === 'DB' || database.binding === 'DB_ADMIN'
+        )
+      : D1_DATABASES;
+  const builtins = selectedDatabases
+    .map((db) => ({
+      binding: db.binding,
+      database_name: resourceIds.d1[db.binding]?.name || '',
+      database_id: resourceIds.d1[db.binding]?.id || '',
+    }))
+    .filter((db) => db.database_id);
 
-  const tenantDatabases = Object.entries(resourceIds.d1)
+  const tenantDatabases = (component === 'ar-agent-access' ? [] : Object.entries(resourceIds.d1))
     .filter(([binding]) => isTenantDatabaseBinding(binding))
     .map(([binding, resource]) => ({
       binding,
@@ -178,7 +186,7 @@ function collectD1DatabaseBindings(
 
 const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   'ar-lib-core': ['AUTHRIM_CONFIG'],
-  'ar-discovery': ['AUTHRIM_CONFIG'],
+  'ar-discovery': ['SETTINGS', 'AUTHRIM_CONFIG'],
   'ar-auth': [
     'CLIENTS_CACHE',
     'SETTINGS',
@@ -204,6 +212,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
+  'ar-agent-access': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
   'ar-async': ['AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
@@ -255,6 +264,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'VERSION_MANAGER',
     'CHALLENGE_STORE',
   ],
+  'ar-agent-access': ['KEY_MANAGER', 'RATE_LIMITER', 'DPOP_JTI_STORE'],
   'ar-router': [],
   'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE'],
   'ar-policy': ['PERMISSION_CHANGE_HUB'],
@@ -277,6 +287,7 @@ const COMPONENT_LOCAL_DO_BINDINGS: Partial<
     { name: 'CREDENTIAL_OFFER_STORE', className: 'CredentialOfferStoreV2' },
     { name: 'VP_REQUEST_STORE', className: 'VPRequestStoreV2' },
   ],
+  'ar-agent-access': [{ name: 'AGENT_ACCESS_MCP', className: 'AgentAccessMcpAgent' }],
 };
 
 const COMPONENT_EXTERNAL_DO_BINDINGS: Partial<
@@ -305,6 +316,7 @@ const COMPONENT_ENTRY_POINTS: Record<WorkerComponent, string> = {
   'ar-token': 'src/index.ts',
   'ar-userinfo': 'src/index.ts',
   'ar-management': 'src/index.ts',
+  'ar-agent-access': 'src/platform/cloudflare/worker.ts',
   'ar-router': 'src/index.ts',
   'ar-async': 'src/index.ts',
   'ar-policy': 'src/index.ts',
@@ -480,7 +492,7 @@ export function generateWranglerConfig(
   const wranglerConfig: WranglerConfig = {
     name: workerName,
     main: COMPONENT_ENTRY_POINTS[component],
-    compatibility_date: '2024-09-23',
+    compatibility_date: component === 'ar-agent-access' ? '2026-07-16' : '2024-09-23',
     compatibility_flags: ['nodejs_compat'],
     // With Service Binding, UI Workers can reach ar-router internally without workers.dev.
     // Disable workers.dev when a custom API domain is set to avoid dual public endpoints.
@@ -499,7 +511,13 @@ export function generateWranglerConfig(
 
   if (component === 'ar-management') {
     wranglerConfig.triggers = {
-      crons: ['0 */6 * * *'],
+      crons: ['* * * * *', '0 */6 * * *'],
+    };
+  }
+
+  if (component === 'ar-agent-access') {
+    wranglerConfig.triggers = {
+      crons: ['* * * * *'],
     };
   }
 
@@ -718,6 +736,18 @@ export function generateWranglerConfig(
     ];
   }
 
+  if (component === 'ar-agent-access') {
+    wranglerConfig.services = [
+      { binding: 'OP_MANAGEMENT', service: `${env}-ar-management` },
+      { binding: 'OP_DISCOVERY', service: `${env}-ar-discovery` },
+      {
+        binding: 'AGENT_DOWNSCOPE',
+        service: `${env}-ar-token`,
+        entrypoint: 'AgentDownscopeEntrypoint',
+      },
+    ];
+  }
+
   if (component === 'ar-auth' || component === 'ar-management') {
     wranglerConfig.services = [{ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` }];
     if (component === 'ar-management' && config.components.vc === true) {
@@ -738,6 +768,7 @@ export function generateWranglerConfig(
       { binding: 'OP_TOKEN', service: `${env}-ar-token` },
       { binding: 'OP_USERINFO', service: `${env}-ar-userinfo` },
       { binding: 'OP_MANAGEMENT', service: `${env}-ar-management` },
+      { binding: 'OP_AGENT_ACCESS', service: `${env}-ar-agent-access` },
     ];
 
     // Standard services are installed by default. Some features still require runtime setup.
@@ -889,6 +920,7 @@ export function generateEnvVars(
     component === 'ar-token' ||
     component === 'ar-discovery' ||
     component === 'ar-management' ||
+    component === 'ar-agent-access' ||
     component === 'ar-saml'
   ) {
     vars['ISSUER_URL'] = issuerUrl;
@@ -903,6 +935,7 @@ export function generateEnvVars(
     'ar-token',
     'ar-userinfo',
     'ar-management',
+    'ar-agent-access',
     'ar-router',
     'ar-async',
     'ar-policy',
@@ -916,6 +949,7 @@ export function generateEnvVars(
     'ar-token',
     'ar-userinfo',
     'ar-management',
+    'ar-agent-access',
     'ar-async',
     'ar-policy',
     'ar-saml',
@@ -1050,6 +1084,10 @@ export function generateEnvVars(
   if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
     vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
   }
+  if (componentSecrets.includes('AGENT_ELEVATION_ENCRYPTION_KEY')) {
+    vars['AGENT_ELEVATION_ENCRYPTION_KEY'] = ''; // Set via secret
+    vars['AGENT_ELEVATION_KEY_VERSION'] = 'v1';
+  }
   if (componentSecrets.includes('PII_ENCRYPTION_KEY')) {
     vars['PII_ENCRYPTION_KEY'] = ''; // Set via secret
   }
@@ -1123,7 +1161,7 @@ export function generateEnvVars(
   // CORS allowed origins for workers that handle cross-origin requests.
   // This is the setup-side web_origin_registry -> ALLOWED_ORIGINS materialization boundary.
   // Workers.dev URLs are normalized to correct format: {name}.{subdomain}.workers.dev
-  if (['ar-auth', 'ar-management', 'ar-router', 'ar-saml'].includes(component)) {
+  if (['ar-auth', 'ar-management', 'ar-agent-access', 'ar-router', 'ar-saml'].includes(component)) {
     const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain);
     if (allowedOrigins.length > 0) {
       vars['ALLOWED_ORIGINS'] = allowedOrigins.join(',');

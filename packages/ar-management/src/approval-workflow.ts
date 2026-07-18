@@ -52,14 +52,16 @@ async function assertApprovalDecisionPolicy(
 ): Promise<void> {
   if (
     input.nextStatus === 'approved' &&
-    input.request.request_surface === 'support_ops' &&
+    (input.request.request_surface === 'support_ops' ||
+      input.request.request_surface === 'agent_mcp') &&
     input.request.requester_subject_type === input.actorSubjectType &&
     input.request.requester_subject_id === input.actorSubjectId &&
-    !(await isSupportOpsSelfApprovalAllowed(c, input.request.tenant_id))
+    (input.request.request_surface === 'agent_mcp' ||
+      !(await isSupportOpsSelfApprovalAllowed(c, input.request.tenant_id)))
   ) {
     throw new ApprovalWorkflowPolicyError(
       'self_approval_not_allowed',
-      'Support operation requests must be approved by a different admin operator.'
+      'This request must be approved by a different admin operator.'
     );
   }
 }

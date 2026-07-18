@@ -36,6 +36,7 @@ import adminAdminAudit from './admin-admin-audit';
 import adminAdminLogging from './admin-admin-logging';
 import adminIpAllowlist from './admin-ip-allowlist';
 import adminMachineAccess from './admin-machine-access';
+import adminAgentAccess from './admin-agent-access';
 import adminOperationalLogs from './admin-operational-logs';
 import adminSecurity from './admin-security';
 import adminCompliance from './admin-compliance';
@@ -94,6 +95,7 @@ const en: BaseTranslation = {
 	...adminAdminLogging,
 	...adminIpAllowlist,
 	...adminMachineAccess,
+	...adminAgentAccess,
 	...adminOperationalLogs,
 	...adminSecurity,
 	...adminCompliance,

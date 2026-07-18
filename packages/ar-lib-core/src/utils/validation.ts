@@ -22,6 +22,10 @@ export interface ValidationResult {
   error?: string;
 }
 
+// FAPI 2.0 conformance exercises a 1000-byte state value. Keep a finite upper
+// bound for resource protection while allowing interoperable client-generated state.
+const MAX_STATE_LENGTH = 2048;
+
 /**
  * Client ID validation
  * Must be a non-empty string with reasonable length
@@ -327,14 +331,14 @@ export function validateRedirectUri(
       };
     }
 
-    // Allow http://localhost or http://127.0.0.1 for development
-    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+    // Allow explicit loopback hosts when the caller implements a native-app/CLI journey.
+    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]') {
       return { valid: true };
     }
 
     return {
       valid: false,
-      error: 'redirect_uri must use HTTPS or be http://localhost',
+      error: 'redirect_uri must use HTTPS or an allowed HTTP loopback host',
     };
   }
 
@@ -613,10 +617,10 @@ export function validateState(state: string | undefined): ValidationResult {
     };
   }
 
-  if (state.length > 512) {
+  if (state.length > MAX_STATE_LENGTH) {
     return {
       valid: false,
-      error: 'state is too long (max 512 characters)',
+      error: `state is too long (max ${MAX_STATE_LENGTH} characters)`,
     };
   }
 
@@ -900,16 +904,42 @@ export function normalizeRedirectUri(uri: string): string | null {
 /**
  * Check if a provided redirect_uri matches any registered URI
  *
- * OAuth 2.0 requires simple string comparison for fully registered redirect URIs.
- * Do not normalize host casing, ports, paths, queries, or fragments here; a client
- * must request exactly one of its registered values.
+ * OAuth 2.0 requires simple string comparison for fully registered redirect URIs. RFC 8252
+ * requires native-app loopback IP redirects to accept the ephemeral port selected at runtime;
+ * every other component remains an exact string match and hostname aliases are not accepted.
  *
  * @param providedUri - The redirect_uri from the authorization request
  * @param registeredUris - Array of registered redirect_uris for the client
  * @returns true if the providedUri matches any registered URI
  */
 export function isRedirectUriRegistered(providedUri: string, registeredUris: string[]): boolean {
-  return registeredUris.some((registeredUri) => registeredUri === providedUri);
+  return registeredUris.some((registeredUri) => {
+    if (registeredUri === providedUri) return true;
+    const provided = parseLoopbackRedirect(providedUri);
+    const registered = parseLoopbackRedirect(registeredUri);
+    return (
+      provided !== null &&
+      registered !== null &&
+      provided.host === registered.host &&
+      provided.suffix === registered.suffix
+    );
+  });
+}
+
+function parseLoopbackRedirect(
+  uri: string
+): { host: '127.0.0.1' | '[::1]'; suffix: string } | null {
+  const match = uri.match(/^http:\/\/(127\.0\.0\.1|\[::1\])(?::([0-9]{1,5}))?(\/.*)$/u);
+  if (!match) return null;
+  const port = match[2];
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65_535)) return null;
+  try {
+    const parsed = new URL(uri);
+    if (parsed.username || parsed.password || parsed.hash) return null;
+  } catch {
+    return null;
+  }
+  return { host: match[1] as '127.0.0.1' | '[::1]', suffix: match[3]! };
 }
 
 // =============================================================================

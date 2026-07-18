@@ -32,12 +32,26 @@ import { adminAbacRouter } from './admin-abac';
 import { adminRebacRouter } from './admin-rebac';
 import { adminPoliciesRouter } from './admin-policies';
 import { myPasskeysRouter } from './my-passkeys';
+import { myAgentConsentsRouter } from './my-agent-consents';
 import { adminAccessControlRouter } from './admin-access-control';
 import { adminApprovalsRouter } from './admin-approvals';
 import { operationalLogsRouter } from './operational-logs';
 import { storageDestinationsRouter } from './storage-destinations';
 import { databaseConnectionsRouter } from './database-connections';
 import { machineAccessRouter } from './machine-access';
+import { agentGrantsRouter } from './agent-grants';
+import { agentWriteOperationsRouter } from './agent-write-operations';
+import { agentElevationsRouter } from './agent-elevations';
+import { agentSettingsRouter } from './agent-settings';
+import { agentReadOperationsRouter } from './agent-read-operations';
+import {
+  agentConfigurationPlansRouter,
+  agentScopePoliciesRouter,
+  agentSecretRefsRouter,
+  agentTaskSetsRouter,
+} from './agent-configuration';
+import { agentBulkPlansRouter } from './agent-bulk';
+import { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
 import {
   adminLoggingRouter,
   destinationsRouter,
@@ -63,6 +77,7 @@ adminManagementRouter.route('/admin-roles', adminRolesRouter);
 adminManagementRouter.route('/ip-allowlist', ipAllowlistRouter);
 adminManagementRouter.route('/admin-audit-log', adminAuditRouter);
 adminManagementRouter.route('/me/passkeys', myPasskeysRouter);
+adminManagementRouter.route('/me/agent-consents', myAgentConsentsRouter);
 adminManagementRouter.route('/approvals', adminApprovalsRouter);
 adminManagementRouter.route('/operational-logs', operationalLogsRouter);
 adminManagementRouter.route('/storage-destinations', storageDestinationsRouter);
@@ -72,6 +87,18 @@ adminManagementRouter.route('/admin-logging', adminLoggingRouter);
 adminManagementRouter.route('/notifications', notificationsRouter);
 adminManagementRouter.route('/database-connections', databaseConnectionsRouter);
 adminManagementRouter.route('/machine-access', machineAccessRouter);
+adminManagementRouter.route('/agent-grants', agentGrantsRouter);
+adminManagementRouter.route('/agent-write', agentWriteOperationsRouter);
+adminManagementRouter.route('/agent-elevations', agentElevationsRouter);
+adminManagementRouter.route('/settings/agent', agentSettingsRouter);
+adminManagementRouter.route('/agent-read', agentReadOperationsRouter);
+adminManagementRouter.route('/agent-task-sets', agentTaskSetsRouter);
+adminManagementRouter.route('/agent-scope-policies', agentScopePoliciesRouter);
+adminManagementRouter.route('/agent-config-plans', agentConfigurationPlansRouter);
+adminManagementRouter.route('/agent-secret-refs', agentSecretRefsRouter);
+adminManagementRouter.route('/agent-bulk-plans', agentBulkPlansRouter);
+adminManagementRouter.route('/agent-templates', agentTemplatesRouter);
+adminManagementRouter.route('/agent-baselines', agentBaselinesRouter);
 
 // Mount sub-routers - Admin ABAC/ReBAC/Policies (these also have /admins/:userId subroutes)
 adminManagementRouter.route('/', adminAbacRouter);
@@ -88,11 +115,25 @@ export { adminAbacRouter } from './admin-abac';
 export { adminRebacRouter } from './admin-rebac';
 export { adminPoliciesRouter } from './admin-policies';
 export { myPasskeysRouter } from './my-passkeys';
+export { myAgentConsentsRouter } from './my-agent-consents';
 export { adminApprovalsRouter } from './admin-approvals';
 export { operationalLogsRouter } from './operational-logs';
 export { storageDestinationsRouter } from './storage-destinations';
 export { databaseConnectionsRouter } from './database-connections';
 export { machineAccessRouter } from './machine-access';
+export { agentGrantsRouter } from './agent-grants';
+export { agentWriteOperationsRouter } from './agent-write-operations';
+export { agentElevationsRouter } from './agent-elevations';
+export { agentSettingsRouter } from './agent-settings';
+export { agentReadOperationsRouter } from './agent-read-operations';
+export {
+  agentConfigurationPlansRouter,
+  agentScopePoliciesRouter,
+  agentSecretRefsRouter,
+  agentTaskSetsRouter,
+} from './agent-configuration';
+export { agentBulkPlansRouter } from './agent-bulk';
+export { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
 export {
   adminLoggingRouter,
   destinationsRouter,

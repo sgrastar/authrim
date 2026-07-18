@@ -1,0 +1,88 @@
+{
+  "name": "@authrim/ar-agent-access",
+  "version": "0.3.3",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./core": {
+      "import": "./dist/core/index.js",
+      "types": "./dist/core/index.d.ts",
+      "default": "./src/core/index.ts"
+    },
+    "./protocol/mcp": {
+      "import": "./dist/protocol/mcp/index.js",
+      "types": "./dist/protocol/mcp/index.d.ts",
+      "default": "./src/protocol/mcp/index.ts"
+    },
+    "./platform/ports": {
+      "import": "./dist/platform/ports.js",
+      "types": "./dist/platform/ports.d.ts",
+      "default": "./src/platform/ports.ts"
+    },
+    "./platform/cloudflare": {
+      "import": "./dist/platform/cloudflare/index.js",
+      "types": "./dist/platform/cloudflare/index.d.ts",
+      "default": "./src/platform/cloudflare/index.ts"
+    },
+    "./platform/cloudflare/refresh-family-revoker": {
+      "import": "./dist/platform/cloudflare/refresh-family-revoker.js",
+      "types": "./dist/platform/cloudflare/refresh-family-revoker.d.ts",
+      "default": "./src/platform/cloudflare/refresh-family-revoker.ts"
+    },
+    "./platform/cloudflare/elevation": {
+      "import": "./dist/platform/cloudflare/elevation.js",
+      "types": "./dist/platform/cloudflare/elevation.d.ts",
+      "default": "./src/platform/cloudflare/elevation.ts"
+    },
+    "./platform/cloudflare/tenant-configuration-reader": {
+      "import": "./dist/platform/cloudflare/tenant-configuration-reader.js",
+      "types": "./dist/platform/cloudflare/tenant-configuration-reader.d.ts",
+      "default": "./src/platform/cloudflare/tenant-configuration-reader.ts"
+    },
+    "./platform/cloudflare/tenant-settings": {
+      "import": "./dist/platform/cloudflare/tenant-settings.js",
+      "types": "./dist/platform/cloudflare/tenant-settings.d.ts",
+      "default": "./src/platform/cloudflare/tenant-settings.ts"
+    },
+    "./platform/cloudflare/service-binding": {
+      "import": "./dist/platform/cloudflare/service-binding.js",
+      "types": "./dist/platform/cloudflare/service-binding.d.ts",
+      "default": "./src/platform/cloudflare/service-binding.ts"
+    }
+  },
+  "scripts": {
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-agent-access --mode=auto --concurrency=1",
+    "build": "tsc && node scripts/verify-build-contract.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'ar-agent-access: dependency boundaries enforced by tests'",
+    "test": "pnpm exec vitest run",
+    "test:mcp-conformance": "node scripts/run-mcp-conformance-gate.mjs",
+    "test:inspector": "node scripts/run-inspector-gate.mjs",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@authrim/ar-lib-core": "workspace:*",
+    "@cfworker/json-schema": "4.1.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "agents": "0.17.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260424.1",
+    "@modelcontextprotocol/conformance": "0.1.16",
+    "@modelcontextprotocol/inspector": "0.22.0",
+    "@types/node": "^20.19.25",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8"
+  }
+}

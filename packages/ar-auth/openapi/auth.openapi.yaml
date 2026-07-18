@@ -104,6 +104,159 @@ paths:
       responses:
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
+  /oauth/admin-agent/par:
+    post:
+      tags:
+        - OAuth
+      operationId: createAdminAgentPushedAuthorizationRequest
+      summary: Create a pushed authorization request for Admin Agent access.
+      description: >
+        Creates a single-use RFC 9126 request URI bound to the dedicated Admin Agent authorization
+        journey and the tenant MCP resource. The client must be pre-registered for every requested
+        agent scope. PKCE S256 and the exact RFC 8707 resource parameter are required.
+      requestBody:
+        $ref: '#/components/requestBodies/AdminAgentPushedAuthorization'
+      responses:
+        '201':
+          $ref: '#/components/responses/PushedAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /oauth/admin-agent/authorize:
+    get:
+      tags:
+        - OAuth
+      operationId: getAdminAgentAuthorization
+      summary: Review an Admin Agent authorization request.
+      description: >
+        Requires a human Admin UI session. A request_uri resolves the dedicated PAR request without
+        consuming it. A direct Authorization Code with PKCE request is first validated and converted
+        to the same bounded PAR journey with a 302 redirect. RFC 8252 loopback IP callbacks may
+        vary only by port. The consent step rechecks the active Grant, current delegator
+        permissions, client registration, tenant, scopes, and resource.
+      security:
+        - adminSessionCookie: []
+      parameters:
+        - name: request_uri
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: response_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [code]
+        - name: redirect_uri
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uri
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          description: Exact MCP resource. Repeated identical values are normalized.
+          schema:
+            type: string
+            format: uri
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [S256]
+        - name: authorization_details
+          in: query
+          required: false
+          description: Bounded authrim_admin_agent RAR array.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HTML consent page.
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Direct request normalized to the dedicated PAR journey.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+        - OAuth
+      operationId: decideAdminAgentAuthorization
+      summary: Approve or deny an Admin Agent authorization request.
+      description: >
+        Repeats all live checks, atomically consumes the dedicated PAR request, and redirects to the
+        registered client. Approval records delegation and OAuth client consent with a synchronous
+        audit event before issuing a dedicated admin-subject authorization code.
+      security:
+        - adminSessionCookie: []
+      requestBody:
+        $ref: '#/components/requestBodies/AdminAgentAuthorizationDecision'
+      responses:
+        '302':
+          description: Redirect to the exact registered redirect URI with code or OAuth error.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /flow/login:
     get:
       tags:
@@ -202,8 +355,12 @@ paths:
     post:
       tags:
         - TOTP
-      summary: Start TOTP login.
-      description: Creates a short-lived TOTP login challenge for an email or username identifier.
+      summary: Start TOTP login or reauthentication.
+      description: >
+        Creates a short-lived TOTP challenge for either an email or username identifier, or an
+        opaque OIDC reauthentication challenge. Exactly one input must be supplied. The
+        reauthentication form resolves the bound subject server-side and does not disclose the
+        subject identifier to the browser.
       requestBody:
         $ref: '#/components/requestBodies/TotpLoginStart'
       responses:
@@ -1574,6 +1731,10 @@ components:
       type: apiKey
       in: cookie
       name: authrim_session
+    adminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_admin_session
   parameters:
     ClientIdQuery:
       name: client_id
@@ -1611,6 +1772,30 @@ components:
             scope: openid profile email
             code_challenge: rfc7636-code-challenge
             code_challenge_method: S256
+    AdminAgentPushedAuthorization:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/AdminAgentPushedAuthorizationRequest'
+          example:
+            client_id: mcp_client_123
+            redirect_uri: http://127.0.0.1:34127/callback
+            response_type: code
+            scope: agent:read
+            resource: https://tenant.example.com/mcp
+            code_challenge: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+            code_challenge_method: S256
+    AdminAgentAuthorizationDecision:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/AdminAgentAuthorizationDecisionRequest'
+          example:
+            request_uri: urn:ietf:params:oauth:request_uri:par_123
+            client_id: mcp_client_123
+            decision: approve
     PasskeyRegisterOptions:
       required: true
       content:
@@ -2877,6 +3062,74 @@ components:
       required:
         - request_uri
         - expires_in
+    AdminAgentPushedAuthorizationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        client_id:
+          type: string
+        redirect_uri:
+          type: string
+          format: uri
+        response_type:
+          type: string
+          const: code
+        scope:
+          type: string
+          description: Space-separated scopes from agent:read, agent:write, agent:execute, and agent:admin.
+        resource:
+          type: string
+          format: uri
+          description: Exact tenant MCP resource identifier advertised by protected resource metadata.
+        state:
+          type: string
+        code_challenge:
+          type: string
+          minLength: 43
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+        code_challenge_method:
+          type: string
+          const: S256
+        client_secret:
+          type: string
+          writeOnly: true
+        client_assertion:
+          type: string
+          writeOnly: true
+        client_assertion_type:
+          type: string
+          const: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+        authorization_details:
+          type: string
+          description: >
+            JSON-encoded RFC 9396 array. Only type authrim_admin_agent and the bounded
+            max_subjects_per_call field are accepted in this phase.
+      required:
+        - client_id
+        - redirect_uri
+        - response_type
+        - scope
+        - resource
+        - code_challenge
+        - code_challenge_method
+    AdminAgentAuthorizationDecisionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        request_uri:
+          type: string
+        client_id:
+          type: string
+        decision:
+          type: string
+          enum:
+            - approve
+            - deny
+      required:
+        - request_uri
+        - client_id
+        - decision
     AuthUser:
       type: object
       properties:
@@ -3103,13 +3356,21 @@ components:
     TotpLoginStartRequest:
       type: object
       additionalProperties: false
-      required:
-        - identifier
+      oneOf:
+        - required:
+            - identifier
+        - required:
+            - authorization_challenge_id
       properties:
         identifier:
           type: string
           minLength: 1
           description: Email address or username/user identifier.
+        authorization_challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Opaque reauthentication challenge whose bound subject is resolved server-side.
     TotpLoginStartResponse:
       type: object
       required:

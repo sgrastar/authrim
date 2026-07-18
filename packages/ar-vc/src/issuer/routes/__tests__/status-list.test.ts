@@ -52,7 +52,11 @@ function createMockEnv(listData: typeof mockListData | null = mockListData): Env
       batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
     AUTHRIM_CONFIG: {
-      get: vi.fn().mockResolvedValue(null),
+      get: vi
+        .fn()
+        .mockImplementation((key: string) =>
+          Promise.resolve(key === 'v1:tenant-exists:tenant1' ? 'true' : null)
+        ),
     } as unknown as KVNamespace,
     VP_REQUEST_STORE: {} as DurableObjectNamespace,
     CREDENTIAL_OFFER_STORE: {} as DurableObjectNamespace,

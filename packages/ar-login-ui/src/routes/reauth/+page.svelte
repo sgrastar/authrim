@@ -1,15 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { Button, Card, Alert, TurnstileWidget } from '$lib/components';
+	import { Button, Card, Alert, Input, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI, loginChallengeAPI } from '$lib/api/client';
+	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl } from '$lib/utils/url-validation';
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { startAuthentication } from '@simplewebauthn/browser';
+	import { startTotpReauth, verifyTotpReauth } from './reauth-totp';
 	import {
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
@@ -44,8 +45,13 @@
 	// Auth method states
 	let passkeyEnabled = $state(false);
 	let emailCodeEnabled = $state(false);
+	let totpEnabled = $state(false);
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
+	let totpLoading = $state(false);
+	let totpChallengeId = $state('');
+	let totpCode = $state('');
+	let totpCodeRequested = $state(false);
 	let email = $state('');
 	let turnstileSiteKey = $state<string | null>(null);
 	let humanVerificationProvider = $state<'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom'>(
@@ -61,7 +67,7 @@
 	let isDarkMode = $state(false);
 	let turnstileLanguage = $state('en');
 	const turnstileTheme = $derived(isDarkMode ? 'dark' : 'light');
-	const authActionLoading = $derived(passkeyLoading || emailCodeLoading);
+	const authActionLoading = $derived(passkeyLoading || emailCodeLoading || totpLoading);
 
 	// Derived
 	const isPasskeySupported = $derived(
@@ -138,6 +144,7 @@
 			if (data) {
 				passkeyEnabled = data.methods.passkey.reauthEnabled ?? data.methods.passkey.enabled;
 				emailCodeEnabled = data.methods.emailCode.reauthEnabled ?? data.methods.emailCode.enabled;
+				totpEnabled = data.methods.totp.reauthEnabled ?? data.methods.totp.enabled;
 				const humanVerificationRequired =
 					data.methods.humanVerification.enabled && data.methods.humanVerification.reauthEnabled;
 				humanVerificationProvider =
@@ -266,6 +273,62 @@
 		} finally {
 			emailCodeLoading = false;
 		}
+	}
+
+	async function handleTotpStart() {
+		if (authActionLoading) return;
+		error = '';
+		totpLoading = true;
+		try {
+			const { data, error: apiError } = await startTotpReauth(totpAPI, challengeId);
+			if (apiError || !data) {
+				throw new Error(apiError?.error_description || $LL.login_totpStartFailed());
+			}
+			totpChallengeId = data.challenge_id;
+			totpCode = '';
+			totpCodeRequested = true;
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.login_totpStartFailed();
+		} finally {
+			totpLoading = false;
+		}
+	}
+
+	async function handleTotpVerify() {
+		if (authActionLoading) return;
+		error = '';
+		const code = totpCode.trim().replace(/\s+/g, '');
+		if (!totpChallengeId || !/^\d{6}$|^\d{8}$/.test(code)) {
+			error = $LL.login_totpCodeInvalid();
+			return;
+		}
+
+		totpLoading = true;
+		try {
+			const { data, error: apiError } = await verifyTotpReauth(totpAPI, {
+				totpChallengeId,
+				code,
+				authorizationChallengeId: challengeId
+			});
+			if (apiError || !data?.success) {
+				throw new Error(apiError?.error_description || $LL.login_totpCodeInvalid());
+			}
+			if (data.redirect_url && isValidRedirectUrl(data.redirect_url)) {
+				window.location.href = data.redirect_url;
+			} else {
+				window.location.href = '/';
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.login_totpCodeInvalid();
+		} finally {
+			totpLoading = false;
+		}
+	}
+
+	function handleTotpKeyPress(event: KeyboardEvent) {
+		if (event.key !== 'Enter') return;
+		event.preventDefault();
+		void (totpCodeRequested ? handleTotpVerify() : handleTotpStart());
 	}
 </script>
 
@@ -401,6 +464,43 @@
 							errorLabel={$LL.login_humanVerificationLoadFailed()}
 						/>
 					{/if}
+				{/if}
+
+				<!-- Authenticator App (TOTP) -->
+				{#if totpEnabled}
+					{#if showPasskey || emailCodeEnabled}
+						<div class="auth-divider">
+							<div class="auth-divider__line"></div>
+							<span class="auth-divider__text">{$LL.common_or()}</span>
+							<div class="auth-divider__line"></div>
+						</div>
+					{/if}
+
+					{#if totpCodeRequested}
+						<Input
+							label={$LL.login_totpCodeLabel()}
+							type="text"
+							placeholder={$LL.login_totpCodePlaceholder()}
+							bind:value={totpCode}
+							onkeypress={handleTotpKeyPress}
+							autocomplete="one-time-code"
+							inputmode="numeric"
+							maxlength={8}
+							disabled={authActionLoading}
+							required
+						/>
+					{/if}
+
+					<Button
+						variant="secondary"
+						class="w-full"
+						loading={totpLoading}
+						disabled={passkeyLoading || emailCodeLoading}
+						onclick={totpCodeRequested ? handleTotpVerify : handleTotpStart}
+					>
+						<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
+						{totpCodeRequested ? $LL.login_totpVerify() : $LL.reauth_verifyWithTotp()}
+					</Button>
 				{/if}
 			</Card>
 		{/if}

@@ -90,6 +90,51 @@ export interface CreateTenantRequest {
 	description?: string;
 }
 
+export interface TenantCloneOptions {
+	settings: boolean;
+	secret_settings: boolean;
+	clients: boolean;
+	client_credentials: boolean;
+	roles: boolean;
+	admin_access: boolean;
+	webhooks: boolean;
+	webhook_secrets: boolean;
+}
+
+export interface CloneTenantRequest extends CreateTenantRequest {
+	copy: TenantCloneOptions;
+}
+
+export interface CloneTenantResponse extends Tenant {
+	source_tenant_id: string;
+	source_tenant_name: string;
+	copy: TenantCloneOptions;
+	cloned_items: {
+		settings: number;
+		secret_settings_skipped: number;
+		unclassified_settings_skipped: number;
+		clients: number;
+		client_settings: number;
+		client_contracts: number;
+		client_web_origins: number;
+		client_trust_policies: number;
+		client_consent_overrides_skipped: number;
+		client_flow_assignments_skipped: number;
+		roles: number;
+		role_assignment_rules: number;
+		role_references_unresolved: number;
+		role_assignment_rules_skipped: number;
+		admin_roles: number;
+		admin_role_assignments: number;
+		admin_role_assignments_skipped: number;
+		admin_role_inheritance_unresolved: number;
+		webhooks: number;
+		client_webhooks_skipped: number;
+	};
+	signing_keys: { copied: false; generated: true };
+	warnings: string[];
+}
+
 export interface UpdateTenantRequest {
 	name?: string;
 	tenant_code?: string;
@@ -182,6 +227,30 @@ export const adminTenantsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || error.message || 'Failed to create tenant');
+		}
+		return response.json();
+	},
+
+	/** Create a tenant by copying selected configuration from an existing tenant. */
+	async clone(
+		sourceTenantId: string,
+		data: CloneTenantRequest,
+		idempotencyKey: string = crypto.randomUUID()
+	): Promise<CloneTenantResponse> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(sourceTenantId)}/clone`,
+			{
+				method: 'POST',
+				includeJsonContentType: true,
+				skipTenantHeader: true,
+				headers: { 'Idempotency-Key': idempotencyKey },
+				body: JSON.stringify(data)
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to clone tenant');
 		}
 		return response.json();
 	},

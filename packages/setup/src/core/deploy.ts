@@ -462,6 +462,7 @@ const DEPLOYMENT_PRIORITY: readonly WorkerComponent[] = [
   'ar-management',
   'ar-discovery',
   'ar-token',
+  'ar-agent-access',
   'ar-userinfo',
   'ar-async',
   'ar-policy',

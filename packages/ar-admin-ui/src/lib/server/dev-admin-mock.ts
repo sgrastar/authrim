@@ -146,6 +146,7 @@ interface DevClient {
 	delegation_mode?: 'none' | 'delegation' | 'impersonation';
 	client_credentials_allowed?: boolean;
 	allowed_scopes?: string[];
+	requestable_scopes?: string[];
 	default_scope?: string | null;
 	default_audience?: string | null;
 	access_token_ttl?: number;
@@ -854,6 +855,36 @@ interface DevMachinePrincipal {
 	credentials: DevMachineCredential[];
 }
 
+interface DevAgentGrant {
+	id: string;
+	tenant_id: string;
+	client_id: string;
+	machine_principal_id: string | null;
+	grantor_id: string;
+	delegator_id: string;
+	permissions: string[];
+	scopes: Array<'agent:read' | 'agent:write' | 'agent:execute' | 'agent:admin'>;
+	authorization_details: Record<string, unknown>[] | null;
+	resolved_scope_constraints: Record<string, unknown>;
+	purpose: string | null;
+	consent_version: number;
+	generation: number;
+	status: 'active' | 'suspended' | 'revoked';
+	delegation_mode: 'user_consent' | 'admin_pre_authorized' | 'task_approved';
+	task_set_id: string | null;
+	task_set_version: number | null;
+	scope_policy_id: string | null;
+	scope_policy_version: number | null;
+	resolved_tools: Record<string, unknown>[] | null;
+	access_snapshot_hash: string | null;
+	expires_at: number | null;
+	last_used_at: number | null;
+	created_at: number;
+	updated_at: number;
+	revoked_at: number | null;
+	revoked_by: string | null;
+}
+
 interface DevSigningKey {
 	kid: string;
 	algorithm: string;
@@ -1260,7 +1291,8 @@ const clients = new Map<string, DevClient>([
 			token_endpoint_auth_method: 'none',
 			browser_public_client_mode: 'strict',
 			browser_refresh_token_policy: 'dpop_bound',
-			scope: 'openid profile email',
+			scope: 'openid profile email agent:read',
+			requestable_scopes: ['openid', 'profile', 'email', 'agent:read'],
 			identity_mapping: {
 				fieldMappingSetId: 'field-mapping-gakunin-basic',
 				destinationNamespace: 'oidc.claim'
@@ -3225,6 +3257,30 @@ const samlProviders = new Map<string, DevSamlProvider>([
 
 const machinePrincipals = new Map<string, DevMachinePrincipal>([
 	[
+		'machine-agent-access',
+		{
+			id: 'machine-agent-access',
+			clientId: 'dev-agent-client',
+			displayName: 'Dev Configuration Agent',
+			description: 'Machine-key identity for Agent Access Admin UI development.',
+			principalType: 'ai_agent',
+			status: 'active',
+			defaultAudience: 'authrim-admin',
+			tokenTtlSeconds: 600,
+			createdAt: NOW - 86400 * 1000 * 10,
+			updatedAt: NOW - 3600 * 1000,
+			disabledAt: null,
+			permissions: [
+				'admin:users:read',
+				'admin:clients:read',
+				'admin:admin_audit:read',
+				'admin:agent_settings:read'
+			],
+			tenantScopes: [{ scopeMode: 'allow', tenantId: TENANT_ID }],
+			credentials: []
+		}
+	],
+	[
 		'machine-automation-admin',
 		{
 			id: 'machine-automation-admin',
@@ -3308,6 +3364,63 @@ const machinePrincipals = new Map<string, DevMachinePrincipal>([
 		}
 	]
 ]);
+
+const agentGrants = new Map<string, DevAgentGrant>([
+	[
+		'aag-dev-read',
+		{
+			id: 'aag-dev-read',
+			tenant_id: TENANT_ID,
+			client_id: 'dev-agent-client',
+			machine_principal_id: 'machine-agent-access',
+			grantor_id: 'dev-admin',
+			delegator_id: 'dev-admin',
+			permissions: ['admin:users:read', 'admin:clients:read'],
+			scopes: ['agent:read'],
+			authorization_details: null,
+			resolved_scope_constraints: { tenantIds: [TENANT_ID] },
+			purpose: 'Inspect development users and OAuth clients while diagnosing configuration.',
+			consent_version: 1,
+			generation: 1,
+			status: 'active',
+			delegation_mode: 'user_consent',
+			task_set_id: 'ats_dev_inspector',
+			task_set_version: 1,
+			scope_policy_id: 'asp_dev_tenant',
+			scope_policy_version: 1,
+			resolved_tools: [],
+			access_snapshot_hash: 'dev-snapshot-hash',
+			expires_at: NOW + 86400 * 1000 * 30,
+			last_used_at: NOW - 7200 * 1000,
+			created_at: NOW - 86400 * 1000 * 5,
+			updated_at: NOW - 7200 * 1000,
+			revoked_at: null,
+			revoked_by: null
+		}
+	]
+]);
+
+let agentAccessSettings: {
+	enabled: boolean;
+	maxTokenTtlSeconds: number;
+	elevationMode: 'self_reauth' | 'approval' | 'both';
+	elevationTtlSeconds: number;
+	rateLimitPerMinute: number;
+	publicClientStandardRateLimitPerMinute: number;
+	highRiskPermissionsAdditional: string[];
+	publicClientStandardToolIds: string[];
+	bulkCanaryProtected: boolean;
+} = {
+	enabled: true,
+	maxTokenTtlSeconds: 600,
+	elevationMode: 'self_reauth',
+	elevationTtlSeconds: 180,
+	rateLimitPerMinute: 60,
+	publicClientStandardRateLimitPerMinute: 10,
+	highRiskPermissionsAdditional: [] as string[],
+	publicClientStandardToolIds: [] as string[],
+	bulkCanaryProtected: false
+};
 
 const externalIdPProviders = new Map<string, DevExternalIdPProvider>([
 	[
@@ -9300,6 +9413,376 @@ function devMachinePrincipalFromInput(
 	};
 }
 
+async function handleAgentAccess(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	const method = event.request.method;
+	const now = Date.now();
+
+	if (segments[0] === 'settings' && segments[1] === 'agent') {
+		if (method === 'GET') return json({ settings: agentAccessSettings });
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			agentAccessSettings = {
+				enabled: input.enabled === true,
+				maxTokenTtlSeconds: Number(input.maxTokenTtlSeconds),
+				elevationMode:
+					input.elevationMode === 'approval' || input.elevationMode === 'both'
+						? input.elevationMode
+						: 'self_reauth',
+				elevationTtlSeconds: Number(input.elevationTtlSeconds),
+				rateLimitPerMinute: Number(input.rateLimitPerMinute),
+				publicClientStandardRateLimitPerMinute: Number(
+					input.publicClientStandardRateLimitPerMinute
+				),
+				highRiskPermissionsAdditional: parseDevStringArray(input.highRiskPermissionsAdditional, []),
+				publicClientStandardToolIds: parseDevStringArray(input.publicClientStandardToolIds, []),
+				bulkCanaryProtected: input.bulkCanaryProtected === true
+			};
+			return json({ settings: agentAccessSettings, version: 2 });
+		}
+		return null;
+	}
+
+	const devTools = [
+		{
+			tool_id: 'admin.read.clients.get',
+			name: 'get_client',
+			contract_version: '1',
+			permissions: ['admin:clients:read'],
+			risk_level: 'low',
+			requires_elevation: false,
+			public_client_standard_opt_in_eligible: false
+		},
+		{
+			tool_id: 'admin.write.clients.metadata',
+			name: 'update_client_metadata',
+			contract_version: '1',
+			permissions: ['admin:clients:write'],
+			risk_level: 'standard',
+			requires_elevation: false,
+			public_client_standard_opt_in_eligible: true
+		}
+	];
+	const taskSet = {
+		id: 'ats_dev_inspector',
+		name: 'Development inspector',
+		description: 'Read development OAuth client configuration.',
+		kind: 'custom',
+		status: 'active',
+		current_version: 1,
+		catalog_version: 'admin-agent-tools-v1',
+		digest: 'dev-task-set-digest',
+		tools: [
+			{
+				toolId: devTools[0].tool_id,
+				toolName: devTools[0].name,
+				contractVersion: '1',
+				permissions: ['admin:clients:read'],
+				requiredScope: 'agent:read',
+				riskLevel: 'low',
+				requiresElevation: false
+			}
+		],
+		permissions: ['admin:clients:read']
+	};
+	const scopePolicy = {
+		id: 'asp_dev_tenant',
+		name: 'Development tenant',
+		description: 'Masked access within the development tenant.',
+		kind: 'custom',
+		status: 'active',
+		current_version: 1,
+		digest: 'dev-scope-policy-digest',
+		selector_catalog_version: 'agent-selector-catalog-v1',
+		definition: {
+			tenantIds: [TENANT_ID],
+			environmentIds: [],
+			domains: ['clients'],
+			resourceIds: [],
+			selectors: [],
+			allowedFields: [],
+			piiMode: 'masked',
+			maxPerCall: 20,
+			maxPlanOperations: 25,
+			maxBulkTenants: 1
+		}
+	};
+
+	if (segments[0] === 'agent-task-sets') {
+		if (segments[1] === 'catalog' && method === 'GET') {
+			return json({ catalog_version: 'admin-agent-tools-v1', tools: devTools });
+		}
+		if (segments.length === 1 && method === 'GET') return json({ task_sets: [taskSet] });
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'ats_dev_created', version: 1, digest: 'dev-created-task-digest' }, 201);
+		}
+		if (segments.length === 2 && method === 'GET') return json({ task_set: taskSet });
+	}
+	if (segments[0] === 'agent-scope-policies') {
+		if (segments.length === 1 && method === 'GET') {
+			return json({ scope_policies: [scopePolicy] });
+		}
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'asp_dev_created', version: 1, digest: 'dev-created-scope-digest' }, 201);
+		}
+		if (segments.length === 2 && method === 'GET') return json({ scope_policy: scopePolicy });
+	}
+	if (segments[0] === 'agent-config-plans' && method === 'GET') {
+		return segments.length === 1 ? json({ plans: [] }) : json({ plan: null }, 404);
+	}
+	if (segments[0] === 'agent-bulk-plans') {
+		if (segments.length === 1 && method === 'GET') return json({ bulk_plans: [] });
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'abp_dev', version: 1, digest: 'dev-bulk-digest', status: 'draft' }, 201);
+		}
+		if (segments.length === 3 && method === 'GET') {
+			return json({
+				bulk_plan: {
+					id: segments[1],
+					version: Number(segments[2]),
+					controlTenantId: TENANT_ID,
+					grantId: 'aag-dev',
+					actorSub: 'machine:dev',
+					definitionDigest: 'dev-bulk-digest',
+					targetTenantIds: [TENANT_ID],
+					canaryTenantIds: [TENANT_ID],
+					status: 'draft',
+					stage: 'validate',
+					currentWave: 0,
+					succeededCount: 0,
+					failedCount: 0,
+					indeterminateCount: 0,
+					createdAt: Date.now(),
+					updatedAt: Date.now()
+				},
+				tenant_executions: []
+			});
+		}
+		if (segments.length === 4 && method === 'POST') {
+			return json({
+				id: segments[1],
+				version: Number(segments[2]),
+				status:
+					segments[3] === 'validate' ? 'ready' : segments[3] === 'pause' ? 'paused' : 'running'
+			});
+		}
+	}
+	if (segments[0] === 'agent-templates') {
+		if (segments.length === 1 && method === 'GET') return json({ templates: [] });
+		if (segments.length === 1 && method === 'POST')
+			return json({ id: 'act_dev', version: 1, digest: 'dev-template-digest' }, 201);
+		if (segments.length === 4 && segments[3] === 'copies') {
+			return method === 'GET' ? json({ copies: [] }) : json({ copies: [] }, 201);
+		}
+	}
+	if (segments[0] === 'agent-baselines') {
+		if (segments.length === 1 && method === 'GET') return json({ baselines: [] });
+		if (segments.length === 1 && method === 'POST')
+			return json({ id: 'abl_dev', version: 1, digest: 'dev-baseline-digest' }, 201);
+		if (segments.length === 3 && method === 'GET')
+			return json({ baseline: null, assignments: [] }, 404);
+		if (segments.includes('evaluate') && method === 'POST')
+			return json({ drift_status: 'in_sync' });
+		if (segments.includes('exceptions') && method === 'POST') return json({ id: 'abx_dev' }, 201);
+		if (segments.includes('assignments') && method === 'POST')
+			return json({ id: 'aba_dev', drift_status: 'unknown' }, 201);
+	}
+	if (segments[0] === 'agent-secret-refs') {
+		if (method === 'GET') return json({ secret_refs: [] });
+		if (segments.length === 3 && segments[2] === 'revoke' && method === 'POST') {
+			return json({ id: segments[1], status: 'revoked' });
+		}
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'asr_dev_reference', status: 'active' }, 201);
+		}
+	}
+	if (segments[0] === 'agent-elevations' && segments.length >= 2) {
+		const id = segments[1];
+		if (segments.length === 2 && method === 'GET') {
+			return json({
+				elevation: {
+					id,
+					grant_id: 'aag-dev-1',
+					client_id: 'dev-agent-client',
+					actor_sub: 'oauth_client:dev-agent-client',
+					tool: 'suspend_user',
+					title: 'Suspend end user',
+					confirmation_summary: 'Suspend development user dev-user-1 and revoke active sessions.',
+					risk_level: 'high',
+					status: 'pending',
+					expires_at: now + 5 * 60 * 1000,
+					fresh_auth_required: true
+				}
+			});
+		}
+		if (segments[2] === 'decision' && method === 'POST') {
+			const input = await readJson(event.request);
+			const status = input.decision === 'denied' ? 'denied' : 'approved';
+			return json({ id, status });
+		}
+	}
+
+	if (segments[0] !== 'agent-grants') return null;
+	if (segments.length === 1 && method === 'GET') {
+		const status = event.url.searchParams.get('status');
+		const grants = [...agentGrants.values()].filter((grant) => !status || grant.status === status);
+		return json({
+			grants,
+			pagination: {
+				total: grants.length,
+				limit: Number(event.url.searchParams.get('limit') ?? 50),
+				offset: Number(event.url.searchParams.get('offset') ?? 0)
+			}
+		});
+	}
+
+	if (segments.length === 1 && method === 'POST') {
+		const input = await readJson(event.request);
+		const id = `aag-dev-${agentGrants.size + 1}`;
+		const grant: DevAgentGrant = {
+			id,
+			tenant_id: TENANT_ID,
+			client_id: String(input.client_id || ''),
+			machine_principal_id:
+				typeof input.machine_principal_id === 'string' ? input.machine_principal_id : null,
+			grantor_id: 'dev-admin',
+			delegator_id: String(input.delegator_id || ''),
+			permissions: parseDevStringArray(input.permissions, []),
+			scopes: ['agent:read'],
+			authorization_details: null,
+			resolved_scope_constraints: { tenantIds: [TENANT_ID] },
+			purpose: typeof input.purpose === 'string' ? input.purpose : null,
+			consent_version: 1,
+			generation: 1,
+			status: 'active',
+			delegation_mode:
+				input.delegation_mode === 'admin_pre_authorized' ? 'admin_pre_authorized' : 'user_consent',
+			task_set_id: typeof input.task_set_id === 'string' ? input.task_set_id : null,
+			task_set_version: typeof input.task_set_version === 'number' ? input.task_set_version : null,
+			scope_policy_id: typeof input.scope_policy_id === 'string' ? input.scope_policy_id : null,
+			scope_policy_version:
+				typeof input.scope_policy_version === 'number' ? input.scope_policy_version : null,
+			resolved_tools: [],
+			access_snapshot_hash: 'dev-created-snapshot-hash',
+			expires_at: typeof input.expires_at === 'number' ? input.expires_at : null,
+			last_used_at: null,
+			created_at: now,
+			updated_at: now,
+			revoked_at: null,
+			revoked_by: null
+		};
+		agentGrants.set(id, grant);
+		return json(
+			{
+				grant_id: id,
+				status: 'active',
+				consent_version: 1,
+				generation: 1,
+				consent_required: grant.delegation_mode === 'user_consent'
+			},
+			201
+		);
+	}
+	if (segments[1] === 'eligible-permissions' && method === 'GET') {
+		const delegatorId = event.url.searchParams.get('delegator_id');
+		const principalId = event.url.searchParams.get('principal_id');
+		if (!delegatorId) {
+			return json(
+				{ error: 'AGENT_GRANT_INVALID_REQUEST', error_description: 'AGENT_GRANT_INVALID_REQUEST' },
+				400
+			);
+		}
+		const principal = principalId ? machinePrincipals.get(principalId) : null;
+		const candidates = [
+			'admin:users:read',
+			'admin:clients:read',
+			'admin:admin_audit:read',
+			'admin:agent_settings:read'
+		];
+		return json({
+			delegator_id: delegatorId,
+			principal_id: principalId,
+			permissions: principal
+				? candidates.filter((value) => principal.permissions.includes(value))
+				: candidates
+		});
+	}
+
+	const id = segments[1];
+	const grant = agentGrants.get(id);
+	if (!grant) {
+		return json(
+			{ error: 'AGENT_GRANT_NOT_FOUND', error_description: 'AGENT_GRANT_NOT_FOUND' },
+			404
+		);
+	}
+	if (segments.length === 2 && method === 'GET') return json({ grant });
+	if (segments.length === 2 && method === 'PATCH') {
+		const input = await readJson(event.request);
+		const updated: DevAgentGrant = {
+			...grant,
+			permissions: input.permissions
+				? parseDevStringArray(input.permissions, grant.permissions)
+				: grant.permissions,
+			purpose:
+				typeof input.purpose === 'string' || input.purpose === null
+					? (input.purpose as string | null)
+					: grant.purpose,
+			expires_at:
+				typeof input.expires_at === 'number' || input.expires_at === null
+					? (input.expires_at as number | null)
+					: grant.expires_at,
+			generation: grant.generation + 1,
+			consent_version: grant.consent_version + 1,
+			updated_at: now
+		};
+		agentGrants.set(id, updated);
+		return json({ grant_id: id, status: updated.status, generation: updated.generation });
+	}
+	if (segments[2] === 'audit' && method === 'GET') {
+		return json({
+			events: [
+				{
+					id: `audit-${id}`,
+					action: 'agent.grant.created',
+					result: 'success',
+					severity: 'info',
+					actor_type: 'admin_user',
+					actor_sub: 'admin_user:dev-admin',
+					metadata: { client_id: grant.client_id },
+					created_at: grant.created_at
+				}
+			]
+		});
+	}
+	if (
+		(segments[2] === 'suspend' || segments[2] === 'resume' || segments[2] === 'revoke') &&
+		method === 'POST'
+	) {
+		const nextStatus =
+			segments[2] === 'suspend' ? 'suspended' : segments[2] === 'resume' ? 'active' : 'revoked';
+		const updated: DevAgentGrant = {
+			...grant,
+			status: nextStatus,
+			generation: segments[2] === 'resume' ? grant.generation : grant.generation + 1,
+			consent_version: segments[2] === 'resume' ? grant.consent_version : grant.consent_version + 1,
+			updated_at: now,
+			revoked_at: nextStatus === 'revoked' ? now : null,
+			revoked_by: nextStatus === 'revoked' ? 'dev-admin' : null
+		};
+		agentGrants.set(id, updated);
+		return json({
+			grant_id: id,
+			status: nextStatus,
+			generation: updated.generation,
+			consent_required: segments[2] === 'resume'
+		});
+	}
+	return null;
+}
+
 async function handleMachineAccess(
 	event: RequestEvent,
 	segments: string[]
@@ -10052,6 +10535,85 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		};
 		tenants.set(id, tenant);
 		return json(tenant, 201);
+	}
+
+	if (segments.length === 3 && segments[2] === 'clone' && method === 'POST') {
+		const source = tenants.get(segments[1]);
+		if (!source || source.lifecycle_state !== 'active') {
+			return json({ error_description: 'Active source tenant not found' }, 404);
+		}
+		const input = await readJson(event.request);
+		const id = typeof input.id === 'string' ? input.id.trim() : '';
+		const name = typeof input.name === 'string' ? input.name.trim() : '';
+		if (!id || !name) return json({ error_description: 'id and name are required' }, 400);
+		if (tenants.has(id)) return json({ error_description: 'Tenant already exists' }, 409);
+		const copyInput =
+			input.copy && typeof input.copy === 'object' && !Array.isArray(input.copy)
+				? (input.copy as Record<string, unknown>)
+				: {};
+		const copy = {
+			settings: copyInput.settings !== false,
+			secret_settings: copyInput.secret_settings === true,
+			clients: copyInput.clients === true,
+			client_credentials: copyInput.client_credentials === true,
+			roles: copyInput.roles !== false,
+			admin_access: copyInput.admin_access === true,
+			webhooks: copyInput.webhooks === true,
+			webhook_secrets: copyInput.webhook_secrets === true
+		};
+		const now = Date.now();
+		const tenant: DevTenant = {
+			id,
+			tenant_code:
+				typeof input.tenant_code === 'string' && input.tenant_code.trim()
+					? input.tenant_code.trim()
+					: id,
+			name,
+			description:
+				typeof input.description === 'string' && input.description.trim()
+					? input.description.trim()
+					: null,
+			lifecycle_state: 'active',
+			is_default: false,
+			created_at: now,
+			updated_at: now
+		};
+		tenants.set(id, tenant);
+		return json(
+			{
+				...tenant,
+				source_tenant_id: source.id,
+				source_tenant_name: source.name,
+				copy,
+				cloned_items: {
+					settings: copy.settings ? 5 : 0,
+					secret_settings_skipped: copy.settings && !copy.secret_settings ? 1 : 0,
+					unclassified_settings_skipped: 0,
+					clients: copy.clients ? 2 : 0,
+					client_settings: copy.clients ? 2 : 0,
+					client_contracts: copy.clients ? 2 : 0,
+					client_web_origins: copy.clients ? 3 : 0,
+					client_trust_policies: copy.clients ? 1 : 0,
+					client_consent_overrides_skipped: 0,
+					client_flow_assignments_skipped: 0,
+					roles: copy.roles ? 2 : 0,
+					role_assignment_rules: copy.roles ? 1 : 0,
+					role_references_unresolved: 0,
+					role_assignment_rules_skipped: 0,
+					admin_roles: copy.admin_access ? 1 : 0,
+					admin_role_assignments: copy.admin_access ? 2 : 0,
+					admin_role_assignments_skipped: 0,
+					admin_role_inheritance_unresolved: 0,
+					webhooks: copy.webhooks ? 2 : 0,
+					client_webhooks_skipped: 0
+				},
+				signing_keys: { copied: false, generated: true },
+				warnings: [
+					'Tenant signing private keys were not copied; a new isolated signing key was generated.'
+				]
+			},
+			201
+		);
 	}
 
 	if (segments.length === 3 && segments[2] === 'invitations' && method === 'GET') {
@@ -11694,6 +12256,8 @@ export async function handleDevAdminMock(
 	if (adminPoliciesResponse) return adminPoliciesResponse;
 	const complianceResponse = await handleCompliance(event, segments);
 	if (complianceResponse) return complianceResponse;
+	const agentAccessResponse = await handleAgentAccess(event, segments);
+	if (agentAccessResponse) return agentAccessResponse;
 	const machineAccessResponse = await handleMachineAccess(event, segments);
 	if (machineAccessResponse) return machineAccessResponse;
 	const controlPlaneDestinationsResponse = await handleControlPlaneDestinations(event, segments);

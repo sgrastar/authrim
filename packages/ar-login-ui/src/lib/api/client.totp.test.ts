@@ -184,4 +184,24 @@ describe('LoginUI TOTP API adapter', () => {
 		expect(activationBody).not.toHaveProperty('secret');
 		expect(activationBody).not.toHaveProperty('otpauth_uri');
 	});
+
+	it('starts TOTP reauthentication with an OAuth challenge instead of a user identifier', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response(JSON.stringify({ challenge_id: 'totp_reauth', expires_in: 300 }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { totpAPI } = await loadClient();
+
+		await totpAPI.startLogin({ authorizationChallengeId: 'oauth_reauth' });
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+			authorization_challenge_id: 'oauth_reauth'
+		});
+	});
 });

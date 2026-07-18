@@ -32,16 +32,17 @@ export function createActiveAccessTokenProtectedResourceMiddleware(
   Variables: { activeAccessTokenProtectedResource?: ActiveAccessTokenProtectedResourceContext };
 }> {
   return async (c, next) => {
-    const result = await introspectTokenFromContext(
-      c as unknown as Context<{ Bindings: AuthrimEnv }>
-    );
-    const claims = result.claims as Record<string, unknown> | undefined;
-    const subject = typeof claims?.sub === 'string' ? claims.sub : '';
-    const tenantId = typeof claims?.tenant_id === 'string' ? claims.tenant_id : '';
     const expectedAudience =
       typeof options.audience === 'function'
         ? options.audience(c as unknown as Context<{ Bindings: AuthrimEnv }>)
         : options.audience;
+    const result = await introspectTokenFromContext(
+      c as unknown as Context<{ Bindings: AuthrimEnv }>,
+      { audience: expectedAudience }
+    );
+    const claims = result.claims as Record<string, unknown> | undefined;
+    const subject = typeof claims?.sub === 'string' ? claims.sub : '';
+    const tenantId = typeof claims?.tenant_id === 'string' ? claims.tenant_id : '';
     const audiences = Array.isArray(claims?.aud) ? claims.aud : [claims?.aud];
     const scopes = typeof claims?.scope === 'string' ? claims.scope.split(/\s+/u) : [];
     if (

@@ -137,6 +137,26 @@ describe('KeyManager Durable Object', () => {
     keyManager = new KeyManager(state as unknown as DurableObjectState, env);
   });
 
+  describe('purpose-separated OIDC signing keys', () => {
+    it('publishes a dedicated ES256 key without reusing VC EC state', async () => {
+      const keys = await keyManager.getAllOIDCPublicKeysRpc();
+      const oidcECKey = keys.find((key) => key.alg === 'ES256');
+
+      expect(oidcECKey).toMatchObject({
+        kty: 'EC',
+        use: 'sig',
+        alg: 'ES256',
+        crv: 'P-256',
+      });
+      expect(oidcECKey?.kid).toMatch(/^oidc-es256-/);
+
+      const vcState = state.storage.map.get('ecState') as { keys: unknown[] };
+      const oidcState = state.storage.map.get('oidcECState') as { keys: unknown[] };
+      expect(vcState.keys).toHaveLength(0);
+      expect(oidcState.keys).toHaveLength(1);
+    });
+  });
+
   describe('Authentication', () => {
     it('should require authentication for all endpoints except /jwks', async () => {
       // Note: /jwks is public because it only returns public keys for JWT verification

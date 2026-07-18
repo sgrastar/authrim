@@ -30,7 +30,12 @@ import {
   OIDCIdentityMappingRuntimeError,
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
+  setBoundedMapEntry,
 } from '@authrim/ar-lib-core';
+import {
+  resolveUserInfoSigningAlgorithm,
+  type OIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
 import { SignJWT } from 'jose';
 
 // ===== Key Caching for Performance Optimization =====
@@ -45,6 +50,7 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 60000; // 60 seconds
+const MAX_SIGNING_KEY_CACHE_ENTRIES = 128;
 
 /**
  * Get signing key from KeyManager with per-tenant caching.
@@ -52,10 +58,12 @@ const KEY_CACHE_TTL = 60000; // 60 seconds
  */
 async function getSigningKeyFromKeyManager(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  algorithm: OIDCSigningAlgorithm
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
-  const cached = signingKeyCache.get(tenantId);
+  const cacheKey = `${tenantId}:${algorithm}`;
+  const cached = signingKeyCache.get(cacheKey);
 
   // Check cache — if within TTL, verify KV version to detect emergency rotation
   if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
@@ -71,7 +79,10 @@ async function getSigningKeyFromKeyManager(
   const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
-  const keyData = await keyManager.getActiveKeyWithPrivateRpc();
+  const keyData =
+    algorithm === 'RS256'
+      ? await keyManager.getActiveKeyWithPrivateRpc()
+      : await keyManager.getActiveOIDCSigningKeyWithPrivateRpc(algorithm);
 
   if (!keyData || !keyData.privatePEM) {
     throw new Error('Private key not available from KeyManager');
@@ -79,13 +90,18 @@ async function getSigningKeyFromKeyManager(
 
   // Import private key (expensive operation: 5-7ms)
   const { importPKCS8 } = await import('jose');
-  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  const privateKey = await importPKCS8(keyData.privatePEM, algorithm);
 
   // Fetch current version for cache coherence
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
+  setBoundedMapEntry(
+    signingKeyCache,
+    cacheKey,
+    { privateKey, kid: keyData.kid, timestamp: now, version },
+    MAX_SIGNING_KEY_CACHE_ENTRIES
+  );
   return { privateKey, kid: keyData.kid };
 }
 
@@ -379,7 +395,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get client's public key for encryption
-    const publicKey = await getClientPublicKey(clientMetadata);
+    const publicKey = await getClientPublicKey(clientMetadata, undefined, alg as JWEAlgorithm);
     if (!publicKey) {
       log.error('Client requires UserInfo encryption but no public key available', { client_id });
       return c.json(
@@ -395,15 +411,20 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // For UserInfo encryption, we need to sign the claims first (JWT), then encrypt (JWE)
     // This creates a nested JWT: JWS inside JWE
     try {
+      const signingAlgorithm = resolveUserInfoSigningAlgorithm(clientMetadata, true);
+      if (signingAlgorithm === 'none') {
+        throw new Error('Encrypted UserInfo requires a signing algorithm');
+      }
       // Get signing key from KeyManager (with caching)
       const { privateKey, kid } = await getSigningKeyFromKeyManager(
         c.env,
-        getTenantIdFromContext(c)
+        getTenantIdFromContext(c),
+        signingAlgorithm
       );
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
-        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+        .setProtectedHeader({ alg: signingAlgorithm, typ: 'JWT', kid })
         .setIssuedAt()
         .setIssuer(requestIssuer)
         .setAudience(client_id)
@@ -436,21 +457,32 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // OIDC Core 5.3.3: Check if UserInfo signing is required (signed but not encrypted)
-  const userinfoSignedResponseAlg = clientMetadata?.userinfo_signed_response_alg as
-    | string
-    | undefined;
+  let userinfoSignedResponseAlg: ReturnType<typeof resolveUserInfoSigningAlgorithm>;
+  try {
+    userinfoSignedResponseAlg = resolveUserInfoSigningAlgorithm(clientMetadata, false);
+  } catch (error) {
+    log.error('Unsupported UserInfo signing algorithm', { client_id }, error as Error);
+    return c.json(
+      {
+        error: 'invalid_client_metadata',
+        error_description: 'Client UserInfo signing configuration is invalid',
+      },
+      400
+    );
+  }
 
-  if (userinfoSignedResponseAlg && userinfoSignedResponseAlg !== 'none') {
+  if (userinfoSignedResponseAlg !== 'none') {
     try {
       // Get signing key from KeyManager (with caching)
       const { privateKey, kid } = await getSigningKeyFromKeyManager(
         c.env,
-        getTenantIdFromContext(c)
+        getTenantIdFromContext(c),
+        userinfoSignedResponseAlg
       );
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
-        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+        .setProtectedHeader({ alg: userinfoSignedResponseAlg, typ: 'JWT', kid })
         .setIssuedAt()
         .setIssuer(requestIssuer)
         .setAudience(client_id)

@@ -309,6 +309,17 @@ function toCanonicalProjection(userId: string, row: any, tenantId: string) {
     account_id: row.id?.startsWith?.('account:') ? row.id : `account:${userId}`,
     account_type: row.account_type ?? 'user',
     lifecycle_state: lifecycleState,
+    account_status:
+      row.status ??
+      (lifecycleState === 'suspended' || lifecycleState === 'locked' || lifecycleState === 'deleted'
+        ? lifecycleState
+        : lifecycleState === 'active'
+          ? 'active'
+          : 'inactive'),
+    suspended_at: row.suspended_at ?? null,
+    suspended_until: row.suspended_until ?? null,
+    locked_at: row.locked_at ?? null,
+    locked_until: row.locked_until ?? null,
     email: row.email ?? null,
     email_verified: row.email_verified ?? 0,
     name: row.name ?? null,
@@ -365,7 +376,7 @@ function createMockDB(options: {
   prepareResults?: Record<string, any>;
   allResults?: any[];
   firstResult?: any;
-  runResult?: { success: boolean };
+  runResult?: { success: boolean; meta?: { changes: number } };
 }) {
   let currentSql = '';
   const mockStatement = {
@@ -433,9 +444,13 @@ function createOAuthClientRow(
     jwks: null,
     subject_type: null,
     sector_identifier_uri: null,
+    token_endpoint_auth_signing_alg: null,
     id_token_signed_response_alg: null,
     userinfo_signed_response_alg: null,
     request_object_signing_alg: null,
+    authorization_signed_response_alg: null,
+    authorization_encrypted_response_alg: null,
+    authorization_encrypted_response_enc: null,
     is_trusted: null,
     skip_consent: null,
     allow_claims_without_scope: null,
@@ -1387,6 +1402,49 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserGetHandler', () => {
+    it('returns the canonical suspended status and restriction timestamps', async () => {
+      const userId = 'suspended-user';
+      const suspendedAt = 1_752_700_000;
+      const suspendedUntil = suspendedAt + 86_400;
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'suspended',
+        status: 'suspended',
+        suspended_at: suspendedAt,
+        suspended_until: suspendedUntil,
+        active: 0,
+        email: 'suspended@example.com',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(suspendedAt * 1000).toISOString(),
+        updated_at: new Date(suspendedAt * 1000).toISOString(),
+      });
+      const c = createMockContext({
+        params: { id: userId },
+        db: createMockDB({ allResults: [] }),
+      });
+
+      const response = await adminUserGetHandler(c);
+      const body = (await response.json()) as {
+        user: {
+          status: string;
+          is_active: number;
+          pii_status: string;
+          suspended_at: number | null;
+          suspended_until: number | null;
+        };
+      };
+
+      expect(body.user).toMatchObject({
+        status: 'suspended',
+        is_active: 0,
+        pii_status: 'active',
+        suspended_at: suspendedAt * 1000,
+        suspended_until: suspendedUntil * 1000,
+      });
+    });
+
     it('should return user details with passkeys', async () => {
       const userId = 'user-123';
       // Core DB returns users_core data (no PII) and passkeys
@@ -2696,6 +2754,60 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should persist explicit requestable scopes for an Agent Access connection', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'MCP client Agent Access',
+          redirect_uris: ['http://localhost:18080/callback'],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          require_pkce: true,
+          requestable_scopes: ['agent:read', 'agent:write', 'agent:execute'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            requestable_scopes: ['agent:read', 'agent:write', 'agent:execute'],
+            require_pkce: true,
+          }),
+        }),
+        201
+      );
+    });
+
+    it('should reject malformed requestable scope tokens', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Malformed Agent Access client',
+          redirect_uris: ['http://localhost:18080/callback'],
+          requestable_scopes: ['agent:read agent:write'],
+        },
+        db: createMockDB({}),
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('requestable_scopes'),
+        }),
+        400
+      );
+    });
+
     it('should create a token-exchange capable service client', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -3022,6 +3134,38 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should not generate or persist a secret for a PKCE public client', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Public Code Client',
+          application_type: 'spa',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          require_pkce: true,
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.not.objectContaining({ client_secret: expect.anything() }),
+        }),
+        201
+      );
+      expect((mockDB as any)._mockStatement.bind).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^[a-f0-9]{64}$/u)
+      );
+    });
+
     it('should reject invalid allowed_redirect_origins', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -3156,7 +3300,7 @@ describe('Admin API Handlers', () => {
     it('should update client fields', async () => {
       const clientId = 'client-to-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       // First call checks if client exists, second call gets updated client
@@ -3209,7 +3353,7 @@ describe('Admin API Handlers', () => {
     it('should update token exchange and downstream grant fields', async () => {
       const clientId = 'client-downstream-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       let queryCount = 0;
@@ -3228,6 +3372,7 @@ describe('Admin API Handlers', () => {
             delegation_mode: 'none',
             client_credentials_allowed: 0,
             allowed_scopes: '["openid"]',
+            requestable_scopes: '["agent:read"]',
             default_scope: 'openid',
             default_audience: null,
           });
@@ -3244,6 +3389,7 @@ describe('Admin API Handlers', () => {
           delegation_mode: 'delegation',
           client_credentials_allowed: 1,
           allowed_scopes: '["openid","profile"]',
+          requestable_scopes: '["agent:read","agent:write"]',
           default_scope: 'openid profile',
           default_audience: 'svc://op-userinfo/customer-profile',
         });
@@ -3259,6 +3405,7 @@ describe('Admin API Handlers', () => {
           allowed_subject_token_clients: ['svc-client-a'],
           allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
           allowed_scopes: ['openid', 'profile'],
+          requestable_scopes: ['agent:read', 'agent:write'],
           default_scope: 'openid profile',
           default_audience: 'svc://op-userinfo/customer-profile',
         },
@@ -3278,6 +3425,7 @@ describe('Admin API Handlers', () => {
             allowed_subject_token_clients: ['svc-client-a'],
             allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
             allowed_scopes: ['openid', 'profile'],
+            requestable_scopes: ['agent:read', 'agent:write'],
             default_scope: 'openid profile',
             default_audience: 'svc://op-userinfo/customer-profile',
           }),
@@ -3288,7 +3436,7 @@ describe('Admin API Handlers', () => {
     it('should update Phase 1 client policy metadata', async () => {
       const clientId = 'client-policy-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       let queryCount = 0;
@@ -3404,7 +3552,7 @@ describe('Admin API Handlers', () => {
     it('should update OIDC claims and ASC client settings', async () => {
       const clientId = 'client-claims-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       let queryCount = 0;

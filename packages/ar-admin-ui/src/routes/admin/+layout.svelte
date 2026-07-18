@@ -57,7 +57,11 @@
 	const navEndUser = $derived({
 		identity: [
 			{ path: '/admin/users', label: $LL.admin_nav_end_users(), icon: 'i-ph-users' },
-			{ path: '/admin/organizations', label: $LL.admin_nav_organizations(), icon: 'i-ph-buildings' },
+			{
+				path: '/admin/organizations',
+				label: $LL.admin_nav_organizations(),
+				icon: 'i-ph-buildings'
+			},
 			{ path: '/admin/sessions', label: $LL.admin_nav_user_sessions(), icon: 'i-ph-clock' }
 		],
 		accessControl: {
@@ -235,6 +239,11 @@
 		},
 		adminOthers: [
 			{ path: '/admin/machine-access', label: $LL.admin_nav_machine_access(), icon: 'i-ph-robot' },
+			{
+				path: '/admin/agent-access',
+				label: $LL.admin_agent_access_nav(),
+				icon: 'i-ph-robot'
+			},
 			{
 				path: '/admin/ip-allowlist',
 				label: $LL.admin_nav_ip_allowlist(),

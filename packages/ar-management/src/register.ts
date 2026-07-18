@@ -44,18 +44,40 @@ import {
   // Write-Through cache for client metadata
   putClient,
   CanonicalRuntimeUserStore,
+  SUPPORTED_JWE_ALG,
+  SUPPORTED_JWE_ENC,
+  CLIENT_ASSERTION_SIGNING_ALGS,
+  FAPI2_MESSAGE_SIGNING_ALGS,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
+import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
 type ClientRegistrationRequestWithPkce = ClientRegistrationRequest & {
   require_pkce?: boolean;
+  client_credentials_allowed?: boolean;
+  allowed_scopes?: string[];
+  default_scope?: string;
   default_audience?: string | null;
   default_resource?: string | null;
 };
 
 type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
   require_pkce: boolean;
+  client_credentials_allowed?: boolean;
+  allowed_scopes?: string[];
+  default_scope?: string;
+  default_audience?: string;
+  default_resource?: string;
 };
+
+const CONFORMANCE_TEST_USER_ID = 'user-oidc-conformance-test';
+
+export function buildConformanceTestUserId(tenantId: string, defaultTenantId = 'default'): string {
+  return tenantId === defaultTenantId
+    ? CONFORMANCE_TEST_USER_ID
+    : `${CONFORMANCE_TEST_USER_ID}-${tenantId}`;
+}
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
@@ -317,6 +339,16 @@ function validateRegistrationRequest(
     }
   }
 
+  if (data.jwks !== undefined && data.jwks_uri !== undefined) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'jwks and jwks_uri must not both be provided',
+      },
+    };
+  }
+
   // Validate contacts (must be array of strings)
   if (data.contacts !== undefined) {
     if (!Array.isArray(data.contacts)) {
@@ -388,7 +420,12 @@ function validateRegistrationRequest(
       };
     }
 
-    const validGrantTypes = ['authorization_code', 'refresh_token', 'implicit'];
+    const validGrantTypes = [
+      'authorization_code',
+      'refresh_token',
+      'implicit',
+      'client_credentials',
+    ];
     for (const grantType of data.grant_types) {
       if (!validGrantTypes.includes(grantType)) {
         return {
@@ -408,6 +445,59 @@ function validateRegistrationRequest(
       error: {
         error: 'invalid_client_metadata',
         error_description: 'require_pkce must be a boolean',
+      },
+    };
+  }
+
+  if (
+    data.client_credentials_allowed !== undefined &&
+    typeof data.client_credentials_allowed !== 'boolean'
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'client_credentials_allowed must be a boolean',
+      },
+    };
+  }
+
+  if (
+    data.allowed_scopes !== undefined &&
+    (!Array.isArray(data.allowed_scopes) ||
+      data.allowed_scopes.some((scope) => typeof scope !== 'string' || !scope.trim()))
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'allowed_scopes must be an array of non-empty strings',
+      },
+    };
+  }
+
+  for (const field of ['default_scope', 'default_audience', 'default_resource'] as const) {
+    if (data[field] !== undefined && (typeof data[field] !== 'string' || !data[field]?.trim())) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `${field} must be a non-empty string`,
+        },
+      };
+    }
+  }
+
+  if (
+    data.grant_types?.includes('client_credentials') &&
+    data.client_credentials_allowed !== true
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'client_credentials_allowed must be true when grant_types includes client_credentials',
       },
     };
   }
@@ -462,6 +552,116 @@ function validateRegistrationRequest(
         };
       }
     }
+  }
+
+  if (
+    data.id_token_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(data.id_token_signed_response_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+      },
+    };
+  }
+
+  if (
+    data.token_endpoint_auth_signing_alg !== undefined &&
+    !CLIENT_ASSERTION_SIGNING_ALGS.includes(
+      data.token_endpoint_auth_signing_alg as (typeof CLIENT_ASSERTION_SIGNING_ALGS)[number]
+    )
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: `token_endpoint_auth_signing_alg must be one of: ${CLIENT_ASSERTION_SIGNING_ALGS.join(', ')}`,
+      },
+    };
+  }
+
+  if (
+    data.request_object_signing_alg !== undefined &&
+    !['none', 'RS256', ...FAPI2_MESSAGE_SIGNING_ALGS].includes(data.request_object_signing_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'request_object_signing_alg must be one of: none, RS256, ES256, PS256, EdDSA',
+      },
+    };
+  }
+
+  if (
+    data.userinfo_signed_response_alg !== undefined &&
+    data.userinfo_signed_response_alg !== 'none' &&
+    !isOIDCSigningAlgorithm(data.userinfo_signed_response_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+      },
+    };
+  }
+
+  if (
+    data.authorization_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(data.authorization_signed_response_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'authorization_signed_response_alg must be one of: RS256, ES256',
+      },
+    };
+  }
+  if (
+    data.authorization_encrypted_response_alg !== undefined &&
+    !SUPPORTED_JWE_ALG.includes(
+      data.authorization_encrypted_response_alg as (typeof SUPPORTED_JWE_ALG)[number]
+    )
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: `authorization_encrypted_response_alg must be one of: ${SUPPORTED_JWE_ALG.join(', ')}`,
+      },
+    };
+  }
+  if (
+    data.authorization_encrypted_response_enc !== undefined &&
+    !SUPPORTED_JWE_ENC.includes(
+      data.authorization_encrypted_response_enc as (typeof SUPPORTED_JWE_ENC)[number]
+    )
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: `authorization_encrypted_response_enc must be one of: ${SUPPORTED_JWE_ENC.join(', ')}`,
+      },
+    };
+  }
+  if (
+    (data.authorization_encrypted_response_alg === undefined) !==
+    (data.authorization_encrypted_response_enc === undefined)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'authorization_encrypted_response_alg and authorization_encrypted_response_enc must be provided together',
+      },
+    };
   }
 
   // Validate subject_type (OIDC Core 8)
@@ -939,7 +1139,7 @@ async function storeClient(
       browser_public_client_mode, browser_refresh_token_policy,
       native_sso_enabled, native_channel_allowed, allowed_channels,
       subject_type, sector_identifier_uri,
-      token_endpoint_auth_method, is_trusted, skip_consent,
+      token_endpoint_auth_method, token_endpoint_auth_signing_alg, is_trusted, skip_consent,
       allow_claims_without_scope,
       claims_parameter_policy, asc_enabled, asc_protected_request_required,
       asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
@@ -947,6 +1147,8 @@ async function storeClient(
       userinfo_signed_response_alg,
       id_token_signed_response_alg,
       request_object_signing_alg,
+      authorization_signed_response_alg,
+      authorization_encrypted_response_alg, authorization_encrypted_response_enc,
       post_logout_redirect_uris,
       backchannel_logout_uri, backchannel_logout_session_required,
       frontchannel_logout_uri, frontchannel_logout_session_required,
@@ -955,9 +1157,10 @@ async function storeClient(
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
       default_audience, default_resource,
+      client_credentials_allowed, allowed_scopes, default_scope,
       require_pkce,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -987,6 +1190,7 @@ async function storeClient(
       metadata.subject_type || 'public',
       metadata.sector_identifier_uri || null,
       metadata.token_endpoint_auth_method || 'client_secret_basic',
+      metadata.token_endpoint_auth_signing_alg || null,
       metadata.is_trusted ? 1 : 0,
       metadata.skip_consent ? 1 : 0,
       metadata.allow_claims_without_scope ? 1 : 0,
@@ -1003,6 +1207,9 @@ async function storeClient(
       metadata.userinfo_signed_response_alg || null,
       metadata.id_token_signed_response_alg || null,
       metadata.request_object_signing_alg || null,
+      metadata.authorization_signed_response_alg || null,
+      metadata.authorization_encrypted_response_alg || null,
+      metadata.authorization_encrypted_response_enc || null,
       metadata.post_logout_redirect_uris
         ? JSON.stringify(metadata.post_logout_redirect_uris)
         : null,
@@ -1024,6 +1231,9 @@ async function storeClient(
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
       metadata.default_audience || null,
       metadata.default_resource || null,
+      metadata.client_credentials_allowed ? 1 : 0,
+      metadata.allowed_scopes ? JSON.stringify(metadata.allowed_scopes) : null,
+      metadata.default_scope || null,
       metadata.require_pkce ? 1 : 0,
       // Tenant ID
       metadataTenantId,
@@ -1096,6 +1306,80 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     const request = validation.data;
+    const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    })) as {
+      fapi?: {
+        enabled?: boolean;
+        messageSigning?: {
+          enabled?: boolean;
+          requestObjectSigningAlgorithms?: string[];
+          authorizationSigningAlgorithms?: string[];
+        };
+      };
+    } | null;
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      (request.token_endpoint_auth_method ?? 'client_secret_basic') !== 'private_key_jwt'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_method must be private_key_jwt for the active FAPI profile',
+        },
+        400
+      );
+    }
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      request.token_endpoint_auth_signing_alg &&
+      !FAPI2_MESSAGE_SIGNING_ALGS.includes(
+        request.token_endpoint_auth_signing_alg as (typeof FAPI2_MESSAGE_SIGNING_ALGS)[number]
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+
+    const messageSigning = systemSettings?.fapi?.messageSigning;
+    if (
+      messageSigning?.enabled === true &&
+      request.request_object_signing_alg &&
+      !(messageSigning.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS]).includes(
+        request.request_object_signing_alg
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description: 'request_object_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+    if (
+      messageSigning?.enabled === true &&
+      request.authorization_signed_response_alg &&
+      !(messageSigning.authorizationSigningAlgorithms ?? ['ES256']).includes(
+        request.authorization_signed_response_alg
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'authorization_signed_response_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
 
     // OIDC Core 8.1: Validate pairwise subject type configuration
     // If pairwise subject type is used with multiple redirect URIs that have different hosts,
@@ -1210,6 +1494,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       application_type: applicationType,
     };
 
+    if (request.token_endpoint_auth_signing_alg)
+      response.token_endpoint_auth_signing_alg = request.token_endpoint_auth_signing_alg;
+
     // Include optional fields if provided
     if (request.client_name) response.client_name = request.client_name;
     if (request.client_uri) response.client_uri = request.client_uri;
@@ -1222,6 +1509,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.software_id) response.software_id = request.software_id;
     if (request.software_version) response.software_version = request.software_version;
     if (request.scope) response.scope = request.scope;
+    if (request.client_credentials_allowed !== undefined)
+      response.client_credentials_allowed = request.client_credentials_allowed;
+    if (request.allowed_scopes) response.allowed_scopes = request.allowed_scopes;
+    if (request.default_scope) response.default_scope = request.default_scope;
+    if (request.default_audience) response.default_audience = request.default_audience;
+    if (request.default_resource) response.default_resource = request.default_resource;
     // OIDC Core 8: Subject type and sector identifier
     response.subject_type = subjectType;
     if (request.sector_identifier_uri)
@@ -1235,6 +1528,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // RFC 9101 (JAR): Request Object signing algorithm
     if (request.request_object_signing_alg)
       response.request_object_signing_alg = request.request_object_signing_alg;
+    if (request.authorization_signed_response_alg)
+      response.authorization_signed_response_alg = request.authorization_signed_response_alg;
+    if (request.authorization_encrypted_response_alg)
+      response.authorization_encrypted_response_alg = request.authorization_encrypted_response_alg;
+    if (request.authorization_encrypted_response_enc)
+      response.authorization_encrypted_response_enc = request.authorization_encrypted_response_enc;
     if (request.claims_parameter_policy)
       response.claims_parameter_policy = request.claims_parameter_policy;
     if (request.asc_enabled !== undefined) response.asc_enabled = request.asc_enabled;
@@ -1366,6 +1665,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       asc_allowed_transformed_claims: request.asc_allowed_transformed_claims,
       // Store hashed client secret, not plaintext
       client_secret_hash: clientSecretHash,
+      client_credentials_allowed: request.client_credentials_allowed ?? false,
+      allowed_scopes: request.allowed_scopes,
+      default_scope: request.default_scope,
       default_audience: defaultTarget.defaultAudience,
       default_resource: defaultTarget.defaultResource,
     };
@@ -1421,7 +1723,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (isCertificationTest) {
       log.info('OIDC Conformance Test detected, creating test user', { action: 'register' });
 
-      const testUserId = 'user-oidc-conformance-test';
+      const testUserId = buildConformanceTestUserId(
+        tenantId,
+        c.env.DEFAULT_TENANT_ID?.trim() || 'default'
+      );
       const testAddress = {
         formatted: '1234 Main St, Anytown, ST 12345, USA',
         street_address: '1234 Main St',
@@ -1474,7 +1779,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         addressJson: JSON.stringify(testAddress),
       });
 
-      log.info('Test user created/verified: user-oidc-conformance-test', { action: 'register' });
+      log.info('Conformance test user created or verified', {
+        action: 'register',
+        userId: testUserId,
+      });
     }
 
     return c.json(response, 201, {

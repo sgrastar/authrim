@@ -158,8 +158,13 @@ describe('Validation Utilities', () => {
       expect(result.error).toContain('empty');
     });
 
+    it('should accept the 1000-byte state used by FAPI 2.0 clients', () => {
+      const result = validateState('a'.repeat(1000));
+      expect(result.valid).toBe(true);
+    });
+
     it('should reject state that is too long', () => {
-      const result = validateState('a'.repeat(513));
+      const result = validateState('a'.repeat(2049));
       expect(result.valid).toBe(false);
       expect(result.error).toContain('too long');
     });

@@ -277,6 +277,68 @@ describe('PARRequestStore', () => {
       expect(body.error_description).toContain('PAR request');
     });
 
+    it('keeps an Admin Agent request usable after the default journey rejects it', async () => {
+      const parRequest = createValidPARRequest();
+      parRequest.data = {
+        ...parRequest.data,
+        authorization_server: 'admin_agent' as const,
+        resource: 'https://auth.example.com/mcp',
+      };
+      await store.storeRequest(parRequest);
+
+      await expect(
+        store.consumeRequest({
+          requestUri: parRequest.requestUri,
+          tenant_id: parRequest.data.tenant_id,
+          client_id: parRequest.data.client_id,
+          expected_authorization_server: 'default',
+        })
+      ).rejects.toThrow('authorization server mismatch');
+
+      await expect(
+        store.consumeRequest({
+          requestUri: parRequest.requestUri,
+          tenant_id: parRequest.data.tenant_id,
+          client_id: parRequest.data.client_id,
+          expected_authorization_server: 'admin_agent',
+          expected_resource: 'https://auth.example.com/mcp',
+        })
+      ).resolves.toMatchObject({
+        authorization_server: 'admin_agent',
+        resource: 'https://auth.example.com/mcp',
+      });
+    });
+
+    it('does not consume an Admin Agent request when its resource binding mismatches', async () => {
+      const parRequest = createValidPARRequest();
+      parRequest.data = {
+        ...parRequest.data,
+        authorization_server: 'admin_agent' as const,
+        resource: 'https://auth.example.com/mcp',
+      };
+      await store.storeRequest(parRequest);
+
+      await expect(
+        store.consumeRequest({
+          requestUri: parRequest.requestUri,
+          tenant_id: parRequest.data.tenant_id,
+          client_id: parRequest.data.client_id,
+          expected_authorization_server: 'admin_agent',
+          expected_resource: 'https://other.example.com/mcp',
+        })
+      ).rejects.toThrow('resource mismatch');
+
+      await expect(
+        store.consumeRequest({
+          requestUri: parRequest.requestUri,
+          tenant_id: parRequest.data.tenant_id,
+          client_id: parRequest.data.client_id,
+          expected_authorization_server: 'admin_agent',
+          expected_resource: 'https://auth.example.com/mcp',
+        })
+      ).resolves.toMatchObject({ authorization_server: 'admin_agent' });
+    });
+
     it('should reject consumption with wrong client_id', async () => {
       const parRequest = createValidPARRequest();
 

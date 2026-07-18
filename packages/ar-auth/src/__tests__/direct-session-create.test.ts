@@ -246,6 +246,8 @@ describe('managed Direct Auth browser session finish', () => {
           max_age: '300',
           acr_values: 'urn:authrim:acr:mfa',
           issuer: 'https://issuer.example.com',
+          authorization_request_source: 'par',
+          authorization_request_integrity_protected: true,
         },
       });
     const { directSessionCreateHandler } = await import('../direct-auth');
@@ -270,13 +272,24 @@ describe('managed Direct Auth browser session finish', () => {
 
     const redirect = new URL(String(body.redirect_url));
     expect(redirect.origin).toBe('https://issuer.example.com');
-    expect(redirect.searchParams.get('response_type')).toBe('code');
-    expect(redirect.searchParams.get('client_id')).toBe('rp_web');
-    expect(redirect.searchParams.get('prompt')).toBe('login');
-    expect(redirect.searchParams.get('max_age')).toBe('300');
-    expect(redirect.searchParams.get('acr_values')).toBe('urn:authrim:acr:mfa');
+    expect([...redirect.searchParams.keys()]).toEqual(['_confirmation_challenge']);
     expect(redirect.searchParams.get('_confirmation_challenge')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
+    expect(challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'reauth',
+        metadata: expect.objectContaining({
+          purpose: 'authorize_confirmation',
+          authorization_request: expect.objectContaining({
+            source: 'par',
+            authorization_server: 'default',
+            integrity_protected: true,
+            client_id: 'rp_web',
+            state: 'state-123',
+          }),
+        }),
+      })
     );
   });
 

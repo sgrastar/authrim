@@ -41,6 +41,9 @@ describe('active access-token protected-resource middleware', () => {
       audience: 'svc://op-vc/attribute-elevation',
       requiredScopes: ['vc.attribute'],
     })(c, next);
+    expect(mocks.introspect).toHaveBeenCalledWith(c, {
+      audience: 'svc://op-vc/attribute-elevation',
+    });
     expect(next).toHaveBeenCalledTimes(1);
     expect(getActiveAccessTokenProtectedResourceContext(c)).toMatchObject({
       subject: 'user-1',

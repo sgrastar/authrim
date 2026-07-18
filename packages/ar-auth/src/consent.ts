@@ -26,6 +26,10 @@ import type {
   ConsentScreenItem,
 } from '@authrim/ar-lib-core';
 import {
+  buildAuthorizeContinuationUrl,
+  createAuthorizationRequestContinuation,
+} from './authorization-continuation';
+import {
   getConsentRBACData,
   getConsentUserInfo,
   getActingAsUserInfo,
@@ -53,7 +57,10 @@ import {
   parseClaimsRequest,
   // Logger
   getLogger,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
+import { redirectWithError } from './authorize';
+import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 
 // Scope descriptions (human-readable)
 const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
@@ -94,7 +101,8 @@ function acceptsJson(c: Context): boolean {
 async function createConsentConfirmationChallenge(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
-  userId: string
+  userId: string,
+  authorizationRequest: Record<string, unknown>
 ): Promise<string> {
   const confirmationId = crypto.randomUUID();
   const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
@@ -107,6 +115,7 @@ async function createConsentConfirmationChallenge(
     ttl: 60,
     metadata: {
       purpose: 'authorize_consent_confirmation',
+      authorization_request: authorizationRequest,
     },
   });
   return confirmationId;
@@ -477,7 +486,8 @@ async function handleJsonConsentGet(
         target_id: clientRow.client_id,
         requested_scopes: splitScopes(metadata.scope as string | undefined),
         requested_claims: collectRequestedClaimNames(metadata.claims),
-      }
+      },
+      piiCtx.defaultPiiAdapter
     );
     consentManagementEnabled = mgmtEnabled || (consentItems?.length ?? 0) > 0;
   } catch (err) {
@@ -544,6 +554,7 @@ async function loadConsentScreenItems(
   }
 ): Promise<ConsentScreenItem[]> {
   const authCtx = createAuthContextFromHono(c, params.tenantId);
+  const piiCtx = createPIIContextFromHono(c, params.tenantId);
   return getConsentItemsForScreen(
     authCtx.coreAdapter,
     params.tenantId,
@@ -556,7 +567,8 @@ async function loadConsentScreenItems(
       target_id: params.clientId,
       requested_scopes: splitScopes(params.metadata.scope as string | undefined),
       requested_claims: collectRequestedClaimNames(params.metadata.claims),
-    }
+    },
+    piiCtx.defaultPiiAdapter
   );
 }
 
@@ -922,6 +934,69 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       const redirectUri = metadata.redirect_uri as string;
       const cancelUri = metadata.cancel_uri as string | undefined;
 
+      const responseMode = metadata.response_mode as string | undefined;
+      const isJarm =
+        responseMode === 'jwt' ||
+        (typeof responseMode === 'string' && responseMode.endsWith('.jwt'));
+      if (isJarm) {
+        const clientId = metadata.client_id;
+        if (typeof clientId !== 'string' || clientId.length === 0) {
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Unable to create JWT-secured authorization error response',
+            },
+            500
+          );
+        }
+
+        let messageSigning: FAPI2MessageSigningConfig | undefined;
+        try {
+          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+            failOnError: true,
+          });
+          messageSigning = (
+            settings?.fapi as { messageSigning?: FAPI2MessageSigningConfig } | undefined
+          )?.messageSigning;
+        } catch (error) {
+          log.error(
+            'Failed to load JARM settings for consent denial',
+            { action: 'settings_load' },
+            error as Error
+          );
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Security profile settings are temporarily unavailable',
+            },
+            503
+          );
+        }
+
+        const response = await redirectWithError(
+          c,
+          redirectUri,
+          'access_denied',
+          'User denied the consent request',
+          metadata.state as string | undefined,
+          {
+            responseMode,
+            responseType: metadata.response_type,
+            clientId,
+            messageSigning,
+            cancelUri,
+            isUserCancellation: true,
+          }
+        );
+        if (contentType.includes('application/json')) {
+          const location = response.headers.get('Location');
+          if (location) {
+            return c.json({ redirect_url: location });
+          }
+        }
+        return response;
+      }
+
       // Use cancel_uri for user-initiated denial, fallback to redirect_uri
       const targetUri = cancelUri || redirectUri;
       const redirectUrl = new URL(targetUri);
@@ -1189,45 +1264,26 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     // PII Protection: Don't log userId (can be used for user tracking)
     log.info('Consent granted', { action: 'grant', scope: effectiveScope });
 
-    // Build query string for internal redirect to /authorize
-    const params = new URLSearchParams();
-    if (metadata.response_type) params.set('response_type', metadata.response_type as string);
-    if (metadata.client_id) params.set('client_id', metadata.client_id as string);
-    if (metadata.redirect_uri) params.set('redirect_uri', metadata.redirect_uri as string);
-    // Use effective scope (may be reduced if granular scopes is enabled)
-    params.set('scope', effectiveScope);
-    if (metadata.state) params.set('state', metadata.state as string);
-    if (metadata.nonce) params.set('nonce', metadata.nonce as string);
-    if (metadata.code_challenge) params.set('code_challenge', metadata.code_challenge as string);
-    if (metadata.code_challenge_method)
-      params.set('code_challenge_method', metadata.code_challenge_method as string);
-    if (metadata.claims) params.set('claims', metadata.claims as string);
-    if (metadata.authorization_details) {
-      params.set('authorization_details', metadata.authorization_details as string);
-    }
-    if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
-    if (metadata.max_age) params.set('max_age', metadata.max_age as string);
-    if (metadata.prompt) params.set('prompt', metadata.prompt as string);
-    if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
-
-    // Add RBAC parameters
-    if (effectiveOrgId) {
-      params.set('org_id', effectiveOrgId);
-    }
-    if (acting_as_user_id || metadata.acting_as) {
-      params.set('acting_as', acting_as_user_id || (metadata.acting_as as string));
-    }
-
-    // Custom Redirect URIs (Authrim Extension)
-    if (metadata.error_uri) params.set('error_uri', metadata.error_uri as string);
-    if (metadata.cancel_uri) params.set('cancel_uri', metadata.cancel_uri as string);
-
-    // Add one-time proof that this redirect came from a completed consent challenge.
-    const consentConfirmationId = await createConsentConfirmationChallenge(c, tenantId, userId);
-    params.set('_consent_confirmation_challenge', consentConfirmationId);
-
-    // Redirect to /authorize with original parameters
-    const redirectUrl = `/authorize?${params.toString()}`;
+    const authorizationMetadata = metadata as unknown as Record<string, unknown>;
+    const authorizationRequest = createAuthorizationRequestContinuation(authorizationMetadata, {
+      scope: effectiveScope,
+      org_id: effectiveOrgId || undefined,
+      acting_as:
+        acting_as_user_id ||
+        (typeof metadata.acting_as === 'string' ? metadata.acting_as : undefined),
+    });
+    const consentConfirmationId = await createConsentConfirmationChallenge(
+      c,
+      tenantId,
+      userId,
+      authorizationRequest
+    );
+    const redirectUrl = buildAuthorizeContinuationUrl(
+      authorizationMetadata,
+      consentConfirmationId,
+      c.env.ISSUER_URL || 'https://authrim.local',
+      '_consent_confirmation_challenge'
+    );
 
     // For JSON requests, return redirect URL instead of redirecting
     if (contentType.includes('application/json')) {

@@ -2,12 +2,17 @@
 	import { goto } from '$app/navigation';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { adminAuthAPI, getAuthErrorMessage } from '$lib/api/admin-auth';
+	import { resolveAdminLoginReturnTo } from '$lib/admin/admin-login-return';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let error = $state('');
 	let loading = $state(false);
+
+	function safeReturnTo(): string {
+		return resolveAdminLoginReturnTo(window.location.search, window.location.origin);
+	}
 
 	async function handlePasskeyLogin() {
 		error = '';
@@ -26,8 +31,8 @@
 			// Step 4: Refresh session-backed auth state, including tenant context and roles.
 			await adminAuth.checkAuth();
 
-			// Step 5: Redirect to admin dashboard
-			goto('/admin');
+			// Step 5: Resume a bounded browser authorization journey or open the dashboard.
+			goto(safeReturnTo());
 		} catch (err) {
 			console.error('Login error:', err);
 			error = getAuthErrorMessage(err);

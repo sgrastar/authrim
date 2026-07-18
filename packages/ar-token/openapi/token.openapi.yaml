@@ -69,7 +69,89 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+  /oauth/admin-agent/token:
+    post:
+      tags:
+        - OAuth
+      operationId: exchangeAdminAgentTokenGrant
+      summary: Issue Mode A tokens or exchange a Mode B machine actor delegation.
+      description: >
+        Consumes only authorization codes bound to the dedicated Admin Agent issuer, admin subject
+        namespace, exact tenant MCP resource, Grant generation, and consent version. The endpoint
+        rechecks client authentication, PKCE, the active Grant, both consent records, current
+        delegator permissions, scopes, and optional DPoP before issuing a tenant-capped access
+        token and rotating refresh token. Refresh grants additionally require an active DB_ADMIN
+        family row and the current RefreshTokenRotator version; public clients have a 12-hour idle
+        and 7-day absolute limit, while confidential clients have a 24-hour idle and 30-day limit.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/AdminAgentAuthorizationCodeTokenRequest"
+                - $ref: "#/components/schemas/AdminAgentRefreshTokenRequest"
+                - $ref: "#/components/schemas/AdminAgentModeBTokenExchangeRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OAuthToken"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /oauth/admin-agent/delegation:
+    post:
+      tags: [OAuth]
+      operationId: issueAdminAgentModeBDelegation
+      summary: Issue a JIT one-time Agent delegation JWT for a DPoP-bound Machine Principal.
+      description: >
+        Requires a DPoP-scheme Admin Machine Access Token and matching DPoP proof. Rechecks the
+        active pre-authorized Grant, explicit tenant scope, Machine Principal and credential,
+        delegator permission ceiling, principal permission ceiling, scope, and feature flag. The
+        returned JWT is audience-bound to the Admin Agent token endpoint, expires within five
+        minutes, and is consumed once during RFC 8693 exchange.
+      security:
+        - DPoP: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [grant_id]
+              properties:
+                grant_id: { type: string, minLength: 1, maxLength: 128 }
+                scope: { type: string }
+                resource: { type: string, format: uri }
+      responses:
+        "200":
+          description: Short-lived one-time delegation JWT.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delegation_token, delegation_token_type, expires_in, scope]
+                properties:
+                  delegation_token: { type: string, writeOnly: true }
+                  delegation_token_type:
+                    type: string
+                    const: urn:authrim:token-type:agent-delegation
+                  expires_in: { type: integer, maximum: 300 }
+                  scope: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 components:
+  securitySchemes:
+    DPoP:
+      type: http
+      scheme: DPoP
+      description: DPoP-bound Machine Access Token plus a matching DPoP proof header.
   responses:
     Ok:
       description: Successful JSON response.
@@ -125,6 +207,102 @@ components:
             refresh_token: refresh_123
             scope: openid profile
   schemas:
+    AdminAgentAuthorizationCodeTokenRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - grant_type
+        - code
+        - redirect_uri
+        - client_id
+        - code_verifier
+        - resource
+      properties:
+        grant_type:
+          type: string
+          const: authorization_code
+        code:
+          type: string
+          pattern: '^aac_'
+        redirect_uri:
+          type: string
+          format: uri
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          writeOnly: true
+        client_assertion:
+          type: string
+          writeOnly: true
+        client_assertion_type:
+          type: string
+          const: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+        code_verifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+        resource:
+          type: string
+          format: uri
+    AdminAgentRefreshTokenRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - grant_type
+        - refresh_token
+        - client_id
+      properties:
+        grant_type:
+          type: string
+          const: refresh_token
+        refresh_token:
+          type: string
+          writeOnly: true
+        scope:
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          writeOnly: true
+        client_assertion:
+          type: string
+          writeOnly: true
+        client_assertion_type:
+          type: string
+          const: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+        resource:
+          type: string
+          format: uri
+    AdminAgentModeBTokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - grant_type
+        - subject_token
+        - subject_token_type
+        - actor_token
+        - actor_token_type
+        - resource
+      properties:
+        grant_type:
+          type: string
+          const: urn:ietf:params:oauth:grant-type:token-exchange
+        subject_token: { type: string, writeOnly: true }
+        subject_token_type:
+          type: string
+          const: urn:authrim:token-type:agent-delegation
+        actor_token: { type: string, writeOnly: true }
+        actor_token_type:
+          type: string
+          const: urn:ietf:params:oauth:token-type:access_token
+        requested_token_type:
+          type: string
+          const: urn:ietf:params:oauth:token-type:access_token
+        client_id: { type: string }
+        scope: { type: string }
+        resource: { type: string, format: uri }
     TokenHealth:
       type: object
       required:

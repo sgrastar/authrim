@@ -83,6 +83,7 @@ export interface KeyMetadata {
     vcEvidenceHmacSecret?: string;
     vcProfileContractHmacSecret?: string;
     pluginEncryptionKey?: string;
+    agentElevationEncryptionKey?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
     adminUiBffPrivateKey?: string;
@@ -138,6 +139,8 @@ export interface GeneratedSecrets {
   vcProfileContractHmacSecret: string;
   /** Dedicated encryption key for plugin configuration secrets */
   pluginEncryptionKey: string;
+  /** Dedicated AES-256-GCM key for Agent elevation payloads and terminal results. */
+  agentElevationEncryptionKey: string;
   /** Setup token for initial admin creation */
   setupToken?: string;
 }
@@ -325,6 +328,7 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
     vcEvidenceHmacSecret: generateBase64Secret(32), // 256-bit secret
     vcProfileContractHmacSecret: generateBase64Secret(32), // 256-bit secret
     pluginEncryptionKey: generateBase64Secret(32), // 256-bit secret
+    agentElevationEncryptionKey: generateHexSecret(32), // 256-bit AES-GCM key
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
   };
 }
@@ -548,6 +552,7 @@ export async function saveKeysToDirectory(
     vcEvidenceHmacSecret: join(targetDir, 'vc_evidence_hmac_secret.txt'),
     vcProfileContractHmacSecret: join(targetDir, 'vc_profile_contract_hmac_secret.txt'),
     pluginEncryptionKey: join(targetDir, 'plugin_encryption_key.txt'),
+    agentElevationEncryptionKey: join(targetDir, 'agent_elevation_encryption_key.txt'),
     setupToken: join(targetDir, 'setup_token.txt'),
     setupMachinePrivateKey: join(targetDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(targetDir, 'setup_machine_public.jwk.json'),
@@ -612,6 +617,8 @@ export async function saveKeysToDirectory(
   await chmod(paths.vcProfileContractHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.pluginEncryptionKey, secrets.pluginEncryptionKey, 'utf-8');
   await chmod(paths.pluginEncryptionKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.agentElevationEncryptionKey, secrets.agentElevationEncryptionKey, 'utf-8');
+  await chmod(paths.agentElevationEncryptionKey, SENSITIVE_FILE_MODE);
 
   if (secrets.setupToken) {
     await writeFile(paths.setupToken, secrets.setupToken, 'utf-8');
@@ -677,6 +684,7 @@ export async function saveKeysToDirectory(
       vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,
       vcProfileContractHmacSecret: paths.vcProfileContractHmacSecret,
       pluginEncryptionKey: paths.pluginEncryptionKey,
+      agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
@@ -828,6 +836,7 @@ export async function ensureSupplementalKeyFiles(
     vcEvidenceHmacSecret: join(keysDir, 'vc_evidence_hmac_secret.txt'),
     vcProfileContractHmacSecret: join(keysDir, 'vc_profile_contract_hmac_secret.txt'),
     pluginEncryptionKey: join(keysDir, 'plugin_encryption_key.txt'),
+    agentElevationEncryptionKey: join(keysDir, 'agent_elevation_encryption_key.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
     adminUiBffPrivateKey: join(keysDir, 'admin_ui_bff_private.pem'),
@@ -887,6 +896,10 @@ export async function ensureSupplementalKeyFiles(
     await writeSensitiveFile(paths.pluginEncryptionKey, generateBase64Secret(32));
     createdFiles.push(paths.pluginEncryptionKey);
   }
+  if (!existsSync(paths.agentElevationEncryptionKey)) {
+    await writeSensitiveFile(paths.agentElevationEncryptionKey, generateHexSecret(32));
+    createdFiles.push(paths.agentElevationEncryptionKey);
+  }
 
   await writeMissingMachineKeyPair(
     {
@@ -941,6 +954,7 @@ export async function ensureSupplementalKeyFiles(
     vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,
     vcProfileContractHmacSecret: paths.vcProfileContractHmacSecret,
     pluginEncryptionKey: paths.pluginEncryptionKey,
+    agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
     setupMachinePrivateKey: paths.setupMachinePrivateKey,
     setupMachinePublicKey: paths.setupMachinePublicKey,
     adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
@@ -1139,6 +1153,10 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'plugin_encryption_key.txt')})" | wrangler secret put PLUGIN_ENCRYPTION_KEY${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'agent_elevation_encryption_key.txt')})" | wrangler secret put AGENT_ELEVATION_ENCRYPTION_KEY${envFlag}`
   );
 
   return commands;

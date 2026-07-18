@@ -118,6 +118,26 @@ export interface DeployCommandOptions {
   keysDir?: string;
 }
 
+/** Non-interactive deploys must apply the freshly generated target-environment section. */
+export function getAutomaticWranglerSyncAction(
+  options: Pick<DeployCommandOptions, 'yes'>
+): SyncAction | null {
+  return options.yes === true ? 'overwrite' : null;
+}
+
+/** Ignore a stale config default while preserving an explicit CLI override for strict validation. */
+export function getDeployKeysDirHint(input: {
+  baseDir: string;
+  explicitKeysDir?: string;
+  configuredKeysDir?: string;
+}): string | undefined {
+  if (input.explicitKeysDir) return input.explicitKeysDir;
+  if (!input.configuredKeysDir) return undefined;
+  return existsSync(resolve(input.baseDir, input.configuredKeysDir))
+    ? input.configuredKeysDir
+    : undefined;
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -608,7 +628,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     resolvedKeysDir = resolveDownstreamIntrospectionKeysDir({
       env,
       rootDir: baseDir,
-      keysDir: options.keysDir || config.keys.secretsPath,
+      keysDir: getDeployKeysDirHint({
+        baseDir,
+        explicitKeysDir: options.keysDir,
+        configuredKeysDir: config.keys.secretsPath,
+      }),
       keysBaseDir: process.cwd(),
     });
     return resolvedKeysDir;
@@ -766,14 +790,20 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
           console.log('');
 
-          const action = await select({
-            message: t('deploy.wranglerChanged'),
-            choices: [
-              { value: 'keep', name: t('deploy.wranglerKeep') },
-              { value: 'backup', name: t('deploy.wranglerBackup') },
-              { value: 'overwrite', name: t('deploy.wranglerOverwrite') },
-            ],
-          });
+          const automaticAction = getAutomaticWranglerSyncAction(options);
+          const action =
+            automaticAction ??
+            (await select({
+              message: t('deploy.wranglerChanged'),
+              choices: [
+                { value: 'keep', name: t('deploy.wranglerKeep') },
+                { value: 'backup', name: t('deploy.wranglerBackup') },
+                { value: 'overwrite', name: t('deploy.wranglerOverwrite') },
+              ],
+            }));
+          if (automaticAction) {
+            console.log(chalk.gray('  --yes: applying regenerated target-environment sections'));
+          }
 
           if (action === 'backup' || action === 'overwrite') {
             const resyncSpinner = ora('Syncing wrangler configs...').start();

@@ -9,6 +9,7 @@ import { SignJWT, jwtVerify, importPKCS8, importJWK } from 'jose';
 import type { JWK, CryptoKey, JWTPayload } from 'jose';
 import { generateSecureRandomString } from './crypto';
 import type { IDTokenClaims } from '../types/oidc';
+import type { OIDCSigningAlgorithm } from './oidc-signing';
 
 const MAX_JWT_SIZE_BYTES = 16 * 1024;
 const MAX_JWT_SEGMENT_SIZE_BYTES = 8 * 1024;
@@ -43,7 +44,8 @@ export async function createIDToken(
   claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
   privateKey: CryptoKey,
   kid: string,
-  expiresIn: number = 3600
+  expiresIn: number = 3600,
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -52,7 +54,7 @@ export async function createIDToken(
     iat: now,
     exp: now + expiresIn,
   })
-    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+    .setProtectedHeader({ alg: algorithm, typ: 'JWT', kid })
     .sign(privateKey);
 }
 
@@ -75,7 +77,8 @@ export async function createSDJWTIDTokenFromClaims(
   privateKey: CryptoKey,
   kid: string,
   expiresIn: number = 3600,
-  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate']
+  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate'],
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -90,7 +93,7 @@ export async function createSDJWTIDTokenFromClaims(
   };
 
   // Create SD-JWT
-  const sdJwt = await createSDJWTIDToken(fullClaims, privateKey, kid, selectiveClaims);
+  const sdJwt = await createSDJWTIDToken(fullClaims, privateKey, kid, selectiveClaims, algorithm);
 
   return sdJwt.combined;
 }

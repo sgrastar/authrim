@@ -22,13 +22,23 @@ describe('OIDC claims parameter and ASC utilities', () => {
     expect(result.request?._asc?.sao?.userinfo).toHaveLength(1);
   });
 
-  it('rejects unsupported top-level claims keys', () => {
-    const result = parseClaimsRequest(JSON.stringify({ access_token: { email: null } }));
+  it('ignores unsupported top-level claims members', () => {
+    const result = parseClaimsRequest(
+      JSON.stringify({
+        userinfo: { email: null },
+        extension_location: { email: null },
+      })
+    );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error_description).toContain('Invalid claims section');
-    }
+    expect(result.ok).toBe(true);
+    expect(result.request?.userinfo).toEqual({ email: null });
+  });
+
+  it('accepts a claims object containing only unknown extension members', () => {
+    const result = parseClaimsRequest(JSON.stringify({ extension_location: { email: null } }));
+
+    expect(result.ok).toBe(true);
+    expect(result.request).toMatchObject({ userinfo: {}, id_token: {} });
   });
 
   it('enforces claim-level policy for claims without corresponding scope', () => {

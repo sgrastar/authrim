@@ -168,6 +168,46 @@ describe('DPoP Utilities', () => {
       expect(body).toMatchObject({ jti: 'jti-1', client_id: 'client-1', ttl: 3600 });
     });
 
+    it('ignores query and fragment in the proof htu claim', async () => {
+      const store = namespace();
+      const result = await validateDPoPProof(
+        await proof({
+          htu: 'https://api.example/token?allthedoorsonthisspaceshiphavebeen#programmed',
+        }),
+        'POST',
+        'https://api.example/token',
+        undefined,
+        store as never,
+        'client-1',
+        'tenant-a'
+      );
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts a Worker Env with DPoP storage even when SETTINGS is not bound', async () => {
+      const store = namespace();
+      const env = {
+        DPOP_JTI_STORE: store,
+        AUTHRIM_CONFIG: {
+          get: vi.fn(async () => null),
+        },
+      };
+
+      await expect(
+        validateDPoPProof(
+          await proof({ jti: 'userinfo-jti' }),
+          'POST',
+          'https://api.example/token',
+          undefined,
+          env as never,
+          'client-1',
+          'tenant-userinfo-no-settings'
+        )
+      ).resolves.toMatchObject({ valid: true });
+      expect(store.idFromName).toHaveBeenCalled();
+    });
+
     it('validates the access-token hash when an access token is supplied', async () => {
       const token = 'access-token';
       const ath = await calculateAccessTokenHash(token);
@@ -275,6 +315,19 @@ describe('DPoP Utilities', () => {
       [{ jwk: undefined }, 'jwk header'],
       [{ jwk: {} }, 'kty'],
       [{ jwk: { kty: 'EC', d: 'private' } }, 'private key material'],
+      [{ jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', use: 'enc' } }, 'intended for signatures'],
+      [
+        { jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', key_ops: ['sign'] } },
+        'signature verification',
+      ],
+      [
+        { jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', key_ops: ['verify', 'sign'] } },
+        'only permit signature verification',
+      ],
+      [
+        { jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', alg: 'PS256' } },
+        'algorithm does not match',
+      ],
       [{ jwk: { kty: 'EC', crv: 'P-256', x: 'bad', y: 'bad' } }, 'Invalid JWK'],
     ])('rejects unsafe protected header %#', async (header, message) => {
       const encodedHeader = base64url.encode(
@@ -292,6 +345,28 @@ describe('DPoP Utilities', () => {
           'tenant-a'
         )
       ).resolves.toMatchObject({ error_description: expect.stringContaining(message) });
+    });
+
+    it('rejects oversized proofs before JOSE parsing or storage', async () => {
+      const store = namespace();
+      const oversized = `${'a'.repeat(9 * 1024)}.payload.signature`;
+
+      await expect(
+        validateDPoPProof(
+          oversized,
+          'POST',
+          'https://api.example/token',
+          undefined,
+          store as never,
+          'client-1',
+          'tenant-a'
+        )
+      ).resolves.toMatchObject({
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: expect.stringContaining('segment is too large'),
+      });
+      expect(store.fetch).not.toHaveBeenCalled();
     });
 
     it('rejects a tampered signature without exposing verification details', async () => {

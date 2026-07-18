@@ -11,6 +11,9 @@ import {
   adminTenantResumeHandler,
   adminTenantLifecycleJobRetryHandler,
   adminTenantsListHandler,
+  activateProvisionedTenant,
+  provisionTenant,
+  rollbackProvisionedTenant,
 } from '../admin-tenants';
 
 type QueryOp = 'query' | 'queryOne' | 'execute';
@@ -180,6 +183,11 @@ function createKVNamespace() {
     delete: vi.fn(async (key: string) => {
       store.delete(key);
     }),
+    list: vi.fn(async ({ prefix = '' }: { prefix?: string }) => ({
+      list_complete: true as const,
+      keys: [...store.keys()].filter((key) => key.startsWith(prefix)).map((name) => ({ name })),
+      cacheStatus: null,
+    })),
   } as unknown as KVNamespace;
 }
 
@@ -1390,5 +1398,103 @@ describe('tenant D1 pool tenant management', () => {
 
     expect(response.status).toBe(500);
     expect(kv.delete).not.toHaveBeenCalled();
+  });
+
+  it('keeps a regular provisioned tenant hidden until explicit activation', async () => {
+    let row: TenantRow | null = null;
+    adapters.defaultAdapter = createAdapter((sql, params, op) => {
+      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') return row;
+      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') return null;
+      if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
+        row = createTenantRowFromInsertParams(params);
+        return { rowsAffected: 1 };
+      }
+      if (op === 'execute' && sql.includes("SET lifecycle_state = 'active'")) {
+        row = row ? { ...row, lifecycle_state: 'active', updated_at: Number(params[0]) } : row;
+        return { rowsAffected: 1 };
+      }
+      if (op === 'queryOne' && sql.startsWith('SELECT id, tenant_code')) return row;
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+    adapters.tenantAdapters.set('copy', adapters.defaultAdapter);
+    const config = createKVNamespace();
+    const context = createContext(
+      {},
+      {
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
+        AUTHRIM_CONFIG: config,
+      }
+    );
+
+    const provisioned = await provisionTenant(context, {
+      id: 'copy',
+      tenantCode: 'copy',
+      name: 'Copy',
+      description: null,
+      deferActivation: true,
+    });
+
+    expect(provisioned.ok).toBe(true);
+    if (!provisioned.ok) return;
+    expect(provisioned.tenant.lifecycle_state).toBe('provisioning');
+    expect(config.delete).toHaveBeenCalledWith('v1:tenant-exists:copy');
+    expect(config.delete).toHaveBeenCalledTimes(1);
+
+    const activated = await activateProvisionedTenant(context, 'copy');
+    expect(activated.lifecycle_state).toBe('active');
+    expect(config.delete).toHaveBeenCalledWith('v1:tenant-exists:copy');
+    expect(config.delete).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports rollback artifacts that could not be removed', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'execute' && sql.includes('DELETE FROM webhook_configs')) {
+        throw new Error('D1 unavailable');
+      }
+      return { rowsAffected: 1 };
+    });
+    adapters.tenantAdapters.set('copy', adapters.defaultAdapter);
+    const context = createContext({}, { DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1' });
+
+    const result = await rollbackProvisionedTenant(context, 'copy');
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('webhook_configs');
+  });
+
+  it('lists every KV page before deleting rollback keys', async () => {
+    adapters.defaultAdapter = createAdapter(() => ({ rowsAffected: 1 }));
+    adapters.tenantAdapters.set('copy', adapters.defaultAdapter);
+    const store = new Map([
+      ['settings:tenant:copy:a', 'a'],
+      ['settings:tenant:copy:b', 'b'],
+      ['settings:tenant:copy:c', 'c'],
+    ]);
+    const settings = {
+      list: vi.fn(async ({ prefix = '', cursor }: { prefix?: string; cursor?: string }) => {
+        const matching = [...store.keys()].filter((key) => key.startsWith(prefix));
+        const start = cursor ? Number(cursor) : 0;
+        const keys = matching.slice(start, start + 1).map((name) => ({ name }));
+        const next = start + keys.length;
+        return next >= matching.length
+          ? { list_complete: true as const, keys, cacheStatus: null }
+          : { list_complete: false as const, keys, cursor: String(next), cacheStatus: null };
+      }),
+      delete: vi.fn(async (key: string) => {
+        store.delete(key);
+      }),
+    } as unknown as KVNamespace;
+
+    const result = await rollbackProvisionedTenant(
+      createContext(
+        {},
+        { DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1', SETTINGS: settings }
+      ),
+      'copy'
+    );
+
+    expect(result.ok).toBe(true);
+    expect([...store.keys()]).toEqual([]);
+    expect(settings.list).toHaveBeenCalledTimes(4);
   });
 });
