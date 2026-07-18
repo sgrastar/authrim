@@ -238,9 +238,12 @@ describe('HTTPS Request URI Security', () => {
         envWithPAR
       );
 
-      // Should NOT return "request_uri_not_supported" - PAR URN is always accepted
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).not.toBe('request_uri_not_supported');
+      // Should NOT return "request_uri_not_supported" - PAR URN is always accepted. A missing
+      // PAR entry is reported through the independently validated registered redirect URI.
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('location')!);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('invalid_request_uri');
     });
   });
 

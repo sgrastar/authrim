@@ -53,6 +53,7 @@ import {
 } from './fapi-message-signing';
 
 const LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS = ['RS256'];
+const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
 
 /**
  * PAR request parameters interface
@@ -88,20 +89,49 @@ interface CompletePARRequestParams extends PARRequestParams {
 /**
  * Validate PAR request parameters
  */
-function validatePARParams(formData: Record<string, unknown>): PARRequestParams {
-  const client_id = formData.client_id;
+function resolvePARClientId(
+  formData: Record<string, unknown>,
+  clientAssertion: string | undefined,
+  clientAssertionType: string | undefined
+): string {
+  const requestClientId = formData.client_id;
+  if (typeof requestClientId === 'string' && requestClientId.length > 0) {
+    return requestClientId;
+  }
+
+  if (
+    !clientAssertion ||
+    clientAssertionType !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer' ||
+    new TextEncoder().encode(clientAssertion).byteLength > MAX_CLIENT_ASSERTION_SIZE_BYTES
+  ) {
+    throw new RFCError('invalid_request', 400, 'client_id is required');
+  }
+
+  try {
+    // This unverified payload is used only to select the registered client key. The assertion is
+    // cryptographically verified against that client below before the request is accepted.
+    const claims = parseToken(clientAssertion);
+    if (
+      typeof claims.iss === 'string' &&
+      claims.iss.length > 0 &&
+      typeof claims.sub === 'string' &&
+      timingSafeEqual(claims.iss, claims.sub)
+    ) {
+      return claims.iss;
+    }
+  } catch {
+    // Return the same generic authentication error for malformed and unknown assertions.
+  }
+  throw new RFCError('invalid_client', 401, 'Client authentication failed');
+}
+
+function validatePARParams(formData: Record<string, unknown>, clientId: string): PARRequestParams {
   const response_type = formData.response_type;
   const redirect_uri = formData.redirect_uri;
   const scope = formData.scope;
 
-  // client_id is needed before the request object can be verified. The remaining
-  // required authorization parameters may legally exist only inside a signed JAR.
-  if (!client_id || typeof client_id !== 'string') {
-    throw new RFCError('invalid_request', 400, 'client_id is required');
-  }
-
   return {
-    client_id,
+    client_id: clientId,
     response_type: typeof response_type === 'string' ? response_type : undefined,
     redirect_uri: typeof redirect_uri === 'string' ? redirect_uri : undefined,
     scope: typeof scope === 'string' ? scope : undefined,
@@ -237,8 +267,16 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     const client_assertion = formData.client_assertion as string | undefined;
     const client_assertion_type = formData.client_assertion_type as string | undefined;
 
+    // RFC 9126 permits authenticated clients to omit the outer client_id. private_key_jwt
+    // identifies the client through the assertion issuer; its signature is verified below.
+    const clientId = resolvePARClientId(
+      formData as Record<string, unknown>,
+      client_assertion,
+      client_assertion_type
+    );
+
     // Validate request parameters
-    const params = validatePARParams(formData as Record<string, unknown>);
+    const params = validatePARParams(formData as Record<string, unknown>, clientId);
 
     // Validate client_id
     const clientValidation = validateClientId(params.client_id);
@@ -349,6 +387,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       // FAPI 2.0: Require private_key_jwt authentication
       if (fapiConfig.requirePrivateKeyJwt !== false) {
         if (
+          clientMetadata.token_endpoint_auth_method !== 'private_key_jwt' ||
           !client_assertion ||
           client_assertion_type !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
         ) {
@@ -702,7 +741,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           if (requestObjectClaims.request_uri !== undefined) {
             return c.json(
               {
-                error: 'request_uri_not_supported',
+                error: 'invalid_request_object',
                 error_description: 'request_uri is not supported inside a PAR request object',
               },
               400
@@ -844,6 +883,17 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
 
     // Validate response_type
+    // FAPI 2.0 Security Profile Final permits only the authorization code flow. Rejecting
+    // hybrid/implicit response types at PAR also avoids creating a request_uri for a request
+    // that the authorization endpoint can never process.
+    if (fapiConfig.enabled && params.response_type !== 'code') {
+      throw new RFCError(
+        'unsupported_response_type',
+        400,
+        'FAPI 2.0 supports only response_type=code'
+      );
+    }
+
     const supportedResponseTypes = ['code', 'code id_token', 'code token', 'code id_token token'];
     if (!supportedResponseTypes.includes(params.response_type)) {
       throw new RFCError(

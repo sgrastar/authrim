@@ -57,7 +57,10 @@ import {
   parseClaimsRequest,
   // Logger
   getLogger,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
+import { redirectWithError } from './authorize';
+import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 
 // Scope descriptions (human-readable)
 const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
@@ -483,7 +486,8 @@ async function handleJsonConsentGet(
         target_id: clientRow.client_id,
         requested_scopes: splitScopes(metadata.scope as string | undefined),
         requested_claims: collectRequestedClaimNames(metadata.claims),
-      }
+      },
+      piiCtx.defaultPiiAdapter
     );
     consentManagementEnabled = mgmtEnabled || (consentItems?.length ?? 0) > 0;
   } catch (err) {
@@ -550,6 +554,7 @@ async function loadConsentScreenItems(
   }
 ): Promise<ConsentScreenItem[]> {
   const authCtx = createAuthContextFromHono(c, params.tenantId);
+  const piiCtx = createPIIContextFromHono(c, params.tenantId);
   return getConsentItemsForScreen(
     authCtx.coreAdapter,
     params.tenantId,
@@ -562,7 +567,8 @@ async function loadConsentScreenItems(
       target_id: params.clientId,
       requested_scopes: splitScopes(params.metadata.scope as string | undefined),
       requested_claims: collectRequestedClaimNames(params.metadata.claims),
-    }
+    },
+    piiCtx.defaultPiiAdapter
   );
 }
 
@@ -927,6 +933,69 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
       const redirectUri = metadata.redirect_uri as string;
       const cancelUri = metadata.cancel_uri as string | undefined;
+
+      const responseMode = metadata.response_mode as string | undefined;
+      const isJarm =
+        responseMode === 'jwt' ||
+        (typeof responseMode === 'string' && responseMode.endsWith('.jwt'));
+      if (isJarm) {
+        const clientId = metadata.client_id;
+        if (typeof clientId !== 'string' || clientId.length === 0) {
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Unable to create JWT-secured authorization error response',
+            },
+            500
+          );
+        }
+
+        let messageSigning: FAPI2MessageSigningConfig | undefined;
+        try {
+          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+            failOnError: true,
+          });
+          messageSigning = (
+            settings?.fapi as { messageSigning?: FAPI2MessageSigningConfig } | undefined
+          )?.messageSigning;
+        } catch (error) {
+          log.error(
+            'Failed to load JARM settings for consent denial',
+            { action: 'settings_load' },
+            error as Error
+          );
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Security profile settings are temporarily unavailable',
+            },
+            503
+          );
+        }
+
+        const response = await redirectWithError(
+          c,
+          redirectUri,
+          'access_denied',
+          'User denied the consent request',
+          metadata.state as string | undefined,
+          {
+            responseMode,
+            responseType: metadata.response_type,
+            clientId,
+            messageSigning,
+            cancelUri,
+            isUserCancellation: true,
+          }
+        );
+        if (contentType.includes('application/json')) {
+          const location = response.headers.get('Location');
+          if (location) {
+            return c.json({ redirect_url: location });
+          }
+        }
+        return response;
+      }
 
       // Use cancel_uri for user-initiated denial, fallback to redirect_uri
       const targetUri = cancelUri || redirectUri;

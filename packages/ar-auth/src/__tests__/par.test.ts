@@ -162,6 +162,7 @@ describe('PAR Handler', () => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
       redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'private_key_jwt',
     });
     mockStoreRequestRpc.mockResolvedValue(undefined);
     mockGetPARRequestStoreForNewRequest.mockResolvedValue({
@@ -405,6 +406,97 @@ describe('PAR Handler', () => {
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
 
+  it('derives an omitted outer client_id from a valid private_key_jwt assertion', async () => {
+    mockParseToken.mockReturnValue({ iss: 'client-123', sub: 'client-123' });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_assertion: 'client-assertion',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(
+            JSON.stringify({
+              fapi: {
+                enabled: true,
+              },
+            })
+          ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockGetClientCached).toHaveBeenCalledWith(c, c.env, 'client-123');
+    expect(mockValidateClientAssertion).toHaveBeenCalled();
+    expect(mockStoreRequestRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ client_id: 'client-123' }),
+      })
+    );
+  });
+
+  it('rejects an omitted outer client_id when assertion iss and sub differ', async () => {
+    mockParseToken.mockReturnValue({ iss: 'client-123', sub: 'other-client' });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_assertion: 'client-assertion',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_client',
+      error_description: 'Client authentication failed',
+    });
+    expect(mockGetClientCached).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized assertion before deriving an omitted outer client_id', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_assertion: 'a'.repeat(16 * 1024 + 1),
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'client_id is required',
+    });
+    expect(mockParseToken).not.toHaveBeenCalled();
+    expect(mockGetClientCached).not.toHaveBeenCalled();
+  });
+
   it('rejects FAPI requests that do not use S256 PKCE', async () => {
     const c = createMockContext({
       headers: {
@@ -527,6 +619,7 @@ describe('PAR Handler', () => {
     };
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       redirect_uris: ['https://client.example.com/callback'],
       jwks: {
         keys: [firstKey, matchingKey],
@@ -616,6 +709,7 @@ describe('PAR Handler', () => {
     };
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       redirect_uris: ['https://client.example.com/callback'],
       request_object_signing_alg: 'ES256',
       jwks: { keys: [signingKey] },
@@ -700,6 +794,7 @@ describe('PAR Handler', () => {
     };
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       redirect_uris: ['https://client.example.com/callback'],
       request_object_signing_alg: 'ES256',
       jwks: { keys: [signingKey] },
@@ -752,7 +847,7 @@ describe('PAR Handler', () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: 'request_uri_not_supported',
+      error: 'invalid_request_object',
       error_description: 'request_uri is not supported inside a PAR request object',
     });
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
@@ -770,6 +865,7 @@ describe('PAR Handler', () => {
     };
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       redirect_uris: ['https://client.example.com/callback'],
       request_object_signing_alg: 'ES256',
       jwks: { keys: [signingKey] },
@@ -827,6 +923,7 @@ describe('PAR Handler', () => {
     mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'missing-key' });
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       redirect_uris: ['https://client.example.com/callback'],
       jwks: {
         keys: [
@@ -870,6 +967,7 @@ describe('PAR Handler', () => {
     mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'confused-key' });
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
       redirect_uris: ['https://client.example.com/callback'],
       jwks: {
         keys: [
@@ -1040,6 +1138,38 @@ describe('PAR Handler', () => {
     await expect(unsupportedResponseTypeResponse.json()).resolves.toMatchObject({
       error: 'unsupported_response_type',
       error_description: expect.stringContaining('Unsupported response_type'),
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects hybrid response types at PAR when FAPI 2.0 is enabled', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        client_assertion: 'signed.client.assertion',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        response_type: 'code id_token',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(JSON.stringify({ fapi: { enabled: true } })),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'unsupported_response_type',
+      error_description: 'FAPI 2.0 supports only response_type=code',
     });
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });

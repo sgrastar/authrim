@@ -1590,5 +1590,45 @@ describe('Consent Statements Utility', () => {
       expect(queryCalls.some(([sql]) => sql.includes('FROM profile_attribute_values'))).toBe(true);
       expect(queryCalls.some(([sql]) => sql.includes('FROM contact_points'))).toBe(true);
     });
+
+    it('keeps sensitive claim reads on the dedicated PII adapter', async () => {
+      const userData = new Map([
+        ['users_core', [{ email_verified: 1 }]],
+        [
+          'users_pii',
+          [
+            {
+              email: 'separated@example.com',
+              locale: 'ja',
+              given_name: 'Separated',
+            },
+          ],
+        ],
+      ]);
+      const coreAdapter = createMockAdapter({ queryResults: userData });
+      const piiAdapter = createMockAdapter({ queryResults: userData });
+
+      const claims = await getUserClaimsForRules(
+        coreAdapter,
+        'tenant-claims',
+        'user-claims',
+        piiAdapter
+      );
+
+      expect(claims).toMatchObject({
+        email: 'separated@example.com',
+        given_name: 'Separated',
+      });
+      expect(
+        (coreAdapter.queryOne as ReturnType<typeof vi.fn>).mock.calls.some(([sql]) =>
+          String(sql).includes('FROM identity_sensitive_values')
+        )
+      ).toBe(false);
+      expect(
+        (piiAdapter.queryOne as ReturnType<typeof vi.fn>).mock.calls.some(([sql]) =>
+          String(sql).includes('FROM identity_sensitive_values')
+        )
+      ).toBe(true);
+    });
   });
 });

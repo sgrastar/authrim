@@ -1394,9 +1394,44 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!parsedData) {
+        // RFC 9126 errors may be returned through the browser only after independently
+        // re-validating the outer client and redirect URI. Never trust a redirect URI recovered
+        // from an invalid/expired request_uri, and never redirect to an unregistered URI.
+        if (client_id && redirect_uri) {
+          try {
+            const errorClient = await getClientCached(c, c.env, client_id);
+            const requestTenantId = getTenantIdFromContext(c);
+            const errorClientTenantId =
+              typeof errorClient?.tenant_id === 'string' && errorClient.tenant_id.length > 0
+                ? errorClient.tenant_id
+                : requestTenantId;
+            const registeredRedirectUris = errorClient?.redirect_uris;
+            if (
+              errorClient &&
+              errorClientTenantId === requestTenantId &&
+              Array.isArray(registeredRedirectUris) &&
+              validateRedirectUri(redirect_uri).valid &&
+              isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+            ) {
+              return redirectWithError(
+                c,
+                redirect_uri,
+                'invalid_request_uri',
+                'Invalid or expired request_uri',
+                state,
+                { responseType: 'code', clientId: client_id }
+              );
+            }
+          } catch (error) {
+            log.warn('Failed to validate redirect for invalid request_uri', {
+              action: 'invalid_request_uri_redirect_validation',
+              error: error instanceof Error ? error.message : 'unknown',
+            });
+          }
+        }
         return c.json(
           {
-            error: 'invalid_request',
+            error: 'invalid_request_uri',
             error_description: 'Invalid or expired request_uri',
           },
           400
@@ -3589,7 +3624,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const authCtx = createAuthContextFromHono(c, tenantId);
-      const userClaims = await getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userClaims = await getUserClaimsForRules(
+        authCtx.coreAdapter,
+        tenantId,
+        sub,
+        piiCtx.defaultPiiAdapter
+      );
       const requirements = await resolveConsentRequirements(
         authCtx.coreAdapter,
         tenantId,
@@ -4412,7 +4453,7 @@ interface ErrorRedirectOptions {
   isUserCancellation?: boolean;
 }
 
-async function redirectWithError(
+export async function redirectWithError(
   c: Context<{ Bindings: Env }>,
   redirectUri: string,
   error: string,

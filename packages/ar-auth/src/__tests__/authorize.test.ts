@@ -856,6 +856,42 @@ describe('Authorization Handler', () => {
       });
     });
 
+    it('redirects an invalid PAR request_uri error only to the registered client URI', async () => {
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_already_consumed';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        consumed: true,
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const registeredResponse = await app.request(
+        `/authorize?client_id=test-client&redirect_uri=${encodeURIComponent('https://example.com/callback')}&response_type=code&request_uri=${encodeURIComponent(requestUri)}`,
+        { method: 'GET' },
+        env
+      );
+
+      expect(registeredResponse.status).toBe(302);
+      const registeredRedirect = new URL(registeredResponse.headers.get('location')!);
+      expect(registeredRedirect.origin + registeredRedirect.pathname).toBe(
+        'https://example.com/callback'
+      );
+      expect(registeredRedirect.searchParams.get('error')).toBe('invalid_request_uri');
+
+      const unregisteredResponse = await app.request(
+        `/authorize?client_id=test-client&redirect_uri=${encodeURIComponent('https://attacker.example/callback')}&response_type=code&request_uri=${encodeURIComponent(requestUri)}`,
+        { method: 'GET' },
+        env
+      );
+
+      expect(unregisteredResponse.status).toBe(400);
+      expect(unregisteredResponse.headers.get('location')).toBeNull();
+      await expect(unregisteredResponse.json()).resolves.toMatchObject({
+        error: 'invalid_request_uri',
+      });
+    });
+
     it('does not let a front-channel continuation bypass FAPI PAR enforcement', async () => {
       await (env.SETTINGS as unknown as MockKVNamespace).put(
         'system_settings',
