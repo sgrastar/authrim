@@ -2250,8 +2250,8 @@ describe('directory password login handler', () => {
       type: 'login',
     });
     expect(body.redirect_url).toContain('https://auth.example.com/authorize?');
-    expect(body.redirect_url).toContain('client_id=client-a');
-    expect(body.redirect_url).toContain('_confirmation_challenge=');
+    const redirectUrl = new URL(body.redirect_url!);
+    expect([...redirectUrl.searchParams.keys()]).toEqual(['_confirmation_challenge']);
     expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
       id: 'login_challenge',
       tenantId: 'tenant-a',

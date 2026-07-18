@@ -28,6 +28,9 @@ import { CloudflareActorContext } from '../actor';
 import { createLogger, type Logger } from '../utils/logger';
 import { isValidTenantIdentifier } from '../utils/tenant-request-policy';
 
+export type AuthorizationCodeSubjectType = 'end_user' | 'admin_user';
+export type AuthorizationServerKind = 'default' | 'admin_agent';
+
 /**
  * Authorization code metadata
  */
@@ -51,6 +54,12 @@ export interface AuthorizationCode {
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   authorizationDetails?: string; // RFC 9396 authorization_details (JSON string)
+  authorizationServer: AuthorizationServerKind;
+  subjectType: AuthorizationCodeSubjectType;
+  resource?: string;
+  agentGrantId?: string;
+  agentGrantGeneration?: number;
+  agentConsentVersion?: number;
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -82,6 +91,12 @@ export interface StoreCodeRequest {
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   authorizationDetails?: string; // RFC 9396 authorization_details (JSON string)
+  authorizationServer?: AuthorizationServerKind;
+  subjectType?: AuthorizationCodeSubjectType;
+  resource?: string;
+  agentGrantId?: string;
+  agentGrantGeneration?: number;
+  agentConsentVersion?: number;
 }
 
 function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
@@ -101,6 +116,9 @@ export interface ConsumeCodeRequest {
   // Optional: Register issued token JTIs in the same atomic operation (DO hop optimization)
   accessTokenJti?: string;
   refreshTokenJti?: string;
+  expectedAuthorizationServer?: AuthorizationServerKind;
+  expectedSubjectType?: AuthorizationCodeSubjectType;
+  expectedResource?: string;
 }
 
 /**
@@ -121,6 +139,12 @@ export interface ConsumeCodeResponse {
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   authorizationDetails?: string; // RFC 9396: Rich Authorization Requests (JSON string)
+  authorizationServer: AuthorizationServerKind;
+  subjectType: AuthorizationCodeSubjectType;
+  resource?: string;
+  agentGrantId?: string;
+  agentGrantGeneration?: number;
+  agentConsentVersion?: number;
   // Present when replay attack is detected - contains JTIs to revoke
   replayAttack?: {
     accessTokenJti?: string;
@@ -532,6 +556,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       dpopJkt: request.dpopJkt,
       sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
       authorizationDetails: request.authorizationDetails, // RFC 9396 authorization_details
+      authorizationServer: request.authorizationServer ?? 'default',
+      subjectType: request.subjectType ?? 'end_user',
+      resource: request.resource,
+      agentGrantId: request.agentGrantId,
+      agentGrantGeneration: request.agentGrantGeneration,
+      agentConsentVersion: request.agentConsentVersion,
       used: false,
       expiresAt: now + this.CODE_TTL * 1000,
       createdAt: now,
@@ -586,11 +616,35 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       throw new Error('invalid_grant: Authorization code not found or expired');
     }
 
+    // Old persisted entries predate explicit journey tagging and are end-user codes.
+    stored.authorizationServer ??= 'default';
+    stored.subjectType ??= 'end_user';
+
     // Check expiration
     if (this.isExpired(stored)) {
       this.codes.delete(request.code);
       await this.actorCtx.storage.delete(this.buildCodeKey(request.code));
       throw new Error('invalid_grant: Authorization code expired');
+    }
+
+    // Validate the caller's security boundary before returning replay metadata.
+    if (stored.clientId !== request.clientId) {
+      throw new Error('invalid_grant: Client ID mismatch');
+    }
+    if (stored.tenantId !== request.tenantId) {
+      throw new Error('invalid_grant: Tenant mismatch');
+    }
+    if (
+      request.expectedAuthorizationServer &&
+      stored.authorizationServer !== request.expectedAuthorizationServer
+    ) {
+      throw new Error('invalid_grant: Authorization server mismatch');
+    }
+    if (request.expectedSubjectType && stored.subjectType !== request.expectedSubjectType) {
+      throw new Error('invalid_grant: Authorization code subject type mismatch');
+    }
+    if (request.expectedResource && stored.resource !== request.expectedResource) {
+      throw new Error('invalid_grant: Resource mismatch');
     }
 
     // CRITICAL: Check if already used (replay attack detection)
@@ -631,20 +685,17 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         dpopJkt: stored.dpopJkt,
         sid: stored.sid,
         authorizationDetails: stored.authorizationDetails,
+        authorizationServer: stored.authorizationServer,
+        subjectType: stored.subjectType,
+        resource: stored.resource,
+        agentGrantId: stored.agentGrantId,
+        agentGrantGeneration: stored.agentGrantGeneration,
+        agentConsentVersion: stored.agentConsentVersion,
         replayAttack: {
           accessTokenJti: stored.issuedAccessTokenJti,
           refreshTokenJti: stored.issuedRefreshTokenJti,
         },
       };
-    }
-
-    // Validate client ID
-    if (stored.clientId !== request.clientId) {
-      throw new Error('invalid_grant: Client ID mismatch');
-    }
-
-    if (stored.tenantId !== request.tenantId) {
-      throw new Error('invalid_grant: Tenant mismatch');
     }
 
     // Validate PKCE (if code_challenge was provided)
@@ -697,6 +748,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       dpopJkt: stored.dpopJkt,
       sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
       authorizationDetails: stored.authorizationDetails, // RFC 9396 authorization_details
+      authorizationServer: stored.authorizationServer,
+      subjectType: stored.subjectType,
+      resource: stored.resource,
+      agentGrantId: stored.agentGrantId,
+      agentGrantGeneration: stored.agentGrantGeneration,
+      agentConsentVersion: stored.agentConsentVersion,
     };
   }
 

@@ -354,6 +354,65 @@ describe('AuthorizationCodeStore', () => {
       // Security: Generic message to prevent client enumeration
       expect(body.error_description).toContain('Authorization code');
     });
+
+    it('binds Admin Agent codes to the dedicated authorization server, subject, and resource', async () => {
+      const expectedChallenge = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode('verifier')
+      );
+      const encodedChallenge = btoa(String.fromCharCode(...new Uint8Array(expectedChallenge)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+      await codeStore.storeCodeRpc({
+        code: 'admin_agent_code',
+        clientId: 'mcp_client',
+        tenantId: 'default',
+        redirectUri: 'https://client.example/callback',
+        userId: 'admin_123',
+        scope: 'agent:read',
+        codeChallenge: encodedChallenge,
+        codeChallengeMethod: 'S256',
+        authorizationServer: 'admin_agent',
+        subjectType: 'admin_user',
+        resource: 'https://default.example/mcp',
+        agentGrantId: 'grant_123',
+        agentGrantGeneration: 4,
+        agentConsentVersion: 2,
+      });
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'admin_agent_code',
+          clientId: 'mcp_client',
+          tenantId: 'default',
+          codeVerifier: 'verifier',
+          expectedAuthorizationServer: 'default',
+          expectedSubjectType: 'end_user',
+        })
+      ).rejects.toThrow('Authorization server mismatch');
+
+      // A boundary mismatch must not consume the code. The dedicated endpoint can still redeem it.
+      const consumed = await codeStore.consumeCodeRpc({
+        code: 'admin_agent_code',
+        clientId: 'mcp_client',
+        tenantId: 'default',
+        codeVerifier: 'verifier',
+        expectedAuthorizationServer: 'admin_agent',
+        expectedSubjectType: 'admin_user',
+        expectedResource: 'https://default.example/mcp',
+      });
+
+      expect(consumed).toMatchObject({
+        userId: 'admin_123',
+        authorizationServer: 'admin_agent',
+        subjectType: 'admin_user',
+        resource: 'https://default.example/mcp',
+        agentGrantId: 'grant_123',
+        agentGrantGeneration: 4,
+        agentConsentVersion: 2,
+      });
+    });
   });
 
   describe('PKCE Validation', () => {

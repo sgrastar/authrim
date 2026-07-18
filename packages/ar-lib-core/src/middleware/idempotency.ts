@@ -63,6 +63,10 @@ export interface IdempotencyConfig {
   redactFields?: string[];
   /** Whether Idempotency-Key is required instead of best-effort */
   required?: boolean;
+  /** Reject before mutation when idempotency storage cannot be read. */
+  failClosedOnStorageError?: boolean;
+  /** Atomically reserve a key before invoking the mutation handler. */
+  reserveBeforeExecution?: boolean;
 }
 
 /**
@@ -85,6 +89,18 @@ const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 
 function isUniqueConstraintError(error: unknown): boolean {
   return String(error).includes('UNIQUE constraint');
+}
+
+function returnStoredResponse(
+  c: Context<{ Bindings: Env }>,
+  entry: Pick<IdempotencyKeyEntry, 'response_body' | 'response_status'>
+): Response {
+  const status = entry.response_status as 200 | 201 | 202 | 400 | 404 | 409 | 425 | 500 | 503;
+  try {
+    return c.json(JSON.parse(entry.response_body), status);
+  } catch {
+    return c.text(entry.response_body, status);
+  }
 }
 
 /**
@@ -171,21 +187,6 @@ function extractResourceId(path: string): string | null {
 }
 
 /**
- * Normalize path to pattern for consistent matching
- * Replaces UUIDs and IDs with placeholders
- */
-function normalizePath(path: string): string {
-  // Replace UUIDs
-  let normalized = path.replace(
-    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
-    ':id'
-  );
-  // Replace numeric IDs
-  normalized = normalized.replace(/\/\d+\//g, '/:id/');
-  return normalized;
-}
-
-/**
  * Create idempotency middleware
  *
  * This middleware intercepts requests with Idempotency-Key header
@@ -201,6 +202,8 @@ export function idempotencyMiddleware(
   const redactFields = config?.redactFields ?? DEFAULT_REDACT_FIELDS;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    let handlerStarted = false;
+    let handlerThrew = false;
     // Check for Idempotency-Key header
     const idempotencyKey = c.req.header('Idempotency-Key');
     if (!idempotencyKey) {
@@ -245,7 +248,10 @@ export function idempotencyMiddleware(
     const method = c.req.method;
     const path = c.req.path;
     const resourceId = extractResourceId(path);
-    const normalizedPath = normalizePath(path);
+    // Scope idempotency to the exact target path. Normalizing UUID/numeric segments can alias
+    // unrelated resources on routes not covered by extractResourceId (for example step-up
+    // actions and credential offers), allowing one resource's response to replay for another.
+    const normalizedPath = path;
 
     let bodyText: string;
     try {
@@ -306,19 +312,55 @@ export function idempotencyMiddleware(
         // Same body, return cached response
         log.debug('Returning cached idempotent response', { keyId });
 
-        // Parse and return cached response
+        if (existingEntry.response_status === 425) c.header('Retry-After', '2');
+        return returnStoredResponse(c, existingEntry);
+      }
+
+      const reservationTimestamp = Math.floor(Date.now() / 1000);
+      const reservationExpiresAt = reservationTimestamp + ttlSeconds;
+      if (config?.reserveBeforeExecution) {
         try {
-          const cachedBody = JSON.parse(existingEntry.response_body);
-          return c.json(
-            cachedBody,
-            existingEntry.response_status as 200 | 201 | 400 | 404 | 409 | 500
+          await adapter.execute(
+            `INSERT INTO idempotency_keys
+             (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              keyId,
+              tenantId,
+              actorId,
+              method,
+              normalizedPath,
+              resourceId,
+              idempotencyKey,
+              bodyHash,
+              425,
+              JSON.stringify({
+                error: 'idempotency_in_progress',
+                error_description: 'A request with this Idempotency-Key is still in progress',
+              }),
+              reservationTimestamp,
+              reservationExpiresAt,
+            ]
           );
-        } catch {
-          // If parsing fails, return as-is
-          return c.text(
-            existingEntry.response_body,
-            existingEntry.response_status as 200 | 201 | 400 | 404 | 409 | 500
+        } catch (error) {
+          if (!isUniqueConstraintError(error)) throw error;
+          const winner = await adapter.queryOne<IdempotencyKeyEntry>(
+            'SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?',
+            [keyId, reservationTimestamp]
           );
+          if (!winner) throw error;
+          if (winner.body_hash !== bodyHash) {
+            return c.json(
+              {
+                error: 'idempotency_conflict',
+                error_description: 'Idempotency-Key already used with different request body',
+                error_details: createPhase1ErrorDetails('idempotency_conflict'),
+              },
+              409
+            );
+          }
+          if (winner.response_status === 425) c.header('Retry-After', '2');
+          return returnStoredResponse(c, winner);
         }
       }
 
@@ -336,7 +378,13 @@ export function idempotencyMiddleware(
       (c.req as any).raw = newRequest;
 
       // Execute the handler
-      await next();
+      handlerStarted = true;
+      try {
+        await next();
+      } catch (error) {
+        handlerThrew = true;
+        throw error;
+      }
 
       // After handler execution, capture and store the response
       const response = c.res;
@@ -366,13 +414,22 @@ export function idempotencyMiddleware(
       // inserted the key after the initial SELECT, so handle UNIQUE races
       // explicitly instead of relying on dialect-specific upsert syntax.
       const updateResult = await adapter.execute(
-        `UPDATE idempotency_keys
-         SET response_status = ?, response_body = ?, expires_at = ?
-         WHERE id = ?`,
-        [responseStatus, sanitizedBody, expiresAt, keyId]
+        config?.reserveBeforeExecution
+          ? `UPDATE idempotency_keys
+             SET response_status = ?, response_body = ?, expires_at = ?
+             WHERE id = ? AND body_hash = ? AND response_status = 425`
+          : `UPDATE idempotency_keys
+             SET response_status = ?, response_body = ?, expires_at = ?
+             WHERE id = ?`,
+        config?.reserveBeforeExecution
+          ? [responseStatus, sanitizedBody, expiresAt, keyId, bodyHash]
+          : [responseStatus, sanitizedBody, expiresAt, keyId]
       );
 
       if (updateResult.rowsAffected === 0) {
+        if (config?.reserveBeforeExecution) {
+          throw new Error('Idempotency reservation was lost before response storage');
+        }
         try {
           await adapter.execute(
             `INSERT INTO idempotency_keys
@@ -397,22 +454,34 @@ export function idempotencyMiddleware(
           if (!isUniqueConstraintError(error)) {
             throw error;
           }
-
-          await adapter.execute(
-            `UPDATE idempotency_keys
-             SET response_status = ?, response_body = ?, expires_at = ?
-             WHERE id = ?`,
-            [responseStatus, sanitizedBody, expiresAt, keyId]
+          const winner = await adapter.queryOne<IdempotencyKeyEntry>(
+            'SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?',
+            [keyId, nowTs]
           );
+          if (!winner || winner.body_hash !== bodyHash) throw error;
+          return returnStoredResponse(c, winner);
         }
       }
 
       log.debug('Stored idempotency key', { keyId, status: responseStatus, expiresAt });
     } catch (error) {
-      // Log error but don't fail the request - idempotency is best-effort
       log.error('Idempotency middleware error', { error, keyId });
-      // If we haven't called next yet, do it now
-      if (!c.res) {
+      if (handlerThrew) throw error;
+      if (config?.failClosedOnStorageError && !handlerStarted) {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Idempotency storage is temporarily unavailable',
+          },
+          503
+        );
+      }
+      // Best-effort mode preserves legacy behavior. If the handler already ran, keep its response
+      // because returning a retryable error could cause a duplicate mutation.
+      if (!handlerStarted) {
+        handlerStarted = true;
         await next();
       }
     }

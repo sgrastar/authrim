@@ -30,6 +30,7 @@ import {
   profileForTotpPreset,
   resolveAuthCorePersistenceAdapterFromEnv,
   SELF_SERVICE_DEFAULTS,
+  VALIDATION_LIMITS,
   validateAccountPagePath,
   validateLoginUICustomCss,
 } from '@authrim/ar-lib-core';
@@ -803,7 +804,11 @@ async function applyClientLoginUIOverride(
   clientId: string | null | undefined,
   base: LoginUIResolved
 ): Promise<LoginUIResolved> {
-  if (!clientId || !/^[A-Za-z0-9._:-]{1,128}$/u.test(clientId)) {
+  if (
+    !clientId ||
+    clientId.length > VALIDATION_LIMITS.CLIENT_ID_MAX_LENGTH ||
+    !/^[A-Za-z0-9._:-]+$/u.test(clientId)
+  ) {
     return base;
   }
   try {

@@ -217,6 +217,8 @@ export interface Env {
   // Object Artifact Encryption
   OBJECT_ENCRYPTION_ROOT_KEY?: string; // 32-byte hex string (64 characters) for object plane envelope encryption
   OBJECT_ENCRYPTION_KEY_VERSION?: string; // Key version for object plane encryption (default: 1)
+  AGENT_ELEVATION_ENCRYPTION_KEY?: string; // Dedicated 32-byte hex key for Agent elevation payloads
+  AGENT_ELEVATION_KEY_VERSION?: string; // Agent elevation envelope key version (default: v1)
   LOGGING_TENANT_KEY_SALT?: string; // Optional salt while logging tenant_key is derived before registry-backed keys
   PII_CACHE_MODE?: string; // merged, encrypted_short_ttl, or no_cross_request_pii
   PII_CACHE_TTL?: string; // Encrypted PII cache TTL in seconds (default: 300)

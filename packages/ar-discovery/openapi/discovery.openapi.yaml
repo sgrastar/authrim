@@ -53,6 +53,30 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/OidcProviderMetadata"
+  /.well-known/oauth-authorization-server/oauth/admin-agent:
+    get:
+      tags:
+        - Discovery
+      summary: Return dedicated Admin Agent authorization server metadata.
+      responses:
+        "200":
+          $ref: "#/components/responses/AdminAgentAuthorizationServerMetadata"
+        "404":
+          $ref: "#/components/responses/AgentAccessNotFound"
+        "503":
+          $ref: "#/components/responses/AgentAccessUnavailable"
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      tags:
+        - Discovery
+      summary: Return RFC 9728 metadata for the protected MCP resource.
+      responses:
+        "200":
+          $ref: "#/components/responses/AgentProtectedResourceMetadata"
+        "404":
+          $ref: "#/components/responses/AgentAccessNotFound"
+        "503":
+          $ref: "#/components/responses/AgentAccessUnavailable"
   /.well-known/webfinger:
     get:
       tags:
@@ -123,11 +147,36 @@ components:
             grant_types_supported:
               - authorization_code
               - refresh_token
+              - refresh_token
             subject_types_supported:
               - public
               - pairwise
             code_challenge_methods_supported:
               - S256
+    AgentProtectedResourceMetadata:
+      description: RFC 9728 protected resource metadata.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentProtectedResourceMetadata"
+    AdminAgentAuthorizationServerMetadata:
+      description: RFC 8414 metadata for the dedicated Admin Agent issuer.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminAgentAuthorizationServerMetadata"
+    AgentAccessNotFound:
+      description: Agent access is disabled for the tenant.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OAuthMetadataError"
+    AgentAccessUnavailable:
+      description: Agent access configuration could not be evaluated safely.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OAuthMetadataError"
     WebFinger:
       description: Successful JSON response.
       content:
@@ -227,6 +276,8 @@ components:
           format: uri
         require_pushed_authorization_requests:
           type: boolean
+        authorization_response_iss_parameter_supported:
+          type: boolean
         response_types_supported:
           type: array
           items:
@@ -243,10 +294,136 @@ components:
           type: array
           items:
             type: string
+        id_token_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - RS256
+              - ES256
+        userinfo_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - RS256
+              - ES256
         code_challenge_methods_supported:
           type: array
           items:
             type: string
+    AgentProtectedResourceMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - resource
+        - authorization_servers
+        - scopes_supported
+        - bearer_methods_supported
+        - dpop_signing_alg_values_supported
+      properties:
+        resource:
+          type: string
+          format: uri
+        authorization_servers:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uri
+        scopes_supported:
+          $ref: "#/components/schemas/AgentScopes"
+        bearer_methods_supported:
+          type: array
+          items:
+            type: string
+            enum:
+              - header
+        dpop_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        resource_documentation:
+          type: string
+          format: uri
+    AdminAgentAuthorizationServerMetadata:
+      type: object
+      additionalProperties: true
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+        - pushed_authorization_request_endpoint
+        - jwks_uri
+        - response_types_supported
+        - grant_types_supported
+        - token_endpoint_auth_methods_supported
+        - code_challenge_methods_supported
+        - scopes_supported
+        - require_pushed_authorization_requests
+      properties:
+        issuer:
+          type: string
+          format: uri
+        authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
+        pushed_authorization_request_endpoint:
+          type: string
+          format: uri
+        jwks_uri:
+          type: string
+          format: uri
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+        scopes_supported:
+          $ref: "#/components/schemas/AgentScopes"
+        require_pushed_authorization_requests:
+          type: boolean
+        dpop_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        client_id_metadata_document_supported:
+          type: boolean
+    AgentScopes:
+      type: array
+      items:
+        type: string
+        enum:
+          - agent:read
+          - agent:write
+          - agent:execute
+          - agent:admin
+    OAuthMetadataError:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+        message:
+          type: string
     WebFingerResponse:
       type: object
       required:

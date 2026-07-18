@@ -97,6 +97,7 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
     vcEvidenceHmacSecret: 'e'.repeat(43),
     vcProfileContractHmacSecret: 'p'.repeat(43),
     pluginEncryptionKey: 'c'.repeat(64),
+    agentElevationEncryptionKey: 'd'.repeat(64),
     setupToken: 'fixture_setup_token_1234567890',
   };
 }

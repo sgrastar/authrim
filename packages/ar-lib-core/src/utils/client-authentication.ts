@@ -47,12 +47,24 @@ export interface ClientAssertionValidationResult {
  */
 export interface ClientAssertionValidationOptions {
   /**
+   * Accepted audience policy. FAPI 2.0 Security Profile Final requires exactly one string
+   * containing the authorization server issuer identifier.
+   * Default: endpoint-or-issuer (backward-compatible RFC 7523/OIDC interoperability mode)
+   */
+  audiencePolicy?: 'endpoint-or-issuer' | 'issuer-only';
+  /**
    * Whether to accept Issuer ID as a valid audience value (in addition to token endpoint URL).
    * RFC 7523 Section 3 recommends the token endpoint URL, but OIDC Core and industry practice
    * also accept the Issuer ID for interoperability (Google, Microsoft, Okta, Auth0, Keycloak).
    * Default: true (industry standard)
    */
   acceptIssuerIdAsAudience?: boolean;
+  /** Explicit authorization server issuer, for endpoints other than `/token` (for example PAR). */
+  issuer?: string;
+  /** Additional endpoint URLs accepted as audience values. */
+  additionalAudiences?: string[];
+  /** Allowed positive clock skew for nbf, in seconds. Default: 0. */
+  clockSkewSeconds?: number;
 }
 
 export interface OAuthClientAuthenticationParams {
@@ -109,8 +121,22 @@ export function parseOAuthClientAuthenticationParams(
 
   const basicAuth = parseBasicAuth(params.authorizationHeader);
   if (basicAuth.success) {
-    clientId = clientId || basicAuth.credentials.username;
-    clientSecret = clientSecret || basicAuth.credentials.password;
+    if (clientAssertion || clientSecret) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Multiple client authentication methods are not allowed',
+      };
+    }
+    if (clientId && !timingSafeEqual(clientId, basicAuth.credentials.username)) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Client authentication failed',
+      };
+    }
+    clientId = basicAuth.credentials.username;
+    clientSecret = basicAuth.credentials.password;
   } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
     return {
       ok: false,
@@ -205,7 +231,13 @@ export async function validateClientAssertion(
   options: ClientAssertionValidationOptions = {}
 ): Promise<ClientAssertionValidationResult> {
   // Default: Accept Issuer ID as audience (industry standard for interoperability)
-  const { acceptIssuerIdAsAudience = true } = options;
+  const {
+    audiencePolicy = 'endpoint-or-issuer',
+    acceptIssuerIdAsAudience = true,
+    issuer,
+    additionalAudiences = [],
+    clockSkewSeconds = 0,
+  } = options;
 
   try {
     const sizeError = validateAssertionSize(assertion);
@@ -310,20 +342,39 @@ export async function validateClientAssertion(
     // RFC 7523 Section 3 recommends token endpoint URL, but OIDC Core and industry practice
     // also accept the Issuer ID (token endpoint without /token suffix)
     // See: https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication
-    const issuerUrl = tokenEndpoint.replace(/\/token$/, '');
+    const issuerUrl = issuer || tokenEndpoint.replace(/\/token$/, '');
     const normalizedIssuer = normalizeUrl(issuerUrl);
+    const normalizedAdditionalAudiences = additionalAudiences.map(normalizeUrl);
+
+    if (audiencePolicy === 'issuer-only' && Array.isArray(claims.aud)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Audience must be the authorization server issuer identifier',
+      };
+    }
 
     const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
 
     // SECURITY: Use timing-safe comparison to prevent timing attacks on audience values
     const audienceMatches = audiences.some((aud) => {
       const normalizedAud = normalizeUrl(aud);
+      if (audiencePolicy === 'issuer-only') {
+        return timingSafeEqual(normalizedAud, normalizedIssuer);
+      }
       // Check if audience matches token endpoint URL (RFC 7523 recommended)
       if (timingSafeEqual(normalizedAud, normalizedEndpoint)) {
         return true;
       }
       // Also accept Issuer ID if option is enabled (industry standard for interoperability)
       if (acceptIssuerIdAsAudience && timingSafeEqual(normalizedAud, normalizedIssuer)) {
+        return true;
+      }
+      if (
+        normalizedAdditionalAudiences.some((acceptedAudience) =>
+          timingSafeEqual(normalizedAud, acceptedAudience)
+        )
+      ) {
         return true;
       }
       return false;
@@ -349,7 +400,7 @@ export async function validateClientAssertion(
     }
 
     // Step 6: Verify not before time (if present)
-    if (claims.nbf && claims.nbf > now) {
+    if (claims.nbf && claims.nbf > now + Math.max(0, clockSkewSeconds)) {
       return {
         valid: false,
         error: 'invalid_client',
@@ -459,14 +510,17 @@ export async function validateClientAssertion(
     // Build acceptable audiences array based on options
     // - Token endpoint URL (RFC 7523 recommended)
     // - Issuer ID (if acceptIssuerIdAsAudience is enabled - industry standard)
-    const acceptableAudiences = acceptIssuerIdAsAudience
-      ? [normalizedEndpoint, normalizedIssuer]
-      : [normalizedEndpoint];
+    const acceptableAudiences = [
+      normalizedEndpoint,
+      ...(acceptIssuerIdAsAudience ? [normalizedIssuer] : []),
+      ...normalizedAdditionalAudiences,
+    ];
 
     await jwtVerify(assertion, cryptoKey, {
       issuer: client.client_id,
       audience: acceptableAudiences,
       algorithms: [...ALLOWED_ASYMMETRIC_ALGS],
+      clockTolerance: Math.max(0, clockSkewSeconds),
     });
 
     // All validations passed

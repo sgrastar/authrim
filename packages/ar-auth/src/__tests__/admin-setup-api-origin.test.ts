@@ -619,5 +619,22 @@ describe('admin setup API rejection matrix', () => {
     expect(config.delete).toHaveBeenCalledWith('admin_auth:challenge:c');
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('UPDATE admin_passkeys'));
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO admin_sessions'));
+
+    const sessionStatementIndex = db.prepare.mock.calls.findIndex((call) =>
+      String((call as unknown[])[0]).includes('INSERT INTO admin_sessions')
+    );
+    const sessionStatement = db.prepare.mock.results[sessionStatementIndex]?.value;
+    expect(sessionStatement.bind).toHaveBeenCalledWith(
+      expect.any(String),
+      'default',
+      'admin-1',
+      null,
+      null,
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      1,
+      expect.any(Number)
+    );
   });
 });

@@ -62,6 +62,9 @@ export interface MockDurableObjectStub {
   id: DurableObjectId;
   // RPC methods for KeyManager
   getActiveKeyWithPrivateRpc?: Mock<() => Promise<{ kid: string; privatePEM: string } | null>>;
+  getActiveOIDCSigningKeyWithPrivateRpc?: Mock<
+    (algorithm: 'RS256' | 'ES256') => Promise<{ kid: string; privatePEM: string }>
+  >;
   rotateKeysWithPrivateRpc?: Mock<() => Promise<{ kid: string; privatePEM: string }>>;
   getAllPublicKeysRpc?: Mock<() => Promise<object[]>>;
   // RPC methods for AuthCodeStore
@@ -227,6 +230,9 @@ export function createMockDurableObjectStub(options?: {
     id: createMockDurableObjectId(),
     getActiveKeyWithPrivateRpc:
       options?.rpcMethods?.getActiveKeyWithPrivateRpc ?? vi.fn().mockResolvedValue(null),
+    getActiveOIDCSigningKeyWithPrivateRpc:
+      options?.rpcMethods?.getActiveOIDCSigningKeyWithPrivateRpc ??
+      vi.fn().mockRejectedValue(new Error('OIDC signing key not configured')),
     rotateKeysWithPrivateRpc:
       options?.rpcMethods?.rotateKeysWithPrivateRpc ??
       vi.fn().mockResolvedValue({ kid: 'test-kid', privatePEM: 'test-pem' }),

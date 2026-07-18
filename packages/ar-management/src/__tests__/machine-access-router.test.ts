@@ -85,9 +85,9 @@ function createApp() {
 describe('machineAccessRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRepo.getPrincipalPermissions.mockResolvedValue(['admin:ai_grants:*']);
+    mockRepo.getPrincipalPermissions.mockResolvedValue(['admin:agent_grants:*']);
     mockRepo.getPrincipalTenantScopes.mockResolvedValue([{ scopeMode: 'all', tenantId: null }]);
-    mockRepo.getCredentialPermissions.mockResolvedValue(['admin:ai_grants:*']);
+    mockRepo.getCredentialPermissions.mockResolvedValue(['admin:agent_grants:*']);
     mockRepo.getCredentialTenantScopes.mockResolvedValue([{ scopeMode: 'all', tenantId: null }]);
     mockRepo.listCredentials.mockResolvedValue([]);
   });
@@ -117,14 +117,14 @@ describe('machineAccessRouter', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Admin-Permissions':
-            'admin:machine_access:read,admin:machine_access:write,admin:ai_grants:*',
+            'admin:machine_access:read,admin:machine_access:write,admin:agent_grants:*',
           'X-Admin-Tenant-Scope': '*',
         },
         body: JSON.stringify({
           client_id: 'mcp-admin',
           display_name: 'MCP Admin',
           principal_type: 'mcp_server',
-          permissions: ['admin:ai_grants:*'],
+          permissions: ['admin:agent_grants:*'],
           tenant_scopes: [{ scope_mode: 'all' }],
         }),
       },
@@ -140,7 +140,7 @@ describe('machineAccessRouter', () => {
     );
     expect(mockRepo.setPrincipalPermissions).toHaveBeenCalledWith(
       'amp_mcp',
-      ['admin:ai_grants:*'],
+      ['admin:agent_grants:*'],
       expect.objectContaining({ actorId: 'admin-1' })
     );
     expect(mockRepo.setPrincipalTenantScopes).toHaveBeenCalledWith(
@@ -262,7 +262,7 @@ describe('machineAccessRouter', () => {
           client_id: 'mcp-admin',
           display_name: 'MCP Admin',
           principal_type: 'mcp_server',
-          permissions: ['admin:ai_grants:*'],
+          permissions: ['admin:agent_grants:*'],
           tenant_scopes: [{ scope_mode: 'all' }],
         }),
       },
@@ -386,7 +386,7 @@ describe('machineAccessRouter', () => {
     );
     expect(mockRepo.setCredentialPermissions).toHaveBeenCalledWith(
       'amk_new',
-      ['admin:ai_grants:*'],
+      ['admin:agent_grants:*'],
       expect.objectContaining({ actorId: 'admin-1' })
     );
     expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(

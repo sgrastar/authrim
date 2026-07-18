@@ -63,6 +63,16 @@ export interface TokenValidationRequest {
   body?: URLSearchParams;
   /** Tenant ID for multi-tenant key isolation */
   tenantId: string;
+  /**
+   * Expected access-token audience for this protected resource.
+   * Defaults to the issuer URL for backwards compatibility with issuer-scoped endpoints.
+   */
+  audience?: string | string[];
+}
+
+export interface TokenIntrospectionContextOptions {
+  /** Expected access-token audience for this protected resource. */
+  audience?: string | string[];
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -456,7 +466,7 @@ export async function introspectToken(
   let tokenClaims: JWTPayload;
   try {
     tokenClaims = await verifyToken(accessToken, publicKey, issuerUrl, {
-      audience: issuerUrl, // For MVP, access token audience is the issuer
+      audience: request.audience ?? issuerUrl,
     });
   } catch (error) {
     // Log full error for debugging but don't expose to client
@@ -601,7 +611,8 @@ export async function introspectToken(
  * ```
  */
 export async function introspectTokenFromContext(
-  c: Context<{ Bindings: Env }>
+  c: Context<{ Bindings: Env }>,
+  options: TokenIntrospectionContextOptions = {}
 ): Promise<TokenIntrospectionResult> {
   // Parse request body if it's a POST request with form-encoded content
   let body: URLSearchParams | undefined;
@@ -632,5 +643,6 @@ export async function introspectTokenFromContext(
     env: c.env,
     body,
     tenantId: getTenantIdFromContext(c),
+    audience: options.audience,
   });
 }

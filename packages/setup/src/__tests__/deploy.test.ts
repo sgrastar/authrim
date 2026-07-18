@@ -988,6 +988,21 @@ describe('deployUiWorkerBindingTargets', () => {
 });
 
 describe('deployAll', () => {
+  it('keeps every core Worker in the deployment plan', async () => {
+    const rootDir = createTempRoot();
+    for (const component of CORE_WORKER_COMPONENTS) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+
+    const summary = await deployAll({ env: 'test', rootDir, dryRun: true });
+
+    expect(summary.failedCount).toBe(0);
+    expect(summary.results.map((result) => result.component).sort()).toEqual(
+      [...CORE_WORKER_COMPONENTS].sort()
+    );
+    expect(summary.results.map((result) => result.component)).toContain('ar-agent-access');
+  });
+
   it('repairs a missing transitive dependency even when the requested Worker already exists', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-bridge', '1.0.0');

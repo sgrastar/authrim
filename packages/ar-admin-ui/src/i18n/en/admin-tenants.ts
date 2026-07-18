@@ -226,7 +226,67 @@ const adminTenants = {
 	admin_tenants_copied: 'Copied!',
 	admin_tenants_copy: 'Copy',
 	admin_tenants_expires_at: 'Expires: {date:string}',
-	admin_tenants_done: 'Done'
+	admin_tenants_done: 'Done',
+	admin_tenants_clone_action: 'Copy Tenant',
+	admin_tenants_clone_head_title: 'Copy Tenant - Admin Dashboard - Authrim',
+	admin_tenants_clone_title: 'Create from Existing Tenant',
+	admin_tenants_clone_description:
+		'Create an isolated tenant and copy only the configuration you select.',
+	admin_tenants_clone_source_title: 'Source tenant',
+	admin_tenants_clone_source_description:
+		'Choose the active tenant whose configuration will be used.',
+	admin_tenants_clone_source: 'Source Tenant',
+	admin_tenants_clone_source_placeholder: 'Select a tenant',
+	admin_tenants_clone_source_required: 'Select a source tenant.',
+	admin_tenants_clone_destination_title: 'New tenant',
+	admin_tenants_clone_destination_description: 'Identity and display details for the new tenant.',
+	admin_tenants_clone_options_title: 'Configuration to copy',
+	admin_tenants_clone_options_description:
+		'Sensitive values are excluded unless their separate checkbox is selected.',
+	admin_tenants_clone_settings: 'Tenant settings and policy',
+	admin_tenants_clone_settings_hint:
+		'Copies recognized tenant settings. Destination identity, redirect trust, signing-key selections, and references to resources not copied are reset; unclassified settings are skipped.',
+	admin_tenants_clone_secret_settings: 'Secret settings and connector credentials',
+	admin_tenants_clone_secret_settings_hint:
+		'Copies confidential settings for credentials, external identity providers, federation, plugins, backup, and connector relays. Without this option, copied directory connectors are disabled.',
+	admin_tenants_clone_roles: 'Application roles and automatic assignment rules',
+	admin_tenants_clone_roles_hint:
+		'Copies custom role definitions and remaps parent and rule references. Users are not copied.',
+	admin_tenants_clone_admin_access: 'Administrator access assignments',
+	admin_tenants_clone_admin_access_hint:
+		'Copies custom Admin roles and active tenant-scoped assignments for existing Admin users. Organization and global scopes are excluded.',
+	admin_tenants_clone_clients: 'OAuth and OIDC clients',
+	admin_tenants_clone_clients_hint:
+		'Copies client IDs, redirect URIs, grants, public JWKS, algorithms, Web Origins, client settings, contracts, and trust policies. Flow assignments and consent overrides are excluded.',
+	admin_tenants_clone_client_credentials: 'Client credentials and secret hashes',
+	admin_tenants_clone_client_credentials_hint:
+		'Keeps existing client secrets valid in the new tenant. Client private keys are never stored or copied.',
+	admin_tenants_clone_webhooks: 'Webhooks',
+	admin_tenants_clone_webhooks_hint:
+		'Copies endpoints and event configuration. Without secrets, copied webhooks start disabled.',
+	admin_tenants_clone_webhook_secrets: 'Webhook secrets and headers',
+	admin_tenants_clone_webhook_secrets_hint:
+		'Copies encrypted signing secrets and potentially sensitive request headers.',
+	admin_tenants_clone_signing_keys: 'Tenant signing keys are always new',
+	admin_tenants_clone_signing_keys_hint:
+		'Algorithms and rotation policy can be copied with tenant settings, but private key material is generated separately for tenant isolation.',
+	admin_tenants_clone_button: 'Create Copy',
+	admin_tenants_cloning: 'Creating copy...',
+	admin_tenants_clone_failed: 'Failed to copy tenant',
+	admin_tenants_clone_success_title: 'Tenant copy created',
+	admin_tenants_clone_success_description:
+		'{name:string} is ready. Review copied items and warnings below.',
+	admin_tenants_clone_result_settings: 'Tenant settings',
+	admin_tenants_clone_result_clients: 'Clients',
+	admin_tenants_clone_result_client_settings: 'Client settings',
+	admin_tenants_clone_result_client_contracts: 'Client contracts',
+	admin_tenants_clone_result_web_origins: 'Web Origins',
+	admin_tenants_clone_result_roles: 'Application roles',
+	admin_tenants_clone_result_admin_assignments: 'Admin assignments',
+	admin_tenants_clone_result_webhooks: 'Webhooks',
+	admin_tenants_clone_warnings_title: 'Review notes',
+	admin_tenants_clone_create_another: 'Create another copy',
+	admin_tenants_clone_open_tenant: 'Open tenant'
 } as const;
 
 export default adminTenants;

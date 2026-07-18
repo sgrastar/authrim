@@ -525,4 +525,48 @@ describe('admin-shared audit detail externalization', () => {
       admin_machine_sender_constrained: false,
     });
   });
+
+  it('records Agent actor separately from the delegating admin user', async () => {
+    const { c } = createMockContext({
+      SENSITIVE_DETAILS: undefined,
+      OBJECT_ENCRYPTION_ROOT_KEY: undefined,
+    });
+    (c as any).set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'bearer',
+      actorType: 'agent',
+      actorId: 'client:client-1',
+      clientId: 'client-1',
+      agentMode: 'mode_a',
+      agentAssurance: 'public_client_transaction',
+      agentGrantId: 'grant-1',
+      agentGrantGeneration: 2,
+      agentConsentVersion: 3,
+      sourceTokenJti: 'source-jti',
+      correlationId: 'correlation-1',
+    });
+
+    await writeAdminAuditLog(c, {
+      action: 'agent.tool.executed',
+      resourceType: 'admin_user',
+      resourceId: 'user-1',
+      result: 'success',
+    });
+
+    const logRow = dbState.adminAuditLogs[0];
+    expect(logRow.admin_user_id).toBe('admin-1');
+    expect(JSON.parse(logRow.metadata_json as string)).toMatchObject({
+      admin_actor_type: 'agent',
+      admin_actor_id: 'client:client-1',
+      admin_delegator_id: 'admin-1',
+      admin_agent_client_id: 'client-1',
+      admin_agent_mode: 'mode_a',
+      admin_agent_assurance: 'public_client_transaction',
+      admin_agent_grant_id: 'grant-1',
+      admin_agent_grant_generation: 2,
+      admin_agent_consent_version: 3,
+      admin_agent_source_token_jti: 'source-jti',
+      admin_agent_correlation_id: 'correlation-1',
+    });
+  });
 });

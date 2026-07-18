@@ -16,6 +16,6 @@ export class KeyManagerPublicEntrypoint extends WorkerEntrypoint<Env> {
     }
 
     const keyManager = this.env.KEY_MANAGER.getByName(`${tenantId}-v3`);
-    return keyManager.getAllPublicKeysRpc();
+    return keyManager.getAllOIDCPublicKeysRpc();
   }
 }

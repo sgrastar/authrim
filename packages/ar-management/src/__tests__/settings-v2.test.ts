@@ -110,6 +110,10 @@ function createTestApp(
       authMethod: 'bearer' | 'session';
       roles: string[];
       org_id?: string;
+      actorType?: 'human' | 'agent';
+      tenantId?: string;
+      tenantScope?: string[];
+      permissions?: string[];
     };
   } = {}
 ) {
@@ -129,6 +133,10 @@ function createTestApp(
         authMethod: 'bearer' | 'session';
         roles: string[];
         org_id?: string;
+        actorType?: 'human' | 'agent';
+        tenantId?: string;
+        tenantScope?: string[];
+        permissions?: string[];
       };
       tenantId?: string;
     };
@@ -1660,6 +1668,81 @@ describe('Settings API v2', () => {
       expect(res.status).toBe(403);
       const body = (await res.json()) as ApiResponse;
       expect(body.error).toBe('forbidden');
+    });
+
+    it('allows an Agent downscope context only for its bound tenant and permission', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'delegator-1',
+          authMethod: 'bearer',
+          actorType: 'agent',
+          roles: [],
+          tenantId: 'tenant_123',
+          tenantScope: ['tenant_123'],
+          permissions: ['admin:settings:read'],
+        },
+      });
+
+      const allowed = await app.request(
+        '/api/admin/tenants/tenant_123/settings/security',
+        { method: 'GET' },
+        mockEnv
+      );
+      expect(allowed.status).toBe(200);
+
+      const crossTenant = await app.request(
+        '/api/admin/tenants/tenant_other/settings/security',
+        { method: 'GET' },
+        mockEnv
+      );
+      expect(crossTenant.status).toBe(403);
+
+      const writeWithoutPermission = await app.request(
+        '/api/admin/tenants/tenant_123/settings/security',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ifMatch: 'v1', set: { 'security.fapi_enabled': true } }),
+        },
+        mockEnv
+      );
+      expect(writeWithoutPermission.status).toBe(403);
+    });
+
+    it('requires the category-specific Agent permission for tenant settings writes', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'delegator-1',
+          authMethod: 'bearer',
+          actorType: 'agent',
+          roles: [],
+          tenantId: 'tenant_123',
+          tenantScope: ['tenant_123'],
+          permissions: ['admin:settings:security:update'],
+        },
+      });
+
+      const security = await app.request(
+        '/api/admin/tenants/tenant_123/settings/security',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        mockEnv
+      );
+      expect(security.status).toBe(401);
+
+      const assurance = await app.request(
+        '/api/admin/tenants/tenant_123/settings/assurance',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        mockEnv
+      );
+      expect(assurance.status).toBe(403);
     });
   });
 });

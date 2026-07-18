@@ -115,6 +115,10 @@ import {
 } from './human-verification';
 import { resolveSessionTtl } from './session-ttl';
 import { verifyEmailVerificationProtocol } from './email-verification-protocol';
+import {
+  buildAuthorizeContinuationUrl,
+  createAuthorizationRequestContinuation,
+} from './authorization-continuation';
 
 // ===== Constants =====
 
@@ -478,47 +482,6 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value ? value : undefined;
 }
 
-function buildAuthorizeContinuationUrl(
-  metadata: Record<string, unknown>,
-  confirmationChallengeId: string,
-  fallbackIssuer: string
-): string {
-  const issuer = metadataString(metadata, 'issuer') || fallbackIssuer;
-  const authorizeUrl = new URL('/authorize', issuer);
-  const params = new URLSearchParams();
-  for (const key of [
-    'response_type',
-    'client_id',
-    'redirect_uri',
-    'scope',
-    'state',
-    'nonce',
-    'code_challenge',
-    'code_challenge_method',
-    'claims',
-    'response_mode',
-    'max_age',
-    'prompt',
-    'acr_values',
-    'id_token_hint',
-    'display',
-    'ui_locales',
-    'login_hint',
-    'error_uri',
-    'cancel_uri',
-  ]) {
-    const value = metadataString(metadata, key);
-    if (value) {
-      params.set(key, value);
-    }
-  }
-
-  params.set('_confirmation_challenge', confirmationChallengeId);
-
-  authorizeUrl.search = params.toString();
-  return authorizeUrl.toString();
-}
-
 export async function consumeAuthorizationChallengeContinuation(
   env: Env,
   tenantId: string,
@@ -597,6 +560,7 @@ export async function consumeAuthorizationChallengeContinuation(
       purpose: 'authorize_confirmation',
       authTime,
       sessionUserId: expectedUserId || authenticatedUserId,
+      authorization_request: createAuthorizationRequestContinuation(metadata),
     },
   });
 

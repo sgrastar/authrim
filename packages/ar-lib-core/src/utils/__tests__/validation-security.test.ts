@@ -44,13 +44,13 @@ describe('Input Validation Security Tests', () => {
     });
 
     describe('validateState boundaries', () => {
-      it('should accept state at exactly max length (512)', () => {
-        const maxState = 'x'.repeat(512);
+      it('should accept state at exactly max length (2048)', () => {
+        const maxState = 'x'.repeat(2048);
         expect(validateState(maxState).valid).toBe(true);
       });
 
-      it('should reject state at max+1 length (513)', () => {
-        const overMaxState = 'x'.repeat(513);
+      it('should reject state at max+1 length (2049)', () => {
+        const overMaxState = 'x'.repeat(2049);
         expect(validateState(overMaxState).valid).toBe(false);
       });
     });
@@ -534,7 +534,7 @@ describe('Input Validation Security Tests', () => {
         const start = performance.now();
 
         validateClientId('a'.repeat(256));
-        validateState('s'.repeat(512));
+        validateState('s'.repeat(2048));
         validateNonce('n'.repeat(512));
         validateAuthCode('c'.repeat(512));
 

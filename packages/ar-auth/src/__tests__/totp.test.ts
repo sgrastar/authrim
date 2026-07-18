@@ -466,6 +466,80 @@ describe('TOTP login handlers', () => {
     );
   });
 
+  it('starts reauthentication from the bound OAuth challenge without exposing an identifier', async () => {
+    mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
+      tenantId: 'default',
+      type: 'reauth',
+      userId: 'user-001',
+      consumed: false,
+    });
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'person@example.com',
+      active: 1,
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValueOnce([{ id: 'totp-001' }]);
+
+    const response = await post(
+      '/api/auth/totp/login/start',
+      { authorization_challenge_id: 'oauth-reauth-001' },
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.reauth_enabled': true,
+        },
+      }),
+      true
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'totp_login',
+        userId: 'user-001',
+        metadata: expect.objectContaining({
+          authorization_challenge_id: 'oauth-reauth-001',
+          usage: 'reauth',
+        }),
+      })
+    );
+  });
+
+  it('rejects a TOTP challenge presented with a different OAuth reauth challenge', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'identifier-hash',
+      metadata: {
+        authorization_challenge_id: 'oauth-reauth-001',
+        usage: 'reauth',
+      },
+    });
+
+    const response = await post(
+      '/api/auth/totp/login/verify',
+      {
+        challenge_id: 'totp-challenge-001',
+        code: '123456',
+        authorization_challenge_id: 'oauth-reauth-002',
+      },
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.reauth_enabled': true,
+        },
+      }),
+      true
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mockRuntimeUserStore.findById).not.toHaveBeenCalled();
+    expect(mockPublishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        data: expect.objectContaining({ errorCode: 'authorization_challenge_mismatch' }),
+      })
+    );
+  });
+
   it('verifies a TOTP code and creates an otp/totp session', async () => {
     const app = createApp();
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';

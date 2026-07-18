@@ -31,13 +31,15 @@ export const adminRebacRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
-// Apply admin authentication with ReBAC permissions
-adminRebacRouter.use(
-  '*',
-  adminAuthMiddleware({
-    requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
-  })
-);
+const adminRebacAuth = adminAuthMiddleware({
+  requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
+});
+adminRebacRouter.use('/admin-rebac-definitions', adminRebacAuth);
+adminRebacRouter.use('/admin-rebac-definitions/*', adminRebacAuth);
+adminRebacRouter.use('/admin-relationships', adminRebacAuth);
+adminRebacRouter.use('/admin-relationships/*', adminRebacAuth);
+adminRebacRouter.use('/admins/:userId/relationships', adminRebacAuth);
+adminRebacRouter.use('/admins/:userId/relationships/*', adminRebacAuth);
 
 /**
  * Helper to get DB_ADMIN adapter

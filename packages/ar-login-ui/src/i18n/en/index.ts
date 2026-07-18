@@ -309,6 +309,7 @@ const en = {
 	reauth_subtitle: 'For security, please re-authenticate to continue',
 	reauth_verifyWithPasskey: 'Verify with Passkey',
 	reauth_verifyWithEmailCode: 'Verify with Email Code',
+	reauth_verifyWithTotp: 'Verify with Authenticator App',
 
 	callback_title: 'Signing In',
 	callback_processing: 'Processing authentication...',

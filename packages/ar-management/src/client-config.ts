@@ -36,6 +36,7 @@ import {
   validateWebhookUrl,
   GRANT_TYPES,
 } from '@authrim/ar-lib-core';
+import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
 const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
@@ -155,6 +156,26 @@ function isCharArrayLike(value: unknown): boolean {
 function validateUpdateRequest(
   body: Partial<ClientMetadata>
 ): { error: string; error_description: string } | null {
+  if (
+    body.id_token_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(body.id_token_signed_response_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+    };
+  }
+  if (
+    body.userinfo_signed_response_alg !== undefined &&
+    body.userinfo_signed_response_alg !== 'none' &&
+    !isOIDCSigningAlgorithm(body.userinfo_signed_response_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+    };
+  }
+
   // Validate grant_types if provided
   if (body.grant_types !== undefined) {
     if (!Array.isArray(body.grant_types)) {

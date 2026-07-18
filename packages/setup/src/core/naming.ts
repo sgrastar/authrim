@@ -18,6 +18,7 @@ export const WORKER_COMPONENTS = [
   'ar-token', // Token endpoint
   'ar-userinfo', // UserInfo endpoint
   'ar-management', // Management API
+  'ar-agent-access', // Agent/MCP access plane
   'ar-router', // Service Bindings router (must deploy last)
   'ar-async', // Async queue processing
   'ar-policy', // Policy service (ReBAC)
@@ -36,6 +37,7 @@ export const CORE_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-token',
   'ar-userinfo',
   'ar-management',
+  'ar-agent-access',
   'ar-async',
   'ar-policy',
   'ar-saml',
@@ -203,6 +205,7 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
   'ar-vc': ['ar-lib-core'],
   'ar-auth': ['ar-lib-core', 'ar-bridge'],
   'ar-management': ['ar-lib-core', 'ar-bridge', 'ar-auth'],
+  'ar-agent-access': ['ar-lib-core', 'ar-token', 'ar-management'],
   'ar-router': CORE_WORKER_COMPONENTS.filter((component) => component !== 'ar-router'),
 };
 
@@ -225,6 +228,7 @@ export const DEPLOYMENT_LEVELS: WorkerComponent[][] = [
   ],
   ['ar-auth'],
   ['ar-management'],
+  ['ar-agent-access'],
   ['ar-router'],
 ];
 

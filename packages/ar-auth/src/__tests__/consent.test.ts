@@ -651,11 +651,11 @@ describe('Consent Handlers', () => {
         type: 'consent',
         userId: 'user-123',
         metadata: {
+          response_type: 'code',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile',
           state: 'test-state',
-          response_type: 'code',
         },
       });
 
@@ -685,6 +685,11 @@ describe('Consent Handlers', () => {
         userId: 'user-123',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          authorization_request: expect.objectContaining({
+            response_type: 'code',
+            client_id: 'test-client',
+            scope: 'openid profile',
+          }),
         },
       });
     });
@@ -715,11 +720,11 @@ describe('Consent Handlers', () => {
         type: 'consent',
         userId: 'user-123',
         metadata: {
+          response_type: 'code',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile',
           state: 'test-state',
-          response_type: 'code',
         },
       });
       const mockDB = createMockDB({
@@ -946,6 +951,7 @@ describe('Consent Handlers', () => {
         type: 'consent',
         userId: 'user-123',
         metadata: {
+          response_type: 'code',
           client_id: 'test-client',
           redirect_uri: 'https://example.com/callback',
           scope: 'openid profile',
@@ -968,9 +974,12 @@ describe('Consent Handlers', () => {
       await consentPostHandler(c);
 
       const response = c.json.mock.calls[0][0] as { redirect_url: string };
-      expect(new URL(response.redirect_url, 'https://example.com').searchParams.get('scope')).toBe(
-        'openid'
+      const confirmationId = new URL(response.redirect_url, 'https://example.com').searchParams.get(
+        '_consent_confirmation_challenge'
       );
+      expect(challengeStore._challenges.get(confirmationId!)?.metadata).toMatchObject({
+        authorization_request: expect.objectContaining({ scope: 'openid' }),
+      });
     });
 
     it('uses cancel_uri only for denial and preserves acting-as state', async () => {

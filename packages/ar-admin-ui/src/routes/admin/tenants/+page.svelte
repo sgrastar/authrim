@@ -70,11 +70,19 @@
 	<AdminPageHeader title={$LL.admin_tenants_title()} description={$LL.admin_tenants_description()}>
 		{#snippet actions()}
 			{#if !singleTenantMode}
+				<a href="/admin/tenants/clone" class="btn btn-secondary">
+					<i class="i-ph-copy"></i>
+					{$LL.admin_tenants_clone_action()}
+				</a>
 				<a href="/admin/tenants/new" class="btn btn-primary">
 					<i class="i-ph-plus"></i>
 					{$LL.admin_tenants_add()}
 				</a>
 			{:else}
+				<button class="btn btn-secondary" disabled title={$LL.admin_tenants_add_disabled_title()}>
+					<i class="i-ph-copy"></i>
+					{$LL.admin_tenants_clone_action()}
+				</button>
 				<button class="btn btn-primary" disabled title={$LL.admin_tenants_add_disabled_title()}>
 					<i class="i-ph-plus"></i>
 					{$LL.admin_tenants_add()}

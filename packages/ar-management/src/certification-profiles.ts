@@ -13,12 +13,15 @@ export interface CertificationProfile {
       enabled: boolean;
       requireDpop: boolean;
       allowPublicClients: boolean;
+      clientAssertionAudience?: 'issuer';
     };
     oidc: {
       requirePar: boolean;
       responseTypesSupported?: string[];
       tokenEndpointAuthMethodsSupported: string[];
       allowNoneAlgorithm?: boolean; // Allow 'none' algorithm for JWT signatures (default: false)
+      clientCredentials?: { enabled: boolean };
+      aiEphemeralAuth?: { enabled: boolean };
       httpsRequestUri?: {
         // OIDC Core 6.2: Request Object by Reference (HTTPS request_uri)
         enabled: boolean;
@@ -165,6 +168,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
         enabled: true,
         requireDpop: false,
         allowPublicClients: false,
+        clientAssertionAudience: 'issuer',
       },
       oidc: {
         requirePar: true,
@@ -183,12 +187,35 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
         enabled: true,
         requireDpop: true,
         allowPublicClients: false,
+        clientAssertionAudience: 'issuer',
       },
       oidc: {
         requirePar: true,
         responseTypesSupported: ['code'],
         tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
         allowNoneAlgorithm: false, // Security: Reject 'none' algorithm
+      },
+    },
+  },
+
+  'fapi-2-client-credentials-dpop': {
+    name: 'FAPI 2.0 Client Credentials + DPoP',
+    description:
+      'FAPI 2.0 Client Credentials grant with private_key_jwt and DPoP sender-constrained tokens',
+    settings: {
+      fapi: {
+        enabled: true,
+        requireDpop: true,
+        allowPublicClients: false,
+        clientAssertionAudience: 'issuer',
+      },
+      oidc: {
+        requirePar: false,
+        responseTypesSupported: ['code'],
+        tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
+        allowNoneAlgorithm: false,
+        clientCredentials: { enabled: true },
+        aiEphemeralAuth: { enabled: true },
       },
     },
   },

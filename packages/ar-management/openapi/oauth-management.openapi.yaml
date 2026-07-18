@@ -342,8 +342,6 @@ components:
   schemas:
     ClientRegistrationRequest:
       type: object
-      required:
-        - redirect_uris
       properties:
         redirect_uris:
           type: array
@@ -367,6 +365,20 @@ components:
           type: string
         require_pkce:
           type: boolean
+        client_credentials_allowed:
+          type: boolean
+          description: Must be true when grant_types contains client_credentials.
+        allowed_scopes:
+          type: array
+          items:
+            type: string
+        default_scope:
+          type: string
+        default_audience:
+          type: string
+        default_resource:
+          type: string
+          format: uri
         jwks:
           type: object
           additionalProperties: true

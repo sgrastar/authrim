@@ -499,6 +499,7 @@ export const ADMIN_PERMISSIONS = {
   // End user management
   USERS_READ: 'admin:users:read',
   USERS_WRITE: 'admin:users:write',
+  USERS_SUSPEND: 'admin:users:suspend',
   USERS_DELETE: 'admin:users:delete',
   USERS_UNLOCK: 'admin:users:unlock',
   USERS_ALL: 'admin:users:*',
@@ -506,6 +507,9 @@ export const ADMIN_PERMISSIONS = {
   // Client management
   CLIENTS_READ: 'admin:clients:read',
   CLIENTS_WRITE: 'admin:clients:write',
+  CLIENTS_CREATE: 'admin:clients:create',
+  CLIENTS_UPDATE: 'admin:clients:update',
+  CLIENTS_SECRET_ROTATE: 'admin:clients:secret:rotate',
   CLIENTS_DELETE: 'admin:clients:delete',
   CLIENTS_ALL: 'admin:clients:*',
 
@@ -530,6 +534,12 @@ export const ADMIN_PERMISSIONS = {
   // Settings management
   SETTINGS_READ: 'admin:settings:read',
   SETTINGS_WRITE: 'admin:settings:write',
+  SETTINGS_ASSURANCE_UPDATE: 'admin:settings:assurance:update',
+  SETTINGS_SECURITY_UPDATE: 'admin:settings:security:update',
+  SETTINGS_TOKEN_EXCHANGE_UPDATE: 'admin:settings:token_exchange:update',
+  SETTINGS_OAUTH_UPDATE: 'admin:settings:oauth:update',
+  SETTINGS_SESSION_UPDATE: 'admin:settings:session:update',
+  SETTINGS_LOGIN_UI_UPDATE: 'admin:settings:login_ui:update',
   SETTINGS_ALL: 'admin:settings:*',
 
   // Tenant vanity domain management
@@ -674,12 +684,32 @@ export const ADMIN_PERMISSIONS = {
   APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
   APPROVALS_ALL: 'admin:approvals:*',
 
-  // AI Grants
-  AI_GRANTS_READ: 'admin:ai_grants:read',
-  AI_GRANTS_CREATE: 'admin:ai_grants:create',
-  AI_GRANTS_UPDATE: 'admin:ai_grants:update',
-  AI_GRANTS_REVOKE: 'admin:ai_grants:revoke',
-  AI_GRANTS_ALL: 'admin:ai_grants:*',
+  // Agent Access delegation and orchestration
+  AGENT_USE: 'admin:agent:use',
+  AGENT_GRANTS_READ: 'admin:agent_grants:read',
+  AGENT_GRANTS_WRITE: 'admin:agent_grants:write',
+  AGENT_GRANTS_REVOKE: 'admin:agent_grants:revoke',
+  AGENT_GRANTS_ALL: 'admin:agent_grants:*',
+  AGENT_SETTINGS_READ: 'admin:agent_settings:read',
+  AGENT_SETTINGS_WRITE: 'admin:agent_settings:write',
+  AGENT_ELEVATION_RECONCILE: 'admin:agent_elevation:reconcile',
+  AGENT_TASK_SETS_READ: 'admin:agent_task_sets:read',
+  AGENT_TASK_SETS_WRITE: 'admin:agent_task_sets:write',
+  AGENT_SCOPE_POLICIES_READ: 'admin:agent_scope_policies:read',
+  AGENT_SCOPE_POLICIES_WRITE: 'admin:agent_scope_policies:write',
+  AGENT_TEMPLATES_PUBLISH: 'admin:agent_templates:publish',
+  AGENT_BASELINES_READ: 'admin:agent_baselines:read',
+  AGENT_BASELINES_WRITE: 'admin:agent_baselines:write',
+  AGENT_BASELINES_APPLY: 'admin:agent_baselines:apply',
+  AUTH_CONFIG_PLANS_READ: 'admin:auth_config_plans:read',
+  AUTH_CONFIG_PLANS_CREATE: 'admin:auth_config_plans:create',
+  AUTH_CONFIG_PLANS_APPLY: 'admin:auth_config_plans:apply',
+  AUTH_CONFIG_PLANS_CANCEL: 'admin:auth_config_plans:cancel',
+  BULK_PLANS_READ: 'admin:bulk_plans:read',
+  BULK_PLANS_CREATE: 'admin:bulk_plans:create',
+  BULK_PLANS_APPLY: 'admin:bulk_plans:apply',
+  BULK_PLANS_PAUSE: 'admin:bulk_plans:pause',
+  BULK_PLANS_RESUME: 'admin:bulk_plans:resume',
 
   // Admin Machine Access
   ADMIN_MACHINE_ACCESS_READ: 'admin:machine_access:read',
@@ -719,6 +749,9 @@ export const ADMIN_PERMISSIONS = {
 
   // Policy control plane
   POLICY_SIMULATE: 'admin:policy:simulate',
+  FLOWS_VALIDATE: 'admin:flows:validate',
+  FLOWS_COMPILE: 'admin:flows:compile',
+  FLOWS_PUBLISH: 'admin:flows:publish',
   POLICY_REBAC_WRITE: 'admin:policy:rebac:write',
   POLICY_ALL: 'admin:policy:*',
 
@@ -756,6 +789,28 @@ export function hasAdminPermission(permissions: string[], required: string): boo
   if (permissions.includes(required)) {
     return true;
   }
+
+  // Compatibility ceilings for operation-level permissions. New route gates and Agent Grants
+  // use the fine-grained permission, while existing coarse write roles remain an explicit upper
+  // bound until role definitions are migrated.
+  const compatibilityParent: Readonly<Record<string, string>> = {
+    [ADMIN_PERMISSIONS.USERS_SUSPEND]: ADMIN_PERMISSIONS.USERS_WRITE,
+    [ADMIN_PERMISSIONS.CLIENTS_CREATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
+    [ADMIN_PERMISSIONS.CLIENTS_UPDATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
+    [ADMIN_PERMISSIONS.CLIENTS_SECRET_ROTATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
+    [ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.SETTINGS_TOKEN_EXCHANGE_UPDATE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.SETTINGS_OAUTH_UPDATE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.SETTINGS_SESSION_UPDATE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.POLICY_SIMULATE]: ADMIN_PERMISSIONS.ROLES_READ,
+    [ADMIN_PERMISSIONS.FLOWS_VALIDATE]: ADMIN_PERMISSIONS.SETTINGS_READ,
+    [ADMIN_PERMISSIONS.FLOWS_COMPILE]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    [ADMIN_PERMISSIONS.FLOWS_PUBLISH]: ADMIN_PERMISSIONS.SETTINGS_WRITE,
+  };
+  const parent = compatibilityParent[required];
+  if (parent && permissions.includes(parent)) return true;
 
   // Check wildcard patterns
   const parts = required.split(':');

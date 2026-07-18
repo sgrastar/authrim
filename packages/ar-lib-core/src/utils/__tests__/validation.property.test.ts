@@ -317,6 +317,40 @@ describe('Redirect URI Registration Properties', () => {
       isRedirectUriRegistered('https://example.com/CallBack', ['https://example.com/callback'])
     ).toBe(false);
   });
+
+  it('allows only the ephemeral port to vary for RFC 8252 loopback IP redirects', () => {
+    expect(
+      isRedirectUriRegistered('http://127.0.0.1:58848/callback/nonce', [
+        'http://127.0.0.1:58483/callback/nonce',
+      ])
+    ).toBe(true);
+    expect(
+      isRedirectUriRegistered('http://[::1]:58848/callback/nonce?channel=codex', [
+        'http://[::1]:58483/callback/nonce?channel=codex',
+      ])
+    ).toBe(true);
+    expect(
+      isRedirectUriRegistered('http://127.0.0.1:58848/callback/other', [
+        'http://127.0.0.1:58483/callback/nonce',
+      ])
+    ).toBe(false);
+    expect(
+      isRedirectUriRegistered('http://localhost:58848/callback/nonce', [
+        'http://localhost:58483/callback/nonce',
+      ])
+    ).toBe(false);
+    expect(
+      isRedirectUriRegistered('https://127.0.0.1:58848/callback/nonce', [
+        'https://127.0.0.1:58483/callback/nonce',
+      ])
+    ).toBe(false);
+  });
+
+  it('accepts IPv4 and IPv6 loopback HTTP only when the caller enables it', () => {
+    expect(validateRedirectUri('http://127.0.0.1:58848/callback', true).valid).toBe(true);
+    expect(validateRedirectUri('http://[::1]:58848/callback', true).valid).toBe(true);
+    expect(validateRedirectUri('http://127.0.0.1:58848/callback').valid).toBe(false);
+  });
 });
 
 // =============================================================================
@@ -324,7 +358,7 @@ describe('Redirect URI Registration Properties', () => {
 // =============================================================================
 
 describe('State Validation Properties', () => {
-  it('∀ valid state (1-512 chars): validateState returns valid=true', () => {
+  it('∀ valid state (1-2048 chars): validateState returns valid=true', () => {
     fc.assert(
       fc.property(stateArb, (state) => {
         const result = validateState(state);
@@ -353,12 +387,12 @@ describe('State Validation Properties', () => {
     expect(validateState('').valid).toBe(false);
   });
 
-  it('length boundaries: 512 valid, 513 invalid', () => {
-    const s512 = 'a'.repeat(512);
-    const s513 = 'a'.repeat(513);
+  it('length boundaries: 2048 valid, 2049 invalid', () => {
+    const s2048 = 'a'.repeat(2048);
+    const s2049 = 'a'.repeat(2049);
 
-    expect(validateState(s512).valid).toBe(true);
-    expect(validateState(s513).valid).toBe(false);
+    expect(validateState(s2048).valid).toBe(true);
+    expect(validateState(s2049).valid).toBe(false);
   });
 });
 

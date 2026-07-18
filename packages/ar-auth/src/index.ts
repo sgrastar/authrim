@@ -28,6 +28,7 @@ import {
   // Tenant-aware utilities
   getTenantIdFromContext,
   getTenantSettings,
+  adminAuthMiddleware,
 } from '@authrim/ar-lib-core';
 import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
 import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
@@ -36,6 +37,7 @@ import { getRequestIssuer } from './issuer';
 // Import handlers
 import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
 import { parHandler } from './par';
+import { adminAgentAuthorizeHandler, adminAgentParHandler } from './admin-agent-oauth';
 import {
   passkeyRegisterOptionsHandler,
   passkeyRegisterVerifyHandler,
@@ -296,6 +298,37 @@ app.use('/par', async (c, next) => {
   })(c, next);
 });
 
+app.use('/oauth/admin-agent/par', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/par'],
+  })(c, next);
+});
+
+app.use('/oauth/admin-agent/authorize', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/authorize'],
+  })(c, next);
+});
+
+app.use(
+  '/oauth/admin-agent/authorize',
+  adminAuthMiddleware({
+    plane: 'tenant',
+    sessionOnly: true,
+    unauthenticatedRedirect: (c) => {
+      if (c.req.method !== 'GET') return undefined;
+      const requestUrl = new URL(c.req.url);
+      const returnTo = `${requestUrl.pathname}${requestUrl.search}`;
+      return `/admin/login?return_to=${encodeURIComponent(returnTo)}`;
+    },
+  })
+);
+app.use('/oauth/admin-agent/authorize', csrfProtectionMiddleware());
+
 // Rate limiting for anonymous login endpoints (architecture-decisions.md §17)
 // Strict profile: prevent brute-force attacks on device authentication
 app.use('/api/auth/anon-login/*', async (c, next) => {
@@ -403,6 +436,11 @@ app.post('/flow/login', authorizeLoginHandler);
 
 // PAR (Pushed Authorization Request) endpoint - RFC 9126
 app.post('/par', parHandler);
+
+// Dedicated Admin Agent authorization journey. It never shares PAR state with end-user OAuth.
+app.post('/oauth/admin-agent/par', adminAgentParHandler);
+app.get('/oauth/admin-agent/authorize', adminAgentAuthorizeHandler);
+app.post('/oauth/admin-agent/authorize', adminAgentAuthorizeHandler);
 
 // PAR endpoint should reject non-POST methods
 app.get('/par', (c) => {

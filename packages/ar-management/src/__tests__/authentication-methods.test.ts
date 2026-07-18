@@ -873,6 +873,29 @@ describe('Authentication Methods API', () => {
   // ===========================================================================
 
   describe('UI config from settings-v2', () => {
+    it('applies client Login UI overrides for DCR-generated client identifiers', async () => {
+      const clientId = `client_${'a'.repeat(128)}`;
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.brand_name': 'Tenant App',
+        }),
+        [`settings:client:default:${clientId}:login-ui`]: JSON.stringify({
+          'login-ui.brand_name': 'DCR Client App',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request(
+        `/api/auth/authentication-methods?client_id=${encodeURIComponent(clientId)}`,
+        { method: 'GET' },
+        mockEnv
+      );
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.branding.brandName).toBe('DCR Client App');
+    });
+
     it('should use settings-v2 KV values when available', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({

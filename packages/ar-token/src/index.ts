@@ -16,6 +16,7 @@ import {
 
 // Import handlers
 import { tokenHandler } from './token';
+import { adminAgentDelegationHandler, adminAgentTokenHandler } from './admin-agent-token';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -78,6 +79,20 @@ app.use('/token', async (c, next) => {
     endpoints: ['/token'],
   })(c, next);
 });
+app.use('/oauth/admin-agent/token', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/token'],
+  })(c, next);
+});
+app.use('/oauth/admin-agent/delegation', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/delegation'],
+  })(c, next);
+});
 
 // Health check endpoints
 app.get('/api/health', (c) => {
@@ -101,6 +116,8 @@ app.get('/health/ready', healthHandlers.readiness);
 
 // Token endpoint
 app.post('/token', tokenHandler);
+app.post('/oauth/admin-agent/token', adminAgentTokenHandler);
+app.post('/oauth/admin-agent/delegation', adminAgentDelegationHandler);
 
 // 404 handler
 app.notFound((c) => {
@@ -118,3 +135,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { AgentDownscopeEntrypoint } from './entrypoints/AgentDownscopeEntrypoint';

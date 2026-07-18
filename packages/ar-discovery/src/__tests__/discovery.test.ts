@@ -17,6 +17,14 @@ function createMockEnv(): Env {
     NONCE_EXPIRY: '600',
     PRIVATE_KEY_PEM: 'test-key',
     KEY_ID: 'test-kid',
+    PUBLIC_JWK_JSON: JSON.stringify({
+      kty: 'RSA',
+      use: 'sig',
+      alg: 'RS256',
+      kid: 'test-kid',
+      n: 'test-modulus',
+      e: 'AQAB',
+    }),
   } as Env;
 }
 
@@ -108,6 +116,7 @@ describe('Discovery Handler', () => {
       expect(metadata).toHaveProperty('scopes_supported');
       expect(metadata).toHaveProperty('claims_supported');
       expect(metadata).toHaveProperty('token_endpoint_auth_methods_supported');
+      expect(metadata.authorization_response_iss_parameter_supported).toBe(true);
     });
 
     it('should use correct issuer URL from environment', async () => {
@@ -318,6 +327,34 @@ describe('Discovery Handler', () => {
 
       const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256']);
+    });
+
+    it('advertises ES256 only when a purpose-compatible key is published', async () => {
+      const env = createMockEnv();
+      env.KEY_MANAGER_PUBLIC = {
+        getAllPublicKeys: vi.fn().mockResolvedValue([
+          JSON.parse(env.PUBLIC_JWK_JSON!) as JsonWebKey,
+          {
+            kty: 'EC',
+            use: 'sig',
+            alg: 'ES256',
+            kid: 'oidc-es256-test',
+            crv: 'P-256',
+            x: 'test-x',
+            y: 'test-y',
+          },
+        ]),
+      } as Env['KEY_MANAGER_PUBLIC'];
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+
+      expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
+      expect(metadata.userinfo_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
     });
 
     it('should support public and pairwise subject types', async () => {

@@ -28,6 +28,7 @@ interface Env {
   OP_TOKEN: Fetcher;
   OP_USERINFO: Fetcher;
   OP_MANAGEMENT: Fetcher;
+  OP_AGENT_ACCESS?: Fetcher;
   OP_ASYNC?: Fetcher;
   OP_SAML?: Fetcher;
   EXTERNAL_IDP: Fetcher; // External IdP (social login, enterprise IdP)
@@ -111,6 +112,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/register',
   '/clients',
   '/par',
+  '/oauth/admin-agent',
   '/device_authorization',
   '/bc-authorize',
   '/auth/step-up',
@@ -123,6 +125,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/api/v1/auth/direct',
   '/api/sessions',
   '/api/protected',
+  '/mcp',
   '/vci',
   '/vp',
   '/scim/v2',
@@ -556,6 +559,8 @@ app.use('*', async (c, next) => {
  * - Supports wildcards (e.g., https://*.example.com)
  */
 app.use('*', async (c, next) => {
+  // MCP Streamable HTTP owns its stricter Origin/CORS contract in ar-agent-access.
+  if (c.req.path === '/mcp') return next();
   let allowedOriginsStr: string | null = null;
 
   // 1. Try to get from KV (tenant-aware settings)
@@ -671,6 +676,10 @@ app.use(
       '/authorize', // OAuth authorization endpoint (form_post from login UI or RP redirects)
       '/token', // OAuth token endpoint (client_secret auth)
       '/par', // Pushed Authorization Request (client auth)
+      '/oauth/admin-agent/par', // Dedicated Agent PAR (client auth)
+      '/oauth/admin-agent/token', // Dedicated Agent token endpoint (client auth)
+      '/oauth/admin-agent/delegation', // Mode B machine delegation (DPoP-bound machine auth)
+      '/mcp', // MCP Streamable HTTP (Bearer/DPoP, Origin validated by the owner Worker)
       '/introspect', // Token introspection (client auth)
       '/revoke', // Token revocation (client auth)
       '/register', // Dynamic Client Registration (initial access token)
@@ -761,6 +770,21 @@ app.get('/.well-known/*', async (c) => {
   return c.env.OP_DISCOVERY.fetch(request);
 });
 
+/** MCP Streamable HTTP endpoint. Its owner Worker enforces Origin, version, and token admission. */
+app.all('/mcp', async (c) => {
+  if (!c.env.OP_AGENT_ACCESS) return notFoundResponse();
+  const request = createServiceBindingRequest(c.req.raw);
+  const response = await c.env.OP_AGENT_ACCESS.fetch(request);
+  // Service Binding responses can carry an immutable header guard. Hono's outer
+  // security middleware adds response headers after the route returns, so keep
+  // the body stream and copy the response metadata onto a mutable Response.
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: new Headers(response.headers),
+  });
+});
+
 /**
  * Authorization endpoints - Route to OP_AUTH worker
  * - /authorize (GET/POST)
@@ -800,11 +824,37 @@ app.get('/par', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+// Dedicated Admin Agent OAuth authorization and PAR endpoints.
+app.get('/oauth/admin-agent/authorize', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/oauth/admin-agent/authorize', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/oauth/admin-agent/par', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 /**
  * Token endpoint - Route to OP_TOKEN worker
  * - /token (POST)
  */
 app.post('/token', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_TOKEN.fetch(request);
+});
+
+app.post('/oauth/admin-agent/token', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_TOKEN.fetch(request);
+});
+
+app.post('/oauth/admin-agent/delegation', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_TOKEN.fetch(request);
 });
@@ -819,6 +869,11 @@ app.get('/userinfo', async (c) => {
 });
 
 app.post('/userinfo', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_USERINFO.fetch(request);
+});
+
+app.get('/api/protected/fapi-resource', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_USERINFO.fetch(request);
 });

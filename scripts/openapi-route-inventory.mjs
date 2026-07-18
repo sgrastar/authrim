@@ -46,6 +46,19 @@ const packageSpecs = [
     openapiFiles: ['packages/ar-token/openapi/token.openapi.yaml'],
   },
   {
+    name: 'ar-agent-access',
+    sourceFiles: [],
+    declaredRoutes: [
+      { method: 'GET', path: '/api/health' },
+      { method: 'GET', path: '/health/live' },
+      { method: 'GET', path: '/health/ready' },
+      { method: 'GET', path: '/mcp' },
+      { method: 'POST', path: '/mcp' },
+      { method: 'DELETE', path: '/mcp' },
+    ],
+    openapiFiles: ['packages/ar-agent-access/openapi/agent-access.openapi.yaml'],
+  },
+  {
     name: 'ar-userinfo',
     sourceFiles: [
       { file: 'packages/ar-userinfo/src/index.ts' },
@@ -320,7 +333,9 @@ async function collectSourceRoutes(files) {
       routes.set(`${route.method} ${route.path}`, route);
     }
   }
-  return [...routes.values()].sort((a, b) => `${a.path} ${a.method}`.localeCompare(`${b.path} ${b.method}`));
+  return [...routes.values()].sort((a, b) =>
+    `${a.path} ${a.method}`.localeCompare(`${b.path} ${b.method}`)
+  );
 }
 
 async function collectOpenApiRoutes(files) {
@@ -342,9 +357,14 @@ async function collectOpenApiRoutes(files) {
 let hasMissing = false;
 const report = [];
 for (const spec of packageSpecs) {
-  const sourceRoutes = await collectSourceRoutes(spec.sourceFiles);
+  const sourceRoutes = [
+    ...(await collectSourceRoutes(spec.sourceFiles)),
+    ...(spec.declaredRoutes ?? []),
+  ];
   const openApiRoutes = await collectOpenApiRoutes(spec.openapiFiles);
-  const missing = sourceRoutes.filter((route) => !openApiRoutes.has(`${route.method} ${route.path}`));
+  const missing = sourceRoutes.filter(
+    (route) => !openApiRoutes.has(`${route.method} ${route.path}`)
+  );
   report.push({
     name: spec.name,
     implemented: sourceRoutes.length,

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
-import { exportPKCS8, generateKeyPair } from 'jose';
+import { decodeProtectedHeader, exportPKCS8, generateKeyPair } from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
 
 // Mock all functions at module level using vi.hoisted to survive vi.restoreAllMocks()
@@ -1240,6 +1240,41 @@ describe('UserInfo Endpoint', () => {
       await userinfoHandler(c);
       expect(getActiveKeyWithPrivateRpc).toHaveBeenCalledTimes(2);
       expect(configGet).toHaveBeenCalledWith('v1:key-version:default');
+    });
+
+    it('signs UserInfo with the client-selected ES256 key', async () => {
+      const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+      const privatePEM = await exportPKCS8(privateKey);
+      const getActiveOIDCSigningKeyWithPrivateRpc = vi
+        .fn()
+        .mockResolvedValue({ kid: 'oidc-es256-userinfo', privatePEM });
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+        env: {
+          KEY_MANAGER: {
+            idFromName: vi.fn().mockReturnValue('key-manager-id'),
+            get: vi.fn().mockReturnValue({ getActiveOIDCSigningKeyWithPrivateRpc }),
+          } as unknown as Env['KEY_MANAGER'],
+        },
+      });
+      vi.mocked(introspectTokenFromContext).mockResolvedValue({
+        valid: true,
+        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'es-client' },
+      });
+      vi.mocked(getClient).mockResolvedValue({
+        client_id: 'es-client',
+        userinfo_signed_response_alg: 'ES256',
+      } as never);
+      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+
+      await userinfoHandler(c);
+
+      const signed = vi.mocked(c.body).mock.calls.at(-1)?.[0] as string;
+      expect(decodeProtectedHeader(signed)).toMatchObject({
+        alg: 'ES256',
+        kid: 'oidc-es256-userinfo',
+      });
+      expect(getActiveOIDCSigningKeyWithPrivateRpc).toHaveBeenCalledWith('ES256');
     });
 
     it('should return encrypted response when client requires encryption', async () => {

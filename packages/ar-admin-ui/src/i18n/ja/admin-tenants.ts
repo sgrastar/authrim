@@ -226,7 +226,66 @@ const adminTenants = {
 	admin_tenants_copied: 'コピーしました',
 	admin_tenants_copy: 'コピー',
 	admin_tenants_expires_at: 'Expires: {date}',
-	admin_tenants_done: '完了'
+	admin_tenants_done: '完了',
+	admin_tenants_clone_action: 'テナントを複製',
+	admin_tenants_clone_head_title: 'テナントを複製 - Admin Dashboard - Authrim',
+	admin_tenants_clone_title: '既存テナントから新規作成',
+	admin_tenants_clone_description:
+		'分離された新しいテナントを作成し、選択した設定だけをコピーします。',
+	admin_tenants_clone_source_title: 'コピー元テナント',
+	admin_tenants_clone_source_description: '設定のコピー元にする稼働中のテナントを選択します。',
+	admin_tenants_clone_source: 'コピー元テナント',
+	admin_tenants_clone_source_placeholder: 'テナントを選択',
+	admin_tenants_clone_source_required: 'コピー元テナントを選択してください。',
+	admin_tenants_clone_destination_title: '新しいテナント',
+	admin_tenants_clone_destination_description: '新しいテナントの識別情報と表示情報を入力します。',
+	admin_tenants_clone_options_title: 'コピーする設定',
+	admin_tenants_clone_options_description:
+		'機密値は、対応するチェックボックスを明示的に選択した場合だけコピーします。',
+	admin_tenants_clone_settings: 'テナント設定とポリシー',
+	admin_tenants_clone_settings_hint:
+		'分類済みのテナント設定をコピーします。コピー先固有の識別情報、リダイレクト信頼設定、署名鍵選択、コピーしないリソースへの参照はリセットし、未分類設定は除外します。',
+	admin_tenants_clone_secret_settings: '機密設定と接続シークレット',
+	admin_tenants_clone_secret_settings_hint:
+		'資格情報、外部IdP、フェデレーション、プラグイン、バックアップ、接続中継の機密設定をコピーします。選択しない場合、コピーしたディレクトリ接続は無効化されます。',
+	admin_tenants_clone_roles: 'アプリケーションロールと自動割当ルール',
+	admin_tenants_clone_roles_hint:
+		'カスタムロール定義をコピーし、親ロールとルール内の参照を付け替えます。ユーザー本人はコピーしません。',
+	admin_tenants_clone_admin_access: '管理者のアクセス権',
+	admin_tenants_clone_admin_access_hint:
+		'カスタム管理者ロールと、既存の管理者ユーザーに対する有効なテナント単位の割当をコピーします。組織・グローバル単位は除外します。',
+	admin_tenants_clone_clients: 'OAuth・OIDCクライアント',
+	admin_tenants_clone_clients_hint:
+		'クライアントID、リダイレクトURI、grant、公開JWKS、アルゴリズム、Web Origin、クライアント設定・Contract・信頼ポリシーをコピーします。Flow割当と同意上書きは除外します。',
+	admin_tenants_clone_client_credentials: 'クライアント認証情報とシークレットハッシュ',
+	admin_tenants_clone_client_credentials_hint:
+		'既存のクライアントシークレットを新しいテナントでも有効にします。クライアント秘密鍵は保存もコピーもしません。',
+	admin_tenants_clone_webhooks: 'Webhook',
+	admin_tenants_clone_webhooks_hint:
+		'送信先とイベント設定をコピーします。シークレットを含めない場合、コピーしたWebhookは無効状態になります。',
+	admin_tenants_clone_webhook_secrets: 'Webhookシークレットとヘッダー',
+	admin_tenants_clone_webhook_secrets_hint:
+		'暗号化された署名シークレットと、機密情報を含む可能性があるリクエストヘッダーをコピーします。',
+	admin_tenants_clone_signing_keys: 'テナント署名鍵は常に新規生成',
+	admin_tenants_clone_signing_keys_hint:
+		'テナント設定を選ぶとアルゴリズムとローテーションポリシーはコピーできますが、秘密鍵素材はテナント分離のため別に生成します。',
+	admin_tenants_clone_button: '複製して作成',
+	admin_tenants_cloning: '複製中...',
+	admin_tenants_clone_failed: 'テナントの複製に失敗しました',
+	admin_tenants_clone_success_title: 'テナントを複製しました',
+	admin_tenants_clone_success_description:
+		'{name} を作成しました。コピー件数と注意事項を確認してください。',
+	admin_tenants_clone_result_settings: 'テナント設定',
+	admin_tenants_clone_result_clients: 'クライアント',
+	admin_tenants_clone_result_client_settings: 'クライアント設定',
+	admin_tenants_clone_result_client_contracts: 'Client Contract',
+	admin_tenants_clone_result_web_origins: 'Web Origin',
+	admin_tenants_clone_result_roles: 'アプリケーションロール',
+	admin_tenants_clone_result_admin_assignments: '管理者権限割当',
+	admin_tenants_clone_result_webhooks: 'Webhook',
+	admin_tenants_clone_warnings_title: '確認事項',
+	admin_tenants_clone_create_another: '別のテナントを複製',
+	admin_tenants_clone_open_tenant: 'テナントを開く'
 } as const;
 
 export default adminTenants;

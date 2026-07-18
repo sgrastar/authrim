@@ -15,6 +15,7 @@ tags:
   - name: Health
   - name: UserInfo
   - name: Customer Profiles
+  - name: FAPI Protected Resource
 paths:
   /api/health:
     get:
@@ -66,6 +67,32 @@ paths:
           $ref: "#/components/responses/Error"
       security:
         - bearerAuth: []
+  /api/protected/fapi-resource:
+    get:
+      tags:
+        - FAPI Protected Resource
+      summary: Return a minimal FAPI client-credentials resource representation.
+      description: Accepts a DPoP-bound client credentials access token whose audience is this exact resource URL. No end-user data is returned.
+      parameters:
+        - name: X-FAPI-Interaction-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Correlation identifier echoed in the response when supplied.
+      responses:
+        "200":
+          description: Valid machine-client token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FapiClientCredentialsResource"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+      security:
+        - dpopAuth: []
   /api/protected/customer-profiles/{userId}:
     get:
       tags:
@@ -138,6 +165,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    dpopAuth:
+      type: http
+      scheme: DPoP
+      description: DPoP-bound OAuth 2.0 access token accompanied by a DPoP proof header.
   responses:
     Ok:
       description: Successful JSON response.
@@ -241,6 +272,20 @@ components:
             audit:
               reason: user_requested_update
   schemas:
+    FapiClientCredentialsResource:
+      type: object
+      required:
+        - sub
+        - client_id
+        - scope
+      properties:
+        sub:
+          type: string
+          pattern: "^client:"
+        client_id:
+          type: string
+        scope:
+          type: string
     UserInfoHealth:
       type: object
       required:

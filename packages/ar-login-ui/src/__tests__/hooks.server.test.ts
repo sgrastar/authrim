@@ -439,6 +439,57 @@ describe('Login UI proxy hooks', () => {
 		);
 	});
 
+	it('accepts DCR-generated client identifiers up to the shared 256-character limit', async () => {
+		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
+		const clientId = `client_${'a'.repeat(128)}`;
+		const fetch = vi.fn(async () => Response.json({ client: { client_id: clientId } }));
+		const event = {
+			request: new Request(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-dcr'
+			),
+			url: new URL(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-dcr'
+			),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(target).toEqual({ challengeId: 'challenge-dcr', valid: true, clientId });
+	});
+
+	it('rejects challenge client identifiers above the shared 256-character limit', async () => {
+		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
+		const fetch = vi.fn(async () =>
+			Response.json({ client: { client_id: `client_${'a'.repeat(250)}` } })
+		);
+		const event = {
+			request: new Request(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-too-long'
+			),
+			url: new URL(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-too-long'
+			),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(target).toEqual({
+			challengeId: 'challenge-too-long',
+			valid: false,
+			clientId: null
+		});
+	});
+
 	it('does not share a never-settling authentication methods loader across requests', async () => {
 		const { getCachedAuthenticationMethods } =
 			await import('$lib/server/authentication-methods-cache');

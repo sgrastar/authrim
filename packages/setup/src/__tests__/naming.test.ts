@@ -45,6 +45,7 @@ describe('Component Lists', () => {
     expect(CORE_WORKER_COMPONENTS).toContain('ar-lib-core');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-auth');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-token');
+    expect(CORE_WORKER_COMPONENTS).toContain('ar-agent-access');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-saml');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-async');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-vc');
@@ -63,6 +64,7 @@ describe('getEnabledComponents', () => {
     expect(components.has('ar-lib-core')).toBe(true);
     expect(components.has('ar-auth')).toBe(true);
     expect(components.has('ar-token')).toBe(true);
+    expect(components.has('ar-agent-access')).toBe(true);
     expect(components.has('ar-router')).toBe(true);
   });
 
@@ -130,6 +132,12 @@ describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
   it('should require ar-auth and ar-bridge before ar-management', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-management']).toEqual(
       expect.arrayContaining(['ar-auth', 'ar-bridge'])
+    );
+  });
+
+  it('should deploy Agent Access only after its token and management dependencies', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-agent-access']).toEqual(
+      expect.arrayContaining(['ar-lib-core', 'ar-token', 'ar-management'])
     );
   });
 

@@ -143,7 +143,8 @@ export interface OAuthClient {
   backchannel_authentication_request_signing_alg: string | null;
   backchannel_user_code_parameter: boolean;
 
-  // UserInfo response signing
+  // OIDC response signing
+  id_token_signed_response_alg: string | null;
   userinfo_signed_response_alg: string | null;
 
   // ==========================================================================
@@ -253,6 +254,7 @@ export interface CreateClientInput {
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
   backchannel_user_code_parameter?: boolean;
+  id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
   // OIDC Logout
   backchannel_logout_uri?: string | null;
@@ -336,6 +338,7 @@ export interface UpdateClientInput {
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
   backchannel_user_code_parameter?: boolean;
+  id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
   // OIDC Logout
   backchannel_logout_uri?: string | null;
@@ -354,6 +357,14 @@ export interface UpdateClientInput {
   // OIDC Dynamic Client Registration
   initiate_login_uri?: string | null;
   login_ui_url?: string | null;
+}
+
+export interface ClientUpdateOptions {
+  /**
+   * Apply the update only while the stored row is still the version that was read.
+   * This is used by Agent plans to close the read/validate/write TOCTOU window.
+   */
+  expectedUpdatedAt?: number;
 }
 
 /**
@@ -496,6 +507,7 @@ export class ClientRepository {
       backchannel_authentication_request_signing_alg:
         input.backchannel_authentication_request_signing_alg ?? null,
       backchannel_user_code_parameter: input.backchannel_user_code_parameter ?? false,
+      id_token_signed_response_alg: input.id_token_signed_response_alg ?? null,
       userinfo_signed_response_alg: input.userinfo_signed_response_alg ?? null,
       // OIDC Logout
       backchannel_logout_uri: input.backchannel_logout_uri ?? null,
@@ -543,7 +555,7 @@ export class ClientRepository {
         default_resource,
         backchannel_token_delivery_mode, backchannel_client_notification_endpoint,
         backchannel_authentication_request_signing_alg, backchannel_user_code_parameter,
-        userinfo_signed_response_alg,
+        id_token_signed_response_alg, userinfo_signed_response_alg,
         backchannel_logout_uri, backchannel_logout_session_required,
         frontchannel_logout_uri, frontchannel_logout_session_required,
         allowed_redirect_origins,
@@ -551,7 +563,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -617,6 +629,7 @@ export class ClientRepository {
         client.backchannel_client_notification_endpoint,
         client.backchannel_authentication_request_signing_alg,
         client.backchannel_user_code_parameter ? 1 : 0,
+        client.id_token_signed_response_alg,
         client.userinfo_signed_response_alg,
         client.backchannel_logout_uri,
         client.backchannel_logout_session_required ? 1 : 0,
@@ -651,13 +664,18 @@ export class ClientRepository {
   /**
    * Update a client
    */
-  async update(clientId: string, input: UpdateClientInput): Promise<OAuthClient | null> {
+  async update(
+    clientId: string,
+    input: UpdateClientInput,
+    options: ClientUpdateOptions = {}
+  ): Promise<OAuthClient | null> {
     const existing = await this.findByClientId(clientId);
     if (!existing) {
       return null;
     }
 
-    const now = getCurrentTimestamp();
+    // Keep the version monotonic even when two writes occur in the same millisecond.
+    const now = Math.max(getCurrentTimestamp(), existing.updated_at + 1);
     const updates: string[] = ['updated_at = ?'];
     const params: unknown[] = [now];
 
@@ -924,6 +942,10 @@ export class ClientRepository {
       updates.push('userinfo_signed_response_alg = ?');
       params.push(input.userinfo_signed_response_alg);
     }
+    if (input.id_token_signed_response_alg !== undefined) {
+      updates.push('id_token_signed_response_alg = ?');
+      params.push(input.id_token_signed_response_alg);
+    }
     // OIDC Logout
     if (input.backchannel_logout_uri !== undefined) {
       updates.push('backchannel_logout_uri = ?');
@@ -977,11 +999,19 @@ export class ClientRepository {
     }
 
     params.push(this.tenantId, clientId);
+    const versionCondition = options.expectedUpdatedAt === undefined ? '' : ' AND updated_at = ?';
+    if (options.expectedUpdatedAt !== undefined) {
+      params.push(options.expectedUpdatedAt);
+    }
 
-    await this.adapter.execute(
-      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?`,
+    const result = await this.adapter.execute(
+      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?${versionCondition}`,
       params
     );
+
+    if (result.rowsAffected === 0) {
+      return null;
+    }
 
     return this.findByClientId(clientId);
   }

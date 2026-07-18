@@ -39,9 +39,9 @@ export interface IssuerEnvLike {
  *
  * - Positive cache TTL: 300s (negative results are NOT cached to allow immediate
  *   recognition after tenant creation)
- * - DB error → fail-open to prevent outage from blocking all requests
+ * - DB absence/error → fail-closed unless a positive cache entry already proved the tenant active
  *
- * @param db - D1 database binding (undefined = fail-open)
+ * @param db - D1 database binding (undefined = fail-closed)
  * @param kv - KV namespace for caching (undefined = skip cache)
  * @param tenantId - Tenant ID to validate
  * @returns true if tenant exists and is active, false if not found or not runtime-active
@@ -63,8 +63,8 @@ export async function validateTenantExistsAsync(
     }
   }
 
-  // Fail-open if no DB binding
-  if (!db) return true;
+  // An unverified host must never become a tenant merely because storage is unavailable.
+  if (!db) return false;
 
   try {
     const adapter = ensureDatabaseAdapter(db, 'tenant-exists');
@@ -74,10 +74,7 @@ export async function validateTenantExistsAsync(
     );
 
     if (!row) {
-      const health = await adapter.isHealthy().catch(() => ({
-        healthy: false,
-      }));
-      return health.healthy ? false : true;
+      return false;
     }
 
     // Write positive cache only (never cache negative to ensure immediate visibility)
@@ -86,8 +83,7 @@ export async function validateTenantExistsAsync(
     }
     return true;
   } catch {
-    // D1 error → fail-open to prevent outage from blocking requests
-    return true;
+    return false;
   }
 }
 

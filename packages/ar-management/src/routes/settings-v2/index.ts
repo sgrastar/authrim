@@ -58,6 +58,8 @@ import {
   createAuditLogFromContext,
   // Admin Auth
   type AdminAuthContext,
+  ADMIN_PERMISSIONS,
+  hasAdminPermission,
   ensureDatabaseAdapter,
   createRuntimeProfileRegistryFromEnv,
   loadEnvironmentProfileDefaultsFromEnv,
@@ -70,10 +72,128 @@ import {
   validateLoginUICustomCss,
   validateTrustedRedirectOrigins,
 } from '@authrim/ar-lib-core';
+import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
+import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
 
 // Module-level logger for settings audit
 const log = createLogger().module('SETTINGS_AUDIT');
+
+function settingValue(body: JsonObject, key: string): JsonValue | undefined {
+  const set = body.set;
+  return set && typeof set === 'object' && !Array.isArray(set)
+    ? (set as JsonObject)[key]
+    : undefined;
+}
+
+function definedEntries(
+  entries: ReadonlyArray<readonly [string, JsonValue | undefined]>
+): JsonObject {
+  return Object.fromEntries(entries.filter(([, value]) => value !== undefined)) as JsonObject;
+}
+
+function parsedJsonObject(value: JsonValue | undefined): JsonValue | undefined {
+  if (typeof value !== 'string') return value;
+  try {
+    const parsed = JSON.parse(value) as JsonValue;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
+const AGENT_ELEVATED_SETTINGS = {
+  assurance: {
+    operation: 'admin.write.assurance.update',
+    input: (body: JsonObject) =>
+      definedEntries([
+        ['resource_version', body.ifMatch],
+        ['enabled', settingValue(body, 'assurance.enabled')],
+        ['defaultAAL', settingValue(body, 'assurance.default_aal')],
+        ['defaultFAL', settingValue(body, 'assurance.default_fal')],
+        ['defaultIAL', settingValue(body, 'assurance.default_ial')],
+        [
+          'scopeAALRequirements',
+          parsedJsonObject(settingValue(body, 'assurance.scope_aal_requirements')),
+        ],
+        ['includeInIdToken', settingValue(body, 'assurance.include_in_id_token')],
+        ['includeInAccessToken', settingValue(body, 'assurance.include_in_access_token')],
+        ['fal2RequiresDPoP', settingValue(body, 'assurance.fal2_requires_dpop')],
+        ['fal3RequiresPAR', settingValue(body, 'assurance.fal3_requires_par')],
+      ]),
+  },
+  security: {
+    operation: 'admin.write.protocol-security.update',
+    input: (body: JsonObject): JsonObject => ({
+      resource_version: body.ifMatch,
+      fapi: definedEntries([
+        ['enabled', settingValue(body, 'security.fapi_enabled')],
+        ['strictDPoP', settingValue(body, 'security.fapi_strict_dpop')],
+        ['allowPublicClients', settingValue(body, 'security.fapi_allow_public_clients')],
+      ]),
+    }),
+  },
+  tokens: {
+    operation: 'admin.write.token-exchange.update',
+    input: (body: JsonObject) =>
+      definedEntries([
+        ['resource_version', body.ifMatch],
+        ['enabled', settingValue(body, 'tokens.exchange_enabled')],
+        ['delegationEnabled', settingValue(body, 'tokens.exchange_delegation_enabled')],
+        ['impersonationEnabled', settingValue(body, 'tokens.exchange_impersonation_enabled')],
+      ]),
+  },
+  oauth: {
+    operation: 'admin.write.oauth.update',
+    input: (body: JsonObject) =>
+      definedEntries([
+        ['resource_version', body.ifMatch],
+        ['accessTokenExpiry', settingValue(body, 'oauth.access_token_expiry')],
+        ['idTokenExpiry', settingValue(body, 'oauth.id_token_expiry')],
+        ['authCodeTtl', settingValue(body, 'oauth.auth_code_ttl')],
+        ['stateRequired', settingValue(body, 'oauth.state_required')],
+        ['refreshTokenRotation', settingValue(body, 'oauth.refresh_token_rotation')],
+        ['offlineAccessRequired', settingValue(body, 'oauth.offline_access_required')],
+        ['jarmEnabled', settingValue(body, 'oauth.jarm_enabled')],
+      ]),
+  },
+  session: {
+    operation: 'admin.write.session.update',
+    input: (body: JsonObject) =>
+      definedEntries([
+        ['resource_version', body.ifMatch],
+        ['defaultTtl', settingValue(body, 'session.default_ttl')],
+        ['maxTtl', settingValue(body, 'session.max_ttl')],
+        ['refreshDefault', settingValue(body, 'session.refresh_default')],
+        ['backchannelLogoutTokenExp', settingValue(body, 'session.backchannel_logout_token_exp')],
+        ['backchannelOnFailure', settingValue(body, 'session.backchannel_on_failure')],
+      ]),
+  },
+} as const;
+
+export function buildAgentElevatedSettingsToolInput(
+  category: string,
+  body: JsonObject
+): { operation: string; input: JsonObject } | null {
+  const definition = AGENT_ELEVATED_SETTINGS[category as keyof typeof AGENT_ELEVATED_SETTINGS];
+  return definition ? { operation: definition.operation, input: definition.input(body) } : null;
+}
+
+async function requireAgentSettingsElevation(
+  c: Context<{ Bindings: Env }>,
+  next: () => Promise<void>
+) {
+  const adminAuth = c.get('adminAuth' as never) as AdminAuthContext | undefined;
+  if (adminAuth?.actorType !== 'agent') return next();
+  const category = c.req.param('category') ?? '';
+  if (!hasTenantSettingsPermission(adminAuth, category as CategoryName, 'edit')) return next();
+  const definition = buildAgentElevatedSettingsToolInput(category, {});
+  if (!definition) return next();
+  return agentElevatedExecutionMiddleware(
+    definition.operation,
+    ({ body }) => buildAgentElevatedSettingsToolInput(category, body)!.input
+  )(c as never, next);
+}
 
 // =============================================================================
 // Authorization Helper Functions
@@ -100,6 +220,30 @@ function checkRolePermission(
     return perms.editRoles.some((role) => userRoles.includes(role));
   }
   return perms.viewRoles.some((role) => userRoles.includes(role));
+}
+
+function hasTenantSettingsPermission(
+  adminAuth: AdminAuthContext | undefined,
+  category: CategoryName,
+  action: 'view' | 'edit'
+): boolean {
+  if (!adminAuth) return false;
+  if (adminAuth.actorType === 'agent') {
+    const granularEditPermission: Partial<Record<CategoryName, string>> = {
+      assurance: ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE,
+      security: ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE,
+      tokens: ADMIN_PERMISSIONS.SETTINGS_TOKEN_EXCHANGE_UPDATE,
+      oauth: ADMIN_PERMISSIONS.SETTINGS_OAUTH_UPDATE,
+      session: ADMIN_PERMISSIONS.SETTINGS_SESSION_UPDATE,
+      'login-ui': ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE,
+    };
+    const required =
+      action === 'edit'
+        ? (granularEditPermission[category] ?? ADMIN_PERMISSIONS.SETTINGS_WRITE)
+        : ADMIN_PERMISSIONS.SETTINGS_READ;
+    return hasAdminPermission(adminAuth.permissions ?? [], required);
+  }
+  return checkRolePermission(adminAuth.roles, category, 'tenant', action);
 }
 
 /**
@@ -157,6 +301,10 @@ async function getClientTenantId(
  */
 function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
   if (!adminAuth) return false;
+
+  if (adminAuth.actorType === 'agent') {
+    return adminAuth.tenantId === tenantId && adminAuth.tenantScope?.includes(tenantId) === true;
+  }
 
   const userRoles = adminAuth.roles;
 
@@ -909,9 +1057,7 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
 
   // Security Check 3: Validate user has permission for this category at tenant scope
   const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
-
-  if (!checkRolePermission(userRoles, category, 'tenant', 'view')) {
+  if (!hasTenantSettingsPermission(adminAuth, category, 'view')) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view tenant settings', 403);
   }
 
@@ -938,184 +1084,190 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
  * PATCH /api/admin/tenants/:tenantId/settings/:category
  * Partial update settings for a tenant and category
  */
-settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
-  const tenantId = c.req.param('tenantId')!;
-  const category = c.req.param('category')! as CategoryName;
+settingsV2.patch(
+  '/tenants/:tenantId/settings/:category',
+  requireAgentSettingsElevation,
+  async (c) => {
+    const tenantId = c.req.param('tenantId')!;
+    const category = c.req.param('category')! as CategoryName;
 
-  // Security Check 1: Validate category exists
-  if (!ALL_CATEGORY_META[category]) {
-    return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-  }
-
-  // Security Check 2: Validate category is available at tenant scope
-  if (!isCategoryAllowedAtScope(category, 'tenant')) {
-    return errorResponse(
-      c,
-      'bad_request',
-      `Category "${category}" is not available at tenant scope`,
-      400
-    );
-  }
-
-  // Security Check 3: Validate user has EDIT permission for this category at tenant scope
-  const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
-
-  if (!checkRolePermission(userRoles, category, 'tenant', 'edit')) {
-    return errorResponse(c, 'forbidden', 'Insufficient permissions to edit tenant settings', 403);
-  }
-
-  // Security Check 4: Validate user can access this specific tenant
-  if (!canAccessTenant(adminAuth, tenantId)) {
-    return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
-  }
-
-  const manager = getSettingsManager(c.env, c);
-  const scope: SettingScope = { type: 'tenant', id: tenantId };
-
-  try {
-    // Parse and sanitize request body (prevent prototype pollution)
-    const rawBody = await c.req.json();
-    const body = parsePatchRequest(rawBody);
-
-    // Validate ifMatch is provided
-    if (!body.ifMatch) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-      return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+    // Security Check 1: Validate category exists
+    if (!ALL_CATEGORY_META[category]) {
+      return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
     }
 
-    if (category === 'login-ui') {
-      const loginUiValidation = validateLoginUIPatch(body);
-      if (!loginUiValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'login_ui_validation_failed',
-          metadata: loginUiValidation.details,
-        });
-        return errorResponse(
-          c,
-          'validation_failed',
-          loginUiValidation.message ?? 'Login UI settings are invalid',
-          400,
-          loginUiValidation.details
-        );
-      }
-    }
-
-    const postLoginValidation = await validatePostLoginRelatedPatch(
-      c.env,
-      tenantId,
-      category,
-      body
-    );
-    if (!postLoginValidation.ok) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'post_login_validation_failed',
-        metadata: postLoginValidation.details,
-      });
+    // Security Check 2: Validate category is available at tenant scope
+    if (!isCategoryAllowedAtScope(category, 'tenant')) {
       return errorResponse(
         c,
-        postLoginValidation.error,
-        postLoginValidation.message,
-        postLoginValidation.status,
-        postLoginValidation.details
-      );
-    }
-
-    const runtimeProfileValidation = await validateTenantRuntimeProfilePatch(c.env, category, body);
-    if (!runtimeProfileValidation.ok) {
-      return errorResponse(
-        c,
-        runtimeProfileValidation.error,
-        runtimeProfileValidation.message,
-        runtimeProfileValidation.status,
-        runtimeProfileValidation.details
-      );
-    }
-
-    // Get actor from context (set by auth middleware)
-    const actor = adminAuth?.userId ?? 'unknown';
-
-    const result = await manager.patch(category, scope, body, actor);
-
-    if (
-      category === 'login-entry' &&
-      body.set?.['login-entry.post_login_behavior'] === 'account' &&
-      result.applied.includes('login-entry.post_login_behavior')
-    ) {
-      await ensureTenantAccountPageEnabled(c.env, tenantId);
-    }
-
-    // Check if there were any rejections
-    const hasRejections = Object.keys(result.rejected).length > 0;
-    const hasApplied =
-      result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-
-    // Return appropriate status
-    // 200 OK if anything was applied (even with rejections)
-    // 400 Bad Request if everything was rejected
-    if (!hasApplied && hasRejections) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'validation_failed',
-        metadata: { rejected: result.rejected },
-      });
-      return c.json(
-        {
-          error: 'validation_failed',
-          message: 'All changes were rejected',
-          ...result,
-        },
+        'bad_request',
+        `Category "${category}" is not available at tenant scope`,
         400
       );
     }
 
-    return c.json(result);
-  } catch (error) {
-    // Handle JSON parse errors
-    if (error instanceof SyntaxError) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-      return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+    // Security Check 3: Validate user has EDIT permission for this category at tenant scope
+    const adminAuth = c.get('adminAuth');
+    if (!hasTenantSettingsPermission(adminAuth, category, 'edit')) {
+      return errorResponse(c, 'forbidden', 'Insufficient permissions to edit tenant settings', 403);
     }
-    if (error instanceof ConflictError) {
+
+    // Security Check 4: Validate user can access this specific tenant
+    if (!canAccessTenant(adminAuth, tenantId)) {
+      return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
+    }
+
+    const manager = getSettingsManager(c.env, c);
+    const scope: SettingScope = { type: 'tenant', id: tenantId };
+
+    try {
+      // Parse and sanitize request body (prevent prototype pollution)
+      const rawBody = await c.req.json();
+      const body = parsePatchRequest(rawBody);
+
+      // Validate ifMatch is provided
+      if (!body.ifMatch) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+      }
+
+      if (category === 'login-ui') {
+        const loginUiValidation = validateLoginUIPatch(body);
+        if (!loginUiValidation.ok) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'login_ui_validation_failed',
+            metadata: loginUiValidation.details,
+          });
+          return errorResponse(
+            c,
+            'validation_failed',
+            loginUiValidation.message ?? 'Login UI settings are invalid',
+            400,
+            loginUiValidation.details
+          );
+        }
+      }
+
+      const postLoginValidation = await validatePostLoginRelatedPatch(
+        c.env,
+        tenantId,
+        category,
+        body
+      );
+      if (!postLoginValidation.ok) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'post_login_validation_failed',
+          metadata: postLoginValidation.details,
+        });
+        return errorResponse(
+          c,
+          postLoginValidation.error,
+          postLoginValidation.message,
+          postLoginValidation.status,
+          postLoginValidation.details
+        );
+      }
+
+      const runtimeProfileValidation = await validateTenantRuntimeProfilePatch(
+        c.env,
+        category,
+        body
+      );
+      if (!runtimeProfileValidation.ok) {
+        return errorResponse(
+          c,
+          runtimeProfileValidation.error,
+          runtimeProfileValidation.message,
+          runtimeProfileValidation.status,
+          runtimeProfileValidation.details
+        );
+      }
+
+      // Get actor from context (set by auth middleware)
+      const actor = adminAuth?.userId ?? 'unknown';
+
+      const result = await manager.patch(category, scope, body, actor);
+
+      if (
+        category === 'login-entry' &&
+        body.set?.['login-entry.post_login_behavior'] === 'account' &&
+        result.applied.includes('login-entry.post_login_behavior')
+      ) {
+        await ensureTenantAccountPageEnabled(c.env, tenantId);
+      }
+
+      // Check if there were any rejections
+      const hasRejections = Object.keys(result.rejected).length > 0;
+      const hasApplied =
+        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+      // Return appropriate status
+      // 200 OK if anything was applied (even with rejections)
+      // 400 Bad Request if everything was rejected
+      if (!hasApplied && hasRejections) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'validation_failed',
+          metadata: { rejected: result.rejected },
+        });
+        return c.json(
+          {
+            error: 'validation_failed',
+            message: 'All changes were rejected',
+            ...result,
+          },
+          400
+        );
+      }
+
+      return c.json(result);
+    } catch (error) {
+      // Handle JSON parse errors
+      if (error instanceof SyntaxError) {
+        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+      }
+      if (error instanceof ConflictError) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'version_conflict',
+          metadata: { current_version: error.currentVersion },
+        });
+        return c.json(
+          {
+            error: 'conflict',
+            message: error.message,
+            currentVersion: error.currentVersion,
+          },
+          409
+        );
+      }
+      if (error instanceof Error) {
+        if (error.message.includes('Unknown category')) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+          return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+        }
+        if (error.message.includes('read-only')) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
+          return errorResponse(c, 'forbidden', error.message, 403);
+        }
+      }
       await recordSettingsAuditFailure(c, {
         category,
         scope,
-        reason: 'version_conflict',
-        metadata: { current_version: error.currentVersion },
+        reason: 'unhandled_error',
+        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
       });
-      return c.json(
-        {
-          error: 'conflict',
-          message: error.message,
-          currentVersion: error.currentVersion,
-        },
-        409
-      );
+      throw error;
     }
-    if (error instanceof Error) {
-      if (error.message.includes('Unknown category')) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-        return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-      }
-      if (error.message.includes('read-only')) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
-        return errorResponse(c, 'forbidden', error.message, 403);
-      }
-    }
-    await recordSettingsAuditFailure(c, {
-      category,
-      scope,
-      reason: 'unhandled_error',
-      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-    });
-    throw error;
   }
-});
+);
 
 // =============================================================================
 // Client Settings Routes

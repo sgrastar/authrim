@@ -421,6 +421,157 @@ describe('migration seed SQL portability', () => {
     expect(sql).toContain('device_secret_introspection_trust_groups TEXT');
   });
 
+  it(
+    'adds the Agent refresh-family revocation owner through an additive admin migration',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-revocation-owner-'));
+      const dbPath = join(tempDir, 'test.db');
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeAdminMigrationFiles());
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM pragma_table_info('admin_agent_token_families')
+             WHERE name = 'revocation_outbox_id';`
+          )
+        ).toBe('1');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM sqlite_master
+             WHERE type = 'index'
+               AND name = 'idx_admin_agent_token_families_revocation_outbox';`
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'suspends built-in v3 Agent Grants when user data Tools move to a dedicated Task Set',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-user-data-split-'));
+      const dbPath = join(tempDir, 'test.db');
+      const splitMigration = 'admin/019_split_agent_user_data_task_set.sql';
+
+      try {
+        runMigrationFiles(
+          sqlite3Path,
+          dbPath,
+          activeAdminMigrationFiles().filter((file) => file !== splitMigration)
+        );
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at)
+VALUES ('admin-1', 'tenant-1', 'admin@example.test', 1, 1);
+
+INSERT INTO admin_agent_grants (
+  id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+  delegation_mode, generation, consent_version, status, active_uniqueness_key,
+  created_at, updated_at, task_set_id, task_set_version, scope_policy_id,
+  scope_policy_version, resolved_tools, resolved_scope_constraints, access_snapshot_hash
+) VALUES
+  ('grant-builtin-v3', 'tenant-1', 'client-v3', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', 'active', 1, 1,
+   'builtin_agent_task_set_read_only_inspector', 3, 'scope-1', 1,
+   '[{"toolId":"admin.read.users.search"}]', '{}', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  ('grant-builtin-v4', 'tenant-1', 'client-v4', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', 'active', 1, 1,
+   'builtin_agent_task_set_read_only_inspector', 4, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+  ('grant-custom', 'tenant-1', 'client-custom', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', 'active', 1, 1,
+   'custom-user-support', 1, 'scope-1', 1,
+   '[{"toolId":"admin.read.users.search"}]', '{}', 'ccccccccccccccccccccccccccccccccccccccccccc');
+
+INSERT INTO agent_consents (
+  id, tenant_id, consent_type, grant_id, user_id, client_id, consent_version,
+  scopes, granted_at
+) VALUES
+  ('consent-v3', 'tenant-1', 'delegation', 'grant-builtin-v3', 'admin-1', 'client-v3', 1,
+   '["agent:read"]', 1),
+  ('consent-custom', 'tenant-1', 'delegation', 'grant-custom', 'admin-1', 'client-custom', 1,
+   '["agent:read"]', 1);
+
+INSERT INTO admin_agent_token_families (
+  family_id, family_jti, tenant_id, grant_id, grant_generation, admin_user_id,
+  client_id, consent_version, status, finalization_nonce, finalized_at,
+  expires_at, created_at, updated_at
+) VALUES
+  ('family-v3', 'jti-v3', 'tenant-1', 'grant-builtin-v3', 1, 'admin-1',
+   'client-v3', 1, 'active', 'nonce-v3', 1, 1000, 1, 1),
+  ('family-custom', 'jti-custom', 'tenant-1', 'grant-custom', 1, 'admin-1',
+   'client-custom', 1, 'active', 'nonce-custom', 1, 1000, 1, 1);`
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [splitMigration]);
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || generation || '|' || consent_version
+               FROM admin_agent_grants WHERE id = 'grant-builtin-v3';`
+          )
+        ).toBe('suspended|2|2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+               FROM admin_agent_grants
+              WHERE id IN ('grant-builtin-v4', 'grant-custom') AND status = 'active';`
+          )
+        ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT (revoked_at IS NOT NULL) || '|' || revoked_reason
+               FROM agent_consents WHERE id = 'consent-v3';`
+          )
+        ).toBe('1|grant_updated');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status FROM admin_agent_token_families WHERE family_id = 'family-v3';`
+          )
+        ).toBe('revoked');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_audit_log
+              WHERE resource_id = 'grant-builtin-v3'
+                AND action = 'agent.grant.suspended'
+                AND actor_sub = 'migration:019';`
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
   it('extends Flow assignment targets in follow-up migrations instead of baselines', () => {
     const coreBaseline = readMigration('017_core_flow_runtime.sql');
     const coreExtension = readMigration('020_flow_assignment_credential_profiles.sql');

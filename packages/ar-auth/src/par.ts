@@ -38,6 +38,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   isSigningJWK,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
 import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
@@ -67,6 +68,7 @@ interface PARRequestParams {
   login_hint?: string | undefined;
   acr_values?: string | undefined;
   claims?: string | undefined;
+  dpop_jkt?: string | undefined;
   authorization_details?: string | undefined; // RFC 9396: Rich Authorization Requests
 }
 
@@ -115,6 +117,7 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
     login_hint: typeof formData.login_hint === 'string' ? formData.login_hint : undefined,
     acr_values: typeof formData.acr_values === 'string' ? formData.acr_values : undefined,
     claims: typeof formData.claims === 'string' ? formData.claims : undefined,
+    dpop_jkt: typeof formData.dpop_jkt === 'string' ? formData.dpop_jkt : undefined,
     authorization_details:
       typeof formData.authorization_details === 'string'
         ? formData.authorization_details
@@ -174,6 +177,17 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     const formData = await c.req.parseBody();
 
+    // RFC 9126: request_uri is an authorization endpoint parameter produced by PAR; it is not
+    // accepted as input to the pushed authorization request endpoint. Reject it explicitly
+    // instead of silently discarding it and issuing a new request_uri.
+    if (Object.prototype.hasOwnProperty.call(formData, 'request_uri')) {
+      throw new RFCError(
+        'request_uri_not_supported',
+        400,
+        'request_uri is not supported at the PAR endpoint'
+      );
+    }
+
     // Extract client authentication parameters
     const client_secret = formData.client_secret as string | undefined;
     const client_assertion = formData.client_assertion as string | undefined;
@@ -204,6 +218,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       enabled?: boolean;
       requirePrivateKeyJwt?: boolean;
       maxRequestUriExpiry?: number;
+      clientAssertionAudience?: 'issuer';
     } = {};
     let oidcConfig: {
       parExpiry?: number;
@@ -212,9 +227,11 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     } = {};
 
     try {
-      const settingsJson = await c.env.SETTINGS?.get('system_settings');
-      if (settingsJson) {
-        const settings = JSON.parse(settingsJson);
+      const settings = await getTenantSystemSettings(
+        c.env.SETTINGS,
+        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c)
+      );
+      if (settings) {
         fapiConfig = settings.fapi || {};
         oidcConfig = settings.oidc || {};
       }
@@ -235,7 +252,15 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       const assertionValidation = await validateClientAssertion(
         client_assertion,
         `${issuer}/par`,
-        clientMetadata
+        clientMetadata,
+        {
+          audiencePolicy:
+            fapiConfig.clientAssertionAudience === 'issuer' ? 'issuer-only' : 'endpoint-or-issuer',
+          issuer,
+          additionalAudiences:
+            fapiConfig.clientAssertionAudience === 'issuer' ? [] : [`${issuer}/token`],
+          clockSkewSeconds: 60,
+        }
       );
 
       if (!assertionValidation.valid) {
@@ -549,6 +574,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               typeof requestObjectClaims.claims === 'string'
                 ? requestObjectClaims.claims
                 : JSON.stringify(requestObjectClaims.claims);
+          if (typeof requestObjectClaims.dpop_jkt === 'string')
+            params.dpop_jkt = requestObjectClaims.dpop_jkt;
           // RFC 9396: authorization_details from request object
           if (requestObjectClaims.authorization_details)
             params.authorization_details =
@@ -679,6 +706,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     let dpopJkt: string | undefined;
     const dpopHeader = c.req.header('DPoP');
 
+    if (params.dpop_jkt && !/^[A-Za-z0-9_-]{43}$/.test(params.dpop_jkt)) {
+      throw new RFCError('invalid_request', 400, 'dpop_jkt must be a SHA-256 JWK thumbprint');
+    }
+
     if (dpopHeader) {
       const parEndpointUrl = `${issuer}/par`;
       const dpopValidation = await validateDPoPProof(
@@ -703,11 +734,20 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
       // Store dpop_jkt for authorization code binding
       dpopJkt = dpopValidation.jkt;
+      if (params.dpop_jkt && dpopJkt && !timingSafeEqual(params.dpop_jkt, dpopJkt)) {
+        throw new RFCError(
+          'invalid_request',
+          400,
+          'dpop_jkt does not match the key in the DPoP proof'
+        );
+      }
       log.debug('DPoP proof validated', {
         action: 'dpop_validate',
         jktPrefix: dpopJkt?.substring(0, 16),
       });
     }
+
+    dpopJkt ??= params.dpop_jkt;
 
     // =========================================================================
     // P1: Use ConfigManager for expiration (KV → env → default)

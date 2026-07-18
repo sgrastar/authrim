@@ -20,7 +20,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const rootDir = resolve(__dirname, '..');
 
 // Import from built setup package
-const { generateWranglerConfig, toToml, generatePagesWranglerConfig } = await import(
+const { generateWranglerConfig, toToml, generateUiWorkersWranglerConfig } = await import(
   join(rootDir, 'packages/setup/dist/core/wrangler.js')
 );
 const { CORE_WORKER_COMPONENTS, OPTIONAL_WORKER_COMPONENTS } = await import(
@@ -86,11 +86,12 @@ if (config.components?.async) components.push('ar-async');
 if (config.components?.vc) components.push('ar-vc');
 if (config.components?.bridge) components.push('ar-bridge');
 if (config.components?.policy) components.push('ar-policy');
+const uniqueComponents = [...new Set(components)];
 
 let generated = 0;
 const skipped = [];
 
-for (const component of components) {
+for (const component of uniqueComponents) {
   const componentDir = join(rootDir, 'packages', component);
   if (!existsSync(componentDir)) {
     skipped.push(component);
@@ -116,10 +117,16 @@ for (const component of pagesComponents) {
   }
 
   const settings = resolveUiDeploymentSettings({ component, config });
-  const tomlContent = generatePagesWranglerConfig({
+  const tomlContent = generateUiWorkersWranglerConfig({
     component,
     env,
-    needsProxy: settings.needsProxy,
+    needsProxy: Boolean(settings.serviceBindingName),
+    workersDev: settings.workersDev,
+    routes: settings.routes,
+    vars: {
+      ...settings.uiEnv,
+      API_BACKEND_URL: settings.runtimeApiBackendUrl,
+    },
   });
   const tomlPath = join(componentDir, 'wrangler.toml');
   await writeFile(tomlPath, tomlContent, 'utf-8');

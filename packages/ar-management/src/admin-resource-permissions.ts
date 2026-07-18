@@ -1,6 +1,12 @@
 import type { Context, Hono, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { ADMIN_PERMISSIONS, requireAdminPermissions } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  getLogger,
+  hasAdminPermission,
+  requireAdminPermissions,
+  type AdminAuthContext,
+} from '@authrim/ar-lib-core';
 
 type AdminPermissionMiddleware = (
   c: Context<{ Bindings: Env }>,
@@ -81,6 +87,21 @@ function requireSecurityCredentialPermission(): AdminPermissionMiddleware {
     const method = c.req.method.toUpperCase();
     const permission =
       method === 'GET' ? ADMIN_PERMISSIONS.SECURITY_READ : ADMIN_PERMISSIONS.SECURITY_WRITE;
+
+    const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+      | AdminAuthContext
+      | undefined;
+    if (!hasAdminPermission(authContext?.permissions ?? [], permission)) {
+      getLogger(c)
+        .module('ADMIN-RESOURCE-PERMISSIONS')
+        .warn('Security resource access denied', {
+          method,
+          path: new URL(c.req.url).pathname,
+          authMethod: authContext?.authMethod,
+          requiredPermissions: [permission],
+          actualPermissions: authContext?.permissions ?? [],
+        });
+    }
 
     return requireAdminPermissions([permission])(c, next);
   };

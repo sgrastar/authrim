@@ -314,7 +314,7 @@ type RootTranslation = {
 	 */
 	account_totpCurrentCode: string
 	/**
-	 * C​u​r​r​e​n​t​ ​c​o​d​e
+	 * C​u​r​r​e​n​t​ ​c​o​d​e​ ​o​r​ ​b​a​c​k​u​p​ ​c​o​d​e
 	 */
 	account_totpDeleteCode: string
 	/**
@@ -451,7 +451,7 @@ type RootTranslation = {
 	 */
 	login_signInWithPasskey: string
 	/**
-	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 * S​e​n​d​ ​c​o​d​e​ ​b​y​ ​e​m​a​i​l
 	 */
 	login_sendCode: string
 	/**
@@ -471,7 +471,7 @@ type RootTranslation = {
 	 */
 	login_totpCodePlaceholder: string
 	/**
-	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
 	 */
 	login_totpContinue: string
 	/**
@@ -705,11 +705,11 @@ type RootTranslation = {
 	 */
 	register_createWithPasskey: string
 	/**
-	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 * S​e​n​d​ ​c​o​d​e​ ​b​y​ ​e​m​a​i​l
 	 */
 	register_sendCode: string
 	/**
-	 * C​r​e​a​t​e​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
 	 */
 	register_createWithTotp: string
 	/**
@@ -1122,6 +1122,10 @@ type RootTranslation = {
 	 * V​e​r​i​f​y​ ​w​i​t​h​ ​E​m​a​i​l​ ​C​o​d​e
 	 */
 	reauth_verifyWithEmailCode: string
+	/**
+	 * V​e​r​i​f​y​ ​w​i​t​h​ ​A​u​t​h​e​n​t​i​c​a​t​o​r​ ​A​p​p
+	 */
+	reauth_verifyWithTotp: string
 	/**
 	 * S​i​g​n​i​n​g​ ​I​n
 	 */
@@ -1539,7 +1543,7 @@ export type TranslationFunctions = {
 	 */
 	account_totpCurrentCode: () => LocalizedString
 	/**
-	 * Current code
+	 * Current code or backup code
 	 */
 	account_totpDeleteCode: () => LocalizedString
 	/**
@@ -1675,7 +1679,7 @@ export type TranslationFunctions = {
 	 */
 	login_signInWithPasskey: () => LocalizedString
 	/**
-	 * Send verification code
+	 * Send code by email
 	 */
 	login_sendCode: () => LocalizedString
 	/**
@@ -1695,7 +1699,7 @@ export type TranslationFunctions = {
 	 */
 	login_totpCodePlaceholder: () => LocalizedString
 	/**
-	 * Continue with authenticator app
+	 * Sign in with authenticator app
 	 */
 	login_totpContinue: () => LocalizedString
 	/**
@@ -1927,11 +1931,11 @@ export type TranslationFunctions = {
 	 */
 	register_createWithPasskey: () => LocalizedString
 	/**
-	 * Sign up with verification code
+	 * Send code by email
 	 */
 	register_sendCode: () => LocalizedString
 	/**
-	 * Create account with authenticator app
+	 * Sign up with authenticator app
 	 */
 	register_createWithTotp: () => LocalizedString
 	/**
@@ -2338,6 +2342,10 @@ export type TranslationFunctions = {
 	 * Verify with Email Code
 	 */
 	reauth_verifyWithEmailCode: () => LocalizedString
+	/**
+	 * Verify with Authenticator App
+	 */
+	reauth_verifyWithTotp: () => LocalizedString
 	/**
 	 * Signing In
 	 */

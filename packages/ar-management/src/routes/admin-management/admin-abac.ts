@@ -31,13 +31,13 @@ export const adminAbacRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
-// Apply admin authentication with ABAC permissions
-adminAbacRouter.use(
-  '*',
-  adminAuthMiddleware({
-    requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
-  })
-);
+const adminAbacAuth = adminAuthMiddleware({
+  requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
+});
+adminAbacRouter.use('/admin-attributes', adminAbacAuth);
+adminAbacRouter.use('/admin-attributes/*', adminAbacAuth);
+adminAbacRouter.use('/admins/:userId/attributes', adminAbacAuth);
+adminAbacRouter.use('/admins/:userId/attributes/*', adminAbacAuth);
 
 /**
  * Helper to get DB_ADMIN adapter

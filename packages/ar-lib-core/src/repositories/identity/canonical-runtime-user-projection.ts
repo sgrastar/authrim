@@ -58,6 +58,11 @@ export interface CanonicalRuntimeUserProjection {
   account_id: string;
   account_type: string;
   lifecycle_state: string;
+  account_status: string;
+  suspended_at: number | null;
+  suspended_until: number | null;
+  locked_at: number | null;
+  locked_until: number | null;
   email: string | null;
   email_verified: number;
   name: string | null;
@@ -255,6 +260,30 @@ function toStringOrNull(value: unknown): string | null {
   return null;
 }
 
+function toNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function accountStatusFromMetadata(
+  lifecycleState: string,
+  metadata: Record<string, unknown>
+): string {
+  if (typeof metadata.status === 'string' && metadata.status.trim()) {
+    return metadata.status;
+  }
+  if (lifecycleState === 'active') {
+    return 'active';
+  }
+  if (
+    lifecycleState === 'suspended' ||
+    lifecycleState === 'locked' ||
+    lifecycleState === 'deleted'
+  ) {
+    return lifecycleState;
+  }
+  return 'inactive';
+}
+
 /**
  * Builds the runtime user shape from canonical identity tables.
  *
@@ -360,6 +389,11 @@ export class CanonicalRuntimeUserProjectionRepository {
       account_id: account.id,
       account_type: account.account_type,
       lifecycle_state: account.lifecycle_state,
+      account_status: accountStatusFromMetadata(account.lifecycle_state, accountMetadataObject),
+      suspended_at: toNumberOrNull(accountMetadataObject.suspended_at),
+      suspended_until: toNumberOrNull(accountMetadataObject.suspended_until),
+      locked_at: toNumberOrNull(accountMetadataObject.locked_at),
+      locked_until: toNumberOrNull(accountMetadataObject.locked_until),
       email: null,
       email_verified: 0,
       name: subject.display_label ?? account.display_label,

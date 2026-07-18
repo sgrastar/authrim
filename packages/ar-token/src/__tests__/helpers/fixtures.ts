@@ -146,7 +146,7 @@ export function createFAPIClient(overrides?: Partial<TestClientMetadata>): TestC
     default_resource: 'svc://fapi-api',
     require_pkce: true,
     dpop_bound_access_tokens: true, // Sender-constrained tokens
-    id_token_signed_response_alg: 'PS256',
+    id_token_signed_response_alg: 'RS256',
     ...overrides,
   };
 }

@@ -382,6 +382,7 @@ PACKAGES=(
     "ar-vc:packages/ar-vc"
     "ar-auth:packages/ar-auth"
     "ar-management:packages/ar-management"
+    "ar-agent-access:packages/ar-agent-access"
     "ar-router:packages/ar-router"
 )
 

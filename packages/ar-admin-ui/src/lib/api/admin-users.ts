@@ -45,7 +45,7 @@ export interface User {
 	created_at: number;
 	updated_at: number;
 	last_login_at: number | null;
-	status: 'active' | 'suspended' | 'locked';
+	status: 'active' | 'inactive' | 'suspended' | 'locked' | 'deleted';
 	suspended_at: number | null;
 	suspended_until: number | null;
 	locked_at: number | null;

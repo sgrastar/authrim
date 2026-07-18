@@ -40,6 +40,7 @@ import {
   // Write-Through KV Cache (Phase 3)
   readResponseTextWithLimit,
   CanonicalRuntimeUserStore,
+  buildTenantSystemSettingsKey,
 } from '@authrim/ar-lib-core';
 import {
   logSanitizedError,
@@ -2146,6 +2147,7 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
   try {
     const env = c.env as Env;
     const profileName = c.req.param('profileName')!;
+    const tenantId = getTenantIdFromContext(c);
 
     if (!profileName) {
       return c.json(
@@ -2170,8 +2172,10 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
       );
     }
 
-    // Get current settings
-    const settingsJson = await env.SETTINGS?.get('system_settings');
+    // Certification profiles are tenant-scoped. The legacy global settings remain
+    // deployment defaults and must not be mutated by a tenant profile switch.
+    const settingsKey = buildTenantSystemSettingsKey(tenantId);
+    const settingsJson = await env.SETTINGS?.get(settingsKey);
     const currentSettings = settingsJson ? JSON.parse(settingsJson) : {};
 
     // Merge profile settings with current settings
@@ -2182,7 +2186,7 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
 
     // Store updated settings
     if (env.SETTINGS) {
-      await env.SETTINGS.put('system_settings', JSON.stringify(updatedSettings));
+      await env.SETTINGS.put(settingsKey, JSON.stringify(updatedSettings));
     } else {
       return c.json(
         {
@@ -2200,6 +2204,7 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
         name: profile.name,
         description: profile.description,
       },
+      tenant_id: tenantId,
       settings: updatedSettings,
     });
   } catch (error) {

@@ -178,9 +178,22 @@ export async function validateDPoPProof(
     }
 
     // htu (required) - must match request URL (without query and fragment)
-    const requestUrl = new URL(url);
-    const htu = `${requestUrl.protocol}//${requestUrl.host}${requestUrl.pathname}`;
-    if (!claims.htu || claims.htu !== htu) {
+    const normalizeHtu = (value: string): string => {
+      const parsed = new URL(value);
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.href;
+    };
+    const normalizedRequestHtu = normalizeHtu(url);
+    let htuMatches = false;
+    if (claims.htu) {
+      try {
+        htuMatches = normalizeHtu(claims.htu) === normalizedRequestHtu;
+      } catch {
+        htuMatches = false;
+      }
+    }
+    if (!htuMatches) {
       return {
         valid: false,
         error: 'invalid_dpop_proof',
@@ -251,8 +264,10 @@ export async function validateDPoPProof(
     // Determine if we have Env (new sharded approach) or DurableObjectNamespace (legacy)
     let stub: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
 
-    // Check if this is an Env object by looking for the DPOP_JTI_STORE binding
-    const isEnv = 'DPOP_JTI_STORE' in envOrJTIStore && 'SETTINGS' in envOrJTIStore;
+    // A resource server can validate DPoP without a SETTINGS binding. Distinguish the
+    // full Env shape by the binding that this path actually needs; requiring SETTINGS
+    // incorrectly treated ar-userinfo's Env as a DurableObjectNamespace.
+    const isEnv = 'DPOP_JTI_STORE' in envOrJTIStore;
 
     if (isEnv) {
       // New region-aware sharding approach

@@ -57,6 +57,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
     getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
+    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
     validateClientId: mocks.mockValidateClientId,
     verifyClientSecretHash: mocks.mockVerifyClientSecretHash,
     validateClientAssertion: mocks.mockValidateClientAssertion,

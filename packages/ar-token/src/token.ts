@@ -38,6 +38,7 @@ import {
   getClientCached,
   loadTenantProfileCached,
   getSystemSettingsCached,
+  getTenantSystemSettings,
   requireDedicatedAdminDatabaseAdapter,
   resolveElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
@@ -58,6 +59,10 @@ import {
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
 } from '@authrim/ar-lib-core';
+import {
+  resolveIDTokenSigningAlgorithm,
+  type OIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
 import {
   revokeToken,
   getCachedUser,
@@ -520,6 +525,26 @@ async function resolveBrowserPublicClientMode(
   return TENANT_DEFAULTS['tenant.browser_public_client_mode'];
 }
 
+interface TenantRBACClaimsConfig {
+  accessToken: string | undefined;
+  idToken: string | undefined;
+}
+
+async function resolveTenantRBACClaimsConfig(
+  env: Env,
+  tenantId: string
+): Promise<TenantRBACClaimsConfig> {
+  const authrimSettings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tokens');
+  const settings = authrimSettings ?? (await getTenantSettings(env.SETTINGS, tenantId, 'tokens'));
+  const accessToken = settings?.['tokens.rbac_access_token_claims'];
+  const idToken = settings?.['tokens.rbac_id_token_claims'];
+
+  return {
+    accessToken: typeof accessToken === 'string' ? accessToken : env.RBAC_ACCESS_TOKEN_CLAIMS,
+    idToken: typeof idToken === 'string' ? idToken : env.RBAC_ID_TOKEN_CLAIMS,
+  };
+}
+
 function getBrowserRefreshTokenPolicy(clientMetadata: ClientMetadata): BrowserRefreshTokenPolicy {
   return clientMetadata.browser_refresh_token_policy === 'dpop_bound' ? 'dpop_bound' : 'disabled';
 }
@@ -794,9 +819,10 @@ async function isDPoPRequiredForTokenRequest(
 ): Promise<boolean> {
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env);
+    const tenantId = (clientMetadata.tenant_id as string | undefined) || getTenantIdFromContext(c);
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
     if (settings) {
-      const fapi = settings.fapi || {};
+      const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
     }
   } catch (error) {
@@ -1065,10 +1091,12 @@ interface AuthCodeStoreResponse {
 async function getSigningKeyFromKeyManager(
   env: Env,
   tenantId: string,
-  expectedKid?: string
+  expectedKid?: string,
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
-  const cached = signingKeyCache.get(tenantId);
+  const cacheKey = `${tenantId}:${algorithm}`;
+  const cached = signingKeyCache.get(cacheKey);
 
   // Check cache with kid mismatch logic + KV version check
   if (cached) {
@@ -1108,9 +1136,12 @@ async function getSigningKeyFromKeyManager(
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Try to get active key via RPC
-  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
+  let keyData =
+    algorithm === 'RS256'
+      ? await keyManager.getActiveKeyWithPrivateRpc()
+      : await keyManager.getActiveOIDCSigningKeyWithPrivateRpc(algorithm);
 
-  if (!keyData) {
+  if (!keyData && algorithm === 'RS256') {
     // No active key, generate and activate one
     moduleLogger.info('No active signing key found, generating new key', {
       action: 'KeyManager',
@@ -1121,13 +1152,16 @@ async function getSigningKeyFromKeyManager(
   }
 
   // Import private key (expensive operation: 5-7ms)
-  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  if (!keyData) {
+    throw new Error('OIDC signing key is unavailable');
+  }
+  const privateKey = await importPKCS8(keyData.privatePEM, algorithm);
 
   // Fetch current version for cache coherence
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
+  signingKeyCache.set(cacheKey, { privateKey, kid: keyData.kid, timestamp: now, version });
   moduleLogger.debug('Signing key cached', {
     kid: keyData.kid,
     ttlMs: KEY_CACHE_TTL,
@@ -1135,6 +1169,48 @@ async function getSigningKeyFromKeyManager(
   });
 
   return { privateKey, kid: keyData.kid };
+}
+
+async function createClientIDToken(
+  env: Env,
+  tenantId: string,
+  clientMetadata: ClientMetadata,
+  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
+  expiresIn: number
+): Promise<string> {
+  const algorithm = resolveIDTokenSigningAlgorithm(clientMetadata);
+  const { privateKey, kid } = await getSigningKeyFromKeyManager(
+    env,
+    tenantId,
+    undefined,
+    algorithm
+  );
+  return createIDToken(claims, privateKey, kid, expiresIn, algorithm);
+}
+
+async function createClientSDJWTIDToken(
+  env: Env,
+  tenantId: string,
+  clientMetadata: ClientMetadata,
+  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
+  expiresIn: number,
+  selectiveClaims: string[]
+): Promise<string> {
+  const algorithm = resolveIDTokenSigningAlgorithm(clientMetadata);
+  const { privateKey, kid } = await getSigningKeyFromKeyManager(
+    env,
+    tenantId,
+    undefined,
+    algorithm
+  );
+  return createSDJWTIDTokenFromClaims(
+    claims,
+    privateKey,
+    kid,
+    expiresIn,
+    selectiveClaims,
+    algorithm
+  );
 }
 
 /**
@@ -1424,9 +1500,9 @@ async function handleAuthorizationCodeGrant(
   // DPoP requirement (FAPI 2.0 / sender-constrained tokens) - request-level cached
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env);
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
     if (settings) {
-      const fapi = settings.fapi || {};
+      const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
     }
@@ -1569,6 +1645,8 @@ async function handleAuthorizationCodeGrant(
       tenantId: getTenantIdFromContext(c),
       clientId: client_id,
       codeVerifier: code_verifier,
+      expectedAuthorizationServer: 'default',
+      expectedSubjectType: 'end_user',
     })) as AuthCodeStoreResponse;
 
     // RFC 6749 Section 4.1.2: Handle replay attack detection
@@ -1831,16 +1909,17 @@ async function handleAuthorizationCodeGrant(
   // Phase 1 RBAC: Fetch RBAC claims for tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId,
       }),
     ]);
@@ -2326,10 +2405,11 @@ async function handleAuthorizationCodeGrant(
       const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
         ? rawSelectiveClaims
         : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createSDJWTIDTokenFromClaims(
+      idToken = await createClientSDJWTIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn,
         selectiveClaims
       );
@@ -2337,10 +2417,11 @@ async function handleAuthorizationCodeGrant(
     } else {
       // For Authorization Code Flow, ID token should only contain standard claims
       // Scope-based claims (profile, email) are returned from UserInfo endpoint
-      idToken = await createIDToken(
+      idToken = await createClientIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn
       );
     }
@@ -2805,6 +2886,19 @@ async function handleRefreshTokenGrant(
     );
   }
 
+  // FAPI 2.0 Security Profile 5.3.2.1-9 prohibits routine refresh-token rotation.
+  // Sender-constrained access tokens and confidential-client authentication provide the
+  // required protections without making a client lose its session when the rotated response is
+  // not received or persisted. Non-FAPI tenants keep Authrim's rotation default.
+  let prohibitRefreshTokenRotation = false;
+  try {
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    const fapi = (settings?.fapi || {}) as { enabled?: boolean };
+    prohibitRefreshTokenRotation = fapi.enabled === true;
+  } catch (error) {
+    log.error('Failed to load FAPI refresh-token policy', {}, error as Error);
+  }
+
   // Client authentication verification
   // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
   if (
@@ -2959,16 +3053,17 @@ async function handleRefreshTokenGrant(
   // User's roles/organization may have changed since the original token was issued
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId,
       }),
     ]);
@@ -3059,7 +3154,15 @@ async function handleRefreshTokenGrant(
     dpopJkt = dpopValidation.jkt;
     tokenType = 'DPoP';
 
-    if (refreshTokenDpopJkt && dpopJkt !== refreshTokenDpopJkt) {
+    // Public clients have no independent client authentication credential, so their refresh
+    // token remains bound to the original DPoP key. Confidential clients are already bound by
+    // their authenticated client identity and may rotate the DPoP key when refreshing; the new
+    // access/refresh tokens are then bound to the newly proven key.
+    if (
+      isPublicClientMetadata(typedClient) &&
+      refreshTokenDpopJkt &&
+      dpopJkt !== refreshTokenDpopJkt
+    ) {
       return oauthError(
         c,
         'invalid_dpop_proof',
@@ -3181,18 +3284,20 @@ async function handleRefreshTokenGrant(
       const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
         ? rawSelectiveClaims
         : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createSDJWTIDTokenFromClaims(
+      idToken = await createClientSDJWTIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn,
         selectiveClaims
       );
     } else {
-      idToken = await createIDToken(
+      idToken = await createClientIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn
       );
     }
@@ -3201,9 +3306,10 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'server_error', 'Failed to create ID token', 500);
   }
 
-  // Check if Token Rotation is enabled (default: true for security)
-  // Set ENABLE_REFRESH_TOKEN_ROTATION=false to disable (for load testing only!)
-  const rotationEnabled = c.env.ENABLE_REFRESH_TOKEN_ROTATION !== 'false';
+  // Rotation remains enabled by default except for FAPI 2.0 tenants, where routine rotation is
+  // explicitly prohibited by the security profile.
+  const rotationEnabled =
+    !prohibitRefreshTokenRotation && c.env.ENABLE_REFRESH_TOKEN_ROTATION !== 'false';
 
   let newRefreshToken: string;
   const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
@@ -3303,10 +3409,12 @@ async function handleRefreshTokenGrant(
       );
     }
   } else {
-    // Token Rotation disabled - return the same refresh token
-    // WARNING: This is less secure and should only be used for testing!
+    // A FAPI tenant uses stable refresh tokens by profile requirement. Other tenants may reach
+    // this branch only through the explicit environment override.
     newRefreshToken = refreshTokenValue;
-    log.debug('Refresh token rotation disabled - returning same token', {});
+    log.debug('Refresh token rotation disabled - returning same token', {
+      fapiProfile: prohibitRefreshTokenRotation,
+    });
   }
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
@@ -3326,19 +3434,27 @@ async function handleRefreshTokenGrant(
     }).catch((err: unknown) => {
       log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
     }),
-    publishEvent(c, {
-      type: TOKEN_EVENTS.REFRESH_ROTATED,
-      tenantId,
-      data: {
-        clientId: client_id,
-        userId: refreshTokenData.sub,
-        scopes: grantedScope.split(' '),
-        grantType: 'refresh_token',
-      } satisfies TokenEventData,
-    }).catch((err: unknown) => {
-      log.error('Failed to publish token.refresh.rotated event', { action: 'Event' }, err as Error);
-    }),
   ];
+  if (rotationEnabled) {
+    eventPromises.push(
+      publishEvent(c, {
+        type: TOKEN_EVENTS.REFRESH_ROTATED,
+        tenantId,
+        data: {
+          clientId: client_id,
+          userId: refreshTokenData.sub,
+          scopes: grantedScope.split(' '),
+          grantType: 'refresh_token',
+        } satisfies TokenEventData,
+      }).catch((err: unknown) => {
+        log.error(
+          'Failed to publish token.refresh.rotated event',
+          { action: 'Event' },
+          err as Error
+        );
+      })
+    );
+  }
 
   // ID Token issued event (refresh grant can also issue new ID token)
   if (idToken) {
@@ -3883,16 +3999,17 @@ async function handleDeviceCodeGrant(
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
       }),
     ]);
@@ -3956,10 +4073,11 @@ async function handleDeviceCodeGrant(
 
   let idToken: string;
   try {
-    idToken = await createIDToken(
+    idToken = await createClientIDToken(
+      c.env,
+      getTenantIdFromContext(c),
+      clientMetadata as ClientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      privateKey,
-      keyId,
       expiresIn
     );
   } catch (error) {
@@ -4479,16 +4597,17 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   // Phase 2 RBAC: Fetch RBAC claims for CIBA flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
       }),
     ]);
@@ -4593,10 +4712,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     return idTokenConsent.response;
   }
 
-  let idToken = await createIDToken(
+  let idToken = await createClientIDToken(
+    c.env,
+    getTenantIdFromContext(c),
+    clientMetadata as ClientMetadata,
     idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-    privateKey,
-    kid,
     expiresIn
   );
 
@@ -6562,10 +6682,11 @@ async function handleNativeSSOTokenExchange(
 
   let newIdToken: string;
   try {
-    newIdToken = await createIDToken(
+    newIdToken = await createClientIDToken(
+      c.env,
+      tenantId,
+      clientMetadata,
       newIdTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      privateKey,
-      keyId,
       expiresIn
     );
   } catch (error) {
@@ -7260,6 +7381,25 @@ async function handleAdminMachineClientCredentialsGrant(
   }
 
   const expiresIn = Math.min(principal.tokenTtlSeconds, 900);
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  let dpopJkt: string | undefined;
+  if (dpopProof) {
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      c.req.method,
+      c.req.url,
+      undefined,
+      c.env,
+      principal.clientId,
+      getTenantIdFromContext(c)
+    );
+    if (!dpopValidation.valid || !dpopValidation.jkt) {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+      });
+    }
+    dpopJkt = dpopValidation.jkt;
+  }
   const accessTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
     sub: `machine:${principal.id}`,
@@ -7271,9 +7411,10 @@ async function handleAdminMachineClientCredentialsGrant(
     credential_id: credential.id,
     client_auth_method: 'private_key_jwt',
     credential_strength: 'asymmetric_key',
-    sender_constrained: false,
+    sender_constrained: dpopJkt !== undefined,
     scope: grantedScopes.join(' '),
     tenant_scope: tenantScope,
+    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
   };
 
   let accessToken: string;
@@ -7332,7 +7473,7 @@ async function handleAdminMachineClientCredentialsGrant(
 
   return c.json({
     access_token: accessToken,
-    token_type: 'Bearer',
+    token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     scope: grantedScopes.join(' '),
   });

@@ -45,17 +45,34 @@ import {
   putClient,
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
+import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
 type ClientRegistrationRequestWithPkce = ClientRegistrationRequest & {
   require_pkce?: boolean;
+  client_credentials_allowed?: boolean;
+  allowed_scopes?: string[];
+  default_scope?: string;
   default_audience?: string | null;
   default_resource?: string | null;
 };
 
 type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
   require_pkce: boolean;
+  client_credentials_allowed?: boolean;
+  allowed_scopes?: string[];
+  default_scope?: string;
+  default_audience?: string;
+  default_resource?: string;
 };
+
+const CONFORMANCE_TEST_USER_ID = 'user-oidc-conformance-test';
+
+export function buildConformanceTestUserId(tenantId: string, defaultTenantId = 'default'): string {
+  return tenantId === defaultTenantId
+    ? CONFORMANCE_TEST_USER_ID
+    : `${CONFORMANCE_TEST_USER_ID}-${tenantId}`;
+}
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
@@ -388,7 +405,12 @@ function validateRegistrationRequest(
       };
     }
 
-    const validGrantTypes = ['authorization_code', 'refresh_token', 'implicit'];
+    const validGrantTypes = [
+      'authorization_code',
+      'refresh_token',
+      'implicit',
+      'client_credentials',
+    ];
     for (const grantType of data.grant_types) {
       if (!validGrantTypes.includes(grantType)) {
         return {
@@ -408,6 +430,59 @@ function validateRegistrationRequest(
       error: {
         error: 'invalid_client_metadata',
         error_description: 'require_pkce must be a boolean',
+      },
+    };
+  }
+
+  if (
+    data.client_credentials_allowed !== undefined &&
+    typeof data.client_credentials_allowed !== 'boolean'
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'client_credentials_allowed must be a boolean',
+      },
+    };
+  }
+
+  if (
+    data.allowed_scopes !== undefined &&
+    (!Array.isArray(data.allowed_scopes) ||
+      data.allowed_scopes.some((scope) => typeof scope !== 'string' || !scope.trim()))
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'allowed_scopes must be an array of non-empty strings',
+      },
+    };
+  }
+
+  for (const field of ['default_scope', 'default_audience', 'default_resource'] as const) {
+    if (data[field] !== undefined && (typeof data[field] !== 'string' || !data[field]?.trim())) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `${field} must be a non-empty string`,
+        },
+      };
+    }
+  }
+
+  if (
+    data.grant_types?.includes('client_credentials') &&
+    data.client_credentials_allowed !== true
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'client_credentials_allowed must be true when grant_types includes client_credentials',
       },
     };
   }
@@ -462,6 +537,33 @@ function validateRegistrationRequest(
         };
       }
     }
+  }
+
+  if (
+    data.id_token_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(data.id_token_signed_response_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+      },
+    };
+  }
+
+  if (
+    data.userinfo_signed_response_alg !== undefined &&
+    data.userinfo_signed_response_alg !== 'none' &&
+    !isOIDCSigningAlgorithm(data.userinfo_signed_response_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+      },
+    };
   }
 
   // Validate subject_type (OIDC Core 8)
@@ -955,9 +1057,10 @@ async function storeClient(
       initiate_login_uri, registration_access_token_hash,
       software_id, software_version, requestable_scopes,
       default_audience, default_resource,
+      client_credentials_allowed, allowed_scopes, default_scope,
       require_pkce,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -1024,6 +1127,9 @@ async function storeClient(
       metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
       metadata.default_audience || null,
       metadata.default_resource || null,
+      metadata.client_credentials_allowed ? 1 : 0,
+      metadata.allowed_scopes ? JSON.stringify(metadata.allowed_scopes) : null,
+      metadata.default_scope || null,
       metadata.require_pkce ? 1 : 0,
       // Tenant ID
       metadataTenantId,
@@ -1222,6 +1328,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.software_id) response.software_id = request.software_id;
     if (request.software_version) response.software_version = request.software_version;
     if (request.scope) response.scope = request.scope;
+    if (request.client_credentials_allowed !== undefined)
+      response.client_credentials_allowed = request.client_credentials_allowed;
+    if (request.allowed_scopes) response.allowed_scopes = request.allowed_scopes;
+    if (request.default_scope) response.default_scope = request.default_scope;
+    if (request.default_audience) response.default_audience = request.default_audience;
+    if (request.default_resource) response.default_resource = request.default_resource;
     // OIDC Core 8: Subject type and sector identifier
     response.subject_type = subjectType;
     if (request.sector_identifier_uri)
@@ -1366,6 +1478,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       asc_allowed_transformed_claims: request.asc_allowed_transformed_claims,
       // Store hashed client secret, not plaintext
       client_secret_hash: clientSecretHash,
+      client_credentials_allowed: request.client_credentials_allowed ?? false,
+      allowed_scopes: request.allowed_scopes,
+      default_scope: request.default_scope,
       default_audience: defaultTarget.defaultAudience,
       default_resource: defaultTarget.defaultResource,
     };
@@ -1421,7 +1536,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (isCertificationTest) {
       log.info('OIDC Conformance Test detected, creating test user', { action: 'register' });
 
-      const testUserId = 'user-oidc-conformance-test';
+      const testUserId = buildConformanceTestUserId(
+        tenantId,
+        c.env.DEFAULT_TENANT_ID?.trim() || 'default'
+      );
       const testAddress = {
         formatted: '1234 Main St, Anytown, ST 12345, USA',
         street_address: '1234 Main St',
@@ -1474,7 +1592,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         addressJson: JSON.stringify(testAddress),
       });
 
-      log.info('Test user created/verified: user-oidc-conformance-test', { action: 'register' });
+      log.info('Conformance test user created or verified', {
+        action: 'register',
+        userId: testUserId,
+      });
     }
 
     return c.json(response, 201, {

@@ -168,6 +168,46 @@ describe('DPoP Utilities', () => {
       expect(body).toMatchObject({ jti: 'jti-1', client_id: 'client-1', ttl: 3600 });
     });
 
+    it('ignores query and fragment in the proof htu claim', async () => {
+      const store = namespace();
+      const result = await validateDPoPProof(
+        await proof({
+          htu: 'https://api.example/token?allthedoorsonthisspaceshiphavebeen#programmed',
+        }),
+        'POST',
+        'https://api.example/token',
+        undefined,
+        store as never,
+        'client-1',
+        'tenant-a'
+      );
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts a Worker Env with DPoP storage even when SETTINGS is not bound', async () => {
+      const store = namespace();
+      const env = {
+        DPOP_JTI_STORE: store,
+        AUTHRIM_CONFIG: {
+          get: vi.fn(async () => null),
+        },
+      };
+
+      await expect(
+        validateDPoPProof(
+          await proof({ jti: 'userinfo-jti' }),
+          'POST',
+          'https://api.example/token',
+          undefined,
+          env as never,
+          'client-1',
+          'tenant-userinfo-no-settings'
+        )
+      ).resolves.toMatchObject({ valid: true });
+      expect(store.idFromName).toHaveBeenCalled();
+    });
+
     it('validates the access-token hash when an access token is supplied', async () => {
       const token = 'access-token';
       const ath = await calculateAccessTokenHash(token);

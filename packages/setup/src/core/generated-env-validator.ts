@@ -68,6 +68,7 @@ const PROFILE_AWARE_COMPONENTS: WorkerComponent[] = [
 const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
   'ar-auth',
   'ar-management',
+  'ar-agent-access',
   'ar-token',
   'ar-userinfo',
   'ar-saml',
@@ -76,6 +77,10 @@ const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
 ];
 
 const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
+
+function requiredBuiltinD1Bindings(component: WorkerComponent): ReadonlySet<string> {
+  return component === 'ar-agent-access' ? new Set(['DB', 'DB_ADMIN']) : BUILTIN_D1_BINDINGS;
+}
 
 const LOGGING_R2_BINDINGS = [
   'DIAGNOSTIC_LOGS',
@@ -851,7 +856,7 @@ async function validateDeployWranglers(
     const content = await readFile(deployPath, 'utf-8');
     const parsed = parseWranglerToml(content, env);
     if (component !== 'ar-router' && component !== 'ar-async') {
-      for (const binding of BUILTIN_D1_BINDINGS) {
+      for (const binding of requiredBuiltinD1Bindings(component)) {
         if (!parsed.d1[binding]) {
           pushDetail(
             check,
@@ -981,7 +986,11 @@ async function validateDeployWranglers(
     }
 
     const expectedHyperdrive = Object.values(config.profiles.references?.hyperdrive ?? {});
-    if (component !== 'ar-router' && expectedHyperdrive.length > 0) {
+    if (
+      component !== 'ar-router' &&
+      component !== 'ar-agent-access' &&
+      expectedHyperdrive.length > 0
+    ) {
       for (const binding of expectedHyperdrive) {
         if (parsed.hyperdrive[binding.binding] !== binding.id) {
           pushDetail(

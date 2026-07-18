@@ -20,6 +20,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@authrim/ar-agent-access": "workspace:*",
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-plugin": "workspace:*",
     "@simplewebauthn/server": "^13.2.2",

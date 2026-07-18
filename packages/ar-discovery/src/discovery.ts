@@ -1,5 +1,11 @@
 import type { Context } from 'hono';
-import type { Env, OIDCProviderMetadata, LogoutConfig, TenantProfile } from '@authrim/ar-lib-core';
+import type {
+  Env,
+  Logger,
+  OIDCProviderMetadata,
+  LogoutConfig,
+  TenantProfile,
+} from '@authrim/ar-lib-core';
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
@@ -19,7 +25,13 @@ import {
   buildVersionedKey,
   getCacheTTL,
   PREDEFINED_TRANSFORMED_CLAIMS,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
+import type { JWK } from 'jose';
+import {
+  getPublishedOIDCSigningAlgorithms,
+  type OIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
 
 /**
  * OIDC Configuration interface for discovery metadata
@@ -49,6 +61,8 @@ interface OIDCConfig {
   claimsSupported?: string[];
   /** Token endpoint auth methods */
   tokenEndpointAuthMethodsSupported?: string[];
+  /** OAuth/OIDC response types enabled for this tenant profile */
+  responseTypesSupported?: string[];
   /** Allow 'none' algorithm for request objects */
   allowNoneAlgorithm?: boolean;
 }
@@ -70,6 +84,31 @@ export function clearDiscoveryMetadataCache(): void {
   metadataCache.clear();
 }
 
+async function resolvePublishedSigningAlgorithms(
+  env: Env,
+  tenantId: string,
+  log: Logger
+): Promise<OIDCSigningAlgorithm[]> {
+  let keys: JWK[] = [];
+  try {
+    if (env.KEY_MANAGER_PUBLIC) {
+      keys = await env.KEY_MANAGER_PUBLIC.getAllPublicKeys(tenantId);
+    }
+  } catch (error) {
+    log.warn('Failed to load OIDC signing keys for discovery', { tenantId }, error as Error);
+  }
+
+  if (keys.length === 0 && env.PUBLIC_JWK_JSON) {
+    try {
+      keys = [JSON.parse(env.PUBLIC_JWK_JSON) as JWK];
+    } catch (error) {
+      log.warn('Failed to parse fallback OIDC public key for discovery', {}, error as Error);
+    }
+  }
+
+  return getPublishedOIDCSigningAlgorithms(keys);
+}
+
 /**
  * OpenID Connect Discovery Endpoint Handler
  * https://openid.net/specs/openid-connect-discovery-1_0.html
@@ -85,6 +124,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 
   // Build issuer URL for this tenant.
   const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
+  const publishedSigningAlgorithms = await resolvePublishedSigningAlgorithms(c.env, tenantId, log);
 
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: OIDCConfig = {};
@@ -93,10 +133,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   let currentSettingsJson = '';
 
   try {
-    const settingsJson = await c.env.SETTINGS?.get('system_settings');
-    currentSettingsJson = settingsJson || '';
-    if (settingsJson) {
-      const settings = JSON.parse(settingsJson);
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
+    currentSettingsJson = settings ? JSON.stringify(settings) : '';
+    if (settings) {
       oidcConfig = settings.oidc || {};
       fapiConfig = settings.fapi || {};
     }
@@ -183,7 +222,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // stale metadata for a different environment or component set.
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const settingsHash = `${currentSettingsJson}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}`;
+  const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}`;
+  const settingsHash = `${currentSettingsJson}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}`;
   const cacheKey = `${tenantId}:${settingsHash}`;
   const discoveryTTL = await getCacheTTL(c.env, 'discovery');
   const kvCacheKey = buildVersionedKey('discovery', cacheKey);
@@ -219,6 +259,19 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 
   // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
   const requirePar = fapiConfig.enabled ? true : oidcConfig.requirePar || false;
+  const responseTypesSupported = oidcConfig.responseTypesSupported || [
+    'code',
+    'id_token',
+    'id_token token',
+    'code id_token',
+    'code token',
+    'code id_token token',
+    'none',
+  ];
+  const implicitGrantSupported = responseTypesSupported.some((responseType) => {
+    const values = responseType.split(/\s+/);
+    return values.includes('id_token') || values.includes('token');
+  });
 
   const metadata: OIDCProviderMetadata = {
     issuer,
@@ -235,6 +288,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     pushed_authorization_request_endpoint: `${issuer}/par`,
     // RFC 9126: PAR requirement (dynamic based on FAPI/OIDC config)
     require_pushed_authorization_requests: requirePar,
+    // RFC 9207: /authorize includes iss in successful and error responses
+    authorization_response_iss_parameter_supported: true,
     ...(asyncEnabled
       ? {
           // RFC 8628: Device Authorization endpoint
@@ -246,24 +301,14 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
           backchannel_user_code_parameter_supported: true,
         }
       : {}),
-    // Dynamic OP certification requires all hybrid and implicit response types
-    // Note: These are mandatory for Dynamic OP certification, not configurable
-    response_types_supported: [
-      'code',
-      'id_token',
-      'id_token token',
-      'code id_token',
-      'code token',
-      'code id_token token',
-      'none',
-    ],
+    response_types_supported: responseTypesSupported,
     // Grant types filtered by TenantProfile capabilities (§16: Two-layer model)
     // RFC 8414 §2: Discovery metadata SHOULD reflect actual capabilities
     grant_types_supported: filterGrantTypesByProfile(
       [
         'authorization_code',
         'refresh_token',
-        'implicit', // Required for Dynamic OP certification (id_token/token response types)
+        ...(implicitGrantSupported ? ['implicit'] : []),
         'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
         ...(asyncEnabled
           ? [
@@ -277,7 +322,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       tenantProfile,
       { tokenExchangeEnabled, clientCredentialsEnabled }
     ),
-    id_token_signing_alg_values_supported: ['RS256'],
+    id_token_signing_alg_values_supported: publishedSigningAlgorithms,
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],
     // Dynamic scopes based on AI Ephemeral Auth configuration
@@ -377,8 +422,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     id_token_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     userinfo_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     userinfo_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
-    // UserInfo signing algorithm support (none = unsigned JSON, RS256 = signed JWT)
-    userinfo_signing_alg_values_supported: ['none', 'RS256'],
+    // Unsigned UserInfo is JSON; this field lists only implemented JWS algorithms with JWKS keys.
+    userinfo_signing_alg_values_supported: publishedSigningAlgorithms,
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,

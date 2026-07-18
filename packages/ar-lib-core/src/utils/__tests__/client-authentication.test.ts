@@ -128,6 +128,80 @@ describe('Client Authentication', () => {
       expect(result.valid).toBe(true);
     });
 
+    it('accepts the explicit issuer audience when validating at the PAR endpoint', async () => {
+      const client = createClientWithJWKS(clientId);
+      const issuer = 'https://op.example.com';
+      const assertion = await createClientAssertion(clientId, issuer);
+
+      const result = await validateClientAssertion(assertion, `${issuer}/par`, client, { issuer });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts the token endpoint audience when validating at the PAR endpoint', async () => {
+      const client = createClientWithJWKS(clientId);
+      const issuer = 'https://op.example.com';
+      const assertion = await createClientAssertion(clientId, `${issuer}/token`);
+
+      const result = await validateClientAssertion(assertion, `${issuer}/par`, client, {
+        issuer,
+        additionalAudiences: [`${issuer}/token`],
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts only a single issuer audience in issuer-only mode', async () => {
+      const client = createClientWithJWKS(clientId);
+      const issuer = 'https://op.example.com';
+      const assertion = await createClientAssertion(clientId, issuer);
+
+      const result = await validateClientAssertion(assertion, `${issuer}/par`, client, {
+        audiencePolicy: 'issuer-only',
+        issuer,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects an endpoint audience in issuer-only mode', async () => {
+      const client = createClientWithJWKS(clientId);
+      const issuer = 'https://op.example.com';
+      const assertion = await createClientAssertion(clientId, `${issuer}/par`);
+
+      const result = await validateClientAssertion(assertion, `${issuer}/par`, client, {
+        audiencePolicy: 'issuer-only',
+        issuer,
+      });
+
+      expect(result).toMatchObject({ valid: false, error: 'invalid_client' });
+    });
+
+    it('rejects an audience array in issuer-only mode', async () => {
+      const client = createClientWithJWKS(clientId);
+      const issuer = 'https://op.example.com';
+      const assertion = await createClientAssertion(clientId, issuer, { aud: [issuer] });
+
+      const result = await validateClientAssertion(assertion, `${issuer}/par`, client, {
+        audiencePolicy: 'issuer-only',
+        issuer,
+      });
+
+      expect(result).toMatchObject({ valid: false, error: 'invalid_client' });
+    });
+
+    it('accepts nbf within the configured positive clock skew', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint, { nbf: now + 8 });
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client, {
+        clockSkewSeconds: 60,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
     it('should accept assertion with nbf in the past', async () => {
       const now = Math.floor(Date.now() / 1000);
       const client = createClientWithJWKS(clientId);

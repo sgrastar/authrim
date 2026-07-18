@@ -24,6 +24,7 @@ import { loadTenantProfile, loadTenantContract, loadClientContract } from './con
 import { getTenantProfile } from '../types/contracts/tenant-profile';
 import { buildVersionedKey, getCacheTTL } from './cache-config';
 import { buildKVKey } from './tenant-context';
+import { getTenantSystemSettings } from './tenant-settings';
 
 function getTenantIdFromRequestCacheContext(c: Context<{ Bindings: Env }>): string {
   // Hono's generic context type does not know about middleware-injected values.
@@ -308,12 +309,11 @@ export async function getSystemSettingsCached(
   cache.stats.systemSettingsMiss++;
 
   try {
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-    if (settingsJson) {
-      cache.systemSettings = JSON.parse(settingsJson) as CachedSystemSettings;
-    } else {
-      cache.systemSettings = null;
-    }
+    const tenantId = getTenantIdFromRequestCacheContext(c);
+    cache.systemSettings = (await getTenantSystemSettings(
+      env.SETTINGS,
+      tenantId
+    )) as CachedSystemSettings | null;
   } catch {
     // Parse error or KV error - treat as no settings
     cache.systemSettings = null;

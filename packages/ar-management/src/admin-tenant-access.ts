@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
-import { AR_ERROR_CODES, createErrorResponse } from '@authrim/ar-lib-core';
+import { AR_ERROR_CODES, createErrorResponse, hasAdminPermission } from '@authrim/ar-lib-core';
 
 const PLATFORM_TENANT_MANAGEMENT_ROLES = new Set([
   'super_admin',
@@ -15,16 +15,18 @@ export function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | 
 }
 
 export function hasPlatformTenantManagementAuthority(
-  adminAuth: AdminAuthContext | undefined
+  adminAuth: AdminAuthContext | undefined,
+  requiredPermission?: string
 ): boolean {
   if (!adminAuth) {
     return false;
   }
 
-  return (
-    adminAuth.roles.some((role) => PLATFORM_TENANT_MANAGEMENT_ROLES.has(role)) ||
-    adminAuth.tenantScope?.includes('*') === true
-  );
+  if (adminAuth.roles.some((role) => PLATFORM_TENANT_MANAGEMENT_ROLES.has(role))) return true;
+  if (adminAuth.tenantScope?.includes('*') !== true) return false;
+  return requiredPermission
+    ? hasAdminPermission(adminAuth.permissions ?? [], requiredPermission)
+    : true;
 }
 
 export function canAccessTenantResource(
@@ -86,15 +88,17 @@ export async function requireTenantResourceAccess(
 }
 
 export async function requirePlatformTenantManagementAuthority(
-  c: Context<{ Bindings: Env }>
+  c: Context<{ Bindings: Env }>,
+  requiredPermission?: string
 ): Promise<Response | null> {
-  if (hasPlatformTenantManagementAuthority(getAdminAuth(c))) {
+  if (hasPlatformTenantManagementAuthority(getAdminAuth(c), requiredPermission)) {
     return null;
   }
 
   return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
     variables: {
       required_scope: 'platform',
+      ...(requiredPermission ? { required_permission: requiredPermission } : {}),
       reason: 'Tenant management requires platform administrator authority',
     },
   });

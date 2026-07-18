@@ -744,6 +744,9 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
           c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
         user_agent: c.req.header('user-agent') || undefined,
         expires_at: expiresAt,
+        // A verified passkey assertion includes required user verification and
+        // is the fresh MFA event used by high-risk Admin operations.
+        mfa_verified: true,
       });
     } catch (error) {
       logger.error('Failed to create admin session', { action: 'session_create' }, error as Error);

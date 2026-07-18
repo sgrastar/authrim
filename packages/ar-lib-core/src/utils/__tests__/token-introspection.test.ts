@@ -81,6 +81,43 @@ describe('Token Introspection Utility', () => {
       expect(result.error).toBeUndefined();
     });
 
+    it('validates a resource-indicated token against an explicit protected-resource audience', async () => {
+      const resourceAudience = 'https://test.example.com/api/protected/fapi-resource';
+      const tokenResult = await createAccessToken(
+        {
+          iss: mockEnv.ISSUER_URL,
+          sub: 'client:test-client',
+          aud: resourceAudience,
+          scope: 'fapi',
+          client_id: 'test-client',
+        },
+        privateKey as unknown as Parameters<typeof createAccessToken>[1],
+        mockEnv.KEY_ID!,
+        3600
+      );
+      const headers = new Headers({ Authorization: `Bearer ${tokenResult.token}` });
+
+      const accepted = await introspectToken({
+        method: 'GET',
+        url: resourceAudience,
+        headers,
+        env: mockEnv,
+        tenantId: TEST_TENANT_ID,
+        audience: resourceAudience,
+      });
+      expect(accepted.valid).toBe(true);
+
+      const rejectedWithoutResourceAudience = await introspectToken({
+        method: 'GET',
+        url: resourceAudience,
+        headers,
+        env: mockEnv,
+        tenantId: TEST_TENANT_ID,
+      });
+      expect(rejectedWithoutResourceAudience.valid).toBe(false);
+      expect(rejectedWithoutResourceAudience.error?.error).toBe('invalid_token');
+    });
+
     it('should return error for missing Authorization header', async () => {
       const headers = new Headers();
 

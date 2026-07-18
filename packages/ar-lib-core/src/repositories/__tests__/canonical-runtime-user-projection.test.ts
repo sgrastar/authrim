@@ -90,7 +90,14 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
   });
 
   it('returns null for inactive accounts unless explicitly requested', async () => {
-    seedActiveCanonicalUser({ accountLifecycleState: 'suspended' });
+    seedActiveCanonicalUser({
+      accountLifecycleState: 'suspended',
+      accountMetadata: {
+        status: 'suspended',
+        suspended_at: 1_752_700_000,
+        suspended_until: 1_752_786_400,
+      },
+    });
 
     await expect(repository.findByLegacyUserId('user-1')).resolves.toBeNull();
 
@@ -98,6 +105,11 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     expect(projection).toMatchObject({
       id: 'user-1',
       active: 0,
+      account_status: 'suspended',
+      suspended_at: 1_752_700_000,
+      suspended_until: 1_752_786_400,
+      locked_at: null,
+      locked_until: null,
     });
   });
 

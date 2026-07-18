@@ -15,6 +15,7 @@ import {
 
 // Import handlers
 import { userinfoHandler } from './userinfo';
+import { fapiResourceHandler } from './fapi-resource';
 import { createProtectedCustomerProfileRouter } from './protected-customer-profile';
 
 // Create Hono app with Cloudflare Workers types
@@ -114,6 +115,7 @@ app.get('/health/ready', healthHandlers.readiness);
 // UserInfo endpoint
 app.get('/userinfo', userinfoHandler);
 app.post('/userinfo', userinfoHandler);
+app.get('/api/protected/fapi-resource', fapiResourceHandler);
 app.route('/api/protected/customer-profiles', createProtectedCustomerProfileRouter());
 
 // 404 handler

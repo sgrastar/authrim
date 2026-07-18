@@ -221,6 +221,31 @@ describe('PAR Handler', () => {
     expect(mockGetClientCached).not.toHaveBeenCalled();
   });
 
+  it('rejects request_uri supplied as a PAR form parameter', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        request_uri: 'urn:ietf:params:oauth:request_uri:attacker-controlled',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'request_uri_not_supported',
+      error_description: 'request_uri is not supported at the PAR endpoint',
+    });
+    expect(mockGetClientCached).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('redacts RFC error details from PAR logs in production', async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
@@ -889,6 +914,55 @@ describe('PAR Handler', () => {
     });
   });
 
+  it('stores dpop_jkt from the PAR body when no DPoP header is present', async () => {
+    const dpopJkt = 'A'.repeat(43);
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        dpop_jkt: dpopJkt,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockValidateDPoPProof).not.toHaveBeenCalled();
+    expect(mockStoreRequestRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ dpop_jkt: dpopJkt }) })
+    );
+  });
+
+  it('rejects a dpop_jkt that differs from the PAR DPoP proof key', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        dpop: 'dpop-proof.jwt',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        dpop_jkt: 'A'.repeat(43),
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: 'dpop_jkt does not match the key in the DPoP proof',
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid DPoP proofs before storing the PAR request', async () => {
     mockValidateDPoPProof.mockResolvedValue({
       valid: false,
@@ -1028,6 +1102,48 @@ describe('PAR Handler', () => {
       error_description: 'Assertion audience mismatch',
     });
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('uses issuer-only client assertion audiences for the FAPI Final profile', async () => {
+    const c = createMockContext({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: {
+        client_id: 'client-123',
+        client_assertion: 'signed-assertion',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(
+            JSON.stringify({
+              fapi: {
+                enabled: true,
+                clientAssertionAudience: 'issuer',
+              },
+            })
+          ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockValidateClientAssertion).toHaveBeenCalledWith(
+      'signed-assertion',
+      'https://op.example.com/par',
+      expect.any(Object),
+      expect.objectContaining({
+        audiencePolicy: 'issuer-only',
+        issuer: 'https://op.example.com',
+        additionalAudiences: [],
+      })
+    );
   });
 
   it.each([

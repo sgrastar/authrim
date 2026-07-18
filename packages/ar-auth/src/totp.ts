@@ -57,6 +57,8 @@ interface TotpLoginChallenge {
     identifier_hash?: string;
     credential_count?: number;
     issued_at?: number;
+    authorization_challenge_id?: string;
+    usage?: 'login' | 'reauth';
   };
 }
 
@@ -788,20 +790,63 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('TOTP');
   return constantTimeWrapper(async () => {
     try {
-      const body = await c.req.json<{ identifier?: unknown }>();
+      const body = await c.req.json<{
+        identifier?: unknown;
+        authorization_challenge_id?: unknown;
+      }>();
       const identifier = normalizeIdentifier(body.identifier);
-      if (!identifier) {
+      const authorizationChallengeId =
+        typeof body.authorization_challenge_id === 'string'
+          ? body.authorization_challenge_id.trim()
+          : '';
+      if (
+        (!identifier && !authorizationChallengeId) ||
+        (identifier && authorizationChallengeId) ||
+        authorizationChallengeId.length > 128
+      ) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-          variables: { field: 'identifier' },
+          variables: { field: 'identifier or authorization_challenge_id' },
         });
       }
 
       const tenantId = getTenantIdFromContext(c);
-      if (!(await isTotpUsageAvailable(c.env, tenantId, 'login'))) {
+      const usage: 'login' | 'reauth' = authorizationChallengeId ? 'reauth' : 'login';
+      if (!(await isTotpUsageAvailable(c.env, tenantId, usage))) {
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
-      const identifierHash = await sha256Hex(identifier);
+      let boundUserId: string | null = null;
+      if (authorizationChallengeId) {
+        const authorizationStore = await getChallengeStoreByChallengeId(
+          c.env,
+          authorizationChallengeId,
+          tenantId
+        );
+        const authorizationChallenge = (await authorizationStore.getChallengeRpc(
+          authorizationChallengeId
+        )) as {
+          tenantId?: string;
+          type?: string;
+          userId?: string;
+          consumed?: boolean;
+        } | null;
+        if (
+          !authorizationChallenge ||
+          authorizationChallenge.type !== 'reauth' ||
+          authorizationChallenge.consumed === true ||
+          (authorizationChallenge.tenantId && authorizationChallenge.tenantId !== tenantId) ||
+          !authorizationChallenge.userId ||
+          authorizationChallenge.userId === 'anonymous' ||
+          authorizationChallenge.userId === 'unknown'
+        ) {
+          return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        }
+        boundUserId = authorizationChallenge.userId;
+      }
+
+      const identifierHash = await sha256Hex(
+        authorizationChallengeId ? `reauth:${authorizationChallengeId}` : identifier!
+      );
       const ipHash = await sha256Hex(getClientIp(c));
       const rateLimited = await rateLimitTotpLogin(
         c,
@@ -812,7 +857,9 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
 
       const authCtx = createAuthContextFromHono(c, tenantId);
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-      const runtimeUser = await findRuntimeUserByIdentifier(runtimeUsers, identifier);
+      const runtimeUser = boundUserId
+        ? await runtimeUsers.findById(boundUserId, { includeInactive: true })
+        : await findRuntimeUserByIdentifier(runtimeUsers, identifier!);
       const activeCredentials =
         runtimeUser && runtimeUser.active === 1
           ? await authCtx.repositories.totp.findActiveByUserId(runtimeUser.id)
@@ -831,6 +878,8 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
           identifier_hash: identifierHash,
           credential_count: activeCredentials.length,
           issued_at: Date.now(),
+          authorization_challenge_id: authorizationChallengeId || undefined,
+          usage,
         },
       });
 
@@ -872,10 +921,6 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const tenantId = getTenantIdFromContext(c);
-      if (!(await isTotpUsageAvailable(c.env, tenantId, 'login'))) {
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
-      }
-
       const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
       let challengeData: TotpLoginChallenge;
       try {
@@ -887,6 +932,19 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       } catch (error) {
         publishTotpFailure(c, tenantId, 'challenge_error');
         log.error('TOTP challenge consume failed', { action: 'challenge_consume' }, error as Error);
+        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      }
+
+      const challengeUsage = challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login';
+      if (!(await isTotpUsageAvailable(c.env, tenantId, challengeUsage))) {
+        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      }
+      const boundAuthorizationChallengeId = challengeData.metadata?.authorization_challenge_id;
+      if (
+        boundAuthorizationChallengeId &&
+        boundAuthorizationChallengeId !== authorizationChallengeId
+      ) {
+        publishTotpFailure(c, tenantId, 'authorization_challenge_mismatch');
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 

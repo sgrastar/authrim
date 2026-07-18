@@ -57,6 +57,7 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `018_repair_device_code_client_foreign_key.sql` | Repairs tenant-scoped device-code client foreign keys. |
 | `019_vc_verification_evidence.sql` | Adds minimized VC verification evidence, freshness/invalidation metadata, and the VC attribute scope. |
 | `020_flow_assignment_credential_profiles.sql` | Extends Flow assignments with credential-profile targets without modifying the applied Flow baseline. |
+| `021_remove_legacy_ai_grants.sql` | Removes the unenforced legacy core AI Grant table; Admin Agent grants move to DB_ADMIN. |
 
 ## Current Admin Files
 
@@ -73,6 +74,14 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `009_directory_auth_object_catalog_classes.sql` | Directory-auth object catalog classes. |
 | `010_repair_approval_object_catalog_foreign_key.sql` | Repairs approval foreign keys after the object catalog rebuild. |
 | `011_vc_credential_profiles.sql` | Adds versioned Credential Profiles that pin VC flows and field mappings. |
+| `012_agent_access_control_plane.sql` | Adds Admin Agent grants, consent, elevation and target execution recovery, refresh-family revocation, and Agent audit fields. |
+| `013_agent_elevation_approval_link.sql` | Binds operation-scoped Agent elevation challenges to the existing Approval/CIBA workflow. |
+| `014_agent_configuration_copilot.sql` | Adds versioned Task Sets, Scope Policies, immutable configuration Plans, confirmations, and opaque secret references. |
+| `015_agent_bulk_baseline.sql` | Adds immutable multi-tenant Bulk Plans, tenant child executions, templates, baselines, assignments, and exceptions. |
+| `016_agent_bulk_capability_binding.sql` | Binds Bulk Plans and tenant child capabilities to authenticated Agent context and immutable source versions. |
+| `017_require_versioned_agent_grant_snapshots.sql` | Suspends legacy Agent Grants without complete versioned Task Set and Scope Policy snapshots. |
+| `018_agent_token_family_revocation_owner.sql` | Adds the refresh-family revocation outbox ownership locator. |
+| `019_split_agent_user_data_task_set.sql` | Removes user-data Tools from general built-in Task Sets by suspending v3 Grants before the v4 cut-over. |
 
 ## Current PII Files
 

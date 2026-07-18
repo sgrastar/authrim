@@ -72,6 +72,7 @@ export interface KeyFilePaths {
   otpHmacSecret: string;
   loggingCursorHmacSecret: string;
   pluginEncryptionKey: string;
+  agentElevationEncryptionKey: string;
   tenantRuntimeRegistrySigningPrivateJwk: string;
   tenantRuntimeRegistryVerifyingPublicJwks: string;
   tenantRuntimeRegistrySigningKeyId: string;
@@ -218,6 +219,7 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     pluginEncryptionKey: join(keysDir, 'plugin_encryption_key.txt'),
+    agentElevationEncryptionKey: join(keysDir, 'agent_elevation_encryption_key.txt'),
     tenantRuntimeRegistrySigningPrivateJwk: join(
       keysDir,
       'tenant_runtime_registry_signing_private.jwk.json'

@@ -313,6 +313,7 @@ const ja = {
 	reauth_subtitle: 'セキュリティのため、再認証を行ってください',
 	reauth_verifyWithPasskey: 'Passkeyで確認',
 	reauth_verifyWithEmailCode: 'メールコードで確認',
+	reauth_verifyWithTotp: '認証アプリで確認',
 
 	callback_title: 'サインイン中',
 	callback_processing: '認証を処理しています...',

@@ -14,6 +14,15 @@ function createMockEnv(): Env {
   } as unknown as Env;
 }
 
+function createAgentMetadataEnv(flagValue: unknown = true): Env {
+  return {
+    ...createMockEnv(),
+    AUTHRIM_CONFIG: {
+      get: vi.fn(async () => JSON.stringify({ 'agent.mcp.enabled': flagValue })),
+    } as unknown as KVNamespace,
+  } as Env;
+}
+
 function createHealthEnv(options: { keyManagerError?: Error } = {}): Env {
   const getAllPublicKeys = options.keyManagerError
     ? vi.fn(async () => {
@@ -44,6 +53,60 @@ describe('discovery app routes', () => {
     expect(metadata.issuer).toBe('https://auth.example.com');
     expect(metadata.authorization_endpoint).toBe('https://auth.example.com/authorize');
     expect(metadata.jwks_uri).toBe('https://auth.example.com/.well-known/jwks.json');
+  });
+
+  it('serves RFC 9728 path metadata for the MCP protected resource', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      createAgentMetadataEnv()
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      resource: 'https://auth.example.com/mcp',
+      authorization_servers: ['https://auth.example.com/oauth/admin-agent'],
+      scopes_supported: ['agent:read', 'agent:write', 'agent:execute', 'agent:admin'],
+      bearer_methods_supported: ['header'],
+    });
+  });
+
+  it('serves dedicated Admin Agent authorization server metadata', async () => {
+    const response = await app.fetch(
+      new Request(
+        'https://auth.example.com/.well-known/oauth-authorization-server/oauth/admin-agent'
+      ),
+      createAgentMetadataEnv()
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      issuer: 'https://auth.example.com/oauth/admin-agent',
+      authorization_endpoint: 'https://auth.example.com/oauth/admin-agent/authorize',
+      token_endpoint: 'https://auth.example.com/oauth/admin-agent/token',
+      agent_delegation_endpoint: 'https://auth.example.com/oauth/admin-agent/delegation',
+      grant_types_supported: [
+        'authorization_code',
+        'refresh_token',
+        'urn:ietf:params:oauth:grant-type:token-exchange',
+      ],
+      pushed_authorization_request_endpoint: 'https://auth.example.com/oauth/admin-agent/par',
+      require_pushed_authorization_requests: true,
+      code_challenge_methods_supported: ['S256'],
+    });
+  });
+
+  it('does not advertise Agent endpoints while the tenant flag is disabled', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      createAgentMetadataEnv(false)
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('fails closed when the Agent feature flag has an invalid type', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      createAgentMetadataEnv('true')
+    );
+    expect(response.status).toBe(503);
   });
 
   it('returns JSON 404 responses through the full app stack', async () => {
