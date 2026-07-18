@@ -2,7 +2,12 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminAgentAccessAPI, type AgentAccessSettings } from './admin-agent-access';
+import { API_BASE_URL } from './admin-request';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
+
+function adminUrl(path: string): string {
+	return `${API_BASE_URL}${path}`;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -36,7 +41,7 @@ describe('adminAgentAccessAPI', () => {
 		).resolves.toEqual({ grant_id: 'aag_1' });
 
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-		expect(url).toBe('/api/admin/agent-grants');
+		expect(url).toBe(adminUrl('/api/admin/agent-grants'));
 		expect(init.method).toBe('POST');
 		expect((init.headers as Headers).get('X-Tenant-Id')).toBe('tenant-a');
 		expect(JSON.parse(String(init.body))).toEqual({
@@ -57,7 +62,7 @@ describe('adminAgentAccessAPI', () => {
 
 		await adminAgentAccessAPI.suspendGrant('aag_1');
 
-		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/admin/agent-grants/aag_1/suspend');
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(adminUrl('/api/admin/agent-grants/aag_1/suspend'));
 		expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
 	});
 
@@ -71,8 +76,10 @@ describe('adminAgentAccessAPI', () => {
 		await adminAgentAccessAPI.getElevation('ael_/1');
 		await adminAgentAccessAPI.decideElevation('ael_/1', 'approved');
 
-		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/admin/agent-elevations/ael_%2F1');
-		expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/admin/agent-elevations/ael_%2F1/decision');
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(adminUrl('/api/admin/agent-elevations/ael_%2F1'));
+		expect(fetchMock.mock.calls[1]?.[0]).toBe(
+			adminUrl('/api/admin/agent-elevations/ael_%2F1/decision')
+		);
 		expect(fetchMock.mock.calls[1]?.[1]?.method).toBe('POST');
 		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
 			decision: 'approved'
@@ -92,7 +99,9 @@ describe('adminAgentAccessAPI', () => {
 		await adminAgentAccessAPI.getEligiblePermissions('admin-a', 'amp-a');
 
 		expect(fetchMock.mock.calls[0]?.[0]).toBe(
-			'/api/admin/agent-grants/eligible-permissions?delegator_id=admin-a&principal_id=amp-a'
+			adminUrl(
+				'/api/admin/agent-grants/eligible-permissions?delegator_id=admin-a&principal_id=amp-a'
+			)
 		);
 		expect(fetchMock.mock.calls[0]?.[1]?.method).toBeUndefined();
 	});
@@ -114,7 +123,7 @@ describe('adminAgentAccessAPI', () => {
 
 		await expect(adminAgentAccessAPI.updateSettings(settings)).resolves.toEqual(settings);
 
-		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/admin/settings/agent');
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(adminUrl('/api/admin/settings/agent'));
 		expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('PUT');
 		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(settings);
 	});
@@ -137,7 +146,7 @@ describe('adminAgentAccessAPI', () => {
 			}
 		});
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-		expect(url).toBe('/api/admin/agent-bulk-plans');
+		expect(url).toBe(adminUrl('/api/admin/agent-bulk-plans'));
 		expect(JSON.parse(String(init.body))).toMatchObject({
 			grant_id: 'grant-1',
 			machine_credential_id: 'credential-1',
@@ -150,7 +159,7 @@ describe('adminAgentAccessAPI', () => {
 		vi.stubGlobal('fetch', fetchMock);
 		await adminAgentAccessAPI.evaluateBaselineAssignment('assignment-1');
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-		expect(url).toBe('/api/admin/agent-baselines/assignments/assignment-1/evaluate');
+		expect(url).toBe(adminUrl('/api/admin/agent-baselines/assignments/assignment-1/evaluate'));
 		expect(init.method).toBe('POST');
 		expect(init.body).toBeUndefined();
 	});

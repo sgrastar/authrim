@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const forbiddenPlatformPackages = [
@@ -12,6 +12,14 @@ const forbiddenPlatformPackages = [
   '@aws-sdk/',
   'aws-sdk',
 ] as const;
+
+interface SourceAnalysis {
+  source: string;
+  imports: string[];
+}
+
+let allSourceFiles: string[] = [];
+const sourceAnalysisByFile = new Map<string, SourceAnalysis>();
 
 async function listTypeScriptFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -65,7 +73,28 @@ function importedSpecifiers(source: string): string[] {
   return specifiers;
 }
 
+function filesUnder(area: string): string[] {
+  const prefix = `${path.join(sourceRoot, area)}${path.sep}`;
+  return allSourceFiles.filter((file) => file.startsWith(prefix));
+}
+
+function sourceAnalysis(file: string): SourceAnalysis {
+  const analysis = sourceAnalysisByFile.get(file);
+  if (!analysis) throw new Error(`Source analysis is unavailable for ${file}`);
+  return analysis;
+}
+
 describe('ar-agent-access dependency boundaries', () => {
+  beforeAll(async () => {
+    allSourceFiles = await listTypeScriptFiles(sourceRoot);
+    await Promise.all(
+      allSourceFiles.map(async (file) => {
+        const source = await readFile(file, 'utf8');
+        sourceAnalysisByFile.set(file, { source, imports: importedSpecifiers(source) });
+      })
+    );
+  }, 30_000);
+
   it('detects static, side-effect, dynamic, and re-export module specifiers', () => {
     expect(
       importedSpecifiers(`
@@ -91,9 +120,9 @@ describe('ar-agent-access dependency boundaries', () => {
   it.each(['core', 'protocol/mcp'])(
     '%s contains no Cloudflare, Agents SDK, or AWS imports',
     async (area) => {
-      const files = await listTypeScriptFiles(path.join(sourceRoot, area));
+      const files = filesUnder(area);
       for (const file of files) {
-        const imports = importedSpecifiers(await readFile(file, 'utf8'));
+        const { imports } = sourceAnalysis(file);
         for (const specifier of imports) {
           expect(
             forbiddenPlatformPackages.some(
@@ -107,9 +136,9 @@ describe('ar-agent-access dependency boundaries', () => {
   );
 
   it('core does not import protocol or platform modules', async () => {
-    const files = await listTypeScriptFiles(path.join(sourceRoot, 'core'));
+    const files = filesUnder('core');
     for (const file of files) {
-      const imports = importedSpecifiers(await readFile(file, 'utf8'));
+      const { imports } = sourceAnalysis(file);
       expect(
         imports.filter(
           (specifier) => specifier.includes('/platform') || specifier.includes('/protocol')
@@ -120,9 +149,9 @@ describe('ar-agent-access dependency boundaries', () => {
   });
 
   it('protocol/mcp does not import a concrete platform adapter', async () => {
-    const files = await listTypeScriptFiles(path.join(sourceRoot, 'protocol/mcp'));
+    const files = filesUnder('protocol/mcp');
     for (const file of files) {
-      const imports = importedSpecifiers(await readFile(file, 'utf8'));
+      const { imports } = sourceAnalysis(file);
       expect(
         imports.filter(
           (specifier) =>
@@ -136,9 +165,9 @@ describe('ar-agent-access dependency boundaries', () => {
   it.each(['core', 'protocol/mcp'])(
     '%s does not load the platform-aggregating ar-lib-core root entrypoint',
     async (area) => {
-      const files = await listTypeScriptFiles(path.join(sourceRoot, area));
+      const files = filesUnder(area);
       for (const file of files) {
-        const imports = importedSpecifiers(await readFile(file, 'utf8'));
+        const { imports } = sourceAnalysis(file);
         expect(
           imports.filter((specifier) => specifier === '@authrim/ar-lib-core'),
           path.relative(sourceRoot, file)
@@ -148,8 +177,7 @@ describe('ar-agent-access dependency boundaries', () => {
   );
 
   it('does not pull a concrete runtime adapter into the package root entrypoint', async () => {
-    const source = await readFile(path.join(sourceRoot, 'index.ts'), 'utf8');
-    const imports = importedSpecifiers(source);
+    const { imports } = sourceAnalysis(path.join(sourceRoot, 'index.ts'));
     expect(
       imports.filter(
         (specifier) =>
@@ -159,11 +187,11 @@ describe('ar-agent-access dependency boundaries', () => {
   });
 
   it('keeps MCP Tool, Resource, and Prompt handler registration out of platform adapters', async () => {
-    const files = await listTypeScriptFiles(path.join(sourceRoot, 'platform'));
+    const files = filesUnder('platform');
     for (const file of files) {
       const relative = path.relative(sourceRoot, file);
       if (relative.includes(`${path.sep}__tests__${path.sep}`)) continue;
-      const source = await readFile(file, 'utf8');
+      const { source } = sourceAnalysis(file);
       expect(source, relative).not.toMatch(
         /\.(?:setRequestHandler|registerTool|registerResource|registerPrompt|tool|resource|prompt)\s*\(/u
       );
@@ -172,9 +200,8 @@ describe('ar-agent-access dependency boundaries', () => {
   });
 
   it('keeps concrete platform package imports under platform adapters only', async () => {
-    const files = await listTypeScriptFiles(sourceRoot);
-    for (const file of files) {
-      const imports = importedSpecifiers(await readFile(file, 'utf8'));
+    for (const file of allSourceFiles) {
+      const { imports } = sourceAnalysis(file);
       const concrete = imports.filter((specifier) =>
         forbiddenPlatformPackages.some(
           (prefix) => specifier === prefix || specifier.startsWith(prefix)
@@ -200,9 +227,8 @@ describe('ar-agent-access dependency boundaries', () => {
   });
 
   it('isolates the Cloudflare Agents SDK import to the McpAgent transport shell', async () => {
-    const files = await listTypeScriptFiles(sourceRoot);
-    for (const file of files) {
-      const imports = importedSpecifiers(await readFile(file, 'utf8'));
+    for (const file of allSourceFiles) {
+      const { imports } = sourceAnalysis(file);
       if (!imports.some((specifier) => specifier === 'agents' || specifier.startsWith('agents/'))) {
         continue;
       }
@@ -213,9 +239,8 @@ describe('ar-agent-access dependency boundaries', () => {
   });
 
   it('keeps Tool authorization contracts out of the McpAgent runtime class', async () => {
-    const source = await readFile(
-      path.join(sourceRoot, 'platform', 'cloudflare', 'mcp-agent.ts'),
-      'utf8'
+    const { source } = sourceAnalysis(
+      path.join(sourceRoot, 'platform', 'cloudflare', 'mcp-agent.ts')
     );
     expect(source).not.toMatch(/\brequiredPermissions\s*:/u);
     expect(source).not.toMatch(/\binputSchema\s*:/u);
@@ -224,9 +249,8 @@ describe('ar-agent-access dependency boundaries', () => {
   });
 
   it('uses atomic DatabaseAdapter batches instead of D1 transaction callbacks for control-plane writes', async () => {
-    const source = await readFile(
-      path.join(sourceRoot, 'core', 'repositories', 'admin-agent-access-repository.ts'),
-      'utf8'
+    const { source } = sourceAnalysis(
+      path.join(sourceRoot, 'core', 'repositories', 'admin-agent-access-repository.ts')
     );
     expect(source).not.toContain('adapter.transaction(');
     expect(source).toContain('adapter.batch(');

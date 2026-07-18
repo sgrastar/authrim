@@ -1,6 +1,4 @@
-import { adminFetch } from '$lib/api/admin-request';
-
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 
 export type AgentGrantStatus = 'active' | 'suspended' | 'revoked';
 export type AgentScope = 'agent:read' | 'agent:write' | 'agent:execute' | 'agent:admin';
