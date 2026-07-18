@@ -1,0 +1,63 @@
+name: Notify Agent Skills Sync
+
+on:
+  workflow_run:
+    workflows:
+      - Sync API Docs to Website
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify agent-skills of updated Authrim sources
+    if: >-
+      github.repository == 'sgrastar/authrim' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source revision
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_SHA: ${{ github.sha }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            source_sha="$WORKFLOW_RUN_SHA"
+          else
+            source_sha="$MANUAL_SHA"
+          fi
+
+          if [[ ! "$source_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Expected a full Authrim commit SHA." >&2
+            exit 1
+          fi
+
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch agent-skills sync
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_SKILLS_SYNC_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "AGENT_SKILLS_SYNC_TOKEN is not configured." >&2
+            exit 1
+          fi
+
+          jq -n \
+            --arg event_type "authrim_sources_updated" \
+            --arg source_sha "$SOURCE_SHA" \
+            '{
+              event_type: $event_type,
+              client_payload: {
+                source_sha: $source_sha
+              }
+            }' | gh api \
+              --method POST \
+              repos/authrim/agent-skills/dispatches \
+              --input -
