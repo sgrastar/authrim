@@ -146,6 +146,38 @@ function requestBody(overrides: Record<string, string> = {}): URLSearchParams {
   });
 }
 
+const invalidAuthorizationCodeRequests: Array<{
+  name: string;
+  overrides: Record<string, string>;
+  status: number;
+  error: string;
+}> = [
+  {
+    name: 'an unsupported parameter',
+    overrides: { unexpected: 'value' },
+    status: 400,
+    error: 'invalid_request',
+  },
+  {
+    name: 'an unsupported grant type',
+    overrides: { grant_type: 'client_credentials' },
+    status: 400,
+    error: 'unsupported_grant_type',
+  },
+  {
+    name: 'an invalid client identifier',
+    overrides: { client_id: 'bad client' },
+    status: 401,
+    error: 'invalid_client',
+  },
+  {
+    name: 'a foreign MCP resource',
+    overrides: { resource: 'https://other.example/mcp' },
+    status: 400,
+    error: 'invalid_target',
+  },
+];
+
 function environment(): Partial<Env> & { ENABLE_AGENT_MCP: string } {
   return {
     ENABLE_AGENT_MCP: 'true',
@@ -277,6 +309,142 @@ describe('Admin Agent token endpoint', () => {
       },
       resolution: { instanceName: 'rotator', generation: 1, shardIndex: 0, tenantId: 'tenant-1' },
     });
+  });
+
+  it('returns 404 when Admin Agent access is disabled', async () => {
+    const { app, env } = createApp({ ...environment(), ENABLE_AGENT_MCP: 'false' });
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'not_found' });
+    expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns temporarily_unavailable when Agent settings cannot be loaded', async () => {
+    const unavailableSettings = { get: vi.fn().mockRejectedValue(new Error('unavailable')) };
+    const { app, env } = createApp({
+      ...environment(),
+      SETTINGS: unavailableSettings as never,
+    });
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'temporarily_unavailable',
+      error_description: 'Agent access configuration unavailable',
+    });
+    expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token request with the wrong content type', async () => {
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'Content-Type must be application/x-www-form-urlencoded',
+    });
+    expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+  });
+
+  it.each(invalidAuthorizationCodeRequests)(
+    'rejects an authorization-code request with $name',
+    async ({ overrides, status, error }) => {
+      const { app, env } = createApp(environment());
+      const response = await app.fetch(
+        new Request('https://tenant.example.com/oauth/admin-agent/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: requestBody(overrides),
+        }),
+        env
+      );
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual(expect.objectContaining({ error }));
+      expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects an authorization-code request for an unknown client', async () => {
+    mocks.getClientCached.mockResolvedValueOnce(null);
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: 'invalid_client' }));
+    expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'the proof is invalid without a detailed error',
+      result: { valid: false },
+      error: 'invalid_dpop_proof',
+      description: 'DPoP proof validation failed',
+    },
+    {
+      name: 'the proof has no JWK thumbprint',
+      result: { valid: true },
+      error: 'invalid_dpop_proof',
+      description: 'DPoP proof validation failed',
+    },
+    {
+      name: 'the verifier returns a detailed error',
+      result: { valid: false, error: 'use_dpop_nonce', error_description: 'Retry with nonce' },
+      error: 'use_dpop_nonce',
+      description: 'Retry with nonce',
+    },
+  ])('rejects a DPoP-bound request when $name', async ({ result, error, description }) => {
+    mocks.validateDPoPProof.mockResolvedValueOnce(result);
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          dpop: 'invalid-proof',
+        },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error,
+      error_description: description,
+    });
+    expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
   });
 
   it('consumes only a dedicated code and emits live-bound Agent claims', async () => {

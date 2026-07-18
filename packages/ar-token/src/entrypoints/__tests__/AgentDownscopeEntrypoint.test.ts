@@ -57,6 +57,37 @@ const input: AgentDownscopeExchangeRequest = {
   correlationId: 'correlation-1',
 };
 
+const invalidDownscopeRequests: Array<{
+  name: string;
+  overrides: Record<string, unknown>;
+}> = [
+  { name: 'an unsupported audience', overrides: { audience: 'other-api' } },
+  { name: 'an invalid tenant identifier', overrides: { tenantId: '../tenant-1' } },
+  { name: 'an empty issuer origin', overrides: { issuerOrigin: '' } },
+  { name: 'an empty subject token', overrides: { subjectToken: '' } },
+  { name: 'an empty grant identifier', overrides: { grantId: '' } },
+  { name: 'an empty delegator identifier', overrides: { delegatorId: '' } },
+  { name: 'an empty actor subject', overrides: { actorSub: '' } },
+  { name: 'an empty client identifier', overrides: { clientId: '' } },
+  { name: 'an empty correlation identifier', overrides: { correlationId: '' } },
+  { name: 'a zero grant generation', overrides: { grantGeneration: 0 } },
+  { name: 'a fractional grant generation', overrides: { grantGeneration: 1.5 } },
+  { name: 'a zero consent version', overrides: { consentVersion: 0 } },
+  { name: 'a fractional consent version', overrides: { consentVersion: 1.5 } },
+  { name: 'an empty permission list', overrides: { permissions: [] } },
+  {
+    name: 'more than 64 permissions',
+    overrides: {
+      permissions: Array.from({ length: 65 }, (_, index) => `admin:test:${index}`),
+    },
+  },
+  {
+    name: 'duplicate permissions',
+    overrides: { permissions: ['admin:users:read', 'admin:users:read'] },
+  },
+  { name: 'a malformed permission', overrides: { permissions: ['admin:users/read'] } },
+];
+
 function subject(overrides: Record<string, unknown> = {}) {
   return {
     sub: 'admin_user:admin-1',
@@ -259,17 +290,20 @@ describe('AgentDownscopeEntrypoint', () => {
     expect(deps.signToken).not.toHaveBeenCalled();
   });
 
-  it('rejects duplicate or malformed permission requests before repository access', async () => {
-    const deps = dependencies();
-    await expect(
-      exchangeAgentAccessToken(
-        env,
-        { ...input, permissions: ['admin:users:read', 'admin:users:read'] },
-        deps
-      )
-    ).rejects.toThrow('invalid_agent_downscope_request');
-    expect(deps.isFeatureEnabled).not.toHaveBeenCalled();
-  });
+  it.each(invalidDownscopeRequests)(
+    'rejects $name before repository access',
+    async ({ overrides }) => {
+      const deps = dependencies();
+      await expect(
+        exchangeAgentAccessToken(
+          env,
+          { ...input, ...overrides } as AgentDownscopeExchangeRequest,
+          deps
+        )
+      ).rejects.toThrow('invalid_agent_downscope_request');
+      expect(deps.isFeatureEnabled).not.toHaveBeenCalled();
+    }
+  );
 
   it('issues a target-only Bulk child token from the live Plan and tenant precondition', async () => {
     const binding = {
