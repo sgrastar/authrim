@@ -21,7 +21,10 @@ function relativeToSrc(path: string): string {
 
 describe('Admin UI route structure', () => {
 	it('keeps Admin pages on the shared page shell or an approved shell wrapper', () => {
-		const approvedStandalonePages = new Set(['routes/admin/login/+page.svelte']);
+		const approvedStandalonePages = new Set([
+			'routes/admin/login/+page.svelte',
+			'routes/admin/join/+page.svelte'
+		]);
 		const approvedShellWrappers = ['AdminPageShell', 'IdentityMappingPageShell'];
 		const approvedEditorWrappers = ['ConsentStatementEditor', 'PolicyEditor'];
 		const adminPages = walkFiles(adminRoutesDir).filter((path) => path.endsWith('/+page.svelte'));

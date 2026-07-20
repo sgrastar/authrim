@@ -21,6 +21,7 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   AttributeReleaseConsentRepository,
+  ConsentGateDecisionReceiptRepository,
   getSessionStoreBySessionId,
   isShardedSessionId,
   getUIConfig,
@@ -34,6 +35,8 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
+  isTenantLoginRuntimeFlowEnabled,
+  isTenantFlowProtocolConsentGatesEnabled,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -309,7 +312,16 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     if (authnInteraction.action === 'interactive_login') {
       // User not authenticated - redirect to login
       // Store AuthnRequest in SAMLRequestStore for later retrieval
-      await storeAuthnRequest(env, tenantId, authnRequest, relayState);
+      await storeAuthnRequest(env, tenantId, authnRequest, relayState, {
+        loginFlowProtocol: {
+          tenantId,
+          requestId: authnRequest.id,
+          spEntityId: spConfig.entityId,
+          acsUrl: resolveSAMLResponseDestination(authnRequest, spConfig),
+          requestedAttributes: spConfig.metadataRequestedAttributes ?? [],
+          identityMapping: spConfig.identityMapping,
+        },
+      });
 
       // Redirect to login page with return URL
       // Conformance mode: use builtin forms
@@ -356,6 +368,52 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     if (!userInfo) {
       return createErrorResponse(c, 'Authentication failed', STATUS_CODES.UNKNOWN_PRINCIPAL);
     }
+    const flowReceiptId = new URL(c.req.url).searchParams.get('consent_gate_receipt_id');
+    if (flowReceiptId && !(await isTenantFlowProtocolConsentGatesEnabled(env, tenantId))) {
+      log.warn('Consent Gate receipt processing is disabled', {
+        action: 'consent_gate_metric',
+        metric: 'receipt_validation_failure',
+        gate_kind: 'saml_attribute_release',
+        sp_entity_id: spConfig.entityId,
+        reason_code: 'enforcement_disabled',
+      });
+      return createErrorResponse(
+        c,
+        'Attribute release consent was disabled; restart SSO',
+        STATUS_CODES.REQUEST_DENIED
+      );
+    }
+    const flowRelease = await consumeSAMLFlowConsentReceipt({
+      env,
+      tenantId,
+      receiptId: flowReceiptId,
+      requestContext: parsedInput.requestContext,
+      authnRequest,
+      spEntityId: spConfig.entityId,
+      subjectId: authnInteraction.session.userId,
+    });
+    if (flowRelease === 'invalid') {
+      log.warn('Consent Gate receipt validation failed', {
+        action: 'consent_gate_metric',
+        metric: 'receipt_validation_failure',
+        gate_kind: 'saml_attribute_release',
+        sp_entity_id: spConfig.entityId,
+        reason_code: 'binding_or_consume_failed',
+      });
+      return createErrorResponse(
+        c,
+        'Invalid attribute release consent',
+        STATUS_CODES.REQUEST_DENIED
+      );
+    }
+    if (flowRelease) {
+      log.info('Flow Consent Gate replaced the built-in SAML consent form', {
+        action: 'consent_gate_metric',
+        metric: 'double_challenge_avoided',
+        gate_kind: 'saml_attribute_release',
+        sp_entity_id: spConfig.entityId,
+      });
+    }
 
     // Generate SAML Response
     let responseXml: string;
@@ -370,6 +428,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         tenantId,
         authnInteraction.session,
         parsedInput.requestContext,
+        flowRelease || undefined,
         log
       );
     } catch (error) {
@@ -456,7 +515,24 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         });
 
         const challengeId = crypto.randomUUID();
+        const requiredAttributeNames = new Set([
+          ...(spConfig.attributeReleasePolicy?.attributes ?? [])
+            .filter((attribute) => attribute.required)
+            .map((attribute) => attribute.name),
+          ...(spConfig.metadataRequestedAttributes ?? [])
+            .filter((attribute) => attribute.isRequired)
+            .map((attribute) => attribute.name),
+        ]);
         await storeAuthnRequest(env, tenantId, authnRequest, relayState, {
+          ...parsedInput.requestContext,
+          loginFlowProtocol: parsedInput.requestContext?.loginFlowProtocol ?? {
+            tenantId,
+            requestId: authnRequest.id,
+            spEntityId: spConfig.entityId,
+            acsUrl: resolveSAMLResponseDestination(authnRequest, spConfig),
+            requestedAttributes: spConfig.metadataRequestedAttributes ?? [],
+            identityMapping: spConfig.identityMapping,
+          },
           attributeReleaseConsentChallenge: {
             challengeId,
             subjectId: authnInteraction.session.userId,
@@ -465,8 +541,34 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             attributeSetHash: error.attributeSetHash,
             consentMode: error.consentMode,
             createdAt: Date.now(),
+            attributeSummaries: error.attributeSummaries.map((attribute) => ({
+              ...attribute,
+              required: requiredAttributeNames.has(attribute.name),
+            })),
           },
         });
+
+        if (
+          !(await shouldUseBuiltinForms(env)) &&
+          (await isTenantLoginRuntimeFlowEnabled(env, tenantId)) &&
+          (await isTenantFlowProtocolConsentGatesEnabled(env, tenantId))
+        ) {
+          const uiConfig = await getUIConfig(env);
+          if (uiConfig?.baseUrl) {
+            const loginPath = uiConfig.paths?.login || '/login';
+            const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
+            const loginBaseUrl =
+              loginUrlPolicy === 'tenant_host' ? buildIssuerUrl(env, tenantId) : uiConfig.baseUrl;
+            const loginUrl = new URL(loginPath, loginBaseUrl);
+            loginUrl.searchParams.set('saml_request_id', authnRequest.id);
+            loginUrl.searchParams.set('saml_sp_entity_id', spConfig.entityId);
+            loginUrl.searchParams.set('return_to', 'saml_sso');
+            if (loginUrlPolicy === 'ui_base_url' && tenantId) {
+              loginUrl.searchParams.set('tenant_hint', tenantId);
+            }
+            return c.redirect(loginUrl.toString());
+          }
+        }
 
         return await renderSAMLAttributeReleaseConsentPage(c, {
           tenantId,
@@ -656,7 +758,8 @@ export async function handleIdPAttributeReleaseConsent(
     if (!oneTimeApproval) {
       const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
         env,
-        'saml-attribute-release-consent-post'
+        'saml-attribute-release-consent-post',
+        { tenantId }
       );
       const repository = new AttributeReleaseConsentRepository(adapter);
       await repository.grant({
@@ -724,11 +827,15 @@ async function renderSAMLAttributeReleaseConsentPage(
   const rows = input.attributes
     .map((attribute) => {
       const label = attribute.friendlyName || attribute.name;
-      const detail =
-        attribute.valueCount === 1
-          ? '1 value'
-          : `${attribute.valueCount.toLocaleString('en-US')} values`;
-      return `<li><span>${escapeHtml(label)}</span><small>${escapeHtml(detail)}</small></li>`;
+      const displayValues = attribute.displayValues ?? [];
+      const detail = displayValues.length
+        ? `<ul>${displayValues.map((value) => `<li>${escapeHtml(value)}</li>`).join('')}</ul>`
+        : `<small>${escapeHtml(
+            attribute.valueCount === 1
+              ? '1 value'
+              : `${attribute.valueCount.toLocaleString('en-US')} values`
+          )}</small>`;
+      return `<li><span>${escapeHtml(label)}</span>${detail}</li>`;
     })
     .join('');
   const allowRememberChoice =
@@ -843,7 +950,8 @@ async function loadSAMLAttributeReleaseConsentPresentation(
   try {
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
       c.env,
-      'saml-attribute-release-consent-template'
+      'saml-attribute-release-consent-template',
+      { tenantId: input.tenantId }
     );
     const version = await adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -1269,6 +1377,140 @@ async function getUserInfo(
   return getSamlUserInfoById(env, tenantId, userId);
 }
 
+async function hashSelectedSAMLAttributes(attributes: string[]): Promise<string> {
+  const canonical = JSON.stringify(
+    [...attributes].sort((left, right) => left.localeCompare(right))
+  );
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/gu, '-')
+    .replace(/\//gu, '_')
+    .replace(/=+$/gu, '');
+}
+
+async function consumeSAMLFlowConsentReceipt(input: {
+  env: Env;
+  tenantId: string;
+  receiptId: string | null;
+  requestContext?: SAMLRequestContext;
+  authnRequest: SAMLAuthnRequest;
+  spEntityId: string;
+  subjectId: string;
+}): Promise<{ selectedAttributes: string[]; sourceAttributeSetHash: string } | 'invalid' | null> {
+  if (!input.receiptId) return null;
+  const challenge = input.requestContext?.attributeReleaseConsentChallenge;
+  if (
+    !challenge ||
+    challenge.subjectId !== input.subjectId ||
+    challenge.destinationId !== input.spEntityId ||
+    challenge.destinationType !== 'saml_sp' ||
+    Date.now() - challenge.createdAt > 10 * 60 * 1000
+  ) {
+    return 'invalid';
+  }
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    input.env,
+    'saml-flow-consent-receipt',
+    { tenantId: input.tenantId }
+  );
+  const repository = new ConsentGateDecisionReceiptRepository(adapter);
+  const receipt = await repository.findById(input.tenantId, input.receiptId).catch(() => null);
+  const release = receipt?.decision.release;
+  const requestedAttributes = (challenge.attributeSummaries ?? [])
+    .map((attribute) => attribute.name)
+    .sort((left, right) => left.localeCompare(right));
+  const requiredAttributes = (challenge.attributeSummaries ?? [])
+    .filter((attribute) => attribute.required === true)
+    .map((attribute) => attribute.name)
+    .sort((left, right) => left.localeCompare(right));
+  if (
+    !receipt ||
+    receipt.gate_kind !== 'saml_attribute_release' ||
+    receipt.subject_user_id !== input.subjectId ||
+    receipt.target_type !== 'saml_sp' ||
+    receipt.target_id !== input.spEntityId ||
+    receipt.protocol_request_id !== input.authnRequest.id ||
+    !release ||
+    release.protocol !== 'saml' ||
+    JSON.stringify([...release.requested_attributes].sort()) !==
+      JSON.stringify(requestedAttributes) ||
+    JSON.stringify([...release.required_attributes].sort()) !==
+      JSON.stringify(requiredAttributes) ||
+    release.selected_attributes.some((name) => !requestedAttributes.includes(name)) ||
+    release.required_attributes.some((name) => !release.selected_attributes.includes(name))
+  ) {
+    return 'invalid';
+  }
+  const selectedHash = await hashSelectedSAMLAttributes(release.selected_attributes);
+  if (receipt.release_set_hash !== selectedHash) return 'invalid';
+  try {
+    await repository.consume({
+      tenant_id: input.tenantId,
+      id: receipt.id,
+      interaction_id: receipt.interaction_id,
+      flow_id: receipt.flow_id,
+      flow_version_id: receipt.flow_version_id,
+      flow_node_id: receipt.flow_node_id,
+      gate_kind: 'saml_attribute_release',
+      subject_user_id: input.subjectId,
+      target_type: 'saml_sp',
+      target_id: input.spEntityId,
+      protocol_request_id: input.authnRequest.id,
+      statement_version_set_hash: receipt.statement_version_set_hash,
+      release_set_hash: selectedHash,
+    });
+  } catch {
+    return 'invalid';
+  }
+  return {
+    selectedAttributes: release.selected_attributes,
+    sourceAttributeSetHash: challenge.attributeSetHash,
+  };
+}
+
+async function resolvePersistedSAMLAttributeSelection(input: {
+  env: Env;
+  tenantId: string;
+  subjectId: string;
+  spEntityId: string;
+  attributeSetHash: string | null;
+}): Promise<string[] | null> {
+  if (!input.attributeSetHash) return null;
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    input.env,
+    'saml-persisted-attribute-selection',
+    { tenantId: input.tenantId }
+  );
+  const row = await adapter.queryOne<{ released_attributes_json: string | null }>(
+    `SELECT cr.released_attributes_json
+       FROM attribute_release_consents arc
+       JOIN consent_records cr ON cr.tenant_id = arc.tenant_id AND cr.id = arc.consent_record_id
+      WHERE arc.tenant_id = ? AND arc.subject_id = ? AND arc.destination_type = 'saml_sp'
+        AND arc.destination_id = ?
+        AND (arc.attribute_set_hash = ? OR arc.consent_mode = 'once')
+        AND arc.consent_state = 'granted'
+      ORDER BY CASE WHEN arc.attribute_set_hash = ? THEN 0 ELSE 1 END,
+               arc.last_confirmed_at DESC, arc.updated_at DESC
+      LIMIT 1`,
+    [
+      input.tenantId,
+      input.subjectId,
+      input.spEntityId,
+      input.attributeSetHash,
+      input.attributeSetHash,
+    ]
+  );
+  if (!row?.released_attributes_json) return null;
+  try {
+    const parsed: unknown = JSON.parse(row.released_attributes_json);
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string')
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Generate SAML Response with Assertion
  */
@@ -1282,6 +1524,7 @@ async function generateSAMLResponse(
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
   requestContext?: SAMLRequestContext,
+  flowRelease?: { selectedAttributes: string[]; sourceAttributeSetHash: string },
   log?: { debug(message: string, context?: Record<string, unknown>): void }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
@@ -1333,14 +1576,35 @@ async function generateSAMLResponse(
         }
       : undefined,
   });
-  await enforceSAMLAttributeReleaseConsent({
+  const releaseCheck = await enforceSAMLAttributeReleaseConsent({
     env,
     tenantId,
     subjectId: userInfo.id,
     spConfig,
     attributes: attributeRelease.attributes,
-    confirmedRelease: requestContext?.attributeReleaseConsentConfirmed,
+    confirmedRelease: flowRelease
+      ? {
+          subjectId: userInfo.id,
+          destinationType: 'saml_sp',
+          destinationId: spConfig.entityId,
+          attributeSetHash: flowRelease.sourceAttributeSetHash,
+          confirmedAt: Date.now(),
+        }
+      : requestContext?.attributeReleaseConsentConfirmed,
   });
+  const persistedSelection = flowRelease
+    ? flowRelease.selectedAttributes
+    : await resolvePersistedSAMLAttributeSelection({
+        env,
+        tenantId,
+        subjectId: userInfo.id,
+        spEntityId: spConfig.entityId,
+        attributeSetHash: releaseCheck?.attributeSetHash ?? null,
+      });
+  const selectedAttributeNames = persistedSelection ? new Set(persistedSelection) : null;
+  const releasedAttributes = selectedAttributeNames
+    ? attributeRelease.attributes.filter((attribute) => selectedAttributeNames.has(attribute.name))
+    : attributeRelease.attributes;
   if (attributeRelease.optionalMissingAttributes.length > 0) {
     log?.debug('Optional SAML attributes omitted', {
       tenantId,
@@ -1384,7 +1648,7 @@ async function generateSAMLResponse(
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,
     authnContextClassRef,
-    attributes: attributeRelease.attributes,
+    attributes: releasedAttributes,
   });
 
   const encryptFullAssertion = Boolean(spConfig.encryptAssertions);

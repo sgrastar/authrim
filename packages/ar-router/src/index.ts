@@ -1153,6 +1153,7 @@ app.post('/revoke/batch', async (c) => {
  *
  * /api/admin/auth/* - Route to OP_AUTH worker (admin passkey login endpoints)
  * /api/admin/setup-token/* - Route to OP_AUTH worker (admin setup token endpoints)
+ * /api/admin/invitations/* - Route to OP_AUTH worker (admin invitation enrollment endpoints)
  * /api/admin/* - Route to OP_MANAGEMENT worker (admin management endpoints)
  *
  * Note: Using conditional routing instead of separate route registrations
@@ -1170,6 +1171,10 @@ app.all('/api/admin/*', async (c) => {
 
   // Route admin setup token endpoints to OP_AUTH
   if (path.startsWith('/api/admin/setup-token/')) {
+    return c.env.OP_AUTH.fetch(request);
+  }
+
+  if (path.startsWith('/api/admin/invitations/')) {
     return c.env.OP_AUTH.fetch(request);
   }
 

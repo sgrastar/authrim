@@ -50,6 +50,10 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.post('/api/admin/clients', (c) => c.json({ ok: true }));
   app.put('/api/admin/clients/client-1', (c) => c.json({ ok: true }));
   app.post('/api/admin/clients/client-1/regenerate-secret', (c) => c.json({ ok: true }));
+  app.get('/api/admin/admin-invitations', (c) => c.json({ ok: true }));
+  app.post('/api/admin/admin-invitations', (c) => c.json({ ok: true }));
+  app.post('/api/admin/admin-invitations/invitation-1/resend', (c) => c.json({ ok: true }));
+  app.delete('/api/admin/admin-invitations/invitation-1', (c) => c.json({ ok: true }));
   app.post('/api/admin/policies/simulate', (c) => c.json({ ok: true }));
   app.post('/api/admin/flows/flow-1/validate', (c) => c.json({ ok: true }));
   app.post('/api/admin/flows/flow-1/compile', (c) => c.json({ ok: true }));
@@ -63,6 +67,12 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.put('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
   app.delete('/api/admin/consent-policies/policy-1', (c) => c.json({ ok: true }));
   app.put('/api/admin/consent-policies/policy-1/items', (c) => c.json({ ok: true }));
+  app.get('/api/admin/consent-gate-policy-bindings', (c) => c.json({ ok: true }));
+  app.post('/api/admin/consent-gate-policy-bindings', (c) => c.json({ ok: true }));
+  app.post('/api/admin/consent-gate-policy-bindings/preview', (c) => c.json({ ok: true }));
+  app.get('/api/admin/consent-gate-policy-bindings/binding-1', (c) => c.json({ ok: true }));
+  app.put('/api/admin/consent-gate-policy-bindings/binding-1', (c) => c.json({ ok: true }));
+  app.delete('/api/admin/consent-gate-policy-bindings/binding-1', (c) => c.json({ ok: true }));
   app.get('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
   app.put('/api/admin/client-trust-policies', (c) => c.json({ ok: true }));
   app.get('/api/admin/sign-in-confirmation-policies', (c) => c.json({ ok: true }));
@@ -98,6 +108,34 @@ describe('declared admin route access', () => {
 
     expect(response.status).toBe(403);
     expect(body.error).toBe('insufficient_permissions');
+  });
+
+  it('requires Admin user read access for invitation reads and both write permissions for changes', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.ADMIN_USERS_READ]);
+    const partialWriter = createHarness([ADMIN_PERMISSIONS.ADMIN_USERS_WRITE]);
+    const writer = createHarness([
+      ADMIN_PERMISSIONS.ADMIN_USERS_WRITE,
+      ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    ]);
+
+    await expect(reader.request('/api/admin/admin-invitations')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      reader.request('/api/admin/admin-invitations', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      partialWriter.request('/api/admin/admin-invitations', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      writer.request('/api/admin/admin-invitations', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/admin-invitations/invitation-1/resend', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/admin-invitations/invitation-1', { method: 'DELETE' })
+    ).resolves.toMatchObject({ status: 200 });
   });
 
   it('enforces declared read/write/delete permissions before the handler runs', async () => {
@@ -273,6 +311,12 @@ describe('declared admin route access', () => {
     await expect(reader.request('/api/admin/consent-policies/policy-1')).resolves.toMatchObject({
       status: 200,
     });
+    await expect(reader.request('/api/admin/consent-gate-policy-bindings')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      reader.request('/api/admin/consent-gate-policy-bindings/binding-1')
+    ).resolves.toMatchObject({ status: 200 });
     await expect(reader.request('/api/admin/client-trust-policies')).resolves.toMatchObject({
       status: 200,
     });
@@ -295,6 +339,15 @@ describe('declared admin route access', () => {
       reader.request('/api/admin/consent-policies/policy-1/items', { method: 'PUT' })
     ).resolves.toMatchObject({ status: 403 });
     await expect(
+      reader.request('/api/admin/consent-gate-policy-bindings', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/consent-gate-policy-bindings/preview', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      reader.request('/api/admin/consent-gate-policy-bindings/binding-1', { method: 'DELETE' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
       reader.request('/api/admin/client-trust-policies', { method: 'PUT' })
     ).resolves.toMatchObject({ status: 403 });
     await expect(
@@ -312,6 +365,15 @@ describe('declared admin route access', () => {
     ).resolves.toMatchObject({ status: 200 });
     await expect(
       writer.request('/api/admin/consent-policies/policy-1/items', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-gate-policy-bindings', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-gate-policy-bindings/preview', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      writer.request('/api/admin/consent-gate-policy-bindings/binding-1', { method: 'DELETE' })
     ).resolves.toMatchObject({ status: 200 });
     await expect(
       writer.request('/api/admin/client-trust-policies', { method: 'PUT' })

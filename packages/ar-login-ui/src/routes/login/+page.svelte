@@ -45,6 +45,12 @@
 		type RuntimeAuthMethod
 	} from '$lib/authrim/runtime-auth-handles';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
+	import {
+		buildRuntimeConsentDecisionPayload,
+		canSubmitRuntimeConsentPolicy,
+		formatRuntimeConsentAcceptedLabel,
+		initializeRuntimeConsentDecisions
+	} from '$lib/consent/runtime-consent-state';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -257,18 +263,16 @@
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
 		const key =
 			runtimeFlowStep?.id && policy
-				? `${runtimeFlowStep.id}:${policy.items.map((item) => item.statement_id).join(',')}`
+				? `${runtimeFlowStep.id}:${policy.items
+						.map(
+							(item) =>
+								`${item.statement_id}:${item.version}:${item.acceptance_status ?? 'pending'}`
+						)
+						.join(',')}`
 				: '';
 		if (key === runtimeConsentDecisionKey) return;
 		runtimeConsentDecisionKey = key;
-		runtimeConsentDecisions = policy
-			? Object.fromEntries(
-					policy.items.map((item) => [
-						item.statement_id,
-						item.checkbox_mode === 'none' || item.checkbox_default_checked
-					])
-				)
-			: {};
+		runtimeConsentDecisions = initializeRuntimeConsentDecisions(policy);
 		runtimeConsentSelectedValues = {};
 	});
 
@@ -797,6 +801,18 @@
 		});
 		if (apiError) {
 			runtimeFlowError = apiError.error_description || apiError.error;
+			if (apiError.error === 'consent_state_changed') {
+				const { data: refreshed } = await flowRuntimeAPI.start({
+					resume_interaction_id: flow.interaction.id,
+					contract_hash: flow.contract_hash,
+					signature: flow.signature
+				});
+				if (refreshed) {
+					runtimeFlow = refreshed;
+					runtimeFlowStep = getRuntimeCurrentStep(refreshed);
+					persistFlowRuntimeState(refreshed, { postAuthRedirect: pendingPostAuthRedirect });
+				}
+			}
 			return false;
 		}
 		if (!data) return false;
@@ -1078,6 +1094,8 @@
 					saml_sp_entity_id: spEntityId,
 					return_to: 'saml_sso'
 				});
+				const receiptId = readRuntimeContinuationString(continuation, 'consent_gate_receipt_id');
+				if (receiptId) params.set('consent_gate_receipt_id', receiptId);
 				return `/saml/idp/sso?${params.toString()}`;
 			}
 		}
@@ -1730,26 +1748,11 @@
 
 	function getRuntimeConsentItemDecisionPayload() {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		if (!policy) return { consent_item_decisions: {} };
-		return {
-			consent_item_decisions: Object.fromEntries(
-				policy.items.map((item) => [
-					item.statement_id,
-					item.content_mode === 'radio'
-						? runtimeConsentSelectedValues[item.statement_id]
-							? 'selected'
-							: 'denied'
-						: item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
-							? 'granted'
-							: 'denied'
-				])
-			),
-			consent_item_selected_values: Object.fromEntries(
-				policy.items
-					.filter((item) => item.content_mode === 'radio')
-					.map((item) => [item.statement_id, runtimeConsentSelectedValues[item.statement_id] || ''])
-			)
-		};
+		return buildRuntimeConsentDecisionPayload(
+			policy,
+			runtimeConsentDecisions,
+			runtimeConsentSelectedValues
+		);
 	}
 
 	function getRuntimeStepSubmitInputForAuthenticatedAction() {
@@ -1777,15 +1780,15 @@
 
 	function canSubmitRuntimeConsent(): boolean {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		if (!policy) return true;
-		return policy.items.every(
-			(item) =>
-				!item.is_required ||
-				(item.content_mode === 'radio' &&
-					Boolean(runtimeConsentSelectedValues[item.statement_id])) ||
-				item.checkbox_mode === 'none' ||
-				runtimeConsentDecisions[item.statement_id] === true
+		return canSubmitRuntimeConsentPolicy(
+			policy,
+			runtimeConsentDecisions,
+			runtimeConsentSelectedValues
 		);
+	}
+
+	function runtimeConsentAcceptedLabel(acceptedAt: number | null | undefined): string {
+		return formatRuntimeConsentAcceptedLabel(acceptedAt, getLocale());
 	}
 
 	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
@@ -2223,7 +2226,29 @@
 												<div class="space-y-3">
 													{#each consentPolicy.items as item (item.statement_id)}
 														<div class="runtime-consent-item">
-															{#if item.content_mode === 'radio' && item.options?.length}
+															{#if item.acceptance_status === 'accepted'}
+																<label
+																	class="runtime-consent-choice runtime-consent-choice--accepted"
+																>
+																	<input
+																		type="checkbox"
+																		checked
+																		disabled
+																		aria-describedby={`runtime-consent-accepted-${item.statement_id}`}
+																	/>
+																	<SanitizedHtml
+																		class="runtime-consent-content"
+																		sanitizedHtml={getRuntimeConsentItemHtml(item)}
+																	/>
+																</label>
+																<p
+																	id={`runtime-consent-accepted-${item.statement_id}`}
+																	class="runtime-consent-accepted"
+																	role="status"
+																>
+																	{runtimeConsentAcceptedLabel(item.accepted_at)}
+																</p>
+															{:else if item.content_mode === 'radio' && item.options?.length}
 																<fieldset class="runtime-consent-options">
 																	<legend class="sr-only">{item.title}</legend>
 																	{#each item.options as option (option.id)}
@@ -2755,6 +2780,17 @@
 	.runtime-consent-choice input {
 		margin-top: 3px;
 		flex: 0 0 auto;
+	}
+
+	.runtime-consent-choice--accepted {
+		opacity: 0.82;
+	}
+
+	.runtime-consent-accepted {
+		margin: 0 0 0 1.625rem;
+		color: var(--text-secondary, var(--text-muted));
+		font-size: 0.8rem;
+		font-weight: 600;
 	}
 
 	.runtime-consent-content {

@@ -125,7 +125,12 @@ export type TokenValidationStep =
   | 'userinfo-request'
   | 'userinfo-response'
   | 'userinfo-mismatch'
-  | 'logout-token-validation';
+  | 'logout-token-validation'
+  | 'fapi2-provider-metadata-validation'
+  | 'fapi2-authorization-response-validation'
+  | 'fapi2-token-response-validation'
+  | 'fapi2-id-token-validation'
+  | 'fapi2-resource-response-validation';
 
 /**
  * Token Validation Log Entry

@@ -1284,7 +1284,7 @@
 
 					<ConsentPolicyTargetSettings
 						targetType="saml_sp"
-						targetId={providerId ?? ''}
+						targetId={entityId}
 						title="SAML SP consent policy"
 					/>
 				</AdminSection>

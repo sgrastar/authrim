@@ -139,6 +139,7 @@ function createTestApp() {
 describe('adminRolesRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    repoMocks.adminAdapterQueryOne.mockResolvedValue(null);
   });
 
   it('should hide tenant-scoped system role copies when listing roles', async () => {
@@ -961,6 +962,31 @@ describe('adminRolesRouter', () => {
     );
 
     expect(response.status).toBe(409);
+    expect(repoMocks.deleteRole).not.toHaveBeenCalled();
+  });
+
+  it('should reject deletion while a pending invitation still targets the role', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_custom',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      role_type: 'custom',
+    });
+    repoMocks.getUsersByRole.mockResolvedValue([]);
+    repoMocks.adminAdapterQueryOne.mockResolvedValue({ id: 'invitation_1' });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_custom',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(409);
+    expect(repoMocks.adminAdapterQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'pending'"),
+      ['tenant_123', 'role_custom', expect.any(Number)]
+    );
     expect(repoMocks.deleteRole).not.toHaveBeenCalled();
   });
 

@@ -23,8 +23,10 @@
 	// Tenant selector state — derived from shared store
 	let selectedTenantId = $state('');
 
-	// Check if current page is login page
-	const isLoginPage = $derived($page.url.pathname === '/admin/login');
+	// Login and invitation enrollment are public Admin surfaces without dashboard chrome.
+	const isPublicAdminPage = $derived(
+		$page.url.pathname === '/admin/login' || $page.url.pathname === '/admin/join'
+	);
 
 	// Mobile menu state
 	let mobileMenuOpen = $state(false);
@@ -395,10 +397,10 @@
 
 		// Capture current path at mount time to avoid race conditions with navigation
 		const currentPath = $page.url.pathname;
-		const isOnLoginPage = currentPath === '/admin/login';
+		const isOnPublicAdminPage = currentPath === '/admin/login' || currentPath === '/admin/join';
 
-		// Skip auth check on login page
-		if (isOnLoginPage) {
+		// Skip auth checks while logging in or accepting an invitation.
+		if (isOnPublicAdminPage) {
 			adminAuth.setLoading(false);
 			return;
 		}
@@ -451,10 +453,11 @@
 	}
 
 	$effect(() => {
-		const isOnLoginPage = $page.url.pathname === '/admin/login';
+		const isOnPublicAdminPage =
+			$page.url.pathname === '/admin/login' || $page.url.pathname === '/admin/join';
 		const isAuthenticated = adminAuth.isAuthenticated;
 
-		if (isOnLoginPage) {
+		if (isOnPublicAdminPage) {
 			adminContextReady = false;
 			return;
 		}
@@ -541,8 +544,8 @@
 	}
 </script>
 
-{#if isLoginPage}
-	<!-- Login page - no layout chrome -->
+{#if isPublicAdminPage}
+	<!-- Public Admin page - no layout chrome -->
 	{@render children()}
 {:else if adminAuth.isLoading}
 	<!-- Loading state -->

@@ -974,6 +974,24 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_USERS_DELETE,
     'admin users'
   ),
+  rule({
+    pattern: '/api/admin/admin-invitations',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+    description: 'admin invitations read',
+  }),
+  rule({
+    pattern: '/api/admin/admin-invitations',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE],
+    description: 'admin invitations create',
+  }),
+  rule({
+    pattern: '/api/admin/admin-invitations/*',
+    methods: ['POST', 'DELETE'],
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE],
+    description: 'admin invitations resend or revoke',
+  }),
   ...byMethod(
     '/api/admin/admin-roles',
     ADMIN_PERMISSIONS.ADMIN_ROLES_READ,
@@ -1580,6 +1598,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'consent policies'
+  ),
+  ...byMethod(
+    '/api/admin/consent-gate-policy-bindings',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'Consent Gate Policy bindings'
+  ),
+  ...byMethod(
+    '/api/admin/consent-gate-policy-bindings/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'Consent Gate Policy bindings'
   ),
   ...byMethod(
     '/api/admin/client-trust-policies',

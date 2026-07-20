@@ -188,6 +188,8 @@ export interface Env {
   ENABLE_CLIENT_CREDENTIALS?: string; // "true" to enable RFC 6749 Section 4.4 Client Credentials Grant
   ENABLE_RAR?: string; // "true" to enable RFC 9396 Rich Authorization Requests
   ENABLE_LOGIN_RUNTIME_FLOW?: string; // "true" to enable new LoginUI runtime Flow interactions
+  ENABLE_FLOW_PROTOCOL_CONSENT_GATES?: string; // "true" to route OIDC/SAML consent through Flow receipts
+  ENABLE_FLOW_PROTOCOL_CONSENT_SHADOW?: string; // "true" to log privacy-safe legacy/new decision comparisons
   FLOW_RUNTIME_HMAC_SECRET?: string; // HMAC secret for Flow runtime contract signatures
 
   // AI Ephemeral Auth Features

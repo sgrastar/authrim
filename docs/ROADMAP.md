@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-25
+date: 2026-07-20
 description: "Authrim roadmap organized by product maturity workstreams."
 type: roadmap
 tags:
@@ -26,14 +26,14 @@ The exact release date depends on UI consolidation, SAML interoperability valida
 | Area | Status | Notes |
 | --- | --- | --- |
 | Core OIDC/OAuth implementation | Implemented | Authorization, token, UserInfo, discovery, logout, PAR, DPoP, JAR, JARM, JWE, token exchange, client credentials |
-| FAPI profiles | Implemented / certification target | FAPI 2.0 policy controls, PAR enforcement, PKCE S256, private_key_jwt, DPoP strict mode, and certification profiles exist; formal certification is still planned |
-| CIBA | Implemented / certification target | Backchannel authentication, approval, polling, and request storage paths exist; formal certification and broader interoperability validation are still planned |
+| FAPI profiles | Implemented / official Suite tested | FAPI 2.0 Final DPoP OpenID Connect, Client Credentials, Message Signing OP, and corresponding RP plans have completed without functional failures; formal certification publication is still planned |
+| CIBA | Implemented / official Suite tested | Backchannel authentication, approval, polling, and request storage paths exist; FAPI-CIBA private-key Poll and Ping plans completed without functional failures, while Ping retains Suite-side incoming TLS warnings |
 | SAML 2.0 IdP/SP | Active / implementation substantially complete | Core protocol support, local entity metadata, entityID style, interactive login redirect policy, signing subject/rollover, and metadata import/export are implemented; interoperability and DR assumptions are tracked below |
 | SCIM 2.0 | Implemented | Provisioning support is available; production deployment guidance still needs refinement |
 | Policy engine | Implemented | RBAC, ABAC, ReBAC, token embedding, real-time check API |
 | Identity Hub | Implemented | External OIDC/OAuth providers, account linking, identity stitching |
 | Passkey / email auth / local auth | Implemented | Login UI and production flow hardening remain active work |
-| VC/DID capabilities | Implemented | OpenID4VP, OpenID4VCI, did:web, did:key |
+| VC/DID capabilities | Partial / interoperability active | OpenID4VCI and OpenID4VP implementation baselines exist, but the official Final and HAIP Suite plans currently have known conformance gaps; did:web and did:key support exists |
 | JavaScript SDKs | Implemented | Core, web, server, and SvelteKit packages |
 | Setup tooling | Implemented | Source-download setup, fresh root migrations, standard SAML/CIBA/VC installation, optional Admin/Login UI, DNS guidance, and deletion cleanup exist; documentation needs continued hardening |
 | UI consolidation | Active | Broad Admin UI and Login UI surfaces exist; SAML, database, storage, logging, tenant discovery, and provider icon surfaces have been updated; consolidation and polish continue |
@@ -57,7 +57,7 @@ The following foundations are implemented and have unit/integration test coverag
 - [x] Passkey, email code, anonymous login, and DID authentication
 - [x] PII/non-PII data separation
 - [x] Multi-tenant issuer, storage, policy, admin, and job isolation baseline
-- [x] Verifiable Credentials and DID support
+- [x] Verifiable Credentials and DID implementation baseline
 - [x] JavaScript SDK packages
 - [x] Setup CLI and generated environment validation
 - [x] Fresh root migration set for new deployments
@@ -97,6 +97,37 @@ Authrim supports multiple authentication methods, but the production login path 
 - [ ] Expand SSO/session tests, especially currently under-covered prompt, session, and re-authentication cases.
 - [ ] Verify cookie, SameSite, origin, redirect, and tenant-host behavior across custom domains.
 - [ ] Confirm failure and recovery UX for expired challenges, invalid sessions, denied consent, and login cancellation.
+
+### OpenID4VC Final Interoperability
+
+**Status:** Active / official Suite gap analysis complete
+
+Authrim has OpenID4VCI issuer and OpenID4VP verifier endpoint baselines with unit and integration
+coverage. July 2026 runs against the official OpenID Foundation Conformance Suite confirmed that the
+implementation is not yet conformant to the OpenID4VCI 1.0 Final, OpenID4VP 1.0 Final, or their HAIP
+profiles. The public status is therefore `Partial`, not `Implemented` or `Complete`.
+
+**Verified baseline:**
+
+- [x] OpenID4VCI metadata, offer, token, credential, nonce, deferred issuance, and status endpoints exist.
+- [x] OpenID4VP verifier metadata, authorization initiation, request storage, response handling, request status, and SD-JWT verification paths exist.
+- [x] Holder-binding, proof validation, replay-resistant request state, DPoP/PAR/FAPI building blocks, and local automated tests exist.
+- [x] Official Final and HAIP Suite plans were run as gap analyses without product-code changes.
+
+**Remaining Final interoperability work:**
+
+- [ ] Publish OpenID4VCI Final array-form claim descriptors and the required `openid_credential` Authorization Server metadata.
+- [ ] Do not return an ID Token from the OAuth-only OpenID4VCI authorization-code flow.
+- [ ] Generate OpenID4VP Final client identifiers without the removed `client_id_scheme` parameter and include required `client_metadata.vp_formats`.
+- [ ] Accept and correctly validate the Suite-generated Final `dc+sd-jwt` VP response, including negative KB-JWT and credential-signature cases.
+- [ ] Align verifier metadata with runtime support; do not advertise `direct_post.jwt` or `mso_mdoc` until their processing paths are implemented and tested.
+
+**Remaining HAIP work:**
+
+- [ ] Add Credential Configuration scopes and Wallet/Client Attestation plus PoP authentication at PAR and Token endpoints.
+- [ ] Add tenant-scoped trust anchors, certificate-chain validation, replay protection, and attestation metadata.
+- [ ] Implement OpenID4VP `x509_hash`, signed authorization requests by `request_uri`, and `direct_post.jwt` response processing.
+- [ ] Re-run every Final and HAIP plan from its first unresolved module and then complete a clean full-plan run with no failures.
 
 ### SAML Production Hardening
 
@@ -240,7 +271,7 @@ This section is a compressed history of major completed work. It replaces the ol
 | 2025-12 | Identity Hub foundation, social login providers, account linking, identity stitching |
 | 2025-12 | PII/non-PII data separation, DatabaseAdapter, repository pattern, PII routing |
 | 2025-12 | Policy integration: RBAC, ABAC, ReBAC, token embedding, check API, permission change notifications |
-| 2025-12 | Advanced identity: OpenID4VP, OpenID4VCI, DID resolver, DID authentication |
+| 2025-12 | Advanced identity implementation baseline: OpenID4VP, OpenID4VCI, DID resolver, DID authentication |
 | 2025-12 | Load testing and Durable Object sharding work |
 | 2026-01 | Client Credentials flow |
 | 2026-01 | JavaScript SDK ecosystem: core, web, server, SvelteKit |
@@ -249,6 +280,6 @@ This section is a compressed history of major completed work. It replaces the ol
 
 ---
 
-> **Last Update:** 2026-05-25
+> **Last Update:** 2026-07-20
 >
-> **Current Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Active workstreams: UI, SAML interoperability, storage/logging portability, multi-tenant administration, security/QA
+> **Current Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Active workstreams: UI, OpenID4VC Final/HAIP interoperability, SAML interoperability, storage/logging portability, multi-tenant administration, security/QA

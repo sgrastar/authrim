@@ -60,6 +60,11 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `021_remove_legacy_ai_grants.sql` | Removes the unenforced legacy core AI Grant table; Admin Agent grants move to DB_ADMIN. |
 | `022_oauth_client_jarm_metadata.sql` | Adds RFC 9102 JARM signing and encryption preferences to tenant-scoped OAuth clients. |
 | `023_oauth_client_auth_signing_algorithm.sql` | Adds the RFC 7523 private-key JWT signing preference to tenant-scoped OAuth clients. |
+| `024_external_provider_session_sid.sql` | Adds upstream provider session identifiers for federated logout. |
+| `025_agent_access_self_service_clients.sql` | Adds self-service OAuth client metadata for Agent access. |
+| `026_oauth_client_tls_certificate_binding.sql` | Adds OAuth client mutual-TLS certificate binding metadata. |
+| `027_consent_gate_runtime.sql` | Adds Consent Gate Policy bindings, Legal Consent current state, decision receipts, and OIDC release-set fields. |
+| `028_shared_default_login_flow.sql` | Adds an unassigned published built-in Login Flow reference with explicit Direct, OIDC, and SAML branches. |
 
 ## Current Admin Files
 
@@ -84,12 +89,17 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `017_require_versioned_agent_grant_snapshots.sql` | Suspends legacy Agent Grants without complete versioned Task Set and Scope Policy snapshots. |
 | `018_agent_token_family_revocation_owner.sql` | Adds the refresh-family revocation outbox ownership locator. |
 | `019_split_agent_user_data_task_set.sql` | Removes user-data Tools from general built-in Task Sets by suspending v3 Grants before the v4 cut-over. |
+| `020_agent_access_system_managed_objects.sql` | Adds system-managed Agent access objects. |
+| `021_admin_agent_login_handoffs.sql` | Adds Admin Agent login handoff state. |
+| `022_admin_agent_derived_session_target.sql` | Binds derived Admin Agent sessions to their target. |
+| `023_admin_invitations.sql` | Adds one-time Admin Passkey enrollment invitations with optional per-invitation IP restrictions. |
 
 ## Current PII Files
 
 | File | Category |
 | --- | --- |
 | `001_pii_schema.sql` | D1 PII baseline and cleanup from earlier mixed-database layouts. |
+| `002_linked_identity_oidc_fields.sql` | Adds OIDC token and profile metadata to linked identities. |
 
 ## Current External PostgreSQL Files
 
@@ -104,6 +114,10 @@ Top-level core migrations intentionally exclude the `admin`, `archive`,
 | `007_external_totp_credentials.sql` | TOTP credentials and backup codes. |
 | `008_external_vc_verification_evidence.sql` | Adds VC verification evidence, freshness metadata, and the VC attribute scope for external PostgreSQL. |
 | `009_external_flow_assignment_credential_profiles.sql` | Extends external PostgreSQL Flow assignments with credential-profile targets. |
+| `010_external_linked_identity_oidc_fields.sql` | Adds OIDC token and profile metadata to external linked identities. |
+| `011_external_provider_session_sid.sql` | Adds upstream provider session identifiers for external PostgreSQL. |
+| `012_external_consent_gate_runtime.sql` | Adds PostgreSQL parity for Consent Gate runtime state and OIDC release-set fields. |
+| `013_external_shared_default_login_flow.sql` | Adds PostgreSQL parity for the unassigned published shared Login Flow reference. |
 
 ## Commands
 

@@ -20,11 +20,7 @@
 		type AuthenticationMethodSettingsResponse
 	} from '$lib/api/admin-authentication-methods';
 	import { adminConsentPoliciesAPI, type ConsentPolicy } from '$lib/api/admin-consent-policies';
-	import {
-		adminScreensAPI,
-		type Screen,
-		type ScreenKind
-	} from '$lib/api/admin-screens';
+	import { adminScreensAPI, type Screen, type ScreenKind } from '$lib/api/admin-screens';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
@@ -97,6 +93,10 @@
 		authProfile: string;
 		screen: string;
 		consentPolicy: string;
+		consentGateKind: '' | 'legal_document' | 'oidc_authorization' | 'saml_attribute_release';
+		consentPolicyResolution: 'fixed' | 'target_binding';
+		consentFallbackPolicy: string;
+		consentPolicyRequired: boolean;
 		conditionType: ConditionDraftType;
 		conditionValue: string;
 		conditionOutputHandle: string;
@@ -264,6 +264,10 @@
 			authProfile: 'default',
 			screen: 'basic_profile',
 			consentPolicy: 'registration_consent_policy',
+			consentGateKind: '',
+			consentPolicyResolution: 'fixed',
+			consentFallbackPolicy: '',
+			consentPolicyRequired: false,
 			conditionType: 'always',
 			conditionValue: '',
 			conditionOutputHandle: 'matched',
@@ -501,7 +505,9 @@
 		fallback: string
 	): string {
 		const keyMatches = new Set(screenKeys.map((value) => value.toLowerCase()));
-		const acceptedKinds = screenKinds.includes('code_input') ? screenKinds : [...screenKinds, 'custom'];
+		const acceptedKinds = screenKinds.includes('code_input')
+			? screenKinds
+			: [...screenKinds, 'custom'];
 		const kindMatches = new Set(acceptedKinds.map((value) => value.toLowerCase()));
 		const screen =
 			loadedScreens.find(
@@ -877,11 +883,7 @@
 
 	function buildRegistrationGraph(): { nodes: EditorNode[]; edges: EditorEdge[] } {
 		const registrationOutputs = getAuthProfileOutputs('default');
-		const defaultScreen = preferredScreenValue(
-			['registration'],
-			['registration'],
-			'basic_profile'
-		);
+		const defaultScreen = preferredScreenValue(['registration'], ['registration'], 'basic_profile');
 		const defaultConsentScreen = preferredScreenValue(['consent'], ['consent'], 'basic_profile');
 		const oidcRegistrationBlock = createCompletionBlock('oidc', 'registration', 'consent');
 		const nodes: EditorNode[] = [
@@ -1683,6 +1685,12 @@
 				'consent_policy_ref',
 				'registration_consent_policy'
 			);
+			const consentGateKind = getConfigString(config, 'consent_gate_kind', '');
+			const consentPolicyResolution = getConfigString(
+				config,
+				'policy_resolution',
+				consentGateKind ? 'target_binding' : 'fixed'
+			);
 			const conditionDraft = getConditionDraft(config);
 			return createEditorNode({
 				id: node.id,
@@ -1705,6 +1713,10 @@
 					authProfile,
 					screen,
 					consentPolicy,
+					consentGateKind,
+					consentPolicyResolution,
+					consentFallbackPolicy: getConfigString(config, 'fallback_policy_ref', ''),
+					consentPolicyRequired: config.policy_required === true,
 					completionBlock: getCompletionBlockFromConfig(config),
 					...conditionDraft
 				}
@@ -2081,13 +2093,16 @@
 			consentPolicyOptions,
 			''
 		);
+		const consentGateKindValue = getConfigValue(node, 'consentGateKind', '');
+		const consentGateKind =
+			consentGateKindValue === 'legal_document' ||
+			consentGateKindValue === 'oidc_authorization' ||
+			consentGateKindValue === 'saml_attribute_release'
+				? consentGateKindValue
+				: '';
 		const nodeScreenOptions = screenOptionsForNodeKind(node.data.kind);
 		const screen = normalizeOptionValue(
-			getConfigValue(
-				node,
-				'screen',
-				firstScreenForNodeKind(node.data.kind, 'basic_profile')
-			),
+			getConfigValue(node, 'screen', firstScreenForNodeKind(node.data.kind, 'basic_profile')),
 			nodeScreenOptions,
 			firstSelectableValue(nodeScreenOptions) || 'basic_profile'
 		);
@@ -2098,6 +2113,13 @@
 			authProfile,
 			screen,
 			consentPolicy,
+			consentGateKind,
+			consentPolicyResolution:
+				getConfigValue(node, 'consentPolicyResolution', 'fixed') === 'target_binding'
+					? 'target_binding'
+					: 'fixed',
+			consentFallbackPolicy: getConfigValue(node, 'consentFallbackPolicy', ''),
+			consentPolicyRequired: node.data.consentPolicyRequired === true,
 			conditionType: getConfigConditionType(node),
 			conditionValue: getConfigValue(node, 'conditionValue', ''),
 			conditionOutputHandle: getConfigValue(node, 'conditionOutputHandle', 'matched'),
@@ -2215,6 +2237,10 @@
 				authProfile: draft.authProfile,
 				screen: draft.screen,
 				consentPolicy: draft.consentPolicy,
+				consentGateKind: draft.consentGateKind,
+				consentPolicyResolution: draft.consentPolicyResolution,
+				consentFallbackPolicy: draft.consentFallbackPolicy,
+				consentPolicyRequired: draft.consentPolicyRequired,
 				conditionType: draft.conditionType,
 				conditionValue: draft.conditionValue,
 				conditionOutputHandle: normalizeOutputHandle(draft.conditionOutputHandle || 'matched'),
@@ -2691,6 +2717,18 @@
 				'consentPolicy',
 				node.data.kind === 'consent' ? 'registration_consent_policy' : ''
 			);
+			if (node.data.kind === 'consent' && node.data.consentGateKind) {
+				config.consent_gate_kind = node.data.consentGateKind;
+				config.policy_resolution =
+					node.data.consentPolicyResolution === 'target_binding' ? 'target_binding' : 'fixed';
+				config.policy_required = node.data.consentPolicyRequired === true;
+				if (config.policy_resolution === 'target_binding') {
+					delete config.consent_policy_ref;
+					if (node.data.consentFallbackPolicy) {
+						config.fallback_policy_ref = node.data.consentFallbackPolicy;
+					}
+				}
+			}
 		}
 		if (node.data.kind === 'decision') {
 			config.conditions = buildConditionConfig(nodeConditionDraft(node));
@@ -3118,13 +3156,57 @@
 					</select>
 				</label>
 				<label class="field field-wide">
-					<span>{$LL.admin_flows_consent_policy_label()}</span>
-					<select class="admin-input" bind:value={draft.consentPolicy}>
-						{#each consentPolicyOptions as option (option.value)}
-							<option value={option.value} disabled={option.disabled}>{option.label}</option>
-						{/each}
+					<span>{ft('Consent Gate 種別', 'Consent Gate kind')}</span>
+					<select class="admin-input" bind:value={draft.consentGateKind}>
+						<option value="">{ft('従来の同意ノード', 'Legacy consent node')}</option>
+						<option value="legal_document">{ft('法的文書', 'Legal document')}</option>
+						<option value="oidc_authorization">{ft('OIDC 認可', 'OIDC authorization')}</option>
+						<option value="saml_attribute_release"
+							>{ft('SAML 属性提供', 'SAML attribute release')}</option
+						>
 					</select>
 				</label>
+				{#if draft.consentGateKind}
+					<label class="field field-wide">
+						<span>{ft('ポリシー解決方法', 'Policy resolution')}</span>
+						<select class="admin-input" bind:value={draft.consentPolicyResolution}>
+							<option value="target_binding">{ft('対象への割り当て', 'Target binding')}</option>
+							<option value="fixed">{ft('固定ポリシー', 'Fixed policy')}</option>
+						</select>
+					</label>
+				{/if}
+				<label class="field field-wide">
+					<span>
+						{draft.consentGateKind && draft.consentPolicyResolution === 'target_binding'
+							? ft('フォールバックポリシー', 'Fallback policy')
+							: $LL.admin_flows_consent_policy_label()}
+					</span>
+					{#if draft.consentGateKind && draft.consentPolicyResolution === 'target_binding'}
+						<select class="admin-input" bind:value={draft.consentFallbackPolicy}>
+							<option value="">{ft('なし', 'None')}</option>
+							{#each consentPolicyOptions as option (option.value)}
+								<option value={option.value} disabled={option.disabled}>{option.label}</option>
+							{/each}
+						</select>
+					{:else}
+						<select class="admin-input" bind:value={draft.consentPolicy}>
+							{#each consentPolicyOptions as option (option.value)}
+								<option value={option.value} disabled={option.disabled}>{option.label}</option>
+							{/each}
+						</select>
+					{/if}
+				</label>
+				{#if draft.consentGateKind}
+					<label class="field field-wide checkbox-field">
+						<input type="checkbox" bind:checked={draft.consentPolicyRequired} />
+						<span
+							>{ft(
+								'ポリシーが解決できない場合は停止する',
+								'Fail when no policy can be resolved'
+							)}</span
+						>
+					</label>
+				{/if}
 			{:else if editingNode.data.kind === 'decision'}
 				<label class="field">
 					<span>{$LL.admin_flows_condition_type_label()}</span>

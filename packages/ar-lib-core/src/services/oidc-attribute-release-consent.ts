@@ -84,7 +84,8 @@ export async function enforceOIDCAttributeReleaseConsent(input: {
   const claimSetHash = await buildOIDCClaimSetHash(releasableClaims);
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     input.env,
-    'oidc-attribute-release-consent'
+    'oidc-attribute-release-consent',
+    { tenantId: input.tenantId }
   );
   const repository = new AttributeReleaseConsentRepository(adapter);
   const existingConsent =

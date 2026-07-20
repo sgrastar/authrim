@@ -39,9 +39,18 @@ export interface FlowRuntimeConsentPolicyItem {
 	content_mode?: 'display_only' | 'checkbox' | 'radio';
 	options?: FlowRuntimeConsentPolicyOption[];
 	attribute_value_display?: 'names' | 'masked_values' | 'full_values' | null;
+	attribute_display_values?: string[];
 	checkbox_mode: 'none' | 'required' | 'optional';
 	checkbox_default_checked: boolean;
 	display_order: number;
+	acceptance_status?: 'accepted' | 'pending';
+	action_required?: boolean;
+	accepted_at?: number | null;
+	accepted_record_id?: string | null;
+	release_kind?: 'scope' | 'claim' | 'attribute';
+	release_name?: string;
+	release_locked?: boolean;
+	previously_granted?: boolean;
 }
 
 export interface FlowRuntimeConsentPolicyOption {
@@ -58,6 +67,14 @@ export interface FlowRuntimeConsentPolicyContent {
 	language: string;
 	default_language: string;
 	items: FlowRuntimeConsentPolicyItem[];
+	gate_kind?: 'legal_document' | 'oidc_authorization' | 'saml_attribute_release';
+	policy_id?: string;
+	policy_satisfied?: boolean;
+	force_interaction?: boolean;
+	release_set_hash?: string | null;
+	release_mode?: 'once' | 'every_time' | 'until_attributes_change' | null;
+	release_current_state?: 'granted' | 'denied' | 'revoked' | 'expired' | null;
+	release_existing_set_hash?: string | null;
 }
 
 export interface FlowRuntimeContract {

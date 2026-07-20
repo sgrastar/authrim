@@ -35,6 +35,13 @@ export interface RateLimitConfig {
   // For low-risk read-only endpoints, allow low-volume GET requests without
   // waiting for the RateLimiter DO. The DO is still incremented via waitUntil.
   nonBlockingRead?: boolean;
+  // Whether the caller can safely receive a separate counter per tenant. Public
+  // capability endpoints should use global so changing tenant context cannot
+  // multiply brute-force attempts from the same client IP.
+  keyScope?: 'tenant' | 'global';
+  // Fail closed instead of falling back to eventually consistent KV when the
+  // atomic RateLimiter Durable Object is unavailable.
+  requireAtomic?: boolean;
 }
 
 /**
@@ -54,6 +61,8 @@ interface DiagnosticTimingSpan {
   name: string;
   durationMs: number;
 }
+
+type HonoExecutionContext = Context<{ Bindings: Env }>['executionCtx'];
 
 const fastPathRecords = new Map<string, LocalFastPathRecord>();
 const FAST_PATH_MAX_RECORDS = 10000;
@@ -473,7 +482,7 @@ function shouldUseNonBlockingReadRateLimit(
   return cloudProvider !== 'none';
 }
 
-function getExecutionContext(c: Context<{ Bindings: Env }>): ExecutionContext | undefined {
+function getExecutionContext(c: Context<{ Bindings: Env }>): HonoExecutionContext | undefined {
   try {
     return c.executionCtx;
   } catch {
@@ -553,7 +562,14 @@ export async function checkRateLimit(
       };
     }
   } catch (error) {
+    if (config.requireAtomic) {
+      throw error;
+    }
     log.error('Rate limiting DO error, falling back to KV', {}, error as Error);
+  }
+
+  if (config.requireAtomic) {
+    throw new Error('Atomic rate limiter is unavailable');
   }
 
   // Fallback to KV-based rate limiting
@@ -650,7 +666,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
     }
 
     try {
-      const tenantId = getTenantIdFromContext(c);
+      const tenantId = config.keyScope === 'global' ? undefined : getTenantIdFromContext(c);
       const rateLimitKey = buildRateLimitKey(clientIP, tenantId);
 
       if (shouldUseNonBlockingReadRateLimit(c, c.env, config, clientIP, cloudProvider)) {

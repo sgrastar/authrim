@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-25
+date: 2026-07-20
 description: "Authrim feature and SDK matrix."
 type: reference
 tags:
@@ -23,6 +23,8 @@ Authrim is pre-1.0. This matrix separates implementation coverage, validation le
 |  | Partial | Important pieces exist, but the feature is not usable as a complete capability yet. |
 |  | Planned | Not implemented yet. |
 | Validation | Certified | Validated through formal certification. |
+|  | Official suite tested | Completed applicable official conformance-suite plans without functional failures; this is not a certification claim. |
+|  | Official suite gap-tested | Executed against the official conformance suite, with known failures still remaining. |
 |  | Unit/integration tested | Covered by automated tests in this repository. |
 |  | Partial | Some automated tests exist, but broader interop or E2E coverage is still needed. |
 |  | Not yet | Validation is not yet meaningful or not yet started. |
@@ -38,7 +40,7 @@ Authrim is pre-1.0. This matrix separates implementation coverage, validation le
 | OpenID Provider | Complete | Certified | Ready | OpenID Provider profiles and Logout profiles |
 | OpenID Provider certification profiles | Complete | Certified | Ready | Basic, Implicit, Hybrid, Config, Dynamic, Form Post, and Third-Party Initiated OP |
 | OpenID Provider Logout profiles | Complete | Certified | Ready | RP-Initiated, Session, Front-Channel, and Back-Channel Logout OP |
-| OpenID Relying Party / federation client | Basic complete | Partial | In progress | External IdP bridge support exists; broader RP conformance is not a release target |
+| OpenID Relying Party / federation client | Basic complete | Official suite tested | In progress | Basic, Config, Dynamic, Form Post Basic, Hybrid `code id_token`, Third-Party Initiated Login, RP Logout, and FAPI RP plans have been exercised; formal RP certification submission is not complete. |
 | Authorization Code + PKCE | Complete | Certified | Ready | Standard OAuth/OIDC browser flow |
 | Implicit and Hybrid Flow | Complete | Certified | Ready | Supported for OP conformance and compatibility |
 | Form Post Response Mode | Complete | Certified | Ready | Supported by OP conformance profiles |
@@ -48,8 +50,8 @@ Authrim is pre-1.0. This matrix separates implementation coverage, validation le
 | DPoP | Complete | Unit/integration tested | In progress | RFC 9449 |
 | JAR | Complete | Unit/integration tested | In progress | RFC 9101 |
 | JARM | Complete | Unit/integration tested | In progress | Signed authorization responses |
-| FAPI 2.0 Security Profile | Complete | Unit/integration tested | In progress | PAR enforcement, PKCE S256, private_key_jwt, DPoP strict mode, and setup/certification profiles; formal certification is planned |
-| FAPI CIBA profile | Basic complete | Partial | In progress | CIBA-specific certification profile exists; formal certification and interoperability validation are planned |
+| FAPI 2.0 Security Profile | Complete | Official suite tested | In progress | Final DPoP OpenID Connect, Client Credentials, and Message Signing OP plans completed without functional failures; formal certification publication is still planned. |
+| FAPI CIBA profile | Basic complete | Official suite tested | In progress | Private-key Poll completed without warnings or failures; Ping completed without functional failures and with Suite-side incoming TLS warnings. Formal certification is not complete. |
 | JWE | Complete | Unit/integration tested | In progress | Encrypted token support |
 | Pairwise Subject Identifiers | Complete | Unit/integration tested | In progress | Pairwise subject generation |
 | Claims Parameter | Complete | Unit/integration tested | In progress | Claims request parsing, scope policy, and claim-level release policy |
@@ -82,9 +84,12 @@ Authrim is pre-1.0. This matrix separates implementation coverage, validation le
 | Real-time Check API | Complete | Unit/integration tested | In progress | Runtime authorization checks |
 | WebSocket Push | Complete | Unit/integration tested | In progress | Authorization update push channel |
 | Custom Claims | Complete | Unit/integration tested | In progress | Schema-driven custom claims for tokens, UserInfo, introspection, and VC targets |
-| OpenID4VP | Complete | Unit/integration tested | Experimental | Verifiable presentation verification |
-| OpenID4VCI | Complete | Unit/integration tested | Experimental | Credential issuance |
-| SD-JWT | Complete | Unit/integration tested | Experimental | Selective disclosure utilities and VC-oriented support |
+| Login Flow Consent Gates | Complete | Unit/integration tested | Opt-in | Legal statement/version acceptance, OIDC scope/claim selection, and SAML attribute release share one Login Flow. Policy bindings support tenant, Client, and SP targets; protocol output is authorized by single-use receipts. |
+| OpenID4VP 1.0 Final | Partial | Official suite gap-tested | Experimental | Core authorization, request storage, response, and verification paths exist. The official Final verifier plan currently fails on Final client identifier/metadata behavior and acceptance of the Suite-generated `dc+sd-jwt` response. |
+| OpenID4VCI 1.0 Final | Partial | Official suite gap-tested | Experimental | Core metadata, offer, token, credential, nonce, deferred, and status paths exist. The official Final issuer plan currently fails on Final claims metadata, Authorization Server metadata, and OAuth-only token response semantics. |
+| OpenID4VCI HAIP | Partial | Official suite gap-tested | Experimental | Proof, holder-binding, PAR, DPoP, and FAPI building blocks exist. Credential Configuration scopes and Wallet/Client Attestation authentication remain incomplete. |
+| OpenID4VP HAIP | Partial | Official suite gap-tested | Experimental | HAIP-related types, request storage, and SD-JWT verification building blocks exist. `x509_hash`, signed requests by `request_uri`, `direct_post.jwt` response processing, and mdoc verification remain incomplete; verifier metadata currently over-advertises the latter capabilities. |
+| SD-JWT | Basic complete | Unit/integration tested | Experimental | Selective-disclosure issuance and verification primitives exist, but Final OpenID4VP interoperability is not yet complete. |
 | DID support | Complete | Unit/integration tested | Experimental | did:web and did:key |
 | PII/non-PII separation | Complete | Unit/integration tested | In progress | Separate storage and access boundaries |
 | Runtime storage profiles | Basic complete | Unit/integration tested | In progress | Runtime profiles and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased in the public contract |

@@ -132,6 +132,14 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(adminUiBffKeyFilesExist(keysDir)).toBe(true);
   });
 
+  it('supports a unique key ID for isolated short-lived machine principals', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'isolated-export');
+    await ensureSetupMachineKeyFiles(keysDir, 'authrim-rp-evidence-unique');
+
+    const publicJwk = await loadSetupMachinePublicJwk(keysDir);
+    expect(publicJwk.kid).toBe('authrim-rp-evidence-unique');
+  });
+
   it('builds idempotent DB_ADMIN bootstrap SQL for admin_ui_bff principal', async () => {
     const config = createDefaultConfig('prod');
     config.tenant.name = 'acme';

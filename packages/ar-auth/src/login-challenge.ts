@@ -298,8 +298,12 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
       metadata?: LoginChallengeMetadata;
     };
 
-    // LoginUI reuses this read-only metadata endpoint for initial login and re-auth prompts.
-    if (typedChallengeData.type !== 'login' && typedChallengeData.type !== 'reauth') {
+    // LoginUI reuses this read-only metadata endpoint for authentication and consent prompts.
+    if (
+      typedChallengeData.type !== 'login' &&
+      typedChallengeData.type !== 'reauth' &&
+      typedChallengeData.type !== 'consent'
+    ) {
       return c.json(
         {
           error: 'invalid_request',

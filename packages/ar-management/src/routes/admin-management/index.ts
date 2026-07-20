@@ -25,6 +25,7 @@ import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 // Import routers
 import { adminUsersRouter } from './admins';
+import { adminInvitationsRouter } from './admin-invitations';
 import { adminRolesRouter } from './admin-roles';
 import { ipAllowlistRouter } from './ip-allowlist';
 import { adminAuditRouter } from './admin-audit';
@@ -74,6 +75,7 @@ adminManagementRouter.use('*', async (c, next) => {
 // Mount sub-routers - Core Admin Management
 adminManagementRouter.route('/admin-access-control', adminAccessControlRouter);
 adminManagementRouter.route('/admins', adminUsersRouter);
+adminManagementRouter.route('/admin-invitations', adminInvitationsRouter);
 adminManagementRouter.route('/admin-roles', adminRolesRouter);
 adminManagementRouter.route('/ip-allowlist', ipAllowlistRouter);
 adminManagementRouter.route('/admin-audit-log', adminAuditRouter);
@@ -110,6 +112,7 @@ adminManagementRouter.route('/', adminPoliciesRouter);
 // Re-export individual routers for flexibility
 export { adminAccessControlRouter } from './admin-access-control';
 export { adminUsersRouter } from './admins';
+export { adminInvitationsRouter } from './admin-invitations';
 export { adminRolesRouter } from './admin-roles';
 export { ipAllowlistRouter } from './ip-allowlist';
 export { adminAuditRouter } from './admin-audit';

@@ -693,7 +693,7 @@ export class OIDCRPClient {
               step: 'id-token-validation',
               tokenType: 'id_token',
               result: 'pass',
-              details: result.validation,
+              details: { ...result.validation, jwks_refreshed: true },
             });
           }
           return result.userInfo;
@@ -1100,7 +1100,7 @@ export class OIDCRPClient {
    */
   async fetchUserInfoWithMeta(
     accessToken: string
-  ): Promise<{ userInfo: UserInfo; endpoint: string }> {
+  ): Promise<{ userInfo: UserInfo; endpoint: string; signedResponse: boolean }> {
     const userinfoEndpoint = await this.getUserinfoEndpoint();
 
     if (!userinfoEndpoint) {
@@ -1122,8 +1122,10 @@ export class OIDCRPClient {
 
     const responseText = await readResponseTextWithLimit(response, 64 * 1024);
     const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+    const signedResponse =
+      contentType.includes('application/jwt') || !responseText.trimStart().startsWith('{');
     let userInfo: Record<string, unknown>;
-    if (contentType.includes('application/jwt') || !responseText.trimStart().startsWith('{')) {
+    if (signedResponse) {
       const verify = async (forceRefresh: boolean) => {
         const jwks = await this.fetchJWKS(forceRefresh);
         return jose.jwtVerify(responseText, jose.createLocalJWKSet(jwks), {
@@ -1167,7 +1169,7 @@ export class OIDCRPClient {
       locale: userInfo.locale as string | undefined,
       ...userInfo,
     };
-    return { userInfo: normalized, endpoint: userinfoEndpoint };
+    return { userInfo: normalized, endpoint: userinfoEndpoint, signedResponse };
   }
 
   /**

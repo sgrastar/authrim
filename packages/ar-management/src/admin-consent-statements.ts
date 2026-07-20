@@ -1212,16 +1212,79 @@ export async function adminUserConsentRecordsListHandler(c: Context<{ Bindings: 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
 
-    const rows = await authCtx.coreAdapter.query(
-      `SELECT ucr.*, cs.slug, cs.category
-       FROM user_consent_records ucr
-       LEFT JOIN consent_statements cs ON ucr.statement_id = cs.id
-       WHERE ucr.tenant_id = ? AND ucr.user_id = ?
-       ORDER BY ucr.updated_at DESC`,
-      [tenantId, userId]
-    );
+    const [rows, evidenceRows] = await Promise.all([
+      authCtx.coreAdapter.query(
+        `SELECT ucr.*, cs.slug, cs.category
+		 FROM user_consent_records ucr
+		 LEFT JOIN consent_statements cs ON ucr.statement_id = cs.id
+		 WHERE ucr.tenant_id = ? AND ucr.user_id = ?
+		 ORDER BY ucr.updated_at DESC`,
+        [tenantId, userId]
+      ),
+      authCtx.coreAdapter.query<{
+        id: string;
+        protocol: string;
+        consent_kind: string;
+        recipient_type: string | null;
+        recipient_id: string | null;
+        statement_id: string;
+        statement_version: string;
+        policy_id: string | null;
+        flow_id: string | null;
+        flow_version_id: string | null;
+        flow_node_id: string | null;
+        status: string;
+        evidence_json: string | null;
+        created_at: number;
+      }>(
+        `SELECT id, protocol, consent_kind, recipient_type, recipient_id,
+				statement_id, statement_version, policy_id, flow_id, flow_version_id,
+				flow_node_id, status, evidence_json, created_at
+		   FROM consent_records
+		  WHERE tenant_id = ? AND subject_user_id = ?
+		  ORDER BY created_at DESC`,
+        [tenantId, userId]
+      ),
+    ]);
+    const evidence = evidenceRows.map((row) => {
+      let receiptId: string | null = null;
+      try {
+        const parsed: unknown = row.evidence_json ? JSON.parse(row.evidence_json) : null;
+        const candidate =
+          parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>).consent_gate_receipt_id
+            : null;
+        if (typeof candidate === 'string' && /^cgr_[a-f0-9]{32}$/u.test(candidate)) {
+          receiptId = candidate;
+        }
+      } catch {
+        // Malformed historical evidence must not prevent the remaining records from being listed.
+      }
+      return {
+        id: row.id,
+        gate_kind:
+          row.consent_kind === 'scope_claim_release'
+            ? 'oidc_authorization'
+            : row.consent_kind === 'attribute_release'
+              ? 'saml_attribute_release'
+              : 'legal_document',
+        protocol: row.protocol,
+        consent_kind: row.consent_kind,
+        target_type: row.recipient_type,
+        target_id: row.recipient_id,
+        statement_id: row.statement_id,
+        statement_version: row.statement_version,
+        policy_id: row.policy_id,
+        flow_id: row.flow_id,
+        flow_version_id: row.flow_version_id,
+        flow_node_id: row.flow_node_id,
+        receipt_id: receiptId,
+        status: row.status,
+        created_at: row.created_at,
+      };
+    });
 
-    return c.json({ records: rows });
+    return c.json({ records: rows, evidence });
   } catch (error) {
     log.error(
       'Failed to list user consent records',

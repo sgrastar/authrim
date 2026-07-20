@@ -6,6 +6,7 @@ import {
   type TenantDatabaseRegistryRepository,
 } from '../repositories/admin/tenant-database-registry';
 import type { StorageTarget } from '../types/runtime-profile';
+import { getBoundStorageTargetSource } from './storage-target-resolver';
 import { createTenantDatabaseRegistryRepository } from './tenant-database-registry-factory';
 import {
   loadTenantDatabaseRegistrySignatureKeysFromEnv,
@@ -89,7 +90,7 @@ export interface ResolvedTenantStore {
   shardIndex: number;
   shardCount: number;
   shardKeyStrategy: string;
-  driver: 'd1';
+  driver: 'd1' | 'postgres' | 'mysql';
   bindingRef: string;
   deploymentTarget: string | null;
   healthStatus: 'active' | 'degraded' | 'degraded_pending_snapshot';
@@ -263,6 +264,69 @@ async function getBinding(
     );
   }
   return binding;
+}
+
+async function getRegistrySource(
+  env: TenantDatabaseResolverEnv,
+  row: TenantDatabaseRegistryRow,
+  context: Parameters<typeof getBinding>[2]
+): Promise<{ source: DatabaseSource; driver: ResolvedTenantStore['driver']; bindingRef: string }> {
+  if (row.provider === 'd1') {
+    if (!row.binding_ref) {
+      throw new TenantDatabaseResolverError(
+        'missing_binding',
+        'Tenant D1 registry row is missing binding_ref',
+        {
+          tenantId: context.tenantId,
+          role: context.role,
+        }
+      );
+    }
+    return {
+      source: await getBinding(env, row.binding_ref, context),
+      driver: 'd1',
+      bindingRef: row.binding_ref,
+    };
+  }
+  if (row.provider === 'postgres' || row.provider === 'mysql' || row.provider === 'hyperdrive') {
+    const driver = row.provider === 'mysql' ? 'mysql' : 'postgres';
+    const reference = row.binding_ref ?? row.connection_ref;
+    if (!reference) {
+      throw new TenantDatabaseResolverError(
+        'missing_binding',
+        `Tenant ${driver} registry row is missing binding_ref and connection_ref`,
+        { tenantId: context.tenantId, role: context.role, provider: row.provider }
+      );
+    }
+    try {
+      return {
+        source: getBoundStorageTargetSource(env, {
+          driver,
+          bindingRef: row.binding_ref ?? undefined,
+          connectionRef: row.connection_ref ?? undefined,
+          role: row.role,
+        }),
+        driver,
+        bindingRef: reference,
+      };
+    } catch {
+      await reportTenantDatabaseResolverHealthFailure(env, {
+        ...context,
+        code: 'missing_binding',
+        bindingRef: reference,
+      });
+      throw new TenantDatabaseResolverError(
+        'missing_binding',
+        `Tenant database connection ${reference} is not configured`,
+        { bindingRef: reference, provider: row.provider }
+      );
+    }
+  }
+  throw new TenantDatabaseResolverError(
+    'unsupported_provider',
+    `Tenant database provider ${row.provider} is not supported`,
+    { tenantId: context.tenantId, role: context.role, provider: row.provider }
+  );
 }
 
 function buildRequestCacheKey(
@@ -599,43 +663,21 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       }
     );
   }
-  if (row.provider !== 'd1') {
-    throw new TenantDatabaseResolverError(
-      'unsupported_provider',
-      `Tenant database provider ${row.provider} is not supported by the D1 resolver`,
-      { tenantId: options.tenantId, role: options.role, provider: row.provider }
-    );
-  }
-  if (!row.binding_ref) {
-    await reportTenantDatabaseResolverHealthFailure(env, {
-      tenantId: options.tenantId,
-      role: options.role,
-      code: 'missing_binding',
-      generation: row.generation,
-      shardGroup: row.shard_group,
-      shardIndex: row.shard_index,
-      deploymentTarget,
-    });
-    throw new TenantDatabaseResolverError(
-      'missing_binding',
-      'Tenant D1 registry row is missing binding_ref',
-      { tenantId: options.tenantId, role: options.role }
-    );
-  }
+  const resolvedSource = await getRegistrySource(env, row, {
+    tenantId: options.tenantId,
+    role: options.role,
+    generation: row.generation,
+    shardGroup: row.shard_group,
+    shardIndex: row.shard_index,
+    deploymentTarget,
+  });
 
   return {
     status: 'resolved',
     resolved: {
       tenantId: options.tenantId,
       role: options.role,
-      source: await getBinding(env, row.binding_ref, {
-        tenantId: options.tenantId,
-        role: options.role,
-        generation: row.generation,
-        shardGroup: row.shard_group,
-        shardIndex: row.shard_index,
-        deploymentTarget,
-      }),
+      source: resolvedSource.source,
       generation: row.generation,
       runtimeGeneration: snapshot.runtimeGeneration,
       schemaVersion: row.schema_version,
@@ -643,8 +685,8 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       shardIndex: row.shard_index,
       shardCount: row.shard_count,
       shardKeyStrategy: row.shard_key_strategy,
-      driver: 'd1',
-      bindingRef: row.binding_ref,
+      driver: resolvedSource.driver,
+      bindingRef: resolvedSource.bindingRef,
       deploymentTarget: row.deployment_target,
       healthStatus:
         row.status === 'degraded' || row.status === 'degraded_pending_snapshot'
@@ -811,41 +853,19 @@ export async function resolveTenantDatabaseSourceFromRegistry(
     );
   }
 
-  if (row.provider !== 'd1') {
-    throw new TenantDatabaseResolverError(
-      'unsupported_provider',
-      `Tenant database provider ${row.provider} is not supported by the D1 resolver`,
-      { tenantId: options.tenantId, role: options.role, provider: row.provider }
-    );
-  }
-  if (!row.binding_ref) {
-    await reportTenantDatabaseResolverHealthFailure(env, {
-      tenantId: options.tenantId,
-      role: options.role,
-      code: 'missing_binding',
-      generation: row.generation,
-      shardGroup: row.shard_group,
-      shardIndex: row.shard_index,
-      deploymentTarget,
-    });
-    throw new TenantDatabaseResolverError(
-      'missing_binding',
-      'Tenant D1 registry row is missing binding_ref',
-      { tenantId: options.tenantId, role: options.role }
-    );
-  }
+  const resolvedSource = await getRegistrySource(env, row, {
+    tenantId: options.tenantId,
+    role: options.role,
+    generation: row.generation,
+    shardGroup: row.shard_group,
+    shardIndex: row.shard_index,
+    deploymentTarget,
+  });
 
   const resolved: ResolvedTenantStore = {
     tenantId: options.tenantId,
     role: options.role,
-    source: await getBinding(env, row.binding_ref, {
-      tenantId: options.tenantId,
-      role: options.role,
-      generation: row.generation,
-      shardGroup: row.shard_group,
-      shardIndex: row.shard_index,
-      deploymentTarget,
-    }),
+    source: resolvedSource.source,
     generation: row.generation,
     runtimeGeneration: pointer.runtime_generation,
     schemaVersion: row.schema_version,
@@ -853,8 +873,8 @@ export async function resolveTenantDatabaseSourceFromRegistry(
     shardIndex: row.shard_index,
     shardCount: row.shard_count,
     shardKeyStrategy: row.shard_key_strategy,
-    driver: 'd1',
-    bindingRef: row.binding_ref,
+    driver: resolvedSource.driver,
+    bindingRef: resolvedSource.bindingRef,
     deploymentTarget: row.deployment_target,
     healthStatus:
       row.status === 'degraded' || row.status === 'degraded_pending_snapshot'

@@ -5,6 +5,7 @@ import type {
   SAMLAttribute,
   SAMLRequestContext,
   SAMLSPConfig,
+  SAMLAttributeReleaseConfirmationValueDisplay,
 } from '@authrim/ar-lib-core';
 import {
   AttributeReleaseConsentRepository,
@@ -37,13 +38,14 @@ export class SAMLAttributeReleaseConsentRequiredError extends Error {
     reasonCodes: string[];
     consentMode: AttributeReleaseConsentMode;
     attributes: SAMLAttribute[];
+    valueDisplay?: SAMLAttributeReleaseConfirmationValueDisplay;
   }) {
     super('SAML attribute release consent is required');
     this.name = 'SAMLAttributeReleaseConsentRequiredError';
     this.attributeSetHash = input.attributeSetHash;
     this.reasonCodes = input.reasonCodes;
     this.consentMode = input.consentMode;
-    this.attributeSummaries = summarizeSAMLAttributes(input.attributes);
+    this.attributeSummaries = summarizeSAMLAttributes(input.attributes, input.valueDisplay);
   }
 }
 
@@ -52,6 +54,8 @@ export interface SAMLAttributeReleaseConsentAttributeSummary {
   friendlyName?: string;
   nameFormat?: string;
   valueCount: number;
+  valueDisplay: SAMLAttributeReleaseConfirmationValueDisplay;
+  displayValues?: string[];
 }
 
 export function normalizeAttributeReleaseConsentPolicy(
@@ -106,7 +110,8 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
 
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     input.env,
-    'saml-attribute-release-consent'
+    'saml-attribute-release-consent',
+    { tenantId: input.tenantId }
   );
   const trustPolicy = await resolveClientTrustPolicy(
     adapter,
@@ -209,6 +214,7 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
       reasonCodes: decision.reasonCodes,
       consentMode: policy.mode,
       attributes: input.attributes,
+      valueDisplay: input.spConfig.attributeReleaseConfirmation?.valueDisplay,
     });
   }
 
@@ -247,14 +253,36 @@ function normalizeAttributeReleaseConsentState(
 }
 
 function summarizeSAMLAttributes(
-  attributes: SAMLAttribute[]
+  attributes: SAMLAttribute[],
+  valueDisplay: SAMLAttributeReleaseConfirmationValueDisplay = 'names'
 ): SAMLAttributeReleaseConsentAttributeSummary[] {
   return attributes.map((attribute) => ({
     name: attribute.name,
     friendlyName: attribute.friendlyName,
     nameFormat: attribute.nameFormat,
     valueCount: attribute.values.length,
+    valueDisplay,
+    ...(valueDisplay === 'names'
+      ? {}
+      : {
+          displayValues: attribute.values.map((value) =>
+            valueDisplay === 'full_values' ? value : maskSAMLAttributeValue(value)
+          ),
+        }),
   }));
+}
+
+function maskSAMLAttributeValue(value: string): string {
+  const emailMatch = /^([^@]+)@(.+)$/u.exec(value);
+  if (emailMatch) {
+    const local = emailMatch[1];
+    return `${local.slice(0, 1) || '*'}***@${emailMatch[2]}`;
+  }
+  const characters = [...value];
+  if (characters.length <= 2) return '*'.repeat(Math.max(1, characters.length));
+  if (characters.length <= 6)
+    return `${characters[0]}${'*'.repeat(characters.length - 2)}${characters.at(-1)}`;
+  return `${characters.slice(0, 2).join('')}***${characters.slice(-2).join('')}`;
 }
 
 export async function buildSAMLAttributeSetHash(attributes: SAMLAttribute[]): Promise<string> {

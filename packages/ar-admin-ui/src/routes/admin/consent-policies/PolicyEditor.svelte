@@ -2,6 +2,13 @@
 	import { goto } from '$app/navigation';
 	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
 	import {
+		adminConsentGateBindingsAPI,
+		type ConsentGateKind,
+		type EffectiveConsentGatePolicy,
+		type ConsentGatePolicyBinding,
+		type ConsentGateTargetType
+	} from '$lib/api/admin-consent-gate-bindings';
+	import {
 		adminConsentPoliciesAPI,
 		type ClientTrustPolicy,
 		type ClientTrustPolicyTargetType,
@@ -52,6 +59,14 @@
 	let samlProviders = $state<SAMLProvider[]>([]);
 	let clientTrustPolicies = $state<ClientTrustPolicy[]>([]);
 	let signInPolicies = $state<SignInConfirmationPolicy[]>([]);
+	let consentGateBindings = $state<ConsentGatePolicyBinding[]>([]);
+	let effectiveConsentGatePolicy = $state<EffectiveConsentGatePolicy | null>(null);
+	let previewingBinding = $state(false);
+	let bindingForm = $state<{
+		gate_kind: ConsentGateKind;
+		target_type: ConsentGateTargetType;
+		target_id: string;
+	}>({ gate_kind: 'legal_document', target_type: 'tenant', target_id: '' });
 	let policyForm = $state({
 		id: '',
 		display_name: '',
@@ -108,6 +123,7 @@
 	);
 	const canWriteSettings = $derived(adminAuth.hasPermission('admin:settings:write'));
 	const writeDisabled = $derived(!canWriteSettings || saving || deleting);
+	const localeMarker = $derived($LL.admin_flows_locale_marker());
 	let trustDisplayNameInitialized = $state(false);
 
 	onMount(() => {
@@ -128,19 +144,21 @@
 		loading = true;
 		error = '';
 		try {
-			const [statementResult, clientResult, samlResult, trustResult, signInResult] =
+			const [statementResult, clientResult, samlResult, trustResult, signInResult, bindingResult] =
 				await Promise.all([
 					adminConsentStatementsAPI.listStatements(),
 					adminClientsAPI.list({ limit: 500 }),
 					adminSAMLAPI.listProviders(),
 					adminConsentPoliciesAPI.listClientTrustPolicies(),
-					adminConsentPoliciesAPI.listSignInConfirmationPolicies()
+					adminConsentPoliciesAPI.listSignInConfirmationPolicies(),
+					adminConsentGateBindingsAPI.list()
 				]);
 			statements = statementResult.statements || [];
 			clients = clientResult.clients || [];
 			samlProviders = samlResult.providers || [];
 			clientTrustPolicies = trustResult.policies || [];
 			signInPolicies = signInResult.policies || [];
+			consentGateBindings = bindingResult;
 			const loginPolicy = signInPolicies.find((candidate) => candidate.trigger_type === 'login');
 			if (loginPolicy) {
 				signInForm = {
@@ -166,6 +184,106 @@
 			error = err instanceof Error ? err.message : $LL.admin_consent_policies_load_detail_error();
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function saveConsentGateBinding() {
+		if (!policyForm.id) return;
+		saving = true;
+		error = '';
+		try {
+			const created = await adminConsentGateBindingsAPI.create({
+				gate_kind: bindingForm.gate_kind,
+				target_type: bindingForm.target_type,
+				target_id: bindingForm.target_type === 'tenant' ? null : bindingForm.target_id,
+				policy_id: policyForm.id,
+				enabled: true
+			});
+			consentGateBindings = [...consentGateBindings, created];
+			successMessage = ft('Consent Gate の割り当てを保存しました。', 'Consent Gate binding saved.');
+		} catch (err) {
+			error =
+				err instanceof Error
+					? err.message
+					: ft('割り当てを保存できませんでした。', 'Failed to save binding.');
+		} finally {
+			saving = false;
+		}
+	}
+
+	function ft(ja: string, en: string): string {
+		return localeMarker === 'ja' ? ja : en;
+	}
+
+	function isCompatibleBindingTarget(
+		gateKind: ConsentGateKind,
+		targetType: ConsentGateTargetType
+	): boolean {
+		return (
+			targetType === 'tenant' ||
+			gateKind === 'legal_document' ||
+			(gateKind === 'oidc_authorization' && targetType === 'oidc_client') ||
+			(gateKind === 'saml_attribute_release' && targetType === 'saml_sp')
+		);
+	}
+
+	function setBindingGateKind(event: Event) {
+		const gateKind = (event.currentTarget as HTMLSelectElement).value as ConsentGateKind;
+		bindingForm = {
+			...bindingForm,
+			gate_kind: gateKind,
+			target_type: isCompatibleBindingTarget(gateKind, bindingForm.target_type)
+				? bindingForm.target_type
+				: 'tenant',
+			target_id: isCompatibleBindingTarget(gateKind, bindingForm.target_type)
+				? bindingForm.target_id
+				: ''
+		};
+		effectiveConsentGatePolicy = null;
+	}
+
+	function setBindingTargetType(event: Event) {
+		bindingForm = {
+			...bindingForm,
+			target_type: (event.currentTarget as HTMLSelectElement).value as ConsentGateTargetType,
+			target_id: ''
+		};
+		effectiveConsentGatePolicy = null;
+	}
+
+	async function previewConsentGateBinding() {
+		previewingBinding = true;
+		error = '';
+		try {
+			effectiveConsentGatePolicy = await adminConsentGateBindingsAPI.preview({
+				gate_kind: bindingForm.gate_kind,
+				target_type: bindingForm.target_type,
+				target_id: bindingForm.target_type === 'tenant' ? null : bindingForm.target_id,
+				node_config: { policy_resolution: 'target_binding' }
+			});
+		} catch (err) {
+			error =
+				err instanceof Error
+					? err.message
+					: ft('実効ポリシーを確認できませんでした。', 'Failed to preview effective policy.');
+		} finally {
+			previewingBinding = false;
+		}
+	}
+
+	async function deleteConsentGateBinding(id: string) {
+		saving = true;
+		error = '';
+		try {
+			await adminConsentGateBindingsAPI.remove(id);
+			consentGateBindings = consentGateBindings.filter((binding) => binding.id !== id);
+		} catch (err) {
+			error =
+				err instanceof Error
+					? err.message
+					: ft('割り当てを削除できませんでした。', 'Failed to delete binding.');
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -563,6 +681,155 @@
 					{$LL.admin_consent_policies_save_statements()}
 				</button>
 			</div>
+		</AdminSection>
+
+		<AdminSection
+			title={ft('Consent Gate の割り当て', 'Consent Gate bindings')}
+			description={ft(
+				'このポリシーを tenant 既定、OIDC Client、SAML SP に割り当てます。',
+				'Bind this policy as a tenant default or to an OIDC Client or SAML SP.'
+			)}
+		>
+			<div class="form-grid">
+				<label class="admin-field">
+					<span class="admin-field__label">{ft('Gate 種別', 'Gate kind')}</span>
+					<select
+						class="admin-select"
+						value={bindingForm.gate_kind}
+						onchange={setBindingGateKind}
+						disabled={writeDisabled}
+					>
+						<option value="legal_document">Legal document</option>
+						<option value="oidc_authorization">OIDC authorization</option>
+						<option value="saml_attribute_release">SAML attribute release</option>
+					</select>
+				</label>
+				<label class="admin-field">
+					<span class="admin-field__label">{ft('対象', 'Target')}</span>
+					<select
+						class="admin-select"
+						value={bindingForm.target_type}
+						onchange={setBindingTargetType}
+						disabled={writeDisabled}
+					>
+						<option value="tenant">{ft('Tenant 既定', 'Tenant default')}</option>
+						<option
+							value="oidc_client"
+							disabled={!isCompatibleBindingTarget(bindingForm.gate_kind, 'oidc_client')}
+							>OIDC Client</option
+						>
+						<option
+							value="saml_sp"
+							disabled={!isCompatibleBindingTarget(bindingForm.gate_kind, 'saml_sp')}
+							>SAML SP</option
+						>
+					</select>
+				</label>
+				{#if bindingForm.target_type === 'oidc_client'}
+					<label class="admin-field admin-field--full">
+						<span class="admin-field__label">OIDC Client</span>
+						<select
+							class="admin-select"
+							bind:value={bindingForm.target_id}
+							disabled={writeDisabled}
+						>
+							<option value="">{ft('選択してください', 'Select a client')}</option>
+							{#each clients as client (client.client_id)}
+								<option value={client.client_id}>{client.client_name}</option>
+							{/each}
+						</select>
+					</label>
+				{:else if bindingForm.target_type === 'saml_sp'}
+					<label class="admin-field admin-field--full">
+						<span class="admin-field__label">SAML SP</span>
+						<select
+							class="admin-select"
+							bind:value={bindingForm.target_id}
+							disabled={writeDisabled}
+						>
+							<option value="">{ft('選択してください', 'Select an SP')}</option>
+							{#each samlSpProviders.filter((provider) => provider.config.entityId) as provider (provider.id)}
+								<option value={provider.config.entityId}>{provider.name}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
+			</div>
+			<div class="section-actions">
+				<button
+					class="btn btn-secondary"
+					type="button"
+					onclick={previewConsentGateBinding}
+					disabled={previewingBinding ||
+						(bindingForm.target_type !== 'tenant' && !bindingForm.target_id)}
+				>
+					{previewingBinding
+						? ft('確認中…', 'Previewing…')
+						: ft('実効ポリシーを確認', 'Preview effective policy')}
+				</button>
+				<button
+					class="btn btn-primary"
+					type="button"
+					onclick={saveConsentGateBinding}
+					disabled={!policyForm.id ||
+						writeDisabled ||
+						(bindingForm.target_type !== 'tenant' && !bindingForm.target_id)}
+				>
+					{ft('割り当てを追加', 'Add binding')}
+				</button>
+			</div>
+			{#if effectiveConsentGatePolicy}
+				<div class="binding-preview" aria-live="polite">
+					<strong>{ft('解決結果', 'Resolution')}</strong>
+					<span>{effectiveConsentGatePolicy.source}</span>
+					<span class="admin-mono">
+						{effectiveConsentGatePolicy.policy_id ||
+							ft('ポリシーなし（スキップ）', 'No policy (skip)')}
+					</span>
+				</div>
+				{#if effectiveConsentGatePolicy.policy}
+					<div class="binding-preview-details">
+						<strong>{effectiveConsentGatePolicy.policy.display_name}</strong>
+						{#each effectiveConsentGatePolicy.statement_versions as item (`${item.statement_id}:${item.version}`)}
+							<span>
+								{item.statement_slug} · {item.version || ft('有効版なし', 'No active version')} ·
+								{item.requirement} · {item.checkbox_mode}{item.checkbox_default_checked
+									? ft('（既定で選択）', ' (checked by default)')
+									: ''}
+							</span>
+						{/each}
+						<span>
+							{ft('同じ割り当ての対象', 'Targets using this binding')}:
+							{effectiveConsentGatePolicy.affected_targets.length
+								? effectiveConsentGatePolicy.affected_targets
+										.map((target) => `${target.target_type}:${target.target_id || '*'}`)
+										.join(', ')
+								: '-'}
+						</span>
+					</div>
+				{/if}
+			{/if}
+			{#if consentGateBindings.filter((binding) => binding.policy_id === policyForm.id).length}
+				<div class="binding-list">
+					{#each consentGateBindings.filter((binding) => binding.policy_id === policyForm.id) as binding (binding.id)}
+						<div class="binding-row">
+							<span
+								>{binding.gate_kind} · {binding.target_type}{binding.target_id
+									? ` · ${binding.target_id}`
+									: ''}</span
+							>
+							<button
+								class="btn btn-danger"
+								type="button"
+								onclick={() => deleteConsentGateBinding(binding.id)}
+								disabled={writeDisabled}
+							>
+								{ft('削除', 'Delete')}
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</AdminSection>
 
 		<details class="advanced-details">
@@ -1021,7 +1288,46 @@
 	.section-actions {
 		display: flex;
 		justify-content: flex-end;
+		gap: 10px;
 		margin-top: 16px;
+	}
+
+	.binding-preview {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 14px;
+		margin-top: 12px;
+		padding: 10px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
+		background: var(--color-surface-raised);
+	}
+
+	.binding-preview-details {
+		display: grid;
+		gap: 5px;
+		margin-top: 8px;
+		padding: 10px 12px;
+		border-left: 3px solid var(--color-accent);
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+	}
+
+	.binding-list {
+		display: grid;
+		gap: 8px;
+		margin-top: 16px;
+	}
+
+	.binding-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 10px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 6px);
 	}
 
 	.danger-row {

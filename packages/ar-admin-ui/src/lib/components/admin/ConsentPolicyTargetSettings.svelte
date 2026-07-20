@@ -3,9 +3,16 @@
 	import { onMount } from 'svelte';
 	import {
 		adminConsentPoliciesAPI,
+		type ConsentPolicy,
 		type ClientTrustPolicy,
 		type ClientTrustPolicyTargetType
 	} from '$lib/api/admin-consent-policies';
+	import {
+		adminConsentGateBindingsAPI,
+		type ConsentGateKind,
+		type ConsentGatePolicyBinding
+	} from '$lib/api/admin-consent-gate-bindings';
+	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { ToggleSwitch } from '$lib/components';
 
 	type TargetType = ClientTrustPolicyTargetType;
@@ -22,10 +29,18 @@
 	let trusted = $state(false);
 	let skipAuthorizationConsent = $state(false);
 	let trustPolicyActive = $state(true);
+	let policies = $state<ConsentPolicy[]>([]);
+	let bindings = $state<ConsentGatePolicyBinding[]>([]);
+	let legalPolicyId = $state('');
+	let releasePolicyId = $state('');
 	let loading = $state(true);
 	let saving = $state(false);
 	let message = $state('');
 	let error = $state('');
+	const canWriteSettings = $derived(adminAuth.hasPermission('admin:settings:write'));
+	const releaseGateKind = $derived<ConsentGateKind>(
+		targetType === 'oidc_client' ? 'oidc_authorization' : 'saml_attribute_release'
+	);
 
 	function findTrustPolicy(items: ClientTrustPolicy[]) {
 		return items.find((item) => item.target_type === targetType && item.target_id === targetId);
@@ -37,8 +52,22 @@
 		error = '';
 		message = '';
 		try {
-			const trustResult = await adminConsentPoliciesAPI.listClientTrustPolicies();
+			const [trustResult, policyResult, bindingResult] = await Promise.all([
+				adminConsentPoliciesAPI.listClientTrustPolicies(),
+				adminConsentPoliciesAPI.listPolicies(),
+				adminConsentGateBindingsAPI.list()
+			]);
 			const trustPolicy = findTrustPolicy(trustResult.policies);
+			policies = policyResult.policies.filter((policy) => policy.is_active === 1);
+			bindings = bindingResult.filter(
+				(binding) => binding.target_type === targetType && binding.target_id === targetId
+			);
+			legalPolicyId =
+				bindings.find((binding) => binding.gate_kind === 'legal_document' && binding.enabled === 1)
+					?.policy_id ?? '';
+			releasePolicyId =
+				bindings.find((binding) => binding.gate_kind === releaseGateKind && binding.enabled === 1)
+					?.policy_id ?? '';
 			firstParty = trustPolicy?.first_party === 1;
 			trusted = trustPolicy?.trusted === 1;
 			skipAuthorizationConsent = trustPolicy?.skip_authorization_consent === 1;
@@ -51,11 +80,15 @@
 	}
 
 	async function saveSettings() {
-		if (!targetId) return;
+		if (!targetId || !canWriteSettings) return;
 		saving = true;
 		error = '';
 		message = '';
 		try {
+			await Promise.all([
+				saveBinding('legal_document', legalPolicyId),
+				saveBinding(releaseGateKind, releasePolicyId)
+			]);
 			await adminConsentPoliciesAPI.upsertClientTrustPolicy({
 				target_type: targetType as ClientTrustPolicyTargetType,
 				target_id: targetId,
@@ -72,6 +105,32 @@
 		} finally {
 			saving = false;
 		}
+	}
+
+	async function saveBinding(gateKind: ConsentGateKind, policyId: string): Promise<void> {
+		const existing = bindings.find((binding) => binding.gate_kind === gateKind);
+		if (!policyId) {
+			if (existing) await adminConsentGateBindingsAPI.remove(existing.id);
+			return;
+		}
+		if (existing) {
+			await adminConsentGateBindingsAPI.update(existing.id, {
+				policy_id: policyId,
+				enabled: true
+			});
+			return;
+		}
+		await adminConsentGateBindingsAPI.create({
+			gate_kind: gateKind,
+			target_type: targetType,
+			target_id: targetId,
+			policy_id: policyId,
+			enabled: true
+		});
+	}
+
+	function text(ja: string, en: string): string {
+		return $LL.admin_flows_locale_marker() === 'ja' ? ja : en;
 	}
 
 	onMount(() => {
@@ -101,6 +160,30 @@
 		{/if}
 
 		<div class="form-grid consent-policy-target__grid">
+			<label class="admin-field">
+				<span class="admin-field__label"
+					>{text('Legal Consent Policy', 'Legal Consent Policy')}</span
+				>
+				<select class="admin-select" bind:value={legalPolicyId} disabled={!canWriteSettings}>
+					<option value="">{text('Tenant 既定を使用', 'Use tenant default')}</option>
+					{#each policies as policy (policy.id)}
+						<option value={policy.id}>{policy.display_name}</option>
+					{/each}
+				</select>
+			</label>
+			<label class="admin-field">
+				<span class="admin-field__label">
+					{targetType === 'oidc_client'
+						? 'OIDC Authorization Consent Policy'
+						: 'SAML Attribute Release Consent Policy'}
+				</span>
+				<select class="admin-select" bind:value={releasePolicyId} disabled={!canWriteSettings}>
+					<option value="">{text('Tenant 既定を使用', 'Use tenant default')}</option>
+					{#each policies as policy (policy.id)}
+						<option value={policy.id}>{policy.display_name}</option>
+					{/each}
+				</select>
+			</label>
 			<div class="admin-field admin-field--full">
 				<p class="field-hint">
 					{$LL.admin_flows_trust_policy_flow_hint()}
@@ -114,28 +197,37 @@
 		<div class="behavior-settings-list">
 			<ToggleSwitch
 				bind:checked={firstParty}
+				disabled={!canWriteSettings}
 				label={$LL.admin_flows_trust_policy_first_party_label()}
 				description={$LL.admin_flows_trust_policy_first_party_description()}
 			/>
 			<ToggleSwitch
 				bind:checked={trusted}
+				disabled={!canWriteSettings}
 				label={$LL.admin_flows_trust_policy_trusted_label()}
 				description={$LL.admin_flows_trust_policy_trusted_description()}
 			/>
 			<ToggleSwitch
 				bind:checked={skipAuthorizationConsent}
+				disabled={!canWriteSettings}
 				label={$LL.admin_flows_trust_policy_skip_consent_label()}
 				description={$LL.admin_flows_trust_policy_skip_consent_description()}
 			/>
 			<ToggleSwitch
 				bind:checked={trustPolicyActive}
+				disabled={!canWriteSettings}
 				label={$LL.admin_flows_trust_policy_active_label()}
 				description={$LL.admin_flows_trust_policy_active_description()}
 			/>
 		</div>
 
 		<div class="form-actions">
-			<button type="button" class="btn btn-primary" onclick={saveSettings} disabled={saving}>
+			<button
+				type="button"
+				class="btn btn-primary"
+				onclick={saveSettings}
+				disabled={saving || !canWriteSettings}
+			>
 				{saving ? $LL.admin_flows_trust_policy_saving() : $LL.admin_flows_trust_policy_save()}
 			</button>
 			<a class="btn btn-secondary" href="/admin/flows">{$LL.admin_flows_manage_flows()}</a>

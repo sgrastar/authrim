@@ -30,7 +30,7 @@ export interface NewFlowTemplate {
 	id: NewFlowTemplateId;
 	title: string;
 	subtitle: string;
-	protocol: 'SAML' | 'OIDC';
+	protocol: 'SAML' | 'OIDC' | 'Shared';
 	destinationType: string;
 	flowKind: string;
 	status: 'planning' | 'preview';
@@ -661,29 +661,27 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 	{
 		id: 'default-login',
 		title: 'Login',
-		subtitle: 'アプリケーション向けログイン',
-		protocol: 'OIDC',
-		destinationType: 'OIDC Client',
+		subtitle: 'Direct / OIDC / SAML 共通ログイン',
+		protocol: 'Shared',
+		destinationType: 'Tenant / OIDC Client / SAML SP',
 		flowKind: 'login',
 		status: 'planning',
 		description:
-			'OIDC authorization requestからセッション確認、認証方式選択、ログイン、必要な同意、authorization responseまでを確認します。',
-		primaryEntry: 'OIDC Authorization Request / Login entry',
-		primaryOutput: 'Authorization Response / Existing Account Session',
-		mappingSet: 'OIDC login/session claims',
-		consentPolicy: 'Login and authorization consent policy',
-		consentStatement: 'oidc_authorization_consent',
-		userAction: '既存アカウントでログインし、必要に応じてscope/claim提供を確認',
-		recordedState: 'tenant + user + OIDC Client + session/authentication event + User Decision',
+			'通常ログイン、OIDC、SAMLを同じFlowで処理し、Legal Consentの後にprotocol別のrelease consentとcompletionへ分岐します。',
+		primaryEntry: 'Direct login / OIDC Authorization Request / SAML AuthnRequest',
+		primaryOutput: 'Session / Authorization Response / SAML Response',
+		mappingSet: 'Protocol-specific identity mapping',
+		consentPolicy: 'Target-bound Legal / OIDC / SAML consent policies',
+		consentStatement: 'Policy bindingで解決',
+		userAction: '認証し、必要なLegal文書とprotocol別の送信内容を確認',
+		recordedState: 'tenant + user + target + Flow + gate decision receipts',
 		nodes: [
 			{
 				id: 'request',
 				label: 'Login Request',
-				description:
-					'OIDC authorization requestを受け取り、client、redirect_uri、要求scopeを解決します。',
+				description: 'Direct / OIDC / SAMLのserver-side protocol contextを解決します。',
 				icon: 'i-ph-monitor',
-				settings: ['Application context', 'redirect_uri', 'scope / prompt / max_age'],
-				links: [{ label: 'OIDC Client設定', href: '/admin/clients' }]
+				settings: ['Trusted protocol context', 'target binding', 'request integrity']
 			},
 			{
 				id: 'session-check',
@@ -701,40 +699,75 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				links: [{ label: '認証方法', href: '/admin/authentication-methods' }]
 			},
 			{
-				id: 'consent',
-				label: 'Consent',
-				description: '必要な場合にscope/claim提供内容を表示し、ユーザーの承認を受け取ります。',
+				id: 'legal-consent',
+				label: 'Legal Consent',
+				description: 'ToS / Privacy Policyをtarget bindingから解決し、必要な文書だけ確認します。',
 				icon: 'i-ph-handshake',
-				settings: ['Consent Policy', 'scope / claims', 'User Decision'],
+				settings: ['legal_document', 'target_binding', 'cross-client reuse'],
 				links: [
 					{ label: '同意ポリシー', href: '/admin/consent-policies' },
 					{ label: '同意文', href: '/admin/consent-statements' }
 				]
 			},
 			{
-				id: 'output',
-				label: 'Output',
-				description: 'ログイン済みセッションと承認結果を使ってOIDC responseを生成します。',
+				id: 'protocol-condition',
+				label: 'Protocol Branch',
+				description: 'trusted protocol contextをdirect / OIDC / SAMLへ明示的に分岐します。',
+				icon: 'i-ph-git-branch',
+				settings: ['direct', 'oidc', 'saml']
+			},
+			{
+				id: 'direct-complete',
+				label: 'Direct Complete',
+				description: '通常ログインのsession結果を返します。',
+				icon: 'i-ph-check-circle',
+				settings: ['session', 'audit event']
+			},
+			{
+				id: 'oidc-authorization-consent',
+				label: 'OIDC Authorization Consent',
+				description: 'OIDC scope / claimの送信内容を確認します。',
 				icon: 'i-ph-key',
-				settings: ['authorization code', 'ID Token claims', 'UserInfo claims']
+				settings: ['oidc_authorization', 'target_binding', 'prompt']
+			},
+			{
+				id: 'oidc-authorization-complete',
+				label: 'OIDC Complete',
+				description: '許可されたrelease setでauthorization responseを継続します。',
+				icon: 'i-ph-paper-plane-tilt',
+				settings: ['authorization response', 'decision receipt']
+			},
+			{
+				id: 'saml-attribute-release-consent',
+				label: 'SAML Attribute Release Consent',
+				description: 'SAML SPへ送信するmapping後の属性を確認します。',
+				icon: 'i-ph-identification-card',
+				settings: ['saml_attribute_release', 'target_binding', 'RequestedAttributes']
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				label: 'SAML Complete',
+				description: '許可された属性でSAML Responseを継続します。',
+				icon: 'i-ph-paper-plane-tilt',
+				settings: ['SAML Response', 'decision receipt']
 			}
 		],
 		contractSummary: [
 			{ label: 'Flow kind', value: 'login' },
-			{ label: 'Protocol', value: 'OIDC' },
-			{ label: 'Destination', value: 'OIDC Client' },
+			{ label: 'Protocol', value: 'Direct / OIDC / SAML' },
+			{ label: 'Destination', value: 'Tenant / OIDC Client / SAML SP' },
 			{ label: 'Authentication', value: 'Configured login methods' },
 			{ label: 'Required user action', value: 'Authenticate + optional consent' },
-			{ label: 'Continuation', value: 'Authorization response' }
+			{ label: 'Continuation', value: 'Session / Authorization / SAML response' }
 		],
 		contract: {
 			contract_version: '2026-06-29',
 			interaction_id: 'preview_oidc_login',
 			flow_kind: 'login',
-			protocol: 'oidc',
+			protocol: 'custom:shared',
 			destination: {
-				type: 'oidc_client',
-				display_name: 'Example Web App'
+				type: 'protocol_target',
+				display_name: 'Resolved at runtime'
 			},
 			capabilities: [
 				{
@@ -763,7 +796,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				url: '/api/flow/interactions/preview_oidc_login/submit'
 			},
 			output: {
-				continuation: 'authorization_response',
+				continuation: 'protocol_specific',
 				records: ['session_event', 'authentication_event', 'user_decision', 'audit_event']
 			}
 		}
@@ -896,6 +929,8 @@ export function createLoginUiRuntimeContractPreview(
 	const destination = readRecord(contract.destination);
 	const flowKind = readString(contract.flow_kind, template.flowKind);
 	const flowId = `preview:${template.id}`;
+	const previewProtocol =
+		template.protocol === 'Shared' ? 'custom:shared' : template.protocol.toLowerCase();
 	return {
 		schema_version: 'authrim.login_ui.contract.v1',
 		mode: 'preview',
@@ -904,7 +939,7 @@ export function createLoginUiRuntimeContractPreview(
 			flow_id: flowId,
 			runtime_bindings: createRuntimeBindings(template),
 			protocol_context: {
-				protocol: template.protocol.toLowerCase(),
+				protocol: previewProtocol,
 				preview: true,
 				destination: {
 					type: readString(destination.type, template.destinationType),
@@ -936,7 +971,7 @@ export function createLoginUiRuntimeContractPreview(
 			flow: {
 				id: template.id,
 				kind: flowKind,
-				protocol: template.protocol.toLowerCase(),
+				protocol: previewProtocol,
 				status: template.status,
 				title: template.title,
 				entry: template.primaryEntry,
@@ -960,9 +995,13 @@ function createRuntimeBindings(
 		)
 			? { authentication_method_profile: 'default' }
 			: {}),
-		...(template.consentPolicy ? { consent_policy_ref: template.consentPolicy } : {}),
+		...(template.consentPolicy && template.id !== 'default-login'
+			? { consent_policy_ref: template.consentPolicy }
+			: {}),
 		...(template.mappingSet ? { field_mapping_set_ref: template.mappingSet } : {}),
-		...(template.consentStatement ? { consent_statement_ref: template.consentStatement } : {})
+		...(template.consentStatement && template.id !== 'default-login'
+			? { consent_statement_ref: template.consentStatement }
+			: {})
 	};
 }
 
@@ -1110,6 +1149,12 @@ function createAcademicSamlLoginPreviewEditorState(): LoginUiRuntimeContractPrev
 }
 
 function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'] {
+	const authenticationOutputs = [
+		{ id: 'mail_otp', label: 'Email OTP' },
+		{ id: 'totp', label: 'Authenticator app' },
+		{ id: 'passkey', label: 'Passkey' },
+		{ id: 'facebook', label: 'Facebook' }
+	];
 	return {
 		nodes: [
 			{
@@ -1135,42 +1180,56 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 					ui_kind: 'authentication',
 					authentication_profile_ref: 'default',
 					screen_ref: 'login',
-					outputs: [
-						{ id: 'mail_otp', label: 'Email OTP' },
-						{ id: 'totp', label: 'Authenticator app' },
-						{ id: 'passkey', label: 'Passkey' }
-					]
+					outputs: authenticationOutputs
 				}
 			},
 			{
-				id: 'saml-attribute-release-consent',
+				id: 'legal-consent',
 				type: 'consent',
-				title: 'Consent',
-				position: { x: 120, y: 480 },
+				title: 'Legal Consent',
+				position: { x: 360, y: 432 },
 				config: {
 					ui_kind: 'consent',
-					consent_policy_ref: 'saml_attribute_release_policy',
-					completion_block: {
-						id: 'saml-attribute-release-completion',
-						label: 'SAML Attribute Release Completion',
-						protocol: 'saml',
-						purpose: 'attribute_release',
-						role: 'consent'
+					consent_gate_kind: 'legal_document',
+					policy_resolution: 'target_binding',
+					policy_required: false
+				}
+			},
+			{
+				id: 'protocol-condition',
+				type: 'condition',
+				title: 'Protocol Branch',
+				position: { x: 360, y: 576 },
+				config: {
+					ui_kind: 'condition',
+					conditions: {
+						rows: ['direct', 'oidc', 'saml'].map((protocol) => ({
+							id: protocol,
+							label: protocol.toUpperCase(),
+							condition: { type: 'protocol', value: protocol },
+							output_handle: protocol
+						})),
+						otherwise: {
+							terminal_error: {
+								error: 'unsupported_protocol',
+								message: 'The login protocol is not supported by this Flow.'
+							}
+						}
 					}
 				}
 			},
 			{
-				id: 'saml-attribute-release-complete',
+				id: 'direct-complete',
 				type: 'complete',
-				title: 'Complete',
-				position: { x: 120, y: 624 },
+				title: 'Direct Complete',
+				position: { x: 0, y: 864 },
 				config: {
 					ui_kind: 'complete',
 					completion_block: {
-						id: 'saml-attribute-release-completion',
-						label: 'SAML Attribute Release Completion',
-						protocol: 'saml',
-						purpose: 'attribute_release',
+						id: 'direct-login-completion',
+						label: 'Direct Login Completion',
+						protocol: 'direct',
+						purpose: 'login',
 						role: 'output'
 					}
 				}
@@ -1178,11 +1237,13 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 			{
 				id: 'oidc-authorization-consent',
 				type: 'consent',
-				title: 'Consent',
-				position: { x: 600, y: 480 },
+				title: 'OIDC Authorization Consent',
+				position: { x: 360, y: 720 },
 				config: {
 					ui_kind: 'consent',
-					consent_policy_ref: 'oidc_authorization_consent_policy',
+					consent_gate_kind: 'oidc_authorization',
+					policy_resolution: 'target_binding',
+					policy_required: false,
 					completion_block: {
 						id: 'oidc-authorization-completion',
 						label: 'OIDC Authorization Completion',
@@ -1196,7 +1257,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				id: 'oidc-authorization-complete',
 				type: 'complete',
 				title: 'Complete',
-				position: { x: 600, y: 624 },
+				position: { x: 360, y: 864 },
 				config: {
 					ui_kind: 'complete',
 					completion_block: {
@@ -1204,6 +1265,41 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 						label: 'OIDC Authorization Completion',
 						protocol: 'oidc',
 						purpose: 'authorization',
+						role: 'output'
+					}
+				}
+			},
+			{
+				id: 'saml-attribute-release-consent',
+				type: 'consent',
+				title: 'SAML Attribute Release Consent',
+				position: { x: 720, y: 720 },
+				config: {
+					ui_kind: 'consent',
+					consent_gate_kind: 'saml_attribute_release',
+					policy_resolution: 'target_binding',
+					policy_required: false,
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
+						role: 'consent'
+					}
+				}
+			},
+			{
+				id: 'saml-attribute-release-complete',
+				type: 'complete',
+				title: 'SAML Complete',
+				position: { x: 720, y: 864 },
+				config: {
+					ui_kind: 'complete',
+					completion_block: {
+						id: 'saml-attribute-release-completion',
+						label: 'SAML Attribute Release Completion',
+						protocol: 'saml',
+						purpose: 'attribute_release',
 						role: 'output'
 					}
 				}
@@ -1217,16 +1313,10 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				target: 'session-check'
 			},
 			{
-				id: 'session-check:continue->saml-attribute-release-consent',
+				id: 'session-check:continue->legal-consent',
 				source: 'session-check',
 				source_handle: 'continue',
-				target: 'saml-attribute-release-consent'
-			},
-			{
-				id: 'session-check:continue->oidc-authorization-consent',
-				source: 'session-check',
-				source_handle: 'continue',
-				target: 'oidc-authorization-consent'
+				target: 'legal-consent'
 			},
 			{
 				id: 'session-check:authenticate->authentication',
@@ -1234,41 +1324,35 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				source_handle: 'authenticate',
 				target: 'authentication'
 			},
-			{
-				id: 'authentication:mail_otp->saml-attribute-release-consent',
+			...authenticationOutputs.map((output) => ({
+				id: `authentication:${output.id}->legal-consent`,
 				source: 'authentication',
-				source_handle: 'mail_otp',
-				target: 'saml-attribute-release-consent'
+				source_handle: output.id,
+				target: 'legal-consent'
+			})),
+			{
+				id: 'legal-consent:accepted->protocol-condition',
+				source: 'legal-consent',
+				source_handle: 'accepted',
+				target: 'protocol-condition'
 			},
 			{
-				id: 'authentication:totp->saml-attribute-release-consent',
-				source: 'authentication',
-				source_handle: 'totp',
-				target: 'saml-attribute-release-consent'
+				id: 'protocol-condition:direct->direct-complete',
+				source: 'protocol-condition',
+				source_handle: 'direct',
+				target: 'direct-complete'
 			},
 			{
-				id: 'authentication:mail_otp->oidc-authorization-consent',
-				source: 'authentication',
-				source_handle: 'mail_otp',
+				id: 'protocol-condition:oidc->oidc-authorization-consent',
+				source: 'protocol-condition',
+				source_handle: 'oidc',
 				target: 'oidc-authorization-consent'
 			},
 			{
-				id: 'authentication:totp->oidc-authorization-consent',
-				source: 'authentication',
-				source_handle: 'totp',
-				target: 'oidc-authorization-consent'
-			},
-			{
-				id: 'authentication:passkey->saml-attribute-release-consent',
-				source: 'authentication',
-				source_handle: 'passkey',
+				id: 'protocol-condition:saml->saml-attribute-release-consent',
+				source: 'protocol-condition',
+				source_handle: 'saml',
 				target: 'saml-attribute-release-consent'
-			},
-			{
-				id: 'authentication:passkey->oidc-authorization-consent',
-				source: 'authentication',
-				source_handle: 'passkey',
-				target: 'oidc-authorization-consent'
 			},
 			{
 				id: 'saml-attribute-release-consent:accepted->saml-attribute-release-complete',
@@ -1583,12 +1667,38 @@ function runtimeConfigForNode(
 		config.screen_ref = 'profile_completion';
 	}
 	if (type === 'consent') {
-		config.consent_policy_ref =
-			template.id === 'academic-saml-login' || template.id === 'saml-attribute-release'
-				? 'saml_attribute_release_policy'
-				: template.id === 'default-registration'
-					? 'registration_consent_policy'
-					: 'oidc_authorization_consent_policy';
+		if (template.id === 'default-login') {
+			config.consent_gate_kind = node.id.startsWith('legal-')
+				? 'legal_document'
+				: node.id.startsWith('saml-')
+					? 'saml_attribute_release'
+					: 'oidc_authorization';
+			config.policy_resolution = 'target_binding';
+			config.policy_required = false;
+		} else {
+			config.consent_policy_ref =
+				template.id === 'academic-saml-login' || template.id === 'saml-attribute-release'
+					? 'saml_attribute_release_policy'
+					: template.id === 'default-registration'
+						? 'registration_consent_policy'
+						: 'oidc_authorization_consent_policy';
+		}
+	}
+	if (type === 'condition' && node.id === 'protocol-condition') {
+		config.conditions = {
+			rows: ['direct', 'oidc', 'saml'].map((protocol) => ({
+				id: protocol,
+				label: protocol.toUpperCase(),
+				condition: { type: 'protocol', value: protocol },
+				output_handle: protocol
+			})),
+			otherwise: {
+				terminal_error: {
+					error: 'unsupported_protocol',
+					message: 'The login protocol is not supported by this Flow.'
+				}
+			}
+		};
 	}
 	return config;
 }
@@ -1597,6 +1707,7 @@ function completionBlockForNode(
 	template: NewFlowTemplate,
 	nodeId: string
 ): Record<string, string> | null {
+	if (nodeId === 'legal-consent') return null;
 	const role =
 		nodeId === 'consent' || nodeId.endsWith('-consent')
 			? 'consent'
@@ -1634,6 +1745,9 @@ function completionBlockProtocolAndPurposeForNode(
 	if (nodeId.startsWith('oidc-registration')) {
 		return { protocol: 'oidc', purpose: 'registration' };
 	}
+	if (nodeId.startsWith('direct-')) {
+		return { protocol: 'direct', purpose: 'login' };
+	}
 	return null;
 }
 
@@ -1652,6 +1766,7 @@ function flowNodeTypeForNode(nodeId: string, flowKind: string): string {
 	if (nodeId === 'session-check') return 'session_check';
 	if (nodeId.includes('method') && flowKind === 'registration') return 'registration';
 	if (nodeId.includes('authentication')) return 'authentication';
+	if (nodeId.includes('condition')) return 'condition';
 	if (nodeId.includes('profile')) return 'screen';
 	if (nodeId.includes('consent')) return 'consent';
 	if (nodeId.includes('account')) return 'account_action';
@@ -1677,6 +1792,7 @@ function loginUiComponentForNode(template: NewFlowTemplate, nodeId: string): str
 	}
 	if (nodeId.includes('profile')) return 'screen';
 	if (nodeId.includes('consent')) return 'consent_policy';
+	if (nodeId.includes('condition')) return 'condition';
 	if (nodeId.includes('mapping')) return 'field_mapping_preview';
 	if (nodeId.includes('account')) return 'account_action';
 	if (nodeId === 'output' || nodeId.endsWith('-complete')) return 'completion';

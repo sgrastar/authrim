@@ -85,6 +85,7 @@ import { anonLoginChallengeHandler, anonLoginVerifyHandler } from './anon-login'
 import { upgradeHandler, upgradeCompleteHandler, upgradeStatusHandler } from './upgrade';
 import { setupApp } from './setup';
 import { adminSetupApiApp } from './admin-setup-api';
+import { adminInvitationEnrollmentApp } from './admin-invitation-enrollment';
 import { flowApi } from './flow-engine';
 import {
   directPasskeyLoginStartHandler,
@@ -370,6 +371,15 @@ app.use('/api/auth/directory-relay/connect/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/directory-relay/connect'],
+  })(c, next);
+});
+app.use('/api/admin/invitations/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/invitations'],
+    keyScope: 'global',
+    requireAtomic: true,
   })(c, next);
 });
 app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
@@ -716,6 +726,7 @@ app.route('/', setupApp);
 // Used by Admin UI for passkey registration after initial setup
 // Endpoints: /api/admin/setup-token/*
 app.route('/', adminSetupApiApp);
+app.route('/', adminInvitationEnrollmentApp);
 
 // Logout error page - displayed when logout validation fails
 // Per OIDC RP-Initiated Logout spec, OP SHOULD display an error page when:

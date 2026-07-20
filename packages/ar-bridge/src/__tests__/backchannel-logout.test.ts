@@ -92,11 +92,14 @@ vi.mock('@authrim/ar-lib-core', () => ({
     },
   })),
   isShardedSessionId: vi.fn(() => true),
-  createErrorResponse: vi.fn((_c, _code, _opts) => new Response(null, { status: 400 })),
+  createErrorResponse: vi.fn(
+    (_c, code, _opts) => new Response(null, { status: code === 'internal' ? 500 : 400 })
+  ),
   AR_ERROR_CODES: {
     ADMIN_RESOURCE_NOT_FOUND: 'not_found',
     VALIDATION_REQUIRED_FIELD: 'required',
     VALIDATION_INVALID_VALUE: 'invalid',
+    INTERNAL_ERROR: 'internal',
   },
   getLogger: vi.fn(() => ({
     module: vi.fn(() => ({
@@ -127,7 +130,10 @@ vi.mock('jose', () => ({
   jwtVerify: mockJwtVerify,
 }));
 
-import { handleBackchannelLogout } from '../handlers/backchannel-logout';
+import {
+  classifyBackchannelLogoutError,
+  handleBackchannelLogout,
+} from '../handlers/backchannel-logout';
 
 describe('backchannel logout', () => {
   beforeEach(() => {
@@ -219,11 +225,7 @@ describe('backchannel logout', () => {
       'tenant-a',
       expect.any(Number),
     ]);
-    expect(sqlTracker.calls[1]?.params).toEqual([
-      'provider-google',
-      'provider-sub-123',
-      'tenant-a',
-    ]);
+    expect(sqlTracker.calls[1]?.params).toEqual(['sess-1', 'tenant-a']);
     expect(mockDiagnosticTokenValidation).toHaveBeenCalledWith(
       expect.objectContaining({
         step: 'logout-token-validation',
@@ -277,6 +279,45 @@ describe('backchannel logout', () => {
       expect.anything(),
       expect.objectContaining({ algorithms: ['ES256'] })
     );
+  });
+
+  it('terminates the session selected by a sid-only logout token', async () => {
+    mockJwtVerify.mockResolvedValueOnce({
+      payload: {
+        iss: 'https://accounts.google.com',
+        aud: 'client-123',
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'logout-token-sid-only',
+        sid: 'provider-session-123',
+        events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
+      },
+    });
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'signed.logout.token' }),
+      },
+      env: { SETTINGS: { get: vi.fn(), put: vi.fn() } },
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(200);
+    expect(sqlTracker.calls[0]?.sql).toContain('external_provider_sid = ?');
+    expect(sqlTracker.calls[0]?.params).toEqual([
+      'provider-google',
+      'provider-session-123',
+      'tenant-a',
+      expect.any(Number),
+    ]);
+    expect(mockFindByProviderSub).not.toHaveBeenCalled();
+    expect(mockSessionFetch).toHaveBeenCalledOnce();
   });
 
   it('records a sanitized rejection reason for an invalid logout token', async () => {
@@ -353,5 +394,74 @@ describe('backchannel logout', () => {
 
     expect(response.status).toBe(200);
     expect(mockFindByProviderSub).toHaveBeenCalled();
+  });
+
+  it('does not misclassify a post-validation storage failure as a token failure', async () => {
+    mockCoreExecute.mockRejectedValueOnce(new Error('database unavailable'));
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'signed.logout.token' }),
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(500);
+    expect(mockDiagnosticTokenValidation).toHaveBeenCalledTimes(1);
+    expect(mockDiagnosticTokenValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ result: 'pass' })
+    );
+    expect(mockDiagnosticAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'deny',
+        context: { validation_error: 'session_invalidation_failed' },
+      })
+    );
+    expect(mockDiagnosticCleanup).toHaveBeenCalledOnce();
+  });
+});
+
+describe('backchannel logout diagnostic classification', () => {
+  it('distinguishes the OIDF issuer, audience, algorithm, and signature failures', () => {
+    expect(
+      classifyBackchannelLogoutError({
+        code: 'ERR_JWT_CLAIM_VALIDATION_FAILED',
+        claim: 'iss',
+      })
+    ).toBe('issuer_mismatch');
+    expect(
+      classifyBackchannelLogoutError({
+        code: 'ERR_JWT_CLAIM_VALIDATION_FAILED',
+        claim: 'aud',
+      })
+    ).toBe('audience_mismatch');
+    expect(classifyBackchannelLogoutError({ code: 'ERR_JOSE_ALG_NOT_ALLOWED' })).toBe(
+      'unexpected_signing_algorithm'
+    );
+    expect(classifyBackchannelLogoutError({ code: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED' })).toBe(
+      'invalid_signature'
+    );
+  });
+
+  it('uses stable safe codes for semantic logout token failures', () => {
+    expect(
+      classifyBackchannelLogoutError(new Error('Logout token missing backchannel-logout event'))
+    ).toBe('missing_logout_event');
+    expect(
+      classifyBackchannelLogoutError(new Error('Logout token MUST NOT contain nonce claim'))
+    ).toBe('nonce_present');
   });
 });
