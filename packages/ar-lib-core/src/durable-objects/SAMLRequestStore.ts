@@ -175,6 +175,20 @@ export class SAMLRequestStore {
   }
 
   /**
+   * Read an active request without consuming it. Login Flow uses this to build a
+   * server-trusted protocol context; the SAML response path remains responsible
+   * for the one-time consume operation.
+   */
+  async getRequest(requestId: string): Promise<SAMLRequestData | null> {
+    await this.initializeState();
+    const request = this.getState().requests.get(requestId);
+    if (!request || request.used || Date.now() > request.expiresAt) {
+      return null;
+    }
+    return structuredClone(request);
+  }
+
+  /**
    * Store a SAML artifact
    */
   async storeArtifact(artifact: SAMLArtifactData): Promise<void> {
@@ -325,6 +339,21 @@ export class SAMLRequestStore {
         const exists = await this.checkRequest(requestId);
 
         return new Response(JSON.stringify({ exists }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // GET /request/:requestId - Read an active request without consuming it
+      if (path.startsWith('/request/') && request.method === 'GET') {
+        const requestId = path.substring('/request/'.length);
+        const result = await this.getRequest(requestId);
+        if (!result) {
+          return new Response(JSON.stringify({ error: 'Request not found or already used' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' },
         });
       }

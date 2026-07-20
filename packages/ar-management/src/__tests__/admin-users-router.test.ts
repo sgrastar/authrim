@@ -546,14 +546,7 @@ describe('adminUsersRouter', () => {
     expect(response.status).toBe(403);
   });
 
-  it('creates a normalized tenant admin and records an audit event', async () => {
-    repoMocks.findByEmail.mockResolvedValue(null);
-    repoMocks.createAdminUser.mockImplementation(async (input) => ({
-      id: 'admin_new',
-      ...input,
-      password_hash: input.password,
-      totp_secret_encrypted: null,
-    }));
+  it('requires the invitation flow instead of creating an active Admin directly', async () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
@@ -565,51 +558,17 @@ describe('adminUsersRouter', () => {
           'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_WRITE,
         },
         body: JSON.stringify({
-          email: 'NEW@EXAMPLE.COM',
-          name: 'New Admin',
-          password: 'a long test password',
-          mfa_enabled: true,
+          email: 'new@example.com',
         }),
       },
       env
     );
-    const body = (await response.json()) as Record<string, unknown>;
+    const body = (await response.json()) as { error?: string };
 
-    expect(response.status).toBe(201);
-    expect(repoMocks.createAdminUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenant_id: 'tenant_123',
-        email: 'new@example.com',
-        created_by: 'admin_1',
-        password: expect.stringMatching(/^[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/),
-      })
-    );
-    expect(body).not.toHaveProperty('password_hash');
-    expect(repoMocks.createAuditLog).toHaveBeenCalled();
-  });
-
-  it.each([
-    ['missing email', {}, 400],
-    ['duplicate email', { email: 'exists@example.com' }, 409],
-  ])('rejects admin creation with %s', async (_label, requestBody, expectedStatus) => {
-    repoMocks.findByEmail.mockResolvedValue({ id: 'existing' });
-    const { app, env } = createTestApp();
-
-    const response = await app.request(
-      '/api/admin/admins',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_WRITE,
-        },
-        body: JSON.stringify(requestBody),
-      },
-      env
-    );
-
-    expect(response.status).toBe(expectedStatus);
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('admin_invitation_required');
     expect(repoMocks.createAdminUser).not.toHaveBeenCalled();
+    expect(repoMocks.createAuditLog).not.toHaveBeenCalled();
   });
 
   it('updates the caller account and normalizes its email', async () => {

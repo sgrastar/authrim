@@ -5,6 +5,8 @@ import { BINDING_URIS, SAML_NAMESPACES } from '../../common/constants';
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
   builtin: false,
+  runtimeFlow: false,
+  consentGate: false,
   ui: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
   loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
   storeFetch: vi.fn(async (_url?: string) => new Response('{}', { status: 200 })),
@@ -19,6 +21,17 @@ const mocks = vi.hoisted(() => ({
   authnContextError: null as Error | null,
   nameIdError: null as Error | null,
   consentGrant: vi.fn(async () => undefined),
+  receipt: null as Record<string, unknown> | null,
+  consumeReceipt: vi.fn(async () => undefined),
+  resolveAdapter: vi.fn(async () => ({
+    queryOne: vi.fn(async () => null),
+    execute: vi.fn(async () => ({ success: true, rowsAffected: 1 })),
+  })),
+  releaseCheck: undefined as { attributeSetHash: string | null } | undefined,
+  attributes: [{ name: 'mail', values: ['user@example.test'] }] as Array<{
+    name: string;
+    values: string[];
+  }>,
   pairwiseSecret: 'pairwise-secret' as string | undefined,
   pairwiseSecretForRef: 'referenced-secret' as string | undefined,
   persistentProfileRows: [] as Array<Record<string, unknown>>,
@@ -38,6 +51,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       (tenant: string, role: string, entity: string) => `${tenant}:${role}:${entity}`
     ),
     shouldUseBuiltinForms: vi.fn(async () => mocks.builtin),
+    isTenantLoginRuntimeFlowEnabled: vi.fn(async () => mocks.runtimeFlow),
+    isTenantFlowProtocolConsentGatesEnabled: vi.fn(async () => mocks.consentGate),
     getSessionStoreBySessionId: vi.fn(() => ({
       stub: {
         fetch: vi.fn(async () => {
@@ -47,7 +62,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     })),
     isShardedSessionId: vi.fn(() => mocks.shardedSession),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
+    resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveAdapter,
     requireAdminDatabaseAdapter: vi.fn(() => ({
       query: vi.fn(async () => mocks.persistentProfileRows),
     })),
@@ -70,6 +85,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuditLog: mocks.audit,
     AttributeReleaseConsentRepository: class {
       grant = mocks.consentGrant;
+    },
+    ConsentGateDecisionReceiptRepository: class {
+      findById = vi.fn(async () => mocks.receipt);
+      consume = mocks.consumeReceipt;
     },
   };
 });
@@ -120,7 +139,7 @@ vi.mock('../attributes', async (importOriginal) => {
     buildSAMLAttributesForSPWithDiagnostics: vi.fn(() => {
       if (mocks.attributeError) throw mocks.attributeError;
       return {
-        attributes: [{ name: 'mail', values: ['user@example.test'] }],
+        attributes: mocks.attributes,
         optionalMissingAttributes: [],
       };
     }),
@@ -133,6 +152,7 @@ vi.mock('../attribute-release-consent', async (importOriginal) => {
     ...actual,
     enforceSAMLAttributeReleaseConsent: vi.fn(async () => {
       if (mocks.consentError) throw mocks.consentError;
+      return mocks.releaseCheck;
     }),
   };
 });
@@ -266,6 +286,8 @@ describe('IdP SSO handler policy boundaries', () => {
     vi.clearAllMocks();
     mocks.sp = sp();
     mocks.builtin = false;
+    mocks.runtimeFlow = false;
+    mocks.consentGate = false;
     mocks.ui = undefined;
     mocks.loginPolicy = 'ui_base_url';
     mocks.storeFetch.mockResolvedValue(new Response('{}', { status: 200 }));
@@ -278,6 +300,9 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.consentError = null;
     mocks.authnContextError = null;
     mocks.nameIdError = null;
+    mocks.receipt = null;
+    mocks.releaseCheck = undefined;
+    mocks.attributes = [{ name: 'mail', values: ['user@example.test'] }];
     mocks.pairwiseSecret = 'pairwise-secret';
     mocks.pairwiseSecretForRef = 'referenced-secret';
     mocks.persistentProfileRows = [];
@@ -434,6 +459,222 @@ describe('IdP SSO handler policy boundaries', () => {
     expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
   });
 
+  it('consumes a Flow receipt and omits deselected optional attributes from the assertion', async () => {
+    authenticateSession();
+    mocks.consentGate = true;
+    mocks.user = { id: 'user-a', email: 'user@example.test', name: 'User A' };
+    mocks.attributes = [
+      { name: 'mail', values: ['user@example.test'] },
+      { name: 'displayName', values: ['User A'] },
+    ];
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify(['mail']))
+    );
+    const selectedHash = btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/gu, '-')
+      .replace(/\//gu, '_')
+      .replace(/=+$/gu, '');
+    const stored = storedConsentRequest();
+    stored.context.attributeReleaseConsentChallenge.attributeSummaries = [
+      { name: 'displayName', valueCount: 1 },
+      { name: 'mail', valueCount: 1, required: true },
+    ] as never;
+    mocks.storeFetch.mockResolvedValue(
+      new Response(JSON.stringify(stored), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    mocks.receipt = {
+      id: 'cgr_0123456789abcdef0123456789abcdef',
+      interaction_id: 'interaction-1',
+      flow_id: 'flow-1',
+      flow_version_id: 'flow-version-1',
+      flow_node_id: 'saml-consent',
+      gate_kind: 'saml_attribute_release',
+      subject_user_id: 'user-a',
+      target_type: 'saml_sp',
+      target_id: 'https://sp.example.test/entity',
+      protocol_request_id: '_request',
+      statement_version_set_hash: null,
+      release_set_hash: selectedHash,
+      decision: {
+        release: {
+          protocol: 'saml',
+          requested_attributes: ['displayName', 'mail'],
+          selected_attributes: ['mail'],
+          required_attributes: ['mail'],
+          consent_mode: 'until_attributes_change',
+        },
+      },
+    };
+
+    const response = await app().fetch(
+      new Request(
+        'https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=https%3A%2F%2Fsp.example.test%2Fentity&consent_gate_receipt_id=cgr_0123456789abcdef0123456789abcdef'
+      ),
+      environment(),
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.consumeReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target_id: 'https://sp.example.test/entity',
+        protocol_request_id: '_request',
+        release_set_hash: selectedHash,
+      })
+    );
+    expect(mocks.resolveAdapter).toHaveBeenCalledWith(
+      expect.anything(),
+      'saml-flow-consent-receipt',
+      { tenantId: 'tenant-a' }
+    );
+    expect(mocks.buildResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ attributes: [{ name: 'mail', values: ['user@example.test'] }] })
+    );
+  });
+
+  it('rejects an OIDC Flow receipt on the SAML assertion continuation', async () => {
+    authenticateSession();
+    mocks.consentGate = true;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.attributes = [{ name: 'mail', values: ['user@example.test'] }];
+    mocks.storeFetch.mockResolvedValue(
+      new Response(JSON.stringify(storedConsentRequest()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    mocks.receipt = {
+      id: 'cgr_0123456789abcdef0123456789abcdef',
+      interaction_id: 'interaction-1',
+      flow_id: 'flow-1',
+      flow_version_id: 'flow-version-1',
+      flow_node_id: 'oidc-consent',
+      gate_kind: 'oidc_authorization',
+      subject_user_id: 'user-a',
+      target_type: 'oidc_client',
+      target_id: 'oidc-client',
+      protocol_request_id: '_request',
+      statement_version_set_hash: null,
+      release_set_hash: null,
+      decision: {
+        release: {
+          protocol: 'oidc',
+          requested_scopes: ['openid'],
+          selected_scopes: ['openid'],
+          required_scopes: ['openid'],
+          requested_claims: [],
+          selected_claims: [],
+          required_claims: [],
+          consent_mode: 'once',
+        },
+      },
+    };
+
+    const response = await app().fetch(
+      new Request(
+        'https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=https%3A%2F%2Fsp.example.test%2Fentity&consent_gate_receipt_id=cgr_0123456789abcdef0123456789abcdef'
+      ),
+      environment(),
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.consumeReceipt).not.toHaveBeenCalled();
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Flow receipt that downgrades a required SAML attribute', async () => {
+    authenticateSession();
+    mocks.consentGate = true;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.attributes = [{ name: 'mail', values: ['user@example.test'] }];
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify(['mail']))
+    );
+    const selectedHash = btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/gu, '-')
+      .replace(/\//gu, '_')
+      .replace(/=+$/gu, '');
+    const stored = storedConsentRequest();
+    stored.context.attributeReleaseConsentChallenge.attributeSummaries = [
+      { name: 'mail', valueCount: 1, required: true },
+    ] as never;
+    mocks.storeFetch.mockResolvedValue(
+      new Response(JSON.stringify(stored), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    mocks.receipt = {
+      id: 'cgr_0123456789abcdef0123456789abcdef',
+      interaction_id: 'interaction-1',
+      flow_id: 'flow-1',
+      flow_version_id: 'flow-version-1',
+      flow_node_id: 'saml-consent',
+      gate_kind: 'saml_attribute_release',
+      subject_user_id: 'user-a',
+      target_type: 'saml_sp',
+      target_id: 'https://sp.example.test/entity',
+      protocol_request_id: '_request',
+      statement_version_set_hash: null,
+      release_set_hash: selectedHash,
+      decision: {
+        release: {
+          protocol: 'saml',
+          requested_attributes: ['mail'],
+          selected_attributes: ['mail'],
+          required_attributes: [],
+          consent_mode: 'until_attributes_change',
+        },
+      },
+    };
+
+    const response = await app().fetch(
+      new Request(
+        'https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=https%3A%2F%2Fsp.example.test%2Fentity&consent_gate_receipt_id=cgr_0123456789abcdef0123456789abcdef'
+      ),
+      environment(),
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.consumeReceipt).not.toHaveBeenCalled();
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('rejects an issued Flow receipt after the tenant Consent Gate flag is disabled', async () => {
+    authenticateSession();
+    mocks.consentGate = false;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.storeFetch.mockResolvedValue(
+      new Response(JSON.stringify(storedConsentRequest()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const response = await app().fetch(
+      new Request(
+        'https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=https%3A%2F%2Fsp.example.test%2Fentity&consent_gate_receipt_id=cgr_0123456789abcdef0123456789abcdef'
+      ),
+      environment(),
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'saml_error',
+      status_code: 'urn:oasis:names:tc:SAML:2.0:status:RequestDenied',
+    });
+    expect(mocks.consumeReceipt).not.toHaveBeenCalled();
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       'missing required attribute',
@@ -499,6 +740,57 @@ describe('IdP SSO handler policy boundaries', () => {
       attributeSetHash: 'hash',
       consentMode: 'once',
     });
+  });
+
+  it('routes an attribute consent challenge back through Login Flow when enabled', async () => {
+    authenticateSession();
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.runtimeFlow = true;
+    mocks.consentGate = true;
+    mocks.ui = { baseUrl: 'https://login.example.test', paths: { login: '/login' } };
+    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
+      attributeSetHash: 'hash',
+      reasonCodes: ['consent.required'],
+      consentMode: 'until_attributes_change',
+      attributes: [{ name: 'mail', friendlyName: 'Email', values: ['user@example.test'] }],
+    });
+
+    const response = await post(authnRequest());
+
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get('location')!);
+    expect(location.origin + location.pathname).toBe('https://login.example.test/login');
+    expect(location.searchParams.get('saml_request_id')).toBe('_request');
+    const storeCall = mocks.storeFetch.mock.calls[0] as unknown as [string, { body?: string }];
+    const stored = JSON.parse(storeCall[1].body!) as {
+      context: {
+        attributeReleaseConsentChallenge: {
+          attributeSummaries: Array<Record<string, unknown>>;
+        };
+      };
+    };
+    expect(stored.context.attributeReleaseConsentChallenge.attributeSummaries).toEqual([
+      expect.objectContaining({ name: 'mail', friendlyName: 'Email', required: false }),
+    ]);
+  });
+
+  it('keeps the built-in SAML consent form when the tenant Consent Gate flag is disabled', async () => {
+    authenticateSession();
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.runtimeFlow = true;
+    mocks.consentGate = false;
+    mocks.ui = { baseUrl: 'https://login.example.test', paths: { login: '/login' } };
+    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
+      attributeSetHash: 'hash',
+      reasonCodes: ['consent.required'],
+      consentMode: 'once',
+      attributes: [{ name: 'mail', values: ['user@example.test'] }],
+    });
+
+    const response = await post(authnRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('name="challenge_id"');
   });
 
   it('rejects GET redirect binding without a SAMLRequest', async () => {

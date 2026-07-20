@@ -2053,4 +2053,90 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledTimes(2);
     expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
   });
+
+  it('consumes an authenticated consent challenge through the shared authorization continuation', async () => {
+    mocks.challengeStore.consumeChallengeRpc
+      .mockRejectedValueOnce(new Error('not login'))
+      .mockRejectedValueOnce(new Error('not reauth'))
+      .mockResolvedValueOnce({
+        userId: 'user_existing',
+        metadata: {
+          client_id: 'web-client',
+          redirect_uri: 'https://app.example.com/callback',
+          response_type: 'code',
+          scope: 'openid profile',
+          state: 'state_1',
+          issuer: 'https://tenant.example.com',
+          sessionUserId: 'user_existing',
+        },
+      });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      {} as never,
+      'tenant_test',
+      'consent_challenge_1',
+      'user_existing',
+      1_700_000_123,
+      'https://tenant.example.com'
+    );
+
+    expect(result).toMatchObject({
+      type: 'consent',
+      redirectUrl: expect.stringContaining('_consent_confirmation_challenge='),
+    });
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenNthCalledWith(3, {
+      id: 'consent_challenge_1',
+      tenantId: 'tenant_test',
+      type: 'consent',
+      challenge: 'consent_challenge_1',
+    });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'consent',
+        userId: 'user_existing',
+        metadata: expect.objectContaining({ purpose: 'authorize_consent_confirmation' }),
+      })
+    );
+  });
+
+  it('turns a login continuation with a Flow consent receipt into a consent confirmation', async () => {
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user_existing',
+      metadata: {
+        client_id: 'web-client',
+        redirect_uri: 'https://app.example.com/callback',
+        response_type: 'code',
+        scope: 'openid profile',
+        state: 'state_1',
+        issuer: 'https://tenant.example.com',
+      },
+    });
+    const { consumeAuthorizationChallengeContinuation } = await import('../direct-auth');
+
+    const result = await consumeAuthorizationChallengeContinuation(
+      {} as never,
+      'tenant_test',
+      'login_challenge_1',
+      'user_existing',
+      1_700_000_123,
+      'https://tenant.example.com',
+      'cgr_0123456789abcdef0123456789abcdef'
+    );
+
+    expect(result).toMatchObject({
+      type: 'login',
+      redirectUrl: expect.stringContaining('_consent_confirmation_challenge='),
+    });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'consent',
+        metadata: expect.objectContaining({
+          purpose: 'authorize_consent_confirmation',
+          consent_gate_receipt_id: 'cgr_0123456789abcdef0123456789abcdef',
+          consent_gate_protocol_request_id: 'login_challenge_1',
+        }),
+      })
+    );
+  });
 });

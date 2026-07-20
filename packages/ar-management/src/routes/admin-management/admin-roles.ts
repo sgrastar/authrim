@@ -723,6 +723,18 @@ adminRolesRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
+    // Completed invitations retain a role snapshot for audit history, but a pending invitation
+    // must be revoked before its role can be deleted or the recipient could never activate it.
+    const pendingInvitation = await adapter.queryOne<{ id: string }>(
+      `SELECT id FROM admin_invitations
+        WHERE tenant_id = ? AND admin_role_id = ? AND status = 'pending' AND expires_at > ?
+        LIMIT 1`,
+      [tenantId, id, Date.now()]
+    );
+    if (pendingInvitation) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
     await roleRepo.deleteRole(id);
 
     // Create audit log

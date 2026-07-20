@@ -14602,7 +14602,7 @@ type RootTranslation = {
 	 */
 	admin_admins_description: string;
 	/**
-	 * A​d​d​ ​A​d​m​i​n
+	 * I​n​v​i​t​e​ ​A​d​m​i​n
 	 */
 	admin_admins_add: string;
 	/**
@@ -14721,7 +14721,7 @@ type RootTranslation = {
 	 */
 	admin_admins_next: string;
 	/**
-	 * C​r​e​a​t​e​ ​A​d​m​i​n​ ​U​s​e​r
+	 * I​n​v​i​t​e​ ​A​d​m​i​n
 	 */
 	admin_admins_create_title: string;
 	/**
@@ -14729,9 +14729,119 @@ type RootTranslation = {
 	 */
 	admin_admins_email_required: string;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​a​d​m​i​n​ ​u​s​e​r
+	 * F​a​i​l​e​d​ ​t​o​ ​i​n​v​i​t​e​ ​a​d​m​i​n​ ​u​s​e​r
 	 */
 	admin_admins_create_failed: string;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​p​e​n​d​i​n​g​ ​i​n​v​i​t​a​t​i​o​n​s​ ​o​r​ ​r​o​l​e​s
+	 */
+	admin_admins_invitations_load_failed: string;
+	/**
+	 * R​o​l​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_admins_role_required: string;
+	/**
+	 * A​d​d​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​a​l​l​o​w​e​d​ ​I​P​ ​a​d​d​r​e​s​s​ ​o​r​ ​r​a​n​g​e
+	 */
+	admin_admins_ip_range_required: string;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​s​e​n​d​ ​i​n​v​i​t​a​t​i​o​n
+	 */
+	admin_admins_invitation_resend_failed: string;
+	/**
+	 * R​e​v​o​k​e​ ​t​h​e​ ​i​n​v​i​t​a​t​i​o​n​ ​f​o​r​ ​{​e​m​a​i​l​}​?
+	 * @param {string} email
+	 */
+	admin_admins_invitation_revoke_confirm: RequiredParams<'email'>;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​v​o​k​e​ ​i​n​v​i​t​a​t​i​o​n
+	 */
+	admin_admins_invitation_revoke_failed: string;
+	/**
+	 * P​e​n​d​i​n​g​ ​i​n​v​i​t​a​t​i​o​n​s
+	 */
+	admin_admins_pending_invitations: string;
+	/**
+	 * A​c​c​o​u​n​t​s​ ​r​e​m​a​i​n​ ​i​n​a​c​t​i​v​e​ ​u​n​t​i​l​ ​t​h​e​ ​r​e​c​i​p​i​e​n​t​ ​r​e​g​i​s​t​e​r​s​ ​a​n​d​ ​v​e​r​i​f​i​e​s​ ​a​ ​P​a​s​s​k​e​y​.
+	 */
+	admin_admins_pending_invitations_description: string;
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​I​P
+	 */
+	admin_admins_invitation_ip_restriction: string;
+	/**
+	 * E​x​p​i​r​e​s
+	 */
+	admin_admins_invitation_expires: string;
+	/**
+	 * E​m​a​i​l
+	 */
+	admin_admins_invitation_delivery: string;
+	/**
+	 * A​l​l​o​w​e​d​ ​r​a​n​g​e​s​:​ ​{​c​o​u​n​t​}
+	 * @param {number} count
+	 */
+	admin_admins_invitation_ip_ranges: RequiredParams<'count'>;
+	/**
+	 * N​o​ ​r​e​s​t​r​i​c​t​i​o​n
+	 */
+	admin_admins_invitation_ip_off: string;
+	/**
+	 * R​e​s​e​n​d
+	 */
+	admin_admins_invitation_resend: string;
+	/**
+	 * R​e​v​o​k​e
+	 */
+	admin_admins_invitation_revoke: string;
+	/**
+	 * O​n​l​y​ ​a​l​l​o​w​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​r​o​m​ ​s​p​e​c​i​f​i​e​d​ ​I​P​ ​a​d​d​r​e​s​s​e​s
+	 */
+	admin_admins_invitation_limit_ip: string;
+	/**
+	 * O​p​t​i​o​n​a​l​.​ ​A​d​d​ ​u​p​ ​t​o​ ​5​ ​s​i​n​g​l​e​ ​I​P​s​,​ ​C​I​D​R​ ​r​a​n​g​e​s​,​ ​o​r​ ​e​x​p​l​i​c​i​t​ ​s​t​a​r​t​-​e​n​d​ ​r​a​n​g​e​s​.
+	 */
+	admin_admins_invitation_limit_ip_hint: string;
+	/**
+	 * 2​0​3​.​0​.​1​1​3​.​1​0​,​ ​2​0​3​.​0​.​1​1​3​.​0​/​2​4​,​ ​o​r​ ​2​0​3​.​0​.​1​1​3​.​1​0​-​2​0​3​.​0​.​1​1​3​.​2​0
+	 */
+	admin_admins_invitation_ip_placeholder: string;
+	/**
+	 * R​e​m​o​v​e​ ​I​P​ ​r​a​n​g​e
+	 */
+	admin_admins_invitation_remove_ip_range: string;
+	/**
+	 * A​d​d​ ​a​n​o​t​h​e​r​ ​I​P​ ​r​a​n​g​e
+	 */
+	admin_admins_invitation_add_ip_range: string;
+	/**
+	 * S​e​n​d​i​n​g​ ​i​n​v​i​t​a​t​i​o​n​.​.​.
+	 */
+	admin_admins_inviting: string;
+	/**
+	 * S​e​n​d​ ​i​n​v​i​t​a​t​i​o​n
+	 */
+	admin_admins_invite: string;
+	/**
+	 * a​d​m​i​n​@​e​x​a​m​p​l​e​.​c​o​m
+	 */
+	admin_admins_email_placeholder: string;
+	/**
+	 * O​p​t​i​o​n​a​l​ ​d​i​s​p​l​a​y​ ​n​a​m​e
+	 */
+	admin_admins_name_placeholder: string;
+	/**
+	 * P​e​n​d​i​n​g
+	 */
+	admin_admins_delivery_pending: string;
+	/**
+	 * S​e​n​t
+	 */
+	admin_admins_delivery_sent: string;
+	/**
+	 * F​a​i​l​e​d
+	 */
+	admin_admins_delivery_failed: string;
 	/**
 	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​s​u​s​p​e​n​d​ ​{​e​m​a​i​l​}​?
 	 * @param {string} email
@@ -14753,14 +14863,6 @@ type RootTranslation = {
 	 * C​a​n​c​e​l
 	 */
 	admin_admins_cancel: string;
-	/**
-	 * C​r​e​a​t​i​n​g​.​.​.
-	 */
-	admin_admins_creating: string;
-	/**
-	 * C​r​e​a​t​e
-	 */
-	admin_admins_create: string;
 	/**
 	 * {​e​m​a​i​l​}​ ​-​ ​A​u​t​h​r​i​m
 	 * @param {string} email
@@ -14991,6 +15093,99 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​r​e​m​o​v​e​ ​r​o​l​e
 	 */
 	admin_admins_role_remove_failed: string;
+	/**
+	 * A​c​c​e​p​t​ ​A​d​m​i​n​ ​I​n​v​i​t​a​t​i​o​n​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	admin_join_head_title: string;
+	/**
+	 * S​e​t​ ​u​p​ ​y​o​u​r​ ​A​d​m​i​n​ ​a​c​c​o​u​n​t
+	 */
+	admin_join_title: string;
+	/**
+	 * E​n​t​e​r​ ​t​h​e​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​ ​a​n​d​ ​e​n​r​o​l​l​m​e​n​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​i​n​v​i​t​a​t​i​o​n​.
+	 */
+	admin_join_description: string;
+	/**
+	 * E​m​a​i​l
+	 */
+	admin_join_email: string;
+	/**
+	 * E​n​r​o​l​l​m​e​n​t​ ​c​o​d​e
+	 */
+	admin_join_code: string;
+	/**
+	 * X​X​X​X​-​X​X​X​X​-​X​X​X​X​-​X​X​X​X
+	 */
+	admin_join_code_placeholder: string;
+	/**
+	 * C​o​n​t​i​n​u​e
+	 */
+	admin_join_continue: string;
+	/**
+	 * C​h​e​c​k​i​n​g​ ​i​n​v​i​t​a​t​i​o​n​.​.​.
+	 */
+	admin_join_checking: string;
+	/**
+	 * R​o​l​e​:​ ​{​r​o​l​e​}
+	 * @param {string} role
+	 */
+	admin_join_role: RequiredParams<'role'>;
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​r​e​s​t​r​i​c​t​e​d​ ​t​o​ ​a​p​p​r​o​v​e​d​ ​I​P​ ​a​d​d​r​e​s​s​e​s​.
+	 */
+	admin_join_ip_restricted: string;
+	/**
+	 * C​r​e​a​t​e​ ​a​ ​P​a​s​s​k​e​y​,​ ​t​h​e​n​ ​v​e​r​i​f​y​ ​i​t​ ​o​n​c​e​ ​t​o​ ​a​c​t​i​v​a​t​e​ ​y​o​u​r​ ​A​d​m​i​n​ ​a​c​c​o​u​n​t​.
+	 */
+	admin_join_passkey_explanation: string;
+	/**
+	 * C​r​e​a​t​e​ ​a​n​d​ ​v​e​r​i​f​y​ ​P​a​s​s​k​e​y
+	 */
+	admin_join_create_passkey: string;
+	/**
+	 * W​a​i​t​i​n​g​ ​f​o​r​ ​P​a​s​s​k​e​y​.​.​.
+	 */
+	admin_join_creating_passkey: string;
+	/**
+	 * Y​o​u​r​ ​A​d​m​i​n​ ​a​c​c​o​u​n​t​ ​i​s​ ​a​c​t​i​v​e​.
+	 */
+	admin_join_success: string;
+	/**
+	 * O​p​e​n​ ​A​d​m​i​n​ ​d​a​s​h​b​o​a​r​d
+	 */
+	admin_join_open_dashboard: string;
+	/**
+	 * A​l​r​e​a​d​y​ ​e​n​r​o​l​l​e​d​?​ ​S​i​g​n​ ​i​n
+	 */
+	admin_join_login_link: string;
+	/**
+	 * T​h​e​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​ ​o​r​ ​e​n​r​o​l​l​m​e​n​t​ ​c​o​d​e​ ​i​s​ ​i​n​v​a​l​i​d​.
+	 */
+	admin_join_error_invalid_invitation: string;
+	/**
+	 * T​h​i​s​ ​i​n​v​i​t​a​t​i​o​n​ ​h​a​s​ ​e​x​p​i​r​e​d​.​ ​A​s​k​ ​a​n​ ​A​d​m​i​n​ ​t​o​ ​r​e​s​e​n​d​ ​i​t​.
+	 */
+	admin_join_error_invitation_expired: string;
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​n​o​t​ ​a​l​l​o​w​e​d​ ​f​r​o​m​ ​t​h​i​s​ ​I​P​ ​a​d​d​r​e​s​s​.
+	 */
+	admin_join_error_ip_not_allowed: string;
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​n​o​t​ ​a​l​l​o​w​e​d​ ​f​r​o​m​ ​t​h​i​s​ ​s​i​t​e​ ​a​d​d​r​e​s​s​.
+	 */
+	admin_join_error_invalid_origin: string;
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​o​r​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​d​i​d​ ​n​o​t​ ​c​o​m​p​l​e​t​e​.
+	 */
+	admin_join_error_passkey: string;
+	/**
+	 * T​h​i​s​ ​i​n​v​i​t​a​t​i​o​n​ ​w​a​s​ ​a​l​r​e​a​d​y​ ​u​s​e​d​ ​o​r​ ​c​h​a​n​g​e​d​.​ ​A​s​k​ ​a​n​ ​A​d​m​i​n​ ​f​o​r​ ​a​ ​n​e​w​ ​o​n​e​.
+	 */
+	admin_join_error_conflict: string;
+	/**
+	 * A​d​m​i​n​i​s​t​r​a​t​o​r​ ​e​n​r​o​l​l​m​e​n​t​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	admin_join_error_generic: string;
 	/**
 	 * A​d​m​i​n​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​ ​H​u​b​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -47312,7 +47507,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_admins_description: () => LocalizedString;
 	/**
-	 * Add Admin
+	 * Invite Admin
 	 */
 	admin_admins_add: () => LocalizedString;
 	/**
@@ -47428,7 +47623,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_admins_next: () => LocalizedString;
 	/**
-	 * Create Admin User
+	 * Invite Admin
 	 */
 	admin_admins_create_title: () => LocalizedString;
 	/**
@@ -47436,9 +47631,117 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_admins_email_required: () => LocalizedString;
 	/**
-	 * Failed to create admin user
+	 * Failed to invite admin user
 	 */
 	admin_admins_create_failed: () => LocalizedString;
+	/**
+	 * Failed to load pending invitations or roles
+	 */
+	admin_admins_invitations_load_failed: () => LocalizedString;
+	/**
+	 * Role is required
+	 */
+	admin_admins_role_required: () => LocalizedString;
+	/**
+	 * Add at least one allowed IP address or range
+	 */
+	admin_admins_ip_range_required: () => LocalizedString;
+	/**
+	 * Failed to resend invitation
+	 */
+	admin_admins_invitation_resend_failed: () => LocalizedString;
+	/**
+	 * Revoke the invitation for {email}?
+	 */
+	admin_admins_invitation_revoke_confirm: (arg: { email: string }) => LocalizedString;
+	/**
+	 * Failed to revoke invitation
+	 */
+	admin_admins_invitation_revoke_failed: () => LocalizedString;
+	/**
+	 * Pending invitations
+	 */
+	admin_admins_pending_invitations: () => LocalizedString;
+	/**
+	 * Accounts remain inactive until the recipient registers and verifies a Passkey.
+	 */
+	admin_admins_pending_invitations_description: () => LocalizedString;
+	/**
+	 * Registration IP
+	 */
+	admin_admins_invitation_ip_restriction: () => LocalizedString;
+	/**
+	 * Expires
+	 */
+	admin_admins_invitation_expires: () => LocalizedString;
+	/**
+	 * Email
+	 */
+	admin_admins_invitation_delivery: () => LocalizedString;
+	/**
+	 * Allowed ranges: {count}
+	 */
+	admin_admins_invitation_ip_ranges: (arg: { count: number }) => LocalizedString;
+	/**
+	 * No restriction
+	 */
+	admin_admins_invitation_ip_off: () => LocalizedString;
+	/**
+	 * Resend
+	 */
+	admin_admins_invitation_resend: () => LocalizedString;
+	/**
+	 * Revoke
+	 */
+	admin_admins_invitation_revoke: () => LocalizedString;
+	/**
+	 * Only allow registration from specified IP addresses
+	 */
+	admin_admins_invitation_limit_ip: () => LocalizedString;
+	/**
+	 * Optional. Add up to 5 single IPs, CIDR ranges, or explicit start-end ranges.
+	 */
+	admin_admins_invitation_limit_ip_hint: () => LocalizedString;
+	/**
+	 * 203.0.113.10, 203.0.113.0/24, or 203.0.113.10-203.0.113.20
+	 */
+	admin_admins_invitation_ip_placeholder: () => LocalizedString;
+	/**
+	 * Remove IP range
+	 */
+	admin_admins_invitation_remove_ip_range: () => LocalizedString;
+	/**
+	 * Add another IP range
+	 */
+	admin_admins_invitation_add_ip_range: () => LocalizedString;
+	/**
+	 * Sending invitation...
+	 */
+	admin_admins_inviting: () => LocalizedString;
+	/**
+	 * Send invitation
+	 */
+	admin_admins_invite: () => LocalizedString;
+	/**
+	 * admin@example.com
+	 */
+	admin_admins_email_placeholder: () => LocalizedString;
+	/**
+	 * Optional display name
+	 */
+	admin_admins_name_placeholder: () => LocalizedString;
+	/**
+	 * Pending
+	 */
+	admin_admins_delivery_pending: () => LocalizedString;
+	/**
+	 * Sent
+	 */
+	admin_admins_delivery_sent: () => LocalizedString;
+	/**
+	 * Failed
+	 */
+	admin_admins_delivery_failed: () => LocalizedString;
 	/**
 	 * Are you sure you want to suspend {email}?
 	 */
@@ -47459,14 +47762,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Cancel
 	 */
 	admin_admins_cancel: () => LocalizedString;
-	/**
-	 * Creating...
-	 */
-	admin_admins_creating: () => LocalizedString;
-	/**
-	 * Create
-	 */
-	admin_admins_create: () => LocalizedString;
 	/**
 	 * {email} - Authrim
 	 */
@@ -47688,6 +47983,98 @@ Remove this role from {email}?
 	 * Failed to remove role
 	 */
 	admin_admins_role_remove_failed: () => LocalizedString;
+	/**
+	 * Accept Admin Invitation - Authrim
+	 */
+	admin_join_head_title: () => LocalizedString;
+	/**
+	 * Set up your Admin account
+	 */
+	admin_join_title: () => LocalizedString;
+	/**
+	 * Enter the email address and enrollment code from your invitation.
+	 */
+	admin_join_description: () => LocalizedString;
+	/**
+	 * Email
+	 */
+	admin_join_email: () => LocalizedString;
+	/**
+	 * Enrollment code
+	 */
+	admin_join_code: () => LocalizedString;
+	/**
+	 * XXXX-XXXX-XXXX-XXXX
+	 */
+	admin_join_code_placeholder: () => LocalizedString;
+	/**
+	 * Continue
+	 */
+	admin_join_continue: () => LocalizedString;
+	/**
+	 * Checking invitation...
+	 */
+	admin_join_checking: () => LocalizedString;
+	/**
+	 * Role: {role}
+	 */
+	admin_join_role: (arg: { role: string }) => LocalizedString;
+	/**
+	 * Registration is restricted to approved IP addresses.
+	 */
+	admin_join_ip_restricted: () => LocalizedString;
+	/**
+	 * Create a Passkey, then verify it once to activate your Admin account.
+	 */
+	admin_join_passkey_explanation: () => LocalizedString;
+	/**
+	 * Create and verify Passkey
+	 */
+	admin_join_create_passkey: () => LocalizedString;
+	/**
+	 * Waiting for Passkey...
+	 */
+	admin_join_creating_passkey: () => LocalizedString;
+	/**
+	 * Your Admin account is active.
+	 */
+	admin_join_success: () => LocalizedString;
+	/**
+	 * Open Admin dashboard
+	 */
+	admin_join_open_dashboard: () => LocalizedString;
+	/**
+	 * Already enrolled? Sign in
+	 */
+	admin_join_login_link: () => LocalizedString;
+	/**
+	 * The email address or enrollment code is invalid.
+	 */
+	admin_join_error_invalid_invitation: () => LocalizedString;
+	/**
+	 * This invitation has expired. Ask an Admin to resend it.
+	 */
+	admin_join_error_invitation_expired: () => LocalizedString;
+	/**
+	 * Registration is not allowed from this IP address.
+	 */
+	admin_join_error_ip_not_allowed: () => LocalizedString;
+	/**
+	 * Passkey registration is not allowed from this site address.
+	 */
+	admin_join_error_invalid_origin: () => LocalizedString;
+	/**
+	 * Passkey registration or verification did not complete.
+	 */
+	admin_join_error_passkey: () => LocalizedString;
+	/**
+	 * This invitation was already used or changed. Ask an Admin for a new one.
+	 */
+	admin_join_error_conflict: () => LocalizedString;
+	/**
+	 * Administrator enrollment failed. Please try again.
+	 */
+	admin_join_error_generic: () => LocalizedString;
 	/**
 	 * Admin Access Control Hub - Admin Dashboard - Authrim
 	 */

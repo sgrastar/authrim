@@ -152,6 +152,32 @@ describe('login challenge metadata contract', () => {
     });
   });
 
+  it('exposes read-only client metadata for a consent challenge', async () => {
+    challengeStore.getChallengeRpc.mockResolvedValue({
+      id: 'challenge_123',
+      type: 'consent',
+      userId: 'user_123',
+      metadata: {
+        client_id: 'rp_web',
+        client_name: 'Example RP',
+        redirect_uri: 'https://app.example.com/callback',
+        scope: 'openid profile',
+        sessionUserId: 'user_123',
+      },
+    });
+    const { loginChallengeGetHandler } = await import('../login-challenge');
+
+    const response = await loginChallengeGetHandler(createContext() as never);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      challenge_id: 'challenge_123',
+      client: { client_id: 'rp_web', client_name: 'Example RP' },
+      scope: 'openid profile',
+    });
+  });
+
   it('prefers dedicated web_origin_registry and gates iframe metadata behind tenant flag', async () => {
     isIframeOidcAuthEnabled.mockResolvedValueOnce(true);
     getWebOriginRegistry.mockResolvedValueOnce({

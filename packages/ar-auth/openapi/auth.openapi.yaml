@@ -31,6 +31,7 @@ tags:
   - name: Login Runtime
   - name: Direct Auth
   - name: Invitations
+  - name: Admin Invitations
   - name: Registration
   - name: Auth
 paths:
@@ -1686,6 +1687,181 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/SetupTokenVerify'
+  /api/admin/invitations/redeem:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Redeem an Admin invitation code for Passkey enrollment.
+      description: >-
+        Validates the recipient email, one-time enrollment code, expiry, and optional source-IP
+        restriction. This operation does not create an Admin account or session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  pattern: '^[23456789A-HJ-NP-Z]{4}(-[23456789A-HJ-NP-Z]{4}){3}$'
+      responses:
+        '200':
+          description: Short-lived Passkey enrollment credential and non-secret invitation summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_token, expires_in, invitation]
+                properties:
+                  enrollment_token:
+                    type: string
+                  expires_in:
+                    type: integer
+                    const: 600
+                  invitation:
+                    type: object
+                    required: [email, role, ip_restriction_enabled]
+                    properties:
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: [string, 'null']
+                      role:
+                        type: string
+                      ip_restriction_enabled:
+                        type: boolean
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/invitations/passkey/options:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Create resident Passkey registration options for an Admin invitation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token, rp_id]
+              properties:
+                enrollment_token:
+                  type: string
+                rp_id:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/invitations/passkey/register:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Verify a newly registered Passkey and start possession verification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token, challenge_id, passkey_response, origin]
+              properties:
+                enrollment_token:
+                  type: string
+                challenge_id:
+                  type: string
+                passkey_response:
+                  type: object
+                  additionalProperties: true
+                origin:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/invitations/activate:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Verify the new Passkey and atomically activate the Admin account.
+      description: >-
+        Verifies possession of the Passkey registered in the same enrollment and atomically creates
+        the Admin user, Passkey, role assignment, and Admin session while consuming the invitation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token, challenge_id, credential]
+              properties:
+                enrollment_token:
+                  type: string
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Admin account activated and Admin session cookie set.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, user]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  user:
+                    type: object
+                    required: [id, email, role]
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: string
+                      role:
+                        type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
   /api/flow/cancel:
     post:
       tags:

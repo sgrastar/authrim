@@ -439,6 +439,7 @@ function isAdminBootstrapProxyPath(pathname: string): boolean {
 	return (
 		pathname === '/api/admin/auth/passkey/options' ||
 		pathname === '/api/admin/auth/passkey/verify' ||
+		pathname.startsWith('/api/admin/invitations/') ||
 		pathname.startsWith('/api/admin/setup-token/')
 	);
 }

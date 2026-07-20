@@ -31,7 +31,7 @@
 	} from '$lib/webauthn/signal';
 	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
 	import { getAuthConfig } from '$lib/auth';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
 	let logoutLoading = $state(false);
@@ -53,6 +53,7 @@
 	let accountError = $state('');
 	let profileError = $state('');
 	let consentError = $state('');
+	let consentActionLoading = $state('');
 	let profileSaved = $state(false);
 	let profileSaving = $state(false);
 	let securityError = $state('');
@@ -74,6 +75,7 @@
 		| { type: 'add-totp'; label: string }
 		| { type: 'delete-totp'; id: string; code: string }
 		| { type: 'regenerate-totp-backup-codes'; code: string }
+		| { type: 'withdraw-consent'; consent: AccountConsent }
 		| null
 	>(null);
 	let passkeyReauthAvailable = $derived(
@@ -313,6 +315,50 @@
 			await deleteTotpCredential(pending.id, pending.code);
 		} else if (pending?.type === 'regenerate-totp-backup-codes') {
 			await regenerateTotpBackupCodes(pending.code);
+		} else if (pending?.type === 'withdraw-consent') {
+			await withdrawConsent(pending.consent, false);
+		}
+	}
+
+	async function withdrawConsent(consent: AccountConsent, confirm = true) {
+		const kind = consent.kind === 'oauth_client' ? 'oauth_client' : consent.recordType;
+		if (
+			confirm &&
+			!window.confirm(
+				consent.recordType === 'document_acceptance'
+					? getLocale() === 'ja'
+						? '同じ文書バージョンを利用するすべてのサービスに影響します。同意を取り下げますか？'
+						: 'This acceptance is shared by every service using the same document version. Withdraw it?'
+					: getLocale() === 'ja'
+						? 'このサービスへの情報提供の許可を取り下げますか？'
+						: 'Withdraw this service release grant?'
+			)
+		) {
+			return;
+		}
+		consentActionLoading = consent.id;
+		consentError = '';
+		try {
+			const result = await accountAPI.withdrawConsent(kind, consent.id);
+			if (result.error) {
+				if (result.error.error === 'reauth_required') {
+					requestReauth({ type: 'withdraw-consent', consent });
+					return;
+				}
+				consentError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				return;
+			}
+			const refreshed = await accountAPI.getConsents();
+			if (refreshed.error) {
+				consentError = handleApiError(
+					refreshed.error.error_description,
+					$LL.account_actionFailed()
+				);
+				return;
+			}
+			consents = refreshed.data?.consents ?? [];
+		} finally {
+			consentActionLoading = '';
 		}
 	}
 
@@ -714,7 +760,12 @@
 					onClearTotpEnrollment={() => (totpEnrollment = null)}
 					onReauth={() => requestReauth()}
 				/>
-				<AccountConsentSection {consents} error={consentError} />
+				<AccountConsentSection
+					{consents}
+					error={consentError}
+					withdrawingId={consentActionLoading}
+					onWithdraw={withdrawConsent}
+				/>
 				<AccountActivitySection {operations} />
 			</section>
 		</div>

@@ -52,6 +52,7 @@ import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
   ExternalIdPErrorCode,
+  type TokenResponse,
   type UserInfo,
   type UpstreamProvider,
 } from '../types';
@@ -210,32 +211,21 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   let { code, state, error, errorDescription, issuer } = callbackParams;
   const { idToken, responseJwt, tenantId, user } = callbackParams;
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
-
-  if (responseJwt && !state) {
-    try {
-      const unverified = jose.decodeJwt(responseJwt);
-      state = typeof unverified.state === 'string' ? unverified.state : undefined;
-    } catch {
-      return redirectWithError(c, 'invalid_request', 'Invalid JARM response');
-    }
-  }
+  let diagnosticSessionId: string | undefined;
+  let diagnosticFlowId: string | undefined;
+  let fapi2Flow = false;
+  let fapi2Stage:
+    | 'authorization-response'
+    | 'provider-metadata'
+    | 'token-response'
+    | 'id-token'
+    | 'resource-response' = 'authorization-response';
+  // Declared outside the try block for failure event and diagnostic correlation.
+  let provider: UpstreamProvider | null = null;
 
   if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
     return createHybridFragmentRelayResponse();
   }
-
-  if (!state) {
-    return redirectWithError(c, 'invalid_request', 'Missing state');
-  }
-
-  const stateCookieName = await getAuthStateCookieName(state);
-  if (!matchesAuthStateCookie(state, getCookie(c, stateCookieName))) {
-    return redirectWithError(c, 'invalid_state', 'State is not bound to this browser');
-  }
-  deleteCookie(c, stateCookieName, { path: '/auth/external/' });
-
-  // Declare provider outside try block so it's accessible in catch block for event logging
-  let provider: UpstreamProvider | null = null;
 
   try {
     // 1. Get provider configuration first (by slug or ID)
@@ -244,24 +234,69 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       return redirectWithError(c, 'unknown_provider', 'Provider not found');
     }
 
+    diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
+      tenantId,
+      clientId: provider.clientId,
+    }).catch(() => null);
+    diagnosticSessionId = getDiagnosticSessionId(c);
+    fapi2Flow = isFapi2Provider(provider);
+
+    if (responseJwt && !state) {
+      try {
+        state = extractUnverifiedJarmState(responseJwt);
+      } catch {
+        await logCallbackRejection(log, diagnosticLogger, {
+          diagnosticSessionId,
+          validationError: 'malformed_jarm',
+          fapi2: fapi2Flow,
+        });
+        return redirectWithError(c, 'invalid_request', 'Invalid JARM response');
+      }
+    }
+
+    if (!state) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'missing_state',
+        fapi2: fapi2Flow,
+      });
+      return redirectWithError(c, 'invalid_request', 'Missing state');
+    }
+
+    const stateCookieName = await getAuthStateCookieName(state);
+    if (!matchesAuthStateCookie(state, getCookie(c, stateCookieName))) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'browser_state_binding_failed',
+        fapi2: fapi2Flow,
+      });
+      return redirectWithError(c, 'invalid_state', 'State is not bound to this browser');
+    }
+    deleteCookie(c, stateCookieName, { path: '/auth/external/' });
+
     // 2. Validate state and get stored data
     const authState = await consumeAuthState(c.env, state);
     if (!authState) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'invalid_or_expired_state',
+        fapi2: fapi2Flow,
+      });
       return redirectWithError(c, 'invalid_state', 'State validation failed or expired');
     }
 
     // Verify the provider ID matches (authState always stores the actual ID)
     if (authState.providerId !== provider.id) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'provider_mismatch',
+        fapi2: fapi2Flow,
+      });
       return redirectWithError(c, 'invalid_state', 'Provider mismatch');
     }
 
-    // Create diagnostic logger (OIDF conformance)
-    diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
-      tenantId: authState.tenantId || tenantId,
-      clientId: provider.clientId,
-    });
-    const diagnosticSessionId = getDiagnosticSessionId(c);
     const flowId = authState.flowId;
+    diagnosticFlowId = flowId;
     if (flowId) {
       c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
     }
@@ -294,16 +329,27 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     const callbackUri = `${buildIssuerUrl(c.env, callbackTenantId)}/auth/external/${providerIdentifier}/callback`;
     const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret);
 
-    const fapi2Enabled = isFapi2Provider(provider);
+    const fapi2Enabled = fapi2Flow;
     let fapi2Config: Fapi2ProviderConfig | undefined;
     let fapi2Client: Fapi2Client | undefined;
     let fapi2Metadata: Awaited<ReturnType<OIDCRPClient['discover']>> | undefined;
     if (fapi2Enabled) {
+      fapi2Stage = 'provider-metadata';
       const encryptionKey = getEncryptionKeyOrUndefined(c.env);
       if (!encryptionKey) throw new Error('RP_TOKEN_ENCRYPTION_KEY is not configured');
       fapi2Config = await loadFapi2ProviderConfig(provider, encryptionKey);
       fapi2Metadata = await client.discover();
       validateFapi2ProviderMetadata(fapi2Metadata, fapi2Config.profile, fapi2Config);
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-provider-metadata-validation',
+          tokenType: 'provider_metadata',
+          result: 'pass',
+          details: { issuer_valid: true, profile: fapi2Config?.profile },
+        })
+      );
       fapi2Client = new Fapi2Client({
         issuer: fapi2Metadata.issuer,
         clientId: provider.clientId,
@@ -311,6 +357,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         clientAssertionPrivateJwk: fapi2Config.clientAssertionPrivateJwk,
         dpopPrivateJwk: fapi2Config.dpopPrivateJwk,
       });
+      fapi2Stage = 'authorization-response';
       if (fapi2Config.jarm) {
         if (!responseJwt) {
           throw new ExternalIdPError(
@@ -348,6 +395,20 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           issuer ? 'FAPI2 authorization response issuer mismatch' : 'Missing FAPI2 issuer parameter'
         );
       }
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-authorization-response-validation',
+          tokenType: fapi2Config?.jarm ? 'jarm' : 'authorization_response',
+          result: 'pass',
+          details: {
+            issuer_valid: true,
+            state_valid: true,
+            signature_valid: fapi2Config?.jarm ? true : undefined,
+          },
+        })
+      );
     }
 
     // Provider errors are processed only after state binding and, for JARM,
@@ -373,8 +434,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           client_id: provider.clientId,
           authrim_client_id: authState.clientId,
           redirect_uri: callbackUri,
-          state,
-          code,
+          state_present: true,
+          code_present: true,
+          state_bound_to_browser: true,
         },
       });
     }
@@ -416,10 +478,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
-    let tokens;
+    let tokens: TokenResponse;
     let requestContext;
     let fapi2IdTokenSigningAlgorithms: string[] | undefined;
     if (fapi2Enabled && fapi2Config) {
+      fapi2Stage = 'token-response';
       const metadata = fapi2Metadata ?? (await client.discover());
       validateFapi2ProviderMetadata(metadata, fapi2Config.profile, fapi2Config);
       fapi2IdTokenSigningAlgorithms = metadata.id_token_signing_alg_values_supported;
@@ -434,6 +497,20 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         authMethod: 'private_key_jwt',
         authHeaderPresent: false,
       };
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-token-response-validation',
+          tokenType: 'token_response',
+          result: 'pass',
+          details: {
+            access_token_present: true,
+            token_type_valid: tokens.token_type.toLowerCase() === 'dpop',
+            expires_in_present: tokens.expires_in !== undefined,
+          },
+        })
+      );
     } else {
       ({ tokens, requestContext } = await client.exchangeCode(code, authState.codeVerifier));
     }
@@ -452,8 +529,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           grant_type: 'authorization_code',
           redirect_uri: callbackUri,
           client_id: provider.clientId,
-          code,
-          code_verifier: authState.codeVerifier,
+          authorization_code_present: true,
+          code_verifier_present: true,
         },
       });
 
@@ -487,6 +564,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         }
       : undefined;
     if (provider.providerType === 'oidc' && tokens.id_token && authState.nonce) {
+      if (fapi2Enabled) fapi2Stage = 'id-token';
       // Use the new options-based signature for comprehensive OIDC validation
       userInfo = await client.validateIdToken(
         tokens.id_token,
@@ -515,6 +593,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       // Optionally fetch userinfo even when id_token is present
       // Enable this for OIDC RP certification testing or when userinfo has additional claims
       if (fapi2Client && fapi2Config?.resourceUrl) {
+        fapi2Stage = 'resource-response';
         const resourceData = await fapi2Client.fetchResource({
           resourceUrl: fapi2Config.resourceUrl,
           accessToken: tokens.access_token,
@@ -522,12 +601,30 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         if (idTokenSub && typeof resourceData.sub === 'string') {
           assertUserInfoSubjectMatches(idTokenSub, resourceData.sub);
         }
+        await recordCallbackDiagnostic(log, () =>
+          diagnosticLogger?.logTokenValidation({
+            diagnosticSessionId,
+            flowId,
+            step: 'fapi2-resource-response-validation',
+            tokenType: 'resource_response',
+            result: 'pass',
+            details: {
+              dpop_authorization_scheme_accepted: true,
+              subject_consistent:
+                !idTokenSub ||
+                typeof resourceData.sub !== 'string' ||
+                resourceData.sub === idTokenSub,
+            },
+          })
+        );
         userInfo = { ...userInfo, ...resourceData };
       } else if (provider.alwaysFetchUserinfo && !fapi2Client) {
         try {
-          const { userInfo: userinfoData, endpoint } = await client.fetchUserInfoWithMeta(
-            tokens.access_token
-          );
+          const {
+            userInfo: userinfoData,
+            endpoint,
+            signedResponse,
+          } = await client.fetchUserInfoWithMeta(tokens.access_token);
           if (diagnosticLogger) {
             await diagnosticLogger.logTokenValidation({
               diagnosticSessionId,
@@ -550,6 +647,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
               details: {
                 endpoint,
                 claims: userinfoData,
+                signed_response: signedResponse,
               },
             });
           }
@@ -579,17 +677,30 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         }
       }
     } else if (fapi2Client && fapi2Config?.resourceUrl) {
+      fapi2Stage = 'resource-response';
       const resourceData = await fapi2Client.fetchResource({
         resourceUrl: fapi2Config.resourceUrl,
         accessToken: tokens.access_token,
       });
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-resource-response-validation',
+          tokenType: 'resource_response',
+          result: 'pass',
+          details: { dpop_authorization_scheme_accepted: true },
+        })
+      );
       // Plain OAuth resource responses commonly use an ecosystem-specific
       // account identifier. attributeMapping normalizes it to `sub` below.
       userInfo = resourceData as UserInfo;
     } else {
-      const { userInfo: userinfoData, endpoint } = await client.fetchUserInfoWithMeta(
-        tokens.access_token
-      );
+      const {
+        userInfo: userinfoData,
+        endpoint,
+        signedResponse,
+      } = await client.fetchUserInfoWithMeta(tokens.access_token);
       if (diagnosticLogger) {
         await diagnosticLogger.logTokenValidation({
           diagnosticSessionId,
@@ -612,6 +723,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           details: {
             endpoint,
             claims: userinfoData,
+            signed_response: signedResponse,
           },
         });
       }
@@ -858,6 +970,34 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   } catch (error) {
     log.error('Callback error', {}, error as Error);
 
+    if (diagnosticLogger && fapi2Flow) {
+      const validationError = classifyFapi2CallbackError(error);
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId: diagnosticFlowId,
+          step: `fapi2-${fapi2Stage}-validation`,
+          tokenType: fapi2Stage.replaceAll('-', '_'),
+          result: 'fail',
+          errorMessage: validationError,
+          details: { validation_error: validationError },
+        })
+      );
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logAuthDecision({
+          diagnosticSessionId,
+          flowId: diagnosticFlowId,
+          decision: 'deny',
+          reason: 'fapi2_callback_rejected',
+          flow: 'fapi2',
+          context: {
+            validation_stage: fapi2Stage,
+            validation_error: validationError,
+          },
+        })
+      );
+    }
+
     // Determine error code for event
     let errorCode: string = ExternalIdPErrorCode.CALLBACK_FAILED;
     if (error instanceof ExternalIdPError) {
@@ -913,8 +1053,120 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     );
   } finally {
     if (diagnosticLogger) {
-      await diagnosticLogger.cleanup();
+      await diagnosticLogger.cleanup().catch((cleanupError: unknown) => {
+        log.warn('Failed to flush callback diagnostic logs', {
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
     }
+  }
+}
+
+async function recordCallbackDiagnostic(
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  write: () => Promise<void> | undefined
+): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    log.warn('Failed to record callback diagnostic event', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function logCallbackRejection(
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>>,
+  options: {
+    diagnosticSessionId?: string;
+    flowId?: string;
+    validationError: string;
+    fapi2: boolean;
+  }
+): Promise<void> {
+  if (!diagnosticLogger) return;
+  if (options.fapi2) {
+    await recordCallbackDiagnostic(log, () =>
+      diagnosticLogger.logTokenValidation({
+        diagnosticSessionId: options.diagnosticSessionId,
+        flowId: options.flowId,
+        step: 'fapi2-authorization-response-validation',
+        tokenType: 'authorization_response',
+        result: 'fail',
+        errorMessage: options.validationError,
+        details: { validation_error: options.validationError },
+      })
+    );
+  }
+  await recordCallbackDiagnostic(log, () =>
+    diagnosticLogger.logAuthDecision({
+      diagnosticSessionId: options.diagnosticSessionId,
+      flowId: options.flowId,
+      decision: 'deny',
+      reason: options.fapi2 ? 'fapi2_callback_rejected' : 'authorization_response_rejected',
+      flow: options.fapi2 ? 'fapi2' : 'external_idp',
+      context: {
+        validation_stage: 'authorization-response',
+        validation_error: options.validationError,
+      },
+    })
+  );
+}
+
+export function classifyFapi2CallbackError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  const exact = new Map<string, string>([
+    ['Malformed JARM response', 'malformed_jarm'],
+    ['Missing JARM authorization response', 'missing_jarm_response'],
+    ['Unexpected JARM authorization response', 'unexpected_jarm_response'],
+    ['FAPI2 authorization response issuer mismatch', 'issuer_mismatch'],
+    ['Missing FAPI2 issuer parameter', 'missing_issuer'],
+    ['JARM response audience must contain only the client_id', 'audience_mismatch'],
+    ['JARM response state mismatch', 'state_mismatch'],
+    ['JARM response missing iss', 'missing_issuer'],
+    ['JARM response missing state', 'missing_state'],
+    ['JARM response has invalid code', 'invalid_code'],
+    ['JARM response has invalid error', 'invalid_error'],
+    ['JARM response contains neither code nor error', 'missing_code_or_error'],
+    ['Token response missing access_token', 'missing_access_token'],
+    ['Token response token_type must be DPoP', 'invalid_token_type'],
+    ['Token response has invalid expires_in', 'invalid_expires_in'],
+  ]);
+  const known = exact.get(message);
+  if (known) return known;
+
+  const joseError = error as { code?: unknown; claim?: unknown; reason?: unknown };
+  const code = typeof joseError?.code === 'string' ? joseError.code : '';
+  const claim = typeof joseError?.claim === 'string' ? joseError.claim : '';
+  const reason = typeof joseError?.reason === 'string' ? joseError.reason : '';
+  const missing = reason.toLowerCase().includes('missing');
+  if (code === 'ERR_JOSE_ALG_NOT_ALLOWED') return 'unexpected_signing_algorithm';
+  if (code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') return 'invalid_signature';
+  if (code === 'ERR_JWKS_NO_MATCHING_KEY') return 'signing_key_not_found';
+  if (code === 'ERR_JWS_INVALID' || code === 'ERR_JWT_INVALID') return 'malformed_jwt';
+  if (code === 'ERR_JWT_EXPIRED') return 'expired_expiration';
+  if (code === 'ERR_JWT_CLAIM_VALIDATION_FAILED') {
+    if (claim === 'iss') return missing ? 'missing_issuer' : 'issuer_mismatch';
+    if (claim === 'aud') return missing ? 'missing_audience' : 'audience_mismatch';
+    if (claim === 'exp') return missing ? 'missing_expiration' : 'invalid_expiration';
+    if (claim === 'nonce') return missing ? 'missing_nonce' : 'nonce_mismatch';
+    return missing ? 'missing_required_claim' : 'claim_validation_failed';
+  }
+  if (message.includes('nonce'))
+    return message.includes('missing') ? 'missing_nonce' : 'nonce_mismatch';
+  if (message.includes('audience')) return 'audience_mismatch';
+  if (message.includes('issuer')) return 'issuer_mismatch';
+  if (message.includes('signature')) return 'invalid_signature';
+  return 'fapi2_validation_failed';
+}
+
+export function extractUnverifiedJarmState(responseJwt: string): string | undefined {
+  try {
+    const unverified = jose.decodeJwt(responseJwt);
+    return typeof unverified.state === 'string' ? unverified.state : undefined;
+  } catch {
+    throw new Error('Malformed JARM response');
   }
 }
 

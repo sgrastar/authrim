@@ -80,6 +80,62 @@ describe('Rate Limiting Middleware', () => {
   });
 
   describe('Basic Rate Limiting', () => {
+    it('uses one global IP counter when tenant partitioning would enable capability brute force', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn().mockResolvedValue({
+        allowed: true,
+        current: 1,
+        limit: 5,
+        resetAt,
+        retryAfter: 0,
+      });
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+          keyScope: 'global',
+        })
+      );
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(200);
+      expect(incrementRpc).toHaveBeenCalledWith('192.168.1.1', {
+        maxRequests: 5,
+        windowSeconds: 60,
+      });
+    });
+
+    it('fails closed when an endpoint requires the atomic limiter and the binding is absent', async () => {
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+          keyScope: 'global',
+          requireAtomic: true,
+        })
+      );
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+      expect(mockKVStore.size).toBe(0);
+    });
+
     it('should allow requests within rate limit', async () => {
       app.use(
         '*',

@@ -16,6 +16,7 @@
 	import {
 		adminConsentStatementsAPI,
 		type UserConsentRecord,
+		type ConsentGateEvidenceRecord,
 		type ConsentItemHistory
 	} from '$lib/api/admin-consent-statements';
 	import OrganizationSelectDialog from '$lib/components/OrganizationSelectDialog.svelte';
@@ -111,6 +112,7 @@
 
 	// Consent records state
 	let consentRecords = $state<UserConsentRecord[]>([]);
+	let consentEvidence = $state<ConsentGateEvidenceRecord[]>([]);
 	let consentLoading = $state(false);
 	let consentError = $state('');
 
@@ -756,6 +758,7 @@
 		try {
 			const response = await adminConsentStatementsAPI.listUserConsentRecords(userId);
 			consentRecords = response.records || [];
+			consentEvidence = response.evidence || [];
 		} catch (err) {
 			console.error('Failed to load consent records:', err);
 			consentError =
@@ -763,6 +766,10 @@
 		} finally {
 			consentLoading = false;
 		}
+	}
+
+	function consentEvidenceText(ja: string, en: string): string {
+		return getLocale() === 'ja' ? ja : en;
 	}
 
 	// Consent history loading
@@ -1658,6 +1665,65 @@
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_consent_records()}</p>
+					</div>
+				{/if}
+			</AdminSection>
+
+			<AdminSection
+				title={consentEvidenceText('Consent Gate 証跡', 'Consent Gate evidence')}
+				description={consentEvidenceText(
+					'Gate、対象、Flow version、receipt を関連付けて確認できます。',
+					'Inspect the Gate, target, Flow version, and receipt correlation.'
+				)}
+			>
+				{#if consentLoading}
+					<div class="loading-state">
+						<i class="i-ph-circle-notch loading-spinner"></i>
+					</div>
+				{:else if consentEvidence.length > 0}
+					<AdminDataTable width="xwide">
+						<thead>
+							<tr>
+								<th>Gate</th>
+								<th>{consentEvidenceText('対象', 'Target')}</th>
+								<th>Flow version</th>
+								<th>Receipt ID</th>
+								<th>{$LL.admin_users_status()}</th>
+								<th>{consentEvidenceText('記録日時', 'Recorded at')}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each consentEvidence as evidence (evidence.id)}
+								<tr>
+									<td>
+										<span class="user-detail-strong">{evidence.gate_kind}</span>
+										<div class="muted">{evidence.protocol} · {evidence.consent_kind}</div>
+									</td>
+									<td class="muted">
+										{evidence.target_type || '-'}{evidence.target_id
+											? ` · ${evidence.target_id}`
+											: ''}
+									</td>
+									<td class="muted">{evidence.flow_version_id || '-'}</td>
+									<td class="muted admin-mono">{evidence.receipt_id || '-'}</td>
+									<td>
+										<span class={getConsentStatusBadgeClass(evidence.status)}
+											>{evidence.status}</span
+										>
+									</td>
+									<td class="muted">{formatTimestamp(evidence.created_at)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</AdminDataTable>
+				{:else}
+					<div class="empty-state">
+						<p class="empty-state-description">
+							{consentEvidenceText(
+								'Consent Gate の証跡はありません。',
+								'No Consent Gate evidence found.'
+							)}
+						</p>
 					</div>
 				{/if}
 			</AdminSection>

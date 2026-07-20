@@ -372,6 +372,42 @@ describe('apiProxy', () => {
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
+	it('does not require a BFF machine token for Admin invitation enrollment', async () => {
+		const bffEnv = await createBffEnv();
+		const fetch = vi.fn().mockResolvedValueOnce(new Response('redeemed'));
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('https://mt-ar-admin-ui.pages.dev/api/admin/invitations/redeem'),
+			request: new Request('https://mt-ar-admin-ui.pages.dev/api/admin/invitations/redeem', {
+				method: 'POST',
+				headers: {
+					Origin: 'https://mt-ar-admin-ui.pages.dev',
+					'Content-Type': 'application/json'
+				},
+				body: '{}'
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example',
+					...bffEnv
+				}
+			},
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		const proxiedRequest = fetch.mock.calls[0][0] as Request;
+
+		expect(response.status).toBe(200);
+		expect(proxiedRequest.url).toBe('https://api.authrim.example/api/admin/invitations/redeem');
+		expect(proxiedRequest.headers.get('Authorization')).toBeNull();
+		expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Origin')).toBe(
+			'https://mt-ar-admin-ui.pages.dev'
+		);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('reuses cached BFF machine tokens for protected Admin API requests', async () => {
 		const bffEnv = await createBffEnv();
 		const fetch = vi

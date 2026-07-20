@@ -18,6 +18,7 @@ export * from './types/approval';
 export * from './types/screens';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
+export * from './types/consent-gates';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -141,6 +142,8 @@ export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
+export * from './services/consent-gate-decision';
+export * from './services/consent-gate-persistence';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
@@ -381,6 +384,7 @@ export {
 export * from './services/diagnostic';
 export * from './utils/diagnostic-security';
 export * from './utils/diagnostic-log-formatter';
+export * from './utils/admin-invitation-security';
 
 // Event System (Unified Event System)
 // Note: types/events exports are namespaced to avoid conflicts with types/contracts

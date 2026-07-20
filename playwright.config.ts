@@ -15,8 +15,8 @@ export default defineConfig({
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
 
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
+  /* Login UI's local workerd uses shared SQLite state, so browser tests must be serialized. */
+  workers: 1,
 
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
@@ -69,10 +69,19 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: {
-    command: 'pnpm --filter=ui preview',
-    port: 4173,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  },
+  webServer: [
+    {
+      command: 'pnpm --filter @authrim/ar-login-ui dev --host 127.0.0.1 --port 4173',
+      port: 4173,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120 * 1000,
+    },
+    {
+      command:
+        'AUTHRIM_ADMIN_UI_DEV_MOCK=true pnpm --dir packages/ar-admin-ui exec vite dev --host 127.0.0.1 --port 4175',
+      url: 'http://127.0.0.1:4175/admin/join',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120 * 1000,
+    },
+  ],
 });

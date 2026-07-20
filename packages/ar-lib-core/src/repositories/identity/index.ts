@@ -79,3 +79,29 @@ export {
   type AttributeReleaseConsentState,
   type GrantAttributeReleaseConsentInput,
 } from './attribute-release-consent';
+
+export {
+  ConsentGatePolicyBindingError,
+  ConsentGatePolicyBindingRepository,
+  ConsentGatePolicyConfigurationError,
+  resolveConsentGatePolicyBinding,
+  type ConsentGatePolicyBindingErrorCode,
+  type ConsentGatePolicyBindingRow,
+  type ConsentGatePolicyResolutionSource,
+  type CreateConsentGatePolicyBindingInput,
+  type ResolvedConsentGatePolicyBinding,
+  type UpdateConsentGatePolicyBindingInput,
+} from './consent-gate-policy-binding';
+
+export {
+  DocumentAcknowledgmentRepository,
+  type DocumentAcknowledgmentCurrentRow,
+  type DocumentAcknowledgmentStatus,
+} from './document-acknowledgment';
+
+export {
+  ConsentGateDecisionReceiptError,
+  ConsentGateDecisionReceiptRepository,
+  type ConsentGateDecisionReceiptErrorCode,
+  type CreateConsentGateDecisionReceiptInput,
+} from './consent-gate-decision-receipt';

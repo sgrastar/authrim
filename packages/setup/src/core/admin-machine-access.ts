@@ -1,6 +1,6 @@
 import { createSign, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from './config.js';
 import { generateEs256KeyPair, type JWK } from './keys.js';
@@ -188,7 +188,10 @@ async function unlinkIfExists(path: string): Promise<void> {
   }
 }
 
-export async function ensureSetupMachineKeyFiles(keysDir: string): Promise<{
+export async function ensureSetupMachineKeyFiles(
+  keysDir: string,
+  keyId = 'authrim-setup-ephemeral'
+): Promise<{
   created: boolean;
 }> {
   const privateKeyPath = getSetupMachinePrivateKeyPath(keysDir);
@@ -204,7 +207,9 @@ export async function ensureSetupMachineKeyFiles(keysDir: string): Promise<{
     throw new Error('setup_machine_key_pair_incomplete');
   }
 
-  const keyPair = generateEs256KeyPair('authrim-setup-ephemeral');
+  await mkdir(keysDir, { recursive: true, mode: 0o700 });
+  await chmod(keysDir, 0o700);
+  const keyPair = generateEs256KeyPair(keyId);
   await writeSensitiveFile(privateKeyPath, keyPair.privateKeyPem);
   await writeSensitiveFile(publicJwkPath, JSON.stringify(keyPair.publicKeyJwk, null, 2));
   return { created: true };

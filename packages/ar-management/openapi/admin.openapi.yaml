@@ -24,6 +24,7 @@ tags:
   - name: Admin Attributes
   - name: Admin Audit
   - name: Admin IP Allowlist
+  - name: Admin Invitations
   - name: Admin Miscellaneous
   - name: Admin Passkeys
   - name: Admin Policies
@@ -1962,19 +1963,154 @@ paths:
     post:
       tags:
         - Admin Users
-      summary: Create an admin user.
+      summary: Reject direct admin creation.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
-      requestBody:
-        $ref: '#/components/requestBodies/AdminManagementUserCreate'
       responses:
-        '201':
-          $ref: '#/components/responses/AdminManagementUser'
         '409':
           $ref: '#/components/responses/Error'
       description: >-
-        Create an Admin Console user in DB_ADMIN. The optional password is hashed server-side before
-        storage.
+        Direct Admin creation is disabled. Use the Admin invitation endpoint so the recipient must
+        register and verify a Passkey before the account becomes active.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/admin-invitations:
+    get:
+      tags:
+        - Admin Invitations
+      summary: List Admin invitations.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: include_completed
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Tenant-scoped Admin invitations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminInvitation'
+                  total:
+                    type: integer
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Admin Invitations
+      summary: Invite an Admin to enroll a Passkey.
+      description: >-
+        Creates a pending invitation and emails a one-time enrollment code. The code is not returned
+        by this API and cannot create an Admin session. IP restrictions are disabled by default.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminInvitationCreate'
+      responses:
+        '201':
+          description: Invitation created and email sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, email, expires_at, email_sent]
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    format: email
+                  expires_at:
+                    type: integer
+                    format: int64
+                  email_sent:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          description: >-
+            The invitation was persisted, but email delivery failed. The returned invitation ID can
+            be used to reload the pending invitation and retry delivery.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, invitation_id]
+                properties:
+                  error:
+                    type: string
+                    const: email_delivery_failed
+                  error_description:
+                    type: string
+                  invitation_id:
+                    type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-invitations/{id}/resend':
+    post:
+      tags:
+        - Admin Invitations
+      summary: Replace and resend an Admin invitation code.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Invitation code replaced and email sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, expires_at]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  expires_at:
+                    type: integer
+                    format: int64
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-invitations/{id}':
+    delete:
+      tags:
+        - Admin Invitations
+      summary: Revoke a pending Admin invitation.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminDeleteResult'
+        '404':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -7023,6 +7159,304 @@ paths:
                       type: object
         '400':
           $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/consent-gate-policy-bindings:
+    get:
+      tags:
+        - Consent
+      operationId: getApiAdminConsentGatePolicyBindings
+      summary: List Consent Gate Policy bindings.
+      description: Lists tenant-scoped exact target and tenant-default Policy bindings.
+      responses:
+        '200':
+          description: Consent Gate Policy bindings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - bindings
+                properties:
+                  bindings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConsentGatePolicyBinding'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Consent
+      operationId: postApiAdminConsentGatePolicyBindings
+      summary: Create a Consent Gate Policy binding.
+      description: Creates an exact target or tenant-default binding to a Policy owned by the same tenant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentGatePolicyBindingCreateRequest'
+      responses:
+        '201':
+          description: Created Consent Gate Policy binding.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - binding
+                properties:
+                  binding:
+                    $ref: '#/components/schemas/ConsentGatePolicyBinding'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/consent-gate-policy-bindings/preview:
+    post:
+      tags:
+        - Consent
+      operationId: postApiAdminConsentGatePolicyBindingsPreview
+      summary: Preview the effective Consent Gate Policy binding.
+      description: Resolves fixed, exact target, tenant-default, and fallback Policy selection without trusting a browser-supplied effective Policy ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - gate_kind
+                - target_type
+              properties:
+                gate_kind:
+                  $ref: '#/components/schemas/ConsentGateKind'
+                target_type:
+                  $ref: '#/components/schemas/ConsentGateTargetType'
+                target_id:
+                  type:
+                    - string
+                    - 'null'
+                node_config:
+                  $ref: '#/components/schemas/ConsentGateNodeConfig'
+      responses:
+        '200':
+          description: Effective Policy selection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - effective
+                properties:
+                  effective:
+                    type: object
+                    required:
+                      - gate_kind
+                      - target_type
+                      - target_id
+                      - policy_id
+                      - source
+                      - binding_id
+                      - policy
+                      - statement_versions
+                      - affected_targets
+                    properties:
+                      gate_kind:
+                        $ref: '#/components/schemas/ConsentGateKind'
+                      target_type:
+                        $ref: '#/components/schemas/ConsentGateTargetType'
+                      target_id:
+                        type: [string, 'null']
+                      policy_id:
+                        type: [string, 'null']
+                      source:
+                        type: string
+                        enum: [fixed, exact_binding, tenant_default, fallback, skip]
+                      binding_id:
+                        type: [string, 'null']
+                      policy:
+                        anyOf:
+                          - type: object
+                            additionalProperties: false
+                            required: [id, display_name, description]
+                            properties:
+                              id:
+                                type: string
+                              display_name:
+                                type: string
+                              description:
+                                type: [string, 'null']
+                          - type: 'null'
+                      statement_versions:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required:
+                            - statement_id
+                            - statement_slug
+                            - version
+                            - requirement
+                            - checkbox_mode
+                            - checkbox_default_checked
+                          properties:
+                            statement_id:
+                              type: string
+                            statement_slug:
+                              type: string
+                            version:
+                              type: [string, 'null']
+                            requirement:
+                              type: string
+                            checkbox_mode:
+                              type: string
+                            checkbox_default_checked:
+                              type: integer
+                      affected_targets:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [target_type, target_id, binding_id]
+                          properties:
+                            target_type:
+                              $ref: '#/components/schemas/ConsentGateTargetType'
+                            target_id:
+                              type: [string, 'null']
+                            binding_id:
+                              type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/consent-gate-policy-bindings/{id}':
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Consent Gate Policy binding identifier.
+    get:
+      tags:
+        - Consent
+      operationId: getApiAdminConsentGatePolicyBindingsById
+      summary: Get a Consent Gate Policy binding.
+      responses:
+        '200':
+          description: Consent Gate Policy binding.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - binding
+                properties:
+                  binding:
+                    $ref: '#/components/schemas/ConsentGatePolicyBinding'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Consent
+      operationId: putApiAdminConsentGatePolicyBindingsById
+      summary: Update a Consent Gate Policy binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentGatePolicyBindingUpdateRequest'
+      responses:
+        '200':
+          description: Updated Consent Gate Policy binding.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - binding
+                properties:
+                  binding:
+                    $ref: '#/components/schemas/ConsentGatePolicyBinding'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Consent
+      operationId: deleteApiAdminConsentGatePolicyBindingsById
+      summary: Delete a Consent Gate Policy binding.
+      responses:
+        '200':
+          description: Deletion result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -21831,7 +22265,9 @@ paths:
         - Users
       operationId: getApiAdminUsersByUserIdConsentRecords
       summary: List user consent records
-      description: Returns consent statement records for a user with statement slug and category metadata.
+      description: >-
+        Returns current consent statement records and Consent Gate evidence for a user, including the
+        Gate kind, target context, Flow version, and receipt correlation identifier.
       responses:
         '200':
           $ref: '#/components/responses/UserConsentRecords'
@@ -38298,6 +38734,21 @@ components:
                 updated_at: 1770000000000
                 slug: terms
                 category: terms
+            evidence:
+              - id: evidence_123
+                gate_kind: oidc_authorization
+                protocol: oidc
+                consent_kind: scope_claim_release
+                target_type: oidc_client
+                target_id: client_123
+                statement_id: oidc-release:client_123
+                statement_version: release_hash_123
+                flow_id: login_flow
+                flow_version_id: flow_version_123
+                flow_node_id: authorization_consent
+                receipt_id: cgr_0123456789abcdef0123456789abcdef
+                status: active
+                created_at: 1770000000
     UserConsentHistory:
       description: Successful JSON response.
       content:
@@ -41536,6 +41987,212 @@ components:
             created_at: 1770000000000
             updated_at: 1770000000000
   schemas:
+    AdminInvitationCreate:
+      type: object
+      required: [email, role_id]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: [string, 'null']
+        role_id:
+          type: string
+        scope_type:
+          type: string
+          enum: [global, tenant]
+        scope_id:
+          type: string
+        role_expires_at:
+          type: integer
+          format: int64
+        expires_in_hours:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 168
+          default: 24
+        ip_restriction_enabled:
+          type: boolean
+          default: false
+        allowed_ip_ranges:
+          type: array
+          maxItems: 5
+          description: Single IPv4/IPv6 addresses, CIDR ranges, or explicit start-end ranges.
+          items:
+            type: string
+    AdminInvitation:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - email
+        - status
+        - role
+        - scope_type
+        - ip_restriction_enabled
+        - allowed_ip_ranges
+        - expires_at
+        - last_sent_at
+        - last_delivery_status
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [pending, accepted, revoked, expired]
+        role:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            display_name:
+              type: [string, 'null']
+        scope_type:
+          type: string
+          enum: [global, tenant]
+        scope_id:
+          type: [string, 'null']
+        role_expires_at:
+          type: [integer, 'null']
+          format: int64
+        ip_restriction_enabled:
+          type: boolean
+        allowed_ip_ranges:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+        expires_at:
+          type: integer
+          format: int64
+        last_sent_at:
+          type: integer
+          format: int64
+        last_delivery_status:
+          type: string
+          enum: [pending, sent, failed]
+        accepted_at:
+          type: [integer, 'null']
+          format: int64
+        created_by:
+          type: string
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    ConsentGateKind:
+      type: string
+      enum:
+        - legal_document
+        - oidc_authorization
+        - saml_attribute_release
+    ConsentGateTargetType:
+      type: string
+      enum:
+        - tenant
+        - oidc_client
+        - saml_sp
+    ConsentGateNodeConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        policy_resolution:
+          type: string
+          enum:
+            - fixed
+            - target_binding
+        consent_policy_ref:
+          type: string
+        fallback_policy_ref:
+          type: string
+        policy_required:
+          type: boolean
+    ConsentGatePolicyBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - gate_kind
+        - target_type
+        - target_id
+        - policy_id
+        - enabled
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        gate_kind:
+          $ref: '#/components/schemas/ConsentGateKind'
+        target_type:
+          $ref: '#/components/schemas/ConsentGateTargetType'
+        target_id:
+          type:
+            - string
+            - 'null'
+        policy_id:
+          type: string
+        enabled:
+          type: integer
+          enum:
+            - 0
+            - 1
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    ConsentGatePolicyBindingCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - gate_kind
+        - target_type
+        - policy_id
+      properties:
+        gate_kind:
+          $ref: '#/components/schemas/ConsentGateKind'
+        target_type:
+          $ref: '#/components/schemas/ConsentGateTargetType'
+        target_id:
+          type:
+            - string
+            - 'null'
+        policy_id:
+          type: string
+        enabled:
+          type: boolean
+    ConsentGatePolicyBindingUpdateRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        gate_kind:
+          $ref: '#/components/schemas/ConsentGateKind'
+        target_type:
+          $ref: '#/components/schemas/ConsentGateTargetType'
+        target_id:
+          type:
+            - string
+            - 'null'
+        policy_id:
+          type: string
+        enabled:
+          type: boolean
     AgentConfigurationPlanDefinition:
       type: object
       additionalProperties: false
@@ -61054,12 +61711,60 @@ components:
       additionalProperties: false
       required:
         - records
+        - evidence
       properties:
         records:
           type: array
           items:
             type: object
             additionalProperties: true
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - gate_kind
+              - protocol
+              - consent_kind
+              - statement_id
+              - statement_version
+              - status
+              - created_at
+            properties:
+              id:
+                type: string
+              gate_kind:
+                type: string
+                enum: [legal_document, oidc_authorization, saml_attribute_release]
+              protocol:
+                type: string
+              consent_kind:
+                type: string
+              target_type:
+                type: [string, 'null']
+              target_id:
+                type: [string, 'null']
+              statement_id:
+                type: string
+              statement_version:
+                type: string
+              policy_id:
+                type: [string, 'null']
+              flow_id:
+                type: [string, 'null']
+              flow_version_id:
+                type: [string, 'null']
+              flow_node_id:
+                type: [string, 'null']
+              receipt_id:
+                type: [string, 'null']
+              status:
+                type: string
+              created_at:
+                type: integer
+                format: int64
     UserConsentHistoryResponse:
       type: object
       additionalProperties: false

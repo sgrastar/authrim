@@ -257,6 +257,22 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route public Admin invitation enrollment to OP_AUTH', async () => {
+        const request = new Request('https://auth.example.com/api/admin/invitations/redeem', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://auth.example.com',
+          },
+          body: '{}',
+        });
+
+        await app.fetch(request, { ...mockEnv, ALLOWED_ORIGINS: 'https://auth.example.com' });
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
       it('should route /auth/* browser protocol helpers to OP_AUTH', async () => {
         const req = new Request('https://example.com/auth/login-challenge?challenge_id=test');
         await app.fetch(req, mockEnv);

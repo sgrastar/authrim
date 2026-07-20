@@ -7,14 +7,30 @@ import {
   createPIIContextFromHono,
   evaluateFlowConditionRows,
   generateId,
+  buildSAMLRequestStoreInstanceName,
   getChallengeStoreByChallengeId,
   getFeatureFlag,
+  clearFeatureFlagCache,
+  isTenantFlowProtocolConsentGatesEnabled,
+  isTenantFlowProtocolConsentShadowEnabled,
+  invalidateConsentCache,
   getLogger,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashIpAddress,
   isShardedSessionId,
   CanonicalRuntimeUserStore,
+  ConsentGateDecisionReceiptRepository,
+  ConsentGatePolicyConfigurationError,
+  ConsentGatePolicyBindingRepository,
+  DocumentAcknowledgmentRepository,
+  evaluateConsentGate,
+  resolveConsentGatePolicyBinding,
+  resolveClientTrustPolicy,
+  resolveRuntimeIdentityMappingBinding,
+  requireDedicatedAdminDatabaseAdapter,
+  type ConsentGateKind,
+  type ConsentGateNodeConfig,
   type DatabaseAdapter,
   type Env,
   type Challenge,
@@ -29,6 +45,9 @@ import {
   type FlowRuntimeErrorCategory,
   type FlowRuntimeStep,
   type Session,
+  type SAMLRequestData,
+  type SAMLAuthnRequest,
+  type TransactionContext,
 } from '@authrim/ar-lib-core';
 
 type AuthContext = Context<{ Bindings: Env }>;
@@ -133,6 +152,24 @@ interface FlowRequestContext {
   return_to: string | null;
   requested_scope: string[];
   locale: string | null;
+  oidc_redirect_uri: string | null;
+  oidc_resources: string[];
+  oidc_claims: FlowRuntimeJsonObject | null;
+  oidc_identity_mapping: FlowRuntimeJsonObject | null;
+  oidc_mapping_claims: string[];
+  oidc_mapping_snapshot_hash: string | null;
+  oidc_release_mode: 'once' | 'every_time' | 'until_attributes_change';
+  oidc_prompt: string | null;
+  oidc_prompt_values: string[];
+  oidc_authorization_request_source: string | null;
+  oidc_authorization_request_integrity_protected: boolean;
+  oidc_challenge_type: 'login' | 'reauth' | 'consent' | null;
+  saml_acs_url: string | null;
+  saml_requested_attributes: FlowRuntimeJsonObject[];
+  saml_identity_mapping: FlowRuntimeJsonObject | null;
+  saml_release_attributes: FlowRuntimeJsonObject[];
+  saml_release_set_hash: string | null;
+  saml_release_mode: 'once' | 'every_time' | 'until_attributes_change' | null;
 }
 
 interface CachedFlowVersion {
@@ -160,6 +197,7 @@ interface RuntimeConsentPolicyItem extends FlowRuntimeJsonObject {
   content_mode: 'display_only' | 'checkbox' | 'radio';
   options: RuntimeConsentPolicyOption[];
   attribute_value_display: 'names' | 'masked_values' | 'full_values' | null;
+  attribute_display_values: string[];
   checkbox_mode: 'none' | 'required' | 'optional';
   checkbox_default_checked: boolean;
   binding_type: string | null;
@@ -167,6 +205,14 @@ interface RuntimeConsentPolicyItem extends FlowRuntimeJsonObject {
   evidence_profile: string | null;
   language_fallback: string | null;
   display_order: number;
+  acceptance_status: 'accepted' | 'pending';
+  action_required: boolean;
+  accepted_at: number | null;
+  accepted_record_id: string | null;
+  release_kind: 'scope' | 'claim' | 'attribute' | null;
+  release_name: string | null;
+  release_locked: boolean | null;
+  previously_granted: boolean | null;
 }
 
 interface RuntimeConsentPolicyOption extends FlowRuntimeJsonObject {
@@ -183,7 +229,20 @@ interface RuntimeConsentPolicyContent extends FlowRuntimeJsonObject {
   language: string;
   default_language: string;
   items: RuntimeConsentPolicyItem[];
+  gate_kind: ConsentGateKind | null;
+  policy_id: string;
+  policy_satisfied: boolean;
+  force_interaction: boolean;
+  release_set_hash: string | null;
+  release_mode: 'once' | 'every_time' | 'until_attributes_change' | null;
+  release_current_state: 'granted' | 'denied' | 'revoked' | 'expired' | null;
+  release_existing_set_hash: string | null;
 }
+
+type RuntimeConsentQueryStore = Pick<
+  DatabaseAdapter | TransactionContext,
+  'query' | 'queryOne' | 'execute'
+>;
 
 interface RuntimeScreenRow {
   id: string;
@@ -292,6 +351,7 @@ export function clearLoginRuntimeFlowVersionCacheForTests(): void {
   flowVersionCache.clear();
   preparedRuntimeContractCache.clear();
   loginRuntimeFeatureFlagCache.clear();
+  clearFeatureFlagCache();
 }
 
 function nowSeconds(): number {
@@ -618,15 +678,18 @@ function getLoginRuntimeFeatureFlagCacheTtlMs(env: Env): number {
   );
 }
 
-function readLoginRuntimeFlagFromSettings(settings: Record<string, unknown> | null): true | null {
+function readLoginRuntimeFlagFromSettings(
+  settings: Record<string, unknown> | null
+): boolean | null {
   if (!settings || typeof settings !== 'object') return null;
   for (const key of LOGIN_RUNTIME_FEATURE_KEYS) {
     if (settings[key] === true || settings[key] === 'true' || settings[key] === '1') return true;
+    if (settings[key] === false || settings[key] === 'false' || settings[key] === '0') return false;
   }
   return null;
 }
 
-async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {
+export async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {
   const cacheKey = getLoginRuntimeFeatureFlagCacheKey(env, tenantId);
   const cached = loginRuntimeFeatureFlagCache.get(cacheKey);
   const now = Date.now();
@@ -840,6 +903,19 @@ function normalizeRuntime(
                   client_id: requestContext.client_id,
                   authorization_challenge_id: requestContext.authorization_challenge_id,
                   requested_scope: requestContext.requested_scope,
+                  redirect_uri: requestContext.oidc_redirect_uri,
+                  resource: requestContext.oidc_resources,
+                  claims: requestContext.oidc_claims,
+                  identity_mapping: requestContext.oidc_identity_mapping,
+                  mapping_claims: requestContext.oidc_mapping_claims,
+                  mapping_snapshot_hash: requestContext.oidc_mapping_snapshot_hash,
+                  release_mode: requestContext.oidc_release_mode,
+                  prompt: requestContext.oidc_prompt,
+                  prompt_values: requestContext.oidc_prompt_values,
+                  authorization_request_source: requestContext.oidc_authorization_request_source,
+                  authorization_request_integrity_protected:
+                    requestContext.oidc_authorization_request_integrity_protected,
+                  challenge_type: requestContext.oidc_challenge_type,
                 } as FlowRuntimeJsonObject)
               : null,
           saml: requestContext.saml_sp_id
@@ -847,6 +923,12 @@ function normalizeRuntime(
                 saml_sp_id: requestContext.saml_sp_id,
                 saml_request_id: requestContext.saml_request_id,
                 saml_sp_entity_id: requestContext.saml_sp_entity_id,
+                acs_url: requestContext.saml_acs_url,
+                requested_attributes: requestContext.saml_requested_attributes,
+                identity_mapping: requestContext.saml_identity_mapping,
+                release_attributes: requestContext.saml_release_attributes,
+                release_set_hash: requestContext.saml_release_set_hash,
+                release_mode: requestContext.saml_release_mode,
               } as FlowRuntimeJsonObject)
             : null,
         }
@@ -878,6 +960,20 @@ function getPreparedRuntimeContractCacheKey(
     requestContext.return_to,
     requestContext.locale,
     requestContext.requested_scope,
+    requestContext.oidc_redirect_uri,
+    requestContext.oidc_resources,
+    requestContext.oidc_claims,
+    requestContext.oidc_identity_mapping,
+    requestContext.oidc_mapping_claims,
+    requestContext.oidc_mapping_snapshot_hash,
+    requestContext.oidc_release_mode,
+    requestContext.oidc_prompt,
+    requestContext.oidc_authorization_request_source,
+    requestContext.oidc_authorization_request_integrity_protected,
+    requestContext.oidc_challenge_type,
+    requestContext.saml_acs_url,
+    requestContext.saml_requested_attributes,
+    requestContext.saml_identity_mapping,
   ]);
 }
 
@@ -1302,7 +1398,7 @@ function consentBindingMatchesRequestContext(
 }
 
 async function getConsentVersionForPolicyItem(
-  db: DatabaseAdapter,
+  db: RuntimeConsentQueryStore,
   tenantId: string,
   statementId: string,
   versionMode: string,
@@ -1326,7 +1422,7 @@ async function getConsentVersionForPolicyItem(
 }
 
 async function getConsentLocalizationForRuntime(
-  db: DatabaseAdapter,
+  db: RuntimeConsentQueryStore,
   tenantId: string,
   versionId: string,
   language: string,
@@ -1361,10 +1457,11 @@ async function getConsentLocalizationForRuntime(
 }
 
 async function resolveRuntimeConsentPolicyContent(
-  db: DatabaseAdapter,
+  db: RuntimeConsentQueryStore,
   tenantId: string,
   policyId: string,
-  requestContext: FlowRequestContext
+  requestContext: FlowRequestContext,
+  gateKind: ConsentGateKind | null = null
 ): Promise<RuntimeConsentPolicyContent | null> {
   const policy = await db.queryOne<{
     id: string;
@@ -1455,6 +1552,7 @@ async function resolveRuntimeConsentPolicyContent(
         statementRules.attribute_value_display,
         row.category
       ),
+      attribute_display_values: [],
       checkbox_mode:
         row.checkbox_mode === 'required' || row.checkbox_mode === 'optional'
           ? row.checkbox_mode
@@ -1465,6 +1563,14 @@ async function resolveRuntimeConsentPolicyContent(
       evidence_profile: row.evidence_profile,
       language_fallback: row.language_fallback,
       display_order: row.display_order,
+      acceptance_status: 'pending',
+      action_required: row.requirement === 'required',
+      accepted_at: null,
+      accepted_record_id: null,
+      release_kind: null,
+      release_name: null,
+      release_locked: null,
+      previously_granted: null,
     });
   }
 
@@ -1475,7 +1581,518 @@ async function resolveRuntimeConsentPolicyContent(
     language,
     default_language: 'en',
     items,
+    gate_kind: gateKind,
+    policy_id: policy.id,
+    policy_satisfied: false,
+    force_interaction: false,
+    release_set_hash: null,
+    release_mode: null,
+    release_current_state: null,
+    release_existing_set_hash: null,
   };
+}
+
+const OIDC_RELEASE_POLICY_ID = '__oidc_authorization_release__';
+const SAML_RELEASE_POLICY_ID = '__saml_attribute_release__';
+
+interface OidcReleaseGrantRow {
+  scope: string;
+  selected_claims: unknown;
+  release_set_hash: string | null;
+  expires_at: number | null;
+}
+
+function requestedOidcClaims(request: FlowRuntimeJsonObject | null): Array<{
+  name: string;
+  required: boolean;
+}> {
+  if (!request) return [];
+  const claims = new Map<string, boolean>();
+  for (const target of ['userinfo', 'id_token']) {
+    const values = parseJsonRecord(request[target]);
+    for (const [name, raw] of Object.entries(values)) {
+      const options = parseJsonRecord(raw);
+      claims.set(name, (claims.get(name) ?? false) || options.essential === true);
+    }
+  }
+  return [...claims.entries()]
+    .map(([name, required]) => ({ name, required }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function effectiveRequestedOidcClaims(requestContext: FlowRequestContext): Array<{
+  name: string;
+  required: boolean;
+}> {
+  const claims = new Map(
+    requestedOidcClaims(requestContext.oidc_claims).map((claim) => [claim.name, claim.required])
+  );
+  for (const claimName of requestContext.oidc_mapping_claims) {
+    claims.set(claimName, true);
+  }
+  return [...claims.entries()]
+    .map(([name, required]) => ({ name, required }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function parseStoredStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  if (!value) return [];
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function localizedOidcClaim(
+  name: string,
+  language: string
+): {
+  title: string;
+  description: string;
+} {
+  const ja: Record<string, [string, string]> = {
+    name: ['氏名', '氏名をこのサービスへ提供します。'],
+    preferred_username: ['ユーザー名', '表示用のユーザー名をこのサービスへ提供します。'],
+    email: ['メールアドレス', 'メールアドレスをこのサービスへ提供します。'],
+    email_verified: ['メール確認状態', 'メールアドレスの確認状態をこのサービスへ提供します。'],
+    phone_number: ['電話番号', '電話番号をこのサービスへ提供します。'],
+    address: ['住所', '住所情報をこのサービスへ提供します。'],
+  };
+  const en: Record<string, [string, string]> = {
+    name: ['Name', 'Share your name with this service.'],
+    preferred_username: ['Username', 'Share your display username with this service.'],
+    email: ['Email address', 'Share your email address with this service.'],
+    email_verified: ['Email verification status', 'Share whether your email address is verified.'],
+    phone_number: ['Phone number', 'Share your phone number with this service.'],
+    address: ['Address', 'Share your address information with this service.'],
+  };
+  const fallbackTitle = name
+    .split('_')
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+  const selected = (language === 'ja' ? ja : en)[name];
+  return selected
+    ? { title: selected[0], description: selected[1] }
+    : {
+        title: fallbackTitle,
+        description:
+          language === 'ja'
+            ? `${name} クレームをこのサービスへ提供します。`
+            : `Share the ${name} claim with this service.`,
+      };
+}
+
+export async function resolveOidcReleasePolicyContent(input: {
+  db: RuntimeConsentQueryStore;
+  tenantId: string;
+  requestContext: FlowRequestContext;
+  policy: RuntimeConsentPolicyContent | null;
+  userId?: string | null;
+}): Promise<RuntimeConsentPolicyContent | null> {
+  if (
+    input.requestContext.protocol !== 'oidc' ||
+    !input.requestContext.client_id ||
+    input.requestContext.target_type !== 'oidc_client'
+  ) {
+    return input.policy;
+  }
+  const language = requestedLanguage(input.requestContext);
+  const requestedScopes = [...new Set(input.requestContext.requested_scope)].filter(Boolean);
+  const requestedClaims = effectiveRequestedOidcClaims(input.requestContext);
+  const existing = input.userId
+    ? await input.db.queryOne<OidcReleaseGrantRow>(
+        `SELECT scope, selected_claims, release_set_hash, expires_at
+           FROM oauth_client_consents
+          WHERE tenant_id = ? AND user_id = ? AND client_id = ?
+          LIMIT 1`,
+        [input.tenantId, input.userId, input.requestContext.client_id]
+      )
+    : null;
+  const existingActive =
+    existing && (existing.expires_at === null || existing.expires_at > Date.now());
+  const grantedScopes = new Set(existingActive ? existing.scope.split(/\s+/u).filter(Boolean) : []);
+  const grantedClaims = new Set(
+    existingActive ? parseStoredStringArray(existing.selected_claims) : []
+  );
+  const allRequestedGranted =
+    requestedScopes.every((scope) => grantedScopes.has(scope)) &&
+    requestedClaims.every((claim) => grantedClaims.has(claim.name));
+  const trust = await resolveClientTrustPolicy(
+    input.db as DatabaseAdapter,
+    input.tenantId,
+    'oidc_client',
+    input.requestContext.client_id
+  );
+  const explicitlyTrusted = Boolean(trust?.trusted || trust?.skip_authorization_consent);
+  const trustedSkip =
+    explicitlyTrusted && !input.requestContext.oidc_prompt_values.includes('consent');
+  const releaseSetHash = await sha256Base64Url(
+    JSON.stringify({
+      scopes: [...requestedScopes].sort((left, right) => left.localeCompare(right)),
+      claims: requestedClaims.map((claim) => `${claim.name}:${claim.required}`),
+      mapping_snapshot_hash: input.requestContext.oidc_mapping_snapshot_hash,
+    })
+  );
+  const releaseMode = input.requestContext.oidc_release_mode;
+  const grantSatisfied = Boolean(
+    existingActive &&
+    releaseMode !== 'every_time' &&
+    allRequestedGranted &&
+    (releaseMode === 'once' || existing?.release_set_hash === releaseSetHash)
+  );
+  const scopeRows = await input.db.query<{
+    name: string;
+    display_name: string;
+    description: string | null;
+    localizations_json: string | null;
+  }>(
+    `SELECT name, display_name, description, localizations_json
+       FROM oidc_scopes
+      WHERE enabled = 1 AND name IN (${requestedScopes.map(() => '?').join(', ') || "''"})
+        AND tenant_id IN (?, 'default')
+      ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, name ASC`,
+    [...requestedScopes, input.tenantId, input.tenantId]
+  );
+  const scopeMetadata = new Map<string, (typeof scopeRows)[number]>();
+  for (const row of scopeRows) {
+    if (!scopeMetadata.has(row.name)) scopeMetadata.set(row.name, row);
+  }
+  const baseItems = (input.policy?.items ?? []).filter((item) => !item.release_kind);
+  const releaseItems: RuntimeConsentPolicyItem[] = [];
+  for (const [index, name] of requestedScopes.entries()) {
+    const row = scopeMetadata.get(name);
+    const localizations = parseTrustedJsonObject(row?.localizations_json) ?? {};
+    const localized = parseJsonRecord(localizations[language] ?? localizations.en);
+    const required = name === 'openid';
+    releaseItems.push({
+      statement_id: `oidc:scope:${name}`,
+      slug: `oidc-scope-${name}`,
+      category: 'scope_claim_release',
+      title: readString(localized.display_name, 500) ?? row?.display_name ?? name,
+      description: readString(localized.description, 2000) ?? row?.description ?? '',
+      document_url: null,
+      inline_content: null,
+      version: 'request-v1',
+      version_id: `oidc:scope:${name}`,
+      is_required: required,
+      content_mode: 'checkbox',
+      options: [],
+      attribute_value_display: 'names',
+      attribute_display_values: [],
+      checkbox_mode: required ? 'required' : 'optional',
+      checkbox_default_checked: true,
+      binding_type: 'user_decision',
+      binding_value: name,
+      evidence_profile: 'oidc_authorization',
+      language_fallback: 'en',
+      display_order: 10_000 + index,
+      acceptance_status: required && (grantSatisfied || trustedSkip) ? 'accepted' : 'pending',
+      action_required: required && !grantSatisfied && !trustedSkip,
+      accepted_at: null,
+      accepted_record_id: null,
+      release_kind: 'scope',
+      release_name: name,
+      release_locked: required,
+      previously_granted: grantedScopes.has(name),
+    });
+  }
+  for (const [index, claim] of requestedClaims.entries()) {
+    const localized = localizedOidcClaim(claim.name, language);
+    releaseItems.push({
+      statement_id: `oidc:claim:${claim.name}`,
+      slug: `oidc-claim-${claim.name}`,
+      category: 'scope_claim_release',
+      title: localized.title,
+      description: localized.description,
+      document_url: null,
+      inline_content: null,
+      version: 'request-v1',
+      version_id: `oidc:claim:${claim.name}`,
+      is_required: claim.required,
+      content_mode: 'checkbox',
+      options: [],
+      attribute_value_display: 'names',
+      attribute_display_values: [],
+      checkbox_mode: claim.required ? 'required' : 'optional',
+      checkbox_default_checked: true,
+      binding_type: 'user_decision',
+      binding_value: claim.name,
+      evidence_profile: 'oidc_authorization',
+      language_fallback: 'en',
+      display_order: 20_000 + index,
+      acceptance_status: claim.required && (grantSatisfied || trustedSkip) ? 'accepted' : 'pending',
+      action_required: claim.required && !grantSatisfied && !trustedSkip,
+      accepted_at: null,
+      accepted_record_id: null,
+      release_kind: 'claim',
+      release_name: claim.name,
+      release_locked: claim.required,
+      previously_granted: grantedClaims.has(claim.name),
+    });
+  }
+  const base = input.policy ?? {
+    id: OIDC_RELEASE_POLICY_ID,
+    display_name: language === 'ja' ? '提供する情報' : 'Information to share',
+    description:
+      language === 'ja'
+        ? 'このサービスへ提供する権限と情報を確認してください。'
+        : 'Review the permissions and information shared with this service.',
+    language,
+    default_language: 'en',
+    items: [],
+    gate_kind: 'oidc_authorization' as const,
+    policy_id: OIDC_RELEASE_POLICY_ID,
+    policy_satisfied: false,
+    force_interaction: false,
+    release_set_hash: null,
+    release_mode: null,
+    release_current_state: null,
+    release_existing_set_hash: null,
+  };
+  return {
+    ...base,
+    items: [...baseItems, ...releaseItems],
+    gate_kind: 'oidc_authorization',
+    policy_satisfied:
+      baseItems
+        .filter((item) => item.is_required)
+        .every((item) => item.acceptance_status === 'accepted') &&
+      (grantSatisfied || trustedSkip),
+    force_interaction: input.requestContext.oidc_prompt_values.includes('consent'),
+    release_set_hash: releaseSetHash,
+    release_mode: releaseMode,
+    release_current_state: grantSatisfied || trustedSkip ? 'granted' : null,
+    release_existing_set_hash: existingActive ? existing.release_set_hash : null,
+  };
+}
+
+export async function resolveSamlReleasePolicyContent(input: {
+  db: RuntimeConsentQueryStore;
+  tenantId: string;
+  requestContext: FlowRequestContext;
+  policy: RuntimeConsentPolicyContent | null;
+  userId?: string | null;
+}): Promise<RuntimeConsentPolicyContent | null> {
+  if (
+    input.requestContext.protocol !== 'saml' ||
+    !input.requestContext.saml_sp_id ||
+    input.requestContext.target_type !== 'saml_sp'
+  ) {
+    return input.policy;
+  }
+  const language = requestedLanguage(input.requestContext);
+  const releaseHash = input.requestContext.saml_release_set_hash;
+  const mode = input.requestContext.saml_release_mode ?? 'once';
+  const summaries = input.requestContext.saml_release_attributes;
+  const base = input.policy ?? {
+    id: SAML_RELEASE_POLICY_ID,
+    display_name: language === 'ja' ? '属性の提供' : 'Attribute release',
+    description:
+      language === 'ja'
+        ? 'このサービスへ提供する属性を確認してください。'
+        : 'Review the attributes shared with this service.',
+    language,
+    default_language: 'en',
+    items: [],
+    gate_kind: 'saml_attribute_release' as const,
+    policy_id: SAML_RELEASE_POLICY_ID,
+    policy_satisfied: false,
+    force_interaction: false,
+    release_set_hash: null,
+    release_mode: null,
+    release_current_state: null,
+    release_existing_set_hash: null,
+  };
+  const baseItems = base.items.filter((item) => !item.release_kind);
+  if (!releaseHash || summaries.length === 0) {
+    return {
+      ...base,
+      items: baseItems.map((item) => ({
+        ...item,
+        acceptance_status: 'accepted' as const,
+        action_required: false,
+      })),
+      policy_satisfied: true,
+      release_set_hash: null,
+      release_mode: null,
+      release_current_state: null,
+      release_existing_set_hash: null,
+    };
+  }
+  const existing = input.userId
+    ? await input.db.queryOne<{
+        attribute_set_hash: string;
+        consent_state: string;
+        expires_at: number | null;
+      }>(
+        `SELECT attribute_set_hash, consent_state, expires_at
+           FROM attribute_release_consents
+          WHERE tenant_id = ? AND subject_id = ? AND destination_type = 'saml_sp'
+            AND destination_id = ? AND consent_state = 'granted'
+          ORDER BY last_confirmed_at DESC, updated_at DESC
+          LIMIT 1`,
+        [input.tenantId, input.userId, input.requestContext.saml_sp_id]
+      )
+    : null;
+  const existingActive =
+    existing && (existing.expires_at === null || existing.expires_at > Date.now());
+  const grantSatisfied = Boolean(
+    existingActive &&
+    mode !== 'every_time' &&
+    (mode === 'once' || existing.attribute_set_hash === releaseHash)
+  );
+  const trust = await resolveClientTrustPolicy(
+    input.db as DatabaseAdapter,
+    input.tenantId,
+    'saml_sp',
+    input.requestContext.saml_sp_id
+  );
+  const trustedSkip = Boolean(trust?.trusted || trust?.skip_authorization_consent);
+  const releaseItems = summaries.flatMap((summary, index) => {
+    const name = readString(summary.name, 1000);
+    if (!name) return [];
+    const title = readString(summary.friendlyName, 500) ?? name;
+    const description =
+      readString(summary.description, 2000) ??
+      (language === 'ja'
+        ? `${title} をこのサービスへ提供します。`
+        : `Share ${title} with this service.`);
+    const required = summary.required === true;
+    const valueDisplay = normalizeRuntimeAttributeValueDisplay(
+      summary.valueDisplay,
+      'saml_attribute_release_confirmation'
+    );
+    const displayValues = Array.isArray(summary.displayValues)
+      ? summary.displayValues.filter((value): value is string => typeof value === 'string')
+      : [];
+    return [
+      {
+        statement_id: `saml:attribute:${name}`,
+        slug: `saml-attribute-${name}`,
+        category: 'attribute_release',
+        title,
+        description,
+        document_url: null,
+        inline_content: null,
+        version: 'request-v1',
+        version_id: `saml:attribute:${name}`,
+        is_required: required,
+        content_mode: 'checkbox' as const,
+        options: [],
+        attribute_value_display: valueDisplay,
+        attribute_display_values: valueDisplay === 'names' ? [] : displayValues,
+        checkbox_mode: required ? ('required' as const) : ('optional' as const),
+        checkbox_default_checked: true,
+        binding_type: 'user_decision',
+        binding_value: name,
+        evidence_profile: 'saml_attribute_release',
+        language_fallback: 'en',
+        display_order: 10_000 + index,
+        acceptance_status:
+          required && (grantSatisfied || trustedSkip)
+            ? ('accepted' as const)
+            : ('pending' as const),
+        action_required: required && !grantSatisfied && !trustedSkip,
+        accepted_at: null,
+        accepted_record_id: null,
+        release_kind: 'attribute' as const,
+        release_name: name,
+        release_locked: required,
+        previously_granted: grantSatisfied,
+      } satisfies RuntimeConsentPolicyItem,
+    ];
+  });
+  return {
+    ...base,
+    items: [...baseItems, ...releaseItems],
+    gate_kind: 'saml_attribute_release',
+    policy_satisfied:
+      baseItems
+        .filter((item) => item.is_required)
+        .every((item) => item.acceptance_status === 'accepted') &&
+      (grantSatisfied || trustedSkip),
+    force_interaction: false,
+    release_set_hash: releaseHash,
+    release_mode: mode,
+    release_current_state: grantSatisfied || trustedSkip ? 'granted' : null,
+    release_existing_set_hash: existingActive ? existing.attribute_set_hash : null,
+  };
+}
+
+function readConsentGateKind(config: Record<string, unknown>): ConsentGateKind | null {
+  const value = readString(config.consent_gate_kind, 64);
+  return value === 'legal_document' ||
+    value === 'oidc_authorization' ||
+    value === 'saml_attribute_release'
+    ? value
+    : null;
+}
+
+function readConsentGateNodeConfig(config: Record<string, unknown>): ConsentGateNodeConfig {
+  const policyResolution = readString(config.policy_resolution, 64);
+  return {
+    consent_gate_kind: readConsentGateKind(config) ?? undefined,
+    policy_resolution:
+      policyResolution === 'fixed' || policyResolution === 'target_binding'
+        ? policyResolution
+        : undefined,
+    consent_policy_ref: readString(config.consent_policy_ref, 200) ?? undefined,
+    fallback_policy_ref: readString(config.fallback_policy_ref, 200) ?? undefined,
+    policy_required: config.policy_required === true,
+  };
+}
+
+async function resolveRuntimeConsentPolicyId(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  config: Record<string, unknown>;
+  requestContext: FlowRequestContext;
+}): Promise<{ policyId: string | null; gateKind: ConsentGateKind | null }> {
+  const gateKind = readConsentGateKind(input.config);
+  if (!gateKind) {
+    return {
+      policyId: readString(input.config.consent_policy_ref, 200),
+      gateKind: null,
+    };
+  }
+  if (
+    (gateKind === 'oidc_authorization' && input.requestContext.protocol !== 'oidc') ||
+    (gateKind === 'saml_attribute_release' && input.requestContext.protocol !== 'saml')
+  ) {
+    return { policyId: null, gateKind };
+  }
+  try {
+    const resolved = await resolveConsentGatePolicyBinding({
+      repository: new ConsentGatePolicyBindingRepository(input.db),
+      tenantId: input.tenantId,
+      nodeConfig: readConsentGateNodeConfig(input.config),
+      gateKind,
+      targetType:
+        input.requestContext.target_type === 'oidc_client' ||
+        input.requestContext.target_type === 'saml_sp'
+          ? input.requestContext.target_type
+          : 'tenant',
+      targetId:
+        input.requestContext.target_type === 'oidc_client' ||
+        input.requestContext.target_type === 'saml_sp'
+          ? input.requestContext.target_id
+          : null,
+    });
+    return { policyId: resolved.policyId, gateKind };
+  } catch (error) {
+    if (error instanceof ConsentGatePolicyConfigurationError) {
+      return { policyId: null, gateKind };
+    }
+    throw error;
+  }
 }
 
 async function resolveRuntimeScreenContent(
@@ -1582,11 +2199,39 @@ async function hydrateRuntimeContract(
         nextConfig.screen = screen;
       }
 
-      const policyId = readString(config.consent_policy_ref, 200);
-      if (policyId) {
-        const policy = policyId
-          ? await resolveRuntimeConsentPolicyContent(db, tenantId, policyId, requestContext)
+      const configuredPolicyId = readString(config.consent_policy_ref, 200);
+      if (step.component === 'consent_policy' || configuredPolicyId) {
+        const { policyId, gateKind } = await resolveRuntimeConsentPolicyId({
+          db,
+          tenantId,
+          config,
+          requestContext,
+        });
+        const resolvedPolicy = policyId
+          ? await resolveRuntimeConsentPolicyContent(
+              db,
+              tenantId,
+              policyId,
+              requestContext,
+              gateKind
+            )
           : null;
+        const policy =
+          gateKind === 'oidc_authorization'
+            ? await resolveOidcReleasePolicyContent({
+                db,
+                tenantId,
+                requestContext,
+                policy: resolvedPolicy,
+              })
+            : gateKind === 'saml_attribute_release'
+              ? await resolveSamlReleasePolicyContent({
+                  db,
+                  tenantId,
+                  requestContext,
+                  policy: resolvedPolicy,
+                })
+              : resolvedPolicy;
         nextContent.consent_policy = policy;
       }
 
@@ -1607,7 +2252,53 @@ async function hydrateRuntimeContract(
   };
 }
 
-function createRequestContext(
+function parseTrustedJsonObject(value: unknown): FlowRuntimeJsonObject | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as FlowRuntimeJsonObject;
+  }
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as FlowRuntimeJsonObject)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseTrustedStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return [
+      ...new Set(
+        value
+          .filter((item): item is string => typeof item === 'string')
+          .flatMap((item) => parseStringList(item))
+      ),
+    ];
+  }
+  return parseStringList(value);
+}
+
+function normalizeOidcPrompt(value: unknown): {
+  raw: string | null;
+  values: string[];
+  valid: boolean;
+} {
+  const raw = readOptionalString(value, 200);
+  if (!raw) return { raw: null, values: [], valid: true };
+  const values = [...new Set(raw.split(/\s+/u).filter(Boolean))];
+  const allowed = new Set(['none', 'login', 'consent', 'select_account']);
+  return {
+    raw: values.join(' '),
+    values,
+    valid:
+      values.every((promptValue) => allowed.has(promptValue)) &&
+      !(values.includes('none') && values.length > 1),
+  };
+}
+
+function createUntrustedRequestContext(
   target: ResolvedTarget,
   body: Pick<
     StartRequest,
@@ -1636,26 +2327,57 @@ function createRequestContext(
     return_to: readOptionalString(body.return_to, 128),
     requested_scope: requestedScope,
     locale,
+    oidc_redirect_uri: null,
+    oidc_resources: [],
+    oidc_claims: null,
+    oidc_identity_mapping: null,
+    oidc_mapping_claims: [],
+    oidc_mapping_snapshot_hash: null,
+    oidc_release_mode: 'once',
+    oidc_prompt: null,
+    oidc_prompt_values: [],
+    oidc_authorization_request_source: null,
+    oidc_authorization_request_integrity_protected: false,
+    oidc_challenge_type: null,
+    saml_acs_url: null,
+    saml_requested_attributes: [],
+    saml_identity_mapping: null,
+    saml_release_attributes: [],
+    saml_release_set_hash: null,
+    saml_release_mode: null,
   };
 }
 
-async function validateRuntimeAuthorizationChallengeBinding(
+async function resolveTrustedOidcRequestContext(
   c: AuthContext,
   tenantId: string,
   target: ResolvedTarget,
   requestContext: FlowRequestContext
-): Promise<Response | null> {
+): Promise<{ context?: FlowRequestContext; target?: ResolvedTarget; error?: Response }> {
   const challengeId = requestContext.authorization_challenge_id;
-  if (!challengeId) return null;
+  if (!challengeId) {
+    return {
+      context:
+        requestContext.protocol === 'oidc'
+          ? {
+              ...requestContext,
+              // OIDC scope is authoritative only when restored from an authorization challenge.
+              requested_scope: [],
+            }
+          : requestContext,
+    };
+  }
 
   if (requestContext.protocol !== 'oidc' || !target.clientId) {
-    return jsonError(
-      c,
-      400,
-      'invalid_authorization_challenge',
-      'Authorization challenge can only be used with an OIDC client Flow target',
-      'AR_FLOW_AUTH_CHALLENGE_INVALID'
-    );
+    return {
+      error: jsonError(
+        c,
+        400,
+        'invalid_authorization_challenge',
+        'Authorization challenge can only be used with an OIDC client Flow target',
+        'AR_FLOW_AUTH_CHALLENGE_INVALID'
+      ),
+    };
   }
 
   let challenge: Challenge | null = null;
@@ -1670,29 +2392,289 @@ async function validateRuntimeAuthorizationChallengeBinding(
     !challenge ||
     challenge.tenantId !== tenantId ||
     challenge.consumed ||
-    (challenge.type !== 'login' && challenge.type !== 'reauth')
+    challenge.expiresAt <= Date.now() ||
+    challenge.id !== challengeId ||
+    challenge.challenge !== challengeId ||
+    (challenge.type !== 'login' && challenge.type !== 'reauth' && challenge.type !== 'consent')
   ) {
-    return jsonError(
-      c,
-      400,
-      'invalid_authorization_challenge',
-      'Authorization challenge is invalid or expired',
-      'AR_FLOW_AUTH_CHALLENGE_INVALID'
-    );
+    return {
+      error: jsonError(
+        c,
+        400,
+        'invalid_authorization_challenge',
+        'Authorization challenge is invalid or expired',
+        'AR_FLOW_AUTH_CHALLENGE_INVALID'
+      ),
+    };
   }
 
   const challengeClientId = readOptionalString(challenge.metadata?.client_id, 200);
   if (!challengeClientId || challengeClientId !== target.clientId) {
-    return jsonError(
-      c,
-      403,
-      'authorization_challenge_mismatch',
-      'Authorization challenge does not match the requested client',
-      'AR_FLOW_AUTH_CHALLENGE_MISMATCH'
-    );
+    return {
+      error: jsonError(
+        c,
+        403,
+        'authorization_challenge_mismatch',
+        'Authorization challenge does not match the requested client',
+        'AR_FLOW_AUTH_CHALLENGE_MISMATCH'
+      ),
+    };
   }
 
-  return null;
+  const metadataTenantId = readOptionalString(challenge.metadata?.tenant_id, 200);
+  if (metadataTenantId && metadataTenantId !== tenantId) {
+    return {
+      error: jsonError(
+        c,
+        403,
+        'authorization_challenge_mismatch',
+        'Authorization challenge does not match the requested tenant',
+        'AR_FLOW_AUTH_CHALLENGE_MISMATCH'
+      ),
+    };
+  }
+
+  if (challenge.type === 'reauth' || challenge.type === 'consent') {
+    const session = await getCurrentSession(c, tenantId);
+    const expectedUserId =
+      readOptionalString(challenge.metadata?.sessionUserId, 200) ??
+      readOptionalString(challenge.userId, 200);
+    if (!session || !expectedUserId || session.userId !== expectedUserId) {
+      return {
+        error: jsonError(
+          c,
+          403,
+          'authorization_challenge_subject_mismatch',
+          'Authorization challenge does not match the active session subject',
+          'AR_FLOW_AUTH_CHALLENGE_SUBJECT_MISMATCH'
+        ),
+      };
+    }
+  }
+
+  const prompt = normalizeOidcPrompt(challenge.metadata?.prompt);
+  if (!prompt.valid) {
+    return {
+      error: jsonError(
+        c,
+        400,
+        'invalid_authorization_challenge',
+        'Authorization challenge contains an invalid prompt parameter',
+        'AR_FLOW_AUTH_CHALLENGE_INVALID'
+      ),
+    };
+  }
+  const rawClaims = challenge.metadata?.claims;
+  const claims = parseTrustedJsonObject(rawClaims);
+  if (rawClaims !== undefined && rawClaims !== null && rawClaims !== '' && !claims) {
+    return {
+      error: jsonError(
+        c,
+        400,
+        'invalid_authorization_challenge',
+        'Authorization challenge contains an invalid claims parameter',
+        'AR_FLOW_AUTH_CHALLENGE_INVALID'
+      ),
+    };
+  }
+
+  const identityMapping = parseTrustedJsonObject(challenge.metadata?.identity_mapping);
+  const releasePolicy = parseTrustedJsonObject(challenge.metadata?.attribute_release_consent);
+  const releaseMode =
+    releasePolicy?.enabled === true &&
+    (releasePolicy.mode === 'once' ||
+      releasePolicy.mode === 'every_time' ||
+      releasePolicy.mode === 'until_attributes_change')
+      ? releasePolicy.mode
+      : 'once';
+  let mappingClaims: string[] = [];
+  let mappingSnapshotHash: string | null = null;
+  try {
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const mappingAdapter = c.env.DB_ADMIN
+      ? requireDedicatedAdminDatabaseAdapter(c.env, 'oidc-consent-release-mapping')
+      : coreAdapter;
+    const binding = await resolveRuntimeIdentityMappingBinding(mappingAdapter, {
+      tenantId,
+      protocol: 'oidc',
+      role: 'op',
+      fieldMappingSetId: readOptionalString(identityMapping?.fieldMappingSetId, 200) ?? undefined,
+      fieldMappingVersionId:
+        readOptionalString(identityMapping?.fieldMappingVersionId, 200) ?? undefined,
+      partnerEntityId: challengeClientId,
+      clientId: challengeClientId,
+    });
+    if (binding) {
+      const destinationNamespace =
+        readOptionalString(identityMapping?.destinationNamespace, 200) ??
+        binding.destinationNamespace ??
+        'oidc.claim';
+      const claimNames = new Set<string>();
+      const collect = (
+        ref: { side?: unknown; namespace?: unknown; path?: unknown } | undefined
+      ) => {
+        if (
+          ref?.side === 'destination' &&
+          ref.namespace === destinationNamespace &&
+          typeof ref.path === 'string' &&
+          ref.path.trim()
+        ) {
+          claimNames.add(ref.path.trim());
+        }
+      };
+      for (const edge of binding.edges) collect(edge.targetRef);
+      for (const transform of binding.transforms) collect(transform.outputTargetRef);
+      for (const rule of binding.fieldMappingSet.rules) collect(rule.targetRef);
+      mappingClaims = [...claimNames].sort((left, right) => left.localeCompare(right));
+      mappingSnapshotHash = binding.mappingSnapshotHash;
+    }
+  } catch (error) {
+    if (readOptionalString(identityMapping?.fieldMappingSetId, 200)) {
+      return {
+        error: jsonError(
+          c,
+          409,
+          'invalid_client_configuration',
+          'OIDC identity mapping cannot be resolved for consent',
+          'AR_FLOW_OIDC_IDENTITY_MAPPING_INVALID'
+        ),
+      };
+    }
+  }
+
+  return {
+    target: {
+      targetType: 'oidc_client',
+      targetId: challengeClientId,
+      clientId: challengeClientId,
+      samlSpId: null,
+    },
+    context: {
+      ...requestContext,
+      client_id: challengeClientId,
+      target_type: 'oidc_client',
+      target_id: challengeClientId,
+      requested_scope: parseTrustedStringList(challenge.metadata?.scope),
+      locale:
+        readOptionalString(challenge.metadata?.ui_locales, 64)?.split(/\s+/u)[0] ??
+        requestContext.locale,
+      oidc_redirect_uri: readOptionalString(challenge.metadata?.redirect_uri, 2048),
+      oidc_resources: parseTrustedStringList(challenge.metadata?.resource),
+      oidc_claims: claims,
+      oidc_identity_mapping: identityMapping,
+      oidc_mapping_claims: mappingClaims,
+      oidc_mapping_snapshot_hash: mappingSnapshotHash,
+      oidc_release_mode: releaseMode,
+      oidc_prompt: prompt.raw,
+      oidc_prompt_values: prompt.values,
+      oidc_authorization_request_source: readOptionalString(
+        challenge.metadata?.authorization_request_source,
+        100
+      ),
+      oidc_authorization_request_integrity_protected:
+        challenge.metadata?.authorization_request_integrity_protected === true,
+      oidc_challenge_type: challenge.type,
+    },
+  };
+}
+
+async function resolveTrustedSamlRequestContext(
+  c: AuthContext,
+  tenantId: string,
+  target: ResolvedTarget,
+  requestContext: FlowRequestContext
+): Promise<{ context?: FlowRequestContext; target?: ResolvedTarget; error?: Response }> {
+  if (!requestContext.saml_request_id) return { context: requestContext };
+  const spHint = requestContext.saml_sp_entity_id ?? target.samlSpId;
+  if (requestContext.protocol !== 'saml' || !spHint || !target.samlSpId) {
+    return {
+      error: jsonError(
+        c,
+        403,
+        'saml_request_mismatch',
+        'Stored SAML request does not match the requested Service Provider',
+        'AR_FLOW_SAML_REQUEST_MISMATCH'
+      ),
+    };
+  }
+  try {
+    const storeId = c.env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'idp', spHint)
+    );
+    const store = c.env.SAML_REQUEST_STORE.get(storeId);
+    const response = await store.fetch(
+      `https://saml-request-store/request/${encodeURIComponent(requestContext.saml_request_id)}`
+    );
+    if (!response.ok) throw new Error('missing');
+    const stored = (await response.json()) as SAMLRequestData;
+    const authnRequest = stored.data as SAMLAuthnRequest | undefined;
+    const flowProtocol = stored.context?.loginFlowProtocol;
+    const releaseChallenge = stored.context?.attributeReleaseConsentChallenge;
+    const requestAcs = authnRequest?.assertionConsumerServiceURL;
+    if (
+      stored.used ||
+      stored.expiresAt <= Date.now() ||
+      stored.type !== 'authn_request' ||
+      stored.requestId !== requestContext.saml_request_id ||
+      stored.issuer !== spHint ||
+      !authnRequest ||
+      authnRequest.id !== stored.requestId ||
+      authnRequest.issuer !== stored.issuer ||
+      (stored.acsUrl && requestAcs && stored.acsUrl !== requestAcs) ||
+      (flowProtocol &&
+        (flowProtocol.tenantId !== tenantId ||
+          flowProtocol.requestId !== stored.requestId ||
+          flowProtocol.spEntityId !== stored.issuer ||
+          (flowProtocol.acsUrl && stored.acsUrl && flowProtocol.acsUrl !== stored.acsUrl))) ||
+      (releaseChallenge &&
+        (releaseChallenge.destinationType !== 'saml_sp' ||
+          releaseChallenge.destinationId !== stored.issuer ||
+          !releaseChallenge.attributeSetHash ||
+          Date.now() - releaseChallenge.createdAt > 10 * 60 * 1000))
+    ) {
+      throw new Error('mismatch');
+    }
+    return {
+      target: {
+        targetType: 'saml_sp',
+        targetId: stored.issuer,
+        clientId: null,
+        samlSpId: stored.issuer,
+      },
+      context: {
+        ...requestContext,
+        target_type: 'saml_sp',
+        target_id: stored.issuer,
+        saml_sp_id: stored.issuer,
+        saml_sp_entity_id: stored.issuer,
+        return_to: 'saml_sso',
+        requested_scope: [],
+        saml_acs_url: flowProtocol?.acsUrl ?? stored.acsUrl ?? requestAcs ?? null,
+        saml_requested_attributes: (flowProtocol?.requestedAttributes ?? []).map(
+          (attribute) => ({ ...attribute }) as FlowRuntimeJsonObject
+        ),
+        saml_identity_mapping: flowProtocol?.identityMapping
+          ? ({ ...flowProtocol.identityMapping } as FlowRuntimeJsonObject)
+          : null,
+        saml_release_attributes: (
+          stored.context?.attributeReleaseConsentChallenge?.attributeSummaries ?? []
+        ).map((attribute) => ({ ...attribute }) as FlowRuntimeJsonObject),
+        saml_release_set_hash:
+          stored.context?.attributeReleaseConsentChallenge?.attributeSetHash ?? null,
+        saml_release_mode: stored.context?.attributeReleaseConsentChallenge?.consentMode ?? null,
+      },
+    };
+  } catch {
+    return {
+      error: jsonError(
+        c,
+        400,
+        'invalid_saml_request',
+        'Stored SAML request is invalid, expired, or already used',
+        'AR_FLOW_SAML_REQUEST_INVALID'
+      ),
+    };
+  }
 }
 
 function getRequestContextFromInteraction(interaction: FlowInteractionRow): FlowRequestContext {
@@ -1732,6 +2714,51 @@ function getRequestContextFromInteraction(interaction: FlowInteractionRow): Flow
     return_to: readOptionalString(raw.return_to, 128),
     requested_scope: parseStringList(raw.requested_scope),
     locale: readOptionalString(raw.locale, 64),
+    oidc_redirect_uri: readOptionalString(raw.oidc_redirect_uri, 2048),
+    oidc_resources: parseStringList(raw.oidc_resources),
+    oidc_claims: parseTrustedJsonObject(raw.oidc_claims),
+    oidc_identity_mapping: parseTrustedJsonObject(raw.oidc_identity_mapping),
+    oidc_mapping_claims: parseStringList(raw.oidc_mapping_claims),
+    oidc_mapping_snapshot_hash: readOptionalString(raw.oidc_mapping_snapshot_hash, 200),
+    oidc_release_mode:
+      raw.oidc_release_mode === 'every_time' || raw.oidc_release_mode === 'until_attributes_change'
+        ? raw.oidc_release_mode
+        : 'once',
+    oidc_prompt: readOptionalString(raw.oidc_prompt, 200),
+    oidc_prompt_values: parseStringList(raw.oidc_prompt_values),
+    oidc_authorization_request_source: readOptionalString(
+      raw.oidc_authorization_request_source,
+      100
+    ),
+    oidc_authorization_request_integrity_protected:
+      raw.oidc_authorization_request_integrity_protected === true,
+    oidc_challenge_type:
+      raw.oidc_challenge_type === 'login' ||
+      raw.oidc_challenge_type === 'reauth' ||
+      raw.oidc_challenge_type === 'consent'
+        ? raw.oidc_challenge_type
+        : null,
+    saml_acs_url: readOptionalString(raw.saml_acs_url, 2048),
+    saml_requested_attributes: Array.isArray(raw.saml_requested_attributes)
+      ? raw.saml_requested_attributes.filter(
+          (item): item is FlowRuntimeJsonObject =>
+            Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+        )
+      : [],
+    saml_identity_mapping: parseTrustedJsonObject(raw.saml_identity_mapping),
+    saml_release_attributes: Array.isArray(raw.saml_release_attributes)
+      ? raw.saml_release_attributes.filter(
+          (value): value is FlowRuntimeJsonObject =>
+            Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+        )
+      : [],
+    saml_release_set_hash: readOptionalString(raw.saml_release_set_hash, 200),
+    saml_release_mode:
+      raw.saml_release_mode === 'once' ||
+      raw.saml_release_mode === 'every_time' ||
+      raw.saml_release_mode === 'until_attributes_change'
+        ? raw.saml_release_mode
+        : null,
   };
 }
 
@@ -1861,7 +2888,14 @@ function selectProtocolCompatibleEdge<T extends { target: string }>(
   requestContext: FlowRequestContext | null
 ): T | null {
   if (edges.length === 0) return null;
-  if (edges.length === 1) return edges[0];
+  if (edges.length === 1) {
+    return stepMatchesRequestProtocol(
+      findRuntimeStepBySourceNode(runtime, edges[0].target),
+      requestContext
+    )
+      ? edges[0]
+      : null;
+  }
 
   return (
     edges.find((edge) =>
@@ -1943,6 +2977,16 @@ function withRuntimeConsentPolicyContent(
   };
 }
 
+function runtimeConsentReleaseState(policy: RuntimeConsentPolicyContent | null) {
+  if (!policy?.release_set_hash || !policy.release_mode) return null;
+  return {
+    mode: policy.release_mode,
+    currentSetHash: policy.release_set_hash,
+    existingState: policy.release_current_state ?? null,
+    existingSetHash: policy.release_existing_set_hash ?? null,
+  };
+}
+
 function parseConditionConfig(value: unknown): FlowConditionConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const config = value as FlowConditionConfig;
@@ -2002,6 +3046,12 @@ async function buildConditionEvaluationContext(
     runtime
   );
   return {
+    protocol:
+      requestContext.protocol === 'oidc' ||
+      requestContext.protocol === 'saml' ||
+      requestContext.protocol === 'direct'
+        ? requestContext.protocol
+        : undefined,
     authenticated: Boolean(authenticationMethod),
     client_id: interaction.client_id ?? undefined,
     saml_sp_id: interaction.saml_sp_id ?? undefined,
@@ -2140,8 +3190,15 @@ async function resolveConditionSelectedHandle(input: {
 
 async function resolveSessionCheckSelectedHandle(
   c: AuthContext,
-  tenantId: string
+  tenantId: string,
+  requestContext: FlowRequestContext
 ): Promise<{ selectedHandle: 'continue' | 'authenticate'; userId: string | null }> {
+  if (
+    requestContext.oidc_challenge_type === 'reauth' ||
+    requestContext.oidc_prompt_values.includes('login')
+  ) {
+    return { selectedHandle: 'authenticate', userId: null };
+  }
   const session = await getCurrentSession(c, tenantId);
   return {
     selectedHandle: session?.userId ? 'continue' : 'authenticate',
@@ -2151,6 +3208,84 @@ async function resolveSessionCheckSelectedHandle(
 
 function getStepStateForRuntimeStep(step: FlowRuntimeStep): 'pending' | 'waiting_input' {
   return step.render === false ? 'pending' : 'waiting_input';
+}
+
+function runtimeStepWaitingStateJson(step: FlowRuntimeStep): string | null {
+  const policy = readRuntimeConsentPolicyContent(step);
+  if (!policy) return null;
+  return JSON.stringify({
+    consent_render_snapshot: {
+      policy_id: policy.id,
+      gate_kind: policy.gate_kind,
+      release_set_hash: policy.release_set_hash,
+      release_current_state: policy.release_current_state,
+      release_existing_set_hash: policy.release_existing_set_hash,
+      items: policy.items.map((item) => ({
+        statement_id: item.statement_id,
+        version: item.version,
+        acceptance_status: item.acceptance_status,
+      })),
+    },
+  });
+}
+
+function readConsentRenderSnapshot(value: string | null): {
+  policy_id: string;
+  gate_kind: ConsentGateKind | null;
+  release_set_hash: string | null;
+  release_current_state: 'granted' | 'denied' | 'revoked' | 'expired' | null;
+  release_existing_set_hash: string | null;
+  items: Array<{
+    statement_id: string;
+    version: string;
+    acceptance_status: 'accepted' | 'pending';
+  }>;
+} | null {
+  const state = parseJsonRecord(value);
+  const snapshot = parseJsonRecord(state.consent_render_snapshot);
+  const policyId = readString(snapshot.policy_id, 200);
+  if (!policyId || !Array.isArray(snapshot.items)) return null;
+  const items = snapshot.items.flatMap((value) => {
+    const item = parseJsonRecord(value);
+    const statementId = readString(item.statement_id, 200);
+    const version = readString(item.version, 200);
+    const acceptanceStatus = readString(item.acceptance_status, 32);
+    return statementId &&
+      version &&
+      (acceptanceStatus === 'accepted' || acceptanceStatus === 'pending')
+      ? [
+          {
+            statement_id: statementId,
+            version,
+            acceptance_status: acceptanceStatus as 'accepted' | 'pending',
+          },
+        ]
+      : [];
+  });
+  if (items.length !== snapshot.items.length) return null;
+  const gateKindValue = readString(snapshot.gate_kind, 64);
+  const gateKind =
+    gateKindValue === 'legal_document' ||
+    gateKindValue === 'oidc_authorization' ||
+    gateKindValue === 'saml_attribute_release'
+      ? gateKindValue
+      : null;
+  const releaseCurrentStateValue = readString(snapshot.release_current_state, 32);
+  const releaseCurrentState =
+    releaseCurrentStateValue === 'granted' ||
+    releaseCurrentStateValue === 'denied' ||
+    releaseCurrentStateValue === 'revoked' ||
+    releaseCurrentStateValue === 'expired'
+      ? releaseCurrentStateValue
+      : null;
+  return {
+    policy_id: policyId,
+    gate_kind: gateKind,
+    release_set_hash: readString(snapshot.release_set_hash, 200) ?? null,
+    release_current_state: releaseCurrentState,
+    release_existing_set_hash: readString(snapshot.release_existing_set_hash, 200) ?? null,
+    items,
+  };
 }
 
 function runtimeStepResponse(step: FlowRuntimeStep | null) {
@@ -2207,6 +3342,7 @@ async function resolveAutoAdvanceForStep(input: {
   tenantId: string;
   interaction: FlowInteractionRow;
   runtime: FlowRuntimeContract;
+  requestContext: FlowRequestContext;
   step: FlowRuntimeStep;
 }): Promise<{
   selectedHandle: string | null;
@@ -2225,7 +3361,7 @@ async function resolveAutoAdvanceForStep(input: {
   }
 
   if (input.step.component === 'session_check') {
-    return resolveSessionCheckSelectedHandle(input.c, input.tenantId);
+    return resolveSessionCheckSelectedHandle(input.c, input.tenantId, input.requestContext);
   }
 
   const selectedHandle = autoAdvanceHandleForStep(input.step);
@@ -2246,6 +3382,7 @@ function buildCompletedRuntimeOutput(input: {
   currentStep: FlowRuntimeStep;
   effectiveSelectedHandle: string | null;
   redirectUrl?: string;
+  consentGateReceiptId?: string;
 }): FlowRuntimeJsonObject {
   const completionBlock = readRuntimeCompletionBlock(input.currentStep);
   const output: FlowRuntimeJsonObject = {
@@ -2267,6 +3404,7 @@ function buildCompletedRuntimeOutput(input: {
       requested_scope: input.requestContext.requested_scope,
       selected_handle: input.effectiveSelectedHandle,
       completion_block: completionBlock,
+      consent_gate_receipt_id: input.consentGateReceiptId ?? null,
     },
   };
   if (input.redirectUrl) {
@@ -2334,7 +3472,24 @@ async function resolveCompletedProtocolRedirect(input: {
   runtime: FlowRuntimeContract;
   requestContext: FlowRequestContext;
   resolvedUserId: string | null;
-}): Promise<{ redirectUrl?: string; response?: Response }> {
+}): Promise<{ redirectUrl?: string; consentGateReceiptId?: string; response?: Response }> {
+  if (input.requestContext.protocol === 'saml' && input.requestContext.saml_request_id) {
+    const samlReceipt = await input.db.queryOne<{ id: string }>(
+      `SELECT id FROM consent_gate_decision_receipts
+        WHERE tenant_id = ? AND interaction_id = ? AND gate_kind = 'saml_attribute_release'
+          AND target_type = 'saml_sp' AND target_id = ? AND protocol_request_id = ?
+          AND state = 'ready' AND expires_at > ?
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [
+        input.tenantId,
+        input.interaction.id,
+        input.requestContext.saml_sp_id,
+        input.requestContext.saml_request_id,
+        nowSeconds(),
+      ]
+    );
+    return { consentGateReceiptId: samlReceipt?.id };
+  }
   if (
     input.requestContext.protocol !== 'oidc' ||
     !input.requestContext.authorization_challenge_id
@@ -2348,18 +3503,40 @@ async function resolveCompletedProtocolRedirect(input: {
     return {};
   }
 
+  const oidcReceipt = await input.db.queryOne<{ id: string }>(
+    `SELECT id
+       FROM consent_gate_decision_receipts
+      WHERE tenant_id = ? AND interaction_id = ? AND gate_kind = 'oidc_authorization'
+        AND subject_user_id = ? AND target_type = 'oidc_client' AND target_id = ?
+        AND protocol_request_id = ? AND state = 'ready' AND expires_at > ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [
+      input.tenantId,
+      input.interaction.id,
+      userId,
+      input.requestContext.client_id,
+      input.requestContext.authorization_challenge_id,
+      nowSeconds(),
+    ]
+  );
+
   const continuation = await consumeAuthorizationChallengeContinuation(
     input.c.env,
     input.tenantId,
     input.requestContext.authorization_challenge_id,
     userId,
     getSessionAuthTime(session),
-    getRequestOrigin(input.c)
+    getRequestOrigin(input.c),
+    oidcReceipt?.id
   );
   if ('error' in continuation) {
     return { response: continuation.error };
   }
-  return { redirectUrl: continuation.redirectUrl };
+  return {
+    redirectUrl: continuation.redirectUrl,
+    consentGateReceiptId: oidcReceipt?.id,
+  };
 }
 
 function eventTypeForCompletedStep(step: FlowRuntimeStep): string {
@@ -2682,15 +3859,21 @@ function consentRecordRecipient(input: {
   return { recipientType, recipientId };
 }
 
-async function hasActiveAcceptedConsentRecord(input: {
-  db: DatabaseAdapter;
+async function findActiveAcceptedConsentRecord(input: {
+  db: RuntimeConsentQueryStore;
   tenantId: string;
   interaction: FlowInteractionRow;
   requestContext: FlowRequestContext;
   userId: string;
   policyId: string;
   item: RuntimeConsentPolicyItem;
-}): Promise<boolean> {
+}): Promise<{ id: string; accepted_at: number } | null> {
+  if (input.item.acceptance_status === 'accepted' && input.item.accepted_record_id) {
+    return {
+      id: input.item.accepted_record_id,
+      accepted_at: input.item.accepted_at ?? 0,
+    };
+  }
   const { recipientType, recipientId } = consentRecordRecipient(input);
   const bindingType = normalizeConsentRecordBindingType(
     input.item.binding_type,
@@ -2699,8 +3882,8 @@ async function hasActiveAcceptedConsentRecord(input: {
   const protocol =
     input.requestContext.protocol === 'direct' ? 'custom' : input.requestContext.protocol;
   const now = nowSeconds();
-  const row = await input.db.queryOne<{ id: string }>(
-    `SELECT id
+  return input.db.queryOne<{ id: string; accepted_at: number }>(
+    `SELECT id, created_at AS accepted_at
        FROM consent_records
       WHERE tenant_id = ?
         AND subject_user_id = ?
@@ -2733,39 +3916,279 @@ async function hasActiveAcceptedConsentRecord(input: {
       now,
     ]
   );
-  return Boolean(row);
 }
 
-async function removeAcceptedConsentItems(input: {
-  db: DatabaseAdapter;
+async function annotateRuntimeConsentItems(input: {
+  db: RuntimeConsentQueryStore;
   tenantId: string;
   interaction: FlowInteractionRow;
   requestContext: FlowRequestContext;
   userId: string | null;
   step: FlowRuntimeStep;
 }): Promise<FlowRuntimeStep> {
-  if (input.step.component !== 'consent_policy' || !input.userId) return input.step;
+  if (input.step.component !== 'consent_policy') return input.step;
   const policy = readRuntimeConsentPolicyContent(input.step);
   if (!policy) return input.step;
-  const remainingItems: RuntimeConsentPolicyItem[] = [];
-  for (const item of policy.items) {
-    const alreadyAccepted = await hasActiveAcceptedConsentRecord({
+  if (!input.userId) {
+    const anonymousPolicy =
+      policy.gate_kind === 'oidc_authorization'
+        ? await resolveOidcReleasePolicyContent({
+            db: input.db,
+            tenantId: input.tenantId,
+            requestContext: input.requestContext,
+            policy,
+          })
+        : policy.gate_kind === 'saml_attribute_release'
+          ? await resolveSamlReleasePolicyContent({
+              db: input.db,
+              tenantId: input.tenantId,
+              requestContext: input.requestContext,
+              policy,
+            })
+          : policy;
+    return withRuntimeConsentPolicyContent(input.step, {
+      ...(anonymousPolicy ?? policy),
+      policy_satisfied: false,
+      force_interaction:
+        policy.gate_kind === 'oidc_authorization' &&
+        input.requestContext.oidc_prompt_values.includes('consent'),
+    });
+  }
+  const annotatedItems: RuntimeConsentPolicyItem[] = [];
+  for (const item of policy.items.filter((candidate) => !candidate.release_kind)) {
+    const accepted =
+      policy.gate_kind === 'legal_document'
+        ? await new DocumentAcknowledgmentRepository(input.db).findActive({
+            tenant_id: input.tenantId,
+            subject_user_id: input.userId,
+            consent_kind: normalizeConsentRecordKind(item.category),
+            statement_id: item.statement_id,
+            statement_version: item.version,
+            now: nowSeconds(),
+          })
+        : await findActiveAcceptedConsentRecord({
+            db: input.db,
+            tenantId: input.tenantId,
+            interaction: input.interaction,
+            requestContext: input.requestContext,
+            userId: input.userId,
+            policyId: policy.id,
+            item,
+          });
+    annotatedItems.push({
+      ...item,
+      acceptance_status: accepted ? 'accepted' : 'pending',
+      action_required: !accepted && item.is_required,
+      accepted_at: accepted?.accepted_at ?? null,
+      accepted_record_id:
+        accepted && 'latest_evidence_record_id' in accepted
+          ? accepted.latest_evidence_record_id
+          : (accepted?.id ?? null),
+    });
+  }
+  const policySatisfied = annotatedItems
+    .filter((item) => item.is_required)
+    .every((item) => item.acceptance_status === 'accepted');
+  const annotatedPolicy: RuntimeConsentPolicyContent = {
+    ...policy,
+    items: annotatedItems,
+    policy_satisfied: policySatisfied,
+    force_interaction:
+      policy.gate_kind === 'oidc_authorization' &&
+      input.requestContext.oidc_prompt_values.includes('consent'),
+  };
+  const effectivePolicy =
+    policy.gate_kind === 'oidc_authorization'
+      ? await resolveOidcReleasePolicyContent({
+          db: input.db,
+          tenantId: input.tenantId,
+          requestContext: input.requestContext,
+          policy: annotatedPolicy,
+          userId: input.userId,
+        })
+      : policy.gate_kind === 'saml_attribute_release'
+        ? await resolveSamlReleasePolicyContent({
+            db: input.db,
+            tenantId: input.tenantId,
+            requestContext: input.requestContext,
+            policy: annotatedPolicy,
+            userId: input.userId,
+          })
+        : annotatedPolicy;
+  return withRuntimeConsentPolicyContent(input.step, effectivePolicy ?? annotatedPolicy);
+}
+
+async function preflightPromptNoneConsentGates(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  runtime: FlowRuntimeContract;
+  requestContext: FlowRequestContext;
+  verifiedSubjectUserId?: string;
+}): Promise<{
+  status: 400 | 409;
+  error: string;
+  description: string;
+  errorCode: string;
+} | null> {
+  if (
+    input.requestContext.protocol !== 'oidc' ||
+    !input.requestContext.oidc_prompt_values.includes('none')
+  ) {
+    return null;
+  }
+  const subjectUserId =
+    input.verifiedSubjectUserId ?? (await getCurrentSession(input.c, input.tenantId))?.userId;
+  if (!subjectUserId) {
+    return {
+      status: 400,
+      error: 'login_required',
+      description: 'prompt=none requires an active authenticated session',
+      errorCode: 'AR_FLOW_PROMPT_NONE_LOGIN_REQUIRED',
+    };
+  }
+  for (const step of input.runtime.ui.steps) {
+    if (step.component !== 'consent_policy') continue;
+    const gateKind = readConsentGateKind(parseJsonRecord(step.config));
+    if (!gateKind) continue;
+    if (
+      (gateKind === 'oidc_authorization' || gateKind === 'saml_attribute_release') &&
+      !(await isTenantFlowProtocolConsentGatesEnabled(input.c.env, input.tenantId))
+    ) {
+      continue;
+    }
+    const annotated = await annotateRuntimeConsentItems({
       db: input.db,
       tenantId: input.tenantId,
       interaction: input.interaction,
       requestContext: input.requestContext,
-      userId: input.userId,
-      policyId: policy.id,
-      item,
+      userId: subjectUserId,
+      step,
     });
-    if (!alreadyAccepted) {
-      remainingItems.push(item);
+    const policy = readRuntimeConsentPolicyContent(annotated);
+    const decision = evaluateConsentGate({
+      gateKind,
+      protocol: input.requestContext.protocol,
+      policyResolved: policy !== null,
+      policyRequired: parseJsonRecord(step.config).policy_required === true,
+      oidcPrompt: input.requestContext.oidc_prompt,
+      release: runtimeConsentReleaseState(policy),
+      items: (policy?.items ?? []).map((item) => ({
+        id: item.statement_id,
+        required: item.is_required,
+        acceptanceStatus: item.acceptance_status,
+        actionRequired: item.action_required,
+      })),
+    });
+    if (decision.action === 'protocol_error') {
+      return {
+        status: 400,
+        error: decision.protocolError?.error ?? 'consent_required',
+        description: decision.protocolError?.description ?? 'Consent is required',
+        errorCode: 'AR_FLOW_PROMPT_NONE_CONSENT_REQUIRED',
+      };
+    }
+    if (decision.action === 'deny') {
+      return {
+        status: 409,
+        error: 'consent_policy_unavailable',
+        description: 'A required consent policy cannot be evaluated',
+        errorCode: 'AR_FLOW_CONSENT_POLICY_UNAVAILABLE',
+      };
     }
   }
-  return withRuntimeConsentPolicyContent(input.step, {
-    ...policy,
-    items: remainingItems,
+  return null;
+}
+
+export async function preflightOidcPromptNoneConsentGates(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  clientId: string;
+  subjectUserId: string;
+  requestedScope: string[];
+  resources: string[];
+  claims: FlowRuntimeJsonObject | null;
+  redirectUri: string | null;
+  authorizationRequestSource: string | null;
+  authorizationRequestIntegrityProtected: boolean;
+}): Promise<{
+  error: 'login_required' | 'consent_required' | 'server_error';
+  description: string;
+} | null> {
+  if (!(await isLoginRuntimeFlowEnabled(input.c.env, input.tenantId))) return null;
+  const target: ResolvedTarget = {
+    targetType: 'oidc_client',
+    targetId: input.clientId,
+    clientId: input.clientId,
+    samlSpId: null,
+  };
+  const assignment = await resolveAssignment(input.db, input.tenantId, 'login', target);
+  if (!assignment) return null;
+  const version = await getPublishedVersion(input.db, input.tenantId, assignment);
+  const snapshot = version ? parseRuntimeSnapshot(version.runtime_snapshot_json) : null;
+  if (!version || !snapshot) {
+    return { error: 'server_error', description: 'Published Login Flow is unavailable' };
+  }
+  const requestContext: FlowRequestContext = {
+    ...createUntrustedRequestContext(target, {}),
+    requested_scope: [...new Set(input.requestedScope)],
+    oidc_resources: [...new Set(input.resources)],
+    oidc_redirect_uri: input.redirectUri,
+    oidc_claims: input.claims,
+    oidc_identity_mapping: null,
+    oidc_mapping_claims: [],
+    oidc_mapping_snapshot_hash: null,
+    oidc_release_mode: 'once',
+    oidc_prompt: 'none',
+    oidc_prompt_values: ['none'],
+    oidc_authorization_request_source: input.authorizationRequestSource,
+    oidc_authorization_request_integrity_protected: input.authorizationRequestIntegrityProtected,
+  };
+  const prepared = await prepareRuntimeContract({
+    c: input.c,
+    db: input.db,
+    tenantId: input.tenantId,
+    assignment,
+    version,
+    runtimeSnapshot: snapshot,
+    requestContext,
   });
+  const interaction: FlowInteractionRow = {
+    id: `prompt-none-preflight:${crypto.randomUUID()}`,
+    flow_id: assignment.flow_id,
+    flow_version_id: version.id,
+    user_id: input.subjectUserId,
+    client_id: input.clientId,
+    saml_sp_id: null,
+    state: 'active',
+    current_node_id: null,
+    current_step_id: null,
+    context_json: JSON.stringify(requestContext),
+    contract_hash: prepared.contractHash,
+    signature: '',
+    expires_at: nowSeconds() + 60,
+  };
+  const failure = await preflightPromptNoneConsentGates({
+    c: input.c,
+    db: input.db,
+    tenantId: input.tenantId,
+    interaction,
+    runtime: prepared.contract,
+    requestContext,
+    verifiedSubjectUserId: input.subjectUserId,
+  });
+  if (!failure) return null;
+  return {
+    error:
+      failure.error === 'login_required'
+        ? 'login_required'
+        : failure.error === 'consent_required'
+          ? 'consent_required'
+          : 'server_error',
+    description: failure.description,
+  };
 }
 
 async function resolveNextDisplayStep(input: {
@@ -2817,6 +4240,7 @@ async function resolveNextDisplayStep(input: {
       tenantId: input.tenantId,
       interaction: input.interaction,
       runtime: input.runtime,
+      requestContext: input.requestContext,
       step,
     });
     if (autoAdvance) {
@@ -2877,7 +4301,43 @@ async function resolveNextDisplayStep(input: {
     }
 
     if (step.component === 'consent_policy') {
-      const filteredStep = await removeAcceptedConsentItems({
+      const configuredGateKind = readConsentGateKind(parseJsonRecord(step.config));
+      if (
+        (configuredGateKind === 'oidc_authorization' ||
+          configuredGateKind === 'saml_attribute_release') &&
+        !(await isTenantFlowProtocolConsentGatesEnabled(input.c.env, input.tenantId))
+      ) {
+        autoAdvancedSteps.push({ step, selectedHandle: null, userId });
+        const stepIndex = getRuntimeStepIndex(input.runtime, step);
+        if (stepIndex < 0) {
+          return {
+            step: null,
+            terminalStep: null,
+            errorCode: 'AR_FLOW_RUNTIME_INVALID',
+            userId,
+            autoAdvancedSteps,
+          };
+        }
+        const nextResolution = resolveNextStep(
+          input.runtime,
+          stepIndex,
+          input.editor,
+          null,
+          input.requestContext
+        );
+        if (nextResolution.errorCode) {
+          return {
+            step: null,
+            terminalStep: null,
+            errorCode: nextResolution.errorCode,
+            userId,
+            autoAdvancedSteps,
+          };
+        }
+        step = nextResolution.step;
+        continue;
+      }
+      const annotatedStep = await annotateRuntimeConsentItems({
         db: input.db,
         tenantId: input.tenantId,
         interaction: input.interaction,
@@ -2885,13 +4345,54 @@ async function resolveNextDisplayStep(input: {
         userId,
         step,
       });
-      const policy = readRuntimeConsentPolicyContent(filteredStep);
-      if (!policy || policy.items.length > 0) {
-        return { step: filteredStep, terminalStep: null, userId, autoAdvancedSteps };
+      const policy = readRuntimeConsentPolicyContent(annotatedStep);
+      const gateKind = readConsentGateKind(parseJsonRecord(step.config));
+      if (!policy && !gateKind) {
+        return { step: annotatedStep, terminalStep: null, userId, autoAdvancedSteps };
+      }
+      const decision = gateKind
+        ? evaluateConsentGate({
+            gateKind,
+            protocol: input.requestContext.protocol,
+            policyResolved: policy !== null,
+            policyRequired: parseJsonRecord(step.config).policy_required === true,
+            oidcPrompt: input.requestContext.oidc_prompt,
+            release: runtimeConsentReleaseState(policy),
+            items: (policy?.items ?? []).map((item) => ({
+              id: item.statement_id,
+              required: item.is_required,
+              acceptanceStatus: item.acceptance_status,
+              actionRequired: item.action_required,
+            })),
+          })
+        : null;
+      if (policy && (!decision ? !policy.policy_satisfied : decision.action === 'challenge')) {
+        return { step: annotatedStep, terminalStep: null, userId, autoAdvancedSteps };
+      }
+      if (decision?.action === 'deny' || decision?.action === 'protocol_error') {
+        if (decision.action === 'protocol_error') {
+          getLogger(input.c).module('LOGIN-RUNTIME-FLOW').warn('Consent Gate protocol error', {
+            action: 'consent_gate_metric',
+            metric: 'protocol_error',
+            gate_kind: configuredGateKind,
+            reason_codes: decision.reasonCodes,
+            flow_version_id: input.interaction.flow_version_id,
+          });
+        }
+        return {
+          step: null,
+          terminalStep: null,
+          errorCode:
+            decision.action === 'protocol_error'
+              ? 'AR_FLOW_CONSENT_PROTOCOL_ERROR'
+              : 'AR_FLOW_CONSENT_POLICY_UNAVAILABLE',
+          userId,
+          autoAdvancedSteps,
+        };
       }
 
       autoAdvancedSteps.push({
-        step,
+        step: annotatedStep,
         selectedHandle: null,
         userId,
       });
@@ -2985,7 +4486,7 @@ async function persistInitialAutoAdvancedSteps(input: {
       `INSERT INTO flow_interaction_steps (
         id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
       [
         generateId(),
         input.tenantId,
@@ -2993,6 +4494,7 @@ async function persistInitialAutoAdvancedSteps(input: {
         input.nextStep.source_node_id,
         input.nextStep.id,
         getStepStateForRuntimeStep(input.nextStep),
+        runtimeStepWaitingStateJson(input.nextStep),
         input.now,
         input.now,
       ]
@@ -3043,7 +4545,7 @@ function createInitialAutoAdvanceAuditEvents(input: {
 }
 
 async function insertFlowConsentRecords(input: {
-  db: DatabaseAdapter;
+  db: RuntimeConsentQueryStore;
   tenantId: string;
   interaction: FlowInteractionRow;
   step: FlowRuntimeStep;
@@ -3051,10 +4553,12 @@ async function insertFlowConsentRecords(input: {
   requestContext: FlowRequestContext;
   userId: string;
   decisions: Record<string, RuntimeConsentItemDecision>;
+  consentGateReceiptId?: string;
   ipHash?: string;
   userAgent?: string;
-}): Promise<void> {
+}): Promise<string[]> {
   const now = nowSeconds();
+  const evidenceRecordIds: string[] = [];
   const { recipientType, recipientId } = consentRecordRecipient(input);
   const releasedScopes =
     input.requestContext.protocol === 'oidc' && input.requestContext.requested_scope.length > 0
@@ -3068,6 +4572,7 @@ async function insertFlowConsentRecords(input: {
     };
     const bindingType = normalizeConsentRecordBindingType(item.binding_type, input.requestContext);
     const resourceType = consentRecordResourceType(item, input.requestContext);
+    const evidenceRecordId = generateId();
     await input.db.execute(
       `INSERT INTO consent_records (
         id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
@@ -3078,7 +4583,7 @@ async function insertFlowConsentRecords(input: {
         revoked_at, evidence_json, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        generateId(),
+        evidenceRecordId,
         input.tenantId,
         input.userId,
         input.userId,
@@ -3110,6 +4615,7 @@ async function insertFlowConsentRecords(input: {
         null,
         JSON.stringify({
           source: 'flow_runtime',
+          consent_gate_receipt_id: input.consentGateReceiptId,
           interaction_id: input.interaction.id,
           step_id: input.step.id,
           node_id: input.step.source_node_id,
@@ -3131,7 +4637,1228 @@ async function insertFlowConsentRecords(input: {
         now,
       ]
     );
+    evidenceRecordIds.push(evidenceRecordId);
   }
+  return evidenceRecordIds;
+}
+
+type LegalConsentPersistenceFailure =
+  | 'render_snapshot_missing'
+  | 'consent_state_changed'
+  | 'consent_required'
+  | 'step_not_active';
+
+async function persistLegalConsentGate(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  stepState: FlowInteractionStepRow;
+  step: FlowRuntimeStep;
+  policy: RuntimeConsentPolicyContent;
+  requestContext: FlowRequestContext;
+  userId: string;
+  decisions: Record<string, RuntimeConsentItemDecision>;
+  ipHash?: string;
+  userAgent?: string;
+}): Promise<{ ok: true } | { ok: false; reason: LegalConsentPersistenceFailure }> {
+  const rendered = readConsentRenderSnapshot(input.stepState.state_json);
+  if (!rendered || rendered.gate_kind !== 'legal_document') {
+    return { ok: false, reason: 'render_snapshot_missing' };
+  }
+  const currentInteraction = await input.db.queryOne<FlowInteractionRow>(
+    `SELECT id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state,
+              current_node_id, current_step_id, context_json, contract_hash, signature, expires_at
+         FROM flow_interactions
+        WHERE tenant_id = ? AND id = ?
+        LIMIT 1`,
+    [input.tenantId, input.interaction.id]
+  );
+  const now = nowSeconds();
+  if (
+    !currentInteraction ||
+    currentInteraction.state !== 'active' ||
+    currentInteraction.current_node_id !== input.step.source_node_id ||
+    currentInteraction.current_step_id !== input.step.id ||
+    currentInteraction.expires_at <= now
+  ) {
+    return { ok: false, reason: 'step_not_active' };
+  }
+
+  const currentPolicy = await resolveRuntimeConsentPolicyContent(
+    input.db,
+    input.tenantId,
+    input.policy.id,
+    input.requestContext,
+    'legal_document'
+  );
+  if (!currentPolicy || rendered.policy_id !== currentPolicy.id) {
+    return { ok: false, reason: 'consent_state_changed' };
+  }
+  const annotatedStep = await annotateRuntimeConsentItems({
+    db: input.db,
+    tenantId: input.tenantId,
+    interaction: currentInteraction,
+    requestContext: input.requestContext,
+    userId: input.userId,
+    step: withRuntimeConsentPolicyContent(input.step, currentPolicy),
+  });
+  const annotatedPolicy = readRuntimeConsentPolicyContent(annotatedStep);
+  if (!annotatedPolicy || !consentSnapshotMatchesPolicy(rendered, annotatedPolicy)) {
+    return { ok: false, reason: 'consent_state_changed' };
+  }
+
+  const pendingItems = annotatedPolicy.items.filter((item) => item.acceptance_status === 'pending');
+  const missingRequired = pendingItems.filter(
+    (item) => !consentItemInputSatisfied(item, input.decisions[item.statement_id])
+  );
+  if (missingRequired.length > 0) {
+    return { ok: false, reason: 'consent_required' };
+  }
+
+  const acceptedPendingItems = pendingItems.filter(
+    (item) => input.decisions[item.statement_id]?.decision !== 'rejected'
+  );
+  const statementVersionSetHash = await sha256Base64Url(
+    JSON.stringify(
+      annotatedPolicy.items
+        .map((item) => `${item.statement_id}:${item.version}`)
+        .sort((left, right) => left.localeCompare(right))
+    )
+  );
+  const receiptDecision = evaluateConsentGate({
+    gateKind: 'legal_document',
+    protocol: input.requestContext.protocol,
+    policyResolved: true,
+    policyRequired: true,
+    items: annotatedPolicy.items.map((item) => ({
+      id: item.statement_id,
+      required: item.is_required,
+      acceptanceStatus:
+        item.acceptance_status === 'accepted' ||
+        acceptedPendingItems.some((accepted) => accepted.statement_id === item.statement_id)
+          ? 'accepted'
+          : 'pending',
+      actionRequired: false,
+    })),
+  });
+  const writeResult = await writeLegalConsentGateBatch({
+    ...input,
+    interaction: currentInteraction,
+    policy: annotatedPolicy,
+    rendered,
+    acceptedPendingItems,
+    statementVersionSetHash,
+    receiptDecision,
+    now,
+  });
+  if (writeResult.claimed) return { ok: true };
+  const existing = await new ConsentGateDecisionReceiptRepository(
+    input.db
+  ).findLatestForInteractionGate({
+    tenant_id: input.tenantId,
+    interaction_id: input.interaction.id,
+    flow_node_id: input.step.source_node_id,
+    gate_kind: 'legal_document',
+  });
+  return existing?.state === 'ready'
+    ? { ok: true }
+    : { ok: false, reason: 'consent_state_changed' };
+}
+
+async function writeLegalConsentGateBatch(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  stepState: FlowInteractionStepRow;
+  step: FlowRuntimeStep;
+  policy: RuntimeConsentPolicyContent;
+  rendered: NonNullable<ReturnType<typeof readConsentRenderSnapshot>>;
+  requestContext: FlowRequestContext;
+  userId: string;
+  decisions: Record<string, RuntimeConsentItemDecision>;
+  acceptedPendingItems: RuntimeConsentPolicyItem[];
+  statementVersionSetHash: string;
+  receiptDecision: ReturnType<typeof evaluateConsentGate>;
+  ipHash?: string;
+  userAgent?: string;
+  now: number;
+}): Promise<{ claimed: boolean }> {
+  const claimToken = `legal-consent:${crypto.randomUUID()}`;
+  const claimStateJson = JSON.stringify({ processing_claim: claimToken });
+  const validationClauses = [
+    `EXISTS (
+       SELECT 1 FROM flow_interactions fi
+        WHERE fi.tenant_id = ? AND fi.id = ? AND fi.state = 'active'
+          AND fi.current_node_id = ? AND fi.current_step_id = ? AND fi.expires_at > ?
+     )`,
+    `EXISTS (
+       SELECT 1 FROM consent_policies cp
+        WHERE cp.tenant_id = ? AND cp.id = ? AND cp.is_active = 1
+     )`,
+  ];
+  const validationParams: unknown[] = [
+    input.tenantId,
+    input.interaction.id,
+    input.step.source_node_id,
+    input.step.id,
+    input.now,
+    input.tenantId,
+    input.policy.id,
+  ];
+  for (const item of input.rendered.items) {
+    validationClauses.push(
+      `EXISTS (
+         SELECT 1
+           FROM consent_policy_items cpi
+           JOIN consent_statement_versions csv
+             ON csv.tenant_id = cpi.tenant_id AND csv.statement_id = cpi.statement_id
+          WHERE cpi.tenant_id = ? AND cpi.policy_id = ? AND cpi.statement_id = ?
+            AND csv.status = 'active' AND csv.version = ?
+            AND (
+              (cpi.version_mode = 'fixed' AND csv.id = cpi.version_id) OR
+              (cpi.version_mode <> 'fixed' AND csv.is_current = 1)
+            )
+       )`
+    );
+    validationParams.push(input.tenantId, input.policy.id, item.statement_id, item.version);
+    const activeAcknowledgment = `SELECT 1 FROM document_acknowledgments_current dac
+      WHERE dac.tenant_id = ? AND dac.subject_user_id = ? AND dac.consent_kind = ?
+        AND dac.statement_id = ? AND dac.statement_version = ? AND dac.status = 'accepted'
+        AND (dac.expires_at IS NULL OR dac.expires_at > ?)`;
+    validationClauses.push(
+      item.acceptance_status === 'accepted'
+        ? `EXISTS (${activeAcknowledgment})`
+        : `NOT EXISTS (${activeAcknowledgment})`
+    );
+    const policyItem = input.policy.items.find(
+      (candidate) => candidate.statement_id === item.statement_id
+    );
+    validationParams.push(
+      input.tenantId,
+      input.userId,
+      normalizeConsentRecordKind(policyItem?.category ?? 'custom'),
+      item.statement_id,
+      item.version,
+      input.now
+    );
+  }
+  if (input.rendered.items.length > 0) {
+    validationClauses.push(
+      `NOT EXISTS (
+         SELECT 1
+           FROM consent_policy_items cpi
+           JOIN consent_statements cs
+             ON cs.tenant_id = cpi.tenant_id AND cs.id = cpi.statement_id
+          WHERE cpi.tenant_id = ? AND cpi.policy_id = ? AND cs.is_active = 1
+            AND cpi.requirement <> 'hidden'
+            AND (cpi.binding_type IS NULL OR cpi.binding_value IS NULL OR cpi.binding_type <> 'scope')
+            AND cpi.statement_id NOT IN (${input.rendered.items.map(() => '?').join(', ')})
+       )`
+    );
+    validationParams.push(
+      input.tenantId,
+      input.policy.id,
+      ...input.rendered.items.map((item) => item.statement_id)
+    );
+  }
+  appendLegalPolicyBindingValidation(input, validationClauses, validationParams);
+
+  const receiptId = `cgr_${crypto.randomUUID().replace(/-/gu, '')}`;
+  const evidenceRecordIds = input.acceptedPendingItems.map(() => generateId());
+  const receiptAbsentSql = `NOT EXISTS (
+    SELECT 1 FROM consent_gate_decision_receipts cgr
+     WHERE cgr.tenant_id = ? AND cgr.interaction_id = ?
+       AND cgr.flow_node_id = ? AND cgr.gate_kind = 'legal_document'
+  )`;
+  const receiptAbsentParams = [input.tenantId, input.interaction.id, input.step.source_node_id];
+  const claimExistsSql = `EXISTS (
+    SELECT 1 FROM flow_interaction_steps fis
+     WHERE fis.tenant_id = ? AND fis.id = ? AND fis.state = 'processing' AND fis.state_json = ?
+  )`;
+  const claimExistsParams = [input.tenantId, input.stepState.id, claimStateJson];
+  const statements: Array<{ sql: string; params: unknown[] }> = [
+    {
+      sql: `UPDATE flow_interaction_steps
+               SET state = 'processing', state_json = ?, updated_at = ?
+             WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input')
+               AND ${receiptAbsentSql}
+               AND ${validationClauses.join('\n               AND ')}`,
+      params: [
+        claimStateJson,
+        input.now,
+        input.tenantId,
+        input.stepState.id,
+        ...receiptAbsentParams,
+        ...validationParams,
+      ],
+    },
+  ];
+  for (let index = 0; index < input.acceptedPendingItems.length; index += 1) {
+    const item = input.acceptedPendingItems[index];
+    const decision = input.decisions[item.statement_id];
+    const { recipientType, recipientId } = consentRecordRecipient(input);
+    const bindingType = normalizeConsentRecordBindingType(item.binding_type, input.requestContext);
+    const selectedOptions = decision.selectedValue
+      ? JSON.stringify([decision.selectedValue])
+      : null;
+    const releasedScopes =
+      input.requestContext.protocol === 'oidc' && input.requestContext.requested_scope.length > 0
+        ? JSON.stringify(input.requestContext.requested_scope)
+        : null;
+    statements.push({
+      sql: `INSERT INTO consent_records (
+        id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+        client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+        resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+        flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+        released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+        revoked_at, evidence_json, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+      params: [
+        evidenceRecordIds[index],
+        input.tenantId,
+        input.userId,
+        input.userId,
+        input.requestContext.protocol === 'direct' ? 'custom' : input.requestContext.protocol,
+        normalizeConsentRecordKind(item.category),
+        input.interaction.client_id,
+        input.interaction.saml_sp_id,
+        recipientType,
+        recipientId,
+        bindingType,
+        item.binding_value,
+        consentRecordResourceType(item, input.requestContext),
+        item.binding_value,
+        item.category,
+        item.statement_id,
+        item.version,
+        input.policy.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        decision.decision,
+        decision.selectedValue,
+        selectedOptions,
+        releasedScopes,
+        null,
+        null,
+        'active',
+        null,
+        null,
+        JSON.stringify({
+          source: 'flow_runtime',
+          consent_gate_receipt_id: receiptId,
+          interaction_id: input.interaction.id,
+          step_id: input.step.id,
+          node_id: input.step.source_node_id,
+          statement_slug: item.slug,
+          statement_version_id: item.version_id,
+          content_mode: item.content_mode,
+          checkbox_mode: item.checkbox_mode,
+          is_required: item.is_required,
+          selected_value: decision.selectedValue,
+          attribute_value_display: item.attribute_value_display,
+          requested_scope: input.requestContext.requested_scope,
+          authorization_challenge_id: input.requestContext.authorization_challenge_id,
+          saml_request_id: input.requestContext.saml_request_id,
+          saml_sp_entity_id: input.requestContext.saml_sp_entity_id,
+          user_agent: input.userAgent,
+          ip_address_hash: input.ipHash,
+        }),
+        input.now,
+        input.now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    });
+    statements.push({
+      sql: `INSERT INTO document_acknowledgments_current (
+        tenant_id, subject_user_id, consent_kind, statement_id, statement_version, status,
+        accepted_at, expires_at, withdrawn_at, latest_evidence_record_id, updated_at
+      ) SELECT ?, ?, ?, ?, ?, 'accepted', ?, NULL, NULL, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}
+      ON CONFLICT (tenant_id, subject_user_id, consent_kind, statement_id, statement_version)
+      DO UPDATE SET status = 'accepted', accepted_at = excluded.accepted_at,
+                    expires_at = excluded.expires_at, withdrawn_at = NULL,
+                    latest_evidence_record_id = excluded.latest_evidence_record_id,
+                    updated_at = excluded.updated_at`,
+      params: [
+        input.tenantId,
+        input.userId,
+        normalizeConsentRecordKind(item.category),
+        item.statement_id,
+        item.version,
+        input.now,
+        evidenceRecordIds[index],
+        input.now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    });
+  }
+  const target = consentRecordRecipient(input);
+  const protocolRequestId =
+    input.requestContext.authorization_challenge_id ??
+    input.requestContext.saml_request_id ??
+    (target.recipientType === 'tenant' ? null : input.interaction.id);
+  statements.push({
+    sql: `INSERT INTO consent_gate_decision_receipts (
+      id, tenant_id, interaction_id, flow_id, flow_version_id, flow_node_id, gate_kind,
+      subject_user_id, target_type, target_id, policy_id, protocol_request_id,
+      statement_version_set_hash, release_set_hash, decision_json, evidence_record_ids_json,
+      state, expires_at, consumed_at, created_at, updated_at
+    ) SELECT ?, ?, ?, ?, ?, ?, 'legal_document', ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'ready', ?,
+             NULL, ?, ?
+      WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+    params: [
+      receiptId,
+      input.tenantId,
+      input.interaction.id,
+      input.interaction.flow_id,
+      input.interaction.flow_version_id,
+      input.step.source_node_id,
+      input.userId,
+      target.recipientType,
+      target.recipientId,
+      input.policy.id,
+      protocolRequestId,
+      input.statementVersionSetHash,
+      JSON.stringify(input.receiptDecision),
+      JSON.stringify(evidenceRecordIds),
+      input.interaction.expires_at,
+      input.now,
+      input.now,
+      ...claimExistsParams,
+      ...receiptAbsentParams,
+    ],
+  });
+  statements.push({
+    sql: `UPDATE flow_interactions
+             SET user_id = COALESCE(user_id, ?), updated_at = ?
+           WHERE tenant_id = ? AND id = ? AND ${claimExistsSql}`,
+    params: [input.userId, input.now, input.tenantId, input.interaction.id, ...claimExistsParams],
+  });
+  const results = await input.db.batch(statements);
+  return { claimed: results[0]?.rowsAffected === 1 };
+}
+
+function appendLegalPolicyBindingValidation(
+  input: {
+    tenantId: string;
+    policy: RuntimeConsentPolicyContent;
+    step: FlowRuntimeStep;
+    requestContext: FlowRequestContext;
+  },
+  clauses: string[],
+  params: unknown[]
+): void {
+  const config = readConsentGateNodeConfig(parseJsonRecord(input.step.config));
+  const resolution =
+    config.policy_resolution ?? (config.consent_policy_ref ? 'fixed' : 'target_binding');
+  if (resolution === 'fixed') return;
+  const targetType =
+    input.requestContext.target_type === 'oidc_client' ||
+    input.requestContext.target_type === 'saml_sp'
+      ? input.requestContext.target_type
+      : 'tenant';
+  const targetId = targetType === 'tenant' ? null : input.requestContext.target_id;
+  const exactExists =
+    targetType === 'tenant'
+      ? '0'
+      : `EXISTS (SELECT 1 FROM consent_gate_policy_bindings b
+           WHERE b.tenant_id = ? AND b.gate_kind = 'legal_document'
+             AND b.target_type = ? AND b.target_id = ? AND b.enabled = 1)`;
+  const exactMatches =
+    targetType === 'tenant'
+      ? '0'
+      : `EXISTS (SELECT 1 FROM consent_gate_policy_bindings b
+           WHERE b.tenant_id = ? AND b.gate_kind = 'legal_document'
+             AND b.target_type = ? AND b.target_id = ? AND b.policy_id = ? AND b.enabled = 1)`;
+  const defaultExists = `EXISTS (SELECT 1 FROM consent_gate_policy_bindings b
+    WHERE b.tenant_id = ? AND b.gate_kind = 'legal_document'
+      AND b.target_type = 'tenant' AND b.target_id IS NULL AND b.enabled = 1)`;
+  const defaultMatches = `EXISTS (SELECT 1 FROM consent_gate_policy_bindings b
+    WHERE b.tenant_id = ? AND b.gate_kind = 'legal_document'
+      AND b.target_type = 'tenant' AND b.target_id IS NULL AND b.policy_id = ? AND b.enabled = 1)`;
+  const fallbackMatches = config.fallback_policy_ref === input.policy.id ? '1' : '0';
+  clauses.push(
+    `((${exactMatches}) OR (NOT (${exactExists}) AND (${defaultMatches})) OR
+      (NOT (${exactExists}) AND NOT (${defaultExists}) AND ${fallbackMatches} = 1))`
+  );
+  if (targetType !== 'tenant') {
+    params.push(input.tenantId, targetType, targetId, input.policy.id);
+    params.push(input.tenantId, targetType, targetId);
+  }
+  params.push(input.tenantId, input.policy.id);
+  if (targetType !== 'tenant') params.push(input.tenantId, targetType, targetId);
+  params.push(input.tenantId);
+}
+
+function consentSnapshotMatchesPolicy(
+  snapshot: NonNullable<ReturnType<typeof readConsentRenderSnapshot>>,
+  policy: RuntimeConsentPolicyContent
+): boolean {
+  if (
+    snapshot.policy_id !== policy.id ||
+    snapshot.gate_kind !== policy.gate_kind ||
+    snapshot.release_set_hash !== policy.release_set_hash ||
+    snapshot.release_current_state !== policy.release_current_state ||
+    snapshot.release_existing_set_hash !== policy.release_existing_set_hash
+  ) {
+    return false;
+  }
+  const expected = snapshot.items
+    .map((item) => `${item.statement_id}:${item.version}:${item.acceptance_status}`)
+    .sort((left, right) => left.localeCompare(right));
+  const actual = policy.items
+    .map((item) => `${item.statement_id}:${item.version}:${item.acceptance_status}`)
+    .sort((left, right) => left.localeCompare(right));
+  return (
+    expected.length === actual.length && expected.every((value, index) => value === actual[index])
+  );
+}
+
+type OidcConsentPersistenceFailure =
+  | 'render_snapshot_missing'
+  | 'consent_state_changed'
+  | 'consent_required'
+  | 'step_not_active';
+type SamlConsentPersistenceFailure = OidcConsentPersistenceFailure;
+
+export async function persistOidcAuthorizationConsentGate(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  stepState: FlowInteractionStepRow;
+  step: FlowRuntimeStep;
+  policy: RuntimeConsentPolicyContent;
+  requestContext: FlowRequestContext;
+  userId: string;
+  decisions: Record<string, RuntimeConsentItemDecision>;
+  ipHash?: string;
+  userAgent?: string;
+}): Promise<{ ok: true } | { ok: false; reason: OidcConsentPersistenceFailure }> {
+  const rendered = readConsentRenderSnapshot(input.stepState.state_json);
+  if (
+    !rendered ||
+    rendered.gate_kind !== 'oidc_authorization' ||
+    input.requestContext.protocol !== 'oidc' ||
+    !input.requestContext.client_id ||
+    !input.requestContext.authorization_challenge_id
+  ) {
+    return { ok: false, reason: 'render_snapshot_missing' };
+  }
+  const now = nowSeconds();
+  const currentInteraction = await input.db.queryOne<FlowInteractionRow>(
+    `SELECT id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state,
+            current_node_id, current_step_id, context_json, contract_hash, signature, expires_at
+       FROM flow_interactions
+      WHERE tenant_id = ? AND id = ?
+      LIMIT 1`,
+    [input.tenantId, input.interaction.id]
+  );
+  if (
+    !currentInteraction ||
+    currentInteraction.state !== 'active' ||
+    currentInteraction.current_node_id !== input.step.source_node_id ||
+    currentInteraction.current_step_id !== input.step.id ||
+    currentInteraction.expires_at <= now
+  ) {
+    return { ok: false, reason: 'step_not_active' };
+  }
+  const configuredPolicy =
+    input.policy.id === OIDC_RELEASE_POLICY_ID
+      ? null
+      : await resolveRuntimeConsentPolicyContent(
+          input.db,
+          input.tenantId,
+          input.policy.id,
+          input.requestContext,
+          'oidc_authorization'
+        );
+  const currentPolicy = await resolveOidcReleasePolicyContent({
+    db: input.db,
+    tenantId: input.tenantId,
+    requestContext: input.requestContext,
+    policy: configuredPolicy,
+    userId: input.userId,
+  });
+  if (!currentPolicy) return { ok: false, reason: 'consent_state_changed' };
+  const annotatedStep = await annotateRuntimeConsentItems({
+    db: input.db,
+    tenantId: input.tenantId,
+    interaction: currentInteraction,
+    requestContext: input.requestContext,
+    userId: input.userId,
+    step: withRuntimeConsentPolicyContent(input.step, currentPolicy),
+  });
+  const annotatedPolicy = readRuntimeConsentPolicyContent(annotatedStep);
+  if (!annotatedPolicy || !consentSnapshotMatchesPolicy(rendered, annotatedPolicy)) {
+    return { ok: false, reason: 'consent_state_changed' };
+  }
+
+  const releaseItems = annotatedPolicy.items.filter(
+    (item) => item.release_kind && item.release_name
+  );
+  const selectedScopes = releaseItems
+    .filter(
+      (item) =>
+        item.release_kind === 'scope' &&
+        (item.release_locked || input.decisions[item.statement_id]?.decision !== 'rejected')
+    )
+    .map((item) => item.release_name!)
+    .sort((left, right) => left.localeCompare(right));
+  const selectedClaims = releaseItems
+    .filter(
+      (item) =>
+        item.release_kind === 'claim' &&
+        (item.release_locked || input.decisions[item.statement_id]?.decision !== 'rejected')
+    )
+    .map((item) => item.release_name!)
+    .sort((left, right) => left.localeCompare(right));
+  const requiredScopes = releaseItems
+    .filter((item) => item.release_kind === 'scope' && item.release_locked)
+    .map((item) => item.release_name!);
+  const requiredClaims = releaseItems
+    .filter((item) => item.release_kind === 'claim' && item.release_locked)
+    .map((item) => item.release_name!);
+  if (
+    requiredScopes.some((scope) => !selectedScopes.includes(scope)) ||
+    requiredClaims.some((claim) => !selectedClaims.includes(claim))
+  ) {
+    return { ok: false, reason: 'consent_required' };
+  }
+  const missingPolicyItem = annotatedPolicy.items
+    .filter((item) => !item.release_kind && item.acceptance_status === 'pending')
+    .find((item) => !consentItemInputSatisfied(item, input.decisions[item.statement_id]));
+  if (missingPolicyItem) return { ok: false, reason: 'consent_required' };
+
+  const requestedScopes = [...new Set(input.requestContext.requested_scope)].sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const requestedClaims = effectiveRequestedOidcClaims(input.requestContext).map(
+    (claim) => claim.name
+  );
+  const selectedSetHash = await sha256Base64Url(
+    JSON.stringify({ scopes: selectedScopes, claims: selectedClaims })
+  );
+  const receiptId = `cgr_${crypto.randomUUID().replace(/-/gu, '')}`;
+  const releaseEvidenceId = generateId();
+  const acceptedPolicyItems = annotatedPolicy.items.filter(
+    (item) =>
+      !item.release_kind &&
+      item.acceptance_status === 'pending' &&
+      input.decisions[item.statement_id]?.decision !== 'rejected'
+  );
+  const policyEvidenceIds = acceptedPolicyItems.map(() => generateId());
+  const consentId = generateId();
+  const grantNow = Date.now();
+  const claimStateJson = JSON.stringify({
+    processing_claim: `oidc-consent:${crypto.randomUUID()}`,
+  });
+  const receiptAbsentSql = `NOT EXISTS (
+    SELECT 1 FROM consent_gate_decision_receipts cgr
+     WHERE cgr.tenant_id = ? AND cgr.interaction_id = ?
+       AND cgr.flow_node_id = ? AND cgr.gate_kind = 'oidc_authorization'
+  )`;
+  const receiptAbsentParams = [input.tenantId, input.interaction.id, input.step.source_node_id];
+  const claimExistsSql = `EXISTS (
+    SELECT 1 FROM flow_interaction_steps fis
+     WHERE fis.tenant_id = ? AND fis.id = ? AND fis.state = 'processing' AND fis.state_json = ?
+  )`;
+  const claimExistsParams = [input.tenantId, input.stepState.id, claimStateJson];
+  const decision = {
+    action: 'skip' as const,
+    gateKind: 'oidc_authorization' as const,
+    reasonCodes: ['consent.gate.release_selected'],
+    forceInteraction: input.requestContext.oidc_prompt_values.includes('consent'),
+    pendingItemIds: [],
+    release: {
+      protocol: 'oidc' as const,
+      requested_scopes: requestedScopes,
+      selected_scopes: selectedScopes,
+      required_scopes: requiredScopes,
+      requested_claims: requestedClaims,
+      selected_claims: selectedClaims,
+      required_claims: requiredClaims,
+    },
+  };
+  const results = await input.db.batch([
+    {
+      sql: `UPDATE flow_interaction_steps
+               SET state = 'processing', state_json = ?, updated_at = ?
+             WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input')
+               AND ${receiptAbsentSql}
+               AND EXISTS (
+                 SELECT 1 FROM flow_interactions fi
+                  WHERE fi.tenant_id = ? AND fi.id = ? AND fi.state = 'active'
+                    AND fi.current_node_id = ? AND fi.current_step_id = ? AND fi.expires_at > ?
+               )`,
+      params: [
+        claimStateJson,
+        now,
+        input.tenantId,
+        input.stepState.id,
+        ...receiptAbsentParams,
+        input.tenantId,
+        input.interaction.id,
+        input.step.source_node_id,
+        input.step.id,
+        now,
+      ],
+    },
+    {
+      sql: `INSERT INTO oauth_client_consents (
+        id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at,
+        tenant_id, selected_scopes, consent_version, release_set_hash, selected_claims
+      ) SELECT ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}
+      ON CONFLICT (tenant_id, user_id, client_id) DO UPDATE SET
+        scope = excluded.scope,
+        selected_scopes = excluded.selected_scopes,
+        granted_at = excluded.granted_at,
+        expires_at = excluded.expires_at,
+        consent_version = COALESCE(oauth_client_consents.consent_version, 0) + 1,
+        release_set_hash = excluded.release_set_hash,
+        selected_claims = excluded.selected_claims,
+        updated_at = excluded.updated_at`,
+      params: [
+        consentId,
+        input.userId,
+        input.requestContext.client_id,
+        selectedScopes.join(' '),
+        grantNow,
+        grantNow,
+        grantNow,
+        input.tenantId,
+        JSON.stringify(selectedScopes),
+        annotatedPolicy.release_set_hash ?? selectedSetHash,
+        JSON.stringify(selectedClaims),
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    },
+    ...acceptedPolicyItems.map((item, index) => {
+      const itemDecision = input.decisions[item.statement_id];
+      const bindingType = normalizeConsentRecordBindingType(
+        item.binding_type,
+        input.requestContext
+      );
+      return {
+        sql: `INSERT INTO consent_records (
+          id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+          client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+          resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+          flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+          released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+          revoked_at, evidence_json, created_at, updated_at
+        ) SELECT ?, ?, ?, ?, 'oidc', ?, ?, NULL, 'oidc_client', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', NULL, NULL, ?, ?, ?
+          WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+        params: [
+          policyEvidenceIds[index],
+          input.tenantId,
+          input.userId,
+          input.userId,
+          normalizeConsentRecordKind(item.category),
+          input.requestContext.client_id,
+          input.requestContext.client_id,
+          bindingType,
+          item.binding_value,
+          consentRecordResourceType(item, input.requestContext),
+          item.binding_value,
+          item.category,
+          item.statement_id,
+          item.version,
+          annotatedPolicy.id === OIDC_RELEASE_POLICY_ID ? null : annotatedPolicy.id,
+          input.interaction.flow_id,
+          input.interaction.flow_version_id,
+          input.step.source_node_id,
+          itemDecision.decision,
+          itemDecision.selectedValue,
+          itemDecision.selectedValue ? JSON.stringify([itemDecision.selectedValue]) : null,
+          JSON.stringify(selectedScopes),
+          JSON.stringify(selectedClaims),
+          JSON.stringify({
+            source: 'flow_runtime',
+            consent_gate_receipt_id: receiptId,
+            interaction_id: input.interaction.id,
+            authorization_challenge_id: input.requestContext.authorization_challenge_id,
+            statement_slug: item.slug,
+            statement_version_id: item.version_id,
+            release_set_hash: selectedSetHash,
+            user_agent: input.userAgent,
+            ip_address_hash: input.ipHash,
+          }),
+          now,
+          now,
+          ...claimExistsParams,
+          ...receiptAbsentParams,
+        ],
+      };
+    }),
+    {
+      sql: `INSERT INTO consent_records (
+        id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+        client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+        resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+        flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+        released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+        revoked_at, evidence_json, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, 'oidc', 'scope_claim_release', ?, NULL, 'oidc_client', ?,
+               'user_decision', ?, 'custom', ?, 'oidc_authorization', ?, ?, ?, ?, ?, ?,
+               'selected', NULL, ?, ?, ?, NULL, 'active', NULL, NULL, ?, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+      params: [
+        releaseEvidenceId,
+        input.tenantId,
+        input.userId,
+        input.userId,
+        input.requestContext.client_id,
+        input.requestContext.client_id,
+        selectedSetHash,
+        input.requestContext.client_id,
+        `oidc-release:${input.requestContext.client_id}`,
+        selectedSetHash,
+        annotatedPolicy.id === OIDC_RELEASE_POLICY_ID ? null : annotatedPolicy.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        JSON.stringify([...selectedScopes, ...selectedClaims]),
+        JSON.stringify(selectedScopes),
+        JSON.stringify(selectedClaims),
+        JSON.stringify({
+          source: 'flow_runtime',
+          consent_gate_receipt_id: receiptId,
+          interaction_id: input.interaction.id,
+          authorization_challenge_id: input.requestContext.authorization_challenge_id,
+          requested_scopes: requestedScopes,
+          requested_claims: requestedClaims,
+          release_set_hash: selectedSetHash,
+          user_agent: input.userAgent,
+          ip_address_hash: input.ipHash,
+        }),
+        now,
+        now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    },
+    {
+      sql: `INSERT INTO consent_gate_decision_receipts (
+        id, tenant_id, interaction_id, flow_id, flow_version_id, flow_node_id, gate_kind,
+        subject_user_id, target_type, target_id, policy_id, protocol_request_id,
+        statement_version_set_hash, release_set_hash, decision_json, evidence_record_ids_json,
+        state, expires_at, consumed_at, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, ?, 'oidc_authorization', ?, 'oidc_client', ?, ?, ?,
+               NULL, ?, ?, ?, 'ready', ?, NULL, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+      params: [
+        receiptId,
+        input.tenantId,
+        input.interaction.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        input.userId,
+        input.requestContext.client_id,
+        annotatedPolicy.id === OIDC_RELEASE_POLICY_ID ? null : annotatedPolicy.id,
+        input.requestContext.authorization_challenge_id,
+        selectedSetHash,
+        JSON.stringify(decision),
+        JSON.stringify([...policyEvidenceIds, releaseEvidenceId]),
+        input.interaction.expires_at,
+        now,
+        now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    },
+    {
+      sql: `UPDATE flow_interactions
+               SET user_id = COALESCE(user_id, ?), updated_at = ?
+             WHERE tenant_id = ? AND id = ? AND ${claimExistsSql}`,
+      params: [input.userId, now, input.tenantId, input.interaction.id, ...claimExistsParams],
+    },
+  ]);
+  if (results[0]?.rowsAffected === 1) return { ok: true };
+  const existingReceipt = await new ConsentGateDecisionReceiptRepository(
+    input.db
+  ).findLatestForInteractionGate({
+    tenant_id: input.tenantId,
+    interaction_id: input.interaction.id,
+    flow_node_id: input.step.source_node_id,
+    gate_kind: 'oidc_authorization',
+  });
+  return existingReceipt?.state === 'ready'
+    ? { ok: true }
+    : { ok: false, reason: 'consent_state_changed' };
+}
+
+export async function persistSamlAttributeReleaseConsentGate(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  stepState: FlowInteractionStepRow;
+  step: FlowRuntimeStep;
+  policy: RuntimeConsentPolicyContent;
+  requestContext: FlowRequestContext;
+  userId: string;
+  decisions: Record<string, RuntimeConsentItemDecision>;
+  ipHash?: string;
+  userAgent?: string;
+}): Promise<{ ok: true } | { ok: false; reason: SamlConsentPersistenceFailure }> {
+  const rendered = readConsentRenderSnapshot(input.stepState.state_json);
+  if (
+    !rendered ||
+    rendered.gate_kind !== 'saml_attribute_release' ||
+    input.requestContext.protocol !== 'saml' ||
+    !input.requestContext.saml_sp_id ||
+    !input.requestContext.saml_request_id ||
+    !input.requestContext.saml_release_set_hash ||
+    !input.requestContext.saml_release_mode
+  ) {
+    return { ok: false, reason: 'render_snapshot_missing' };
+  }
+  const configuredPolicy =
+    input.policy.id === SAML_RELEASE_POLICY_ID
+      ? null
+      : await resolveRuntimeConsentPolicyContent(
+          input.db,
+          input.tenantId,
+          input.policy.id,
+          input.requestContext,
+          'saml_attribute_release'
+        );
+  const resolvedCurrentPolicy = await resolveSamlReleasePolicyContent({
+    db: input.db,
+    tenantId: input.tenantId,
+    requestContext: input.requestContext,
+    policy: configuredPolicy,
+    userId: input.userId,
+  });
+  if (!resolvedCurrentPolicy) return { ok: false, reason: 'consent_state_changed' };
+  const annotatedStep = await annotateRuntimeConsentItems({
+    db: input.db,
+    tenantId: input.tenantId,
+    interaction: input.interaction,
+    requestContext: input.requestContext,
+    userId: input.userId,
+    step: withRuntimeConsentPolicyContent(input.step, resolvedCurrentPolicy),
+  });
+  const currentPolicy = readRuntimeConsentPolicyContent(annotatedStep);
+  if (!currentPolicy || !consentSnapshotMatchesPolicy(rendered, currentPolicy)) {
+    return { ok: false, reason: 'consent_state_changed' };
+  }
+  const releaseItems = currentPolicy.items.filter(
+    (item) => item.release_kind === 'attribute' && item.release_name
+  );
+  const selectedAttributes = releaseItems
+    .filter(
+      (item) => item.release_locked || input.decisions[item.statement_id]?.decision !== 'rejected'
+    )
+    .map((item) => item.release_name!)
+    .sort((left, right) => left.localeCompare(right));
+  const requiredAttributes = releaseItems
+    .filter((item) => item.release_locked)
+    .map((item) => item.release_name!);
+  if (requiredAttributes.some((attribute) => !selectedAttributes.includes(attribute))) {
+    return { ok: false, reason: 'consent_required' };
+  }
+  const missingPolicyItem = currentPolicy.items
+    .filter((item) => !item.release_kind && item.acceptance_status === 'pending')
+    .find((item) => !consentItemInputSatisfied(item, input.decisions[item.statement_id]));
+  if (missingPolicyItem) return { ok: false, reason: 'consent_required' };
+  const requestedAttributes = releaseItems
+    .map((item) => item.release_name!)
+    .sort((left, right) => left.localeCompare(right));
+  const selectedHash = await sha256Base64Url(JSON.stringify(selectedAttributes));
+  const receiptId = `cgr_${crypto.randomUUID().replace(/-/gu, '')}`;
+  const existingReceipt = await new ConsentGateDecisionReceiptRepository(
+    input.db
+  ).findLatestForInteractionGate({
+    tenant_id: input.tenantId,
+    interaction_id: input.interaction.id,
+    flow_node_id: input.step.source_node_id,
+    gate_kind: 'saml_attribute_release',
+  });
+  if (existingReceipt?.state === 'ready') return { ok: true };
+  const now = nowSeconds();
+  const grantNow = Date.now();
+  const releaseEvidenceId = generateId();
+  const acceptedPolicyItems = currentPolicy.items.filter(
+    (item) =>
+      !item.release_kind &&
+      item.acceptance_status === 'pending' &&
+      input.decisions[item.statement_id]?.decision !== 'rejected'
+  );
+  const policyEvidenceIds = acceptedPolicyItems.map(() => generateId());
+  const claimStateJson = JSON.stringify({
+    processing_claim: `saml-consent:${crypto.randomUUID()}`,
+  });
+  const receiptAbsentSql = `NOT EXISTS (
+    SELECT 1 FROM consent_gate_decision_receipts cgr
+     WHERE cgr.tenant_id = ? AND cgr.interaction_id = ?
+       AND cgr.flow_node_id = ? AND cgr.gate_kind = 'saml_attribute_release'
+  )`;
+  const receiptAbsentParams = [input.tenantId, input.interaction.id, input.step.source_node_id];
+  const claimExistsSql = `EXISTS (
+    SELECT 1 FROM flow_interaction_steps fis
+     WHERE fis.tenant_id = ? AND fis.id = ? AND fis.state = 'processing' AND fis.state_json = ?
+  )`;
+  const claimExistsParams = [input.tenantId, input.stepState.id, claimStateJson];
+  const decision = {
+    action: 'skip' as const,
+    gateKind: 'saml_attribute_release' as const,
+    reasonCodes: ['consent.gate.release_selected'],
+    forceInteraction: false,
+    pendingItemIds: [],
+    release: {
+      protocol: 'saml' as const,
+      requested_attributes: requestedAttributes,
+      selected_attributes: selectedAttributes,
+      required_attributes: requiredAttributes,
+      consent_mode: input.requestContext.saml_release_mode,
+    },
+  };
+  const statements: Array<{ sql: string; params: unknown[] }> = [
+    {
+      sql: `UPDATE flow_interaction_steps
+               SET state = 'processing', state_json = ?, updated_at = ?
+             WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input')
+               AND ${receiptAbsentSql}
+               AND EXISTS (
+                 SELECT 1 FROM flow_interactions fi
+                  WHERE fi.tenant_id = ? AND fi.id = ? AND fi.state = 'active'
+                    AND fi.current_node_id = ? AND fi.current_step_id = ? AND fi.expires_at > ?
+               )`,
+      params: [
+        claimStateJson,
+        now,
+        input.tenantId,
+        input.stepState.id,
+        ...receiptAbsentParams,
+        input.tenantId,
+        input.interaction.id,
+        input.step.source_node_id,
+        input.step.id,
+        now,
+      ],
+    },
+  ];
+  for (let index = 0; index < acceptedPolicyItems.length; index += 1) {
+    const item = acceptedPolicyItems[index];
+    const itemDecision = input.decisions[item.statement_id];
+    const bindingType = normalizeConsentRecordBindingType(item.binding_type, input.requestContext);
+    statements.push({
+      sql: `INSERT INTO consent_records (
+        id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+        client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+        resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+        flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+        released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+        revoked_at, evidence_json, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, 'saml', ?, NULL, ?, 'saml_sp', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'active', NULL, NULL, ?, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+      params: [
+        policyEvidenceIds[index],
+        input.tenantId,
+        input.userId,
+        input.userId,
+        normalizeConsentRecordKind(item.category),
+        input.requestContext.saml_sp_id,
+        input.requestContext.saml_sp_id,
+        bindingType,
+        item.binding_value,
+        consentRecordResourceType(item, input.requestContext),
+        item.binding_value,
+        item.category,
+        item.statement_id,
+        item.version,
+        currentPolicy.id === SAML_RELEASE_POLICY_ID ? null : currentPolicy.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        itemDecision.decision,
+        itemDecision.selectedValue,
+        itemDecision.selectedValue ? JSON.stringify([itemDecision.selectedValue]) : null,
+        JSON.stringify(selectedAttributes),
+        JSON.stringify({
+          source: 'flow_runtime',
+          consent_gate_receipt_id: receiptId,
+          interaction_id: input.interaction.id,
+          saml_request_id: input.requestContext.saml_request_id,
+          statement_slug: item.slug,
+          statement_version_id: item.version_id,
+          release_set_hash: selectedHash,
+          user_agent: input.userAgent,
+          ip_address_hash: input.ipHash,
+        }),
+        now,
+        now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    });
+  }
+  statements.push(
+    {
+      sql: `INSERT INTO consent_records (
+        id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+        client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+        resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+        flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+        released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+        revoked_at, evidence_json, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, 'saml', 'attribute_release', NULL, ?, 'saml_sp', ?,
+               'user_decision', ?, 'saml_attributes', ?, 'saml_attribute_release', ?, ?, ?,
+               ?, ?, ?, 'selected', NULL, ?, NULL, NULL, ?, 'active', NULL, NULL, ?, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+      params: [
+        releaseEvidenceId,
+        input.tenantId,
+        input.userId,
+        input.userId,
+        input.requestContext.saml_sp_id,
+        input.requestContext.saml_sp_id,
+        selectedHash,
+        input.requestContext.saml_sp_id,
+        `saml-release:${input.requestContext.saml_sp_id}`,
+        input.requestContext.saml_release_set_hash,
+        currentPolicy.id === SAML_RELEASE_POLICY_ID ? null : currentPolicy.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        JSON.stringify(selectedAttributes),
+        JSON.stringify(selectedAttributes),
+        JSON.stringify({
+          source: 'flow_runtime',
+          consent_gate_receipt_id: receiptId,
+          interaction_id: input.interaction.id,
+          saml_request_id: input.requestContext.saml_request_id,
+          requested_attributes: requestedAttributes,
+          selected_attributes: selectedAttributes,
+          source_attribute_set_hash: input.requestContext.saml_release_set_hash,
+          selected_release_set_hash: selectedHash,
+          user_agent: input.userAgent,
+          ip_address_hash: input.ipHash,
+        }),
+        now,
+        now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    },
+    {
+      sql: `INSERT INTO attribute_release_consents (
+        id, tenant_id, subject_id, account_id, destination_type, destination_id,
+        attribute_set_hash, consent_mode, consent_state, consent_record_id,
+        first_granted_at, last_confirmed_at, expires_at, revoked_at, created_at, updated_at
+      ) SELECT ?, ?, ?, NULL, 'saml_sp', ?, ?, ?, 'granted', ?, ?, ?, NULL, NULL, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}
+      ON CONFLICT (tenant_id, subject_id, destination_type, destination_id, attribute_set_hash)
+      DO UPDATE SET consent_mode = excluded.consent_mode, consent_state = 'granted',
+                    consent_record_id = excluded.consent_record_id,
+                    last_confirmed_at = excluded.last_confirmed_at, expires_at = NULL,
+                    revoked_at = NULL, updated_at = excluded.updated_at`,
+      params: [
+        generateId(),
+        input.tenantId,
+        input.userId,
+        input.requestContext.saml_sp_id,
+        input.requestContext.saml_release_set_hash,
+        input.requestContext.saml_release_mode,
+        releaseEvidenceId,
+        grantNow,
+        grantNow,
+        grantNow,
+        grantNow,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    },
+    {
+      sql: `INSERT INTO consent_gate_decision_receipts (
+        id, tenant_id, interaction_id, flow_id, flow_version_id, flow_node_id, gate_kind,
+        subject_user_id, target_type, target_id, policy_id, protocol_request_id,
+        statement_version_set_hash, release_set_hash, decision_json, evidence_record_ids_json,
+        state, expires_at, consumed_at, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, ?, 'saml_attribute_release', ?, 'saml_sp', ?, ?, ?,
+               NULL, ?, ?, ?, 'ready', ?, NULL, ?, ?
+        WHERE ${claimExistsSql} AND ${receiptAbsentSql}`,
+      params: [
+        receiptId,
+        input.tenantId,
+        input.interaction.id,
+        input.interaction.flow_id,
+        input.interaction.flow_version_id,
+        input.step.source_node_id,
+        input.userId,
+        input.requestContext.saml_sp_id,
+        currentPolicy.id === SAML_RELEASE_POLICY_ID ? null : currentPolicy.id,
+        input.requestContext.saml_request_id,
+        selectedHash,
+        JSON.stringify(decision),
+        JSON.stringify([...policyEvidenceIds, releaseEvidenceId]),
+        input.interaction.expires_at,
+        now,
+        now,
+        ...claimExistsParams,
+        ...receiptAbsentParams,
+      ],
+    },
+    {
+      sql: `UPDATE flow_interactions
+               SET user_id = COALESCE(user_id, ?), updated_at = ?
+             WHERE tenant_id = ? AND id = ? AND ${claimExistsSql}`,
+      params: [input.userId, now, input.tenantId, input.interaction.id, ...claimExistsParams],
+    }
+  );
+  try {
+    const results = await input.db.batch(statements);
+    if (results[0]?.rowsAffected === 1) return { ok: true };
+  } catch {
+    // A concurrent writer may have committed the same gate receipt first.
+  }
+  const concurrentReceipt = await new ConsentGateDecisionReceiptRepository(
+    input.db
+  ).findLatestForInteractionGate({
+    tenant_id: input.tenantId,
+    interaction_id: input.interaction.id,
+    flow_node_id: input.step.source_node_id,
+    gate_kind: 'saml_attribute_release',
+  });
+  return concurrentReceipt?.state === 'ready'
+    ? { ok: true }
+    : { ok: false, reason: 'consent_state_changed' };
+}
+
+export function evaluateConsentGateShadowComparison(
+  gateKind: 'oidc_authorization' | 'saml_attribute_release',
+  policy: RuntimeConsentPolicyContent
+): { legacyWouldChallenge: boolean; reasonCode: string } {
+  if (gateKind === 'oidc_authorization') {
+    if (policy.force_interaction) {
+      return { legacyWouldChallenge: true, reasonCode: 'prompt_forced' };
+    }
+    if (policy.release_current_state !== 'granted') {
+      return { legacyWouldChallenge: true, reasonCode: 'current_grant_missing' };
+    }
+    return { legacyWouldChallenge: false, reasonCode: 'current_grant_reusable' };
+  }
+  if (policy.release_mode === 'every_time') {
+    return { legacyWouldChallenge: true, reasonCode: 'every_time' };
+  }
+  if (policy.release_current_state !== 'granted') {
+    return { legacyWouldChallenge: true, reasonCode: 'current_grant_missing' };
+  }
+  if (policy.release_existing_set_hash !== policy.release_set_hash) {
+    return { legacyWouldChallenge: true, reasonCode: 'release_set_changed' };
+  }
+  return { legacyWouldChallenge: false, reasonCode: 'current_grant_reusable' };
 }
 
 async function persistRuntimeConsentStep(input: {
@@ -3139,12 +5866,54 @@ async function persistRuntimeConsentStep(input: {
   db: DatabaseAdapter;
   tenantId: string;
   interaction: FlowInteractionRow;
+  stepState: FlowInteractionStepRow;
   step: FlowRuntimeStep;
   submitInput: unknown;
 }): Promise<{ ok: boolean; response?: Response; userId?: string | null }> {
   const requestContext = getRequestContextFromInteraction(input.interaction);
   const config = parseJsonRecord(input.step.config);
-  const policyId = readString(config.consent_policy_ref, 200);
+  const renderedPolicy = readRuntimeConsentPolicyContent(input.step);
+  const gateKind = readConsentGateKind(config);
+  if (
+    (gateKind === 'oidc_authorization' || gateKind === 'saml_attribute_release') &&
+    !(await isTenantFlowProtocolConsentGatesEnabled(input.c.env, input.tenantId))
+  ) {
+    return {
+      ok: false,
+      response: runtimeError(
+        input.c,
+        409,
+        'consent_gate_disabled',
+        'Protocol Consent Gates were disabled while this interaction was active',
+        'AR_FLOW_PROTOCOL_CONSENT_GATE_DISABLED',
+        'restart_required',
+        'restart_interaction',
+        input.interaction.id
+      ),
+    };
+  }
+  if (
+    renderedPolicy &&
+    (gateKind === 'oidc_authorization' || gateKind === 'saml_attribute_release') &&
+    (await isTenantFlowProtocolConsentShadowEnabled(input.c.env, input.tenantId))
+  ) {
+    const { legacyWouldChallenge, reasonCode } = evaluateConsentGateShadowComparison(
+      gateKind,
+      renderedPolicy
+    );
+    getLogger(input.c)
+      .module('LOGIN-RUNTIME-FLOW')
+      .info('Consent Gate shadow comparison', {
+        action: 'consent_gate_shadow',
+        metric: legacyWouldChallenge ? 'shadow_match' : 'shadow_mismatch',
+        gate_kind: gateKind,
+        flow_action: 'challenge',
+        legacy_action: legacyWouldChallenge ? 'challenge' : 'skip',
+        reason_code: reasonCode,
+        flow_version_id: input.interaction.flow_version_id,
+      });
+  }
+  const policyId = renderedPolicy?.id ?? readString(config.consent_policy_ref, 200);
   if (!policyId) {
     if (input.step.component !== 'consent_policy') return { ok: true };
     return {
@@ -3162,12 +5931,34 @@ async function persistRuntimeConsentStep(input: {
     };
   }
 
-  const policy = await resolveRuntimeConsentPolicyContent(
-    input.db,
-    input.tenantId,
-    policyId,
-    requestContext
-  );
+  const resolvedPolicy =
+    policyId === OIDC_RELEASE_POLICY_ID || policyId === SAML_RELEASE_POLICY_ID
+      ? null
+      : await resolveRuntimeConsentPolicyContent(
+          input.db,
+          input.tenantId,
+          policyId,
+          requestContext,
+          gateKind
+        );
+  const policy =
+    gateKind === 'oidc_authorization'
+      ? await resolveOidcReleasePolicyContent({
+          db: input.db,
+          tenantId: input.tenantId,
+          requestContext,
+          policy: resolvedPolicy,
+          userId: await getCurrentSessionUserId(input.c, input.tenantId),
+        })
+      : gateKind === 'saml_attribute_release'
+        ? await resolveSamlReleasePolicyContent({
+            db: input.db,
+            tenantId: input.tenantId,
+            requestContext,
+            policy: resolvedPolicy,
+            userId: await getCurrentSessionUserId(input.c, input.tenantId),
+          })
+        : resolvedPolicy;
   if (!policy) {
     return {
       ok: false,
@@ -3219,6 +6010,150 @@ async function persistRuntimeConsentStep(input: {
       }),
     ])
   ) as Record<string, RuntimeConsentItemDecision>;
+  const ipAddress =
+    getRequestHeader(input.c, 'CF-Connecting-IP') ||
+    getRequestHeader(input.c, 'X-Forwarded-For') ||
+    '';
+  const ipHash = ipAddress
+    ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null)
+    : undefined;
+  if (gateKind === 'legal_document') {
+    const legalResult = await persistLegalConsentGate({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      stepState: input.stepState,
+      step: input.step,
+      policy,
+      requestContext,
+      userId,
+      decisions,
+      ipHash,
+      userAgent: getRequestHeader(input.c, 'User-Agent'),
+    });
+    if (legalResult.ok) return { ok: true, userId };
+    const stateChanged =
+      legalResult.reason === 'render_snapshot_missing' ||
+      legalResult.reason === 'consent_state_changed';
+    return {
+      ok: false,
+      response: runtimeError(
+        input.c,
+        stateChanged ? 409 : legalResult.reason === 'consent_required' ? 400 : 409,
+        stateChanged
+          ? 'consent_state_changed'
+          : legalResult.reason === 'consent_required'
+            ? 'consent_required'
+            : 'step_not_active',
+        stateChanged
+          ? 'Consent policy or acceptance state changed; review the current consent screen'
+          : legalResult.reason === 'consent_required'
+            ? 'Required consent items must be granted'
+            : 'The submitted Flow step is no longer active',
+        stateChanged
+          ? 'AR_FLOW_CONSENT_STATE_CHANGED'
+          : legalResult.reason === 'consent_required'
+            ? 'AR_FLOW_CONSENT_REQUIRED'
+            : 'AR_FLOW_STEP_NOT_ACTIVE',
+        stateChanged ? 'recoverable' : 'recoverable',
+        'retry_step',
+        input.interaction.id
+      ),
+    };
+  }
+  if (gateKind === 'oidc_authorization') {
+    const oidcResult = await persistOidcAuthorizationConsentGate({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      stepState: input.stepState,
+      step: input.step,
+      policy,
+      requestContext,
+      userId,
+      decisions,
+      ipHash,
+      userAgent: getRequestHeader(input.c, 'User-Agent'),
+    });
+    if (oidcResult.ok) {
+      if (requestContext.client_id) {
+        await invalidateConsentCache(input.c.env, userId, input.tenantId, requestContext.client_id);
+      }
+      return { ok: true, userId };
+    }
+    const stateChanged =
+      oidcResult.reason === 'render_snapshot_missing' ||
+      oidcResult.reason === 'consent_state_changed';
+    return {
+      ok: false,
+      response: runtimeError(
+        input.c,
+        stateChanged ? 409 : oidcResult.reason === 'consent_required' ? 400 : 409,
+        stateChanged
+          ? 'consent_state_changed'
+          : oidcResult.reason === 'consent_required'
+            ? 'consent_required'
+            : 'step_not_active',
+        stateChanged
+          ? 'The requested OIDC release set changed; review the current consent screen'
+          : oidcResult.reason === 'consent_required'
+            ? 'Required scopes or claims must be granted'
+            : 'The submitted Flow step is no longer active',
+        stateChanged
+          ? 'AR_FLOW_CONSENT_STATE_CHANGED'
+          : oidcResult.reason === 'consent_required'
+            ? 'AR_FLOW_CONSENT_REQUIRED'
+            : 'AR_FLOW_STEP_NOT_ACTIVE',
+        'recoverable',
+        'retry_step',
+        input.interaction.id
+      ),
+    };
+  }
+  if (gateKind === 'saml_attribute_release') {
+    const samlResult = await persistSamlAttributeReleaseConsentGate({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      stepState: input.stepState,
+      step: input.step,
+      policy,
+      requestContext,
+      userId,
+      decisions,
+      ipHash,
+      userAgent: getRequestHeader(input.c, 'User-Agent'),
+    });
+    if (samlResult.ok) return { ok: true, userId };
+    const stateChanged =
+      samlResult.reason === 'render_snapshot_missing' ||
+      samlResult.reason === 'consent_state_changed';
+    return {
+      ok: false,
+      response: runtimeError(
+        input.c,
+        stateChanged ? 409 : samlResult.reason === 'consent_required' ? 400 : 409,
+        stateChanged
+          ? 'consent_state_changed'
+          : samlResult.reason === 'consent_required'
+            ? 'consent_required'
+            : 'step_not_active',
+        stateChanged
+          ? 'The SAML attribute release set changed; review the current consent screen'
+          : samlResult.reason === 'consent_required'
+            ? 'Required SAML attributes must be granted'
+            : 'The submitted Flow step is no longer active',
+        stateChanged
+          ? 'AR_FLOW_CONSENT_STATE_CHANGED'
+          : samlResult.reason === 'consent_required'
+            ? 'AR_FLOW_CONSENT_REQUIRED'
+            : 'AR_FLOW_STEP_NOT_ACTIVE',
+        'recoverable',
+        'retry_step',
+        input.interaction.id
+      ),
+    };
+  }
   const missingRequired = policy.items.filter(
     (item) => !consentItemInputSatisfied(item, decisions[item.statement_id])
   );
@@ -3238,13 +6173,6 @@ async function persistRuntimeConsentStep(input: {
     };
   }
 
-  const ipAddress =
-    getRequestHeader(input.c, 'CF-Connecting-IP') ||
-    getRequestHeader(input.c, 'X-Forwarded-For') ||
-    '';
-  const ipHash = ipAddress
-    ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null)
-    : undefined;
   await insertFlowConsentRecords({
     db: input.db,
     tenantId: input.tenantId,
@@ -3382,7 +6310,7 @@ async function resumeInteraction(
     target_id: interaction.saml_sp_id ?? interaction.client_id,
     published_version_id: interaction.flow_version_id,
   };
-  const { contract, contractHash } = await prepareRuntimeContract({
+  const prepared = await prepareRuntimeContract({
     c,
     db,
     tenantId,
@@ -3391,6 +6319,54 @@ async function resumeInteraction(
     runtimeSnapshot: runtime,
     requestContext,
   });
+  let contract = prepared.contract;
+  let contractHash = prepared.contractHash;
+  const current = findCurrentStep(contract, interaction);
+  const sessionUserId = await getCurrentSessionUserId(c, tenantId);
+  if (interaction.user_id && sessionUserId && interaction.user_id !== sessionUserId) {
+    return runtimeError(
+      c,
+      403,
+      'interaction_subject_mismatch',
+      'The active session does not match this Flow interaction',
+      'AR_FLOW_SUBJECT_MISMATCH',
+      'security_error',
+      'restart_interaction',
+      interaction.id
+    );
+  }
+  if (current?.step.component === 'consent_policy' && sessionUserId) {
+    const annotated = await annotateRuntimeConsentItems({
+      db,
+      tenantId,
+      interaction,
+      requestContext,
+      userId: sessionUserId,
+      step: current.step,
+    });
+    contract = {
+      ...contract,
+      ui: {
+        ...contract.ui,
+        steps: contract.ui.steps.map((step, index) => (index === current.index ? annotated : step)),
+      },
+    };
+    contractHash = await sha256Base64Url(JSON.stringify(contract));
+    await db.execute(
+      `UPDATE flow_interaction_steps
+          SET state_json = ?, updated_at = ?
+        WHERE tenant_id = ? AND interaction_id = ? AND node_id = ? AND step_id = ?
+          AND state IN ('pending', 'waiting_input')`,
+      [
+        runtimeStepWaitingStateJson(annotated),
+        now,
+        tenantId,
+        interaction.id,
+        annotated.source_node_id,
+        annotated.id,
+      ]
+    );
+  }
   const signature = await signContract({
     interactionId: interaction.id,
     contractHash,
@@ -3458,11 +6434,12 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     return response;
   }
 
-  const target = timeRuntimeStartValue(timing, 'resolve_target', () => resolveTarget(body));
-  if (!target) {
+  const resolvedTarget = timeRuntimeStartValue(timing, 'resolve_target', () => resolveTarget(body));
+  if (!resolvedTarget) {
     writeRuntimeStartTiming(c, timing, { result: 'error', error: 'invalid_target' });
     return jsonError(c, 400, 'invalid_target', 'Flow assignment target is invalid');
   }
+  let target: ResolvedTarget = resolvedTarget;
 
   const flowKind = timeRuntimeStartValue(timing, 'normalize_flow', () =>
     normalizeFlowKind(body.flow_kind)
@@ -3476,21 +6453,43 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       'This flow kind is not executed by the LoginUI runtime'
     );
   }
-  const requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
-    createRequestContext(target, body)
+  let requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
+    createUntrustedRequestContext(target, body)
   );
-  const challengeBindingError = await timeRuntimeStartSpan(timing, 'authorization_challenge', () =>
-    validateRuntimeAuthorizationChallengeBinding(c, tenantId, target, requestContext)
+  const oidcContextResolution = await timeRuntimeStartSpan(timing, 'authorization_challenge', () =>
+    resolveTrustedOidcRequestContext(c, tenantId, target, requestContext)
   );
-  if (challengeBindingError) {
+  if (oidcContextResolution.error || !oidcContextResolution.context) {
     writeRuntimeStartTiming(c, timing, {
       result: 'error',
       flowKind,
       targetType: target.targetType,
       error: 'invalid_authorization_challenge',
     });
-    return challengeBindingError;
+    return (
+      oidcContextResolution.error ??
+      jsonError(c, 400, 'invalid_authorization_challenge', 'Authorization challenge is invalid')
+    );
   }
+  requestContext = oidcContextResolution.context;
+  target = oidcContextResolution.target ?? target;
+  const samlContextResolution = await timeRuntimeStartSpan(timing, 'saml_request', () =>
+    resolveTrustedSamlRequestContext(c, tenantId, target, requestContext)
+  );
+  if (samlContextResolution.error || !samlContextResolution.context) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind,
+      targetType: target.targetType,
+      error: 'invalid_saml_request',
+    });
+    return (
+      samlContextResolution.error ??
+      jsonError(c, 400, 'invalid_saml_request', 'Stored SAML request is invalid')
+    );
+  }
+  requestContext = samlContextResolution.context;
+  target = samlContextResolution.target ?? target;
 
   const assignment = await timeRuntimeStartSpan(timing, 'resolve_assignment', () =>
     resolveAssignment(db, tenantId, flowKind, target)
@@ -3526,7 +6525,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     return jsonError(c, 409, 'flow_version_unavailable', 'Published Flow version is unavailable');
   }
 
-  const { contract: runtime, contractHash } = await timeRuntimeStartSpan(
+  const { contract: runtime, contractHash: preparedContractHash } = await timeRuntimeStartSpan(
     timing,
     'prepare_contract',
     () =>
@@ -3580,7 +6579,9 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const auditEventId = generateId();
   const now = nowSeconds();
   const expiresAt = now + FLOW_RUNTIME_INTERACTION_TTL_SECONDS;
-  const signature = await timeRuntimeStartSpan(timing, 'sign_contract', () =>
+  let responseRuntime = runtime;
+  let contractHash = preparedContractHash;
+  let signature = await timeRuntimeStartSpan(timing, 'sign_contract', () =>
     signContract({
       interactionId,
       contractHash,
@@ -3588,6 +6589,47 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       secret,
     })
   );
+
+  const preflightInteraction: FlowInteractionRow = {
+    id: interactionId,
+    flow_id: assignment.flow_id,
+    flow_version_id: version.id,
+    user_id: null,
+    client_id: target.clientId,
+    saml_sp_id: target.samlSpId,
+    state: 'active',
+    current_node_id: firstStep.source_node_id,
+    current_step_id: firstStep.id,
+    context_json: JSON.stringify(requestContext),
+    contract_hash: contractHash,
+    signature,
+    expires_at: expiresAt,
+  };
+  const promptNonePreflightError = await timeRuntimeStartSpan(timing, 'prompt_none_preflight', () =>
+    preflightPromptNoneConsentGates({
+      c,
+      db,
+      tenantId,
+      interaction: preflightInteraction,
+      runtime,
+      requestContext,
+    })
+  );
+  if (promptNonePreflightError) {
+    writeRuntimeStartTiming(c, timing, {
+      result: 'error',
+      flowKind: assignment.flow_kind,
+      targetType: assignment.target_type,
+      error: 'prompt_none_interaction_required',
+    });
+    return jsonError(
+      c,
+      promptNonePreflightError.status,
+      promptNonePreflightError.error,
+      promptNonePreflightError.description,
+      promptNonePreflightError.errorCode
+    );
+  }
 
   await timeRuntimeStartSpan(timing, 'initial_tx', () =>
     db.transaction(async (tx) => {
@@ -3633,21 +6675,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     })
   );
 
-  const startedInteraction: FlowInteractionRow = {
-    id: interactionId,
-    flow_id: assignment.flow_id,
-    flow_version_id: version.id,
-    user_id: null,
-    client_id: target.clientId,
-    saml_sp_id: target.samlSpId,
-    state: 'active',
-    current_node_id: firstStep.source_node_id,
-    current_step_id: firstStep.id,
-    context_json: JSON.stringify(requestContext),
-    contract_hash: contractHash,
-    signature,
-    expires_at: expiresAt,
-  };
+  const startedInteraction: FlowInteractionRow = preflightInteraction;
   const startAuditFallback = scheduleRuntimeAuditEvents(
     c,
     db,
@@ -3750,6 +6778,35 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       'Published Flow runtime has no displayable initial step'
     );
   }
+  const currentStepIndex = getRuntimeStepIndex(runtime, initialCurrentStep);
+  if (currentStepIndex >= 0) {
+    const candidateRuntime = {
+      ...runtime,
+      ui: {
+        ...runtime.ui,
+        steps: runtime.ui.steps.map((step, index) =>
+          index === currentStepIndex ? initialCurrentStep : step
+        ),
+      },
+    };
+    const candidateHash = await sha256Base64Url(JSON.stringify(candidateRuntime));
+    if (candidateHash !== contractHash) {
+      responseRuntime = candidateRuntime;
+      contractHash = candidateHash;
+      signature = await signContract({
+        interactionId,
+        contractHash,
+        expiresAt,
+        secret,
+      });
+      await db.execute(
+        `UPDATE flow_interactions
+            SET contract_hash = ?, signature = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [contractHash, signature, now, tenantId, interactionId]
+      );
+    }
+  }
   if (initialDisplayResolution.autoAdvancedSteps.length > 0) {
     await timeRuntimeStartSpan(timing, 'persist_auto_advance', () =>
       persistInitialAutoAdvancedSteps({
@@ -3780,6 +6837,16 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
         timing,
         'audit_auto_advance_fallback',
         () => autoAdvanceAuditFallback
+      );
+    }
+  } else {
+    const waitingStateJson = runtimeStepWaitingStateJson(initialCurrentStep);
+    if (waitingStateJson) {
+      await db.execute(
+        `UPDATE flow_interaction_steps
+            SET state_json = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input')`,
+        [waitingStateJson, now, tenantId, stepRowId]
       );
     }
   }
@@ -3816,7 +6883,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       target_id: assignment.target_id,
       flow_kind: assignment.flow_kind,
     },
-    contract: runtime,
+    contract: responseRuntime,
     contract_hash: contractHash,
     signature,
     expires_in: FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
@@ -4327,6 +7394,26 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
+  if (!stepMatchesRequestProtocol(current.step, requestContext)) {
+    await insertAuditEvent(db, tenantId, interaction, {
+      eventType: 'flow.interaction.failed',
+      result: 'protocol_mismatch',
+      errorCode: 'AR_FLOW_STEP_PROTOCOL_MISMATCH',
+      nodeId: current.step.source_node_id,
+      userId: interaction.user_id,
+    });
+    return runtimeError(
+      c,
+      409,
+      'invalid_protocol_step',
+      'Active Flow step does not match the trusted protocol request',
+      'AR_FLOW_STEP_PROTOCOL_MISMATCH',
+      'security_error',
+      'restart_interaction',
+      interactionId
+    );
+  }
+
   let branchResolution: {
     selectedHandle: string | null;
     userId?: string | null;
@@ -4342,7 +7429,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       step: current.step,
     });
   } else if (current.step.component === 'session_check') {
-    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId);
+    branchResolution = await resolveSessionCheckSelectedHandle(c, tenantId, requestContext);
   } else {
     branchResolution = { selectedHandle };
   }
@@ -4443,6 +7530,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     db,
     tenantId,
     interaction,
+    stepState,
     step: current.step,
     submitInput: body.input,
   });
@@ -4554,6 +7642,28 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   const terminalStep = visibleStepResolution.terminalStep;
   const outputStep = terminalStep ?? current.step;
   const completed = nextStep === null;
+
+  if (completed && !stepMatchesRequestProtocol(outputStep, requestContext)) {
+    await insertAuditEvent(db, tenantId, interaction, {
+      eventType: 'flow.interaction.failed',
+      result: 'protocol_mismatch',
+      errorCode: 'AR_FLOW_COMPLETION_PROTOCOL_MISMATCH',
+      nodeId: outputStep.source_node_id,
+      branchHandleId: effectiveSelectedHandle,
+      userId: resolvedUserId,
+    });
+    return runtimeError(
+      c,
+      409,
+      'invalid_protocol_completion',
+      'Flow completion does not match the trusted protocol request',
+      'AR_FLOW_COMPLETION_PROTOCOL_MISMATCH',
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+
   const nextState = completed ? 'completed' : 'active';
   const completedAt = completed ? now : null;
 
@@ -4581,7 +7691,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
         `INSERT INTO flow_interaction_steps (
           id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
         [
           nextStepRowId,
           tenantId,
@@ -4589,6 +7699,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           nextStep.source_node_id,
           nextStep.id,
           getStepStateForRuntimeStep(nextStep),
+          runtimeStepWaitingStateJson(nextStep),
           now,
           now,
         ]
@@ -4688,6 +7799,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           currentStep: outputStep,
           effectiveSelectedHandle,
           redirectUrl: completedProtocolRedirect.redirectUrl,
+          consentGateReceiptId: completedProtocolRedirect.consentGateReceiptId,
         })
       : null,
   });

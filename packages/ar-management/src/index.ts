@@ -134,6 +134,14 @@ import {
   adminSignInConfirmationPoliciesListHandler,
   adminSignInConfirmationPolicyUpsertHandler,
 } from './admin-consent-policies';
+import {
+  adminConsentGateBindingCreateHandler,
+  adminConsentGateBindingDeleteHandler,
+  adminConsentGateBindingGetHandler,
+  adminConsentGateBindingPreviewHandler,
+  adminConsentGateBindingsListHandler,
+  adminConsentGateBindingUpdateHandler,
+} from './admin-consent-gate-bindings';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
   serveAvatarHandler,
@@ -710,7 +718,7 @@ import {
   getAccountReauthStatusHandler,
 } from './account-page';
 import { getAccountCapabilitiesHandler } from './account-capabilities';
-import { listAccountConsentsHandler } from './account-consents';
+import { listAccountConsentsHandler, withdrawAccountConsentHandler } from './account-consents';
 import { listAccountOperationsHandler } from './account-operations';
 import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
 import {
@@ -951,6 +959,8 @@ app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
 app.use('/api/account/reauth/email-code/send', notificationPluginContextMiddleware);
 app.use('/api/admin/tenants/:id/invitations', notificationPluginContextMiddleware);
 app.use('/api/admin/tenants/:id/invitations/*', notificationPluginContextMiddleware);
+app.use('/api/admin/admin-invitations', notificationPluginContextMiddleware);
+app.use('/api/admin/admin-invitations/*', notificationPluginContextMiddleware);
 app.use('/api/admin/approvals', notificationPluginContextMiddleware);
 app.use('/api/admin/approvals/*', notificationPluginContextMiddleware);
 app.use('/api/approval-artifacts/*', notificationPluginContextMiddleware);
@@ -1269,6 +1279,7 @@ app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandle
 app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/totp/complete', completeAccountTotpReauthHandler);
 app.get('/api/account/consents', listAccountConsentsHandler);
+app.delete('/api/account/consents/:kind/:id', withdrawAccountConsentHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
@@ -1808,7 +1819,7 @@ app.route('/api/admin', policyRouter);
 // Admin Management API (Admin/EndUser Separation - DB_ADMIN)
 // =============================================================================
 // Routes:
-// - GET/POST /api/admin/admins - Admin user list/create
+// - GET /api/admin/admins - Admin user list (POST requires the invitation API)
 // - GET/PATCH/DELETE /api/admin/admins/:id - Admin user CRUD
 // - POST /api/admin/admins/:id/suspend|activate|unlock
 // - POST/DELETE /api/admin/admins/:id/roles - Role assignment
@@ -3383,6 +3394,10 @@ app.use('/api/admin/consent-policies/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
+app.use('/api/admin/consent-gate-policy-bindings/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
 app.use('/api/admin/client-trust-policies/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
@@ -3429,6 +3444,12 @@ app.get('/api/admin/consent-policies/:id', adminConsentPolicyGetHandler);
 app.put('/api/admin/consent-policies/:id', adminConsentPolicyUpdateHandler);
 app.delete('/api/admin/consent-policies/:id', adminConsentPolicyDeleteHandler);
 app.put('/api/admin/consent-policies/:id/items', adminConsentPolicyItemsReplaceHandler);
+app.get('/api/admin/consent-gate-policy-bindings', adminConsentGateBindingsListHandler);
+app.post('/api/admin/consent-gate-policy-bindings', adminConsentGateBindingCreateHandler);
+app.post('/api/admin/consent-gate-policy-bindings/preview', adminConsentGateBindingPreviewHandler);
+app.get('/api/admin/consent-gate-policy-bindings/:id', adminConsentGateBindingGetHandler);
+app.put('/api/admin/consent-gate-policy-bindings/:id', adminConsentGateBindingUpdateHandler);
+app.delete('/api/admin/consent-gate-policy-bindings/:id', adminConsentGateBindingDeleteHandler);
 app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
 app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
 app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);

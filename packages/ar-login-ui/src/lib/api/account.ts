@@ -101,6 +101,7 @@ export type AccountOperation = {
 
 export type AccountOAuthClientConsent = {
 	kind: 'oauth_client';
+	recordType: 'release_grant';
 	id: string;
 	clientId: string;
 	clientName?: string;
@@ -118,6 +119,7 @@ export type AccountOAuthClientConsent = {
 
 export type AccountStatementConsent = {
 	kind: 'statement';
+	recordType: 'document_acceptance' | 'release_grant';
 	id: string;
 	statementId: string;
 	versionId: string;
@@ -134,6 +136,17 @@ export type AccountStatementConsent = {
 	receiptId?: string;
 	updatedAt: number;
 	selectedValue?: string;
+	consentKind?: string;
+	protocol?: string;
+	gateKind?: 'legal_document' | 'oidc_authorization' | 'saml_attribute_release';
+	targetType?: string;
+	targetId?: string;
+	flowId?: string;
+	flowVersionId?: string;
+	flowNodeId?: string;
+	releasedScopes?: string[];
+	releasedClaims?: string[];
+	releasedAttributes?: string[];
 };
 
 export type AccountConsent = AccountOAuthClientConsent | AccountStatementConsent;
@@ -409,5 +422,13 @@ export const accountAPI = {
 		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),
 
 	getConsents: () =>
-		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents')
+		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents'),
+
+	withdrawConsent: (kind: 'document_acceptance' | 'release_grant' | 'oauth_client', id: string) =>
+		accountFetch<{
+			ok: boolean;
+			consent: { id: string; kind: string; status: 'withdrawn' };
+		}>(`/api/account/consents/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, {
+			method: 'DELETE'
+		})
 };

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type {
 		FlowRuntimeConsentPolicyContent,
 		FlowRuntimeConsentPolicyOption
@@ -8,6 +8,8 @@
 	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
 	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
+	import { formatRuntimeConsentAcceptedLabel } from '$lib/consent/runtime-consent-state';
+	import { isValidLinkUrl } from '$lib/utils/url-validation';
 
 	type RuntimeField = {
 		field: string;
@@ -496,6 +498,10 @@
 		return sanitizeRuntimeConsentHtml(body);
 	}
 
+	function consentAcceptedLabel(acceptedAt: number | null | undefined): string {
+		return formatRuntimeConsentAcceptedLabel(acceptedAt, getLocale());
+	}
+
 	function authButtonDisabled(method: AuthMethod): boolean {
 		return disabled || !consentReady || !authMethodAvailable(method);
 	}
@@ -635,7 +641,27 @@
 				<div class="runtime-consent-items">
 					{#each consentPolicy.items as item (item.statement_id)}
 						<div class="runtime-consent-item">
-							{#if item.content_mode === 'radio' && item.options?.length}
+							{#if item.acceptance_status === 'accepted'}
+								<label class="runtime-consent-choice runtime-consent-choice--accepted">
+									<input
+										type="checkbox"
+										checked
+										disabled
+										aria-describedby={`runtime-screen-consent-accepted-${item.statement_id}`}
+									/>
+									<SanitizedHtml
+										class="runtime-consent-content"
+										sanitizedHtml={consentItemHtml(item)}
+									/>
+								</label>
+								<p
+									id={`runtime-screen-consent-accepted-${item.statement_id}`}
+									class="runtime-consent-accepted"
+									role="status"
+								>
+									{consentAcceptedLabel(item.accepted_at)}
+								</p>
+							{:else if item.content_mode === 'radio' && item.options?.length}
 								<fieldset class="runtime-consent-options">
 									<legend class="sr-only">{item.title}</legend>
 									{#each item.options as option (option.id)}
@@ -669,7 +695,7 @@
 										type="checkbox"
 										checked={consentDecisions[item.statement_id] === true}
 										required={item.is_required || item.checkbox_mode === 'required'}
-										{disabled}
+										disabled={disabled || item.release_locked === true}
 										onchange={(event) =>
 											onConsentDecisionChange?.(
 												item.statement_id,
@@ -682,7 +708,14 @@
 									/>
 								</label>
 							{/if}
-							{#if item.document_url}
+							{#if item.attribute_value_display !== 'names' && item.attribute_display_values?.length}
+								<ul class="runtime-consent-attribute-values" aria-label={`${item.title} values`}>
+									{#each item.attribute_display_values as value, valueIndex (valueIndex)}
+										<li>{value}</li>
+									{/each}
+								</ul>
+							{/if}
+							{#if item.document_url && isValidLinkUrl(item.document_url)}
 								<a
 									class="runtime-consent-link"
 									href={item.document_url}
@@ -1252,6 +1285,25 @@
 	.runtime-consent-choice input {
 		margin-top: 0.1875rem;
 		flex: 0 0 auto;
+	}
+
+	.runtime-consent-choice--accepted {
+		opacity: 0.82;
+	}
+
+	.runtime-consent-accepted {
+		margin: 0 0 0 1.625rem;
+		color: var(--text-secondary);
+		font-size: 0.8rem;
+		font-weight: 600;
+	}
+
+	.runtime-consent-attribute-values {
+		margin: 0 0 0 1.625rem;
+		padding-left: 1rem;
+		color: var(--text-secondary);
+		font-size: 0.82rem;
+		line-height: 1.45;
 	}
 
 	.runtime-consent-content {

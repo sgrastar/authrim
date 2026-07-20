@@ -18,6 +18,8 @@ const log = createLogger().module('FEATURE_FLAGS');
 /** In-memory cache for feature flags to reduce KV reads */
 const flagCache = new Map<string, { value: boolean; expiresAt: number }>();
 
+const tenantFlagCache = new Map<string, { value: boolean; expiresAt: number }>();
+
 /** Default cache TTL: 3 minutes (matches CONFIG_CACHE_TTL default) */
 const DEFAULT_CACHE_TTL_MS = 180 * 1000;
 
@@ -104,6 +106,93 @@ export async function isMockAuthEnabled(env: Env): Promise<boolean> {
  */
 export function clearFeatureFlagCache(): void {
   flagCache.clear();
+  tenantFlagCache.clear();
+}
+
+function parseBooleanFlag(value: unknown): boolean | null {
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  return null;
+}
+
+/** Resolve a tenant setting before falling back to the deployment feature flag. */
+export async function getTenantFeatureFlag(input: {
+  env: Env;
+  tenantId: string;
+  settingKeys: string[];
+  environmentFlag: string;
+  defaultValue?: boolean;
+}): Promise<boolean> {
+  const environment = input.env.ENVIRONMENT ?? input.env.NODE_ENV ?? 'default';
+  const cacheKey = `${environment}:${input.tenantId}:${input.environmentFlag}`;
+  const cached = tenantFlagCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const ttlSeconds = Number.parseInt(input.env.CONFIG_CACHE_TTL || '180', 10);
+  const ttlMs = (Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 180) * 1000;
+  const cache = (value: boolean): boolean => {
+    tenantFlagCache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
+    return value;
+  };
+
+  if (input.env.AUTHRIM_CONFIG) {
+    try {
+      const settingsJson = await input.env.AUTHRIM_CONFIG.get(
+        `settings:tenant:${input.tenantId}:feature-flags`
+      );
+      const settings: unknown = settingsJson ? JSON.parse(settingsJson) : null;
+      if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
+        for (const key of input.settingKeys) {
+          const value = parseBooleanFlag((settings as Record<string, unknown>)[key]);
+          if (value !== null) return cache(value);
+        }
+      }
+    } catch {
+      // Fall through to the deployment flag so a malformed tenant record does not break login.
+    }
+  }
+
+  return cache(await getFeatureFlag(input.environmentFlag, input.env, input.defaultValue ?? false));
+}
+
+export function isTenantLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {
+  return getTenantFeatureFlag({
+    env,
+    tenantId,
+    settingKeys: [
+      'feature.enable_login_runtime_flow',
+      'feature.login_runtime_flow.enabled',
+      'feature.flow_runtime.enabled',
+    ],
+    environmentFlag: 'ENABLE_LOGIN_RUNTIME_FLOW',
+    defaultValue: false,
+  });
+}
+
+export function isTenantFlowProtocolConsentGatesEnabled(
+  env: Env,
+  tenantId: string
+): Promise<boolean> {
+  return getTenantFeatureFlag({
+    env,
+    tenantId,
+    settingKeys: ['feature.flow_protocol_consent_gates.enabled', 'feature.consent_gate.enabled'],
+    environmentFlag: 'ENABLE_FLOW_PROTOCOL_CONSENT_GATES',
+    defaultValue: false,
+  });
+}
+
+export function isTenantFlowProtocolConsentShadowEnabled(
+  env: Env,
+  tenantId: string
+): Promise<boolean> {
+  return getTenantFeatureFlag({
+    env,
+    tenantId,
+    settingKeys: ['feature.flow_protocol_consent_shadow.enabled'],
+    environmentFlag: 'ENABLE_FLOW_PROTOCOL_CONSENT_SHADOW',
+    defaultValue: false,
+  });
 }
 
 /**

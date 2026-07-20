@@ -772,9 +772,10 @@ describe('OIDCRPClient', () => {
         userinfoEndpoint: 'https://accounts.google.com/userinfo',
         userinfoSignedResponseAlg: 'RS256',
       });
-      const userInfo = await client.fetchUserInfo('access-token');
+      const { userInfo, signedResponse } = await client.fetchUserInfoWithMeta('access-token');
 
       expect(userInfo).toMatchObject({ sub: 'signed-user', email: 'signed@example.com' });
+      expect(signedResponse).toBe(true);
       expect(mockJwtVerify).toHaveBeenCalledWith('signed.userinfo.jwt', expect.any(Function), {
         issuer: mockConfig.issuer,
         audience: mockConfig.clientId,
@@ -1996,11 +1997,22 @@ describe('OIDCRPClient', () => {
           mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
 
           const client = new OIDCRPClient(mockConfig);
-          const userInfo = await client.validateIdToken('mock-id-token', 'test-nonce');
+          const logTokenValidation = vi.fn();
+          const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' }, {
+            logger: { logTokenValidation },
+            flowId: 'flow-rotation',
+            diagnosticSessionId: 'suite-rotation',
+          } as never);
 
           expect(userInfo.sub).toBe('user-123');
           expect(mockFetch).toHaveBeenCalledTimes(2); // JWKS fetched twice
           expect(mockJwtVerify).toHaveBeenCalledTimes(2); // Verification attempted twice
+          expect(logTokenValidation).toHaveBeenCalledWith(
+            expect.objectContaining({
+              result: 'pass',
+              details: expect.objectContaining({ jwks_refreshed: true }),
+            })
+          );
         });
 
         it('should retry with fresh JWKS on key not found error', async () => {

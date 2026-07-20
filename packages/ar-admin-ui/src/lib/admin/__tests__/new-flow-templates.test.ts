@@ -85,11 +85,10 @@ describe('new flow templates', () => {
 				flow_id: 'preview:default-login',
 				flow_kind: 'login',
 				runtime_bindings: {
-					authentication_method_profile: 'default',
-					consent_policy_ref: 'Login and authorization consent policy'
+					authentication_method_profile: 'default'
 				},
 				protocol_context: {
-					protocol: 'oidc'
+					protocol: 'custom:shared'
 				}
 			},
 			preview: {
@@ -97,7 +96,7 @@ describe('new flow templates', () => {
 				flow: {
 					id: 'default-login',
 					kind: 'login',
-					protocol: 'oidc'
+					protocol: 'custom:shared'
 				}
 			}
 		});
@@ -106,8 +105,15 @@ describe('new flow templates', () => {
 			'session_check',
 			'authentication_method_selector',
 			'consent_policy',
+			'condition',
+			'completion',
+			'consent_policy',
+			'completion',
+			'consent_policy',
 			'completion'
 		]);
+		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_policy_ref');
+		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_statement_ref');
 		expect(
 			contract.runtime.ui.steps.find((step) => step.source_node_id === 'authentication')?.config
 				.outputs
@@ -119,6 +125,34 @@ describe('new flow templates', () => {
 		).toBe(true);
 		expect(contract.runtime.capabilities).toHaveLength(2);
 		expect(contract.editor.nodes.map((node) => node.id)).toContain('authentication');
+		expect(contract.editor.nodes.find((node) => node.id === 'legal-consent')?.config).toMatchObject(
+			{
+				consent_gate_kind: 'legal_document',
+				policy_resolution: 'target_binding',
+				policy_required: false
+			}
+		);
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'protocol-condition')?.config
+		).toMatchObject({
+			conditions: {
+				rows: [
+					{ condition: { type: 'protocol', value: 'direct' }, output_handle: 'direct' },
+					{ condition: { type: 'protocol', value: 'oidc' }, output_handle: 'oidc' },
+					{ condition: { type: 'protocol', value: 'saml' }, output_handle: 'saml' }
+				]
+			}
+		});
+		expect(
+			contract.editor.nodes.find((node) => node.id === 'direct-complete')?.config
+		).toMatchObject({
+			completion_block: {
+				id: 'direct-login-completion',
+				protocol: 'direct',
+				purpose: 'login',
+				role: 'output'
+			}
+		});
 		expect(
 			contract.editor.nodes.find((node) => node.id === 'oidc-authorization-consent')?.config
 		).toMatchObject({

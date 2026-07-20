@@ -31,17 +31,6 @@ Production hardening is tracked against documented deployment, operations, recov
 
 Authrim is still under active development, and breaking changes, including database schema changes, are expected until at least 0.5.0 and possibly until 1.0.0.
 
-### Security Hardening Status
-
-Recent internal security review work has remediated several pre-1.0 findings across
-selected management API authorization paths, CIBA client authentication, admin setup-token recovery,
-Admin WebAuthn origin/RP ID validation, OTP HMAC secret handling, VCI holder binding,
-device-flow token issuance, and SCIM filter handling. These fixes include negative
-regression coverage in the affected packages.
-
-Security validation remains active. The main remaining authorization hardening task is
-a declarative, fail-closed Admin API permission table with CI coverage for undeclared
-routes. Low/Info hardening items and an external audit/penetration test are still pending.
 
 ### For Organizations Considering Adoption
 
@@ -201,13 +190,14 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | Area | Status |
 | ----- | ------ |
 | Core OIDC/OAuth implementation | Implemented |
-| FAPI profiles | Implemented; certification target |
-| CIBA | Implemented; certification target |
+| FAPI profiles | Implemented; official Final OP/RP Suite plans completed without functional failures; formal certification publication planned |
+| CIBA | Implemented; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures |
 | SAML 2.0 IdP/SP | Active; implementation substantially complete with local entity metadata, signing rollover, and Admin UI operations |
 | SCIM 2.0 | Implemented |
 | RBAC / ABAC / ReBAC policy engine | Implemented |
 | Identity Hub and external IdP integration | Implemented |
 | Passkey / email auth / local auth | Implemented; production flow hardening in progress |
+| VC/DID | Partial; OpenID4VCI/OpenID4VP endpoint baselines exist, but official Final and HAIP conformance gaps remain |
 | JavaScript SDKs | Implemented |
 | Setup tooling | Implemented; production deployment docs in progress |
 | UI consolidation | Active; Admin/Login/setup flows are being polished against the current Workers deployment model |
@@ -259,15 +249,15 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 | --- | --- | --- | --- |
 | OpenID Provider | Complete | Ready | Certified OpenID Provider and Logout profiles |
 | OAuth/OIDC advanced profiles | Complete | In progress | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange |
-| FAPI profiles | Complete | In progress | FAPI 2.0 policy controls and certification profiles; formal certification is planned |
+| FAPI profiles | Complete | In progress | FAPI 2.0 Final DPoP, Client Credentials, Message Signing, and RP Suite plans completed without functional failures; formal certification publication is planned |
 | SAML 2.0 IdP/SP | Hardening active | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, interactive login redirect policy, signing certificate subject/rollover, encryption options, SSO/SLO correlation, and DR planning |
 | SCIM 2.0 | Complete | In progress | User provisioning |
 | Authentication | Complete | In progress | Passkey, email code, social login, Direct Auth, device flow, CIBA |
-| CIBA | Complete | In progress | Backchannel authentication, approval, polling, and request storage paths |
+| CIBA | Complete | In progress | Backchannel authentication, approval, polling, and request storage paths; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures |
 | Native SSO | Complete | In progress | `device_secret`, `ds_hash`, and DPoP-bound token exchange support |
 | Authorization | Complete | In progress | RBAC, ABAC, ReBAC, token embedding, real-time check API |
 | Identity Hub | Complete | In progress | External IdP integration, account linking, identity stitching |
-| VC/DID | Complete | Experimental | OpenID4VP, OpenID4VCI, did:web, did:key |
+| VC/DID | Partial | Experimental | OpenID4VCI/OpenID4VP endpoint baselines and did:web/did:key support exist; official Final and HAIP Suite plans currently have known failures |
 | SDKs | Complete | In progress | Core, web, server, and SvelteKit packages |
 | Admin/Login UI | Basic complete | In progress | Admin UI includes SAML entity info, database connections, storage destinations, logging controls, and tenant discovery settings; Login UI supports configured provider logos/icons |
 | Runtime storage profiles | Basic complete | In progress | Runtime profiles, setup-managed D1/R2 inventory, tenant D1 assignment visibility, and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased |
@@ -310,7 +300,7 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — _Identity & Access at the edge of everywhere_
 >
-> **Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Production hardening in progress
+> **Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Production hardening and OpenID4VC Final/HAIP interoperability work in progress
 >
 > _A self-hosted Identity & Access Platform for modern applications._
 >

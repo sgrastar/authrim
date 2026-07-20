@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   discover: vi.fn(),
   provider: vi.fn(),
   decrypt: vi.fn(),
+  logAuthDecision: vi.fn(),
+  diagnosticCleanup: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
@@ -19,16 +21,21 @@ vi.mock('@authrim/ar-lib-core', () => ({
   createAuthContextFromHono: () => ({
     repositories: { client: { findByClientId: mocks.findByClientId } },
   }),
-  createDiagnosticLoggerFromContext: vi.fn(async () => null),
+  createDiagnosticLoggerFromContext: vi.fn(async () => ({
+    logAuthDecision: mocks.logAuthDecision,
+    cleanup: mocks.diagnosticCleanup,
+  })),
+  DIAGNOSTIC_FLOW_ID_HEADER: 'X-Authrim-Diagnostic-Flow-Id',
   getChallengeStoreByChallengeId: () => ({
     storeChallengeRpc: mocks.storeChallengeRpc,
     consumeChallengeRpc: mocks.consumeChallengeRpc,
   }),
-  getDiagnosticSessionId: () => undefined,
+  getDiagnosticSessionId: () => 'suite-module-1',
   getSessionStoreBySessionId: () => ({
     stub: { getSessionRpc: mocks.getSessionRpc, fetch: mocks.sessionFetch },
   }),
   getTenantIdFromContext: () => 'tenant-1',
+  getLogger: () => ({ module: () => ({ warn: vi.fn() }) }),
   isShardedSessionId: () => true,
   resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({ execute: mocks.execute })),
 }));
@@ -88,6 +95,8 @@ describe('RP-initiated upstream logout', () => {
     mocks.sessionFetch.mockResolvedValue(new Response(null, { status: 204 }));
     mocks.execute.mockResolvedValue(undefined);
     mocks.storeChallengeRpc.mockResolvedValue(undefined);
+    mocks.logAuthDecision.mockResolvedValue(undefined);
+    mocks.diagnosticCleanup.mockResolvedValue(undefined);
   });
 
   it('terminates the local session and redirects to the discovered end_session_endpoint', async () => {
@@ -107,6 +116,23 @@ describe('RP-initiated upstream logout', () => {
     expect(location.searchParams.get('state')).toBeTruthy();
     expect(mocks.sessionFetch).toHaveBeenCalledWith(expect.objectContaining({ method: 'DELETE' }));
     expect(response.headers.get('set-cookie')).toContain('authrim_upstream_logout=');
+    expect(mocks.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ diagnostic_session_id: 'suite-module-1' }),
+      })
+    );
+    expect(mocks.logAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'allow',
+        reason: 'rp_initiated_logout_redirect',
+        context: expect.objectContaining({
+          id_token_hint_present: true,
+          state_present: true,
+          post_logout_redirect_uri_registered: true,
+        }),
+      })
+    );
+    expect(JSON.stringify(mocks.logAuthDecision.mock.calls)).not.toContain('upstream.id.token');
   });
 
   it('rejects an unregistered post-logout target without terminating the session', async () => {
@@ -119,6 +145,13 @@ describe('RP-initiated upstream logout', () => {
     expect(response.status).toBe(400);
     expect(mocks.sessionFetch).not.toHaveBeenCalled();
     expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.logAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'deny',
+        reason: 'rp_initiated_logout_rejected',
+        context: { validation_error: 'unregistered_post_logout_redirect_uri' },
+      })
+    );
   });
 
   it('uses the one-time browser cookie when the OP omits or changes state', async () => {
@@ -128,6 +161,8 @@ describe('RP-initiated upstream logout', () => {
         target_uri: 'https://rp.example/callback',
         application_state: 'app-state',
         op_state: 'expected-state',
+        diagnostic_session_id: 'original-suite-module',
+        diagnostic_flow_id: 'original-flow',
       },
     });
 
@@ -145,5 +180,77 @@ describe('RP-initiated upstream logout', () => {
       type: 'upstream_logout',
       challenge: 'logout-1',
     });
+    expect(mocks.logAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'allow',
+        reason: 'rp_initiated_logout_callback_processed',
+        diagnosticSessionId: 'original-suite-module',
+        flowId: 'original-flow',
+        context: expect.objectContaining({ op_state_status: 'unexpected_ignored' }),
+      })
+    );
+  });
+
+  it('records that a missing OP state is accepted using the one-time browser cookie', async () => {
+    mocks.consumeChallengeRpc.mockResolvedValue({
+      metadata: {
+        provider_id: 'provider-1',
+        target_uri: 'https://rp.example/callback',
+        op_state: 'expected-state',
+      },
+    });
+
+    const response = await app().request(
+      'https://tenant.example/auth/external/suite/logout/callback',
+      { headers: { Cookie: 'authrim_upstream_logout=logout-1' } },
+      {} as Env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.logAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ op_state_status: 'missing_accepted' }),
+      })
+    );
+  });
+
+  it('records and flushes an operational failure during the logout request', async () => {
+    mocks.getSessionRpc.mockRejectedValueOnce(new Error('session store unavailable'));
+
+    const response = await app().request(
+      'https://tenant.example/auth/external/suite/logout',
+      { headers: { Cookie: 'authrim_session=0_session-1' } },
+      {} as Env
+    );
+
+    expect(response.status).toBe(502);
+    expect(mocks.logAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'deny',
+        context: { validation_error: 'session_lookup_failed' },
+      })
+    );
+    expect(mocks.diagnosticCleanup).toHaveBeenCalledOnce();
+  });
+
+  it('flushes callback diagnostics when stored redirect metadata is malformed', async () => {
+    mocks.consumeChallengeRpc.mockResolvedValueOnce({
+      metadata: { provider_id: 'provider-1', target_uri: 'not a URL' },
+    });
+
+    const response = await app().request(
+      'https://tenant.example/auth/external/suite/logout/callback',
+      { headers: { Cookie: 'authrim_upstream_logout=logout-1' } },
+      {} as Env
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.logAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'deny',
+        context: { validation_error: 'callback_processing_failed' },
+      })
+    );
+    expect(mocks.diagnosticCleanup).toHaveBeenCalledOnce();
   });
 });
