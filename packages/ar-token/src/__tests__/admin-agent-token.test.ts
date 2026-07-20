@@ -355,6 +355,65 @@ describe('Admin Agent token endpoint', () => {
     expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
   });
 
+  it('loads scalar Agent enablement from the legacy AUTHRIM_CONFIG binding', async () => {
+    const { app, env } = createApp({
+      ...environment(),
+      ENABLE_AGENT_MCP: 'false',
+      AUTHRIM_CONFIG: { get: vi.fn().mockResolvedValue('true') } as never,
+    });
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createAccessToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'kid-1',
+      900,
+      expect.any(String)
+    );
+  });
+
+  it('rotates the signing key when no active private key exists', async () => {
+    const getActiveKeyWithPrivateRpc = vi.fn().mockResolvedValue(null);
+    const rotateKeysWithPrivateRpc = vi.fn().mockResolvedValue({
+      kid: 'kid-rotated',
+      privatePEM: 'rotated-private-key',
+    });
+    const configured = environment();
+    configured.KEY_MANAGER = {
+      idFromName: vi.fn(() => ({}) as never),
+      get: vi.fn(() => ({ getActiveKeyWithPrivateRpc, rotateKeysWithPrivateRpc })),
+    } as never;
+    const { app, env } = createApp(configured);
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(getActiveKeyWithPrivateRpc).toHaveBeenCalledOnce();
+    expect(rotateKeysWithPrivateRpc).toHaveBeenCalledOnce();
+    expect(mocks.importPKCS8).toHaveBeenCalledWith('rotated-private-key', 'RS256');
+    expect(mocks.createAccessToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'kid-rotated',
+      900,
+      expect.any(String)
+    );
+  });
+
   it('rejects a token request with the wrong content type', async () => {
     const { app, env } = createApp(environment());
     const response = await app.fetch(
@@ -681,6 +740,37 @@ describe('Admin Agent token endpoint', () => {
     );
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({ error: 'invalid_actor_token' });
+  });
+
+  it('rejects a DPoP-bound Mode B actor token with incomplete machine claims', async () => {
+    mocks.verifyToken.mockResolvedValue({
+      actor_type: 'machine',
+      sender_constrained: true,
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          dpop: 'dpop-proof',
+        },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+          subject_token: 'delegation-token',
+          subject_token_type: 'urn:authrim:token-type:agent-delegation',
+          actor_token: 'machine-token',
+          actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          resource: 'https://tenant.example.com/mcp',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_actor_token' });
+    expect(mocks.validateDPoPProof).not.toHaveBeenCalled();
+    expect(mocks.findPrincipalById).not.toHaveBeenCalled();
   });
 
   it('rejects JIT delegation issuance without a DPoP machine authorization token', async () => {

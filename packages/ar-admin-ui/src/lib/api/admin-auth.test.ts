@@ -8,13 +8,14 @@ import { adminAuthAPI, AuthError } from './admin-auth';
 
 const handoffId = `alh_${'a'.repeat(32)}`;
 const code = `ahc_${'b'.repeat(43)}`;
+const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 describe('adminAuthAPI.approveAgentLoginHandoff', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it('posts same-origin and accepts only the fixed HTTPS consume contract', async () => {
+	it('posts to the configured Admin API and accepts only the fixed HTTPS consume contract', async () => {
 		adminFetch.mockResolvedValue(
 			new Response(
 				JSON.stringify({
@@ -28,7 +29,7 @@ describe('adminAuthAPI.approveAgentLoginHandoff', () => {
 			`https://tenant.example.com/oauth/admin-agent/login-handoff/consume?code=${code}`
 		);
 		expect(adminFetch).toHaveBeenCalledWith(
-			`/api/admin/agent-login-handoffs/${handoffId}/approve`,
+			`${apiBaseUrl}/api/admin/agent-login-handoffs/${handoffId}/approve`,
 			expect.objectContaining({ method: 'POST', skipTenantHeader: true, credentials: 'include' })
 		);
 	});

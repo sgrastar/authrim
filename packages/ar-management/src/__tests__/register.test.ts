@@ -417,7 +417,9 @@ describe('Dynamic Client Registration Handler', () => {
         .bind.mock.calls;
       expect(
         bindCalls.some((args) =>
-          args.includes('https://certification.openid.net/ciba-notification-endpoint')
+          args.some(
+            (value) => value === 'https://certification.openid.net/ciba-notification-endpoint'
+          )
         )
       ).toBe(true);
     });
