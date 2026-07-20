@@ -1747,16 +1747,21 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
     const migrationDirectory = existsSync(rootCandidate)
       ? rootCandidate
       : path.resolve(process.cwd(), '../../migrations/admin');
-    for (const filename of readdirSync(migrationDirectory)
+    const migrationSql = readdirSync(migrationDirectory)
       .filter((name) => /^\d{3}_.*\.sql$/u.test(name))
-      .sort()) {
-      const sql = readFileSync(path.join(migrationDirectory, filename), 'utf8').replaceAll(
-        '__AUTHRIM_NOW_EPOCH_MILLISECONDS__',
-        '0'
-      );
-      execFileSync(sqlite3Path!, ['-bail', databasePath, `\n${sql}`], { encoding: 'utf8' });
-    }
-  });
+      .sort()
+      .map((filename) =>
+        readFileSync(path.join(migrationDirectory, filename), 'utf8').replaceAll(
+          '__AUTHRIM_NOW_EPOCH_MILLISECONDS__',
+          '0'
+        )
+      )
+      .join('\n');
+    execFileSync(sqlite3Path!, ['-bail', databasePath], {
+      encoding: 'utf8',
+      input: migrationSql,
+    });
+  }, 30_000);
 
   afterEach(() => {
     rmSync(temporaryDirectory, { recursive: true, force: true });
