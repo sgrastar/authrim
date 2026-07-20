@@ -23,8 +23,19 @@ export { sanitizeCloudflareAgentAccessMcpPropsForStorage } from './mcp-props';
 
 export interface CloudflareAgentAccessMcpState {
   initializedAt?: number;
+  lastActivityAt?: number;
   contextBinding?: CloudflareAgentAccessSessionBinding;
 }
+
+export const AGENT_ACCESS_MCP_SESSION_IDLE_MS = 30 * 60 * 1000;
+export const AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1000;
+
+export type CloudflareAgentAccessMcpSessionStatus =
+  | 'active'
+  | 'not_found'
+  | 'expired'
+  | 'context_mismatch'
+  | 'unavailable';
 
 export interface CloudflareAgentAccessSessionBinding {
   tenantId: string;
@@ -65,6 +76,31 @@ function assertSessionBinding(
   }
 }
 
+export function evaluateCloudflareAgentAccessMcpSession(input: {
+  state: CloudflareAgentAccessMcpState;
+  context: AgentAccessMcpRequestContext;
+  now: number;
+}): Exclude<CloudflareAgentAccessMcpSessionStatus, 'unavailable'> {
+  const { contextBinding, initializedAt } = input.state;
+  if (!contextBinding || initializedAt === undefined) return 'not_found';
+  try {
+    assertSessionBinding(contextBinding, input.context);
+  } catch {
+    return 'context_mismatch';
+  }
+  const lastActivityAt = input.state.lastActivityAt ?? initializedAt;
+  if (
+    !Number.isSafeInteger(input.now) ||
+    input.now < initializedAt ||
+    input.now < lastActivityAt ||
+    input.now - initializedAt >= AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS ||
+    input.now - lastActivityAt >= AGENT_ACCESS_MCP_SESSION_IDLE_MS
+  ) {
+    return 'expired';
+  }
+  return 'active';
+}
+
 export interface CloudflareAgentAccessMcpAgentOptions<Env extends Cloudflare.Env> {
   createDependencies(
     env: Env,
@@ -80,12 +116,55 @@ export interface CloudflareAgentAccessMcpAgentInstance<Env extends Cloudflare.En
 > {
   server: Server;
   init(): Promise<void>;
+  validateSessionContextRpc(
+    context: AgentAccessMcpRequestContext,
+    now: number
+  ): Promise<Exclude<CloudflareAgentAccessMcpSessionStatus, 'unavailable'>>;
 }
 
 export interface CloudflareAgentAccessMcpAgentClass<
   Env extends Cloudflare.Env,
 > extends CloudflareMcpAgentServeFactory<Env> {
   new (ctx: DurableObjectState, env: Env): CloudflareAgentAccessMcpAgentInstance<Env>;
+}
+
+interface CloudflareAgentAccessMcpSessionStub {
+  setName(name: string, props?: CloudflareAgentAccessMcpProps): Promise<void>;
+  getInitializeRequest(): Promise<unknown | undefined>;
+  validateSessionContextRpc(
+    context: AgentAccessMcpRequestContext,
+    now: number
+  ): Promise<Exclude<CloudflareAgentAccessMcpSessionStatus, 'unavailable'>>;
+  _cf_scheduleDestroy(): Promise<void>;
+}
+
+/** Validates the exact named McpAgent DO before an existing session request is forwarded. */
+export async function validateCloudflareAgentAccessMcpSession(input: {
+  namespace: DurableObjectNamespace;
+  sessionId: string;
+  context: AgentAccessMcpRequestContext;
+  now?: number;
+}): Promise<CloudflareAgentAccessMcpSessionStatus> {
+  try {
+    const name = `streamable-http:${input.sessionId}`;
+    const id = input.namespace.idFromName(name);
+    const agent = input.namespace.get(id) as unknown as CloudflareAgentAccessMcpSessionStub;
+    // This RPC is a read-only ownership check. Passing the caller's context as PartyServer props
+    // would persist an unverified context before the binding comparison and let another valid
+    // Grant corrupt the victim session on its next cold start.
+    await agent.setName(name);
+    if (!(await agent.getInitializeRequest())) {
+      await agent._cf_scheduleDestroy().catch(() => undefined);
+      return 'not_found';
+    }
+    const status = await agent.validateSessionContextRpc(input.context, input.now ?? Date.now());
+    if (status === 'expired') {
+      await agent._cf_scheduleDestroy().catch(() => undefined);
+    }
+    return status;
+  } catch {
+    return 'unavailable';
+  }
 }
 
 /**
@@ -143,7 +222,17 @@ export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env>(
       if (!authorization?.[1] || !context) {
         throw new Error('Agent Access request-local authorization context is unavailable');
       }
-      assertSessionBinding(this.state.contextBinding, context);
+      const now = Date.now();
+      const sessionStatus = evaluateCloudflareAgentAccessMcpSession({
+        state: this.state,
+        context,
+        now,
+      });
+      if (sessionStatus !== 'active') {
+        connection.close(1008, `Agent Access MCP session ${sessionStatus}`);
+        throw new Error(`Agent Access MCP session ${sessionStatus}`);
+      }
+      this.setState({ ...this.state, lastActivityAt: now });
       return runWithCloudflareAgentAccessRequest(
         { context, sourceAccessToken: authorization[1] },
         () => super.onConnect(connection, connectionContext)
@@ -152,13 +241,31 @@ export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env>(
 
     async init(): Promise<void> {
       const context = this.props?.context;
-      if (!context) throw new Error('Agent Access MCP authentication context is unavailable');
+      // A read-only validation RPC may address a non-existent named DO. Let that empty object
+      // initialize so getInitializeRequest() can return not_found, but never accept a previously
+      // bound session without its verified persisted context.
+      if (!context) {
+        if (this.state.contextBinding) {
+          throw new Error('Agent Access MCP authentication context is unavailable');
+        }
+        return;
+      }
       const binding = toCloudflareAgentAccessSessionBinding(context);
       if (this.state.contextBinding) {
         assertSessionBinding(this.state.contextBinding, context);
         return;
       }
-      this.setState({ initializedAt: Date.now(), contextBinding: binding });
+      const now = Date.now();
+      this.setState({ initializedAt: now, lastActivityAt: now, contextBinding: binding });
+    }
+
+    async validateSessionContextRpc(
+      context: AgentAccessMcpRequestContext,
+      now: number
+    ): Promise<Exclude<CloudflareAgentAccessMcpSessionStatus, 'unavailable'>> {
+      // Do not refresh activity before method/content negotiation succeeds. onConnect records
+      // activity only after the request has passed admission and reached the real transport.
+      return evaluateCloudflareAgentAccessMcpSession({ state: this.state, context, now });
     }
   }
   return AgentAccessMcpAgent as unknown as CloudflareAgentAccessMcpAgentClass<Env>;

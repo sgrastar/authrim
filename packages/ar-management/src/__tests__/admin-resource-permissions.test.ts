@@ -33,6 +33,8 @@ function createApp(permissions: string[]) {
   app.post('/api/admin/users/user-1/roles', (c) => c.json({ ok: true }));
   app.get('/api/admin/settings', (c) => c.json({ ok: true }));
   app.put('/api/admin/settings', (c) => c.json({ ok: true }));
+  app.get('/api/admin/settings/agent', (c) => c.json({ ok: true }));
+  app.put('/api/admin/settings/agent', (c) => c.json({ ok: true }));
   app.get('/api/admin/sessions/session-1', (c) => c.json({ ok: true }));
   app.delete('/api/admin/sessions/session-1', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/sessions', (c) => c.json({ ok: true }));
@@ -132,6 +134,17 @@ describe('admin resource permission middleware', () => {
     expect(read.status).toBe(200);
     expect(denied.status).toBe(403);
     expect(allowed.status).toBe(200);
+  });
+
+  it('uses dedicated permissions for Agent settings instead of generic settings permissions', async () => {
+    const reader = createApp([ADMIN_PERMISSIONS.AGENT_SETTINGS_READ]);
+    const writer = createApp([ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE]);
+    const genericReader = createApp([ADMIN_PERMISSIONS.SETTINGS_READ]);
+
+    expect((await reader.request('/api/admin/settings/agent')).status).toBe(200);
+    expect((await reader.request('/api/admin/settings/agent', { method: 'PUT' })).status).toBe(403);
+    expect((await writer.request('/api/admin/settings/agent', { method: 'PUT' })).status).toBe(200);
+    expect((await genericReader.request('/api/admin/settings/agent')).status).toBe(403);
   });
 
   it('requires sessions revoke permission for session revocation', async () => {

@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim UserInfo API
-  version: 0.3.3
+  version: 0.4.0
   summary: OIDC UserInfo and protected customer profile APIs.
   description: Initial OpenAPI contract for `@authrim/ar-userinfo`.
 servers:

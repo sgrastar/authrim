@@ -12,7 +12,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { validateClientAssertion } from '../client-authentication';
+import {
+  authenticateConfidentialOAuthClient,
+  validateClientAssertion,
+} from '../client-authentication';
 import type { ClientMetadata } from '../../types/oidc';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
@@ -92,6 +95,46 @@ describe('Client Authentication', () => {
   }
 
   describe('Valid Client Assertions', () => {
+    it('accepts the authorization server issuer audience at the CIBA endpoint', async () => {
+      const clientId = 'ciba-client';
+      const issuer = 'https://op.example.com';
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, issuer);
+
+      const result = await authenticateConfidentialOAuthClient(
+        client,
+        `${issuer}/bc-authorize`,
+        {
+          clientId,
+          clientAssertion: assertion,
+          clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        },
+        { issuer }
+      );
+
+      expect(result).toEqual({ ok: true, method: 'client_assertion', clientId });
+    });
+
+    it('accepts the token endpoint audience at the CIBA endpoint when explicitly configured', async () => {
+      const clientId = 'ciba-client';
+      const issuer = 'https://op.example.com';
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, `${issuer}/token`);
+
+      const result = await authenticateConfidentialOAuthClient(
+        client,
+        `${issuer}/bc-authorize`,
+        {
+          clientId,
+          clientAssertion: assertion,
+          clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        },
+        { issuer, additionalAudiences: [`${issuer}/token`] }
+      );
+
+      expect(result).toEqual({ ok: true, method: 'client_assertion', clientId });
+    });
+
     const tokenEndpoint = 'https://op.example.com/token';
     const clientId = 'test-client-123';
 

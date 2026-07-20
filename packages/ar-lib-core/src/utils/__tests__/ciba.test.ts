@@ -23,11 +23,11 @@ import {
 
 describe('CIBA Utilities', () => {
   describe('generateAuthReqId', () => {
-    it('should generate a valid UUID v4', () => {
+    it('should generate an unpadded Base64URL value with 256 bits of entropy', () => {
       const authReqId = generateAuthReqId();
-      expect(authReqId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-      );
+      expect(authReqId).toHaveLength(43);
+      expect(authReqId).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(CIBA_CONSTANTS.AUTH_REQ_ID_ENTROPY_BITS).toBeGreaterThanOrEqual(160);
     });
 
     it('should generate unique IDs', () => {
@@ -164,6 +164,33 @@ describe('CIBA Utilities', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toContain('binding_message');
     });
+
+    it('should accept a requested expiry shorter than the server default', () => {
+      const result = validateCIBARequest({
+        scope: 'openid',
+        login_hint: 'user@example.com',
+        requested_expiry: 5,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+      'should reject non-positive or non-integer requested expiry %s',
+      (requested_expiry) => {
+        const result = validateCIBARequest({
+          scope: 'openid',
+          login_hint: 'user@example.com',
+          requested_expiry,
+        });
+
+        expect(result).toEqual({
+          valid: false,
+          error: 'invalid_request',
+          error_description: 'requested_expiry must be a positive integer',
+        });
+      }
+    );
   });
 
   describe('determineDeliveryMode', () => {

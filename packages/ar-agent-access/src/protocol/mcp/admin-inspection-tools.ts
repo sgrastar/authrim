@@ -192,7 +192,7 @@ export const ADMIN_CONFIGURATION_INSPECTION_TOOL_DEFINITIONS: readonly AgentTool
     'admin.read.sessions.inspect',
     'inspect_sessions',
     'Inspect active session posture',
-    'Inspect bounded session metadata for operational diagnosis without token values.',
+    'Inspect aggregate active-session posture without user, session, device, network, or token identifiers.',
     ADMIN_PERMISSIONS.SESSIONS_READ,
     'sha256:71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892'
   ),

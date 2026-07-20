@@ -586,7 +586,13 @@ adminSetupApiApp.post('/api/admin/auth/passkey/options', async (c) => {
   try {
     const browserOrigin = resolveAdminWebAuthnBrowserOrigin(c);
     if (!browserOrigin) {
-      return c.json({ error: 'invalid_request', error_description: 'Origin header required' }, 400);
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Admin WebAuthn Origin header is missing or not allowed',
+        },
+        400
+      );
     }
 
     const originUrl = new URL(browserOrigin);

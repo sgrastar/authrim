@@ -81,6 +81,24 @@ describe('CSRF middleware security decision table', () => {
     expect(lookalike.reached).not.toHaveBeenCalled();
   });
 
+  it('supports a narrow request-level protocol exclusion without excluding sibling mutations', async () => {
+    const resolver = vi.fn(() => ['https://app.example.test']);
+    const excludeRequest = vi.fn(
+      (input: Request) => new URL(input.url).pathname === '/protocol/provider/callback'
+    );
+    const callback = app(
+      { excludeRequest, resolveAllowedOrigins: resolver },
+      '/protocol/provider/callback'
+    );
+    expect(
+      (await request(callback.instance, 'POST', {}, {}, '/protocol/provider/callback')).status
+    ).toBe(200);
+
+    const sibling = app({ excludeRequest, resolveAllowedOrigins: resolver }, '/protocol/links');
+    expect((await request(sibling.instance, 'POST', {}, {}, '/protocol/links')).status).toBe(403);
+    expect(sibling.reached).not.toHaveBeenCalled();
+  });
+
   it('skips browser-origin checks only for a proper Bearer authorization scheme', async () => {
     const resolver = vi.fn(() => ['https://app.example.test']);
     const allowed = app({ resolveAllowedOrigins: resolver });

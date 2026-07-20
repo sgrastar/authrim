@@ -1,6 +1,6 @@
 import type { JWK } from 'jose';
 
-export const OIDC_SIGNING_ALGORITHMS = ['RS256', 'ES256'] as const;
+export const OIDC_SIGNING_ALGORITHMS = ['RS256', 'ES256', 'PS256'] as const;
 export type OIDCSigningAlgorithm = (typeof OIDC_SIGNING_ALGORITHMS)[number];
 
 export const DEFAULT_ID_TOKEN_SIGNING_ALGORITHM: OIDCSigningAlgorithm = 'RS256';
@@ -65,6 +65,7 @@ export function getPublishedOIDCSigningAlgorithms(keys: readonly JWK[]): OIDCSig
     if (key.alg === 'ES256' && key.kty === 'EC' && key.crv === 'P-256' && key.x && key.y) {
       published.add('ES256');
     }
+    if (key.alg === 'PS256' && key.kty === 'RSA' && key.n && key.e) published.add('PS256');
   }
   return OIDC_SIGNING_ALGORITHMS.filter((algorithm) => published.has(algorithm));
 }

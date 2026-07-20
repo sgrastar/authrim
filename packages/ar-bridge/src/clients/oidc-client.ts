@@ -10,7 +10,13 @@
  */
 
 import * as jose from 'jose';
-import type { ProviderMetadata, TokenResponse, UserInfo, UpstreamProvider } from '../types';
+import type {
+  DynamicClientRegistrationResponse,
+  ProviderMetadata,
+  TokenResponse,
+  UserInfo,
+  UpstreamProvider,
+} from '../types';
 import { generateCodeChallenge } from '../utils/pkce';
 import {
   createLogger,
@@ -44,6 +50,8 @@ export interface OIDCRPClientConfig {
   jwksUri?: string;
   // Provider-specific quirks
   providerQuirks?: Record<string, unknown>;
+  discoveryUrl?: string;
+  discoveryDocumentType?: 'oidc' | 'oauth2';
   // Request Object (JAR - RFC 9101) settings
   /** Whether to use request objects */
   useRequestObject?: boolean;
@@ -53,6 +61,8 @@ export interface OIDCRPClientConfig {
   privateKeyJwk?: jose.JWK;
   /** Key ID for the signing key */
   keyId?: string;
+  /** JWS algorithm registered for signed UserInfo responses. */
+  userinfoSignedResponseAlg?: string;
 }
 
 /**
@@ -64,6 +74,12 @@ export interface ValidateIdTokenOptions {
   accessToken?: string;
   /** Authorization code for c_hash validation (optional, required for hybrid flow) */
   code?: string;
+  /** Require c_hash to be present (OIDC Hybrid Flow authorization endpoint ID Token). */
+  requireCodeHash?: boolean;
+  /** Require aud to contain only this client, as required by stricter profiles such as FAPI2. */
+  requireExactAudience?: boolean;
+  /** Restrict the JOSE alg to the algorithms selected from trusted provider metadata. */
+  expectedSigningAlgorithms?: string[];
   /** max_age parameter sent in authorization request, for auth_time validation */
   maxAge?: number;
   /** acr_values parameter sent in authorization request, for acr validation (space-separated) */
@@ -74,6 +90,21 @@ export interface TokenRequestContext {
   tokenEndpoint: string;
   authMethod: 'client_secret_basic' | 'client_secret_post';
   authHeaderPresent: boolean;
+}
+
+export interface DynamicClientRegistrationRequest {
+  redirect_uris: string[];
+  client_name?: string;
+  token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post' | 'none';
+  grant_types?: string[];
+  response_types?: string[];
+  application_type?: 'web' | 'native';
+  initiate_login_uri?: string;
+  request_uris?: string[];
+  request_object_signing_alg?: string;
+  userinfo_signed_response_alg?: string;
+  jwks?: jose.JSONWebKeySet;
+  initialAccessToken?: string;
 }
 
 interface DiagnosticContext {
@@ -115,6 +146,19 @@ export class OIDCRPClient {
     clientSecret: string,
     privateKeyJwk?: jose.JWK
   ): OIDCRPClient {
+    const dynamicRegistration = provider.providerQuirks?.dynamicClientRegistration;
+    const userinfoSignedResponseAlg =
+      dynamicRegistration &&
+      typeof dynamicRegistration === 'object' &&
+      !Array.isArray(dynamicRegistration) &&
+      typeof (dynamicRegistration as Record<string, unknown>).userinfoSignedResponseAlg === 'string'
+        ? ((dynamicRegistration as Record<string, unknown>).userinfoSignedResponseAlg as string)
+        : undefined;
+    const fapi2 = provider.providerQuirks?.fapi2;
+    const fapi2Config =
+      fapi2 && typeof fapi2 === 'object' && !Array.isArray(fapi2)
+        ? (fapi2 as Record<string, unknown>)
+        : undefined;
     return new OIDCRPClient({
       issuer: provider.issuer || '',
       clientId: provider.clientId,
@@ -127,11 +171,15 @@ export class OIDCRPClient {
       jwksUri: provider.jwksUri,
       tokenEndpointAuthMethod: provider.tokenEndpointAuthMethod,
       providerQuirks: provider.providerQuirks,
+      discoveryUrl:
+        typeof fapi2Config?.discoveryUrl === 'string' ? fapi2Config.discoveryUrl : undefined,
+      discoveryDocumentType: provider.providerType === 'oauth2' ? 'oauth2' : 'oidc',
       // Request Object settings
       useRequestObject: provider.useRequestObject,
       requestObjectSigningAlg: provider.requestObjectSigningAlg,
       privateKeyJwk,
       keyId: privateKeyJwk?.kid as string | undefined,
+      userinfoSignedResponseAlg,
     });
   }
 
@@ -144,7 +192,8 @@ export class OIDCRPClient {
       return this.metadata;
     }
 
-    const discoveryUrl = `${this.config.issuer}/.well-known/openid-configuration`;
+    const discoveryUrl =
+      this.config.discoveryUrl ?? `${this.config.issuer}/.well-known/openid-configuration`;
     assertSafeProviderFetchUrl(discoveryUrl, 'issuer');
     const response = await safeFetch(discoveryUrl, {
       timeoutMs: 10000,
@@ -174,7 +223,7 @@ export class OIDCRPClient {
     if (!metadata.token_endpoint) {
       throw new Error('Discovery document missing required token_endpoint');
     }
-    if (!metadata.jwks_uri) {
+    if (this.config.discoveryDocumentType !== 'oauth2' && !metadata.jwks_uri) {
       throw new Error('Discovery document missing required jwks_uri');
     }
     if (!metadata.response_types_supported || metadata.response_types_supported.length === 0) {
@@ -183,6 +232,61 @@ export class OIDCRPClient {
 
     this.metadata = metadata;
     return this.metadata;
+  }
+
+  /**
+   * Register this RP at the discovered OP registration endpoint.
+   * Secrets returned by the OP are returned to the caller and are never logged.
+   */
+  async registerClient(
+    request: DynamicClientRegistrationRequest
+  ): Promise<DynamicClientRegistrationResponse> {
+    const metadata = await this.discover();
+    if (!metadata.registration_endpoint) {
+      throw new Error('Discovery document missing registration_endpoint');
+    }
+    assertSafeProviderFetchUrl(metadata.registration_endpoint, 'registration_endpoint');
+
+    if (request.redirect_uris.length === 0) {
+      throw new Error('Dynamic registration requires at least one redirect_uri');
+    }
+    const { initialAccessToken, ...metadataRequest } = request;
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    };
+    if (initialAccessToken) headers.Authorization = `Bearer ${initialAccessToken}`;
+
+    const response = await safeFetch(metadata.registration_endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(metadataRequest),
+      timeoutMs: 10_000,
+      maxResponseSize: 64 * 1024,
+    });
+    if (!response.ok) {
+      throw new Error(`Dynamic client registration failed: HTTP ${response.status}`);
+    }
+    const registered = JSON.parse(
+      await readResponseTextWithLimit(response, 64 * 1024)
+    ) as DynamicClientRegistrationResponse;
+    if (typeof registered.client_id !== 'string' || registered.client_id.length === 0) {
+      throw new Error('Dynamic registration response missing client_id');
+    }
+    const requestedAuthMethod = request.token_endpoint_auth_method ?? 'client_secret_basic';
+    if (
+      requestedAuthMethod !== 'none' &&
+      (typeof registered.client_secret !== 'string' || registered.client_secret.length === 0)
+    ) {
+      throw new Error('Dynamic registration response missing client_secret');
+    }
+    if (
+      registered.token_endpoint_auth_method &&
+      registered.token_endpoint_auth_method !== requestedAuthMethod
+    ) {
+      throw new Error('Dynamic registration response changed token_endpoint_auth_method');
+    }
+    return registered;
   }
 
   /**
@@ -241,14 +345,19 @@ export class OIDCRPClient {
     loginHint?: string;
     maxAge?: number;
     acrValues?: string;
+    /** Authrim intentionally supports Code Flow and the code id_token Hybrid variant only. */
+    responseType?: 'code' | 'code id_token';
     responseMode?: string; // 'query' | 'fragment' | 'form_post'
+    /** Registered HTTPS URI where the request object is published by reference. */
+    requestUri?: string;
+    publishRequestObject?: (requestObject: string) => Promise<void>;
   }): Promise<string> {
     const authEndpoint = await this.getAuthorizationEndpoint();
     const codeChallenge = await generateCodeChallenge(params.codeVerifier);
 
     // Build authorization parameters
     const authParams: Record<string, string> = {
-      response_type: 'code',
+      response_type: params.responseType ?? 'code',
       client_id: this.config.clientId,
       redirect_uri: this.config.redirectUri,
       scope: this.config.scopes.join(' '),
@@ -280,8 +389,42 @@ export class OIDCRPClient {
       const url = new URL(authEndpoint);
       // RFC 9101: When using request parameter, client_id is still required in URL
       url.searchParams.set('client_id', this.config.clientId);
-      url.searchParams.set('request', requestObject);
+      url.searchParams.set('response_type', authParams.response_type);
+      // OIDC Core 6.1/6.2 requires openid in the OAuth request syntax even
+      // when scope is also present inside the Request Object.
+      url.searchParams.set('scope', authParams.scope);
+      if (params.requestUri) {
+        if (!params.publishRequestObject) {
+          throw new Error('request_uri requires a request object publisher');
+        }
+        await params.publishRequestObject(requestObject);
+        url.searchParams.set('request_uri', params.requestUri);
+      } else {
+        url.searchParams.set('request', requestObject);
+      }
       return url.toString();
+    }
+
+    if (this.config.useRequestObject && this.config.requestObjectSigningAlg === 'none') {
+      const requestObject = await this.createRequestObject(authParams);
+      const url = new URL(authEndpoint);
+      url.searchParams.set('client_id', this.config.clientId);
+      url.searchParams.set('response_type', authParams.response_type);
+      url.searchParams.set('scope', authParams.scope);
+      if (params.requestUri) {
+        if (!params.publishRequestObject) {
+          throw new Error('request_uri requires a request object publisher');
+        }
+        await params.publishRequestObject(requestObject);
+        url.searchParams.set('request_uri', params.requestUri);
+      } else {
+        url.searchParams.set('request', requestObject);
+      }
+      return url.toString();
+    }
+
+    if (this.config.useRequestObject) {
+      throw new Error('Request Object is enabled but no compatible signing key is configured');
     }
 
     // Standard: Use query parameters
@@ -301,13 +444,8 @@ export class OIDCRPClient {
    * @param params - Authorization request parameters to include in the JWT
    * @returns Signed JWT string
    */
-  private async createRequestObject(params: Record<string, string>): Promise<string> {
-    if (!this.config.privateKeyJwk) {
-      throw new Error('Private key required for request object signing');
-    }
-
+  async createRequestObject(params: Record<string, string>): Promise<string> {
     const alg = this.config.requestObjectSigningAlg || 'RS256';
-    const privateKey = await jose.importJWK(this.config.privateKeyJwk, alg);
 
     // Build JWT payload from authorization parameters
     const payload: Record<string, unknown> = {
@@ -328,6 +466,18 @@ export class OIDCRPClient {
       alg,
       typ: 'oauth-authz-req+jwt', // RFC 9101 Section 5.1
     };
+
+    if (alg === 'none') {
+      const encode = (value: unknown): string => {
+        const bytes = new TextEncoder().encode(JSON.stringify(value));
+        return this.base64UrlEncode(bytes);
+      };
+      return `${encode(header)}.${encode(payload)}.`;
+    }
+    if (!this.config.privateKeyJwk) {
+      throw new Error('Private key required for request object signing');
+    }
+    const privateKey = await jose.importJWK(this.config.privateKeyJwk, alg);
 
     // Add kid if available
     if (this.config.keyId) {
@@ -533,19 +683,34 @@ export class OIDCRPClient {
       ) {
         log.warn('ID token signature verification failed, refreshing JWKS and retrying...');
         this.clearJWKSCache();
-        const result = await this.validateIdTokenInternal(idToken, options, true);
-        if (diagnostics) {
-          await diagnostics.logger.logTokenValidation({
-            diagnosticSessionId: diagnostics.diagnosticSessionId,
-            flowId: diagnostics.flowId,
-            requestId: diagnostics.requestId,
-            step: 'id-token-validation',
-            tokenType: 'id_token',
-            result: 'pass',
-            details: result.validation,
-          });
+        try {
+          const result = await this.validateIdTokenInternal(idToken, options, true);
+          if (diagnostics) {
+            await diagnostics.logger.logTokenValidation({
+              diagnosticSessionId: diagnostics.diagnosticSessionId,
+              flowId: diagnostics.flowId,
+              requestId: diagnostics.requestId,
+              step: 'id-token-validation',
+              tokenType: 'id_token',
+              result: 'pass',
+              details: result.validation,
+            });
+          }
+          return result.userInfo;
+        } catch (retryError) {
+          if (diagnostics) {
+            await diagnostics.logger.logTokenValidation({
+              diagnosticSessionId: diagnostics.diagnosticSessionId,
+              flowId: diagnostics.flowId,
+              requestId: diagnostics.requestId,
+              step: 'id-token-validation',
+              tokenType: 'id_token',
+              result: 'fail',
+              errorMessage: retryError instanceof Error ? retryError.message : String(retryError),
+            });
+          }
+          throw retryError;
         }
-        return result.userInfo;
       }
       if (diagnostics) {
         await diagnostics.logger.logTokenValidation({
@@ -581,6 +746,12 @@ export class OIDCRPClient {
       issuer: usePatternValidation ? undefined : this.config.issuer,
       audience: this.config.clientId,
     });
+    if (
+      options.expectedSigningAlgorithms &&
+      !options.expectedSigningAlgorithms.includes(protectedHeader.alg)
+    ) {
+      throw new Error('ID token signing algorithm is not allowed by provider metadata');
+    }
     const validation: Record<string, unknown> = {
       signature_ok: true,
       issuer_ok: true,
@@ -601,6 +772,14 @@ export class OIDCRPClient {
     }
     if (!payload.aud) {
       throw new Error('ID token missing required aud claim');
+    }
+    if (options.requireExactAudience) {
+      const audienceContainsOnlyClient = Array.isArray(payload.aud)
+        ? payload.aud.length === 1 && payload.aud[0] === this.config.clientId
+        : payload.aud === this.config.clientId;
+      if (!audienceContainsOnlyClient) {
+        throw new Error('ID token audience must contain only the expected client_id');
+      }
     }
 
     // 1. Validate nonce (OIDC Core 3.1.3.7 step 11)
@@ -652,7 +831,11 @@ export class OIDCRPClient {
       validation.at_hash_ok = true;
     }
 
-    // 7. Validate c_hash if code provided (OIDC Core 3.3.2.12)
+    // 7. Validate c_hash if code provided (OIDC Core 3.3.2.12). The
+    // authorization-endpoint ID Token in Hybrid Flow MUST contain c_hash.
+    if (options.requireCodeHash && !payload.c_hash) {
+      throw new Error('ID token missing required c_hash claim');
+    }
     if (options.code && payload.c_hash) {
       await this.validateTokenHash(
         payload.c_hash as string,
@@ -937,10 +1120,32 @@ export class OIDCRPClient {
       throw new Error(`Userinfo request failed: ${response.status}`);
     }
 
-    const userInfo = JSON.parse(await readResponseTextWithLimit(response, 64 * 1024)) as Record<
-      string,
-      unknown
-    >;
+    const responseText = await readResponseTextWithLimit(response, 64 * 1024);
+    const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+    let userInfo: Record<string, unknown>;
+    if (contentType.includes('application/jwt') || !responseText.trimStart().startsWith('{')) {
+      const verify = async (forceRefresh: boolean) => {
+        const jwks = await this.fetchJWKS(forceRefresh);
+        return jose.jwtVerify(responseText, jose.createLocalJWKSet(jwks), {
+          issuer: this.config.issuer,
+          audience: this.config.clientId,
+          ...(this.config.userinfoSignedResponseAlg
+            ? { algorithms: [this.config.userinfoSignedResponseAlg] }
+            : {}),
+        });
+      };
+      try {
+        userInfo = (await verify(false)).payload as Record<string, unknown>;
+      } catch (error) {
+        if (error instanceof Error && /signature|jws|key|kid/i.test(error.message)) {
+          userInfo = (await verify(true)).payload as Record<string, unknown>;
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      userInfo = JSON.parse(responseText) as Record<string, unknown>;
+    }
 
     // Validate sub claim is present (OIDC Core Section 5.3.2 - REQUIRED)
     if (

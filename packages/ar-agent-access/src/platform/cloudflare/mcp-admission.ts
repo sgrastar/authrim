@@ -25,6 +25,13 @@ export type CloudflareAgentAccessAdmissionResult =
   | CloudflareAgentAccessAdmissionSuccess
   | CloudflareAgentAccessAdmissionFailure;
 
+export type CloudflareAgentAccessSessionValidationStatus =
+  | 'active'
+  | 'not_found'
+  | 'expired'
+  | 'context_mismatch'
+  | 'unavailable';
+
 export interface CloudflareAgentAccessMcpAdmissionOptions<Env> {
   /** Returns the exact allowed origin, or null when an Origin header is not allowed. */
   resolveAllowedOrigin(request: Request, env: Env): string | null | Promise<string | null>;
@@ -33,6 +40,14 @@ export interface CloudflareAgentAccessMcpAdmissionOptions<Env> {
     request: Request,
     env: Env
   ): CloudflareAgentAccessAdmissionResult | Promise<CloudflareAgentAccessAdmissionResult>;
+  /** Revalidates an existing MCP session against the verified token context before forwarding. */
+  validateSession?(
+    sessionId: string,
+    env: Env,
+    props: CloudflareAgentAccessMcpProps
+  ):
+    | CloudflareAgentAccessSessionValidationStatus
+    | Promise<CloudflareAgentAccessSessionValidationStatus>;
   forward(
     request: Request,
     env: Env,
@@ -73,7 +88,7 @@ function protocolVersionError(): Response {
     {
       jsonrpc: '2.0',
       id: null,
-      error: { code: -32600, message: 'Unsupported or missing MCP-Protocol-Version' },
+      error: { code: -32600, message: 'Unsupported MCP-Protocol-Version' },
     },
     { status: 400 }
   );
@@ -91,6 +106,35 @@ function transportRequestError(message: string, status: 400 | 405 = 400): Respon
       headers: status === 405 ? { allow: 'GET, POST, DELETE, OPTIONS' } : undefined,
     }
   );
+}
+
+function sessionRequestError(
+  status: Exclude<CloudflareAgentAccessSessionValidationStatus, 'active'>
+): Response {
+  const contextMismatch = status === 'context_mismatch';
+  const unavailable = status === 'unavailable';
+  return Response.json(
+    {
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: contextMismatch ? -32003 : unavailable ? -32603 : -32001,
+        message: contextMismatch
+          ? 'MCP session authorization context does not match'
+          : unavailable
+            ? 'MCP session validation is unavailable'
+            : 'MCP session not found or expired',
+      },
+    },
+    {
+      status: contextMismatch ? 403 : unavailable ? 503 : 404,
+      headers: { 'cache-control': 'no-store' },
+    }
+  );
+}
+
+function validSessionId(value: string): boolean {
+  return value.length >= 1 && value.length <= 128 && /^[\x21-\x7e]+$/u.test(value);
 }
 
 function accepts(request: Request, mediaType: string): boolean {
@@ -143,6 +187,31 @@ export function createCloudflareAgentAccessMcpAdmissionHandler<Env>(
       if (request.method !== 'POST' && request.method !== 'GET' && request.method !== 'DELETE') {
         return transportRequestError('Method is not supported by Streamable HTTP', 405);
       }
+      const admission = await options.authenticate(sanitizedRequest, env);
+      if (!admission.allowed) return admission.response;
+
+      const sessionId = request.headers.get('mcp-session-id');
+      if (sessionId !== null) {
+        if (!validSessionId(sessionId)) {
+          return transportRequestError(
+            'MCP-Session-Id must contain 1-128 visible ASCII characters'
+          );
+        }
+        if (options.validateSession) {
+          let validation: CloudflareAgentAccessSessionValidationStatus;
+          try {
+            validation = await options.validateSession(sessionId, env, admission.props);
+          } catch {
+            validation = 'unavailable';
+          }
+          if (validation !== 'active') return sessionRequestError(validation);
+        }
+      }
+
+      // Authenticate before validating the negotiated MCP transport. OAuth-capable clients probe
+      // the protected endpoint before they have a token and may use generic Accept headers or a
+      // previously supported protocol revision. Those unauthenticated probes must receive the
+      // RFC 9728 challenge instead of a transport error so authorization discovery can start.
       if (
         request.method === 'POST' &&
         (!isJsonContentType(request) ||
@@ -159,13 +228,12 @@ export function createCloudflareAgentAccessMcpAdmissionHandler<Env>(
 
       const version = request.headers.get('mcp-protocol-version');
       // MCP 2025-11-25 requires clients to send this after initialization, but the server SHOULD
-      // assume 2025-03-26 when it is absent. Pre-Streamable-HTTP revisions stay unsupported.
+      // assume 2025-03-26 when it is absent. Pre-Streamable-HTTP revisions stay unsupported after
+      // authentication; before authentication the OAuth challenge above takes precedence.
       if (version && !AGENT_ACCESS_MCP_COMPATIBLE_PROTOCOL_REVISIONS.includes(version)) {
         return protocolVersionError();
       }
 
-      const admission = await options.authenticate(sanitizedRequest, env);
-      if (!admission.allowed) return admission.response;
       return options.forward(
         sanitizedRequest,
         env,
@@ -185,6 +253,7 @@ export function createCloudflareAgentAccessMcpWorker<Env>(
   return createCloudflareAgentAccessMcpAdmissionHandler({
     resolveAllowedOrigin: options.resolveAllowedOrigin,
     authenticate: options.authenticate,
+    validateSession: options.validateSession,
     async forward(request, env, context, props, allowedOrigin) {
       const headers = new Headers(request.headers);
       headers.set(

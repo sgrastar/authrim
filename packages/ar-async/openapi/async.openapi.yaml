@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Async Authorization API
-  version: 0.3.3
+  version: 0.4.0
   summary: Device Authorization and CIBA endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-async`.
 servers:
@@ -114,6 +114,35 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CibaDecision'
+  /api/ciba/conformance-action:
+    post:
+      tags:
+        - CIBA
+      summary: Execute a short-lived capability-authorized CIBA conformance action.
+      description: Internal automation endpoint available only after an expiring capability is provisioned.
+      parameters:
+        - name: secret
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+        - name: auth_req_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [allow, deny]
+      responses:
+        '200':
+          description: Action completed.
+        '401':
+          description: Capability is invalid or expired.
 components:
   securitySchemes:
     sessionCookie:

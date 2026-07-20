@@ -1,6 +1,12 @@
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core/db/adapter';
 import type { AdminAgentAuditWrite } from '../audit';
 import { hasCompleteAgentConfigurationSnapshot } from '../authorization';
+import { canonicalizeJson, sha256Base64Url } from '../canonical-json';
+import type { AgentScopePolicyDefinition, ResolvedAgentTaskSetVersion } from '../configuration';
+import {
+  normalizeSelfServiceAgentAuthorizationDetails,
+  selfServiceRevocationOutboxId,
+} from '../self-service';
 import {
   hasCurrentAgentConsent,
   type AgentConsentContract,
@@ -18,6 +24,7 @@ import type {
   AgentScope,
   AgentScopeConstraints,
   JsonObject,
+  JsonValue,
 } from '../types';
 
 interface AgentGrantRow {
@@ -29,6 +36,7 @@ interface AgentGrantRow {
   delegator_id: string;
   permissions: string;
   scopes: string;
+  authorization_details?: string | null;
   resolved_scope_constraints: string;
   consent_version: number;
   generation: number;
@@ -46,6 +54,7 @@ interface AgentGrantRow {
 interface AdminAgentGrantRecordRow extends AgentGrantRow {
   authorization_details: string | null;
   purpose: string | null;
+  management_mode: 'managed' | 'system_managed';
   last_used_at: number | null;
   created_at: number;
   updated_at: number;
@@ -116,6 +125,7 @@ export interface CreateAdminAgentGrantInput extends AgentGrantContract {
   createdAt: number;
   purpose?: string;
   authorizationDetails?: JsonObject[];
+  managementMode?: 'managed' | 'system_managed';
 }
 
 export interface CreateAdminAgentGrantWithAuditInput {
@@ -129,9 +139,236 @@ export interface CreateAdminAgentGrantWithPreauthorizationInput extends CreateAd
   consentAudit: AdminAgentAuditWrite;
 }
 
+export interface SelfServiceAgentConfigurationInput {
+  taskSet: {
+    id: string;
+    version: number;
+    digest: string;
+    resolved: ResolvedAgentTaskSetVersion;
+  };
+  scopePolicy: {
+    id: string;
+    version: number;
+    digest: string;
+    definition: AgentScopePolicyDefinition;
+    selectorCatalogVersion: string;
+  };
+}
+
+export interface CreateSelfServiceAgentAuthorizationInput
+  extends CreateAdminAgentGrantWithPreauthorizationInput, SelfServiceAgentConfigurationInput {}
+
+export interface ReplaceSelfServiceAgentAuthorizationInput extends SelfServiceAgentConfigurationInput {
+  grant: CreateAdminAgentGrantInput;
+  expectedGeneration: number;
+  delegationConsent: UpsertAgentConsentInput;
+  oauthClientConsent: UpsertAgentConsentInput;
+  transitionId: string;
+  outboxId: string;
+  grantAudit: AdminAgentAuditWrite;
+  consentAudit: AdminAgentAuditWrite;
+}
+
+export interface SuspendAgentClientMetadataChangeInput {
+  tenantId: string;
+  clientId: string;
+  oldHash: string;
+  newHash: string;
+  transitionId: string;
+  outboxId: string;
+  now: number;
+}
+
+export type AdminAgentLoginHandoffStatus = 'pending' | 'issued' | 'consumed';
+
+export interface AdminAgentLoginHandoffRecord {
+  id: string;
+  targetTenantId: string;
+  targetOrigin: string;
+  authorizationPath: string;
+  status: AdminAgentLoginHandoffStatus;
+  browserBindingHash: string;
+  sourceSessionId?: string;
+  sourceSessionHash?: string;
+  adminUserId?: string;
+  codeHash?: string;
+  lastTransitionId: string;
+  createdAt: number;
+  expiresAt: number;
+  issuedAt?: number;
+  consumedAt?: number;
+}
+
+interface AdminAgentLoginHandoffRow {
+  id: string;
+  target_tenant_id: string;
+  target_origin: string;
+  authorization_path: string;
+  status: AdminAgentLoginHandoffStatus;
+  browser_binding_hash: string;
+  source_session_id: string | null;
+  source_session_hash: string | null;
+  admin_user_id: string | null;
+  code_hash: string | null;
+  last_transition_id: string;
+  created_at: number;
+  expires_at: number;
+  issued_at: number | null;
+  consumed_at: number | null;
+}
+
+export interface CreateAdminAgentLoginHandoffInput {
+  id: string;
+  targetTenantId: string;
+  targetOrigin: string;
+  authorizationPath: string;
+  browserBindingHash: string;
+  transitionId: string;
+  createdAt: number;
+  expiresAt: number;
+  audit: AdminAgentAuditWrite;
+}
+
+export interface IssueAdminAgentLoginHandoffInput {
+  id: string;
+  targetTenantId: string;
+  sourceSessionId: string;
+  sourceSessionHash: string;
+  adminUserId: string;
+  codeHash: string;
+  transitionId: string;
+  issuedAt: number;
+  expiresAt: number;
+  audit: AdminAgentAuditWrite;
+}
+
+export interface ConsumeAdminAgentLoginHandoffInput {
+  id: string;
+  targetTenantId: string;
+  codeHash: string;
+  transitionId: string;
+  consumedAt: number;
+  targetSession: {
+    id: string;
+    tenantId: string;
+    adminUserId: string;
+    parentSessionId: string;
+    parentSessionHash: string;
+    ipAddress?: string;
+    userAgent?: string;
+    createdAt: number;
+    expiresAt: number;
+    mfaVerifiedAt: number;
+  };
+  audit: AdminAgentAuditWrite;
+}
+
+async function assertSelfServiceAuthorizationConsistency(
+  input: {
+    grant: CreateAdminAgentGrantInput;
+    delegationConsent: UpsertAgentConsentInput;
+    oauthClientConsent: UpsertAgentConsentInput;
+  } & SelfServiceAgentConfigurationInput
+): Promise<void> {
+  const { grant, taskSet, scopePolicy, delegationConsent, oauthClientConsent } = input;
+  if (!hasCompleteAgentConfigurationSnapshot(grant)) {
+    throw new TypeError('Self-service authorization requires a complete configuration snapshot');
+  }
+  parseScopeConstraints(JSON.stringify(grant.resolvedScopeConstraints), grant.tenantId);
+  const exactJson = (left: unknown, right: unknown) =>
+    canonicalizeJson(left as JsonValue) === canonicalizeJson(right as JsonValue);
+  if (
+    grant.delegationMode !== 'user_consent' ||
+    grant.purpose !== 'interactive_self_service' ||
+    grant.managementMode !== 'system_managed' ||
+    grant.machinePrincipalId ||
+    grant.grantorId !== grant.delegatorId ||
+    grant.expiresAt === undefined ||
+    !Number.isSafeInteger(grant.expiresAt) ||
+    grant.expiresAt <= grant.createdAt ||
+    taskSet.id !== grant.taskSetId ||
+    taskSet.version !== grant.taskSetVersion ||
+    scopePolicy.id !== grant.scopePolicyId ||
+    scopePolicy.version !== grant.scopePolicyVersion ||
+    taskSet.digest !== taskSet.resolved.digest ||
+    delegationConsent.type !== 'delegation' ||
+    oauthClientConsent.type !== 'oauth_client' ||
+    delegationConsent.tenantId !== grant.tenantId ||
+    oauthClientConsent.tenantId !== grant.tenantId ||
+    delegationConsent.grantId !== grant.grantId ||
+    oauthClientConsent.grantId !== grant.grantId ||
+    delegationConsent.userId !== grant.delegatorId ||
+    oauthClientConsent.userId !== grant.delegatorId ||
+    delegationConsent.clientId !== grant.clientId ||
+    oauthClientConsent.clientId !== grant.clientId ||
+    delegationConsent.consentVersion !== grant.consentVersion ||
+    oauthClientConsent.consentVersion !== grant.consentVersion ||
+    !exactJson(delegationConsent.scopes, grant.scopes) ||
+    !exactJson(oauthClientConsent.scopes, grant.scopes) ||
+    !exactJson(taskSet.resolved.permissions, grant.permissions) ||
+    !exactJson(taskSet.resolved.tools, grant.resolvedTools) ||
+    !exactJson(scopePolicy.definition.tenantIds, [grant.tenantId]) ||
+    scopePolicy.definition.piiMode !== 'masked' ||
+    !exactJson(grant.resolvedScopeConstraints.tenantIds, [grant.tenantId]) ||
+    grant.resolvedScopeConstraints.piiMode !== 'masked' ||
+    grant.resolvedScopeConstraints.maxPerCall !== scopePolicy.definition.maxPerCall ||
+    grant.resolvedScopeConstraints.maxPerPlan !== scopePolicy.definition.maxPlanOperations ||
+    grant.resolvedScopeConstraints.maxPerBulkPlan !== scopePolicy.definition.maxBulkTenants
+  ) {
+    throw new TypeError('Self-service authorization inputs are inconsistent');
+  }
+  const normalizedAuthorizationDetails = normalizeSelfServiceAgentAuthorizationDetails(
+    grant.authorizationDetails
+  );
+  if (
+    !exactJson(
+      normalizedAuthorizationDetails.authorizationDetails ?? [],
+      grant.authorizationDetails ?? []
+    ) ||
+    normalizedAuthorizationDetails.maxSubjectsPerCall !== grant.resolvedScopeConstraints.maxPerCall
+  ) {
+    throw new TypeError('Self-service authorization RAR constraints are inconsistent');
+  }
+  const taskDigest = await sha256Base64Url(
+    canonicalizeJson({
+      catalogVersion: taskSet.resolved.catalogVersion,
+      tools: taskSet.resolved.tools,
+      permissions: taskSet.resolved.permissions,
+    } as unknown as JsonValue)
+  );
+  const scopeDigest = await sha256Base64Url(
+    canonicalizeJson(scopePolicy.definition as unknown as JsonValue)
+  );
+  const snapshotHash = await sha256Base64Url(
+    canonicalizeJson({
+      purpose: 'authrim-agent-self-service-snapshot-v1',
+      tenant_id: grant.tenantId,
+      admin_user_id: grant.delegatorId,
+      client_id: grant.clientId,
+      grant_id: grant.grantId,
+      expires_at: grant.expiresAt,
+      scopes: grant.scopes,
+      task_set: { id: taskSet.id, version: taskSet.version, digest: taskSet.digest },
+      scope_policy: {
+        id: scopePolicy.id,
+        version: scopePolicy.version,
+        digest: scopePolicy.digest,
+      },
+      tools: grant.resolvedTools,
+    } as unknown as JsonValue)
+  );
+  if (
+    taskDigest !== taskSet.digest ||
+    scopeDigest !== scopePolicy.digest ||
+    snapshotHash !== grant.accessSnapshotHash
+  ) {
+    throw new TypeError('Self-service authorization digest is invalid');
+  }
+}
+
 export interface AdminAgentGrantRecord extends AgentGrantContract {
-  authorizationDetails?: JsonObject[];
   purpose?: string;
+  managementMode: 'managed' | 'system_managed';
   lastUsedAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -404,6 +641,7 @@ function parseAgentScopes(value: string): AgentScope[] {
   const scopes = parseStringArray(value);
   const allowed = new Set<AgentScope>([
     'agent:read',
+    'agent:user-data:read',
     'agent:write',
     'agent:execute',
     'agent:admin',
@@ -558,6 +796,7 @@ function toGrant(row: AgentGrantRow): AgentGrantContract {
     delegatorId: row.delegator_id,
     permissions: parseStringArray(row.permissions),
     scopes: parseAgentScopes(row.scopes),
+    authorizationDetails: parseJsonObjectArray(row.authorization_details ?? null),
     resolvedScopeConstraints: parseScopeConstraints(row.resolved_scope_constraints, row.tenant_id),
     consentVersion: row.consent_version,
     generation: row.generation,
@@ -664,12 +903,26 @@ function adminAgentAuditStatement(
   };
 }
 
-function upsertAgentConsentStatement(input: UpsertAgentConsentInput): PreparedStatement {
+function upsertAgentConsentStatement(
+  input: UpsertAgentConsentInput,
+  guard?: { from: string; where: string; params: readonly unknown[] }
+): PreparedStatement {
+  const values = [
+    input.id,
+    input.tenantId,
+    input.type,
+    input.grantId,
+    input.userId,
+    input.clientId,
+    input.consentVersion,
+    JSON.stringify(input.scopes),
+    input.grantedAt,
+  ];
   return {
     sql: `INSERT INTO agent_consents (
       id, tenant_id, consent_type, grant_id, user_id, client_id,
       consent_version, scopes, granted_at, revoked_at, revoked_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    ) ${guard ? `SELECT ${values.map(() => '?').join(', ')}, NULL, NULL FROM ${guard.from} WHERE ${guard.where}` : `VALUES (${values.map(() => '?').join(', ')}, NULL, NULL)`}
     ON CONFLICT(grant_id, client_id, consent_type) DO UPDATE SET
       tenant_id = excluded.tenant_id,
       user_id = excluded.user_id,
@@ -678,17 +931,90 @@ function upsertAgentConsentStatement(input: UpsertAgentConsentInput): PreparedSt
       granted_at = excluded.granted_at,
       revoked_at = NULL,
       revoked_reason = NULL`,
-    params: [
-      input.id,
-      input.tenantId,
-      input.type,
-      input.grantId,
-      input.userId,
-      input.clientId,
-      input.consentVersion,
-      JSON.stringify(input.scopes),
-      input.grantedAt,
-    ],
+    params: guard ? [...values, ...guard.params] : values,
+  };
+}
+
+function createExactSelfServiceConsentStatement(
+  input: UpsertAgentConsentInput,
+  mutationId: string
+): PreparedStatement {
+  const values = [
+    input.id,
+    input.tenantId,
+    input.type,
+    input.grantId,
+    input.userId,
+    input.clientId,
+    input.consentVersion,
+    JSON.stringify(input.scopes),
+    input.grantedAt,
+  ];
+  return {
+    sql: `INSERT INTO agent_consents (
+      id, tenant_id, consent_type, grant_id, user_id, client_id,
+      consent_version, scopes, granted_at, revoked_at, revoked_reason, last_mutation_id
+    ) VALUES (${values.map(() => '?').join(', ')}, NULL, NULL, ?)
+    ON CONFLICT(grant_id, client_id, consent_type) DO UPDATE SET
+      tenant_id = CASE WHEN
+        agent_consents.id IS excluded.id AND
+        agent_consents.tenant_id IS excluded.tenant_id AND
+        agent_consents.user_id IS excluded.user_id AND
+        agent_consents.consent_version IS excluded.consent_version AND
+        agent_consents.scopes IS excluded.scopes AND
+        agent_consents.granted_at IS excluded.granted_at AND
+        agent_consents.revoked_at IS excluded.revoked_at AND
+        agent_consents.revoked_reason IS excluded.revoked_reason AND
+        agent_consents.last_mutation_id IS excluded.last_mutation_id
+        THEN agent_consents.tenant_id ELSE NULL END`,
+    params: [...values, mutationId],
+  };
+}
+
+function replaceSelfServiceConsentStatement(
+  input: UpsertAgentConsentInput,
+  mutationId: string,
+  guard: AuditStatementGuard
+): PreparedStatement {
+  const values = [
+    input.id,
+    input.tenantId,
+    input.type,
+    input.grantId,
+    input.userId,
+    input.clientId,
+    input.consentVersion,
+    JSON.stringify(input.scopes),
+    input.grantedAt,
+  ];
+  return {
+    sql: `INSERT INTO agent_consents (
+      id, tenant_id, consent_type, grant_id, user_id, client_id,
+      consent_version, scopes, granted_at, revoked_at, revoked_reason, last_mutation_id
+    ) SELECT ${values.map(() => '?').join(', ')}, NULL, NULL, ?
+      FROM ${guard.from} WHERE ${guard.where}
+    ON CONFLICT(grant_id, client_id, consent_type) DO UPDATE SET
+      tenant_id = CASE
+        WHEN agent_consents.last_mutation_id IS excluded.last_mutation_id THEN
+          CASE WHEN
+            agent_consents.tenant_id IS excluded.tenant_id AND
+            agent_consents.user_id IS excluded.user_id AND
+            agent_consents.consent_version IS excluded.consent_version AND
+            agent_consents.scopes IS excluded.scopes AND
+            agent_consents.granted_at IS excluded.granted_at AND
+            agent_consents.revoked_at IS excluded.revoked_at AND
+            agent_consents.revoked_reason IS excluded.revoked_reason
+            THEN agent_consents.tenant_id ELSE NULL END
+        ELSE excluded.tenant_id
+      END,
+      user_id = excluded.user_id,
+      consent_version = excluded.consent_version,
+      scopes = excluded.scopes,
+      granted_at = excluded.granted_at,
+      revoked_at = NULL,
+      revoked_reason = NULL,
+      last_mutation_id = excluded.last_mutation_id`,
+    params: [...values, mutationId, ...guard.params],
   };
 }
 
@@ -701,11 +1027,39 @@ function createAdminAgentGrantStatement(input: CreateAdminAgentGrantInput): Prep
     sql: `INSERT INTO admin_agent_grants (
       id, tenant_id, client_id, machine_principal_id, grantor_id, delegator_id,
       permissions, scopes, authorization_details, resolved_scope_constraints, purpose,
+      management_mode,
       task_set_id, task_set_version, scope_policy_id, scope_policy_version,
       resolved_tools, access_snapshot_hash,
       delegation_mode, generation, consent_version, status, active_uniqueness_key,
       expires_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET tenant_id = CASE WHEN
+      admin_agent_grants.tenant_id IS excluded.tenant_id AND
+      admin_agent_grants.client_id IS excluded.client_id AND
+      admin_agent_grants.machine_principal_id IS excluded.machine_principal_id AND
+      admin_agent_grants.grantor_id IS excluded.grantor_id AND
+      admin_agent_grants.delegator_id IS excluded.delegator_id AND
+      admin_agent_grants.permissions IS excluded.permissions AND
+      admin_agent_grants.scopes IS excluded.scopes AND
+      admin_agent_grants.authorization_details IS excluded.authorization_details AND
+      admin_agent_grants.resolved_scope_constraints IS excluded.resolved_scope_constraints AND
+      admin_agent_grants.purpose IS excluded.purpose AND
+      admin_agent_grants.management_mode IS excluded.management_mode AND
+      admin_agent_grants.task_set_id IS excluded.task_set_id AND
+      admin_agent_grants.task_set_version IS excluded.task_set_version AND
+      admin_agent_grants.scope_policy_id IS excluded.scope_policy_id AND
+      admin_agent_grants.scope_policy_version IS excluded.scope_policy_version AND
+      admin_agent_grants.resolved_tools IS excluded.resolved_tools AND
+      admin_agent_grants.access_snapshot_hash IS excluded.access_snapshot_hash AND
+      admin_agent_grants.delegation_mode IS excluded.delegation_mode AND
+      admin_agent_grants.generation IS excluded.generation AND
+      admin_agent_grants.consent_version IS excluded.consent_version AND
+      admin_agent_grants.status IS excluded.status AND
+      admin_agent_grants.active_uniqueness_key IS excluded.active_uniqueness_key AND
+      admin_agent_grants.expires_at IS excluded.expires_at AND
+      admin_agent_grants.created_at IS excluded.created_at AND
+      admin_agent_grants.updated_at IS excluded.updated_at
+      THEN admin_agent_grants.tenant_id ELSE NULL END`,
     params: [
       input.grantId,
       input.tenantId,
@@ -718,6 +1072,7 @@ function createAdminAgentGrantStatement(input: CreateAdminAgentGrantInput): Prep
       input.authorizationDetails ? JSON.stringify(input.authorizationDetails) : null,
       JSON.stringify(input.resolvedScopeConstraints),
       input.purpose ?? null,
+      input.managementMode ?? 'managed',
       input.taskSetId ?? null,
       input.taskSetVersion ?? null,
       input.scopePolicyId ?? null,
@@ -741,6 +1096,7 @@ function toAdminAgentGrantRecord(row: AdminAgentGrantRecordRow): AdminAgentGrant
     ...toGrant(row),
     authorizationDetails: parseJsonObjectArray(row.authorization_details),
     purpose: row.purpose ?? undefined,
+    managementMode: row.management_mode,
     lastUsedAt: row.last_used_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -749,9 +1105,202 @@ function toAdminAgentGrantRecord(row: AdminAgentGrantRecordRow): AdminAgentGrant
   };
 }
 
+function toAdminAgentLoginHandoffRecord(
+  row: AdminAgentLoginHandoffRow
+): AdminAgentLoginHandoffRecord {
+  return {
+    id: row.id,
+    targetTenantId: row.target_tenant_id,
+    targetOrigin: row.target_origin,
+    authorizationPath: row.authorization_path,
+    status: row.status,
+    browserBindingHash: row.browser_binding_hash,
+    sourceSessionId: row.source_session_id ?? undefined,
+    sourceSessionHash: row.source_session_hash ?? undefined,
+    adminUserId: row.admin_user_id ?? undefined,
+    codeHash: row.code_hash ?? undefined,
+    lastTransitionId: row.last_transition_id,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    issuedAt: row.issued_at ?? undefined,
+    consumedAt: row.consumed_at ?? undefined,
+  };
+}
+
 /** Platform-neutral DB_ADMIN persistence using Authrim's existing database abstraction. */
 export class AdminAgentAccessRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
+
+  async createLoginHandoff(input: CreateAdminAgentLoginHandoffInput): Promise<void> {
+    let targetOrigin: string;
+    let authorizationContinuation: URL;
+    try {
+      targetOrigin = new URL(input.targetOrigin).origin;
+      authorizationContinuation = new URL(input.authorizationPath, targetOrigin);
+    } catch {
+      throw new TypeError('Invalid Admin Agent login handoff');
+    }
+    if (
+      !input.targetTenantId.trim() ||
+      targetOrigin !== input.targetOrigin ||
+      !targetOrigin.startsWith('https://') ||
+      authorizationContinuation.origin !== targetOrigin ||
+      authorizationContinuation.pathname !== '/oauth/admin-agent/authorize' ||
+      authorizationContinuation.hash ||
+      input.expiresAt <= input.createdAt
+    ) {
+      throw new TypeError('Invalid Admin Agent login handoff');
+    }
+    await this.adapter.batch([
+      {
+        sql: `INSERT INTO admin_agent_login_handoffs (
+          id, target_tenant_id, target_origin, authorization_path, status,
+          browser_binding_hash, last_transition_id, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+        params: [
+          input.id,
+          input.targetTenantId,
+          input.targetOrigin,
+          input.authorizationPath,
+          input.browserBindingHash,
+          input.transitionId,
+          input.createdAt,
+          input.expiresAt,
+        ],
+      },
+      adminAgentAuditStatement(input.audit, {
+        from: 'admin_agent_login_handoffs',
+        where: "id = ? AND last_transition_id = ? AND status = 'pending'",
+        params: [input.id, input.transitionId],
+      }),
+    ]);
+  }
+
+  async getLoginHandoffById(id: string): Promise<AdminAgentLoginHandoffRecord | null> {
+    const row = await this.adapter.queryOne<AdminAgentLoginHandoffRow>(
+      'SELECT * FROM admin_agent_login_handoffs WHERE id = ?',
+      [id]
+    );
+    return row ? toAdminAgentLoginHandoffRecord(row) : null;
+  }
+
+  async getLoginHandoffByCodeHash(codeHash: string): Promise<AdminAgentLoginHandoffRecord | null> {
+    const row = await this.adapter.queryOne<AdminAgentLoginHandoffRow>(
+      'SELECT * FROM admin_agent_login_handoffs WHERE code_hash = ?',
+      [codeHash]
+    );
+    return row ? toAdminAgentLoginHandoffRecord(row) : null;
+  }
+
+  async issueLoginHandoff(input: IssueAdminAgentLoginHandoffInput): Promise<boolean> {
+    if (input.expiresAt <= input.issuedAt) {
+      throw new TypeError('Issued Admin Agent login handoff must expire in the future');
+    }
+    const results = await this.adapter.batch([
+      {
+        sql: `UPDATE admin_agent_login_handoffs
+          SET status = 'issued', source_session_id = ?, source_session_hash = ?,
+              admin_user_id = ?, code_hash = ?, last_transition_id = ?,
+              issued_at = ?, expires_at = ?
+          WHERE id = ? AND target_tenant_id = ? AND status = 'pending' AND expires_at > ?`,
+        params: [
+          input.sourceSessionId,
+          input.sourceSessionHash,
+          input.adminUserId,
+          input.codeHash,
+          input.transitionId,
+          input.issuedAt,
+          input.expiresAt,
+          input.id,
+          input.targetTenantId,
+          input.issuedAt,
+        ],
+      },
+      adminAgentAuditStatement(input.audit, {
+        from: 'admin_agent_login_handoffs',
+        where: "id = ? AND target_tenant_id = ? AND last_transition_id = ? AND status = 'issued'",
+        params: [input.id, input.targetTenantId, input.transitionId],
+      }),
+    ]);
+    return (results[0]?.rowsAffected ?? 0) === 1;
+  }
+
+  async consumeLoginHandoff(input: ConsumeAdminAgentLoginHandoffInput): Promise<boolean> {
+    if (
+      input.targetSession.expiresAt <= input.consumedAt ||
+      input.targetSession.parentSessionId.trim() === '' ||
+      input.targetSession.parentSessionHash.trim() === '' ||
+      input.targetSession.id === input.targetSession.parentSessionId ||
+      input.targetSession.adminUserId.trim() === '' ||
+      input.targetSession.tenantId.trim() === '' ||
+      input.targetSession.createdAt > input.consumedAt ||
+      input.targetSession.mfaVerifiedAt > input.consumedAt
+    ) {
+      throw new TypeError('Invalid derived Admin session for login handoff');
+    }
+    const results = await this.adapter.batch([
+      {
+        sql: `UPDATE admin_agent_login_handoffs
+          SET status = 'consumed', source_session_id = NULL, last_transition_id = ?,
+              consumed_at = ?
+          WHERE id = ? AND target_tenant_id = ? AND code_hash = ?
+            AND admin_user_id = ? AND source_session_hash = ?
+            AND status = 'issued' AND expires_at > ?`,
+        params: [
+          input.transitionId,
+          input.consumedAt,
+          input.id,
+          input.targetTenantId,
+          input.codeHash,
+          input.targetSession.adminUserId,
+          input.targetSession.parentSessionHash,
+          input.consumedAt,
+        ],
+      },
+      {
+        sql: `INSERT INTO admin_sessions (
+          id, tenant_id, admin_user_id, ip_address, user_agent,
+          created_at, expires_at, last_activity_at, mfa_verified, mfa_verified_at,
+          parent_session_id, derived_target_tenant_id
+        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?
+          FROM admin_agent_login_handoffs
+          WHERE id = ? AND target_tenant_id = ? AND last_transition_id = ?
+            AND status = 'consumed'`,
+        params: [
+          input.targetSession.id,
+          input.targetSession.tenantId,
+          input.targetSession.adminUserId,
+          input.targetSession.ipAddress ?? null,
+          input.targetSession.userAgent ?? null,
+          input.targetSession.createdAt,
+          input.targetSession.expiresAt,
+          input.consumedAt,
+          input.targetSession.mfaVerifiedAt,
+          input.targetSession.parentSessionId,
+          input.targetTenantId,
+          input.id,
+          input.targetTenantId,
+          input.transitionId,
+        ],
+      },
+      adminAgentAuditStatement(input.audit, {
+        from: 'admin_agent_login_handoffs',
+        where: "id = ? AND target_tenant_id = ? AND last_transition_id = ? AND status = 'consumed'",
+        params: [input.id, input.targetTenantId, input.transitionId],
+      }),
+    ]);
+    return (results[0]?.rowsAffected ?? 0) === 1;
+  }
+
+  async purgeLoginHandoffs(olderThan: number): Promise<number> {
+    const result = await this.adapter.execute(
+      `DELETE FROM admin_agent_login_handoffs
+       WHERE (status = 'consumed' AND consumed_at < ?)
+          OR (status IN ('pending', 'issued') AND expires_at < ?)`,
+      [olderThan, olderThan]
+    );
+    return result.rowsAffected;
+  }
 
   async writeAudit(audit: AdminAgentAuditWrite): Promise<void> {
     const statement = adminAgentAuditStatement(audit);
@@ -792,17 +1341,561 @@ export class AdminAgentAccessRepository {
     }
     await this.adapter.batch([
       createAdminAgentGrantStatement(input.grant),
-      upsertAgentConsentStatement(input.delegationConsent),
-      upsertAgentConsentStatement(input.oauthClientConsent),
+      createExactSelfServiceConsentStatement(input.delegationConsent, input.audit.id),
+      createExactSelfServiceConsentStatement(input.oauthClientConsent, input.audit.id),
       adminAgentAuditStatement(input.audit),
       adminAgentAuditStatement(input.consentAudit),
     ]);
   }
 
+  /**
+   * Atomically creates the internal control plane for one interactive self-service connection.
+   * The generated Task Set and Scope Policy are immutable implementation details, not a setup
+   * prerequisite exposed to the operator.
+   */
+  async createSelfServiceAuthorization(
+    input: CreateSelfServiceAgentAuthorizationInput
+  ): Promise<void> {
+    await assertSelfServiceAuthorizationConsistency(input);
+    await this.adapter.batch([
+      {
+        sql: `INSERT INTO agent_task_sets (
+          id, tenant_id, name, description, kind, status, current_version,
+          management_mode, created_by, last_transition_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'custom', 'active', ?, 'system_managed', ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name = CASE WHEN
+          agent_task_sets.tenant_id IS excluded.tenant_id AND
+          agent_task_sets.name IS excluded.name AND
+          agent_task_sets.description IS excluded.description AND
+          agent_task_sets.kind IS excluded.kind AND
+          agent_task_sets.status IS excluded.status AND
+          agent_task_sets.current_version IS excluded.current_version AND
+          agent_task_sets.management_mode IS excluded.management_mode AND
+          agent_task_sets.created_by IS excluded.created_by AND
+          agent_task_sets.last_transition_id IS excluded.last_transition_id AND
+          agent_task_sets.created_at IS excluded.created_at AND
+          agent_task_sets.updated_at IS excluded.updated_at
+          THEN agent_task_sets.name ELSE NULL END`,
+        params: [
+          input.taskSet.id,
+          input.grant.tenantId,
+          `System-managed connection ${input.grant.grantId}`,
+          'Generated from scopes approved during interactive Agent consent.',
+          input.taskSet.version,
+          input.grant.delegatorId,
+          input.audit.id,
+          input.grant.createdAt,
+          input.grant.createdAt,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_task_set_versions (
+          task_set_id, version, tool_entries_json, resolved_permissions_json,
+          definition_digest, catalog_version, status, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        ON CONFLICT(task_set_id, version) DO UPDATE SET definition_digest = CASE WHEN
+          agent_task_set_versions.tool_entries_json IS excluded.tool_entries_json AND
+          agent_task_set_versions.resolved_permissions_json IS excluded.resolved_permissions_json AND
+          agent_task_set_versions.definition_digest IS excluded.definition_digest AND
+          agent_task_set_versions.catalog_version IS excluded.catalog_version AND
+          agent_task_set_versions.status IS excluded.status AND
+          agent_task_set_versions.created_by IS excluded.created_by AND
+          agent_task_set_versions.created_at IS excluded.created_at
+          THEN agent_task_set_versions.definition_digest ELSE NULL END`,
+        params: [
+          input.taskSet.id,
+          input.taskSet.version,
+          JSON.stringify(input.taskSet.resolved.tools),
+          JSON.stringify(input.taskSet.resolved.permissions),
+          input.taskSet.digest,
+          input.taskSet.resolved.catalogVersion,
+          input.grant.delegatorId,
+          input.grant.createdAt,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_scope_policies (
+          id, tenant_id, name, description, kind, status, current_version,
+          management_mode, created_by, last_transition_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'custom', 'active', ?, 'system_managed', ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name = CASE WHEN
+          agent_scope_policies.tenant_id IS excluded.tenant_id AND
+          agent_scope_policies.name IS excluded.name AND
+          agent_scope_policies.description IS excluded.description AND
+          agent_scope_policies.kind IS excluded.kind AND
+          agent_scope_policies.status IS excluded.status AND
+          agent_scope_policies.current_version IS excluded.current_version AND
+          agent_scope_policies.management_mode IS excluded.management_mode AND
+          agent_scope_policies.created_by IS excluded.created_by AND
+          agent_scope_policies.last_transition_id IS excluded.last_transition_id AND
+          agent_scope_policies.created_at IS excluded.created_at AND
+          agent_scope_policies.updated_at IS excluded.updated_at
+          THEN agent_scope_policies.name ELSE NULL END`,
+        params: [
+          input.scopePolicy.id,
+          input.grant.tenantId,
+          `System-managed connection ${input.grant.grantId}`,
+          'Generated masked, single-tenant limits approved during interactive Agent consent.',
+          input.scopePolicy.version,
+          input.grant.delegatorId,
+          input.audit.id,
+          input.grant.createdAt,
+          input.grant.createdAt,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_scope_policy_versions (
+          scope_policy_id, version, definition_json, definition_digest,
+          selector_catalog_version, status, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+        ON CONFLICT(scope_policy_id, version) DO UPDATE SET definition_digest = CASE WHEN
+          agent_scope_policy_versions.definition_json IS excluded.definition_json AND
+          agent_scope_policy_versions.definition_digest IS excluded.definition_digest AND
+          agent_scope_policy_versions.selector_catalog_version IS excluded.selector_catalog_version AND
+          agent_scope_policy_versions.status IS excluded.status AND
+          agent_scope_policy_versions.created_by IS excluded.created_by AND
+          agent_scope_policy_versions.created_at IS excluded.created_at
+          THEN agent_scope_policy_versions.definition_digest ELSE NULL END`,
+        params: [
+          input.scopePolicy.id,
+          input.scopePolicy.version,
+          JSON.stringify(input.scopePolicy.definition),
+          input.scopePolicy.digest,
+          input.scopePolicy.selectorCatalogVersion,
+          input.grant.delegatorId,
+          input.grant.createdAt,
+        ],
+      },
+      createAdminAgentGrantStatement(input.grant),
+      createExactSelfServiceConsentStatement(input.delegationConsent, input.audit.id),
+      createExactSelfServiceConsentStatement(input.oauthClientConsent, input.audit.id),
+      adminAgentAuditStatement(input.audit),
+      adminAgentAuditStatement(input.consentAudit),
+    ]);
+  }
+
+  /** Atomically replaces the immutable snapshot and consent version of a self-service Grant. */
+  async replaceSelfServiceAuthorization(
+    input: ReplaceSelfServiceAgentAuthorizationInput
+  ): Promise<{ familyCount: number }> {
+    if (input.grant.generation !== input.expectedGeneration + 1) {
+      throw new TypeError('Self-service replacement inputs are inconsistent');
+    }
+    if (input.outboxId !== selfServiceRevocationOutboxId(input.transitionId)) {
+      throw new TypeError('Self-service replacement outbox must be transition-bound');
+    }
+    await assertSelfServiceAuthorizationConsistency(input);
+    if (!hasCompleteAgentConfigurationSnapshot(input.grant)) {
+      throw new TypeError('Self-service replacement requires a complete configuration snapshot');
+    }
+    parseScopeConstraints(
+      JSON.stringify(input.grant.resolvedScopeConstraints),
+      input.grant.tenantId
+    );
+    const guard = {
+      from: 'admin_agent_grants',
+      where: 'tenant_id = ? AND id = ? AND last_mutation_id = ?',
+      params: [input.grant.tenantId, input.grant.grantId, input.transitionId],
+    } as const;
+    const results = await this.adapter.batch([
+      {
+        sql: `UPDATE admin_agent_grants SET
+          permissions = ?, scopes = ?, authorization_details = ?, resolved_scope_constraints = ?, purpose = ?,
+          task_set_id = ?, task_set_version = ?, scope_policy_id = ?, scope_policy_version = ?,
+          resolved_tools = ?, access_snapshot_hash = ?, generation = ?, consent_version = ?,
+          expires_at = ?, updated_at = ?, last_mutation_id = ?
+        WHERE tenant_id = ? AND id = ? AND client_id = ? AND delegator_id = ?
+          AND status = 'active' AND purpose = 'interactive_self_service' AND generation = ?`,
+        params: [
+          JSON.stringify(input.grant.permissions),
+          JSON.stringify(input.grant.scopes),
+          input.grant.authorizationDetails
+            ? JSON.stringify(input.grant.authorizationDetails)
+            : null,
+          JSON.stringify(input.grant.resolvedScopeConstraints),
+          input.grant.purpose,
+          input.taskSet.id,
+          input.taskSet.version,
+          input.scopePolicy.id,
+          input.scopePolicy.version,
+          JSON.stringify(input.grant.resolvedTools),
+          input.grant.accessSnapshotHash,
+          input.grant.generation,
+          input.grant.consentVersion,
+          input.grant.expiresAt ?? null,
+          input.grant.createdAt,
+          input.transitionId,
+          input.grant.tenantId,
+          input.grant.grantId,
+          input.grant.clientId,
+          input.grant.delegatorId,
+          input.expectedGeneration,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_task_sets (
+          id, tenant_id, name, description, kind, status, current_version,
+          management_mode, created_by, last_transition_id, created_at, updated_at
+        ) SELECT ?, ?, ?, ?, 'custom', 'active', ?, 'system_managed', ?, ?, ?, ? FROM ${guard.from}
+          WHERE ${guard.where}
+        ON CONFLICT(id) DO UPDATE SET name = CASE WHEN
+          agent_task_sets.tenant_id IS excluded.tenant_id AND
+          agent_task_sets.name IS excluded.name AND
+          agent_task_sets.description IS excluded.description AND
+          agent_task_sets.kind IS excluded.kind AND
+          agent_task_sets.status IS excluded.status AND
+          agent_task_sets.current_version IS excluded.current_version AND
+          agent_task_sets.management_mode IS excluded.management_mode AND
+          agent_task_sets.created_by IS excluded.created_by AND
+          agent_task_sets.last_transition_id IS excluded.last_transition_id AND
+          agent_task_sets.created_at IS excluded.created_at AND
+          agent_task_sets.updated_at IS excluded.updated_at
+          THEN agent_task_sets.name ELSE NULL END`,
+        params: [
+          input.taskSet.id,
+          input.grant.tenantId,
+          `System-managed connection ${input.grant.grantId} v${input.grant.consentVersion}`,
+          'Regenerated from the approved interactive Agent scope set.',
+          input.taskSet.version,
+          input.grant.delegatorId,
+          input.transitionId,
+          input.grant.createdAt,
+          input.grant.createdAt,
+          ...guard.params,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_task_set_versions (
+          task_set_id, version, tool_entries_json, resolved_permissions_json,
+          definition_digest, catalog_version, status, created_by, created_at
+        ) SELECT ?, ?, ?, ?, ?, ?, 'active', ?, ? FROM ${guard.from} WHERE ${guard.where}
+        ON CONFLICT(task_set_id, version) DO UPDATE SET definition_digest = CASE WHEN
+          agent_task_set_versions.tool_entries_json IS excluded.tool_entries_json AND
+          agent_task_set_versions.resolved_permissions_json IS excluded.resolved_permissions_json AND
+          agent_task_set_versions.definition_digest IS excluded.definition_digest AND
+          agent_task_set_versions.catalog_version IS excluded.catalog_version AND
+          agent_task_set_versions.status IS excluded.status AND
+          agent_task_set_versions.created_by IS excluded.created_by AND
+          agent_task_set_versions.created_at IS excluded.created_at
+          THEN agent_task_set_versions.definition_digest ELSE NULL END`,
+        params: [
+          input.taskSet.id,
+          input.taskSet.version,
+          JSON.stringify(input.taskSet.resolved.tools),
+          JSON.stringify(input.taskSet.resolved.permissions),
+          input.taskSet.digest,
+          input.taskSet.resolved.catalogVersion,
+          input.grant.delegatorId,
+          input.grant.createdAt,
+          ...guard.params,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_scope_policies (
+          id, tenant_id, name, description, kind, status, current_version,
+          management_mode, created_by, last_transition_id, created_at, updated_at
+        ) SELECT ?, ?, ?, ?, 'custom', 'active', ?, 'system_managed', ?, ?, ?, ? FROM ${guard.from}
+          WHERE ${guard.where}
+        ON CONFLICT(id) DO UPDATE SET name = CASE WHEN
+          agent_scope_policies.tenant_id IS excluded.tenant_id AND
+          agent_scope_policies.name IS excluded.name AND
+          agent_scope_policies.description IS excluded.description AND
+          agent_scope_policies.kind IS excluded.kind AND
+          agent_scope_policies.status IS excluded.status AND
+          agent_scope_policies.current_version IS excluded.current_version AND
+          agent_scope_policies.management_mode IS excluded.management_mode AND
+          agent_scope_policies.created_by IS excluded.created_by AND
+          agent_scope_policies.last_transition_id IS excluded.last_transition_id AND
+          agent_scope_policies.created_at IS excluded.created_at AND
+          agent_scope_policies.updated_at IS excluded.updated_at
+          THEN agent_scope_policies.name ELSE NULL END`,
+        params: [
+          input.scopePolicy.id,
+          input.grant.tenantId,
+          `System-managed connection ${input.grant.grantId} v${input.grant.consentVersion}`,
+          'Regenerated masked single-tenant limits for interactive Agent consent.',
+          input.scopePolicy.version,
+          input.grant.delegatorId,
+          input.transitionId,
+          input.grant.createdAt,
+          input.grant.createdAt,
+          ...guard.params,
+        ],
+      },
+      {
+        sql: `INSERT INTO agent_scope_policy_versions (
+          scope_policy_id, version, definition_json, definition_digest,
+          selector_catalog_version, status, created_by, created_at
+        ) SELECT ?, ?, ?, ?, ?, 'active', ?, ? FROM ${guard.from} WHERE ${guard.where}
+        ON CONFLICT(scope_policy_id, version) DO UPDATE SET definition_digest = CASE WHEN
+          agent_scope_policy_versions.definition_json IS excluded.definition_json AND
+          agent_scope_policy_versions.definition_digest IS excluded.definition_digest AND
+          agent_scope_policy_versions.selector_catalog_version IS excluded.selector_catalog_version AND
+          agent_scope_policy_versions.status IS excluded.status AND
+          agent_scope_policy_versions.created_by IS excluded.created_by AND
+          agent_scope_policy_versions.created_at IS excluded.created_at
+          THEN agent_scope_policy_versions.definition_digest ELSE NULL END`,
+        params: [
+          input.scopePolicy.id,
+          input.scopePolicy.version,
+          JSON.stringify(input.scopePolicy.definition),
+          input.scopePolicy.digest,
+          input.scopePolicy.selectorCatalogVersion,
+          input.grant.delegatorId,
+          input.grant.createdAt,
+          ...guard.params,
+        ],
+      },
+      replaceSelfServiceConsentStatement(input.delegationConsent, input.transitionId, guard),
+      replaceSelfServiceConsentStatement(input.oauthClientConsent, input.transitionId, guard),
+      {
+        sql: `UPDATE admin_agent_token_families
+          SET status = 'revocation_pending', updated_at = ?, revocation_outbox_id = ?
+          WHERE tenant_id = ? AND grant_id = ? AND grant_generation = ?
+            AND status IN ('pending_finalization', 'active', 'revocation_pending')
+            AND EXISTS (SELECT 1 FROM ${guard.from} WHERE ${guard.where})`,
+        params: [
+          input.grant.createdAt,
+          input.outboxId,
+          input.grant.tenantId,
+          input.grant.grantId,
+          input.expectedGeneration,
+          ...guard.params,
+        ],
+      },
+      {
+        sql: `INSERT INTO admin_agent_token_revocation_outbox (
+          id, tenant_id, grant_id, grant_generation, client_id, event_type, payload,
+          status, attempt_count, processing_fence, next_attempt_at, created_at
+        ) SELECT ?, ?, ?, ?, ?, 'revoke_grant_families',
+          json_object(
+            'family_ids', json(COALESCE((SELECT json_group_array(family_id) FROM (
+              SELECT family_id FROM admin_agent_token_families
+              WHERE tenant_id = ? AND revocation_outbox_id = ? ORDER BY family_id
+            )), '[]')),
+            'family_jtis', json(COALESCE((SELECT json_group_array(family_jti) FROM (
+              SELECT family_jti FROM admin_agent_token_families
+              WHERE tenant_id = ? AND revocation_outbox_id = ? ORDER BY family_id
+            )), '[]')),
+            'reason', 'self_service_scope_changed'
+          ), 'pending', 0, 0, ?, ? FROM ${guard.from} WHERE ${guard.where}
+        ON CONFLICT(id) DO UPDATE SET payload = CASE WHEN
+          admin_agent_token_revocation_outbox.tenant_id IS excluded.tenant_id AND
+          admin_agent_token_revocation_outbox.grant_id IS excluded.grant_id AND
+          admin_agent_token_revocation_outbox.grant_generation IS excluded.grant_generation AND
+          admin_agent_token_revocation_outbox.client_id IS excluded.client_id AND
+          admin_agent_token_revocation_outbox.event_type IS excluded.event_type AND
+          admin_agent_token_revocation_outbox.payload IS excluded.payload AND
+          admin_agent_token_revocation_outbox.created_at IS excluded.created_at
+          THEN admin_agent_token_revocation_outbox.payload ELSE NULL END`,
+        params: [
+          input.outboxId,
+          input.grant.tenantId,
+          input.grant.grantId,
+          input.expectedGeneration,
+          input.grant.clientId,
+          input.grant.tenantId,
+          input.outboxId,
+          input.grant.tenantId,
+          input.outboxId,
+          input.grant.createdAt,
+          input.grant.createdAt,
+          ...guard.params,
+        ],
+      },
+      adminAgentAuditStatement(input.grantAudit, guard),
+      adminAgentAuditStatement(input.consentAudit, guard),
+    ]);
+    if (results[0]?.rowsAffected !== 1) {
+      const replay = await this.adapter.queryOne<{
+        machine_principal_id: string | null;
+        grantor_id: string;
+        permissions: string;
+        scopes: string;
+        authorization_details: string | null;
+        resolved_scope_constraints: string;
+        purpose: string | null;
+        management_mode: 'managed' | 'system_managed';
+        task_set_id: string | null;
+        task_set_version: number | null;
+        scope_policy_id: string | null;
+        scope_policy_version: number | null;
+        resolved_tools: string | null;
+        access_snapshot_hash: string | null;
+        generation: number;
+        consent_version: number;
+        status: AgentGrantStatus;
+        delegation_mode: AgentDelegationMode;
+        expires_at: number | null;
+        updated_at: number;
+        last_mutation_id: string | null;
+      }>(
+        `SELECT machine_principal_id, grantor_id, permissions, scopes, authorization_details,
+          resolved_scope_constraints, purpose, management_mode, task_set_id, task_set_version,
+          scope_policy_id, scope_policy_version, resolved_tools, access_snapshot_hash, generation,
+          consent_version, status, delegation_mode, expires_at, updated_at, last_mutation_id
+         FROM admin_agent_grants
+         WHERE tenant_id = ? AND id = ? AND client_id = ? AND delegator_id = ?`,
+        [input.grant.tenantId, input.grant.grantId, input.grant.clientId, input.grant.delegatorId]
+      );
+      if (
+        !replay ||
+        replay.machine_principal_id !== (input.grant.machinePrincipalId ?? null) ||
+        replay.grantor_id !== input.grant.grantorId ||
+        replay.permissions !== JSON.stringify(input.grant.permissions) ||
+        replay.scopes !== JSON.stringify(input.grant.scopes) ||
+        replay.authorization_details !==
+          (input.grant.authorizationDetails
+            ? JSON.stringify(input.grant.authorizationDetails)
+            : null) ||
+        replay.resolved_scope_constraints !==
+          JSON.stringify(input.grant.resolvedScopeConstraints) ||
+        replay.purpose !== (input.grant.purpose ?? null) ||
+        replay.management_mode !== (input.grant.managementMode ?? 'managed') ||
+        replay.task_set_id !== (input.grant.taskSetId ?? null) ||
+        replay.task_set_version !== (input.grant.taskSetVersion ?? null) ||
+        replay.scope_policy_id !== (input.grant.scopePolicyId ?? null) ||
+        replay.scope_policy_version !== (input.grant.scopePolicyVersion ?? null) ||
+        replay.resolved_tools !==
+          (input.grant.resolvedTools ? JSON.stringify(input.grant.resolvedTools) : null) ||
+        replay.access_snapshot_hash !== (input.grant.accessSnapshotHash ?? null) ||
+        replay.generation !== input.grant.generation ||
+        replay.consent_version !== input.grant.consentVersion ||
+        replay.status !== input.grant.status ||
+        replay.delegation_mode !== input.grant.delegationMode ||
+        replay.expires_at !== (input.grant.expiresAt ?? null) ||
+        replay.updated_at !== input.grant.createdAt ||
+        replay.last_mutation_id !== input.transitionId
+      ) {
+        throw new AgentAccessConflictError('Self-service Agent Grant changed during consent');
+      }
+    }
+    const outbox = await this.adapter.queryOne<{ payload: string }>(
+      `SELECT payload FROM admin_agent_token_revocation_outbox
+       WHERE id = ? AND tenant_id = ? AND grant_id = ?`,
+      [input.outboxId, input.grant.tenantId, input.grant.grantId]
+    );
+    if (!outbox) throw new AgentAccessConflictError('Self-service revocation outbox is missing');
+    return { familyCount: parseRevocationPayload(outbox.payload).familyIds.length };
+  }
+
+  /** Suspends every active Grant for a changed CIMD identity before the new metadata is trusted. */
+  async suspendForClientMetadataChange(
+    input: SuspendAgentClientMetadataChangeInput
+  ): Promise<{ suspendedGrantCount: number }> {
+    const existing = await this.adapter.queryOne<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM admin_agent_grants
+       WHERE tenant_id = ? AND client_id = ? AND status = 'active'`,
+      [input.tenantId, input.clientId]
+    );
+    const suspendedGrantCount = existing?.total ?? 0;
+    if (suspendedGrantCount === 0) return { suspendedGrantCount: 0 };
+    await this.adapter.batch([
+      {
+        sql: `UPDATE admin_agent_grants SET status = 'suspended', active_uniqueness_key = id,
+          generation = generation + 1, consent_version = consent_version + 1,
+          updated_at = ?, last_mutation_id = ?
+        WHERE tenant_id = ? AND client_id = ? AND status = 'active'`,
+        params: [input.now, input.transitionId, input.tenantId, input.clientId],
+      },
+      {
+        sql: `UPDATE agent_consents SET revoked_at = ?, revoked_reason = 'grant_updated',
+          last_mutation_id = ? WHERE tenant_id = ? AND client_id = ? AND revoked_at IS NULL
+          AND EXISTS (SELECT 1 FROM admin_agent_grants g WHERE g.id = agent_consents.grant_id
+            AND g.tenant_id = ? AND g.client_id = ? AND g.last_mutation_id = ?)`,
+        params: [
+          input.now,
+          input.transitionId,
+          input.tenantId,
+          input.clientId,
+          input.tenantId,
+          input.clientId,
+          input.transitionId,
+        ],
+      },
+      {
+        sql: `UPDATE admin_agent_token_families SET status = 'revocation_pending',
+          updated_at = ?, revocation_outbox_id = ?
+        WHERE tenant_id = ? AND client_id = ?
+          AND status IN ('pending_finalization', 'active', 'revocation_pending')
+          AND EXISTS (SELECT 1 FROM admin_agent_grants g
+            WHERE g.id = admin_agent_token_families.grant_id AND g.tenant_id = ?
+              AND g.client_id = ? AND g.last_mutation_id = ?)`,
+        params: [
+          input.now,
+          input.outboxId,
+          input.tenantId,
+          input.clientId,
+          input.tenantId,
+          input.clientId,
+          input.transitionId,
+        ],
+      },
+      {
+        sql: `INSERT INTO admin_agent_token_revocation_outbox (
+          id, tenant_id, grant_id, grant_generation, client_id, event_type, payload,
+          status, attempt_count, processing_fence, next_attempt_at, created_at
+        ) SELECT ?, ?, NULL, NULL, ?, 'revoke_client_families',
+          json_object(
+            'family_ids', json(COALESCE((SELECT json_group_array(family_id) FROM (
+              SELECT family_id FROM admin_agent_token_families
+              WHERE tenant_id = ? AND revocation_outbox_id = ? ORDER BY family_id
+            )), '[]')),
+            'family_jtis', json(COALESCE((SELECT json_group_array(family_jti) FROM (
+              SELECT family_jti FROM admin_agent_token_families
+              WHERE tenant_id = ? AND revocation_outbox_id = ? ORDER BY family_id
+            )), '[]')),
+            'reason', 'client_metadata_changed'
+          ), 'pending', 0, 0, ?, ?
+        WHERE EXISTS (SELECT 1 FROM admin_agent_grants
+          WHERE tenant_id = ? AND client_id = ? AND last_mutation_id = ?)`,
+        params: [
+          input.outboxId,
+          input.tenantId,
+          input.clientId,
+          input.tenantId,
+          input.outboxId,
+          input.tenantId,
+          input.outboxId,
+          input.now,
+          input.now,
+          input.tenantId,
+          input.clientId,
+          input.transitionId,
+        ],
+      },
+      adminAgentAuditStatement(
+        {
+          id: input.transitionId,
+          tenantId: input.tenantId,
+          action: 'agent.client_metadata.changed',
+          resourceType: 'oauth_client',
+          resourceId: input.clientId,
+          severity: 'warn',
+          actorType: 'system',
+          actorSub: 'system:cimd-verifier',
+          metadata: {
+            client_id: input.clientId,
+            old_hash: input.oldHash,
+            new_hash: input.newHash,
+            suspended_grant_count: suspendedGrantCount,
+          },
+          createdAt: input.now,
+        },
+        {
+          from: 'admin_agent_grants',
+          where: 'tenant_id = ? AND client_id = ? AND last_mutation_id = ?',
+          params: [input.tenantId, input.clientId, input.transitionId],
+        }
+      ),
+    ]);
+    return { suspendedGrantCount };
+  }
+
   async getGrant(tenantId: string, grantId: string): Promise<AgentGrantContract | null> {
     const row = await this.adapter.queryOne<AgentGrantRow>(
       `SELECT id, tenant_id, client_id, machine_principal_id, grantor_id, delegator_id,
-        permissions, scopes, resolved_scope_constraints, consent_version, generation, status,
+        permissions, scopes, authorization_details, resolved_scope_constraints, consent_version, generation, status,
         delegation_mode, expires_at, task_set_id, task_set_version, scope_policy_id,
         scope_policy_version, resolved_tools, access_snapshot_hash
        FROM admin_agent_grants WHERE tenant_id = ? AND id = ?`,
@@ -815,7 +1908,7 @@ export class AdminAgentAccessRepository {
     const row = await this.adapter.queryOne<AdminAgentGrantRecordRow>(
       `SELECT id, tenant_id, client_id, machine_principal_id, grantor_id, delegator_id,
         permissions, scopes, authorization_details, resolved_scope_constraints, consent_version,
-        generation, status, delegation_mode, purpose, expires_at, task_set_id, task_set_version,
+        generation, status, delegation_mode, purpose, management_mode, expires_at, task_set_id, task_set_version,
         scope_policy_id, scope_policy_version, resolved_tools, access_snapshot_hash,
         last_used_at, created_at,
         updated_at, revoked_at, revoked_by
@@ -849,7 +1942,7 @@ export class AdminAgentAccessRepository {
       this.adapter.query<AdminAgentGrantRecordRow>(
         `SELECT id, tenant_id, client_id, machine_principal_id, grantor_id, delegator_id,
           permissions, scopes, authorization_details, resolved_scope_constraints, consent_version,
-          generation, status, delegation_mode, purpose, expires_at, task_set_id, task_set_version,
+          generation, status, delegation_mode, purpose, management_mode, expires_at, task_set_id, task_set_version,
           scope_policy_id, scope_policy_version, resolved_tools, access_snapshot_hash,
           last_used_at, created_at,
           updated_at, revoked_at, revoked_by
@@ -905,7 +1998,7 @@ export class AdminAgentAccessRepository {
   ): Promise<AgentGrantContract | null> {
     const row = await this.adapter.queryOne<AgentGrantRow>(
       `SELECT id, tenant_id, client_id, machine_principal_id, grantor_id, delegator_id,
-        permissions, scopes, resolved_scope_constraints, consent_version, generation, status,
+        permissions, scopes, authorization_details, resolved_scope_constraints, consent_version, generation, status,
         delegation_mode, expires_at, task_set_id, task_set_version, scope_policy_id,
         scope_policy_version, resolved_tools, access_snapshot_hash
        FROM admin_agent_grants
@@ -917,16 +2010,21 @@ export class AdminAgentAccessRepository {
   }
 
   async getActiveDelegatorPermissions(
-    tenantId: string,
+    targetTenantId: string,
     delegatorId: string,
     now: number
   ): Promise<string[] | null> {
-    const user = await this.adapter.queryOne<{ id: string }>(
-      `SELECT id FROM admin_users
-       WHERE tenant_id = ? AND id = ? AND is_active = 1 AND status = 'active'`,
-      [tenantId, delegatorId]
+    // Admin identities and their role assignments belong to the Admin user's home tenant.
+    // A global assignment (or an explicitly target-scoped assignment) may authorize a
+    // derived Admin session and Agent Grant in another tenant, so targetTenantId must not
+    // be used to locate the Admin user itself.
+    const user = await this.adapter.queryOne<{ id: string; tenant_id: string }>(
+      `SELECT id, tenant_id FROM admin_users
+       WHERE id = ? AND is_active = 1 AND status = 'active'`,
+      [delegatorId]
     );
     if (!user) return null;
+    const homeTenantId = user.tenant_id;
 
     const roles = await this.adapter.query<AdminPermissionRow>(
       `WITH RECURSIVE effective_roles(id, permissions_json, inherits_from) AS (
@@ -937,7 +2035,13 @@ export class AdminAgentAccessRepository {
            AND (r.tenant_id = ? OR (r.tenant_id = 'default' AND r.is_system = 1))
            AND (
              ra.scope_type = 'global'
-             OR (ra.scope_type = 'tenant' AND (ra.scope_id = ? OR ra.scope_id IS NULL))
+             OR (
+               ra.scope_type = 'tenant'
+               AND (
+                 ra.scope_id = ?
+                 OR (ra.scope_id IS NULL AND ? = ra.tenant_id)
+               )
+             )
            )
            AND (ra.expires_at IS NULL OR ra.expires_at > ?)
          UNION
@@ -947,7 +2051,7 @@ export class AdminAgentAccessRepository {
          WHERE parent.tenant_id = ? OR (parent.tenant_id = 'default' AND parent.is_system = 1)
        )
        SELECT DISTINCT permissions_json FROM effective_roles`,
-      [delegatorId, tenantId, tenantId, tenantId, now, tenantId]
+      [delegatorId, homeTenantId, homeTenantId, targetTenantId, targetTenantId, now, homeTenantId]
     );
     const permissions = new Set<string>();
     for (const role of roles) {

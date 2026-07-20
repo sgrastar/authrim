@@ -143,6 +143,7 @@ export interface OAuthClient {
   backchannel_client_notification_endpoint: string | null;
   backchannel_authentication_request_signing_alg: string | null;
   backchannel_user_code_parameter: boolean;
+  tls_client_certificate_bound_access_tokens?: boolean;
 
   // OIDC response signing
   id_token_signed_response_alg: string | null;
@@ -259,6 +260,7 @@ export interface CreateClientInput {
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
   backchannel_user_code_parameter?: boolean;
+  tls_client_certificate_bound_access_tokens?: boolean;
   id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
   authorization_signed_response_alg?: string | null;
@@ -347,6 +349,7 @@ export interface UpdateClientInput {
   backchannel_client_notification_endpoint?: string | null;
   backchannel_authentication_request_signing_alg?: string | null;
   backchannel_user_code_parameter?: boolean;
+  tls_client_certificate_bound_access_tokens?: boolean;
   id_token_signed_response_alg?: string | null;
   userinfo_signed_response_alg?: string | null;
   authorization_signed_response_alg?: string | null;
@@ -520,6 +523,8 @@ export class ClientRepository {
       backchannel_authentication_request_signing_alg:
         input.backchannel_authentication_request_signing_alg ?? null,
       backchannel_user_code_parameter: input.backchannel_user_code_parameter ?? false,
+      tls_client_certificate_bound_access_tokens:
+        input.tls_client_certificate_bound_access_tokens ?? false,
       id_token_signed_response_alg: input.id_token_signed_response_alg ?? null,
       userinfo_signed_response_alg: input.userinfo_signed_response_alg ?? null,
       authorization_signed_response_alg: input.authorization_signed_response_alg ?? null,
@@ -571,6 +576,7 @@ export class ClientRepository {
         default_resource,
         backchannel_token_delivery_mode, backchannel_client_notification_endpoint,
         backchannel_authentication_request_signing_alg, backchannel_user_code_parameter,
+        tls_client_certificate_bound_access_tokens,
         id_token_signed_response_alg, userinfo_signed_response_alg,
         authorization_signed_response_alg, authorization_encrypted_response_alg,
         authorization_encrypted_response_enc,
@@ -581,7 +587,7 @@ export class ClientRepository {
         require_pkce,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -648,6 +654,7 @@ export class ClientRepository {
         client.backchannel_client_notification_endpoint,
         client.backchannel_authentication_request_signing_alg,
         client.backchannel_user_code_parameter ? 1 : 0,
+        client.tls_client_certificate_bound_access_tokens ? 1 : 0,
         client.id_token_signed_response_alg,
         client.userinfo_signed_response_alg,
         client.authorization_signed_response_alg,
@@ -964,6 +971,10 @@ export class ClientRepository {
       updates.push('backchannel_user_code_parameter = ?');
       params.push(input.backchannel_user_code_parameter ? 1 : 0);
     }
+    if (input.tls_client_certificate_bound_access_tokens !== undefined) {
+      updates.push('tls_client_certificate_bound_access_tokens = ?');
+      params.push(input.tls_client_certificate_bound_access_tokens ? 1 : 0);
+    }
     if (input.userinfo_signed_response_alg !== undefined) {
       updates.push('userinfo_signed_response_alg = ?');
       params.push(input.userinfo_signed_response_alg);
@@ -1258,6 +1269,9 @@ export class ClientRepository {
         row.asc_transformed_claims_enabled === undefined
           ? true
           : Boolean(row.asc_transformed_claims_enabled),
+      tls_client_certificate_bound_access_tokens: Boolean(
+        row.tls_client_certificate_bound_access_tokens
+      ),
       native_sso_enabled:
         row.native_sso_enabled === null || row.native_sso_enabled === undefined
           ? null

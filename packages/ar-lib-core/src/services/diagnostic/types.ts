@@ -124,7 +124,8 @@ export type TokenValidationStep =
   | 'id-token-validation'
   | 'userinfo-request'
   | 'userinfo-response'
-  | 'userinfo-mismatch';
+  | 'userinfo-mismatch'
+  | 'logout-token-validation';
 
 /**
  * Token Validation Log Entry

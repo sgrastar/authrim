@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Agent Access API
-  version: 0.3.3
+  version: 0.4.0
   summary: Authenticated MCP Streamable HTTP endpoint.
   description: Public HTTP contract owned by `@authrim/ar-agent-access`.
 servers:
@@ -138,6 +138,7 @@ components:
           tokenUrl: /oauth/admin-agent/token
           scopes:
             agent:read: Read Agent Access resources and invoke delegated read tools.
+            agent:user-data:read: Search and inspect masked tenant user data when separately approved.
             agent:write: Invoke delegated write tools.
             agent:execute: Execute an approved Agent Access plan.
     dpop:

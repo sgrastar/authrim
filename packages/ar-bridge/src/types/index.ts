@@ -173,13 +173,44 @@ export interface ProviderMetadata {
   response_types_supported: string[];
   grant_types_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
+  token_endpoint_auth_signing_alg_values_supported?: string[];
+  dpop_signing_alg_values_supported?: string[];
   subject_types_supported?: string[];
   id_token_signing_alg_values_supported?: string[];
+  request_object_signing_alg_values_supported?: string[];
+  authorization_signing_alg_values_supported?: string[];
   claims_supported?: string[];
   /** RFC 7009 Token Revocation endpoint */
   revocation_endpoint?: string;
+  /** OpenID Connect Dynamic Client Registration endpoint (RFC 7591/OIDC Registration) */
+  registration_endpoint?: string;
+  /** RFC 9126 Pushed Authorization Request endpoint. */
+  pushed_authorization_request_endpoint?: string;
+  require_pushed_authorization_requests?: boolean;
   /** OpenID Connect Back-Channel Logout endpoint (for IdPs that support it) */
   end_session_endpoint?: string;
+}
+
+export interface DynamicClientRegistrationConfig {
+  enabled: boolean;
+  /** Re-register when the configured issuer changes; maintained by Authrim. */
+  registeredIssuer?: string;
+  clientName?: string;
+  initiateLoginUri?: string;
+  requestUris?: string[];
+  userinfoSignedResponseAlg?: string;
+  initialAccessTokenEncrypted?: string;
+}
+
+export interface DynamicClientRegistrationResponse {
+  client_id: string;
+  client_secret?: string;
+  client_id_issued_at?: number;
+  client_secret_expires_at?: number;
+  registration_access_token?: string;
+  registration_client_uri?: string;
+  token_endpoint_auth_method?: TokenEndpointAuthMethod | 'none';
+  [key: string]: unknown;
 }
 
 export interface TokenResponse {

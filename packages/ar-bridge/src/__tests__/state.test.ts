@@ -62,6 +62,8 @@ import {
   getStateExpiresAt,
   getAuthStateCookieName,
   matchesAuthStateCookie,
+  setAuthStateRequestObject,
+  getAuthStateRequestObject,
 } from '../utils/state';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -480,6 +482,54 @@ describe('Auth State Management', () => {
       // Only one should succeed
       const successCount = [result1, result2].filter((r) => r !== null).length;
       expect(successCount).toBe(1);
+    });
+  });
+
+  describe('request object binding', () => {
+    it('binds and reads a request object only for a live unconsumed tenant/provider state', async () => {
+      const env = { DB: {} } as unknown as Env;
+      await setAuthStateRequestObject(
+        env,
+        'tenant-1',
+        'provider-1',
+        'state-1',
+        'header.payload.signature'
+      );
+      const update = sqlTracker.calls.find(
+        (call) => call.method === 'execute' && call.sql.includes('SET original_auth_request')
+      );
+      expect(update?.sql).toContain('tenant_id = ?');
+      expect(update?.sql).toContain('provider_id = ?');
+      expect(update?.sql).toContain('consumed_at IS NULL');
+      expect(update?.params.slice(0, 4)).toEqual([
+        'header.payload.signature',
+        'tenant-1',
+        'provider-1',
+        'state-1',
+      ]);
+
+      mockQueryOne.mockResolvedValueOnce({ original_auth_request: 'header.payload.signature' });
+      expect(await getAuthStateRequestObject(env, 'tenant-1', 'provider-1', 'state-1')).toBe(
+        'header.payload.signature'
+      );
+      const select = sqlTracker.calls.find(
+        (call) => call.method === 'queryOne' && call.sql.includes('original_auth_request')
+      );
+      expect(select?.sql).toContain('expires_at > ?');
+      expect(select?.sql).toContain('consumed_at IS NULL');
+    });
+
+    it('rejects a request object update when the state boundary does not match', async () => {
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
+      await expect(
+        setAuthStateRequestObject(
+          { DB: {} } as unknown as Env,
+          'other-tenant',
+          'provider-1',
+          'state-1',
+          'jwt'
+        )
+      ).rejects.toThrow('Unable to bind request object');
     });
   });
 

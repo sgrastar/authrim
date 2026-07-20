@@ -1270,6 +1270,81 @@ INSERT INTO flow_assignments (
     sqliteMigrationApplyTimeoutMs
   );
 
+  it(
+    'adds OAuth/OIDC fields to existing PII linked identities',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-pii-linked-identity-migration-'));
+      const dbPath = join(tempDir, 'test.db');
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, ['pii/001_pii_schema.sql']);
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `INSERT INTO linked_identities (
+  id, tenant_id, user_id, provider_id, provider_user_id, linked_at, last_used_at
+) VALUES ('link-1', 'tenant-1', 'user-1', 'provider-1', 'subject-1', 100, 200);`
+        );
+        runMigrationFiles(sqlite3Path, dbPath, ['pii/002_linked_identity_oidc_fields.sql']);
+
+        const columns = readSqliteLines(
+          sqlite3Path,
+          dbPath,
+          "SELECT name FROM pragma_table_info('linked_identities') ORDER BY cid;"
+        );
+        expect(columns).toEqual(
+          expect.arrayContaining([
+            'email_verified',
+            'access_token_encrypted',
+            'refresh_token_encrypted',
+            'token_expires_at',
+            'raw_claims',
+            'profile_data',
+            'last_login_at',
+            'updated_at',
+          ])
+        );
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT email_verified || '|' || last_login_at || '|' || updated_at
+               FROM linked_identities WHERE id = 'link-1';`
+          )
+        ).toBe('0|200|200');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it('keeps external Postgres linked identities compatible with the PII schema', () => {
+    const postgresMigration = readMigration(
+      'external/postgres/010_external_linked_identity_oidc_fields.sql'
+    );
+
+    for (const column of [
+      'email_verified',
+      'access_token_encrypted',
+      'refresh_token_encrypted',
+      'token_expires_at',
+      'raw_claims',
+      'profile_data',
+      'last_login_at',
+      'updated_at',
+    ]) {
+      expect(postgresMigration).toContain(`ADD COLUMN IF NOT EXISTS ${column}`);
+    }
+    expect(postgresMigration).toContain('last_used_at');
+    expect(postgresMigration).toContain('linked_at');
+  });
+
   for (const [databaseRole, migrationFiles] of [
     ['core', activeCoreMigrationFiles()],
     ['admin', activeAdminMigrationFiles()],

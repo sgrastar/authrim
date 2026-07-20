@@ -173,6 +173,14 @@ interface OIDCECKeyManagerState {
   lastRotation: number | null;
 }
 
+/** Dedicated RSA-PSS state for OIDC PS256 signing. Never shared with RS256 keys. */
+interface OIDCPS256KeyManagerState {
+  keys: StoredKey[];
+  activeKeyId: string | null;
+  config: KeyRotationConfig;
+  lastRotation: number | null;
+}
+
 function normalizeImportedKeyStatus(status: unknown): KeyStatus {
   return status === 'overlap' || status === 'revoked' ? status : 'active';
 }
@@ -265,7 +273,9 @@ export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
   private ecKeyManagerState: ECKeyManagerState | null = null;
   private oidcECKeyManagerState: OIDCECKeyManagerState | null = null;
+  private oidcPS256KeyManagerState: OIDCPS256KeyManagerState | null = null;
   private oidcES256CreationPromise: Promise<StoredECKey> | null = null;
+  private oidcPS256CreationPromise: Promise<StoredKey> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -346,6 +356,23 @@ export class KeyManager extends DurableObject<Env> {
       };
       await this.saveOIDCECState();
     }
+
+    const storedOIDCPS256State =
+      await this.ctx.storage.get<OIDCPS256KeyManagerState>('oidcPS256State');
+    if (storedOIDCPS256State) {
+      this.oidcPS256KeyManagerState = storedOIDCPS256State;
+    } else {
+      this.oidcPS256KeyManagerState = {
+        keys: [],
+        activeKeyId: null,
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+      await this.saveOIDCPS256State();
+    }
   }
 
   // ==========================================
@@ -385,6 +412,9 @@ export class KeyManager extends DurableObject<Env> {
     if (algorithm === 'ES256') {
       return this.ensureActiveOIDCES256Key();
     }
+    if (algorithm === 'PS256') {
+      return this.ensureActiveOIDCPS256Key();
+    }
     throw new Error('unsupported_oidc_signing_algorithm');
   }
 
@@ -394,12 +424,22 @@ export class KeyManager extends DurableObject<Env> {
       await this.rotateKeys();
     }
     await this.ensureActiveOIDCES256Key();
-    return [...(await this.getAllPublicKeys()), ...this.getAllOIDCECPublicKeys()];
+    await this.ensureActiveOIDCPS256Key();
+    return [
+      ...(await this.getAllPublicKeys()),
+      ...this.getAllOIDCECPublicKeys(),
+      ...this.getAllOIDCPS256PublicKeys(),
+    ];
   }
 
   /** RPC: Rotate only the purpose-separated OIDC ES256 key. */
   async rotateOIDCES256KeyRpc(): Promise<Omit<StoredECKey, 'privatePEM'>> {
     return this.sanitizeECKey(await this.rotateOIDCES256Key());
+  }
+
+  /** RPC: Rotate only the purpose-separated OIDC PS256 key. */
+  async rotateOIDCPS256KeyRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
+    return this.sanitizeKey(await this.rotateOIDCPS256Key());
   }
 
   /**
@@ -766,6 +806,12 @@ export class KeyManager extends DurableObject<Env> {
     }
   }
 
+  private async saveOIDCPS256State(): Promise<void> {
+    if (this.oidcPS256KeyManagerState) {
+      await this.ctx.storage.put('oidcPS256State', this.oidcPS256KeyManagerState);
+    }
+  }
+
   private getOIDCECState(): OIDCECKeyManagerState {
     if (!this.oidcECKeyManagerState) {
       throw new Error('OIDC EC KeyManager state not initialized');
@@ -773,8 +819,21 @@ export class KeyManager extends DurableObject<Env> {
     return this.oidcECKeyManagerState;
   }
 
+  private getOIDCPS256State(): OIDCPS256KeyManagerState {
+    if (!this.oidcPS256KeyManagerState) {
+      throw new Error('OIDC PS256 KeyManager state not initialized');
+    }
+    return this.oidcPS256KeyManagerState;
+  }
+
   private getAllOIDCECPublicKeys(): JWK[] {
     return this.getOIDCECState()
+      .keys.filter((key) => key.status !== 'revoked')
+      .map((key) => key.publicJWK);
+  }
+
+  private getAllOIDCPS256PublicKeys(): JWK[] {
+    return this.getOIDCPS256State()
       .keys.filter((key) => key.status !== 'revoked')
       .map((key) => key.publicJWK);
   }
@@ -821,6 +880,49 @@ export class KeyManager extends DurableObject<Env> {
       (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
     );
     await this.saveOIDCECState();
+    return newKey;
+  }
+
+  private async ensureActiveOIDCPS256Key(): Promise<StoredKey> {
+    const state = this.getOIDCPS256State();
+    const active = state.keys.find(
+      (key) => key.kid === state.activeKeyId && key.status === 'active'
+    );
+    if (active) return active;
+
+    if (!this.oidcPS256CreationPromise) {
+      this.oidcPS256CreationPromise = this.rotateOIDCPS256Key().finally(() => {
+        this.oidcPS256CreationPromise = null;
+      });
+    }
+    return this.oidcPS256CreationPromise;
+  }
+
+  private async rotateOIDCPS256Key(): Promise<StoredKey> {
+    const state = this.getOIDCPS256State();
+    const now = Date.now();
+    const previousActive = state.keys.find((key) => key.status === 'active');
+    if (previousActive) {
+      previousActive.status = 'overlap';
+      previousActive.expiresAt = now + 24 * 60 * 60 * 1000;
+    }
+
+    const kid = `oidc-ps256-${now}-${crypto.randomUUID()}`;
+    const keySet = await generateKeySet(kid);
+    const newKey: StoredKey = {
+      kid,
+      publicJWK: { ...keySet.publicJWK, kid, use: 'sig', alg: 'PS256' },
+      privatePEM: keySet.privatePEM,
+      createdAt: now,
+      status: 'active',
+    };
+    state.keys.push(newKey);
+    state.activeKeyId = kid;
+    state.lastRotation = now;
+    state.keys = state.keys.filter(
+      (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
+    );
+    await this.saveOIDCPS256State();
     return newKey;
   }
 

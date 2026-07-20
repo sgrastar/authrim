@@ -98,7 +98,41 @@ describe('createCloudflareAgentAccessMcpWorker', () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it('rejects an unsupported explicit protocol revision before authentication', async () => {
+  it('returns the OAuth challenge before validating a probe transport or protocol revision', async () => {
+    const challenge = new Response(
+      JSON.stringify({ error: 'invalid_token', error_description: 'Access token is invalid' }),
+      {
+        status: 401,
+        headers: {
+          'www-authenticate':
+            'Bearer error="invalid_token", resource_metadata="https://auth.example/.well-known/oauth-protected-resource/mcp"',
+        },
+      }
+    );
+    const authenticate = vi.fn(async () => ({ allowed: false as const, response: challenge }));
+    const fetch = vi.fn(async () => new Response('forwarded'));
+    const worker = createCloudflareAgentAccessMcpWorker(
+      { serve: () => ({ fetch }) },
+      { resolveAllowedOrigin: () => null, authenticate }
+    );
+    const response = await worker.fetch!(
+      new Request('https://auth.example/mcp', {
+        method: 'GET',
+        headers: {
+          accept: '*/*',
+          'mcp-protocol-version': '2024-11-05',
+        },
+      }),
+      {},
+      executionContext()
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get('www-authenticate')).toContain('resource_metadata=');
+    expect(authenticate).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsupported explicit protocol revision after authentication', async () => {
     const authenticate = vi.fn(async () => ({ allowed: true as const, props }));
     const fetch = vi.fn(async () => new Response('forwarded'));
     const worker = createCloudflareAgentAccessMcpWorker(
@@ -111,7 +145,80 @@ describe('createCloudflareAgentAccessMcpWorker', () => {
       executionContext()
     );
     expect(response.status).toBe(400);
-    expect(authenticate).not.toHaveBeenCalled();
+    expect(authenticate).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('binds POST, GET, and DELETE for an existing session to the verified Grant context', async () => {
+    const authenticate = vi.fn(async () => ({ allowed: true as const, props }));
+    const validateSession = vi.fn(async () => 'context_mismatch' as const);
+    const fetch = vi.fn(async () => new Response('forwarded'));
+    const worker = createCloudflareAgentAccessMcpWorker(
+      { serve: () => ({ fetch }) },
+      { resolveAllowedOrigin: () => null, authenticate, validateSession }
+    );
+
+    for (const method of ['POST', 'GET', 'DELETE'] as const) {
+      const response = await worker.fetch!(
+        new Request('https://auth.example/mcp', {
+          method,
+          headers: {
+            authorization: 'Bearer token',
+            accept: method === 'POST' ? 'application/json, text/event-stream' : 'text/event-stream',
+            ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+            'mcp-session-id': 'session-1',
+          },
+          ...(method === 'POST'
+            ? { body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) }
+            : {}),
+        }),
+        {},
+        executionContext()
+      );
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { message: expect.stringContaining('does not match') },
+      });
+    }
+    expect(validateSession).toHaveBeenCalledTimes(3);
+    expect(validateSession).toHaveBeenCalledWith('session-1', {}, props);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for expired, unavailable, and malformed session identifiers', async () => {
+    const authenticate = vi.fn(async () => ({ allowed: true as const, props }));
+    const fetch = vi.fn(async () => new Response('forwarded'));
+    const validateSession = vi
+      .fn()
+      .mockResolvedValueOnce('expired')
+      .mockRejectedValueOnce(new Error('DO unavailable'));
+    const worker = createCloudflareAgentAccessMcpWorker(
+      { serve: () => ({ fetch }) },
+      { resolveAllowedOrigin: () => null, authenticate, validateSession }
+    );
+
+    const expired = await worker.fetch!(
+      initializeRequest({ 'mcp-session-id': 'expired-session' }),
+      {},
+      executionContext()
+    );
+    expect(expired.status).toBe(404);
+    expect(expired.headers.get('cache-control')).toBe('no-store');
+
+    const unavailable = await worker.fetch!(
+      initializeRequest({ 'mcp-session-id': 'unavailable-session' }),
+      {},
+      executionContext()
+    );
+    expect(unavailable.status).toBe(503);
+
+    const malformed = await worker.fetch!(
+      initializeRequest({ 'mcp-session-id': 'contains space' }),
+      {},
+      executionContext()
+    );
+    expect(malformed.status).toBe(400);
+    expect(validateSession).toHaveBeenCalledTimes(2);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -183,7 +290,7 @@ describe('createCloudflareAgentAccessMcpWorker', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('rejects POST without the Streamable HTTP dual Accept contract before authentication', async () => {
+  it('rejects POST without the Streamable HTTP dual Accept contract after authentication', async () => {
     const authenticate = vi.fn(async () => ({ allowed: true as const, props }));
     const fetch = vi.fn(async () => new Response('forwarded'));
     const worker = createCloudflareAgentAccessMcpWorker(
@@ -197,7 +304,7 @@ describe('createCloudflareAgentAccessMcpWorker', () => {
       executionContext()
     );
     expect(response.status).toBe(400);
-    expect(authenticate).not.toHaveBeenCalled();
+    expect(authenticate).toHaveBeenCalledOnce();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -230,7 +337,7 @@ describe('createCloudflareAgentAccessMcpWorker', () => {
     );
     expect(putResponse.status).toBe(405);
     expect(putResponse.headers.get('allow')).toBe('GET, POST, DELETE, OPTIONS');
-    expect(authenticate).not.toHaveBeenCalled();
+    expect(authenticate).toHaveBeenCalledOnce();
     expect(fetch).not.toHaveBeenCalled();
   });
 

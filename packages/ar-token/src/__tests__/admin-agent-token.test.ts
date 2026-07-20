@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   getPrincipalTenantScopes: vi.fn(),
   getCredentialTenantScopes: vi.fn(),
   signJwtPayload: vi.fn(),
+  coreExecute: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-agent-access/core', async (importOriginal) => {
@@ -58,6 +59,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     buildRequestIssuerUrl: vi.fn(() => 'https://tenant.example.com'),
+    createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: { execute: mocks.coreExecute },
+    })),
     createAccessToken: mocks.createAccessToken,
     createRefreshToken: mocks.createRefreshToken,
     createRefreshTokenFamily: mocks.createRefreshTokenFamily,
@@ -284,6 +288,7 @@ describe('Admin Agent token endpoint', () => {
       { scopeMode: 'allow', tenantId: 'tenant-1' },
     ]);
     mocks.consumeModeBDelegationJti.mockResolvedValue(true);
+    mocks.coreExecute.mockResolvedValue({ success: true, rows: [] });
     mocks.getFamilyRpc.mockResolvedValue({
       tenant_id: 'tenant-1',
       version: 1,
@@ -350,6 +355,65 @@ describe('Admin Agent token endpoint', () => {
     expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
   });
 
+  it('loads scalar Agent enablement from the legacy AUTHRIM_CONFIG binding', async () => {
+    const { app, env } = createApp({
+      ...environment(),
+      ENABLE_AGENT_MCP: 'false',
+      AUTHRIM_CONFIG: { get: vi.fn().mockResolvedValue('true') } as never,
+    });
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createAccessToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'kid-1',
+      900,
+      expect.any(String)
+    );
+  });
+
+  it('rotates the signing key when no active private key exists', async () => {
+    const getActiveKeyWithPrivateRpc = vi.fn().mockResolvedValue(null);
+    const rotateKeysWithPrivateRpc = vi.fn().mockResolvedValue({
+      kid: 'kid-rotated',
+      privatePEM: 'rotated-private-key',
+    });
+    const configured = environment();
+    configured.KEY_MANAGER = {
+      idFromName: vi.fn(() => ({}) as never),
+      get: vi.fn(() => ({ getActiveKeyWithPrivateRpc, rotateKeysWithPrivateRpc })),
+    } as never;
+    const { app, env } = createApp(configured);
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(getActiveKeyWithPrivateRpc).toHaveBeenCalledOnce();
+    expect(rotateKeysWithPrivateRpc).toHaveBeenCalledOnce();
+    expect(mocks.importPKCS8).toHaveBeenCalledWith('rotated-private-key', 'RS256');
+    expect(mocks.createAccessToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'kid-rotated',
+      900,
+      expect.any(String)
+    );
+  });
+
   it('rejects a token request with the wrong content type', async () => {
     const { app, env } = createApp(environment());
     const response = await app.fetch(
@@ -405,6 +469,31 @@ describe('Admin Agent token endpoint', () => {
     expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
   });
 
+  it('rejects an expired restricted self-service client before consuming the code', async () => {
+    mocks.getClientCached.mockResolvedValueOnce({
+      client_id: 'mcp-client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'restricted_dcr',
+      agent_access_expires_at: Date.now() - 1,
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: 'invalid_client' }));
+    expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+    expect(mocks.coreExecute).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       name: 'the proof is invalid without a detailed error',
@@ -448,6 +537,20 @@ describe('Admin Agent token endpoint', () => {
   });
 
   it('consumes only a dedicated code and emits live-bound Agent claims', async () => {
+    mocks.consumeCodeRpc.mockResolvedValueOnce({
+      userId: 'admin_user:admin-1',
+      scope: 'agent:read',
+      redirectUri: 'https://client.example.com/callback',
+      authorizationServer: 'admin_agent',
+      subjectType: 'admin_user',
+      resource: 'https://tenant.example.com/mcp',
+      agentGrantId: 'grant-1',
+      agentGrantGeneration: 3,
+      agentConsentVersion: 2,
+      authorizationDetails: JSON.stringify([
+        { type: 'authrim_admin_agent', max_subjects_per_call: 2 },
+      ]),
+    });
     const { app, env } = createApp(environment());
     const response = await app.fetch(
       new Request('https://tenant.example.com/oauth/admin-agent/token', {
@@ -465,6 +568,7 @@ describe('Admin Agent token endpoint', () => {
       token_type: 'Bearer',
       expires_in: 900,
       scope: 'agent:read',
+      authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
     });
     expect(mocks.consumeCodeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -485,6 +589,7 @@ describe('Admin Agent token endpoint', () => {
         actor_mode: 'mode_a',
         actor_assurance: 'public_client_transaction',
         act: { sub: 'client:mcp-client' },
+        authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
       }),
       {},
       'kid-1',
@@ -493,6 +598,16 @@ describe('Admin Agent token endpoint', () => {
     );
     expect(mocks.createAccessToken.mock.calls[0][4]).toBe(
       mocks.consumeCodeRpc.mock.calls[0][0].accessTokenJti
+    );
+    expect(mocks.createRefreshToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+      }),
+      {},
+      'kid-1',
+      expect.any(Number),
+      expect.any(String),
+      expect.any(Number)
     );
     expect(mocks.writeAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'agent.token.issued', grantId: 'grant-1' })
@@ -507,6 +622,103 @@ describe('Admin Agent token endpoint', () => {
     expect(mocks.finalizeTokenFamily).toHaveBeenCalledWith(
       expect.objectContaining({ grantGeneration: 3, consentVersion: 2 })
     );
+  });
+
+  it('exchanges an authorization code for a registered CIMD URL client identifier', async () => {
+    const clientId = 'https://agent.example/client-metadata.json';
+    mocks.getClientCached.mockResolvedValueOnce({
+      client_id: clientId,
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'cimd',
+      agent_access_expires_at: Date.now() + 60_000,
+    });
+    mocks.getGrant.mockResolvedValueOnce({
+      grantId: 'grant-1',
+      tenantId: 'tenant-1',
+      clientId,
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:users:read'],
+      scopes: ['agent:read'],
+      consentVersion: 2,
+      generation: 3,
+      status: 'active',
+      delegationMode: 'user_consent',
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody({ client_id: clientId }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.consumeCodeRpc).toHaveBeenCalledWith(expect.objectContaining({ clientId }));
+    expect(mocks.createAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({ client_id: clientId, act: { sub: `client:${clientId}` } }),
+      {},
+      'kid-1',
+      900,
+      expect.any(String)
+    );
+  });
+
+  it('extends the inactivity expiry after successful use of a self-service client', async () => {
+    const now = Date.now();
+    mocks.getClientCached.mockResolvedValueOnce({
+      client_id: 'mcp-client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'restricted_dcr',
+      agent_access_expires_at: now + 60_000,
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.coreExecute).toHaveBeenCalledTimes(1);
+    const [sql, params] = mocks.coreExecute.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('agent_access_last_used_at');
+    expect(params[3]).toBe('tenant-1');
+    expect(params[4]).toBe('mcp-client');
+    expect(params[1]).toBeGreaterThan(now + 29 * 24 * 60 * 60 * 1000);
+  });
+
+  it('does not turn an issued token into an ambiguous failure when inactivity touch fails', async () => {
+    mocks.getClientCached.mockResolvedValueOnce({
+      client_id: 'mcp-client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'restricted_dcr',
+      agent_access_expires_at: Date.now() + 60_000,
+    });
+    mocks.coreExecute.mockRejectedValueOnce(new Error('temporary D1 failure'));
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: requestBody(),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ access_token: 'signed-access-token' });
   });
 
   it('rejects Mode B exchange when the machine actor is not DPoP-bound', async () => {
@@ -528,6 +740,37 @@ describe('Admin Agent token endpoint', () => {
     );
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({ error: 'invalid_actor_token' });
+  });
+
+  it('rejects a DPoP-bound Mode B actor token with incomplete machine claims', async () => {
+    mocks.verifyToken.mockResolvedValue({
+      actor_type: 'machine',
+      sender_constrained: true,
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          dpop: 'dpop-proof',
+        },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+          subject_token: 'delegation-token',
+          subject_token_type: 'urn:authrim:token-type:agent-delegation',
+          actor_token: 'machine-token',
+          actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          resource: 'https://tenant.example.com/mcp',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_actor_token' });
+    expect(mocks.validateDPoPProof).not.toHaveBeenCalled();
+    expect(mocks.findPrincipalById).not.toHaveBeenCalled();
   });
 
   it('rejects JIT delegation issuance without a DPoP machine authorization token', async () => {
@@ -928,6 +1171,7 @@ describe('Admin Agent token endpoint', () => {
       consent_version: 2,
       actor_mode: 'mode_a',
       actor_assurance: 'public_client_transaction',
+      authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
       jti: 'rt_1_0_initial',
       rtv: 1,
     });
@@ -966,9 +1210,151 @@ describe('Admin Agent token endpoint', () => {
         incomingVersion: 1,
       })
     );
+    expect(mocks.createAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+      }),
+      {},
+      'kid-1',
+      900,
+      expect.any(String)
+    );
+    expect(mocks.createRefreshToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+      }),
+      {},
+      'kid-1',
+      expect.any(Number),
+      expect.any(String),
+      expect.any(Number)
+    );
     expect(mocks.writeAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'agent.token.refreshed' })
     );
+  });
+
+  it('rotates a refresh token for a registered CIMD URL client identifier', async () => {
+    const clientId = 'https://agent.example/client-metadata.json';
+    mocks.getClientCached.mockResolvedValueOnce({
+      client_id: clientId,
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'cimd',
+      agent_access_expires_at: Date.now() + 60_000,
+    });
+    mocks.getGrant.mockResolvedValueOnce({
+      grantId: 'grant-1',
+      tenantId: 'tenant-1',
+      clientId,
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:users:read'],
+      scopes: ['agent:read'],
+      consentVersion: 2,
+      generation: 3,
+      status: 'active',
+      delegationMode: 'user_consent',
+    });
+    mocks.verifyToken.mockResolvedValueOnce({
+      iss: 'https://tenant.example.com/oauth/admin-agent',
+      sub: 'admin_user:admin-1',
+      aud: clientId,
+      client_id: clientId,
+      tenant_id: 'tenant-1',
+      scope: 'agent:read',
+      resource_aud: 'https://tenant.example.com/mcp',
+      agent_family_id: 'agf-family-1',
+      grant_id: 'grant-1',
+      grant_generation: 3,
+      consent_version: 2,
+      actor_mode: 'mode_a',
+      actor_assurance: 'public_client_transaction',
+      jti: 'rt_1_0_initial',
+      rtv: 1,
+    });
+    mocks.getFamilyRpc.mockResolvedValueOnce({
+      tenant_id: 'tenant-1',
+      version: 1,
+      last_jti: 'rt_1_0_initial',
+      last_used_at: Date.now(),
+      expires_at: Date.now() + 604800000,
+      user_id: 'agf-family-1',
+      client_id: clientId,
+      allowed_scope: 'agent:read',
+    });
+    mocks.createRefreshToken.mockResolvedValueOnce({
+      token: 'rotated-refresh-token',
+      jti: 'rt_1_0_rotated',
+      rtv: 2,
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: 'signed-refresh-token',
+          client_id: clientId,
+          resource: 'https://tenant.example.com/mcp',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.rotateRpc).toHaveBeenCalled();
+  });
+
+  it('rejects refresh for an expired Agent Grant before rotating the family', async () => {
+    mocks.verifyToken.mockResolvedValue({
+      sub: 'admin_user:admin-1',
+      aud: 'mcp-client',
+      client_id: 'mcp-client',
+      tenant_id: 'tenant-1',
+      scope: 'agent:read',
+      resource_aud: 'https://tenant.example.com/mcp',
+      agent_family_id: 'agf-family-1',
+      grant_id: 'grant-1',
+      grant_generation: 3,
+      consent_version: 2,
+      jti: 'rt_1_0_initial',
+      rtv: 1,
+    });
+    mocks.getGrant.mockResolvedValue({
+      grantId: 'grant-1',
+      tenantId: 'tenant-1',
+      clientId: 'mcp-client',
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:users:read'],
+      scopes: ['agent:read'],
+      consentVersion: 2,
+      generation: 3,
+      status: 'active',
+      delegationMode: 'user_consent',
+      expiresAt: Date.now() - 1,
+    });
+    const { app, env } = createApp(environment());
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: 'signed-refresh-token',
+          client_id: 'mcp-client',
+          resource: 'https://tenant.example.com/mcp',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+    expect(mocks.rotateRpc).not.toHaveBeenCalled();
   });
 
   it('rejects refresh when a linked Mode A principal permission ceiling is revoked', async () => {

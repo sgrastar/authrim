@@ -38,6 +38,7 @@ export interface ExternalIdPProvider {
 	buttonColor?: string;
 	buttonColorDark?: string;
 	buttonText?: string;
+	providerQuirks?: Record<string, unknown>;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -154,6 +155,7 @@ export interface CreateProviderRequest {
 	userinfo_endpoint?: string;
 	jwks_uri?: string;
 	attribute_mapping?: Record<string, string>;
+	provider_quirks?: Record<string, unknown>;
 	template?: ProviderTemplate;
 }
 
@@ -172,6 +174,11 @@ export interface OidcDiscoveryResponse {
 	subject_types_supported?: string[];
 	id_token_signing_alg_values_supported?: string[];
 	claims_supported?: string[];
+	discovery_source?: {
+		method: 'webfinger';
+		resource: string;
+		webfinger_endpoint: string;
+	};
 }
 
 /**
@@ -202,6 +209,7 @@ export interface UpdateProviderRequest {
 	userinfo_endpoint?: string;
 	jwks_uri?: string;
 	attribute_mapping?: Record<string, string>;
+	provider_quirks?: Record<string, unknown>;
 }
 
 export const adminExternalProvidersAPI = {
@@ -276,6 +284,28 @@ export const adminExternalProvidersAPI = {
 		return response.json();
 	},
 
+	async registerDynamic(
+		providerId: string
+	): Promise<{ registered: boolean; provider: ExternalIdPProvider }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/external-providers/${encodeURIComponent(providerId)}/register`,
+			{
+				method: 'POST',
+				credentials: 'include',
+				headers: { 'Content-Type': 'application/json' },
+				body: '{}'
+			}
+		);
+		if (!response.ok) {
+			const body = (await response.json().catch(() => ({}))) as {
+				error_description?: string;
+				message?: string;
+			};
+			throw new Error(body.error_description || body.message || 'Dynamic registration failed');
+		}
+		return response.json();
+	},
+
 	/**
 	 * Delete a provider
 	 */
@@ -301,14 +331,17 @@ export const adminExternalProvidersAPI = {
 	 * @param url - The issuer URL or full discovery URL
 	 * @returns OpenID Configuration object
 	 */
-	async discoverOidcConfig(url: string): Promise<OidcDiscoveryResponse> {
+	async discoverOidcConfig(
+		value: string,
+		mode: 'url' | 'webfinger' = 'url'
+	): Promise<OidcDiscoveryResponse> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/external-providers/discover-oidc`,
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				credentials: 'include',
-				body: JSON.stringify({ url })
+				body: JSON.stringify(mode === 'webfinger' ? { resource: value } : { url: value })
 			}
 		);
 		if (!response.ok) {

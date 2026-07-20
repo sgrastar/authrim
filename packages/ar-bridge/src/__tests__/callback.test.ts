@@ -4,6 +4,25 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createHybridFragmentRelayResponse } from '../handlers/callback';
+
+describe('Hybrid fragment relay', () => {
+  it('relays only allowlisted fragment fields with restrictive browser headers', async () => {
+    const response = createHybridFragmentRelayResponse();
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('content-security-policy')).toContain("form-action 'self'");
+    expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    expect(html).toContain("['code', 'id_token', 'state', 'error', 'error_description']");
+    expect(html).toContain("history.replaceState(null, '', location.pathname + location.search)");
+    expect(html).not.toContain('document.write');
+    expect(html).not.toContain('innerHTML');
+  });
+});
 
 // Since normalizeUserInfo is a private function in callback.ts,
 // we export a test-accessible version or re-implement the logic for testing.

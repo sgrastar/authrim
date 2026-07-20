@@ -61,6 +61,8 @@ export interface OIDCProviderMetadata {
   backchannel_token_delivery_modes_supported?: string[];
   backchannel_authentication_request_signing_alg_values_supported?: string[];
   backchannel_user_code_parameter_supported?: boolean;
+  // RFC 8705: Mutual-TLS client certificate-bound access tokens
+  tls_client_certificate_bound_access_tokens?: boolean;
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
@@ -263,8 +265,8 @@ export interface OIDCIdentityMappingFieldMappingSelector {
  * https://openid.net/specs/openid-connect-registration-1_0.html#ClientMetadata
  */
 export interface ClientRegistrationRequest {
-  // Required fields
-  redirect_uris: string[];
+  // Required for redirect-based grants; CIBA-only clients register an empty array.
+  redirect_uris?: string[];
   // Optional fields
   client_name?: string;
   client_uri?: string;
@@ -357,6 +359,13 @@ export interface ClientRegistrationRequest {
   // ==========================================================================
   initiate_login_uri?: string;
   login_ui_url?: string | null; // Client-specific login UI base URL
+  // OIDC CIBA client metadata
+  backchannel_token_delivery_mode?: 'poll' | 'ping' | 'push';
+  backchannel_client_notification_endpoint?: string;
+  backchannel_authentication_request_signing_alg?: string;
+  backchannel_user_code_parameter?: boolean;
+  // RFC 8705 certificate-bound token policy
+  tls_client_certificate_bound_access_tokens?: boolean;
 }
 
 /**
@@ -423,6 +432,13 @@ export interface ClientRegistrationResponse {
   // OIDC Front-Channel Logout 1.0
   frontchannel_logout_uri?: string;
   frontchannel_logout_session_required?: boolean;
+  // OIDC CIBA client metadata
+  backchannel_token_delivery_mode?: 'poll' | 'ping' | 'push';
+  backchannel_client_notification_endpoint?: string;
+  backchannel_authentication_request_signing_alg?: string;
+  backchannel_user_code_parameter?: boolean;
+  // RFC 8705 certificate-bound token policy
+  tls_client_certificate_bound_access_tokens?: boolean;
   // ==========================================================================
   // Simple Logout Webhook (Authrim Extension)
   // Returns URI and secret on initial registration only
@@ -479,10 +495,11 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   userinfo_encrypted_response_enc?: string;
   jwks?: JWKS;
   // CIBA (Client Initiated Backchannel Authentication) settings
-  backchannel_token_delivery_mode?: string; // 'poll', 'ping', 'push', or combination
+  backchannel_token_delivery_mode?: 'poll' | 'ping' | 'push';
   backchannel_client_notification_endpoint?: string; // Callback URL for ping/push modes
   backchannel_authentication_request_signing_alg?: string; // Algorithm for signed auth requests
   backchannel_user_code_parameter?: boolean; // Whether client supports user_code parameter
+  tls_client_certificate_bound_access_tokens?: boolean;
 
   // ==========================================================================
   // RFC 9449: DPoP (Demonstrating Proof of Possession)
@@ -604,6 +621,14 @@ export interface ClientMetadata extends ClientRegistrationResponse {
    * Set during DCR registration when dcr.scope_restriction_enabled is true.
    */
   requestable_scopes?: string[];
+
+  /** Restricted self-service registration provenance and inactivity lifecycle. */
+  agent_access_registration_mode?: 'restricted_dcr' | 'cimd';
+  agent_access_expires_at?: number;
+  agent_access_last_used_at?: number;
+  client_metadata_url?: string;
+  client_metadata_hash?: string;
+  client_metadata_fetched_at?: number;
 
   // ==========================================================================
   // PKCE Settings
@@ -860,6 +885,7 @@ export interface CIBARequestMetadata {
   user_id?: string; // Set when user approves the request
   sub?: string; // Subject (user identifier) - set when approved
   nonce?: string; // Nonce for ID token (optional)
+  authenticated_acr?: string; // Authentication context established by the approval step
   // Token issuance tracking
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued

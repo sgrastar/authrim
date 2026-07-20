@@ -15,9 +15,7 @@ describe('OIDC signing policy', () => {
 
   it('accepts only implemented client-selectable algorithms', () => {
     expect(resolveIDTokenSigningAlgorithm({ id_token_signed_response_alg: 'ES256' })).toBe('ES256');
-    expect(() => resolveIDTokenSigningAlgorithm({ id_token_signed_response_alg: 'PS256' })).toThrow(
-      'Unsupported ID Token signing algorithm'
-    );
+    expect(resolveIDTokenSigningAlgorithm({ id_token_signed_response_alg: 'PS256' })).toBe('PS256');
     expect(() =>
       resolveUserInfoSigningAlgorithm({ userinfo_signed_response_alg: 'RS512' }, false)
     ).toThrow('Unsupported UserInfo signing algorithm');
@@ -32,11 +30,11 @@ describe('OIDC signing policy', () => {
         'RS256'
       )
     ).toBe('ES256');
-    expect(() =>
+    expect(
       resolveAuthorizationResponseSigningAlgorithm({
         authorization_signed_response_alg: 'PS256',
       })
-    ).toThrow('Unsupported authorization response signing algorithm');
+    ).toBe('PS256');
   });
 
   it('advertises only algorithms backed by matching public JWKS keys', () => {
@@ -46,6 +44,6 @@ describe('OIDC signing policy', () => {
         { kty: 'EC', use: 'sig', alg: 'ES256', crv: 'P-256', x: 'x', y: 'y' },
         { kty: 'RSA', use: 'sig', alg: 'PS256', n: 'n', e: 'AQAB' },
       ])
-    ).toEqual(['RS256', 'ES256']);
+    ).toEqual(['RS256', 'ES256', 'PS256']);
   });
 });

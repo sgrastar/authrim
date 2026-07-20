@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Admin API
-  version: 0.3.3
+  version: 0.4.0
   summary: Authenticated tenant and platform administration API.
   description: >
     Initial OpenAPI contract for the Authrim Admin API implemented by the `@authrim/ar-management`
@@ -19,6 +19,7 @@ security:
   - adminBearer: []
   - adminSessionCookie: []
 tags:
+  - name: Admin Agent Access
   - name: Admin Access Control
   - name: Admin Attributes
   - name: Admin Audit
@@ -2089,6 +2090,77 @@ paths:
       summary: Export diagnostic logs.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
+        - name: tenantId
+          in: query
+          required: true
+          description: Tenant whose diagnostic logs are exported.
+          schema:
+            type: string
+            maxLength: 128
+        - name: clientIds
+          in: query
+          required: false
+          description: Comma-separated client identifiers.
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          required: false
+          description: Inclusive ISO 8601 or Unix timestamp lower bound.
+          schema:
+            type: string
+        - name: endDate
+          in: query
+          required: false
+          description: Inclusive ISO 8601 or Unix timestamp upper bound.
+          schema:
+            type: string
+        - name: sessionIds
+          in: query
+          required: false
+          description: Comma-separated diagnostic session identifiers.
+          schema:
+            type: string
+        - name: flowIds
+          in: query
+          required: false
+          description: >-
+            Comma-separated Authrim authentication flow identifiers. Use this filter to isolate a
+            single RP conformance test without relying on timestamps alone.
+          schema:
+            type: string
+        - name: categories
+          in: query
+          required: false
+          description: Comma-separated diagnostic log categories.
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, jsonl, text]
+            default: json
+        - name: includeStats
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: sortMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [session, category, timeline]
+        - name: exportMode
+          in: query
+          required: false
+          description: Privacy mode may only make stored data more restrictive.
+          schema:
+            type: string
+            enum: [full, masked, minimal]
       responses:
         '200':
           $ref: '#/components/responses/DiagnosticLogExport'
@@ -2779,6 +2851,54 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/agent-login-handoffs/{id}/approve:
+    post:
+      tags:
+        - Admin Agent Access
+      operationId: approveAdminAgentLoginHandoff
+      summary: Approve a tenant authorization handoff on the central Admin origin.
+      description: >
+        Requires a host-only central Admin session with fresh MFA and `admin:agent:use`. The server
+        re-evaluates live RBAC for the handoff's stored target tenant, rejects derived sessions as
+        approval sources, and atomically issues a code valid for at most 60 seconds. Only the exact
+        HTTPS tenant consume URL is returned; the Admin session credential never crosses origins.
+      security:
+        - adminSessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^alh_[A-Za-z0-9_-]{32}$'
+      responses:
+        '200':
+          description: Exact tenant consume URL carrying a one-time code.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-store`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [consume_url]
+                properties:
+                  consume_url:
+                    type: string
+                    format: uri
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '410':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/admin/settings/agent:
     get:
       tags:
@@ -2981,6 +3101,28 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /api/admin/agent-read/session-posture:
+    get:
+      tags: [Admin Agent Access]
+      operationId: getAgentSafeSessionPosture
+      summary: Get non-identifying aggregate session posture.
+      description: >-
+        Requires `admin:sessions:read`. Aggregates session counts and time windows in the Core DB;
+        user, session, device, network, and token identifiers are neither selected nor returned.
+      security:
+        - adminBearer: []
+      responses:
+        '200':
+          description: Tenant session posture without identifying records.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAgentSessionPostureResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /api/admin/agent-read/admin-audit-log:
     get:
       tags: [Admin Agent Access]
@@ -2988,7 +3130,7 @@ paths:
       summary: Search Admin audit events through the Agent-safe projection.
       description: >-
         Requires `admin:admin_audit:read`. Before/after payloads, metadata, Admin email, and other
-        sensitive detail are never included.
+        sensitive detail are never included. Stable actor and resource identifiers are also omitted.
       security:
         - adminBearer: []
       parameters:
@@ -4653,6 +4795,57 @@ paths:
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
+  '/api/admin/agent-grants/{id}/self-service-scopes':
+    put:
+      tags: [Admin Agent Access]
+      operationId: updateSelfServiceAgentGrantScopes
+      summary: Change the scopes of the current Admin's interactive system-managed connection.
+      description: >-
+        Human session only. The authenticated Admin must be both grantor and delegator. The server
+        rechecks the public client's registered scopes and the Admin's live RBAC ceiling, generates
+        a new immutable Task Set and masked single-tenant Scope Policy, replaces both consent
+        records, increments Grant generation and consent version, and queues prior token families
+        for revocation in one DB_ADMIN transaction.
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/AgentGrantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [scopes]
+              properties:
+                scopes:
+                  type: array
+                  minItems: 1
+                  maxItems: 3
+                  uniqueItems: true
+                  contains: { const: 'agent:read' }
+                  items:
+                    type: string
+                    enum: ['agent:read', 'agent:user-data:read', 'agent:write']
+      responses:
+        '200':
+          description: Current connection and whether its immutable authorization snapshot changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [grant, changed]
+                properties:
+                  grant: { $ref: '#/components/schemas/AdminAgentGrant' }
+                  changed: { type: boolean }
+                  token_families_pending_revocation: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   '/api/admin/agent-grants/{id}/suspend':
     post:
       tags:
@@ -7957,6 +8150,42 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/external-providers/{id}/register':
+    post:
+      tags:
+        - External Providers
+      operationId: postApiAdminExternalProvidersByIdRegister
+      summary: Dynamically register an external OIDC provider client.
+      description: >-
+        Discovers the configured OpenID Provider, performs Dynamic Client Registration, and stores
+        the returned client credentials encrypted in the External IdP Bridge.
+      responses:
+        '200':
+          $ref: '#/components/responses/ExternalProviderProxy'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: External provider identifier.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/external-providers/discover-oidc:
     post:
       tags:
@@ -7964,9 +8193,11 @@ paths:
       operationId: postApiAdminExternalProvidersDiscoverOidc
       summary: Discover an OIDC provider configuration.
       description: >-
-        Fetches and sanitizes an external OIDC discovery document for the supplied HTTPS issuer or
-        discovery URL. The implementation blocks localhost, private/internal hosts, non-standard
-        ports, oversized responses, unsafe redirects, and non-JSON responses.
+        Fetches and sanitizes an external OIDC discovery document for a supplied HTTPS issuer,
+        discovery URL, or RFC 7033 WebFinger resource. WebFinger responses require an exact subject
+        match and the OpenID Connect issuer relation. The implementation blocks localhost,
+        private/internal hosts, non-standard ports, oversized responses, unsafe redirects, and
+        non-JSON responses.
       responses:
         '200':
           $ref: '#/components/responses/OidcDiscovery'
@@ -41476,14 +41707,38 @@ components:
         id: { type: [string, 'null'] }
         action: { type: [string, 'null'] }
         resource_type: { type: [string, 'null'] }
-        resource_id: { type: [string, 'null'] }
         result: { type: [string, 'null'] }
         severity: { type: [string, 'null'] }
         actor_type: { type: [string, 'null'] }
-        actor_id: { type: [string, 'null'] }
         actor_display_name_masked: { type: [string, 'null'] }
         request_id: { type: [string, 'null'] }
         created_at: { type: [integer, 'null'], format: int64 }
+    AdminAgentSessionPostureResponse:
+      type: object
+      additionalProperties: false
+      required: [snapshot]
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [total_sessions, active_sessions, expired_sessions, window]
+          properties:
+            total_sessions: { type: integer, minimum: 0 }
+            active_sessions: { type: integer, minimum: 0 }
+            expired_sessions: { type: integer, minimum: 0 }
+            window:
+              type: object
+              additionalProperties: false
+              required:
+                - oldest_created_at
+                - newest_last_accessed_at
+                - next_expiration_at
+                - latest_expiration_at
+              properties:
+                oldest_created_at: { type: [string, 'null'], format: date-time }
+                newest_last_accessed_at: { type: [string, 'null'], format: date-time }
+                next_expiration_at: { type: [string, 'null'], format: date-time }
+                latest_expiration_at: { type: [string, 'null'], format: date-time }
     AdminAgentAccessSettings:
       type: object
       additionalProperties: false
@@ -41550,6 +41805,7 @@ components:
         - permissions
         - scopes
         - resolved_scope_constraints
+        - management_mode
         - consent_version
         - generation
         - status
@@ -41589,7 +41845,7 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [agent:read, agent:write, agent:execute, agent:admin]
+            enum: [agent:read, 'agent:user-data:read', agent:write, agent:execute, agent:admin]
         authorization_details:
           type: [array, 'null']
           items:
@@ -41600,6 +41856,12 @@ components:
           additionalProperties: true
         purpose:
           type: [string, 'null']
+        management_mode:
+          type: string
+          enum: [managed, system_managed]
+          description: >-
+            system_managed identifies the immutable internal Grant generated by interactive
+            self-service authorization; its Task Set and Scope Policy are not edited directly.
         consent_version:
           type: integer
           minimum: 1
@@ -49642,12 +49904,19 @@ components:
     OidcDiscoveryRequest:
       type: object
       additionalProperties: false
-      required:
-        - url
+      oneOf:
+        - required:
+            - url
+        - required:
+            - resource
       properties:
         url:
           type: string
           format: uri
+          description: HTTPS issuer URL or full OpenID Provider Configuration URL.
+        resource:
+          type: string
+          description: An acct URI or HTTPS URL to resolve using WebFinger.
     OidcDiscoveryResponse:
       type: object
       additionalProperties: false
@@ -49675,6 +49944,23 @@ components:
           type: array
           items:
             type: string
+        discovery_source:
+          type: object
+          additionalProperties: false
+          required:
+            - method
+            - resource
+            - webfinger_endpoint
+          properties:
+            method:
+              type: string
+              enum:
+                - webfinger
+            resource:
+              type: string
+            webfinger_endpoint:
+              type: string
+              format: uri
     ExternalTokenRefreshConfigUpdateRequest:
       type: object
       additionalProperties: true

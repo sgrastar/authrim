@@ -8,6 +8,7 @@
 
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import * as jose from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
@@ -19,6 +20,7 @@ import {
   getTenantIdFromContext,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
+  DIAGNOSTIC_FLOW_ID_HEADER,
   createAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
@@ -44,8 +46,9 @@ import {
 import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
+import { Fapi2Client } from '../clients/fapi2-client';
 import { handleIdentity } from '../services/identity-stitching';
-import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
+import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
   ExternalIdPErrorCode,
@@ -61,6 +64,16 @@ import { type FacebookProviderQuirks, generateAppSecretProof } from '../provider
 import { type TwitterProviderQuirks } from '../providers/twitter';
 import { isAppleProvider, type AppleProviderQuirks } from '../providers/apple';
 import { generateAppleClientSecret, parseAppleUserData } from '../utils/apple-jwt';
+import {
+  UserInfoSubjectMismatchError,
+  assertUserInfoSubjectMatches,
+} from '../utils/userinfo-validation';
+import {
+  isFapi2Provider,
+  loadFapi2ProviderConfig,
+  type Fapi2ProviderConfig,
+  validateFapi2ProviderMetadata,
+} from '../services/fapi2-provider';
 
 /**
  * Extract callback parameters from GET query string or POST form body
@@ -68,18 +81,24 @@ import { generateAppleClientSecret, parseAppleUserData } from '../utils/apple-jw
  */
 async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
   code: string | undefined;
+  idToken: string | undefined;
   state: string | undefined;
   error: string | undefined;
   errorDescription: string | undefined;
+  issuer: string | undefined;
+  responseJwt: string | undefined;
   tenantId: string;
   user: string | undefined; // Apple-specific: user data JSON
 }> {
   // Try GET parameters first (standard OAuth)
   const tenantId = getTenantIdFromContext(c);
   let code = c.req.query('code');
+  let idToken = c.req.query('id_token');
   let state = c.req.query('state');
   let error = c.req.query('error');
   let errorDescription = c.req.query('error_description');
+  let issuer = c.req.query('iss');
+  let responseJwt = c.req.query('response');
   let user = c.req.query('user');
 
   // If POST request (Apple form_post), try to get from body
@@ -88,18 +107,59 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
       const body = await c.req.parseBody();
       // POST body takes precedence over query params for OAuth response
       code = (body.code as string) || code;
+      idToken = (body.id_token as string) || idToken;
       state = (body.state as string) || state;
       error = (body.error as string) || error;
       errorDescription = (body.error_description as string) || errorDescription;
+      issuer = (body.iss as string) || issuer;
+      responseJwt = (body.response as string) || responseJwt;
       // Apple-specific: user data is only in POST body
       user = (body.user as string) || user;
-      // id_token may also be in body for Apple
     } catch {
       // Body parsing failed, fall back to query params
     }
   }
 
-  return { code, state, error, errorDescription, tenantId, user };
+  return { code, idToken, state, error, errorDescription, issuer, responseJwt, tenantId, user };
+}
+
+/**
+ * Hybrid responses use fragment encoding by default. Fragments are never sent
+ * to the server, so the browser relays an allowlisted set of parameters in a
+ * same-origin POST. No fragment value is interpolated into this HTML.
+ */
+export function createHybridFragmentRelayResponse(): Response {
+  const nonce = crypto.randomUUID().replaceAll('-', '');
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Completing sign-in</title></head>
+<body><p>Completing sign-in…</p><script nonce="${nonce}">
+(() => {
+  const source = new URLSearchParams(location.hash.slice(1));
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = location.pathname + location.search;
+  for (const name of ['code', 'id_token', 'state', 'error', 'error_description']) {
+    const value = source.get(name);
+    if (value === null) continue;
+    const input = document.createElement('input');
+    input.type = 'hidden'; input.name = name; input.value = value;
+    form.append(input);
+  }
+  history.replaceState(null, '', location.pathname + location.search);
+  document.body.append(form);
+  form.submit();
+})();
+</script></body></html>`;
+  return new Response(html, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; img-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    },
+  });
 }
 
 /**
@@ -146,18 +206,26 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   const log = getLogger(c).module('CALLBACK');
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return redirectWithError(c, 'invalid_request', 'Missing provider');
-  const { code, state, error, errorDescription, tenantId, user } = await getCallbackParams(c);
+  const callbackParams = await getCallbackParams(c);
+  let { code, state, error, errorDescription, issuer } = callbackParams;
+  const { idToken, responseJwt, tenantId, user } = callbackParams;
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
 
-  // Handle provider errors
-  if (error) {
-    // PII Protection: Do not log errorDescription (may contain user info from provider)
-    log.error('External IdP returned error', { error });
-    return redirectWithError(c, error, errorDescription);
+  if (responseJwt && !state) {
+    try {
+      const unverified = jose.decodeJwt(responseJwt);
+      state = typeof unverified.state === 'string' ? unverified.state : undefined;
+    } catch {
+      return redirectWithError(c, 'invalid_request', 'Invalid JARM response');
+    }
   }
 
-  if (!code || !state) {
-    return redirectWithError(c, 'invalid_request', 'Missing code or state');
+  if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
+    return createHybridFragmentRelayResponse();
+  }
+
+  if (!state) {
+    return redirectWithError(c, 'invalid_request', 'Missing state');
   }
 
   const stateCookieName = await getAuthStateCookieName(state);
@@ -194,6 +262,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     });
     const diagnosticSessionId = getDiagnosticSessionId(c);
     const flowId = authState.flowId;
+    if (flowId) {
+      c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
+    }
 
     // 3. Get client secret (Apple requires dynamic JWT generation)
     let clientSecret: string;
@@ -221,6 +292,73 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     const providerIdentifier = provider.slug || provider.id;
     const callbackTenantId = authState.tenantId || tenantId;
     const callbackUri = `${buildIssuerUrl(c.env, callbackTenantId)}/auth/external/${providerIdentifier}/callback`;
+    const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret);
+
+    const fapi2Enabled = isFapi2Provider(provider);
+    let fapi2Config: Fapi2ProviderConfig | undefined;
+    let fapi2Client: Fapi2Client | undefined;
+    let fapi2Metadata: Awaited<ReturnType<OIDCRPClient['discover']>> | undefined;
+    if (fapi2Enabled) {
+      const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+      if (!encryptionKey) throw new Error('RP_TOKEN_ENCRYPTION_KEY is not configured');
+      fapi2Config = await loadFapi2ProviderConfig(provider, encryptionKey);
+      fapi2Metadata = await client.discover();
+      validateFapi2ProviderMetadata(fapi2Metadata, fapi2Config.profile, fapi2Config);
+      fapi2Client = new Fapi2Client({
+        issuer: fapi2Metadata.issuer,
+        clientId: provider.clientId,
+        redirectUri: callbackUri,
+        clientAssertionPrivateJwk: fapi2Config.clientAssertionPrivateJwk,
+        dpopPrivateJwk: fapi2Config.dpopPrivateJwk,
+      });
+      if (fapi2Config.jarm) {
+        if (!responseJwt) {
+          throw new ExternalIdPError(
+            ExternalIdPErrorCode.CALLBACK_FAILED,
+            'Missing JARM authorization response'
+          );
+        }
+        if (!fapi2Metadata.jwks_uri) {
+          throw new Error('FAPI2 JARM provider metadata has no jwks_uri');
+        }
+        const jwks = await safeFetchJson<jose.JSONWebKeySet>(fapi2Metadata.jwks_uri, {
+          timeoutMs: 5_000,
+          maxResponseSize: 256 * 1024,
+        });
+        const jarm = await fapi2Client.validateJarmResponse({
+          responseJwt,
+          jwks,
+          expectedState: state,
+          signingAlgorithm: fapi2Config.authorizationSignedResponseAlg,
+        });
+        code = jarm.code;
+        state = jarm.state;
+        issuer = jarm.iss;
+        error = jarm.error;
+        errorDescription = jarm.error_description;
+      } else if (responseJwt) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Unexpected JARM authorization response'
+        );
+      }
+      if (!provider.issuer || issuer !== provider.issuer) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          issuer ? 'FAPI2 authorization response issuer mismatch' : 'Missing FAPI2 issuer parameter'
+        );
+      }
+    }
+
+    // Provider errors are processed only after state binding and, for JARM,
+    // signature/issuer/audience validation have completed.
+    if (error) {
+      log.error('External IdP returned error', { error });
+      return redirectWithError(c, error, errorDescription);
+    }
+    if (!code) {
+      return redirectWithError(c, 'invalid_request', 'Missing code');
+    }
 
     // 4b. Log authorization response (OIDF conformance)
     if (diagnosticLogger) {
@@ -242,7 +380,6 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     }
 
     // 5. Exchange code for tokens
-    const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret);
     if (!authState.codeVerifier) {
       throw new ExternalIdPError(
         ExternalIdPErrorCode.CALLBACK_FAILED,
@@ -250,7 +387,56 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
-    const { tokens, requestContext } = await client.exchangeCode(code, authState.codeVerifier);
+    const responseType =
+      provider.providerQuirks?.responseType === 'code id_token' ? 'code id_token' : 'code';
+    let authorizationIdTokenClaims: UserInfo | undefined;
+    if (responseType === 'code id_token') {
+      if (!idToken) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing authorization response ID token for Hybrid Flow'
+        );
+      }
+      if (!authState.nonce) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing nonce for Hybrid Flow ID token validation'
+        );
+      }
+      authorizationIdTokenClaims = await client.validateIdToken(
+        idToken,
+        {
+          nonce: authState.nonce,
+          code,
+          requireCodeHash: true,
+          maxAge: authState.maxAge,
+          acrValues: authState.acrValues,
+        },
+        diagnosticLogger ? { logger: diagnosticLogger, flowId, diagnosticSessionId } : undefined
+      );
+    }
+
+    let tokens;
+    let requestContext;
+    let fapi2IdTokenSigningAlgorithms: string[] | undefined;
+    if (fapi2Enabled && fapi2Config) {
+      const metadata = fapi2Metadata ?? (await client.discover());
+      validateFapi2ProviderMetadata(metadata, fapi2Config.profile, fapi2Config);
+      fapi2IdTokenSigningAlgorithms = metadata.id_token_signing_alg_values_supported;
+      if (!fapi2Client) throw new Error('FAPI2 client was not initialized');
+      tokens = await fapi2Client.exchangeCode({
+        tokenEndpoint: metadata.token_endpoint,
+        code,
+        codeVerifier: authState.codeVerifier,
+      });
+      requestContext = {
+        tokenEndpoint: metadata.token_endpoint,
+        authMethod: 'private_key_jwt',
+        authHeaderPresent: false,
+      };
+    } else {
+      ({ tokens, requestContext } = await client.exchangeCode(code, authState.codeVerifier));
+    }
 
     if (diagnosticLogger) {
       await diagnosticLogger.logTokenValidation({
@@ -309,14 +495,35 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           accessToken: tokens.access_token, // For at_hash validation if present
           maxAge: authState.maxAge, // For auth_time validation if max_age was requested
           acrValues: authState.acrValues, // For acr validation if acr_values was requested
+          requireExactAudience: fapi2Enabled,
+          expectedSigningAlgorithms: fapi2IdTokenSigningAlgorithms,
         },
         diagnostics
       );
       idTokenSub = userInfo.sub;
+      if (
+        authorizationIdTokenClaims &&
+        (authorizationIdTokenClaims.iss !== userInfo.iss ||
+          authorizationIdTokenClaims.sub !== userInfo.sub)
+      ) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Hybrid Flow ID token issuer or subject mismatch'
+        );
+      }
 
       // Optionally fetch userinfo even when id_token is present
       // Enable this for OIDC RP certification testing or when userinfo has additional claims
-      if (provider.alwaysFetchUserinfo) {
+      if (fapi2Client && fapi2Config?.resourceUrl) {
+        const resourceData = await fapi2Client.fetchResource({
+          resourceUrl: fapi2Config.resourceUrl,
+          accessToken: tokens.access_token,
+        });
+        if (idTokenSub && typeof resourceData.sub === 'string') {
+          assertUserInfoSubjectMatches(idTokenSub, resourceData.sub);
+        }
+        userInfo = { ...userInfo, ...resourceData };
+      } else if (provider.alwaysFetchUserinfo && !fapi2Client) {
         try {
           const { userInfo: userinfoData, endpoint } = await client.fetchUserInfoWithMeta(
             tokens.access_token
@@ -361,15 +568,24 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
                 },
               });
             }
-            throw new Error('Userinfo sub claim mismatch');
+            assertUserInfoSubjectMatches(idTokenSub, userinfoData.sub);
           }
           // Merge userinfo data (userinfo may have additional claims not in id_token)
           userInfo = { ...userInfo, ...userinfoData };
-        } catch {
+        } catch (error) {
+          if (error instanceof UserInfoSubjectMismatchError) throw error;
           // Userinfo fetch failure is not fatal - we already have claims from id_token
           log.warn('Userinfo fetch failed, using id_token claims only');
         }
       }
+    } else if (fapi2Client && fapi2Config?.resourceUrl) {
+      const resourceData = await fapi2Client.fetchResource({
+        resourceUrl: fapi2Config.resourceUrl,
+        accessToken: tokens.access_token,
+      });
+      // Plain OAuth resource responses commonly use an ecosystem-specific
+      // account identifier. attributeMapping normalizes it to `sub` below.
+      userInfo = resourceData as UserInfo;
     } else {
       const { userInfo: userinfoData, endpoint } = await client.fetchUserInfoWithMeta(
         tokens.access_token
@@ -538,6 +754,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       // 11b. Create session (SSO session)
       const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
       const sessionTTL = 24 * 60 * 60; // 24 hours
+      const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+      const upstreamIdTokenEncrypted =
+        tokens.id_token && encryptionKey
+          ? await encrypt(tokens.id_token, encryptionKey)
+          : undefined;
 
       await sessionStore.createSessionRpc(
         sessionId,
@@ -550,9 +771,23 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           acr: 'urn:mace:incommon:iap:bronze',
           client_id: clientId,
           external_idp: provider.id,
+          external_provider_id: provider.id,
+          external_provider_sub: userInfo.sub,
+          external_provider_sid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
+          upstream_id_token_encrypted: upstreamIdTokenEncrypted,
         },
         tenantId
       );
+
+      await recordExternalProviderSession(c.env, {
+        tenantId,
+        sessionId,
+        userId: result.userId,
+        providerId: provider.id,
+        providerSub: userInfo.sub,
+        providerSid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
+        expiresAt: Date.now() + sessionTTL * 1000,
+      });
 
       // Set session cookie
       const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
@@ -721,92 +956,56 @@ async function redirectWithError(
   return c.redirect(redirectUrl.toString());
 }
 
-/**
- * Session creation options for external IdP authentication
- */
-interface CreateSessionOptions {
+interface ExternalProviderSessionRecord {
   userId: string;
   tenantId: string;
-  /** External provider ID used for authentication */
-  externalProviderId: string;
-  /** Subject ID from the external provider (for backchannel logout) */
-  externalProviderSub: string;
-  /** ACR value returned by the provider */
-  acr?: string;
+  sessionId: string;
+  providerId: string;
+  providerSub: string;
+  providerSid?: string;
+  expiresAt: number;
 }
 
 /**
- * Create Authrim session (sharded)
- * Stores external provider information for backchannel logout support
+ * Record the same external-provider binding in D1 that is stored in the
+ * sharded SessionStore. Back-channel logout uses this index to find sessions
+ * without scanning Durable Object shards.
  */
-async function createSession(env: Env, options: CreateSessionOptions): Promise<string> {
+async function recordExternalProviderSession(
+  env: Env,
+  options: ExternalProviderSessionRecord
+): Promise<void> {
   try {
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
+    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
       env,
-      options.tenantId
+      'bridge-callback-session-record',
+      { tenantId: options.tenantId }
     );
-    const now = Date.now();
-    const ttl = 3600; // 1 hour in seconds
-    const expiresAt = now + ttl * 1000;
-
-    // 1. Create session in Durable Object (for session data and validation)
-    const response = await sessionStore.fetch(
-      new Request('https://session-store/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: options.userId,
-          ttl,
-          data: {
-            amr: ['external_idp'],
-            acr: options.acr || 'urn:mace:incommon:iap:bronze',
-            // Store external provider info for backchannel logout
-            external_provider_id: options.externalProviderId,
-            external_provider_sub: options.externalProviderSub,
-          },
-        }),
-      })
+    await coreAdapter.execute(
+      `INSERT INTO sessions (
+         id, user_id, expires_at, created_at, external_provider_id, external_provider_sub,
+         external_provider_sid, tenant_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         external_provider_id = excluded.external_provider_id,
+         external_provider_sub = excluded.external_provider_sub,
+         external_provider_sid = excluded.external_provider_sid,
+         expires_at = excluded.expires_at`,
+      [
+        options.sessionId,
+        options.userId,
+        options.expiresAt,
+        Date.now(),
+        options.providerId,
+        options.providerSub,
+        options.providerSid ?? null,
+        options.tenantId,
+      ]
     );
-
-    if (!response.ok) {
-      throw new Error('Session creation failed');
-    }
-
-    // 2. Also record in D1 for backchannel logout queries
-    // This allows us to find sessions by (provider_id, provider_sub)
-    try {
-      const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-        env,
-        'bridge-callback-session-record',
-        { tenantId: options.tenantId }
-      );
-      await coreAdapter.execute(
-        `INSERT INTO sessions (
-           id, user_id, expires_at, created_at, external_provider_id, external_provider_sub, tenant_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          sessionId,
-          options.userId,
-          expiresAt,
-          now,
-          options.externalProviderId,
-          options.externalProviderSub,
-          options.tenantId,
-        ]
-      );
-    } catch (dbError) {
-      // Log but don't fail session creation if D1 insert fails
-      // Session is still valid in DO, just backchannel logout may not work
-      const log = createLogger().module('CALLBACK');
-      log.warn('Failed to record session in D1 for backchannel logout');
-    }
-
-    return sessionId;
-  } catch (error) {
-    const log = createLogger().module('CALLBACK');
-    log.error('Failed to create session', {}, error as Error);
-    throw new Error('session_creation_failed');
+  } catch {
+    // Authentication still succeeds if the secondary logout index is
+    // temporarily unavailable; the Durable Object remains authoritative.
+    createLogger().module('CALLBACK').warn('Failed to record session in D1 for backchannel logout');
   }
 }
 

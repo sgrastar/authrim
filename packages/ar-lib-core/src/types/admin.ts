@@ -105,6 +105,8 @@ export interface AdminAuthContext {
   authenticationTimeMs?: number;
   /** Admin session ID (for session auth) */
   sessionId?: string;
+  /** Absolute expiry of the backing Admin session in epoch milliseconds. */
+  sessionExpiresAt?: number;
   // ==========================================================================
   // RBAC Extensions (Phase 1) - Legacy, kept for backward compatibility
   // ==========================================================================

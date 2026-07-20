@@ -14,6 +14,7 @@ export interface AgentTaskSetRecord {
   name: string;
   description?: string;
   kind: 'builtin' | 'custom' | 'template_copy';
+  managementMode: 'managed' | 'system_managed';
   status: 'active' | 'archived';
   currentVersion: number;
   version: ResolvedAgentTaskSetVersion;
@@ -27,6 +28,7 @@ export interface AgentScopePolicyRecord {
   name: string;
   description?: string;
   kind: 'builtin' | 'custom' | 'template_copy';
+  managementMode: 'managed' | 'system_managed';
   status: 'active' | 'archived';
   currentVersion: number;
   definition: AgentScopePolicyDefinition;
@@ -148,6 +150,7 @@ interface TaskSetRow {
   name: string;
   description: string | null;
   kind: AgentTaskSetRecord['kind'];
+  management_mode: AgentTaskSetRecord['managementMode'];
   status: AgentTaskSetRecord['status'];
   current_version: number;
   tool_entries_json: string;
@@ -164,6 +167,7 @@ interface ScopePolicyRow {
   name: string;
   description: string | null;
   kind: AgentScopePolicyRecord['kind'];
+  management_mode: AgentScopePolicyRecord['managementMode'];
   status: AgentScopePolicyRecord['status'];
   current_version: number;
   definition_json: string;
@@ -258,6 +262,7 @@ function taskSet(row: TaskSetRow): AgentTaskSetRecord {
     name: row.name,
     description: row.description ?? undefined,
     kind: row.kind,
+    managementMode: row.management_mode,
     status: row.status,
     currentVersion: row.current_version,
     version: {
@@ -280,6 +285,7 @@ function scopePolicy(row: ScopePolicyRow): AgentScopePolicyRecord {
     name: row.name,
     description: row.description ?? undefined,
     kind: row.kind,
+    managementMode: row.management_mode,
     status: row.status,
     currentVersion: row.current_version,
     definition: JSON.parse(row.definition_json) as AgentScopePolicyDefinition,
@@ -379,21 +385,25 @@ export class AgentConfigurationRepository {
     ]);
   }
 
-  async listTaskSets(tenantId: string): Promise<AgentTaskSetRecord[]> {
+  async listTaskSets(
+    tenantId: string,
+    options: { includeSystemManaged?: boolean } = {}
+  ): Promise<AgentTaskSetRecord[]> {
     const rows = await this.adapter.query<TaskSetRow>(
-      `SELECT s.id, s.tenant_id, s.name, s.description, s.kind, s.status,
+      `SELECT s.id, s.tenant_id, s.name, s.description, s.kind, s.management_mode, s.status,
         s.current_version, v.tool_entries_json, v.resolved_permissions_json,
         v.definition_digest, v.catalog_version, s.created_at, s.updated_at
        FROM agent_task_sets s JOIN agent_task_set_versions v
         ON v.task_set_id = s.id AND v.version = s.current_version
-       WHERE s.tenant_id = ? ORDER BY s.name, s.id`,
+       WHERE s.tenant_id = ?${options.includeSystemManaged ? '' : " AND s.management_mode = 'managed'"}
+       ORDER BY s.name, s.id`,
       [tenantId]
     );
     return rows.map(taskSet);
   }
 
   async getTaskSet(tenantId: string, id: string): Promise<AgentTaskSetRecord | null> {
-    const rows = await this.listTaskSets(tenantId);
+    const rows = await this.listTaskSets(tenantId, { includeSystemManaged: true });
     return rows.find((item) => item.id === id) ?? null;
   }
 
@@ -403,7 +413,7 @@ export class AgentConfigurationRepository {
     version: number
   ): Promise<AgentTaskSetRecord | null> {
     const row = await this.adapter.queryOne<TaskSetRow>(
-      `SELECT s.id, s.tenant_id, s.name, s.description, s.kind, s.status,
+      `SELECT s.id, s.tenant_id, s.name, s.description, s.kind, s.management_mode, s.status,
         s.current_version, v.tool_entries_json, v.resolved_permissions_json,
         v.definition_digest, v.catalog_version, s.created_at, s.updated_at
        FROM agent_task_sets s JOIN agent_task_set_versions v ON v.task_set_id = s.id
@@ -450,14 +460,18 @@ export class AgentConfigurationRepository {
     ]);
   }
 
-  async listScopePolicies(tenantId: string): Promise<AgentScopePolicyRecord[]> {
+  async listScopePolicies(
+    tenantId: string,
+    options: { includeSystemManaged?: boolean } = {}
+  ): Promise<AgentScopePolicyRecord[]> {
     const rows = await this.adapter.query<ScopePolicyRow>(
-      `SELECT p.id, p.tenant_id, p.name, p.description, p.kind, p.status,
+      `SELECT p.id, p.tenant_id, p.name, p.description, p.kind, p.management_mode, p.status,
         p.current_version, v.definition_json, v.definition_digest,
         v.selector_catalog_version, p.created_at, p.updated_at
        FROM agent_scope_policies p JOIN agent_scope_policy_versions v
         ON v.scope_policy_id = p.id AND v.version = p.current_version
-       WHERE p.tenant_id = ? ORDER BY p.name, p.id`,
+       WHERE p.tenant_id = ?${options.includeSystemManaged ? '' : " AND p.management_mode = 'managed'"}
+       ORDER BY p.name, p.id`,
       [tenantId]
     );
     return rows.map(scopePolicy);
@@ -615,7 +629,7 @@ export class AgentConfigurationRepository {
   }
 
   async getScopePolicy(tenantId: string, id: string): Promise<AgentScopePolicyRecord | null> {
-    const rows = await this.listScopePolicies(tenantId);
+    const rows = await this.listScopePolicies(tenantId, { includeSystemManaged: true });
     return rows.find((item) => item.id === id) ?? null;
   }
 
@@ -625,7 +639,7 @@ export class AgentConfigurationRepository {
     version: number
   ): Promise<AgentScopePolicyRecord | null> {
     const row = await this.adapter.queryOne<ScopePolicyRow>(
-      `SELECT p.id, p.tenant_id, p.name, p.description, p.kind, p.status,
+      `SELECT p.id, p.tenant_id, p.name, p.description, p.kind, p.management_mode, p.status,
         p.current_version, v.definition_json, v.definition_digest,
         v.selector_catalog_version, p.created_at, p.updated_at
        FROM agent_scope_policies p JOIN agent_scope_policy_versions v

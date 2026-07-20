@@ -20,6 +20,16 @@ import {
 } from '../oidc-identity-mapping';
 
 const adapter = {} as DatabaseAdapter;
+const adminAdapter = {
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn(),
+  close: vi.fn(),
+} as unknown as DatabaseAdapter;
 const binding = {
   fieldMappingSetId: 'set-1',
   fieldMappingVersionId: 'version-1',
@@ -50,6 +60,29 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
         claims,
       })
     ).resolves.toEqual({ claims, binding: null });
+  });
+
+  it('resolves control-plane mappings from the dedicated Admin database when configured', async () => {
+    const claims = { sub: 'user-1' };
+
+    await applyOIDCIdentityMapping({
+      adapter,
+      env: { DB_ADMIN: adminAdapter as never },
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims,
+    });
+
+    expect(resolveBinding).toHaveBeenCalledWith(
+      adminAdapter,
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        protocol: 'oidc',
+        role: 'op',
+        clientId: 'client-a',
+      })
+    );
+    expect(resolveBinding).not.toHaveBeenCalledWith(adapter, expect.anything());
   });
 
   it('fails closed when an explicitly selected policy binding is missing', async () => {

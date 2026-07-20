@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { CLOUDFLARE_ADMIN_READ_ROUTES } from '../admin-read-routes';
+import {
+  CLOUDFLARE_ADMIN_READ_ROUTES,
+  projectAgentSessionPostureResponse,
+  projectAgentSettingsResponse,
+} from '../admin-read-routes';
 
 function path(operation: string, input: Record<string, string | number | boolean>): string {
   const route = CLOUDFLARE_ADMIN_READ_ROUTES[operation];
@@ -102,6 +106,78 @@ describe('Cloudflare Admin read route allowlist', () => {
     });
   });
 
+  it('wraps Agent settings in the public Tool output contract and redacts private fields', () => {
+    expect(
+      projectAgentSettingsResponse({
+        settings: {
+          enabled: true,
+          rate_limit_per_minute: 60,
+          signing_secret: 'never-return',
+          supportUrl: 'https://support.example/path?credential=never-return',
+        },
+        version: 7,
+      })
+    ).toEqual({
+      settings: {
+        enabled: true,
+        rate_limit_per_minute: 60,
+        supportUrl: 'https://support.example/path',
+      },
+    });
+    expect(projectAgentSettingsResponse(null)).toEqual({ settings: {} });
+  });
+
+  it('projects Sessions into aggregate posture without end-user or device data', () => {
+    const projected = projectAgentSessionPostureResponse({
+      snapshot: {
+        total_sessions: 17,
+        active_sessions: 10,
+        expired_sessions: 7,
+        window: {
+          oldest_created_at: '2026-07-18T00:00:00.000Z',
+          newest_last_accessed_at: '2026-07-20T01:00:00.000Z',
+          next_expiration_at: '2026-07-21T00:00:00.000Z',
+          latest_expiration_at: '2026-07-22T00:00:00.000Z',
+        },
+        user_email: 'alice@example.com',
+      },
+    });
+
+    expect(projected).toEqual({
+      snapshot: {
+        total_sessions: 17,
+        active_sessions: 10,
+        expired_sessions: 7,
+        window: {
+          oldest_created_at: '2026-07-18T00:00:00.000Z',
+          newest_last_accessed_at: '2026-07-20T01:00:00.000Z',
+          next_expiration_at: '2026-07-21T00:00:00.000Z',
+          latest_expiration_at: '2026-07-22T00:00:00.000Z',
+        },
+      },
+    });
+    const serialized = JSON.stringify(projected);
+    expect(serialized).not.toContain('alice@example.com');
+  });
+
+  it('fails closed when the Sessions owner response does not match its contract', () => {
+    expect(() =>
+      projectAgentSessionPostureResponse({
+        snapshot: {
+          total_sessions: 2,
+          active_sessions: 2,
+          expired_sessions: 1,
+          window: {
+            oldest_created_at: null,
+            newest_last_accessed_at: null,
+            next_expiration_at: null,
+            latest_expiration_at: null,
+          },
+        },
+      })
+    ).toThrow('Invalid Agent session posture response');
+  });
+
   it('encodes filters and opaque cursors without accepting a caller-supplied path', () => {
     const cursor = btoa(JSON.stringify({ v: 1, p: 3 })).replace(/=+$/u, '');
     expect(
@@ -116,6 +192,9 @@ describe('Cloudflare Admin read route allowlist', () => {
     );
     expect(() => path('admin.read.users.get', { user_id: '../admin-audit-log' })).toThrow();
     expect(() => path('admin.read.users.search', { cursor: 'not-a-cursor' })).toThrow();
+    expect(CLOUDFLARE_ADMIN_READ_ROUTES['admin.read.sessions.inspect']?.path).toBe(
+      '/api/admin/agent-read/session-posture'
+    );
   });
 
   it('derives tenant settings paths from verified authorization context', () => {

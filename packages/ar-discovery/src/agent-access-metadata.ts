@@ -91,7 +91,7 @@ export async function agentProtectedResourceMetadataHandler(c: Context<{ Binding
   return c.json({
     resource: `${access.baseIssuer}/mcp`,
     authorization_servers: [`${access.baseIssuer}/oauth/admin-agent`],
-    scopes_supported: ['agent:read', 'agent:write', 'agent:execute', 'agent:admin'],
+    scopes_supported: ['agent:read', 'agent:user-data:read', 'agent:write'],
     bearer_methods_supported: ['header'],
     dpop_signing_alg_values_supported: ALLOWED_DPOP_ALGS,
     resource_documentation: 'https://authrim.com/docs/agent-access/mcp',
@@ -123,11 +123,15 @@ export async function adminAgentAuthorizationServerMetadataHandler(c: Context<{ 
     token_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'private_key_jwt'],
     token_endpoint_auth_signing_alg_values_supported: ['PS256', 'ES256', 'RS256'],
     code_challenge_methods_supported: ['S256'],
-    scopes_supported: ['agent:read', 'agent:write', 'agent:execute', 'agent:admin'],
+    scopes_supported: ['agent:read', 'agent:user-data:read', 'agent:write'],
     authorization_details_types_supported: ['authrim_admin_agent'],
-    require_pushed_authorization_requests: true,
+    // PAR remains available and direct authorization requests are converted into a one-time PAR
+    // record by ar-auth. MCP hosts such as Codex do not universally implement RFC 9126, so the
+    // metadata must not advertise PAR as a client-side prerequisite.
+    require_pushed_authorization_requests: false,
     authorization_response_iss_parameter_supported: true,
     dpop_signing_alg_values_supported: ALLOWED_DPOP_ALGS,
-    client_id_metadata_document_supported: false,
+    client_id_metadata_document_supported: true,
+    registration_endpoint: `${access.baseIssuer}/oauth/admin-agent/register`,
   });
 }

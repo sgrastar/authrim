@@ -9,7 +9,12 @@ export type AgentTokenBinding = 'bearer' | 'dpop';
 export type AgentRiskLevel = 'low' | 'standard' | 'high';
 export type AgentGrantStatus = 'active' | 'suspended' | 'revoked';
 export type AgentDelegationMode = 'user_consent' | 'admin_pre_authorized' | 'task_approved';
-export type AgentScope = 'agent:read' | 'agent:write' | 'agent:execute' | 'agent:admin';
+export type AgentScope =
+  | 'agent:read'
+  | 'agent:user-data:read'
+  | 'agent:write'
+  | 'agent:execute'
+  | 'agent:admin';
 
 export interface AgentActorContext {
   mode: AgentMode;
@@ -30,6 +35,8 @@ export interface AgentGrantContract {
   delegatorId: string;
   permissions: string[];
   scopes: AgentScope[];
+  /** RFC 9396 restrictions carried by the Grant; effective limits are pinned below. */
+  authorizationDetails?: JsonObject[];
   resolvedScopeConstraints: AgentScopeConstraints;
   consentVersion: number;
   generation: number;

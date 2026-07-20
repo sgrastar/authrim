@@ -242,8 +242,12 @@ describe('Router Worker', () => {
           }),
           env
         );
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/login-handoff/consume?code=ahc_test'),
+          env
+        );
 
-        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(3);
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(4);
       });
 
       it('should route /api/auth/* to OP_AUTH', async () => {
@@ -442,6 +446,36 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('routes restricted Admin Agent DCR without requiring browser CSRF headers', async () => {
+        const req = new Request('https://example.com/oauth/admin-agent/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_name: 'Codex',
+            redirect_uris: ['http://127.0.0.1:49152/callback/test'],
+          }),
+        });
+
+        const response = await app.fetch(req, mockEnv);
+
+        expect(response.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not extend the restricted Admin Agent DCR CSRF exception to child paths', async () => {
+        const response = await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/register/unexpected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          }),
+          mockEnv
+        );
+
+        expect(response.status).toBe(403);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
       });
 
       it('should route GET /clients/:client_id to OP_MANAGEMENT', async () => {
@@ -738,6 +772,18 @@ describe('Router Worker', () => {
       expect(res.headers.get('Content-Security-Policy')).toBeNull();
       expect(res.headers.get('X-Frame-Options')).toBeNull();
     });
+
+    it('should NOT apply frame-blocking headers to RP front-channel logout endpoints', async () => {
+      const req = new Request(
+        'https://example.com/auth/external/oidf/frontchannel-logout?iss=https%3A%2F%2Fop.example&sid=session-1'
+      );
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledOnce();
+      expect(res.headers.get('Content-Security-Policy')).toBeNull();
+      expect(res.headers.get('X-Frame-Options')).toBeNull();
+    });
   });
 
   describe('CORS Headers', () => {
@@ -946,6 +992,42 @@ describe('Router Worker', () => {
 
       expect(res.status).toBe(200);
       expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      '/auth/external/oidf/callback',
+      '/api/external/oidf/callback',
+      '/auth/external/oidf/backchannel-logout',
+      '/api/external/oidf/backchannel-logout',
+    ])(
+      'should allow external provider protocol POST without same-origin CSRF: %s',
+      async (path) => {
+        const req = new Request(`https://example.com${path}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Origin: 'https://external-op.example',
+          },
+          body: 'state=state-value&code=code-value',
+        });
+
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('should keep linked-identity mutations behind same-origin CSRF protection', async () => {
+      const req = new Request('https://example.com/auth/external/links', {
+        method: 'POST',
+        headers: { Origin: 'https://external-op.example' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(403);
+      expect(mockEnv.EXTERNAL_IDP.fetch).not.toHaveBeenCalled();
     });
 
     it('should route handoff finalize to external IdP bridge', async () => {
@@ -1176,6 +1258,35 @@ describe('Router Worker', () => {
       expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       const forwardedRequest = mockEnv.OP_AUTH.fetch.mock.calls[0][0];
       expect(new URL(forwardedRequest.url).pathname).toBe('/api/admin-init-setup/initialize');
+    });
+
+    it('should bypass router CSRF only for the capability-authenticated CIBA conformance action', async () => {
+      const request = new Request(
+        'https://example.com/api/ciba/conformance-action?secret=capability&auth_req_id=req&action=allow',
+        { method: 'POST' }
+      );
+
+      const response = await app.fetch(request, mockEnv);
+
+      expect(response.status).toBe(200);
+      expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
+      const forwardedRequest = mockEnv.OP_ASYNC.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).pathname).toBe('/api/ciba/conformance-action');
+    });
+
+    it('should keep normal CIBA approval mutations behind router CSRF protection', async () => {
+      const request = new Request('https://example.com/api/ciba/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_req_id: 'req' }),
+      });
+
+      const response = await app.fetch(request, mockEnv);
+      const body = (await response.json()) as { error: string };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('csrf_validation_failed');
+      expect(mockEnv.OP_ASYNC.fetch).not.toHaveBeenCalled();
     });
 
     it('should proxy login-ui redirects without following them server-side', async () => {

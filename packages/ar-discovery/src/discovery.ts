@@ -327,8 +327,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
           // OIDC CIBA: Backchannel Authentication endpoint
           backchannel_authentication_endpoint: `${issuer}/bc-authorize`,
           backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
-          backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
+          backchannel_authentication_request_signing_alg_values_supported: [
+            'RS256',
+            'ES256',
+            'PS256',
+          ],
           backchannel_user_code_parameter_supported: true,
+          tls_client_certificate_bound_access_tokens: true,
         }
       : {}),
     response_types_supported: responseTypesSupported,

@@ -24,6 +24,7 @@ import { cibaPendingHandler } from './ciba-pending';
 import { cibaDetailsHandler } from './ciba-details';
 import { cibaApproveHandler } from './ciba-approve';
 import { cibaDenyHandler } from './ciba-deny';
+import { cibaConformanceActionHandler } from './ciba-conformance-action';
 import { cibaTestPageHandler } from './ciba-test-page';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -145,6 +146,7 @@ app.post('/api/ciba/approve', cibaApproveHandler);
  * Headless JSON API for CIBA request denial
  */
 app.post('/api/ciba/deny', cibaDenyHandler);
+app.post('/api/ciba/conformance-action', cibaConformanceActionHandler);
 
 /**
  * GET /api/ciba/test

@@ -147,6 +147,7 @@ describe('generateRoutes', () => {
     const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
     const vcConfig = generateWranglerConfig('ar-vc', config, resourceIds);
     const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
+    const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
     expect(authConfig.durable_objects?.bindings).not.toEqual(
@@ -172,6 +173,11 @@ describe('generateRoutes', () => {
           name: 'DIRECTORY_CONNECTOR_RELAY',
           class_name: 'DirectoryConnectorRelay',
         }),
+      ])
+    );
+    expect(bridgeConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'KEY_MANAGER', script_name: 'emailtest-ar-lib-core' }),
       ])
     );
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
@@ -646,6 +652,10 @@ describe('generateRoutes', () => {
         },
       },
       kv: {
+        INITIAL_ACCESS_TOKENS: {
+          id: 'kv-initial-access-tokens',
+          name: 'TENANTD1-INITIAL_ACCESS_TOKENS',
+        },
         TENANT_RUNTIME_REGISTRY: {
           id: 'kv-tenant-runtime-registry',
           name: 'TENANTD1-TENANT_RUNTIME_REGISTRY',
@@ -680,7 +690,17 @@ describe('generateRoutes', () => {
     expect(agentAccessConfig.d1_databases).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TDB_EXAMPLE_ABC123_CORE' })])
     );
-    expect(asyncConfig.d1_databases).toBeUndefined();
+    expect(asyncConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'DB' }),
+        expect.objectContaining({ binding: 'DB_PII' }),
+        expect.objectContaining({ binding: 'TDB_EXAMPLE_ABC123_CORE' }),
+        expect.objectContaining({ binding: 'TDB_EXAMPLE_DEF456_PII' }),
+      ])
+    );
+    expect(asyncConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'INITIAL_ACCESS_TOKENS' })])
+    );
     expect(routerConfig.d1_databases).toBeUndefined();
   });
 
@@ -1547,7 +1567,7 @@ id = "kv-id"
     expect(routerConfig.vars.SERVICE_SITE_BINDING).toBe('SERVICE_SITE');
   });
 
-  it('binds import artifacts R2 only to ar-management', () => {
+  it('binds import artifacts only to management and diagnostic logs to bridge', () => {
     const config = {
       version: '1.0.0',
       createdAt: '2026-04-30T00:00:00.000Z',
@@ -1633,6 +1653,7 @@ id = "kv-id"
 
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
 
     expect(managementConfig.r2_buckets).toEqual(
       expect.arrayContaining([
@@ -1664,6 +1685,21 @@ id = "kv-id"
           binding: 'SENSITIVE_DETAILS',
           bucket_name: 'imports-sensitive-details',
         },
+      ])
+    );
+    expect(bridgeConfig.r2_buckets).toEqual(
+      expect.arrayContaining([
+        {
+          binding: 'DIAGNOSTIC_LOGS',
+          bucket_name: 'imports-diagnostic-logs',
+        },
+      ])
+    );
+    expect(bridgeConfig.r2_buckets).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'IMPORT_ARTIFACTS' }),
+        expect.objectContaining({ binding: 'EXPORT_ARTIFACTS' }),
+        expect.objectContaining({ binding: 'SENSITIVE_DETAILS' }),
       ])
     );
   });

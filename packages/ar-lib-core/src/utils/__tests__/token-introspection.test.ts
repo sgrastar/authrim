@@ -118,6 +118,64 @@ describe('Token Introspection Utility', () => {
       expect(rejectedWithoutResourceAudience.error?.error).toBe('invalid_token');
     });
 
+    it('requires the Cloudflare-presented certificate for an mTLS-bound Bearer token', async () => {
+      const certificateBytes = new TextEncoder().encode('resource-client-certificate');
+      const certificate = btoa(String.fromCharCode(...certificateBytes));
+      const thumbprint = Buffer.from(
+        await crypto.subtle.digest('SHA-256', certificateBytes)
+      ).toString('base64url');
+      const tokenResult = await createAccessToken(
+        {
+          iss: mockEnv.ISSUER_URL,
+          sub: 'user123',
+          aud: mockEnv.ISSUER_URL,
+          scope: 'openid',
+          client_id: 'test-client',
+          cnf: { 'x5t#S256': thumbprint },
+        },
+        privateKey as unknown as Parameters<typeof createAccessToken>[1],
+        mockEnv.KEY_ID!,
+        3600
+      );
+      const rawRequest = new Request('https://test.example.com/userinfo', {
+        headers: {
+          Authorization: `Bearer ${tokenResult.token}`,
+          'Client-Cert': ':c3Bvb2ZlZA==:',
+        },
+      });
+      Object.defineProperty(rawRequest, 'cf', {
+        value: {
+          tlsClientAuth: {
+            certPresented: '1',
+            certRFC9440: `:${certificate}:`,
+            certRFC9440TooLarge: '0',
+          },
+        },
+      });
+
+      const accepted = await introspectToken({
+        method: 'GET',
+        url: rawRequest.url,
+        headers: rawRequest.headers,
+        rawRequest,
+        env: mockEnv,
+        tenantId: TEST_TENANT_ID,
+      });
+      expect(accepted.valid).toBe(true);
+
+      const spoofOnlyRequest = new Request(rawRequest.url, { headers: rawRequest.headers });
+      const rejected = await introspectToken({
+        method: 'GET',
+        url: spoofOnlyRequest.url,
+        headers: spoofOnlyRequest.headers,
+        rawRequest: spoofOnlyRequest,
+        env: mockEnv,
+        tenantId: TEST_TENANT_ID,
+      });
+      expect(rejected.valid).toBe(false);
+      expect(rejected.error?.error).toBe('invalid_token');
+    });
+
     it('should return error for missing Authorization header', async () => {
       const headers = new Headers();
 

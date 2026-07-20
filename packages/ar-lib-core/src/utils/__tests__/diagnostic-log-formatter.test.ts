@@ -109,6 +109,22 @@ describe('diagnostic-log-formatter', () => {
     expect(second.event).toBe('token_validation_issuer-check');
   });
 
+  it('filters evidence by Authrim-generated flow ID', () => {
+    const formatted = toOIDFFormatBatch(logs, {
+      flowIds: ['flow-b'],
+      sortMode: 'timeline',
+    });
+
+    expect(formatted).toHaveLength(1);
+    expect(formatted[0]).toMatchObject({
+      category: 'auth-decision',
+      event: 'auth_decision_deny',
+      details: {
+        flowId: 'flow-b',
+      },
+    });
+  });
+
   it('formats JSON exports with an array of OIDF entries', () => {
     const output = formatAsJSON(logs, { sortMode: 'timeline' });
     const parsed = JSON.parse(output) as Array<Record<string, unknown>>;

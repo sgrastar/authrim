@@ -1,8 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { adminAuthAPI, getAuthErrorMessage } from '$lib/api/admin-auth';
-	import { resolveAdminLoginReturnTo } from '$lib/admin/admin-login-return';
+	import {
+		resolveAdminAgentLoginHandoffId,
+		resolveAdminLoginReturnTo
+	} from '$lib/admin/admin-login-return';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
 	import { LL } from '$i18n/i18n-svelte';
@@ -13,6 +17,34 @@
 	function safeReturnTo(): string {
 		return resolveAdminLoginReturnTo(window.location.search, window.location.origin);
 	}
+
+	async function resumeAfterLogin(): Promise<void> {
+		const handoffId = resolveAdminAgentLoginHandoffId(window.location.search);
+		if (handoffId) {
+			const consumeUrl = await adminAuthAPI.approveAgentLoginHandoff(handoffId);
+			// Do not retain the one-time code URL behind the Admin login page in browser history.
+			window.location.replace(consumeUrl);
+			return;
+		}
+		const destination = safeReturnTo();
+		const resolved = new URL(destination, window.location.origin);
+		await goto(`${resolved.pathname}${resolved.search}${resolved.hash}`);
+	}
+
+	onMount(async () => {
+		if (!resolveAdminAgentLoginHandoffId(window.location.search)) return;
+		loading = true;
+		try {
+			const session = await adminAuthAPI.checkSession();
+			if (!session) return;
+			await adminAuth.checkAuth();
+			await resumeAfterLogin();
+		} catch (err) {
+			error = getAuthErrorMessage(err);
+		} finally {
+			loading = false;
+		}
+	});
 
 	async function handlePasskeyLogin() {
 		error = '';
@@ -32,7 +64,7 @@
 			await adminAuth.checkAuth();
 
 			// Step 5: Resume a bounded browser authorization journey or open the dashboard.
-			goto(safeReturnTo());
+			await resumeAfterLogin();
 		} catch (err) {
 			console.error('Login error:', err);
 			error = getAuthErrorMessage(err);

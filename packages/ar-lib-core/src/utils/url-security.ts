@@ -325,13 +325,21 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
   // Setup timeout with AbortController
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const rejectRedirects = fetchOptions.redirect === 'error';
 
   try {
     const response = await fetch(url, {
       ...fetchOptions,
-      redirect: fetchOptions.redirect === 'error' ? 'error' : 'manual',
+      // Cloudflare Workers intentionally does not implement RequestRedirect "error". Always use
+      // manual handling so the runtime never follows an unvalidated redirect, then reproduce
+      // "error" semantics below for callers that explicitly requested it.
+      redirect: 'manual',
       signal: controller.signal,
     });
+
+    if (rejectRedirects && response.status >= 300 && response.status < 400) {
+      throw new Error(`Redirect response blocked: HTTP ${response.status}`);
+    }
 
     // Check response size if Content-Length header is present
     if (maxResponseSize > 0) {

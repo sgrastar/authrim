@@ -23,10 +23,14 @@ describe('Phase 1 Admin read tool catalog', () => {
     ]);
     for (const tool of catalog.list()) {
       expect(tool.riskLevel).toBe('low');
-      expect(tool.requiredScope).toBe('agent:read');
+      expect(tool.requiredScope).toBe(
+        tool.id.startsWith('admin.read.users.') ? 'agent:user-data:read' : 'agent:read'
+      );
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
       expect(tool.taskSupport).toBe('forbidden');
     }
+    expect(catalog.get('search_users')?.requiredScope).toBe('agent:user-data:read');
+    expect(catalog.get('get_user')?.requiredScope).toBe('agent:user-data:read');
   });
 
   it('rejects page sizes above 50 and non-allowlisted input fields', () => {

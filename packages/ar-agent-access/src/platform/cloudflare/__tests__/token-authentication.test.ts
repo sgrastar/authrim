@@ -95,6 +95,49 @@ describe('createCloudflareAgentAccessTokenAuthenticator', () => {
     );
   });
 
+  it('intersects a token RAR ceiling with the live Grant resource constraints', async () => {
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      now: () => 100,
+      verifyJwt: vi.fn().mockResolvedValue(
+        claims({
+          authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+        })
+      ),
+      validateDpop: vi.fn(),
+      createRepository: () =>
+        repository({
+          ...grant,
+          resolvedScopeConstraints: { tenantIds: ['tenant-1'], maxPerCall: 10 },
+        }),
+    });
+
+    const result = await authenticate(request(), environment());
+
+    expect(result.allowed).toBe(true);
+    if (!result.allowed) throw new Error('expected successful admission');
+    expect(result.props.context.grant.resolvedScopeConstraints.maxPerCall).toBe(2);
+  });
+
+  it('rejects a signed token with authorization_details outside the Admin Agent profile', async () => {
+    const repo = repository();
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      verifyJwt: vi.fn().mockResolvedValue(
+        claims({
+          authorization_details: [{ type: 'authrim_admin_agent', max_subjects_per_call: 500 }],
+        })
+      ),
+      validateDpop: vi.fn(),
+      createRepository: () => repo,
+    });
+
+    const result = await authenticate(request(), environment());
+
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error('expected rejection');
+    expect(result.response.status).toBe(401);
+    expect(repo.getGrant).not.toHaveBeenCalled();
+  });
+
   it('admits only a DPoP-bound Mode B principal matching the linked Grant', async () => {
     const modeBGrant = { ...grant, machinePrincipalId: 'amp-1' };
     const repo = repository(modeBGrant);

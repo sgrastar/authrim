@@ -21,11 +21,18 @@ import {
   getLogger,
   createLogger,
   createDiagnosticLoggerFromContext,
+  getDiagnosticSessionId,
   createAuthContextFromHono,
   getChallengeStoreByChallengeId,
+  DIAGNOSTIC_FLOW_ID_HEADER,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import {
+  ensureDynamicClientRegistration,
+  getDynamicClientRegistrationConfig,
+} from '../services/dynamic-registration';
 import { OIDCRPClient } from '../clients/oidc-client';
+import { Fapi2Client } from '../clients/fapi2-client';
 import { generatePKCE, generateState, generateNonce } from '../utils/pkce';
 import {
   storeAuthState,
@@ -35,6 +42,12 @@ import {
 } from '../utils/state';
 import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import { isAppleProvider, type AppleProviderQuirks } from '../providers/apple';
+import { publishRequestObject } from './request-object';
+import {
+  isFapi2Provider,
+  loadFapi2ProviderConfig,
+  validateFapi2ProviderMetadata,
+} from '../services/fapi2-provider';
 
 /**
  * Rate limit configuration
@@ -99,6 +112,8 @@ async function verifyExternalStartHumanVerification(
  */
 export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('START');
+  let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
+  let diagnosticFlowId: string | undefined;
   try {
     // Rate limiting check
     const rateLimitResult = await checkRateLimit(c);
@@ -183,7 +198,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     );
 
     // 2. Get provider configuration (by slug or ID)
-    const provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantIdResolved);
+    let provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantIdResolved);
 
     if (!provider || !provider.enabled) {
       return c.json(
@@ -240,9 +255,12 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const state = generateState();
     const nonce = generateNonce();
     const flowId = crypto.randomUUID();
+    diagnosticFlowId = flowId;
+    c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
+    c.header('Cache-Control', 'no-store');
 
     // 5. Decrypt client secret
-    const clientSecret = await decryptClientSecret(c.env, provider.clientSecretEncrypted);
+    let clientSecret = await decryptClientSecret(c.env, provider.clientSecretEncrypted);
 
     // 5b. Decrypt private key for request object signing (if configured)
     let privateKeyJwk: Record<string, unknown> | undefined;
@@ -254,6 +272,18 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 6. Build callback URL (use slug if available for cleaner URLs)
     const providerIdentifier = provider.slug || provider.id;
     const callbackUri = `${buildIssuerUrl(c.env, tenantIdResolved)}/auth/external/${providerIdentifier}/callback`;
+
+    // Register dynamically when enabled and no registration exists for the
+    // current issuer. Changing issuer deliberately invalidates the cached
+    // credentials, which is also required by the OIDC Dynamic RP tests.
+    const dynamicResult = await ensureDynamicClientRegistration({
+      env: c.env,
+      tenantId: tenantIdResolved,
+      provider,
+      callbackUri,
+    });
+    provider = dynamicResult.provider;
+    clientSecret = dynamicResult.clientSecret;
 
     // 7. Generate PKCE for Authrim ↔ External IdP flow
     // This is separate from the client ↔ Authrim PKCE flow
@@ -560,6 +590,13 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 10. Create OIDC client and generate authorization URL
     const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret, privateKeyJwk);
 
+    // Initialize before discovery so metadata validation failures are visible
+    // in RP certification evidence and operational diagnostics.
+    diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
+      tenantId,
+      clientId: provider.clientId,
+    });
+
     // Apple Sign In requires response_mode=form_post when requesting name or email scope
     let responseMode: string | undefined;
     if (isAppleProvider(provider)) {
@@ -572,6 +609,84 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       }
     }
 
+    const configuredResponseType = provider.providerQuirks?.responseType;
+    const responseType = configuredResponseType === 'code id_token' ? 'code id_token' : 'code';
+
+    if (isFapi2Provider(provider)) {
+      const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+      if (!encryptionKey) throw new Error('RP_TOKEN_ENCRYPTION_KEY is not configured');
+      const fapiConfig = await loadFapi2ProviderConfig(provider, encryptionKey);
+      const metadata = await client.discover();
+      validateFapi2ProviderMetadata(metadata, fapiConfig.profile, fapiConfig);
+      const fapiClient = new Fapi2Client({
+        issuer: metadata.issuer,
+        clientId: provider.clientId,
+        redirectUri: callbackUri,
+        clientAssertionPrivateJwk: fapiConfig.clientAssertionPrivateJwk,
+        dpopPrivateJwk: fapiConfig.dpopPrivateJwk,
+      });
+      const authorizationParams = {
+        client_id: provider.clientId,
+        redirect_uri: callbackUri,
+        response_type: 'code',
+        scope: provider.scopes,
+        state,
+        ...(fapiConfig.profile === 'oidc' ? { nonce } : {}),
+        code_challenge: externalIdpPKCE.codeChallenge,
+        code_challenge_method: 'S256',
+        ...(fapiConfig.jarm ? { response_mode: 'jwt' } : {}),
+      };
+      const parParameters = fapiConfig.requestObjectSigning
+        ? {
+            request: await fapiClient.createAuthorizationRequestObject(authorizationParams),
+          }
+        : authorizationParams;
+      const par = await fapiClient.pushAuthorizationRequest(
+        metadata.pushed_authorization_request_endpoint!,
+        parParameters
+      );
+      const authUrl = new URL(metadata.authorization_endpoint);
+      authUrl.searchParams.set('client_id', provider.clientId);
+      authUrl.searchParams.set('request_uri', par.request_uri);
+
+      if (diagnosticLogger) {
+        await diagnosticLogger.logAuthDecision({
+          diagnosticSessionId: getDiagnosticSessionId(c),
+          decision: 'allow',
+          reason: 'fapi2_pushed_authorization_request',
+          flow: 'external_idp',
+          flowId,
+          context: {
+            provider: provider.slug ?? provider.id,
+            client_id: provider.clientId,
+            authrim_client_id: clientId,
+            authorization_endpoint: authUrl.origin + authUrl.pathname,
+            pushed_authorization_request_endpoint: metadata.pushed_authorization_request_endpoint,
+            redirect_uri: callbackUri,
+            response_type: 'code',
+            scope: provider.scopes,
+            state,
+            nonce,
+            code_challenge: externalIdpPKCE.codeChallenge,
+            code_challenge_method: 'S256',
+          },
+        });
+        await diagnosticLogger.cleanup();
+        diagnosticLogger = null;
+      }
+
+      const stateCookieName = await getAuthStateCookieName(state);
+      const secureCookie = buildIssuerUrl(c.env, tenantIdResolved).startsWith('https://');
+      setCookie(c, stateCookieName, state, {
+        path: '/auth/external/',
+        httpOnly: true,
+        secure: secureCookie,
+        sameSite: secureCookie ? 'None' : 'Lax',
+        maxAge: 10 * 60,
+      });
+      return c.redirect(authUrl.toString());
+    }
+
     const authUrl = await client.createAuthorizationUrl({
       state,
       nonce,
@@ -580,18 +695,23 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       loginHint,
       maxAge,
       acrValues,
+      responseType,
       responseMode,
-    });
-
-    // Diagnostic logging (OIDF conformance)
-    const diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
-      tenantId,
-      clientId: provider.clientId,
+      requestUri: (() => {
+        const registeredUri = getDynamicClientRegistrationConfig(provider)?.requestUris?.[0];
+        if (!registeredUri) return undefined;
+        const uri = new URL(registeredUri);
+        uri.searchParams.set('id', state);
+        return uri.toString();
+      })(),
+      publishRequestObject: async (requestObject) =>
+        publishRequestObject(c.env, tenantIdResolved, provider.id, state, requestObject),
     });
 
     if (diagnosticLogger) {
       const authUrlParsed = new URL(authUrl);
       await diagnosticLogger.logAuthDecision({
+        diagnosticSessionId: getDiagnosticSessionId(c),
         decision: 'allow',
         reason: 'authorization_request',
         flow: 'external_idp',
@@ -602,7 +722,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           authrim_client_id: clientId,
           authorization_endpoint: authUrlParsed.origin + authUrlParsed.pathname,
           redirect_uri: callbackUri,
-          response_type: 'code',
+          response_type: responseType,
           scope: provider.scopes,
           state,
           nonce,
@@ -616,6 +736,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         },
       });
       await diagnosticLogger.cleanup();
+      diagnosticLogger = null;
     }
 
     // Bind this state to the initiating browser. A per-state cookie supports
@@ -634,6 +755,30 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     return c.redirect(authUrl);
   } catch (error) {
     const err = error as Error;
+    if (diagnosticLogger) {
+      try {
+        await diagnosticLogger.logAuthDecision({
+          diagnosticSessionId: getDiagnosticSessionId(c),
+          flowId: diagnosticFlowId,
+          decision: 'deny',
+          reason: classifyExternalStartDiagnosticFailure(err),
+          flow: 'external_idp',
+          context: {
+            provider: c.req.param('provider'),
+            error_name: err.name,
+            error_message: err.message,
+          },
+        });
+      } catch (diagnosticError) {
+        log.warn('Failed to record external start rejection diagnostic', {
+          error:
+            diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError),
+        });
+      } finally {
+        await diagnosticLogger.cleanup().catch(() => undefined);
+        diagnosticLogger = null;
+      }
+    }
     log.error(
       'External start error',
       {
@@ -658,6 +803,13 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       500
     );
   }
+}
+
+export function classifyExternalStartDiagnosticFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return /discovery|issuer|jwks/i.test(message)
+    ? 'discovery_validation_failed'
+    : 'authorization_request_failed';
 }
 
 // =============================================================================

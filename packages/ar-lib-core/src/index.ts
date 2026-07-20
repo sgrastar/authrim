@@ -74,6 +74,7 @@ export * from './utils/issuer';
 export * from './utils/jwe';
 export * from './utils/jwt';
 export * from './utils/oidc-signing';
+export * from './utils/mtls';
 export * from './utils/jwt-bearer';
 export * from './utils/keys';
 export * from './utils/kv';

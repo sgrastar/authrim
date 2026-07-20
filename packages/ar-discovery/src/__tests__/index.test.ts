@@ -64,7 +64,7 @@ describe('discovery app routes', () => {
     await expect(response.json()).resolves.toMatchObject({
       resource: 'https://auth.example.com/mcp',
       authorization_servers: ['https://auth.example.com/oauth/admin-agent'],
-      scopes_supported: ['agent:read', 'agent:write', 'agent:execute', 'agent:admin'],
+      scopes_supported: ['agent:read', 'agent:user-data:read', 'agent:write'],
       bearer_methods_supported: ['header'],
     });
   });
@@ -88,7 +88,7 @@ describe('discovery app routes', () => {
         'urn:ietf:params:oauth:grant-type:token-exchange',
       ],
       pushed_authorization_request_endpoint: 'https://auth.example.com/oauth/admin-agent/par',
-      require_pushed_authorization_requests: true,
+      require_pushed_authorization_requests: false,
       code_challenge_methods_supported: ['S256'],
     });
   });

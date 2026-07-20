@@ -934,6 +934,54 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     claimsRequestIntegrityProtected = restoredAuthorizationRequest.integrity_protected;
   }
 
+  const sendRequestUriError = async (error: string, description: string): Promise<Response> => {
+    // Request Object processing happens before the main client/redirect validation below. An
+    // OAuth error may still be returned to the client, but only after independently proving that
+    // the outer client and redirect URI belong to this tenant. Never trust values recovered from
+    // an invalid Request Object or PAR entry.
+    if (
+      client_id &&
+      redirect_uri &&
+      response_type &&
+      validateClientId(client_id).valid &&
+      validateResponseType(response_type).valid
+    ) {
+      try {
+        const errorClient = await getClientCached(c, c.env, client_id);
+        const requestTenantId = getTenantIdFromContext(c);
+        const errorClientTenantId =
+          typeof errorClient?.tenant_id === 'string' && errorClient.tenant_id.length > 0
+            ? errorClient.tenant_id
+            : requestTenantId;
+        const registeredRedirectUris = errorClient?.redirect_uris;
+        const redirectValidation = validateRedirectUri(
+          redirect_uri,
+          c.env.ENABLE_HTTP_REDIRECT === 'true'
+        );
+        if (
+          errorClient &&
+          errorClientTenantId === requestTenantId &&
+          Array.isArray(registeredRedirectUris) &&
+          redirectValidation.valid &&
+          isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+        ) {
+          return redirectWithError(c, redirect_uri, error, description, state, {
+            responseMode: response_mode,
+            responseType: response_type,
+            clientId: client_id,
+          });
+        }
+      } catch (validationError) {
+        log.warn('Failed to validate redirect for request_uri error', {
+          action: 'request_uri_error_redirect_validation',
+          error: validationError instanceof Error ? validationError.message : 'unknown',
+        });
+      }
+    }
+
+    return c.json({ error, error_description: description }, 400);
+  };
+
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
   // OIDC Core 6.2: Also support HTTPS request_uri (Request Object by Reference)
   if (request_uri) {
@@ -942,13 +990,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const isHTTPS = request_uri.startsWith('https://');
 
     if (!isPAR && !isHTTPS) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description:
-            'request_uri must be either urn:ietf:params:oauth:request_uri: or https://',
-        },
-        400
+      return sendRequestUriError(
+        'invalid_request',
+        'request_uri must be either urn:ietf:params:oauth:request_uri: or https://'
       );
     }
 
@@ -1012,13 +1056,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!httpsRequestUriConfig.enabled) {
-        return c.json(
-          {
-            error: 'request_uri_not_supported',
-            error_description:
-              'HTTPS request_uri is disabled. Use PAR (RFC 9126) with urn:ietf:params:oauth:request_uri: format instead.',
-          },
-          400
+        return sendRequestUriError(
+          'request_uri_not_supported',
+          'HTTPS request_uri is disabled. Use PAR (RFC 9126) with urn:ietf:params:oauth:request_uri: format instead.'
         );
       }
 
@@ -1032,13 +1072,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       try {
         requestUrl = new URL(request_uri);
       } catch {
-        return c.json(
-          {
-            error: 'invalid_request_uri',
-            error_description: 'Invalid URL format for request_uri',
-          },
-          400
-        );
+        return sendRequestUriError('invalid_request_uri', 'Invalid URL format for request_uri');
       }
 
       // Validate domain against allowlist (if configured)
@@ -1054,12 +1088,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             domain: requestDomain,
             allowedDomains: allowedDomains.join(', '),
           });
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'request_uri domain is not in the allowed list',
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            'request_uri domain is not in the allowed list'
           );
         }
       }
@@ -1070,12 +1101,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           action: 'ssrf_block',
           hostname: requestUrl.hostname,
         });
-        return c.json(
-          {
-            error: 'invalid_request_uri',
-            error_description: 'request_uri cannot point to internal addresses',
-          },
-          400
+        return sendRequestUriError(
+          'invalid_request_uri',
+          'request_uri cannot point to internal addresses'
         );
       }
 
@@ -1103,23 +1131,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }
 
           if (redirectCount === HTTPS_REQUEST_URI_MAX_REDIRECTS) {
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: 'request_uri exceeded maximum redirect depth',
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              'request_uri exceeded maximum redirect depth'
             );
           }
 
           const location = requestObjectResponse.headers.get('location');
           if (!location) {
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: 'request_uri redirect response is missing Location header',
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              'request_uri redirect response is missing Location header'
             );
           }
 
@@ -1127,12 +1149,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             const finalUrl = new URL(location, fetchUrl);
             const finalDomain = finalUrl.hostname.toLowerCase();
             if (finalUrl.protocol !== 'https:') {
-              return c.json(
-                {
-                  error: 'invalid_request_uri',
-                  error_description: 'request_uri redirect target must use HTTPS',
-                },
-                400
+              return sendRequestUriError(
+                'invalid_request_uri',
+                'request_uri redirect target must use HTTPS'
               );
             }
 
@@ -1147,12 +1166,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 domain: finalDomain,
                 allowedDomains: allowedDomains.join(', '),
               });
-              return c.json(
-                {
-                  error: 'invalid_request_uri',
-                  error_description: 'Redirected request_uri domain is not in the allowed list',
-                },
-                400
+              return sendRequestUriError(
+                'invalid_request_uri',
+                'Redirected request_uri domain is not in the allowed list'
               );
             }
 
@@ -1162,34 +1178,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 action: 'ssrf_block',
                 hostname: finalUrl.hostname,
               });
-              return c.json(
-                {
-                  error: 'invalid_request_uri',
-                  error_description: 'request_uri cannot redirect to internal addresses',
-                },
-                400
+              return sendRequestUriError(
+                'invalid_request_uri',
+                'request_uri cannot redirect to internal addresses'
               );
             }
 
             fetchUrl = finalUrl.toString();
           } catch {
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: 'request_uri redirect target is invalid',
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              'request_uri redirect target is invalid'
             );
           }
         }
 
         if (!requestObjectResponse) {
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'Failed to fetch request object from request_uri',
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            'Failed to fetch request object from request_uri'
           );
         }
 
@@ -1199,37 +1206,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             httpStatus: requestObjectResponse.status,
             statusText: requestObjectResponse.statusText,
           });
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'Failed to fetch request object from request_uri',
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            'Failed to fetch request object from request_uri'
           );
         }
 
         // Check Content-Length header first
         const contentLength = requestObjectResponse.headers.get('content-length');
         if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: `Response too large: ${contentLength} bytes exceeds limit of ${maxSizeBytes} bytes`,
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            `Response too large: ${contentLength} bytes exceeds limit of ${maxSizeBytes} bytes`
           );
         }
 
         // Read response with size limit
         const reader = requestObjectResponse.body?.getReader();
         if (!reader) {
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'Failed to read response body',
-            },
-            400
-          );
+          return sendRequestUriError('invalid_request_uri', 'Failed to read response body');
         }
 
         const chunks: Uint8Array[] = [];
@@ -1242,12 +1237,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           totalSize += value.length;
           if (totalSize > maxSizeBytes) {
             reader.cancel();
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: `Response too large: exceeds limit of ${maxSizeBytes} bytes`,
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              `Response too large: exceeds limit of ${maxSizeBytes} bytes`
             );
           }
           chunks.push(value);
@@ -1275,16 +1267,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           { action: 'request_uri_fetch', isTimeout, isTooLarge },
           error as Error
         );
-        return c.json(
-          {
-            error: 'invalid_request_uri',
-            error_description: isTimeout
-              ? `Request timed out after ${timeoutMs}ms`
-              : isTooLarge
-                ? `Response too large: exceeds limit of ${maxSizeBytes} bytes`
-                : 'Failed to fetch request object from request_uri',
-          },
-          400
+        return sendRequestUriError(
+          'invalid_request_uri',
+          isTimeout
+            ? `Request timed out after ${timeoutMs}ms`
+            : isTooLarge
+              ? `Response too large: exceeds limit of ${maxSizeBytes} bytes`
+              : 'Failed to fetch request object from request_uri'
         );
       }
     }

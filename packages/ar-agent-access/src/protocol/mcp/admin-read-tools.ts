@@ -33,7 +33,7 @@ export const ADMIN_READ_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     description: 'Search tenant users with an allowlisted filter set. PII is masked.',
     contractVersion: '1',
     requiredPermissions: [PHASE_ONE_ADMIN_READ_PERMISSIONS.users],
-    requiredScope: 'agent:read',
+    requiredScope: 'agent:user-data:read',
     riskLevel: 'low',
     schemaDigest: 'sha256:68c3fb777050bbcc79daa5d9cd38232d312a98c25c43955f752e843b3f35c1af',
     inputSchema: objectSchema({
@@ -61,7 +61,7 @@ export const ADMIN_READ_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     description: 'Get one tenant user by stable ID. PII and credential identifiers are omitted.',
     contractVersion: '1',
     requiredPermissions: [PHASE_ONE_ADMIN_READ_PERMISSIONS.users],
-    requiredScope: 'agent:read',
+    requiredScope: 'agent:user-data:read',
     riskLevel: 'low',
     schemaDigest: 'sha256:e15df1967ae3ab6422291d692b43621cfe0a9162ee062fad053a618065d7e457',
     inputSchema: objectSchema({ user_id: ID }, ['user_id']),

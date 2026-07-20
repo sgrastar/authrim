@@ -145,6 +145,20 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
   'device_secret_introspection_trust_groups',
 ] as const;
 
+/**
+ * Per-connection Agent Access state is bound to the source tenant, Admin consent, and client
+ * lifecycle. It must never be materialized as an ordinary OAuth client in another tenant.
+ */
+export const OAUTH_CLIENT_NON_CLONE_COLUMNS: ReadonlySet<string> = new Set([
+  'agent_access_registration_mode',
+  'agent_access_expires_at',
+  'agent_access_last_used_at',
+  'agent_access_registration_slot',
+  'client_metadata_url',
+  'client_metadata_hash',
+  'client_metadata_fetched_at',
+]);
+
 export const CLIENT_CREDENTIAL_COLUMNS: ReadonlySet<string> = new Set([
   'client_secret_hash',
   'registration_access_token_hash',
@@ -752,7 +766,8 @@ async function cloneClients(
     !includeCredentials && CLIENT_CREDENTIAL_COLUMNS.has(column) ? `NULL AS ${column}` : column
   );
   const clients = await source.query<Record<string, unknown>>(
-    `SELECT ${selectedColumns.join(', ')} FROM oauth_clients WHERE tenant_id = ?`,
+    `SELECT ${selectedColumns.join(', ')} FROM oauth_clients
+      WHERE tenant_id = ? AND agent_access_registration_mode IS NULL`,
     [sourceTenantId]
   );
   const clientIds = new Set(clients.map((client) => String(client.client_id)));

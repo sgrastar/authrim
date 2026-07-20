@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,8 +12,10 @@ import type {
 } from '@authrim/ar-lib-core/db/adapter';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveAgentBulkPlan } from '../bulk';
+import { canonicalizeJson, sha256Base64Url } from '../canonical-json';
 import {
   AdminAgentAccessRepository,
+  AgentConfigurationRepository,
   AgentBaselineRepository,
   AgentBulkRepository,
 } from '../repositories';
@@ -98,9 +100,14 @@ class SqliteCliAdapter implements DatabaseAdapter {
       'COMMIT;',
       'SELECT rows_affected AS rowsAffected FROM _agent_batch_results ORDER BY position;',
     ].join('\n');
-    const output = execFileSync(this.sqlite3Path, ['-json', '-bail', this.databasePath, script], {
+    const execution = spawnSync(this.sqlite3Path, ['-json', '-bail', this.databasePath, script], {
       encoding: 'utf8',
-    }).trim();
+    });
+    if (execution.error) throw execution.error;
+    if (execution.status !== 0 || execution.stderr.trim().length > 0) {
+      throw new Error(execution.stderr.trim() || `sqlite3 exited with ${execution.status}`);
+    }
+    const output = execution.stdout.trim();
     const rows = output ? (JSON.parse(output) as Array<{ rowsAffected: number }>) : [];
     return Promise.resolve(rows.map((row) => ({ rowsAffected: row.rowsAffected, success: true })));
   }
@@ -125,12 +132,14 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
   let temporaryDirectory: string;
   let adapter: SqliteCliAdapter;
   let repository: AdminAgentAccessRepository;
+  let configurationRepository: AgentConfigurationRepository;
 
   beforeEach(() => {
     temporaryDirectory = mkdtempSync(path.join(tmpdir(), 'authrim-agent-access-'));
     const databasePath = path.join(temporaryDirectory, 'test.db');
     adapter = new SqliteCliAdapter(sqlite3Path!, databasePath);
     repository = new AdminAgentAccessRepository(adapter);
+    configurationRepository = new AgentConfigurationRepository(adapter);
     execFileSync(
       sqlite3Path!,
       [
@@ -144,6 +153,7 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
           task_set_id TEXT, task_set_version INTEGER, scope_policy_id TEXT,
           scope_policy_version INTEGER, resolved_tools TEXT, access_snapshot_hash TEXT,
           purpose TEXT, delegation_mode TEXT NOT NULL DEFAULT 'user_consent',
+          management_mode TEXT NOT NULL DEFAULT 'managed',
           generation INTEGER NOT NULL,
           consent_version INTEGER NOT NULL, status TEXT NOT NULL, expires_at INTEGER,
           active_uniqueness_key TEXT NOT NULL DEFAULT 'active', updated_at INTEGER NOT NULL DEFAULT 0,
@@ -175,6 +185,36 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
           created_at INTEGER NOT NULL, completed_at INTEGER,
           completion_transition_id TEXT, failure_transition_id TEXT
         );
+        CREATE TABLE agent_task_sets (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL,
+          description TEXT, kind TEXT NOT NULL, status TEXT NOT NULL,
+          current_version INTEGER NOT NULL, management_mode TEXT NOT NULL DEFAULT 'managed',
+          created_by TEXT NOT NULL,
+          last_transition_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          UNIQUE(tenant_id, name)
+        );
+        CREATE TABLE agent_task_set_versions (
+          task_set_id TEXT NOT NULL, version INTEGER NOT NULL,
+          tool_entries_json TEXT NOT NULL, resolved_permissions_json TEXT NOT NULL,
+          definition_digest TEXT NOT NULL, catalog_version TEXT NOT NULL,
+          status TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL,
+          PRIMARY KEY(task_set_id, version)
+        );
+        CREATE TABLE agent_scope_policies (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL,
+          description TEXT, kind TEXT NOT NULL, status TEXT NOT NULL,
+          current_version INTEGER NOT NULL, management_mode TEXT NOT NULL DEFAULT 'managed',
+          created_by TEXT NOT NULL,
+          last_transition_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          UNIQUE(tenant_id, name)
+        );
+        CREATE TABLE agent_scope_policy_versions (
+          scope_policy_id TEXT NOT NULL, version INTEGER NOT NULL,
+          definition_json TEXT NOT NULL, definition_digest TEXT NOT NULL,
+          selector_catalog_version TEXT NOT NULL, status TEXT NOT NULL,
+          created_by TEXT NOT NULL, created_at INTEGER NOT NULL,
+          PRIMARY KEY(scope_policy_id, version)
+        );
         CREATE TABLE agent_elevation_challenges (
           id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, grant_id TEXT NOT NULL,
           status TEXT NOT NULL, active_args_key TEXT NOT NULL,
@@ -192,6 +232,35 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
           actor_type TEXT, actor_sub TEXT, actor_mode TEXT, actor_assurance TEXT,
           token_binding TEXT, act_client_id TEXT, act_principal_id TEXT,
           grant_id TEXT, elevation_id TEXT, mcp_tool TEXT
+        );
+        CREATE TABLE admin_agent_login_handoffs (
+          id TEXT PRIMARY KEY, target_tenant_id TEXT NOT NULL,
+          target_origin TEXT NOT NULL, authorization_path TEXT NOT NULL,
+          status TEXT NOT NULL, browser_binding_hash TEXT NOT NULL,
+          source_session_id TEXT, source_session_hash TEXT, admin_user_id TEXT,
+          code_hash TEXT UNIQUE, last_transition_id TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+          issued_at INTEGER, consumed_at INTEGER
+        );
+        CREATE TABLE admin_sessions (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, admin_user_id TEXT NOT NULL,
+          ip_address TEXT, user_agent TEXT, created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL, last_activity_at INTEGER,
+          mfa_verified INTEGER NOT NULL, mfa_verified_at INTEGER,
+          parent_session_id TEXT, derived_target_tenant_id TEXT
+        );
+        CREATE TABLE admin_users (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+          is_active INTEGER NOT NULL, status TEXT NOT NULL
+        );
+        CREATE TABLE admin_roles (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+          permissions_json TEXT NOT NULL, inherits_from TEXT, is_system INTEGER NOT NULL
+        );
+        CREATE TABLE admin_role_assignments (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, admin_user_id TEXT NOT NULL,
+          admin_role_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT,
+          expires_at INTEGER
         );`,
       ],
       { encoding: 'utf8' }
@@ -200,6 +269,93 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
 
   afterEach(() => {
     rmSync(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  it('resolves a home-tenant global role for a cross-tenant Agent Grant', async () => {
+    await adapter.execute(
+      `INSERT INTO admin_users (id, tenant_id, is_active, status)
+       VALUES (?, ?, 1, 'active')`,
+      ['admin-global', 'home-tenant']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_roles (id, tenant_id, permissions_json, inherits_from, is_system)
+       VALUES (?, ?, ?, NULL, 0)`,
+      ['role-global', 'home-tenant', '["admin:agent:use","admin:clients:read"]']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_role_assignments (
+         id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at
+       ) VALUES (?, ?, ?, ?, 'global', NULL, NULL)`,
+      ['assignment-global', 'home-tenant', 'admin-global', 'role-global']
+    );
+
+    await expect(
+      repository.getActiveDelegatorPermissions('target-tenant', 'admin-global', Date.now())
+    ).resolves.toEqual(['admin:agent:use', 'admin:clients:read']);
+  });
+
+  it('does not apply a home-tenant-only assignment to another target tenant', async () => {
+    await adapter.execute(
+      `INSERT INTO admin_users (id, tenant_id, is_active, status)
+       VALUES (?, ?, 1, 'active')`,
+      ['admin-local', 'home-tenant']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_roles (id, tenant_id, permissions_json, inherits_from, is_system)
+       VALUES (?, ?, ?, NULL, 0)`,
+      ['role-local', 'home-tenant', '["admin:clients:read"]']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_role_assignments (
+         id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at
+       ) VALUES (?, ?, ?, ?, 'tenant', NULL, NULL)`,
+      ['assignment-local', 'home-tenant', 'admin-local', 'role-local']
+    );
+
+    await expect(
+      repository.getActiveDelegatorPermissions('target-tenant', 'admin-local', Date.now())
+    ).resolves.toEqual([]);
+    await expect(
+      repository.getActiveDelegatorPermissions('home-tenant', 'admin-local', Date.now())
+    ).resolves.toEqual(['admin:clients:read']);
+  });
+
+  it('applies an explicitly target-scoped home assignment only to that target tenant', async () => {
+    await adapter.execute(
+      `INSERT INTO admin_users (id, tenant_id, is_active, status)
+       VALUES (?, ?, 1, 'active')`,
+      ['admin-targeted', 'home-tenant']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_roles (id, tenant_id, permissions_json, inherits_from, is_system)
+       VALUES (?, ?, ?, NULL, 0)`,
+      ['role-targeted', 'home-tenant', '["admin:clients:read"]']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_role_assignments (
+         id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at
+       ) VALUES (?, ?, ?, ?, 'tenant', ?, NULL)`,
+      ['assignment-targeted', 'home-tenant', 'admin-targeted', 'role-targeted', 'target-tenant']
+    );
+
+    await expect(
+      repository.getActiveDelegatorPermissions('target-tenant', 'admin-targeted', Date.now())
+    ).resolves.toEqual(['admin:clients:read']);
+    await expect(
+      repository.getActiveDelegatorPermissions('other-tenant', 'admin-targeted', Date.now())
+    ).resolves.toEqual([]);
+  });
+
+  it('rejects inactive cross-tenant delegators before resolving their roles', async () => {
+    await adapter.execute(
+      `INSERT INTO admin_users (id, tenant_id, is_active, status)
+       VALUES (?, ?, 0, 'suspended')`,
+      ['admin-inactive', 'home-tenant']
+    );
+
+    await expect(
+      repository.getActiveDelegatorPermissions('target-tenant', 'admin-inactive', Date.now())
+    ).resolves.toBeNull();
   });
 
   async function seedCurrentGrant(): Promise<void> {
@@ -238,6 +394,163 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
       expiresAt: 1000,
     });
   }
+
+  it('issues and consumes a browser-bound Admin login handoff exactly once', async () => {
+    const audit = (action: string, id: string, createdAt: number) => ({
+      id,
+      tenantId: 'tenant-1',
+      action,
+      resourceType: 'admin_agent_login_handoff',
+      resourceId: 'alh-1',
+      severity: 'info' as const,
+      actorType: 'admin_user' as const,
+      actorSub: action.endsWith('created') ? 'admin-agent-authorize' : 'admin-1',
+      adminUserId: action.endsWith('created') ? undefined : 'admin-1',
+      metadata: { target_origin: 'https://tenant.example.com' },
+      createdAt,
+    });
+
+    await repository.createLoginHandoff({
+      id: 'alh-1',
+      targetTenantId: 'tenant-1',
+      targetOrigin: 'https://tenant.example.com',
+      authorizationPath: '/oauth/admin-agent/authorize?request_uri=urn%3Atest',
+      browserBindingHash: 'browser-hash',
+      transitionId: 'transition-created',
+      createdAt: 100,
+      expiresAt: 400,
+      audit: audit('agent.login_handoff.created', 'audit-created', 100),
+    });
+
+    expect(
+      await repository.issueLoginHandoff({
+        id: 'alh-1',
+        targetTenantId: 'tenant-1',
+        sourceSessionId: 'admin-session-secret',
+        sourceSessionHash: 'session-hash',
+        adminUserId: 'admin-1',
+        codeHash: 'code-hash',
+        transitionId: 'transition-issued',
+        issuedAt: 200,
+        expiresAt: 260,
+        audit: audit('agent.login_handoff.issued', 'audit-issued', 200),
+      })
+    ).toBe(true);
+
+    expect(
+      await repository.issueLoginHandoff({
+        id: 'alh-1',
+        targetTenantId: 'tenant-1',
+        sourceSessionId: 'replacement-session',
+        sourceSessionHash: 'replacement-hash',
+        adminUserId: 'admin-2',
+        codeHash: 'replacement-code-hash',
+        transitionId: 'transition-issued-replay',
+        issuedAt: 201,
+        expiresAt: 261,
+        audit: audit('agent.login_handoff.issued', 'audit-issued-replay', 201),
+      })
+    ).toBe(false);
+
+    const issued = await repository.getLoginHandoffByCodeHash('code-hash');
+    expect(issued).toMatchObject({
+      status: 'issued',
+      browserBindingHash: 'browser-hash',
+      sourceSessionId: 'admin-session-secret',
+      sourceSessionHash: 'session-hash',
+      adminUserId: 'admin-1',
+    });
+
+    expect(
+      await repository.consumeLoginHandoff({
+        id: 'alh-1',
+        targetTenantId: 'tenant-1',
+        codeHash: 'code-hash',
+        transitionId: 'transition-wrong-parent',
+        consumedAt: 219,
+        targetSession: {
+          id: 'target-session-wrong-parent',
+          tenantId: 'tenant-home',
+          adminUserId: 'admin-1',
+          parentSessionId: 'attacker-session',
+          parentSessionHash: 'attacker-session-hash',
+          createdAt: 150,
+          expiresAt: 1000,
+          mfaVerifiedAt: 150,
+        },
+        audit: audit('agent.login_handoff.consumed', 'audit-wrong-parent', 219),
+      })
+    ).toBe(false);
+
+    expect(
+      await repository.consumeLoginHandoff({
+        id: 'alh-1',
+        targetTenantId: 'tenant-1',
+        codeHash: 'code-hash',
+        transitionId: 'transition-consumed',
+        consumedAt: 220,
+        targetSession: {
+          id: 'target-session-1',
+          tenantId: 'tenant-home',
+          adminUserId: 'admin-1',
+          parentSessionId: 'admin-session-secret',
+          parentSessionHash: 'session-hash',
+          createdAt: 150,
+          expiresAt: 1000,
+          mfaVerifiedAt: 150,
+        },
+        audit: audit('agent.login_handoff.consumed', 'audit-consumed', 220),
+      })
+    ).toBe(true);
+    expect(
+      await repository.consumeLoginHandoff({
+        id: 'alh-1',
+        targetTenantId: 'tenant-1',
+        codeHash: 'code-hash',
+        transitionId: 'transition-consumed-replay',
+        consumedAt: 221,
+        targetSession: {
+          id: 'target-session-replay',
+          tenantId: 'tenant-home',
+          adminUserId: 'admin-1',
+          parentSessionId: 'admin-session-secret',
+          parentSessionHash: 'session-hash',
+          createdAt: 150,
+          expiresAt: 1000,
+          mfaVerifiedAt: 150,
+        },
+        audit: audit('agent.login_handoff.consumed', 'audit-consumed-replay', 221),
+      })
+    ).toBe(false);
+
+    expect(await repository.getLoginHandoffById('alh-1')).toMatchObject({
+      status: 'consumed',
+      sourceSessionId: undefined,
+      sourceSessionHash: 'session-hash',
+      codeHash: 'code-hash',
+    });
+    const audits = await adapter.query<{ action: string }>(
+      'SELECT action FROM admin_audit_log ORDER BY created_at'
+    );
+    expect(audits.map(({ action }) => action)).toEqual([
+      'agent.login_handoff.created',
+      'agent.login_handoff.issued',
+      'agent.login_handoff.consumed',
+    ]);
+    expect(
+      await adapter.query<{
+        id: string;
+        parent_session_id: string;
+        derived_target_tenant_id: string;
+      }>('SELECT id, parent_session_id, derived_target_tenant_id FROM admin_sessions')
+    ).toEqual([
+      {
+        id: 'target-session-1',
+        parent_session_id: 'admin-session-secret',
+        derived_target_tenant_id: 'tenant-1',
+      },
+    ]);
+  });
 
   it('creates a Grant and its admin audit atomically and lists the persisted contract', async () => {
     await repository.createGrantWithAudit({
@@ -396,6 +709,382 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
         expect.objectContaining({ action: 'agent.consent.granted' }),
       ])
     );
+  });
+
+  it('creates and scope-updates one system-managed self-service authorization atomically', async () => {
+    const readTool = {
+      toolId: 'admin.read.clients.list',
+      toolName: 'list_clients',
+      contractVersion: '1',
+      schemaDigest: 'read-digest',
+      permissions: ['admin:clients:read'],
+      requiredScope: 'agent:read' as const,
+      riskLevel: 'low' as const,
+      requiresElevation: false,
+    };
+    const policy = {
+      tenantIds: ['tenant-1'],
+      environmentIds: [],
+      domains: [],
+      resourceIds: [],
+      selectors: [],
+      allowedFields: [],
+      piiMode: 'masked' as const,
+      maxPerCall: 50,
+      maxPlanOperations: 25,
+      maxBulkTenants: 1,
+    };
+    const taskResolved1 = {
+      catalogVersion: 'catalog-v1',
+      tools: [readTool],
+      permissions: ['admin:clients:read'],
+    };
+    const taskDigest1 = await sha256Base64Url(canonicalizeJson(taskResolved1 as never));
+    const policyDigest = await sha256Base64Url(canonicalizeJson(policy as never));
+    const accessHash1 = await sha256Base64Url(
+      canonicalizeJson({
+        purpose: 'authrim-agent-self-service-snapshot-v1',
+        tenant_id: 'tenant-1',
+        admin_user_id: 'admin-1',
+        client_id: 'client-self-service',
+        grant_id: 'grant-self-service',
+        expires_at: 700,
+        scopes: ['agent:read'],
+        task_set: { id: 'system-task-1', version: 1, digest: taskDigest1 },
+        scope_policy: { id: 'system-policy-1', version: 1, digest: policyDigest },
+        tools: [readTool],
+      } as never)
+    );
+    const consentBase = {
+      tenantId: 'tenant-1',
+      grantId: 'grant-self-service',
+      userId: 'admin-1',
+      clientId: 'client-self-service',
+      consentVersion: 1,
+      scopes: ['agent:read'] as const,
+      grantedAt: 100,
+    };
+    const auditBase = {
+      tenantId: 'tenant-1',
+      adminUserId: 'admin-1',
+      resourceType: 'admin_agent_grant',
+      resourceId: 'grant-self-service',
+      severity: 'info' as const,
+      actorType: 'admin_user' as const,
+      actorSub: 'admin_user:admin-1',
+      grantId: 'grant-self-service',
+      createdAt: 100,
+    };
+    const initialAuthorization = {
+      grant: {
+        grantId: 'grant-self-service',
+        tenantId: 'tenant-1',
+        clientId: 'client-self-service',
+        grantorId: 'admin-1',
+        delegatorId: 'admin-1',
+        permissions: ['admin:clients:read'],
+        scopes: ['agent:read'],
+        authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 50 }],
+        resolvedScopeConstraints: {
+          tenantIds: ['tenant-1'],
+          piiMode: 'masked',
+          maxPerCall: 50,
+          maxPerPlan: 25,
+          maxPerBulkPlan: 1,
+        },
+        consentVersion: 1,
+        generation: 1,
+        status: 'active',
+        delegationMode: 'user_consent',
+        taskSetId: 'system-task-1',
+        taskSetVersion: 1,
+        scopePolicyId: 'system-policy-1',
+        scopePolicyVersion: 1,
+        resolvedTools: [readTool],
+        accessSnapshotHash: accessHash1,
+        purpose: 'interactive_self_service',
+        managementMode: 'system_managed',
+        expiresAt: 700,
+        createdAt: 100,
+      },
+      taskSet: {
+        id: 'system-task-1',
+        version: 1,
+        digest: taskDigest1,
+        resolved: {
+          ...taskResolved1,
+          digest: taskDigest1,
+        },
+      },
+      scopePolicy: {
+        id: 'system-policy-1',
+        version: 1,
+        digest: policyDigest,
+        definition: policy,
+        selectorCatalogVersion: 'selectors-v1',
+      },
+      delegationConsent: { ...consentBase, id: 'self-consent-1', type: 'delegation' },
+      oauthClientConsent: { ...consentBase, id: 'self-consent-2', type: 'oauth_client' },
+      audit: {
+        ...auditBase,
+        id: 'self-audit-create',
+        action: 'agent.grant.created',
+        metadata: { management_mode: 'system_managed' },
+      },
+      consentAudit: {
+        ...auditBase,
+        id: 'self-audit-consent',
+        action: 'agent.consent.granted',
+        metadata: { scopes: ['agent:read'] },
+      },
+    } satisfies Parameters<AdminAgentAccessRepository['createSelfServiceAuthorization']>[0];
+    await repository.createSelfServiceAuthorization(initialAuthorization);
+    await repository.createSelfServiceAuthorization(initialAuthorization);
+    await expect(
+      repository.createSelfServiceAuthorization({
+        ...initialAuthorization,
+        delegationConsent: {
+          ...initialAuthorization.delegationConsent,
+          grantedAt: initialAuthorization.delegationConsent.grantedAt + 1,
+        },
+      })
+    ).rejects.toThrow();
+    await expect(
+      adapter.queryOne<{ granted_at: number }>(
+        `SELECT granted_at FROM agent_consents
+         WHERE grant_id = 'grant-self-service' AND consent_type = 'delegation'`
+      )
+    ).resolves.toEqual({ granted_at: 100 });
+    await repository.createPendingTokenFamily({
+      familyId: 'self-family-1',
+      familyJti: 'self-jti-1',
+      tenantId: 'tenant-1',
+      grantId: 'grant-self-service',
+      grantGeneration: 1,
+      adminUserId: 'admin-1',
+      clientId: 'client-self-service',
+      consentVersion: 1,
+      finalizationNonce: 'self-nonce-1',
+      createdAt: 110,
+      expiresAt: 1000,
+    });
+    const userTool = {
+      toolId: 'admin.read.users.get',
+      toolName: 'get_user',
+      contractVersion: '1',
+      schemaDigest: 'user-digest',
+      permissions: ['admin:users:read'],
+      requiredScope: 'agent:user-data:read' as const,
+      riskLevel: 'low' as const,
+      requiresElevation: false,
+    };
+    const replacementConsent = {
+      ...consentBase,
+      consentVersion: 2,
+      scopes: ['agent:read', 'agent:user-data:read'] as const,
+      grantedAt: 200,
+    };
+    const taskResolved2 = {
+      catalogVersion: 'catalog-v1',
+      tools: [readTool, userTool],
+      permissions: ['admin:clients:read', 'admin:users:read'],
+    };
+    const taskDigest2 = await sha256Base64Url(canonicalizeJson(taskResolved2 as never));
+    const replacementPolicy = { ...policy, maxPerCall: 2 };
+    const replacementPolicyDigest = await sha256Base64Url(
+      canonicalizeJson(replacementPolicy as never)
+    );
+    const accessHash2 = await sha256Base64Url(
+      canonicalizeJson({
+        purpose: 'authrim-agent-self-service-snapshot-v1',
+        tenant_id: 'tenant-1',
+        admin_user_id: 'admin-1',
+        client_id: 'client-self-service',
+        grant_id: 'grant-self-service',
+        expires_at: 800,
+        scopes: ['agent:read', 'agent:user-data:read'],
+        task_set: { id: 'system-task-2', version: 1, digest: taskDigest2 },
+        scope_policy: { id: 'system-policy-2', version: 1, digest: replacementPolicyDigest },
+        tools: [readTool, userTool],
+      } as never)
+    );
+    const replacement = {
+      grant: {
+        grantId: 'grant-self-service',
+        tenantId: 'tenant-1',
+        clientId: 'client-self-service',
+        grantorId: 'admin-1',
+        delegatorId: 'admin-1',
+        permissions: ['admin:clients:read', 'admin:users:read'],
+        scopes: ['agent:read', 'agent:user-data:read'],
+        authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+        resolvedScopeConstraints: {
+          tenantIds: ['tenant-1'],
+          piiMode: 'masked',
+          maxPerCall: 2,
+          maxPerPlan: 25,
+          maxPerBulkPlan: 1,
+        },
+        consentVersion: 2,
+        generation: 2,
+        status: 'active',
+        delegationMode: 'user_consent',
+        taskSetId: 'system-task-2',
+        taskSetVersion: 1,
+        scopePolicyId: 'system-policy-2',
+        scopePolicyVersion: 1,
+        resolvedTools: [readTool, userTool],
+        accessSnapshotHash: accessHash2,
+        purpose: 'interactive_self_service',
+        managementMode: 'system_managed',
+        expiresAt: 800,
+        createdAt: 200,
+      },
+      expectedGeneration: 1,
+      transitionId: 'self-transition-2',
+      outboxId: 'outbox_self-transition-2',
+      taskSet: {
+        id: 'system-task-2',
+        version: 1,
+        digest: taskDigest2,
+        resolved: {
+          ...taskResolved2,
+          digest: taskDigest2,
+        },
+      },
+      scopePolicy: {
+        id: 'system-policy-2',
+        version: 1,
+        digest: replacementPolicyDigest,
+        definition: replacementPolicy,
+        selectorCatalogVersion: 'selectors-v1',
+      },
+      delegationConsent: {
+        ...replacementConsent,
+        id: 'self-consent-3',
+        type: 'delegation',
+      },
+      oauthClientConsent: {
+        ...replacementConsent,
+        id: 'self-consent-4',
+        type: 'oauth_client',
+      },
+      grantAudit: {
+        ...auditBase,
+        id: 'self-transition-2',
+        action: 'agent.grant.updated',
+        metadata: { scopes: replacementConsent.scopes },
+        createdAt: 200,
+      },
+      consentAudit: {
+        ...auditBase,
+        id: 'self-audit-consent-2',
+        action: 'agent.consent.granted',
+        metadata: { scopes: replacementConsent.scopes },
+        createdAt: 200,
+      },
+    } satisfies Parameters<AdminAgentAccessRepository['replaceSelfServiceAuthorization']>[0];
+    await expect(repository.replaceSelfServiceAuthorization(replacement)).resolves.toEqual({
+      familyCount: 1,
+    });
+    await expect(repository.replaceSelfServiceAuthorization(replacement)).resolves.toEqual({
+      familyCount: 1,
+    });
+    await expect(
+      repository.replaceSelfServiceAuthorization({ ...replacement, outboxId: 'outbox_other' })
+    ).rejects.toThrow('outbox must be transition-bound');
+    await expect(
+      repository.replaceSelfServiceAuthorization({
+        ...replacement,
+        grant: {
+          ...replacement.grant,
+          authorizationDetails: [
+            { type: 'authrim_admin_agent', max_subjects_per_call: 2 },
+            { type: 'authrim_admin_agent', max_subjects_per_call: 2 },
+          ],
+        },
+      })
+    ).rejects.toThrow('changed during consent');
+    const differentExpiryHash = await sha256Base64Url(
+      canonicalizeJson({
+        purpose: 'authrim-agent-self-service-snapshot-v1',
+        tenant_id: 'tenant-1',
+        admin_user_id: 'admin-1',
+        client_id: 'client-self-service',
+        grant_id: 'grant-self-service',
+        expires_at: 801,
+        scopes: ['agent:read', 'agent:user-data:read'],
+        task_set: { id: 'system-task-2', version: 1, digest: taskDigest2 },
+        scope_policy: { id: 'system-policy-2', version: 1, digest: replacementPolicyDigest },
+        tools: [readTool, userTool],
+      } as never)
+    );
+    await expect(
+      repository.replaceSelfServiceAuthorization({
+        ...replacement,
+        grant: {
+          ...replacement.grant,
+          expiresAt: 801,
+          accessSnapshotHash: differentExpiryHash,
+        },
+      })
+    ).rejects.toThrow('changed during consent');
+    await expect(
+      repository.replaceSelfServiceAuthorization({
+        ...replacement,
+        delegationConsent: {
+          ...replacement.delegationConsent,
+          grantedAt: replacement.delegationConsent.grantedAt + 1,
+        },
+      })
+    ).rejects.toThrow();
+    await expect(
+      adapter.queryOne<{ granted_at: number }>(
+        `SELECT granted_at FROM agent_consents
+         WHERE grant_id = 'grant-self-service' AND consent_type = 'delegation'`
+      )
+    ).resolves.toEqual({ granted_at: 200 });
+
+    await expect(repository.getGrant('tenant-1', 'grant-self-service')).resolves.toMatchObject({
+      generation: 2,
+      consentVersion: 2,
+      scopes: ['agent:read', 'agent:user-data:read'],
+      authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+      resolvedScopeConstraints: expect.objectContaining({ maxPerCall: 2 }),
+      taskSetId: 'system-task-2',
+    });
+    await expect(
+      repository.getGrantRecord('tenant-1', 'grant-self-service')
+    ).resolves.toMatchObject({ managementMode: 'system_managed' });
+    await expect(
+      adapter.queryOne<{ management_mode: string }>(
+        `SELECT management_mode FROM agent_task_sets
+         WHERE tenant_id = 'tenant-1' AND id = 'system-task-2'`
+      )
+    ).resolves.toEqual({ management_mode: 'system_managed' });
+    await expect(configurationRepository.listTaskSets('tenant-1')).resolves.toEqual([]);
+    await expect(configurationRepository.listScopePolicies('tenant-1')).resolves.toEqual([]);
+    await expect(
+      configurationRepository.getTaskSet('tenant-1', 'system-task-2')
+    ).resolves.toMatchObject({ managementMode: 'system_managed' });
+    await expect(
+      configurationRepository.getScopePolicy('tenant-1', 'system-policy-2')
+    ).resolves.toMatchObject({ managementMode: 'system_managed' });
+    await expect(
+      adapter.queryOne<{ management_mode: string }>(
+        `SELECT management_mode FROM agent_scope_policies
+         WHERE tenant_id = 'tenant-1' AND id = 'system-policy-2'`
+      )
+    ).resolves.toEqual({ management_mode: 'system_managed' });
+    await expect(
+      adapter.queryOne<{ status: string; revocation_outbox_id: string }>(
+        `SELECT status, revocation_outbox_id FROM admin_agent_token_families
+         WHERE family_id = 'self-family-1'`
+      )
+    ).resolves.toEqual({
+      status: 'revocation_pending',
+      revocation_outbox_id: 'outbox_self-transition-2',
+    });
   });
 
   it('finalizes only while Grant generation and both consents remain current', async () => {
@@ -1058,16 +1747,21 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
     const migrationDirectory = existsSync(rootCandidate)
       ? rootCandidate
       : path.resolve(process.cwd(), '../../migrations/admin');
-    for (const filename of readdirSync(migrationDirectory)
+    const migrationSql = readdirSync(migrationDirectory)
       .filter((name) => /^\d{3}_.*\.sql$/u.test(name))
-      .sort()) {
-      const sql = readFileSync(path.join(migrationDirectory, filename), 'utf8').replaceAll(
-        '__AUTHRIM_NOW_EPOCH_MILLISECONDS__',
-        '0'
-      );
-      execFileSync(sqlite3Path!, ['-bail', databasePath, `\n${sql}`], { encoding: 'utf8' });
-    }
-  });
+      .sort()
+      .map((filename) =>
+        readFileSync(path.join(migrationDirectory, filename), 'utf8').replaceAll(
+          '__AUTHRIM_NOW_EPOCH_MILLISECONDS__',
+          '0'
+        )
+      )
+      .join('\n');
+    execFileSync(sqlite3Path!, ['-bail', databasePath], {
+      encoding: 'utf8',
+      input: migrationSql,
+    });
+  }, 30_000);
 
   afterEach(() => {
     rmSync(temporaryDirectory, { recursive: true, force: true });

@@ -5,6 +5,7 @@
  * Endpoints:
  * - GET  /api/external/providers                     - List available providers
  * - GET  /api/external/:provider/start              - Start external IdP login
+ * - GET/POST /api/external/:provider/initiate-login - OIDC third-party initiated login
  * - GET  /api/external/:provider/callback           - Handle OAuth callback
  * - POST /api/external/:provider/backchannel-logout - Handle backchannel logout (OIDC Back-Channel Logout 1.0)
  * - GET  /api/external/link                         - List linked identities (requires session)
@@ -41,13 +42,21 @@ import {
   // Logger
   getLogger,
   createLogger,
+  diagnosticLoggingMiddleware,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
 import { handleListProviders } from './handlers/list';
 import { handleExternalStart } from './handlers/start';
+import { handleThirdPartyInitiatedLogin } from './handlers/initiate-login';
+import { handleRequestObject } from './handlers/request-object';
 import { handleExternalCallback } from './handlers/callback';
 import { handleBackchannelLogout } from './handlers/backchannel-logout';
+import { handleFrontchannelLogout } from './handlers/frontchannel-logout';
+import {
+  handleRpInitiatedLogout,
+  handleRpInitiatedLogoutCallback,
+} from './handlers/rp-initiated-logout';
 import {
   handleLinkIdentity,
   handleUnlinkIdentity,
@@ -60,6 +69,7 @@ import {
   handleAdminListProviders,
   handleAdminCreateProvider,
   handleAdminGetProvider,
+  handleAdminRegisterProvider,
   handleAdminUpdateProvider,
   handleAdminDeleteProvider,
 } from './admin/providers';
@@ -82,8 +92,22 @@ app.use('*', logger());
 app.use('*', requestContextMiddleware());
 app.use('*', pluginContextMiddleware());
 
+// Capture semantic RP-side HTTP evidence for OIDF conformance testing. The
+// middleware is tenant-scoped and remains disabled unless the tenant enables
+// Diagnostic Logging. Health and Admin API traffic are intentionally excluded.
+app.use('/api/external/*', diagnosticLoggingMiddleware({}));
+app.use('/auth/external/*', diagnosticLoggingMiddleware({}));
+
 // Enhanced security headers
 app.use('*', async (c, next) => {
+  if (c.req.path.endsWith('/frontchannel-logout')) {
+    await next();
+    c.res.headers.delete('X-Frame-Options');
+    c.res.headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors *");
+    c.res.headers.set('X-Content-Type-Options', 'nosniff');
+    c.res.headers.set('Referrer-Policy', 'no-referrer');
+    return c.res;
+  }
   return secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"],
@@ -168,6 +192,17 @@ app.get('/auth/external/providers', handleListProviders);
 app.get('/api/external/:provider/start', handleExternalStart);
 app.get('/auth/external/:provider/start', handleExternalStart);
 
+// OpenID Connect Core 1.0 Third-Party Initiated Login. Both methods are
+// required by the Dynamic Client Registration initiate_login_uri contract.
+app.get('/api/external/:provider/initiate-login', handleThirdPartyInitiatedLogin);
+app.post('/api/external/:provider/initiate-login', handleThirdPartyInitiatedLogin);
+app.get('/auth/external/:provider/initiate-login', handleThirdPartyInitiatedLogin);
+app.post('/auth/external/:provider/initiate-login', handleThirdPartyInitiatedLogin);
+
+// HTTPS request_uri target for OIDC Request Objects by reference.
+app.get('/api/external/:provider/request-object', handleRequestObject);
+app.get('/auth/external/:provider/request-object', handleRequestObject);
+
 // Handle OAuth callback from external IdP
 // GET: Standard OAuth callback (most providers)
 // POST: Apple Sign In with response_mode=form_post (required for name/email scope)
@@ -179,6 +214,14 @@ app.post('/auth/external/:provider/callback', handleExternalCallback);
 // Handle backchannel logout from external IdP (OpenID Connect Back-Channel Logout 1.0)
 app.post('/api/external/:provider/backchannel-logout', handleBackchannelLogout);
 app.post('/auth/external/:provider/backchannel-logout', handleBackchannelLogout);
+
+// Upstream OpenID Connect logout endpoints.
+app.get('/api/external/:provider/logout', handleRpInitiatedLogout);
+app.get('/auth/external/:provider/logout', handleRpInitiatedLogout);
+app.get('/api/external/:provider/logout/callback', handleRpInitiatedLogoutCallback);
+app.get('/auth/external/:provider/logout/callback', handleRpInitiatedLogoutCallback);
+app.get('/api/external/:provider/frontchannel-logout', handleFrontchannelLogout);
+app.get('/auth/external/:provider/frontchannel-logout', handleFrontchannelLogout);
 
 // Handoff token verification (for SSO across multiple RPs)
 app.post('/handoff/verify', handleHandoffVerify);
@@ -218,6 +261,9 @@ app.post('/api/admin/external-providers', handleAdminCreateProvider);
 
 // Get provider details
 app.get('/api/admin/external-providers/:id', handleAdminGetProvider);
+
+// Discover the OP and perform RFC 7591/OIDC Dynamic Client Registration.
+app.post('/api/admin/external-providers/:id/register', handleAdminRegisterProvider);
 
 // Update provider
 app.put('/api/admin/external-providers/:id', handleAdminUpdateProvider);

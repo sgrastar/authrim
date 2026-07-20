@@ -150,7 +150,7 @@ function collectD1DatabaseBindings(
   component: WorkerComponent,
   resourceIds: ResourceIds
 ): Array<{ binding: string; database_name: string; database_id: string }> {
-  if (component === 'ar-router' || component === 'ar-async') {
+  if (component === 'ar-router') {
     return [];
   }
 
@@ -159,7 +159,11 @@ function collectD1DatabaseBindings(
       ? D1_DATABASES.filter(
           (database) => database.binding === 'DB' || database.binding === 'DB_ADMIN'
         )
-      : D1_DATABASES;
+      : component === 'ar-async'
+        ? D1_DATABASES.filter(
+            (database) => database.binding === 'DB' || database.binding === 'DB_PII'
+          )
+        : D1_DATABASES;
   const builtins = selectedDatabases
     .map((db) => ({
       binding: db.binding,
@@ -214,7 +218,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   ],
   'ar-agent-access': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
-  'ar-async': ['AUTHRIM_CONFIG'],
+  'ar-async': ['INITIAL_ACCESS_TOKENS', 'AUTHRIM_CONFIG'],
   'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
   'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
@@ -275,7 +279,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'SESSION_STORE',
     'CHALLENGE_STORE',
   ],
-  'ar-bridge': ['SESSION_STORE', 'CHALLENGE_STORE'],
+  'ar-bridge': ['KEY_MANAGER', 'SESSION_STORE', 'CHALLENGE_STORE'],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };
 
@@ -633,6 +637,7 @@ export function generateWranglerConfig(
       component === 'ar-token' ||
       component === 'ar-async' ||
       component === 'ar-saml' ||
+      component === 'ar-bridge' ||
       component === 'ar-vc' ||
       component === 'ar-management'
     ) {

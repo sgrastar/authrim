@@ -39,6 +39,10 @@ import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from
 import { parHandler } from './par';
 import { adminAgentAuthorizeHandler, adminAgentParHandler } from './admin-agent-oauth';
 import {
+  adminAgentLoginHandoffConsumeHandler,
+  createAdminAgentLoginHandoff,
+} from './admin-agent-login-handoff';
+import {
   passkeyRegisterOptionsHandler,
   passkeyRegisterVerifyHandler,
   passkeyLoginOptionsHandler,
@@ -314,16 +318,22 @@ app.use('/oauth/admin-agent/authorize', async (c, next) => {
   })(c, next);
 });
 
+app.use('/oauth/admin-agent/login-handoff/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/login-handoff/consume'],
+  })(c, next);
+});
+
 app.use(
   '/oauth/admin-agent/authorize',
   adminAuthMiddleware({
     plane: 'tenant',
     sessionOnly: true,
-    unauthenticatedRedirect: (c) => {
+    unauthenticatedRedirect: async (c) => {
       if (c.req.method !== 'GET') return undefined;
-      const requestUrl = new URL(c.req.url);
-      const returnTo = `${requestUrl.pathname}${requestUrl.search}`;
-      return `/admin/login?return_to=${encodeURIComponent(returnTo)}`;
+      return createAdminAgentLoginHandoff(c);
     },
   })
 );
@@ -441,6 +451,7 @@ app.post('/par', parHandler);
 app.post('/oauth/admin-agent/par', adminAgentParHandler);
 app.get('/oauth/admin-agent/authorize', adminAgentAuthorizeHandler);
 app.post('/oauth/admin-agent/authorize', adminAgentAuthorizeHandler);
+app.get('/oauth/admin-agent/login-handoff/consume', adminAgentLoginHandoffConsumeHandler);
 
 // PAR endpoint should reject non-POST methods
 app.get('/par', (c) => {

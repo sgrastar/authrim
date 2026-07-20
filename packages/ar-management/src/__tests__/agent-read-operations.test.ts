@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   clientsList: vi.fn(),
   clientGet: vi.fn(),
   auditList: vi.fn(),
+  coreQueryOne: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -26,6 +27,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       c.set('adminAuth', mocks.auth);
       await next();
     },
+    createAuthContextFromHono: () => ({
+      coreAdapter: { queryOne: mocks.coreQueryOne },
+    }),
   };
 });
 
@@ -143,6 +147,8 @@ describe('Agent-safe Management read operations', () => {
           {
             id: 'audit-1',
             action: 'client.updated',
+            resource_id: 'user-stable-id',
+            actor_id: 'admin-stable-id',
             admin_email: 'admin@example.com',
             actor_display_name: 'Alice Admin',
             metadata: { token: 'raw-token' },
@@ -162,8 +168,54 @@ describe('Agent-safe Management read operations', () => {
     const text = await response.text();
     expect(response.status).toBe(200);
     expect(text).not.toContain('admin@example.com');
+    expect(text).not.toContain('user-stable-id');
+    expect(text).not.toContain('admin-stable-id');
     expect(text).not.toContain('raw-token');
     expect(text).not.toContain('old-secret');
+  });
+
+  it('computes session posture in Core DB without loading identifying session fields', async () => {
+    mocks.coreQueryOne.mockResolvedValue({
+      total_sessions: 3,
+      active_sessions: 2,
+      expired_sessions: 1,
+      oldest_created_at: 1_750_000_000,
+      newest_last_accessed_at: 1_750_000_100,
+      next_expiration_at: 1_750_000_200,
+      latest_expiration_at: 1_750_000_300,
+    });
+
+    const response = await app().request(
+      '/api/admin/agent-read/session-posture',
+      undefined,
+      {} as Env
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toMatchObject({
+      snapshot: { total_sessions: 3, active_sessions: 2, expired_sessions: 1 },
+    });
+    const [sql, params] = mocks.coreQueryOne.mock.calls[0] as [string, unknown[]];
+    expect(sql).not.toMatch(/(?:user_id|email|ip_address|user_agent|SELECT \*)/u);
+    expect(params.at(-1)).toBe('tenant-1');
+  });
+
+  it('fails closed when aggregate session counts are inconsistent', async () => {
+    mocks.coreQueryOne.mockResolvedValue({
+      total_sessions: 2,
+      active_sessions: 2,
+      expired_sessions: 1,
+      oldest_created_at: null,
+      newest_last_accessed_at: null,
+      next_expiration_at: null,
+      latest_expiration_at: null,
+    });
+    const response = await app().request(
+      '/api/admin/agent-read/session-posture',
+      undefined,
+      {} as Env
+    );
+    expect(response.status).toBe(502);
   });
 
   it('rejects unknown query fields before invoking owner APIs', async () => {

@@ -105,7 +105,7 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
     'user_data_reader',
     'Search and inspect masked tenant user data. Assign only when the MCP host and model data policy are approved.',
     USER_DATA_READ_TOOLS,
-    'ZHdWtMFNK2FIt0pGI_jilfYOaJK-nYd7gRP-qbrGo_c'
+    'onKFOlvthyskYe6Crii2rqGC_S8dtxa2J7F_h1ssO7k'
   ),
   preset(
     'diagnostics_operator',
@@ -177,6 +177,7 @@ export async function resolveBuiltinAgentTaskSet(input: {
     name: definition.name,
     description: definition.description,
     kind: 'builtin',
+    managementMode: 'managed',
     status: 'active',
     currentVersion: definition.version,
     version: resolved,

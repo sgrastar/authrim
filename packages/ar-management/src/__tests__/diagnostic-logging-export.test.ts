@@ -68,7 +68,7 @@ function createEnv(bucket: MockR2Bucket, kvData: Record<string, string> = {}): E
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'otp-secret',
     DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,
-    AUTHRIM_CONFIG: createMockKV(kvData),
+    SETTINGS: createMockKV(kvData),
   } as Env;
 }
 
@@ -236,6 +236,61 @@ describe('Diagnostic Logs Export API', () => {
     expect(details.errorMessage).toBe('contact user [EMAIL_REDACTED]');
   });
 
+  it('exports only the requested authentication flow', async () => {
+    const bucket = new MockR2Bucket();
+    const env = createEnv(bucket);
+
+    const key = await buildDiagnosticLogPath({
+      pathPrefix: 'diagnostic-logs',
+      tenantId: 'tenant-1',
+      clientId: 'rp-client',
+      category: 'auth-decision',
+      timestamp: Date.UTC(2026, 3, 21, 1, 0, 0),
+      chunkId: 'chk_flow_filter',
+    });
+    bucket.store.set(
+      key,
+      [
+        JSON.stringify({
+          id: 'auth-flow-a',
+          flowId: 'flow-a',
+          tenantId: 'tenant-1',
+          clientId: 'rp-client',
+          category: 'auth-decision',
+          level: 'info',
+          timestamp: Date.UTC(2026, 3, 21, 1, 0, 0),
+          decision: 'allow',
+          reason: 'authorization_response',
+        }),
+        JSON.stringify({
+          id: 'auth-flow-b',
+          flowId: 'flow-b',
+          tenantId: 'tenant-1',
+          clientId: 'rp-client',
+          category: 'auth-decision',
+          level: 'warn',
+          timestamp: Date.UTC(2026, 3, 21, 1, 0, 1),
+          decision: 'deny',
+          reason: 'invalid_issuer',
+        }),
+      ].join('\n')
+    );
+
+    const response = await exportLogsApp.request(
+      '/?tenantId=tenant-1&clientId=rp-client&flowIds=flow-b&format=json&categories=auth-decision&startDate=2026-04-21&endDate=2026-04-21',
+      { headers: authHeaders() },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { logs: Array<Record<string, unknown>> };
+    expect(body.logs).toHaveLength(1);
+    expect(body.logs[0]).toMatchObject({
+      event: 'auth_decision_deny',
+      details: { flowId: 'flow-b', reason: 'invalid_issuer' },
+    });
+  });
+
   it('returns 400 for invalid date format', async () => {
     const bucket = new MockR2Bucket();
     const env = createEnv(bucket);
@@ -250,5 +305,43 @@ describe('Diagnostic Logs Export API', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: 'invalid_date',
     });
+  });
+
+  it('rejects reversed date ranges and unknown categories', async () => {
+    const bucket = new MockR2Bucket();
+    const env = createEnv(bucket);
+
+    const reversed = await exportLogsApp.request(
+      '/?tenantId=tenant-1&startDate=2026-04-22&endDate=2026-04-21',
+      { headers: authHeaders() },
+      env
+    );
+    expect(reversed.status).toBe(400);
+    await expect(reversed.json()).resolves.toMatchObject({ error: 'invalid_date_range' });
+
+    const unknownCategory = await exportLogsApp.request(
+      '/?tenantId=tenant-1&categories=token-validation,secrets',
+      { headers: authHeaders() },
+      env
+    );
+    expect(unknownCategory.status).toBe(400);
+    await expect(unknownCategory.json()).resolves.toMatchObject({
+      error: 'invalid_categories',
+    });
+  });
+
+  it('bounds comma-separated evidence filters', async () => {
+    const bucket = new MockR2Bucket();
+    const env = createEnv(bucket);
+    const flowIds = Array.from({ length: 101 }, (_, index) => `flow-${index}`).join(',');
+
+    const response = await exportLogsApp.request(
+      `/?tenantId=tenant-1&flowIds=${flowIds}`,
+      { headers: authHeaders() },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_filter' });
   });
 });

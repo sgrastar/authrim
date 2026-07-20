@@ -113,6 +113,81 @@ export function projectAgentInspectionResponse(body: JsonValue): JsonValue {
   return { snapshot: sanitizeInspection(body) };
 }
 
+function recordValue(value: JsonValue | undefined): Record<string, JsonValue> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, JsonValue>)
+    : null;
+}
+
+function safePostureCount(value: JsonValue | undefined): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
+}
+
+function safePostureTimestamp(value: JsonValue | undefined): string | null | undefined {
+  return value === null ||
+    (typeof value === 'string' &&
+      value.length <= 64 &&
+      Number.isFinite(Date.parse(value)) &&
+      new Date(value).toISOString() === value)
+    ? value
+    : undefined;
+}
+
+/** Validates and allowlists the Management-owned non-identifying session posture response. */
+export function projectAgentSessionPostureResponse(body: JsonValue): JsonValue {
+  const record = recordValue(body);
+  const snapshot = recordValue(record?.snapshot);
+  const window = recordValue(snapshot?.window);
+  const total = safePostureCount(snapshot?.total_sessions);
+  const active = safePostureCount(snapshot?.active_sessions);
+  const expired = safePostureCount(snapshot?.expired_sessions);
+  const oldest = safePostureTimestamp(window?.oldest_created_at);
+  const newest = safePostureTimestamp(window?.newest_last_accessed_at);
+  const next = safePostureTimestamp(window?.next_expiration_at);
+  const latest = safePostureTimestamp(window?.latest_expiration_at);
+  if (
+    total === null ||
+    active === null ||
+    expired === null ||
+    active + expired !== total ||
+    oldest === undefined ||
+    newest === undefined ||
+    next === undefined ||
+    latest === undefined
+  ) {
+    throw new TypeError('Invalid Agent session posture response');
+  }
+  return {
+    snapshot: {
+      total_sessions: total,
+      active_sessions: active,
+      expired_sessions: expired,
+      window: {
+        oldest_created_at: oldest,
+        newest_last_accessed_at: newest,
+        next_expiration_at: next,
+        latest_expiration_at: latest,
+      },
+    },
+  };
+}
+
+export function projectAgentSettingsResponse(body: JsonValue): JsonValue {
+  const projected = sanitizeInspection(body);
+  const settings =
+    projected !== null &&
+    typeof projected === 'object' &&
+    !Array.isArray(projected) &&
+    projected.settings !== null &&
+    typeof projected.settings === 'object' &&
+    !Array.isArray(projected.settings)
+      ? projected.settings
+      : {};
+  return {
+    settings,
+  };
+}
+
 export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOperationRoute>> = {
   'admin.read.users.search': {
     method: 'GET',
@@ -151,6 +226,7 @@ export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOpe
   'admin.read.agent-settings.get': {
     method: 'GET',
     path: '/api/admin/settings/agent',
+    response: projectAgentSettingsResponse,
   },
   'admin.read.identity-providers.inspect': {
     method: 'GET',
@@ -184,8 +260,8 @@ export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOpe
   },
   'admin.read.sessions.inspect': {
     method: 'GET',
-    path: '/api/admin/sessions?page=1&limit=50',
-    response: projectAgentInspectionResponse,
+    path: '/api/admin/agent-read/session-posture',
+    response: projectAgentSessionPostureResponse,
   },
   'admin.read.assurance.inspect': {
     method: 'GET',
