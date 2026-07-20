@@ -324,8 +324,10 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
         testPrivateKey
       );
 
-      // Tamper with signature
-      const tamperedSignature = signResult.signature.replace(/A/g, 'B');
+      // Tamper with the signature deterministically. Replacing a specific character
+      // can be a no-op when the generated Base64 signature does not contain it.
+      const replacement = signResult.signature[0] === 'A' ? 'B' : 'A';
+      const tamperedSignature = replacement + signResult.signature.slice(1);
 
       // Verify should fail
       const isValid = await verifyRedirectBindingSignature(
