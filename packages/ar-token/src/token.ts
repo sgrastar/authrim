@@ -58,6 +58,7 @@ import {
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
   FAPI2_MESSAGE_SIGNING_ALGS,
+  validateClientCertificateBinding,
   setBoundedMapEntry,
 } from '@authrim/ar-lib-core';
 import {
@@ -511,6 +512,15 @@ function getDPoPJktFromCnfClaim(payload: Record<string, unknown>): string | unde
   return typeof jkt === 'string' && jkt.length > 0 ? jkt : undefined;
 }
 
+function getMTLSCertificateThumbprintFromCnfClaim(
+  payload: Record<string, unknown>
+): string | undefined {
+  const cnf = payload.cnf;
+  if (!cnf || typeof cnf !== 'object' || Array.isArray(cnf)) return undefined;
+  const thumbprint = (cnf as Record<string, unknown>)['x5t#S256'];
+  return typeof thumbprint === 'string' && thumbprint.length > 0 ? thumbprint : undefined;
+}
+
 async function resolveBrowserPublicClientMode(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -885,6 +895,14 @@ async function resolveTokenClientAuthenticationPolicy(
     return { ok: true, assertionOptions };
   }
 
+  const grantTypes = clientMetadata.grant_types;
+  const isCIBAClient = Array.isArray(grantTypes)
+    ? grantTypes.includes('urn:openid:params:grant-type:ciba')
+    : grantTypes === 'urn:openid:params:grant-type:ciba';
+  const effectiveAssertionOptions = isCIBAClient
+    ? { ...assertionOptions, audiencePolicy: 'endpoint-or-issuer' as const }
+    : assertionOptions;
+
   if (
     clientMetadata.token_endpoint_auth_method !== 'private_key_jwt' ||
     !clientAssertion ||
@@ -901,7 +919,7 @@ async function resolveTokenClientAuthenticationPolicy(
     };
   }
 
-  return { ok: true, assertionOptions };
+  return { ok: true, assertionOptions: effectiveAssertionOptions };
 }
 
 // ===== Module-level Logger for Helper Functions =====
@@ -2967,7 +2985,11 @@ async function handleRefreshTokenGrant(
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
-  if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
+  if (
+    typedClient.tls_client_certificate_bound_access_tokens !== true &&
+    (await isDPoPRequiredForTokenRequest(c, typedClient)) &&
+    !dpopProof
+  ) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
   }
 
@@ -3047,12 +3069,28 @@ async function handleRefreshTokenGrant(
   }
   // Public clients (no client_secret_hash and no client_assertion) are allowed
 
+  let refreshMTLSThumbprint: string | undefined;
+  if (typedClient.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, typedClient);
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    refreshMTLSThumbprint = certificateBinding.thumbprint;
+  }
+
   // Parse refresh token to get JTI (without verification yet)
   let refreshTokenPayload;
   try {
     refreshTokenPayload = parseToken(refreshTokenValue);
   } catch {
     return oauthError(c, 'invalid_grant', 'Invalid refresh token format', 400);
+  }
+
+  if (
+    refreshMTLSThumbprint &&
+    getMTLSCertificateThumbprintFromCnfClaim(refreshTokenPayload) !== refreshMTLSThumbprint
+  ) {
+    return oauthError(c, 'invalid_grant', 'Refresh token certificate binding mismatch', 400);
   }
 
   const jti = refreshTokenPayload.jti as string;
@@ -3302,7 +3340,7 @@ async function handleRefreshTokenGrant(
       aud: AccessTokenAudience;
       scope: string;
       client_id: string;
-      cnf?: { jkt: string };
+      cnf?: { jkt: string } | { 'x5t#S256': string };
       authrim_permissions?: string[];
       authrim_scoped_permissions?: AccessTokenScopedPermission[];
       [key: string]: unknown;
@@ -3329,6 +3367,8 @@ async function handleRefreshTokenGrant(
     // Add DPoP confirmation (cnf) claim if DPoP is used
     if (dpopJkt) {
       accessTokenClaims.cnf = { jkt: dpopJkt };
+    } else if (refreshMTLSThumbprint) {
+      accessTokenClaims.cnf = { 'x5t#S256': refreshMTLSThumbprint };
     }
 
     // Generate region-aware JTI for token revocation sharding
@@ -3468,7 +3508,11 @@ async function handleRefreshTokenGrant(
         scope: grantedScope,
         client_id: client_id,
         resource_aud: refreshedAccessTokenAudience,
-        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+        ...(dpopJkt
+          ? { cnf: { jkt: dpopJkt } }
+          : refreshMTLSThumbprint
+            ? { cnf: { 'x5t#S256': refreshMTLSThumbprint } }
+            : {}),
       };
 
       // V2: Include rtv (Refresh Token Version) for theft detection
@@ -4452,6 +4496,21 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     return oauthError(c, clientAuthentication.error, clientAuthentication.errorDescription, 401);
   }
 
+  let mtlsThumbprint: string | undefined;
+  if (clientMetadata.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(
+      c.req.raw,
+      clientMetadata as unknown as ClientMetadata
+    );
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      log.warn('CIBA client certificate binding failed', {
+        reason: certificateBinding.error ?? 'missing_thumbprint',
+      });
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    mtlsThumbprint = certificateBinding.thumbprint;
+  }
+
   const grantTypes = clientMetadata.grant_types as string[] | string | undefined;
   if (!grantTypes || !grantTypes.includes('urn:openid:params:grant-type:ciba')) {
     return oauthError(c, 'unauthorized_client', 'Client is not authorized for CIBA grant', 400);
@@ -4508,6 +4567,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     sub?: string;
     user_id?: string;
     nonce?: string;
+    authenticated_acr?: string;
     last_poll_at?: number;
     poll_count?: number;
     created_at: number;
@@ -4588,7 +4648,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         error: 'access_denied',
         error_description: 'User denied the authentication request',
       },
-      403
+      400
     );
   }
 
@@ -4615,6 +4675,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   if (
+    clientMetadata.tls_client_certificate_bound_access_tokens !== true &&
     (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
     !dpopProof
   ) {
@@ -4752,7 +4813,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     aud: AccessTokenAudience;
     scope: string | undefined;
     client_id: string;
-    cnf?: { jkt: string };
+    cnf?: { jkt: string } | { 'x5t#S256': string };
     authrim_permissions?: string[];
     authrim_scoped_permissions?: AccessTokenScopedPermission[];
     [key: string]: unknown;
@@ -4762,7 +4823,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     aud: audienceResolution.audience,
     scope: metadata.scope,
     client_id: metadata.client_id,
-    ...(dpopJkt && { cnf: { jkt: dpopJkt } }),
+    ...(dpopJkt
+      ? { cnf: { jkt: dpopJkt } }
+      : mtlsThumbprint
+        ? { cnf: { 'x5t#S256': mtlsThumbprint } }
+        : {}),
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
   };
@@ -4794,6 +4859,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     sub: metadata.sub!,
     aud: metadata.client_id,
     ...(metadata.nonce && { nonce: metadata.nonce }),
+    ...(metadata.authenticated_acr && { acr: metadata.authenticated_acr }),
     at_hash: atHash,
     // Phase 2 RBAC: Add RBAC claims to ID token
     ...idTokenRBACClaims,
@@ -4891,6 +4957,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     client_id: metadata.client_id,
     scope: metadata.scope,
     resource_aud: audienceResolution.audience,
+    ...(mtlsThumbprint ? { cnf: { 'x5t#S256': mtlsThumbprint } } : {}),
   };
 
   const { token: refreshToken } = await createRefreshToken(
@@ -4918,14 +4985,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     );
   }
 
-  // Delete the CIBA request after successful token issuance
-  await cibaRequestStore.fetch(
-    new Request('https://internal/delete', {
-      method: 'POST',
-      headers: internalHeaders,
-      body: JSON.stringify({ auth_req_id: authReqId }),
-    })
-  );
+  // Keep the issued request as a short-lived tombstone until its original expiry. This lets a
+  // replay receive invalid_grant instead of being indistinguishable from an unknown/expired ID.
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
   const nowEpoch = Math.floor(Date.now() / 1000);

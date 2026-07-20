@@ -49,8 +49,17 @@
 	let copySuccess = $state(false);
 	let slugError = $state('');
 	let discoveryUrl = $state('');
+	let discoveryMode = $state<'url' | 'webfinger'>('url');
 	let discovering = $state(false);
 	let discoveryError = $state('');
+	let dynamicRegistrationEnabled = $state(false);
+	let dynamicClientName = $state('');
+	let initiateLoginUri = $state('');
+	let requestUris = $state('');
+	let userinfoSignedResponseAlg = $state('');
+	let registering = $state(false);
+	let registrationError = $state('');
+	let registrationSuccess = $state(false);
 	let callbackIssuer = $state<string | null>(null);
 	let callbackIssuerRequest = 0;
 
@@ -119,7 +128,10 @@
 
 		try {
 			// Use backend proxy to fetch OIDC configuration (avoids CORS issues)
-			const config = await adminExternalProvidersAPI.discoverOidcConfig(discoveryUrl.trim());
+			const config = await adminExternalProvidersAPI.discoverOidcConfig(
+				discoveryUrl.trim(),
+				discoveryMode
+			);
 
 			// Populate fields from discovery response
 			if (config.issuer) issuer = config.issuer;
@@ -180,6 +192,27 @@
 			buttonColor = data.buttonColor || '';
 			buttonColorDark = data.buttonColorDark || '';
 			buttonText = data.buttonText || '';
+			const dynamicConfig = data.providerQuirks?.dynamicClientRegistration;
+			if (dynamicConfig && typeof dynamicConfig === 'object' && !Array.isArray(dynamicConfig)) {
+				const config = dynamicConfig as Record<string, unknown>;
+				dynamicRegistrationEnabled = config.enabled === true;
+				dynamicClientName = typeof config.clientName === 'string' ? config.clientName : '';
+				initiateLoginUri =
+					typeof config.initiateLoginUri === 'string' ? config.initiateLoginUri : '';
+				requestUris = Array.isArray(config.requestUris)
+					? config.requestUris.filter((value): value is string => typeof value === 'string').join('\n')
+					: '';
+				userinfoSignedResponseAlg =
+					typeof config.userinfoSignedResponseAlg === 'string'
+						? config.userinfoSignedResponseAlg
+						: '';
+			} else {
+				dynamicRegistrationEnabled = false;
+				dynamicClientName = '';
+				initiateLoginUri = '';
+				requestUris = '';
+				userinfoSignedResponseAlg = '';
+			}
 		} catch (err) {
 			console.error('Failed to load provider:', err);
 			error = err instanceof Error ? err.message : $LL.admin_external_idp_error_load_provider();
@@ -210,6 +243,7 @@
 		saveSuccess = false;
 
 		try {
+			const existingQuirks = provider?.providerQuirks || {};
 			const updateData: UpdateProviderRequest = {
 				name,
 				slug,
@@ -232,7 +266,20 @@
 				icon_name: iconName || null,
 				button_color: buttonColor || undefined,
 				button_color_dark: buttonColorDark || undefined,
-				button_text: buttonText || undefined
+				button_text: buttonText || undefined,
+				provider_quirks: {
+					...existingQuirks,
+					dynamicClientRegistration: {
+						enabled: dynamicRegistrationEnabled,
+						clientName: dynamicClientName.trim() || name.trim() || undefined,
+						initiateLoginUri: initiateLoginUri.trim() || undefined,
+						requestUris: requestUris
+							.split(/[\n,]/)
+							.map((value) => value.trim())
+							.filter(Boolean),
+						userinfoSignedResponseAlg: userinfoSignedResponseAlg || undefined
+					}
+				}
 			};
 
 			// Only include client_secret if it was entered
@@ -250,6 +297,27 @@
 			saveError = err instanceof Error ? err.message : $LL.admin_external_idp_error_update();
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function handleDynamicRegistration() {
+		if (!providerId) return;
+		registrationError = '';
+		registrationSuccess = false;
+		if (!dynamicRegistrationEnabled) {
+			registrationError = 'Enable dynamic client registration and save the provider first.';
+			return;
+		}
+
+		registering = true;
+		try {
+			await adminExternalProvidersAPI.registerDynamic(providerId);
+			registrationSuccess = true;
+			await loadProvider();
+		} catch (err) {
+			registrationError = err instanceof Error ? err.message : 'Dynamic registration failed';
+		} finally {
+			registering = false;
 		}
 	}
 
@@ -413,11 +481,21 @@
 							>{$LL.admin_external_idp_discovery_label()}</label
 						>
 						<div class="discovery-input-row">
+							<select
+								bind:value={discoveryMode}
+								class="admin-select discovery-mode-select"
+								aria-label="Discovery input type"
+							>
+								<option value="url">Issuer URL</option>
+								<option value="webfinger">WebFinger resource</option>
+							</select>
 							<input
 								id="discoveryUrl"
-								type="url"
+								type="text"
 								bind:value={discoveryUrl}
-								placeholder={$LL.admin_external_idp_discovery_placeholder()}
+								placeholder={discoveryMode === 'webfinger'
+									? 'acct:user@example.com or https://example.com/user'
+									: $LL.admin_external_idp_discovery_placeholder()}
 								class="admin-input"
 							/>
 							<button
@@ -541,6 +619,91 @@
 					</div>
 				</details>
 			</AdminSection>
+
+			{#if providerType === 'oidc'}
+				<AdminSection title="Dynamic Client Registration">
+					<div class="behavior-settings-list">
+						<ToggleSwitch
+							bind:checked={dynamicRegistrationEnabled}
+							label="Enable dynamic client registration"
+							description="Register this RP from the provider's discovery registration_endpoint. Existing credentials are replaced only after a successful registration."
+						/>
+					</div>
+
+					{#if dynamicRegistrationEnabled}
+						<div class="form-grid dynamic-registration-fields">
+							<div class="admin-field">
+								<label for="dynamicClientName" class="admin-field__label">Client name</label>
+								<input
+									id="dynamicClientName"
+									type="text"
+									bind:value={dynamicClientName}
+									placeholder={name}
+									class="admin-input"
+								/>
+							</div>
+
+							<div class="admin-field">
+								<label for="userinfoSignedResponseAlg" class="admin-field__label"
+									>Signed UserInfo algorithm</label
+								>
+								<select
+									id="userinfoSignedResponseAlg"
+									bind:value={userinfoSignedResponseAlg}
+									class="admin-select"
+								>
+									<option value="">Provider default (JSON allowed)</option>
+									<option value="RS256">RS256</option>
+									<option value="ES256">ES256</option>
+								</select>
+							</div>
+
+							<div class="admin-field admin-field--full">
+								<label for="initiateLoginUri" class="admin-field__label"
+									>Initiate login URI</label
+								>
+								<input
+									id="initiateLoginUri"
+									type="url"
+									bind:value={initiateLoginUri}
+									placeholder="https://rp.example.com/auth/external/provider/initiate-login"
+									class="admin-input"
+								/>
+								<p class="field-hint">Optional metadata for third-party initiated login.</p>
+							</div>
+
+							<div class="admin-field admin-field--full">
+								<label for="requestUris" class="admin-field__label">Request URIs</label>
+								<textarea
+									id="requestUris"
+									bind:value={requestUris}
+									rows="3"
+									placeholder="One HTTPS request_uri per line"
+									class="admin-input"
+								></textarea>
+							</div>
+						</div>
+
+						{#if registrationError}
+							<div class="alert alert-error">{registrationError}</div>
+						{/if}
+						{#if registrationSuccess}
+							<div class="alert alert-success">Dynamic registration completed.</div>
+						{/if}
+						<div class="registration-actions">
+							<button
+								type="button"
+								class="btn btn-secondary"
+								onclick={handleDynamicRegistration}
+								disabled={registering || saving}
+							>
+								{registering ? 'Registering…' : 'Register now'}
+							</button>
+							<p class="field-hint">Save configuration changes before registering.</p>
+						</div>
+					{/if}
+				</AdminSection>
+			{/if}
 
 			<!-- Behavior Settings -->
 			<AdminSection title={$LL.admin_external_idp_behavior_settings()}>
@@ -682,6 +845,17 @@
 		margin-top: 12px;
 	}
 
+	.dynamic-registration-fields {
+		margin-top: 16px;
+	}
+
+	.registration-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-top: 16px;
+	}
+
 	.admin-field {
 		display: grid;
 		gap: 6px;
@@ -798,6 +972,11 @@
 		flex: 1;
 	}
 
+	.discovery-mode-select {
+		width: 170px;
+		flex: 0 0 170px;
+	}
+
 	.discovery-input-row .btn {
 		display: flex;
 		align-items: center;
@@ -873,9 +1052,15 @@
 
 		.discovery-input-row,
 		.input-copy-group,
+		.registration-actions,
 		.form-actions {
 			align-items: stretch;
 			flex-direction: column;
+		}
+
+		.discovery-mode-select {
+			width: 100%;
+			flex-basis: auto;
 		}
 
 		.copy-btn {

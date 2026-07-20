@@ -228,7 +228,11 @@ function hasTenantSettingsPermission(
   action: 'view' | 'edit'
 ): boolean {
   if (!adminAuth) return false;
-  if (adminAuth.actorType === 'agent') {
+  if (
+    adminAuth.actorType === 'agent' ||
+    adminAuth.actorType === 'machine' ||
+    adminAuth.authMethod === 'machine_access_token'
+  ) {
     const granularEditPermission: Partial<Record<CategoryName, string>> = {
       assurance: ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE,
       security: ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE,
@@ -304,6 +308,14 @@ function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: stri
 
   if (adminAuth.actorType === 'agent') {
     return adminAuth.tenantId === tenantId && adminAuth.tenantScope?.includes(tenantId) === true;
+  }
+
+  if (adminAuth.actorType === 'machine' || adminAuth.authMethod === 'machine_access_token') {
+    return (
+      adminAuth.tenantId === tenantId &&
+      (adminAuth.tenantScope?.includes(tenantId) === true ||
+        adminAuth.tenantScope?.includes('*') === true)
+    );
   }
 
   const userRoles = adminAuth.roles;

@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim User Self-Service API
-  version: 0.3.3
+  version: 0.4.0
   summary: Authenticated user consent and data export endpoints.
   description: OpenAPI contract for user-facing self-service endpoints owned by the management Worker.
 servers:

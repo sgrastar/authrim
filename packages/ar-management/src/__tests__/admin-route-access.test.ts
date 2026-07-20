@@ -39,6 +39,7 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
   app.put('/api/admin/settings', (c) => c.json({ ok: true }));
+  app.get('/api/admin/settings/agent', (c) => c.json({ ok: true }));
   app.patch('/api/admin/tenants/tenant-a/settings/assurance', (c) => c.json({ ok: true }));
   app.patch('/api/admin/tenants/tenant-a/settings/security', (c) => c.json({ ok: true }));
   app.patch('/api/admin/tenants/tenant-a/settings/tokens', (c) => c.json({ ok: true }));
@@ -54,6 +55,7 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.post('/api/admin/flows/flow-1/compile', (c) => c.json({ ok: true }));
   app.post('/api/admin/flows/flow-1/publish', (c) => c.json({ ok: true }));
   app.get('/api/admin/agent-grants/eligible-permissions', (c) => c.json({ ok: true }));
+  app.post('/api/admin/agent-login-handoffs/alh_test/approve', (c) => c.json({ ok: true }));
   app.post('/api/admin/undocumented', (c) => c.json({ ok: true }));
   app.get('/api/admin/consent-policies', (c) => c.json({ ok: true }));
   app.post('/api/admin/consent-policies', (c) => c.json({ ok: true }));
@@ -133,6 +135,17 @@ describe('declared admin route access', () => {
     expect(allowedUpdateSettings.status).toBe(200);
   });
 
+  it('uses the dedicated Agent settings permission ahead of the generic settings wildcard', async () => {
+    expect(findAdminRouteAccessRule('GET', '/api/admin/settings/agent')?.permissions).toEqual([
+      ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
+    ]);
+
+    const agentSettingsReader = createHarness([ADMIN_PERMISSIONS.AGENT_SETTINGS_READ]);
+    const genericSettingsReader = createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]);
+    expect((await agentSettingsReader.request('/api/admin/settings/agent')).status).toBe(200);
+    expect((await genericSettingsReader.request('/api/admin/settings/agent')).status).toBe(403);
+  });
+
   it('requires grant write permission for the grant eligibility helper', async () => {
     const reader = createHarness([ADMIN_PERMISSIONS.AGENT_GRANTS_READ]);
     const writer = createHarness([ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE]);
@@ -147,6 +160,20 @@ describe('declared admin route access', () => {
     expect(
       findAdminRouteAccessRule('GET', '/api/admin/agent-grants/eligible-permissions')?.permissions
     ).toEqual([ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE]);
+  });
+
+  it('requires Agent use permission for central login-handoff approval', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.AGENT_GRANTS_READ]);
+    const agentUser = createHarness([ADMIN_PERMISSIONS.AGENT_USE]);
+    const path = '/api/admin/agent-login-handoffs/alh_test/approve';
+
+    await expect(reader.request(path, { method: 'POST' })).resolves.toMatchObject({ status: 403 });
+    await expect(agentUser.request(path, { method: 'POST' })).resolves.toMatchObject({
+      status: 200,
+    });
+    expect(findAdminRouteAccessRule('POST', path)?.permissions).toEqual([
+      ADMIN_PERMISSIONS.AGENT_USE,
+    ]);
   });
 
   it('uses category-specific permissions for Agent-exposed tenant setting writes', async () => {

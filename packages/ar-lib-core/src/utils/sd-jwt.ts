@@ -126,7 +126,7 @@ export interface SDJWTCreateOptions {
   /** Add holder binding with JWK */
   holderBinding?: JWK;
   /** JWS algorithm used for the issuer-signed JWT */
-  algorithm?: 'RS256' | 'ES256';
+  algorithm?: 'RS256' | 'ES256' | 'PS256';
 }
 
 // =============================================================================
@@ -362,7 +362,7 @@ export async function createSDJWTIDToken(
   privateKey: CryptoKey,
   kid: string,
   selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate'],
-  algorithm: 'RS256' | 'ES256' = 'RS256'
+  algorithm: 'RS256' | 'ES256' | 'PS256' = 'RS256'
 ): Promise<SDJWT> {
   // Required OIDC claims that must not be selective
   const requiredClaims = ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'auth_time', 'acr', 'amr'];

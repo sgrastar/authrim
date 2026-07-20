@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Token API
-  version: 0.3.3
+  version: 0.4.0
   summary: OAuth/OIDC token endpoint.
   description: Initial OpenAPI contract for `@authrim/ar-token`.
 servers:
@@ -19,24 +19,24 @@ paths:
         - Health
       summary: Return token Worker health.
       responses:
-        "200":
-          $ref: "#/components/responses/TokenHealth"
+        '200':
+          $ref: '#/components/responses/TokenHealth'
   /health/live:
     get:
       tags:
         - Health
       summary: Return liveness probe status.
       responses:
-        "200":
-          $ref: "#/components/responses/ProbeHealth"
+        '200':
+          $ref: '#/components/responses/ProbeHealth'
   /health/ready:
     get:
       tags:
         - Health
       summary: Return readiness probe status.
       responses:
-        "200":
-          $ref: "#/components/responses/ProbeHealth"
+        '200':
+          $ref: '#/components/responses/ProbeHealth'
   /token:
     post:
       tags:
@@ -63,12 +63,12 @@ paths:
                 code_verifier:
                   type: string
       responses:
-        "200":
-          $ref: "#/components/responses/OAuthToken"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/OAuthToken'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
   /oauth/admin-agent/token:
     post:
       tags:
@@ -89,20 +89,20 @@ paths:
           application/x-www-form-urlencoded:
             schema:
               oneOf:
-                - $ref: "#/components/schemas/AdminAgentAuthorizationCodeTokenRequest"
-                - $ref: "#/components/schemas/AdminAgentRefreshTokenRequest"
-                - $ref: "#/components/schemas/AdminAgentModeBTokenExchangeRequest"
+                - $ref: '#/components/schemas/AdminAgentAuthorizationCodeTokenRequest'
+                - $ref: '#/components/schemas/AdminAgentRefreshTokenRequest'
+                - $ref: '#/components/schemas/AdminAgentModeBTokenExchangeRequest'
       responses:
-        "200":
-          $ref: "#/components/responses/OAuthToken"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-        "503":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/OAuthToken'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /oauth/admin-agent/delegation:
     post:
       tags: [OAuth]
@@ -129,7 +129,7 @@ paths:
                 scope: { type: string }
                 resource: { type: string, format: uri }
       responses:
-        "200":
+        '200':
           description: Short-lived one-time delegation JWT.
           content:
             application/json:
@@ -143,9 +143,9 @@ paths:
                     const: urn:authrim:token-type:agent-delegation
                   expires_in: { type: integer, maximum: 300 }
                   scope: { type: string }
-        "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     DPoP:
@@ -177,7 +177,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/TokenHealth"
+            $ref: '#/components/schemas/TokenHealth'
           example:
             status: ok
             service: op-token
@@ -187,7 +187,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ProbeHealth"
+            $ref: '#/components/schemas/ProbeHealth'
           example:
             status: ok
             service: op-token
@@ -198,7 +198,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/OAuthTokenResponse"
+            $ref: '#/components/schemas/OAuthTokenResponse'
           example:
             access_token: eyJhbGciOiJSUzI1NiJ9...
             token_type: Bearer
@@ -369,3 +369,13 @@ components:
           type: string
         issued_token_type:
           type: string
+        authorization_details:
+          type: array
+          description: RFC 9396 authorization details preserved in the issued token grant.
+          items:
+            type: object
+            required: [type]
+            additionalProperties: true
+            properties:
+              type:
+                type: string

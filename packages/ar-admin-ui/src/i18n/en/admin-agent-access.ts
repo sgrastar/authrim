@@ -14,13 +14,50 @@ export default {
 	admin_agent_access_tab_templates: 'Templates',
 	admin_agent_access_tab_secrets: 'Secret references',
 	admin_agent_access_tab_settings: 'Settings',
+	admin_agent_access_tab_advanced: 'Advanced',
+	admin_agent_access_connected_title: 'Connected Agents',
+	admin_agent_access_connected_description:
+		'Interactive and automation connections authorized for this tenant.',
+	admin_agent_access_connected_empty:
+		'No Agent is connected yet. Enable Agent Access, then add the URL below to your MCP host.',
+	admin_agent_access_connection_url: 'MCP connection URL',
+	admin_agent_access_connection_url_help:
+		'Use this URL in Codex, Claude Code, or another standards-compatible MCP host. Client registration and permissions are confirmed during sign-in.',
+	admin_agent_access_copy_url: 'Copy URL',
+	admin_agent_access_copied: 'Copied',
+	admin_agent_access_interactive_connection: 'Interactive connection',
+	admin_agent_access_automation_connection: 'Automation connection',
+	admin_agent_access_toggle_on: 'Enable for this tenant',
+	admin_agent_access_toggle_off: 'Disable for this tenant',
+	admin_agent_access_toggle_help:
+		'This setting opens or closes Agent Access only for the current tenant. It is not limited to one Admin user.',
+	admin_agent_access_suspend_connection: 'Suspend connection',
+	admin_agent_access_revoke_connection: 'Revoke connection',
+	admin_agent_access_edit_permissions: 'Change permissions',
+	admin_agent_access_save_permissions: 'Save permissions',
+	admin_agent_access_scope_read: 'Read configuration',
+	admin_agent_access_scope_read_help:
+		'Required. Allows the Agent to inspect non-user Authrim configuration and diagnostics.',
+	admin_agent_access_scope_user_data: 'Read masked user data',
+	admin_agent_access_scope_user_data_help:
+		'Optional. User search results may enter the AI host context; masked output remains enforced.',
+	admin_agent_access_scope_write: 'Propose and apply configuration changes',
+	admin_agent_access_scope_write_help:
+		'Optional. Changes use Plans, server-side validation, and operation-bound confirmation or elevation.',
+	admin_agent_access_scope_change_help:
+		'Saving creates a new immutable authorization snapshot and revokes token families issued under the previous permissions.',
+	admin_agent_access_scope_updated_notice:
+		'Connection permissions updated. The MCP host may need to authenticate again.',
+	admin_agent_access_scope_unchanged_notice: 'Connection permissions are unchanged.',
+	admin_agent_access_advanced_help:
+		'Manual clients, Grants, Task Sets, and Scope Policies are for automation, custom policy, and interoperability troubleshooting.',
 	admin_agent_access_loading: 'Loading Agent Access…',
 	admin_agent_access_load_error: 'Failed to load Agent Access.',
 	admin_agent_access_enabled: 'Enabled',
 	admin_agent_access_disabled: 'Disabled',
-	admin_agent_access_active_grants: 'Active grants',
-	admin_agent_access_suspended_grants: 'Suspended grants',
-	admin_agent_access_revoked_grants: 'Revoked grants',
+	admin_agent_access_active_grants: 'Active connections',
+	admin_agent_access_suspended_grants: 'Suspended connections',
+	admin_agent_access_revoked_grants: 'Revoked connections',
 	admin_agent_access_open_grants: 'Manage Agent Grants',
 	admin_agent_access_open_settings: 'Review policy settings',
 	admin_agent_access_grants_title: 'Agent Grants',

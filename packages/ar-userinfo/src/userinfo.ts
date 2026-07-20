@@ -115,9 +115,15 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('USERINFO');
   const tenantId = getTenantIdFromContext(c);
   const requestIssuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
+  const requestInteractionId = c.req.header('x-fapi-interaction-id');
+  c.header('x-fapi-interaction-id', requestInteractionId || crypto.randomUUID());
 
   // Perform comprehensive token validation (including DPoP if present)
-  const introspection = await introspectTokenFromContext(c);
+  // UserInfo is a protected resource in its own right. Accept the endpoint URL as the
+  // resource indicator while retaining issuer-scoped access tokens for compatibility.
+  const introspection = await introspectTokenFromContext(c, {
+    audience: [requestIssuer, `${requestIssuer.replace(/\/$/u, '')}/userinfo`],
+  });
 
   if (!introspection.valid) {
     // Token validation failed - return error

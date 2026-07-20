@@ -215,7 +215,8 @@ export function parseOAuthClientAuthenticationParams(
 export async function authenticateConfidentialOAuthClient(
   client: ClientMetadata,
   endpoint: string,
-  credentials: ParsedOAuthClientAuthentication
+  credentials: ParsedOAuthClientAuthentication,
+  assertionOptions: ClientAssertionValidationOptions = {}
 ): Promise<ConfidentialOAuthClientAuthenticationResult> {
   if (credentials.clientId && !timingSafeEqual(credentials.clientId, client.client_id)) {
     return {
@@ -232,7 +233,8 @@ export async function authenticateConfidentialOAuthClient(
     const assertionValidation = await validateClientAssertion(
       credentials.clientAssertion,
       endpoint,
-      client
+      client,
+      assertionOptions
     );
 
     if (!assertionValidation.valid) {

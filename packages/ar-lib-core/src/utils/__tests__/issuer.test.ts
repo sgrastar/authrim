@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildIssuerUrl,
+  buildRequestIssuerUrl,
   getDefaultTenantId,
   isMultiTenantEnabled,
   validateHostHeader,
@@ -19,6 +20,41 @@ import {
 import type { Env } from '../../types/env';
 
 describe('Issuer URL Builder', () => {
+  describe('buildRequestIssuerUrl', () => {
+    it('uses the Authrim forwarded host for trusted service-binding requests', () => {
+      const request = new Request('https://external-idp/api/admin/external-providers', {
+        headers: {
+          Host: 'external-idp',
+          'X-Authrim-Forwarded-Host': 'oidc-basic-rp.conformance.authrim.com',
+        },
+      });
+
+      expect(
+        buildRequestIssuerUrl(
+          request,
+          {
+            BASE_DOMAIN: 'conformance.authrim.com',
+            AUTHRIM_TRUST_FORWARDED_HOST: 'true',
+          },
+          'oidc-basic-rp'
+        )
+      ).toBe('https://oidc-basic-rp.conformance.authrim.com');
+    });
+
+    it('does not trust the Authrim forwarded host without the service-binding flag', () => {
+      const request = new Request('https://external-idp/api/admin/external-providers', {
+        headers: {
+          Host: 'external-idp',
+          'X-Authrim-Forwarded-Host': 'attacker.example',
+        },
+      });
+
+      expect(
+        buildRequestIssuerUrl(request, { BASE_DOMAIN: 'conformance.authrim.com' }, 'oidc-basic-rp')
+      ).toBe('https://external-idp');
+    });
+  });
+
   describe('buildIssuerUrl', () => {
     describe('single-tenant mode', () => {
       it('should return ISSUER_URL when BASE_DOMAIN not set', () => {

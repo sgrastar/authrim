@@ -1,4 +1,5 @@
-import type { AgentActorAssurance } from './types';
+import { normalizeSelfServiceAgentAuthorizationDetails } from './self-service';
+import type { AgentActorAssurance, JsonObject } from './types';
 
 export interface ModeAAgentAccessTokenClaims {
   sub: string;
@@ -13,6 +14,7 @@ export interface ModeAAgentAccessTokenClaims {
   actor_assurance: Exclude<AgentActorAssurance, 'machine_key'>;
   token_binding: 'bearer' | 'dpop';
   act: { sub: string };
+  authorization_details?: JsonObject[];
   cnf?: { jkt: string };
 }
 
@@ -62,6 +64,13 @@ export function parseModeAAgentAccessTokenClaims(
   }
   if (value.cnf !== undefined && (!isRecord(value.cnf) || typeof value.cnf.jkt !== 'string')) {
     return null;
+  }
+  if (value.authorization_details !== undefined) {
+    try {
+      normalizeSelfServiceAgentAuthorizationDetails(value.authorization_details);
+    } catch {
+      return null;
+    }
   }
   return value as unknown as ModeAAgentAccessTokenClaims;
 }

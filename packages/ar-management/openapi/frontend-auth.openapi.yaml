@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Frontend Auth Discovery API
-  version: 0.3.3
+  version: 0.4.0
   summary: Login UI discovery and grant bootstrap endpoints.
   description: OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
 servers:

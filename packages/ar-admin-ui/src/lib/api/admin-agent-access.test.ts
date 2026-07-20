@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminAgentAccessAPI, type AgentAccessSettings } from './admin-agent-access';
+import {
+	adminAgentAccessAPI,
+	buildAgentAccessMcpUrl,
+	type AgentAccessSettings
+} from './admin-agent-access';
 import { API_BASE_URL } from './admin-request';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
 
@@ -23,6 +27,15 @@ describe('adminAgentAccessAPI', () => {
 		settingsContext.reset();
 		await settingsContext.setTenantId('tenant-a');
 		vi.restoreAllMocks();
+	});
+
+	it('builds the connection URL from the tenant issuer instead of the Admin UI origin', () => {
+		expect(buildAgentAccessMcpUrl('https://first.test.authrim.com/')).toBe(
+			'https://first.test.authrim.com/mcp'
+		);
+		expect(buildAgentAccessMcpUrl('https://issuer.example/tenant?ignored=1#ignored')).toBe(
+			'https://issuer.example/tenant/mcp'
+		);
 	});
 
 	it('creates a read-only Agent Grant using the tenant-aware Admin request path', async () => {
@@ -126,6 +139,55 @@ describe('adminAgentAccessAPI', () => {
 		expect(fetchMock.mock.calls[0]?.[0]).toBe(adminUrl('/api/admin/settings/agent'));
 		expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('PUT');
 		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(settings);
+	});
+
+	it('binds overview reads and writes to an explicit tenant during a context switch', async () => {
+		const settings: AgentAccessSettings = {
+			enabled: false,
+			maxTokenTtlSeconds: 600,
+			elevationMode: 'self_reauth',
+			elevationTtlSeconds: 180,
+			rateLimitPerMinute: 60,
+			publicClientStandardRateLimitPerMinute: 10,
+			highRiskPermissionsAdditional: [],
+			publicClientStandardToolIds: [],
+			bulkCanaryProtected: false
+		};
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ settings }))
+			.mockResolvedValueOnce(jsonResponse({ settings: { ...settings, enabled: true } }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await settingsContext.setTenantId('tenant-c');
+		await adminAgentAccessAPI.getSettings('tenant-b');
+		await adminAgentAccessAPI.updateSettings({ ...settings, enabled: true }, 'tenant-b');
+
+		for (const call of fetchMock.mock.calls) {
+			expect((call[1]?.headers as Headers).get('X-Tenant-Id')).toBe('tenant-b');
+		}
+	});
+
+	it('binds Grant detail reads and mutations to the explicitly loaded tenant', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ grant: { id: 'aag-1' } }))
+			.mockResolvedValueOnce(jsonResponse({ events: [] }))
+			.mockResolvedValueOnce(jsonResponse({}))
+			.mockResolvedValueOnce(jsonResponse({}))
+			.mockResolvedValueOnce(jsonResponse({}));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await settingsContext.setTenantId('tenant-c');
+		await adminAgentAccessAPI.getGrant('aag-1', 'tenant-b');
+		await adminAgentAccessAPI.listGrantAudit('aag-1', 'tenant-b');
+		await adminAgentAccessAPI.updateGrant('aag-1', { purpose: 'test' }, 'tenant-b');
+		await adminAgentAccessAPI.preauthorizeGrant('aag-1', 'tenant-b');
+		await adminAgentAccessAPI.suspendGrant('aag-1', 'tenant-b');
+
+		for (const call of fetchMock.mock.calls) {
+			expect((call[1]?.headers as Headers).get('X-Tenant-Id')).toBe('tenant-b');
+		}
 	});
 
 	it('binds Bulk Plan creation to an explicit machine credential and immutable targets', async () => {

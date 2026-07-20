@@ -221,6 +221,85 @@ describe('OIDCRPClient', () => {
     });
   });
 
+  describe('dynamic client registration', () => {
+    it('registers at the discovered endpoint without serializing the initial access token', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ...mockDiscoveryDoc,
+            registration_endpoint: 'https://accounts.google.com/register',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            client_id: 'registered-client',
+            client_secret: 'registered-secret',
+            token_endpoint_auth_method: 'client_secret_basic',
+          }),
+        });
+
+      const client = new OIDCRPClient(mockConfig);
+      const registered = await client.registerClient({
+        redirect_uris: ['https://example.com/callback'],
+        client_name: 'Authrim RP',
+        token_endpoint_auth_method: 'client_secret_basic',
+        initialAccessToken: 'initial-token',
+      });
+
+      expect(registered.client_id).toBe('registered-client');
+      const registrationOptions = mockFetch.mock.calls[1]?.[1] as RequestInit & {
+        maxResponseSize?: number;
+        timeoutMs?: number;
+      };
+      expect(registrationOptions.headers).toMatchObject({
+        Authorization: 'Bearer initial-token',
+        'Content-Type': 'application/json',
+      });
+      expect(JSON.parse(String(registrationOptions.body))).toEqual({
+        redirect_uris: ['https://example.com/callback'],
+        client_name: 'Authrim RP',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      expect(registrationOptions.maxResponseSize).toBe(64 * 1024);
+      expect(registrationOptions.timeoutMs).toBe(10_000);
+    });
+
+    it('rejects missing client credentials and unsafe registration endpoints', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ...mockDiscoveryDoc,
+          registration_endpoint: 'https://169.254.169.254/register',
+        }),
+      });
+      const unsafeClient = new OIDCRPClient(mockConfig);
+      await expect(
+        unsafeClient.registerClient({ redirect_uris: ['https://example.com/callback'] })
+      ).rejects.toThrow('registration_endpoint is not safe to fetch');
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ...mockDiscoveryDoc,
+            registration_endpoint: 'https://accounts.google.com/register',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 201,
+          json: async () => ({ client_id: 'registered-client' }),
+        });
+      const missingSecretClient = new OIDCRPClient(mockConfig);
+      await expect(
+        missingSecretClient.registerClient({ redirect_uris: ['https://example.com/callback'] })
+      ).rejects.toThrow('Dynamic registration response missing client_secret');
+    });
+  });
+
   describe('createAuthorizationUrl', () => {
     it('should generate valid authorization URL with PKCE', async () => {
       mockFetch.mockResolvedValueOnce({
@@ -353,8 +432,10 @@ describe('OIDCRPClient', () => {
         expect(url).toContain('request=');
         // client_id should still be in URL per RFC 9101
         expect(url).toContain('client_id=' + mockConfig.clientId);
-        // Should not have individual parameters in URL when using request object
-        expect(url).not.toContain('response_type=');
+        // OIDC Core requires response_type/client_id and openid scope in the
+        // outer OAuth request even when a Request Object is used.
+        expect(url).toContain('response_type=code');
+        expect(url).toContain('scope=openid');
         expect(url).not.toContain('redirect_uri=');
 
         // Extract and verify the request object JWT
@@ -410,7 +491,26 @@ describe('OIDCRPClient', () => {
         expect(url).not.toContain('request=');
       });
 
-      it('should not create request object when privateKeyJwk is missing even if useRequestObject is true', async () => {
+      it('should request only the supported code id_token Hybrid response type', async () => {
+        const client = new OIDCRPClient({
+          ...mockConfig,
+          authorizationEndpoint: 'https://op.example.com/authorize',
+        });
+        const url = new URL(
+          await client.createAuthorizationUrl({
+            state: 'hybrid-state',
+            nonce: 'hybrid-nonce',
+            codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+            responseType: 'code id_token',
+          })
+        );
+
+        expect(url.searchParams.get('response_type')).toBe('code id_token');
+        expect(url.searchParams.get('nonce')).toBe('hybrid-nonce');
+        expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+      });
+
+      it('should reject a signed request object configuration without a private key', async () => {
         const configMissingKey = {
           ...mockConfig,
           authorizationEndpoint: 'https://op.example.com/authorize',
@@ -420,15 +520,60 @@ describe('OIDCRPClient', () => {
         };
 
         const client = new OIDCRPClient(configMissingKey);
-        const url = await client.createAuthorizationUrl({
-          state: 'test-state',
-          nonce: 'test-nonce',
-          codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
-        });
+        await expect(
+          client.createAuthorizationUrl({
+            state: 'test-state',
+            nonce: 'test-nonce',
+            codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+          })
+        ).rejects.toThrow('no compatible signing key');
+      });
 
-        // Should fall back to standard parameters
-        expect(url).toContain('response_type=code');
-        expect(url).not.toContain('request=');
+      it('publishes signed and unsigned request objects by reference', async () => {
+        const publishSigned = vi.fn(async (_requestObject: string): Promise<void> => undefined);
+        const signedClient = new OIDCRPClient({
+          ...mockConfig,
+          authorizationEndpoint: 'https://op.example.com/authorize',
+          useRequestObject: true,
+          requestObjectSigningAlg: 'RS256',
+          privateKeyJwk: testPrivateKeyJwk,
+        });
+        const signedUrl = new URL(
+          await signedClient.createAuthorizationUrl({
+            state: 'signed-state',
+            nonce: 'signed-nonce',
+            codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+            requestUri: 'https://example.com/request-object',
+            publishRequestObject: publishSigned,
+          })
+        );
+        expect(signedUrl.searchParams.get('request_uri')).toBe(
+          'https://example.com/request-object'
+        );
+        expect(signedUrl.searchParams.has('request')).toBe(false);
+        expect(publishSigned.mock.calls[0]![0].split('.')).toHaveLength(3);
+
+        const publishUnsigned = vi.fn(async (_requestObject: string): Promise<void> => undefined);
+        const unsignedClient = new OIDCRPClient({
+          ...mockConfig,
+          authorizationEndpoint: 'https://op.example.com/authorize',
+          useRequestObject: true,
+          requestObjectSigningAlg: 'none',
+        });
+        await unsignedClient.createAuthorizationUrl({
+          state: 'unsigned-state',
+          nonce: 'unsigned-nonce',
+          codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+          requestUri: 'https://example.com/request-object',
+          publishRequestObject: publishUnsigned,
+        });
+        const unsigned = publishUnsigned.mock.calls[0]![0];
+        expect(unsigned.endsWith('.')).toBe(true);
+        expect(
+          JSON.parse(Buffer.from(unsigned.split('.')[0], 'base64url').toString())
+        ).toMatchObject({
+          alg: 'none',
+        });
       });
     });
   });
@@ -595,6 +740,46 @@ describe('OIDCRPClient', () => {
       await expect(client.fetchUserInfo('invalid-token')).rejects.toThrow(
         'Userinfo request failed: 401'
       );
+    });
+
+    it('verifies signed UserInfo with the OP issuer and RP audience', async () => {
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response('signed.userinfo.jwt', {
+            status: 200,
+            headers: { 'Content-Type': 'application/jwt' },
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ keys: [{ kty: 'RSA', kid: 'userinfo-key' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+      mockCreateLocalJWKSet.mockReturnValueOnce(() => undefined);
+      mockJwtVerify.mockResolvedValueOnce({
+        payload: {
+          iss: mockConfig.issuer,
+          aud: mockConfig.clientId,
+          sub: 'signed-user',
+          email: 'signed@example.com',
+        },
+        protectedHeader: { alg: 'RS256', kid: 'userinfo-key' },
+      });
+
+      const client = new OIDCRPClient({
+        ...mockConfig,
+        userinfoEndpoint: 'https://accounts.google.com/userinfo',
+        userinfoSignedResponseAlg: 'RS256',
+      });
+      const userInfo = await client.fetchUserInfo('access-token');
+
+      expect(userInfo).toMatchObject({ sub: 'signed-user', email: 'signed@example.com' });
+      expect(mockJwtVerify).toHaveBeenCalledWith('signed.userinfo.jwt', expect.any(Function), {
+        issuer: mockConfig.issuer,
+        audience: mockConfig.clientId,
+        algorithms: ['RS256'],
+      });
     });
   });
 
@@ -1411,6 +1596,31 @@ describe('OIDCRPClient', () => {
           ).rejects.toThrow('c_hash validation failed');
         });
 
+        it('should reject a Hybrid authorization ID token missing c_hash', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: createMockPayload({
+              iss: 'https://accounts.google.com',
+              aud: 'test-client-id',
+              nonce: 'test-nonce',
+            }),
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              code: 'authorization-code',
+              requireCodeHash: true,
+            })
+          ).rejects.toThrow('ID token missing required c_hash claim');
+        });
+
         it('should skip c_hash validation when code not provided', async () => {
           mockFetch.mockResolvedValueOnce({
             ok: true,
@@ -1512,6 +1722,70 @@ describe('OIDCRPClient', () => {
           const client = new OIDCRPClient(mockConfig);
           const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' });
           expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should reject secondary audiences when exact audience is required', async () => {
+          mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockJwks });
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: createMockPayload({
+              iss: 'https://accounts.google.com',
+              aud: ['test-client-id', 'untrusted-audience'],
+              nonce: 'test-nonce',
+              azp: 'test-client-id',
+            }),
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              requireExactAudience: true,
+            })
+          ).rejects.toThrow('audience must contain only');
+        });
+
+        it('should accept a single-element audience array when exact audience is required', async () => {
+          mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockJwks });
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: createMockPayload({
+              iss: 'https://accounts.google.com',
+              aud: ['test-client-id'],
+              nonce: 'test-nonce',
+            }),
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            requireExactAudience: true,
+          });
+
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should reject a signing algorithm outside trusted provider metadata', async () => {
+          mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockJwks });
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: createMockPayload({
+              iss: 'https://accounts.google.com',
+              aud: 'test-client-id',
+              nonce: 'test-nonce',
+            }),
+            protectedHeader: { alg: 'RS256', kid: 'alternate-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              expectedSigningAlgorithms: ['PS256'],
+            })
+          ).rejects.toThrow('signing algorithm is not allowed');
         });
 
         it('should accept token without azp when single audience', async () => {
@@ -1815,12 +2089,25 @@ describe('OIDCRPClient', () => {
           mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
 
           const client = new OIDCRPClient(mockConfig);
-          await expect(client.validateIdToken('mock-id-token', 'test-nonce')).rejects.toThrow(
-            'JWS signature verification failed'
-          );
+          const logTokenValidation = vi.fn();
+          await expect(
+            client.validateIdToken('mock-id-token', { nonce: 'test-nonce' }, {
+              logger: { logTokenValidation },
+              flowId: 'flow-1',
+              diagnosticSessionId: 'session-1',
+            } as never)
+          ).rejects.toThrow('JWS signature verification failed');
 
           expect(mockFetch).toHaveBeenCalledTimes(2);
           expect(mockJwtVerify).toHaveBeenCalledTimes(2);
+          expect(logTokenValidation).toHaveBeenCalledWith(
+            expect.objectContaining({
+              flowId: 'flow-1',
+              step: 'id-token-validation',
+              result: 'fail',
+              errorMessage: 'JWS signature verification failed',
+            })
+          );
         });
       });
 

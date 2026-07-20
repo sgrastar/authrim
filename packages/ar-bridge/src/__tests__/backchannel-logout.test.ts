@@ -10,6 +10,10 @@ const {
   mockSafeFetchJson,
   mockJwtVerify,
   mockCreateLocalJwkSet,
+  mockDiagnosticTokenValidation,
+  mockDiagnosticAuthDecision,
+  mockDiagnosticCleanup,
+  mockCreateDiagnosticLogger,
   MockD1Adapter,
   sqlTracker,
 } = vi.hoisted(() => {
@@ -35,6 +39,14 @@ const {
   const jwtVerify = vi.fn();
   const createLocalJwkSet = vi.fn().mockReturnValue({});
   const safeFetchJson = vi.fn().mockResolvedValue({ keys: [] });
+  const diagnosticTokenValidation = vi.fn().mockResolvedValue(undefined);
+  const diagnosticAuthDecision = vi.fn().mockResolvedValue(undefined);
+  const diagnosticCleanup = vi.fn().mockResolvedValue(undefined);
+  const createDiagnosticLogger = vi.fn().mockResolvedValue({
+    logTokenValidation: diagnosticTokenValidation,
+    logAuthDecision: diagnosticAuthDecision,
+    cleanup: diagnosticCleanup,
+  });
 
   class D1AdapterClass {
     constructor(_options: { db: unknown }) {}
@@ -60,6 +72,10 @@ const {
     mockSafeFetchJson: safeFetchJson,
     mockJwtVerify: jwtVerify,
     mockCreateLocalJwkSet: createLocalJwkSet,
+    mockDiagnosticTokenValidation: diagnosticTokenValidation,
+    mockDiagnosticAuthDecision: diagnosticAuthDecision,
+    mockDiagnosticCleanup: diagnosticCleanup,
+    mockCreateDiagnosticLogger: createDiagnosticLogger,
     MockD1Adapter: D1AdapterClass,
     sqlTracker: tracker,
   };
@@ -92,6 +108,9 @@ vi.mock('@authrim/ar-lib-core', () => ({
   })),
   getTenantIdFromContext: vi.fn((c: { get?: (key: string) => unknown }) => c.get?.('tenantId')),
   safeFetchJson: mockSafeFetchJson,
+  createDiagnosticLoggerFromContext: mockCreateDiagnosticLogger,
+  getDiagnosticSessionId: vi.fn().mockReturnValue(undefined),
+  DIAGNOSTIC_FLOW_ID_HEADER: 'X-Authrim-Diagnostic-Flow-Id',
 }));
 
 vi.mock('../services/provider-store', () => ({
@@ -144,6 +163,14 @@ describe('backchannel logout', () => {
         },
       },
     });
+    mockDiagnosticTokenValidation.mockReset().mockResolvedValue(undefined);
+    mockDiagnosticAuthDecision.mockReset().mockResolvedValue(undefined);
+    mockDiagnosticCleanup.mockReset().mockResolvedValue(undefined);
+    mockCreateDiagnosticLogger.mockReset().mockResolvedValue({
+      logTokenValidation: mockDiagnosticTokenValidation,
+      logAuthDecision: mockDiagnosticAuthDecision,
+      cleanup: mockDiagnosticCleanup,
+    });
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ keys: [] }), {
         status: 200,
@@ -174,6 +201,7 @@ describe('backchannel logout', () => {
       },
       env,
       get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
     };
 
     const response = await handleBackchannelLogout(c as never);
@@ -196,5 +224,134 @@ describe('backchannel logout', () => {
       'provider-sub-123',
       'tenant-a',
     ]);
+    expect(mockDiagnosticTokenValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: 'logout-token-validation',
+        result: 'pass',
+        flowId: expect.any(String),
+      })
+    );
+    expect(mockDiagnosticAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'allow',
+        reason: 'backchannel_logout_processed',
+        flowId: expect.any(String),
+      })
+    );
+    expect(mockDiagnosticCleanup).toHaveBeenCalledOnce();
+    expect(mockJwtVerify).toHaveBeenCalledWith(
+      'signed.logout.token',
+      expect.anything(),
+      expect.objectContaining({ algorithms: ['RS256'] })
+    );
+  });
+
+  it('pins logout token verification to the provider configured ID Token algorithm', async () => {
+    mockGetProvider.mockResolvedValueOnce({
+      id: 'provider-google',
+      name: 'Google',
+      issuer: 'https://accounts.google.com',
+      clientId: 'client-123',
+      jwksUri: 'https://accounts.google.com/jwks',
+      providerQuirks: { idTokenSignedResponseAlg: 'ES256' },
+    });
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'signed.logout.token' }),
+      },
+      env: { SETTINGS: { get: vi.fn(), put: vi.fn() } },
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(200);
+    expect(mockJwtVerify).toHaveBeenCalledWith(
+      'signed.logout.token',
+      expect.anything(),
+      expect.objectContaining({ algorithms: ['ES256'] })
+    );
+  });
+
+  it('records a sanitized rejection reason for an invalid logout token', async () => {
+    mockJwtVerify.mockRejectedValueOnce(new Error('cryptographic internals must not be exported'));
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'invalid.logout.token' }),
+      },
+      env: {
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(400);
+    expect(mockDiagnosticTokenValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: 'logout-token-validation',
+        result: 'fail',
+        errorMessage: 'signature_or_claim_validation_failed',
+      })
+    );
+    expect(mockDiagnosticAuthDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'deny',
+        reason: 'backchannel_logout_rejected',
+        context: { validation_error: 'signature_or_claim_validation_failed' },
+      })
+    );
+    expect(mockDiagnosticAuthDecision).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          validation_error: 'cryptographic internals must not be exported',
+        }),
+      })
+    );
+    expect(mockDiagnosticCleanup).toHaveBeenCalledOnce();
+  });
+
+  it('does not fail logout when diagnostic logging initialization fails', async () => {
+    mockCreateDiagnosticLogger.mockRejectedValueOnce(new Error('R2 unavailable'));
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'signed.logout.token' }),
+      },
+      env: {
+        DB: {},
+        SETTINGS: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(200);
+    expect(mockFindByProviderSub).toHaveBeenCalled();
   });
 });

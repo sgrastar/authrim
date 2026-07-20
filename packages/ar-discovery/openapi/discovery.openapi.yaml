@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Discovery API
-  version: 0.3.3
+  version: 0.4.0
   summary: OIDC/OAuth metadata and JWKS endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-discovery`.
 servers:
@@ -19,64 +19,64 @@ paths:
         - Health
       summary: Return discovery Worker health.
       responses:
-        "200":
-          $ref: "#/components/responses/DiscoveryHealth"
+        '200':
+          $ref: '#/components/responses/DiscoveryHealth'
   /health/live:
     get:
       tags:
         - Health
       summary: Return liveness probe status.
       responses:
-        "200":
-          $ref: "#/components/responses/ProbeHealth"
+        '200':
+          $ref: '#/components/responses/ProbeHealth'
   /health/ready:
     get:
       tags:
         - Health
       summary: Return readiness probe status.
       responses:
-        "200":
-          $ref: "#/components/responses/ProbeHealth"
+        '200':
+          $ref: '#/components/responses/ProbeHealth'
   /.well-known/openid-configuration:
     get:
       tags:
         - Discovery
       summary: Return OpenID Provider metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/OidcProviderMetadata"
+        '200':
+          $ref: '#/components/responses/OidcProviderMetadata'
   /.well-known/oauth-authorization-server:
     get:
       tags:
         - Discovery
       summary: Return OAuth Authorization Server metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/OidcProviderMetadata"
+        '200':
+          $ref: '#/components/responses/OidcProviderMetadata'
   /.well-known/oauth-authorization-server/oauth/admin-agent:
     get:
       tags:
         - Discovery
       summary: Return dedicated Admin Agent authorization server metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/AdminAgentAuthorizationServerMetadata"
-        "404":
-          $ref: "#/components/responses/AgentAccessNotFound"
-        "503":
-          $ref: "#/components/responses/AgentAccessUnavailable"
+        '200':
+          $ref: '#/components/responses/AdminAgentAuthorizationServerMetadata'
+        '404':
+          $ref: '#/components/responses/AgentAccessNotFound'
+        '503':
+          $ref: '#/components/responses/AgentAccessUnavailable'
   /.well-known/oauth-protected-resource/mcp:
     get:
       tags:
         - Discovery
       summary: Return RFC 9728 metadata for the protected MCP resource.
       responses:
-        "200":
-          $ref: "#/components/responses/AgentProtectedResourceMetadata"
-        "404":
-          $ref: "#/components/responses/AgentAccessNotFound"
-        "503":
-          $ref: "#/components/responses/AgentAccessUnavailable"
+        '200':
+          $ref: '#/components/responses/AgentProtectedResourceMetadata'
+        '404':
+          $ref: '#/components/responses/AgentAccessNotFound'
+        '503':
+          $ref: '#/components/responses/AgentAccessUnavailable'
   /.well-known/webfinger:
     get:
       tags:
@@ -89,16 +89,16 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          $ref: "#/components/responses/WebFinger"
+        '200':
+          $ref: '#/components/responses/WebFinger'
   /.well-known/jwks.json:
     get:
       tags:
         - Discovery
       summary: Return JSON Web Key Set.
       responses:
-        "200":
-          $ref: "#/components/responses/JWKS"
+        '200':
+          $ref: '#/components/responses/JWKS'
 components:
   responses:
     Ok:
@@ -113,7 +113,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DiscoveryHealth"
+            $ref: '#/components/schemas/DiscoveryHealth'
           example:
             status: ok
             service: op-discovery
@@ -123,7 +123,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ProbeHealth"
+            $ref: '#/components/schemas/ProbeHealth'
           example:
             status: ok
             service: op-discovery
@@ -134,7 +134,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/OidcProviderMetadata"
+            $ref: '#/components/schemas/OidcProviderMetadata'
           example:
             issuer: https://auth.example.com
             authorization_endpoint: https://auth.example.com/authorize
@@ -158,31 +158,31 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AgentProtectedResourceMetadata"
+            $ref: '#/components/schemas/AgentProtectedResourceMetadata'
     AdminAgentAuthorizationServerMetadata:
       description: RFC 8414 metadata for the dedicated Admin Agent issuer.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AdminAgentAuthorizationServerMetadata"
+            $ref: '#/components/schemas/AdminAgentAuthorizationServerMetadata'
     AgentAccessNotFound:
       description: Agent access is disabled for the tenant.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/OAuthMetadataError"
+            $ref: '#/components/schemas/OAuthMetadataError'
     AgentAccessUnavailable:
       description: Agent access configuration could not be evaluated safely.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/OAuthMetadataError"
+            $ref: '#/components/schemas/OAuthMetadataError'
     WebFinger:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/WebFingerResponse"
+            $ref: '#/components/schemas/WebFingerResponse'
           example:
             subject: acct:user@example.com
             links:
@@ -193,7 +193,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/JwksResponse"
+            $ref: '#/components/schemas/JwksResponse'
           example:
             keys:
               - kty: RSA
@@ -317,6 +317,7 @@ components:
             enum:
               - RS256
               - ES256
+              - PS256
         userinfo_signing_alg_values_supported:
           type: array
           items:
@@ -324,6 +325,7 @@ components:
             enum:
               - RS256
               - ES256
+              - PS256
         token_endpoint_auth_methods_supported:
           type: array
           items:
@@ -335,6 +337,7 @@ components:
             enum:
               - RS256
               - ES256
+              - PS256
         request_object_signing_alg_values_supported:
           type: array
           items:
@@ -343,6 +346,24 @@ components:
               - none
               - RS256
               - ES256
+              - PS256
+        backchannel_authentication_endpoint:
+          type: string
+          format: uri
+        backchannel_token_delivery_modes_supported:
+          type: array
+          items:
+            type: string
+            enum: [poll, ping, push]
+        backchannel_authentication_request_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+            enum: [RS256, ES256, PS256]
+        backchannel_user_code_parameter_supported:
+          type: boolean
+        tls_client_certificate_bound_access_tokens:
+          type: boolean
               - PS256
               - EdDSA
         authorization_signing_alg_values_supported:
@@ -402,7 +423,7 @@ components:
             type: string
             format: uri
         scopes_supported:
-          $ref: "#/components/schemas/AgentScopes"
+          $ref: '#/components/schemas/AgentScopes'
         bearer_methods_supported:
           type: array
           items:
@@ -431,6 +452,8 @@ components:
         - code_challenge_methods_supported
         - scopes_supported
         - require_pushed_authorization_requests
+        - client_id_metadata_document_supported
+        - registration_endpoint
       properties:
         issuer:
           type: string
@@ -464,7 +487,7 @@ components:
           items:
             type: string
         scopes_supported:
-          $ref: "#/components/schemas/AgentScopes"
+          $ref: '#/components/schemas/AgentScopes'
         require_pushed_authorization_requests:
           type: boolean
         dpop_signing_alg_values_supported:
@@ -473,15 +496,19 @@ components:
             type: string
         client_id_metadata_document_supported:
           type: boolean
+          const: true
+        registration_endpoint:
+          type: string
+          format: uri
+          description: Restricted public-client registration endpoint for interactive Agent MCP hosts.
     AgentScopes:
       type: array
       items:
         type: string
         enum:
           - agent:read
+          - agent:user-data:read
           - agent:write
-          - agent:execute
-          - agent:admin
     OAuthMetadataError:
       type: object
       additionalProperties: true

@@ -22,6 +22,7 @@ import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken
 import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
 import { getTenantIdFromContext } from '../middleware/request-context';
+import { getPresentedClientCertificateThumbprint } from './mtls';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -57,6 +58,8 @@ export interface TokenValidationRequest {
   url: string;
   /** Request headers */
   headers: Headers;
+  /** Raw request used for trusted edge-provided client certificate metadata. */
+  rawRequest?: Request;
   /** Environment bindings */
   env: Env;
   /** Request body (for form-encoded POST requests) */
@@ -568,6 +571,24 @@ export async function introspectToken(
         },
       };
     }
+
+    const mtlsConfirmation = tokenClaims.cnf as { 'x5t#S256'?: string } | undefined;
+    if (mtlsConfirmation?.['x5t#S256']) {
+      const presentedThumbprint = request.rawRequest
+        ? await getPresentedClientCertificateThumbprint(request.rawRequest)
+        : undefined;
+      if (!presentedThumbprint || presentedThumbprint !== mtlsConfirmation['x5t#S256']) {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_token',
+            error_description: 'Client certificate does not match access token binding',
+            wwwAuthenticate: 'Bearer error="invalid_token"',
+            statusCode: 401,
+          },
+        };
+      }
+    }
   }
 
   // Check if token has been revoked
@@ -640,6 +661,7 @@ export async function introspectTokenFromContext(
     method: c.req.method,
     url: c.req.url,
     headers: c.req.raw.headers,
+    rawRequest: c.req.raw,
     env: c.env,
     body,
     tenantId: getTenantIdFromContext(c),

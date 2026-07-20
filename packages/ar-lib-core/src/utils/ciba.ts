@@ -79,14 +79,72 @@ export interface ValidateJWTHintOptions {
   jwks?: { keys: JWK[] };
 }
 
+export interface CIBARequestObjectValidationResult {
+  valid: boolean;
+  payload?: JoseJWTPayload;
+  error?: string;
+}
+
+/** Verify a signed CIBA authentication request against the client's registered key and algorithm. */
+export async function validateCIBARequestObject(
+  requestObject: string,
+  options: {
+    clientId: string;
+    audience: string;
+    algorithm: string;
+    jwks: { keys: JWK[] };
+    clockSkewSeconds?: number;
+  }
+): Promise<CIBARequestObjectValidationResult> {
+  if (
+    !ALLOWED_JWT_ALGORITHMS.includes(options.algorithm as (typeof ALLOWED_JWT_ALGORITHMS)[number])
+  ) {
+    return { valid: false, error: 'unsupported_algorithm' };
+  }
+  if (!options.jwks.keys.length) return { valid: false, error: 'missing_client_jwks' };
+
+  try {
+    const result = await jwtVerify(requestObject, createLocalJWKSet(options.jwks), {
+      issuer: options.clientId,
+      audience: options.audience,
+      algorithms: [options.algorithm],
+      requiredClaims: ['iss', 'aud', 'exp', 'iat', 'nbf', 'jti'],
+      clockTolerance: options.clockSkewSeconds ?? 60,
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const { exp, iat, nbf, jti } = result.payload;
+    if (
+      typeof exp !== 'number' ||
+      typeof iat !== 'number' ||
+      typeof nbf !== 'number' ||
+      typeof jti !== 'string' ||
+      !jti ||
+      exp > now + 3600 ||
+      iat > now + 60 ||
+      iat < now - 3600 ||
+      nbf > now + 60 ||
+      nbf < now - 3600
+    ) {
+      return { valid: false, error: 'invalid_request_object_claims' };
+    }
+    return { valid: true, payload: result.payload };
+  } catch {
+    return { valid: false, error: 'invalid_request_object' };
+  }
+}
+
 /**
  * Generate an authentication request ID (auth_req_id)
- * Should be cryptographically random and unique
+ * CIBA Core 1.0 section 7.3 recommends at least 160 bits of entropy.
+ * Generate 256 random bits and encode them as an unpadded Base64URL value.
  *
- * @returns Authentication request ID (UUID v4)
+ * @returns Authentication request ID (43-character Base64URL string)
  */
 export function generateAuthReqId(): string {
-  return crypto.randomUUID();
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const binary = String.fromCharCode(...bytes);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 /**
@@ -294,8 +352,9 @@ export const CIBA_CONSTANTS = {
   // User code constraints (optional)
   USER_CODE_LENGTH: 9, // 8 chars + 1 hyphen (XXXX-XXXX)
 
-  // Auth req ID format
-  AUTH_REQ_ID_FORMAT: 'uuid', // UUID v4
+  // Auth req ID format and entropy (CIBA 7.3 recommends at least 160 bits)
+  AUTH_REQ_ID_FORMAT: 'base64url',
+  AUTH_REQ_ID_ENTROPY_BITS: 256,
 
   // Token delivery modes
   DELIVERY_MODES: ['poll', 'ping', 'push'] as const,
@@ -608,12 +667,15 @@ export function validateCIBARequest(params: {
   user_code?: string;
   requested_expiry?: number;
 }): { valid: boolean; error?: string; error_description?: string } {
-  // At least one hint must be provided
-  if (!params.login_hint && !params.login_hint_token && !params.id_token_hint) {
+  const hintCount = [params.login_hint, params.login_hint_token, params.id_token_hint].filter(
+    (hint) => typeof hint === 'string' && hint.length > 0
+  ).length;
+  if (hintCount !== 1) {
     return {
       valid: false,
       error: 'invalid_request',
-      error_description: 'One of login_hint, login_hint_token, or id_token_hint is required',
+      error_description:
+        'Exactly one of login_hint, login_hint_token, or id_token_hint is required',
     };
   }
 
@@ -638,19 +700,14 @@ export function validateCIBARequest(params: {
     }
   }
 
-  // Validate requested_expiry if provided
+  // CIBA Core defines requested_expiry as any positive integer. The server may
+  // cap the effective lifetime, but must not reject a valid short lifetime.
   if (params.requested_expiry !== undefined) {
-    // Check for NaN (parseInt of non-numeric string returns NaN)
-    // NaN comparisons always return false, so explicit check is needed
-    if (
-      Number.isNaN(params.requested_expiry) ||
-      params.requested_expiry < CIBA_CONSTANTS.MIN_EXPIRES_IN ||
-      params.requested_expiry > CIBA_CONSTANTS.MAX_EXPIRES_IN
-    ) {
+    if (!Number.isSafeInteger(params.requested_expiry) || params.requested_expiry <= 0) {
       return {
         valid: false,
         error: 'invalid_request',
-        error_description: `requested_expiry must be between ${CIBA_CONSTANTS.MIN_EXPIRES_IN} and ${CIBA_CONSTANTS.MAX_EXPIRES_IN} seconds`,
+        error_description: 'requested_expiry must be a positive integer',
       };
     }
   }

@@ -31,7 +31,7 @@ describe('built-in Agent Task Sets', () => {
     );
     expect(resolved.map((item) => item.digest)).toEqual([
       '_e6Y6YcUQviBgNcpT1ppMCfCNvQyQl45DGcpemKLX7I',
-      'ZHdWtMFNK2FIt0pGI_jilfYOaJK-nYd7gRP-qbrGo_c',
+      'onKFOlvthyskYe6Crii2rqGC_S8dtxa2J7F_h1ssO7k',
       'Ij3ISoppD4aP8M1PK0VoI4U2ViMXhwCUk8q8XRVipi8',
       '8yAjD04TtXK-8yxYvb5hbgUKrUapSbd3b9KqxZmKP8k',
       '02Rg4I8B6DhjhRDOgDr9NTESVDIQY7NC9jT3GG5WKSE',
@@ -54,7 +54,7 @@ describe('built-in Agent Task Sets', () => {
     expect(items.every((item) => item.kind === 'builtin' && item.currentVersion === 4)).toBe(true);
     expect(items.map((item) => item.version.digest)).toEqual([
       '_e6Y6YcUQviBgNcpT1ppMCfCNvQyQl45DGcpemKLX7I',
-      'ZHdWtMFNK2FIt0pGI_jilfYOaJK-nYd7gRP-qbrGo_c',
+      'onKFOlvthyskYe6Crii2rqGC_S8dtxa2J7F_h1ssO7k',
       'Ij3ISoppD4aP8M1PK0VoI4U2ViMXhwCUk8q8XRVipi8',
       '8yAjD04TtXK-8yxYvb5hbgUKrUapSbd3b9KqxZmKP8k',
       '02Rg4I8B6DhjhRDOgDr9NTESVDIQY7NC9jT3GG5WKSE',

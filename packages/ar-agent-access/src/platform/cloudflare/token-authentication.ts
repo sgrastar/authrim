@@ -11,6 +11,7 @@ import {
 import {
   AdminAgentAccessRepository,
   evaluateAgentMcpFeatureFlag,
+  normalizeSelfServiceAgentAuthorizationDetails,
   parseAgentAccessTokenClaims,
   type AgentGrantContract,
   type AgentScope,
@@ -61,6 +62,7 @@ export interface CloudflareAgentAccessTokenAuthenticationDependencies<
 
 const AGENT_SCOPES = new Set<AgentScope>([
   'agent:read',
+  'agent:user-data:read',
   'agent:write',
   'agent:execute',
   'agent:admin',
@@ -291,6 +293,18 @@ export function createCloudflareAgentAccessTokenAuthenticator<
       return { allowed: false, response: invalidToken(request) };
     }
 
+    const tokenMaximum = claims.authorization_details
+      ? normalizeSelfServiceAgentAuthorizationDetails(claims.authorization_details)
+          .maxSubjectsPerCall
+      : undefined;
+    const grantMaximum = grant.resolvedScopeConstraints.maxPerCall;
+    const effectiveMaximum =
+      tokenMaximum === undefined
+        ? grantMaximum
+        : grantMaximum === undefined
+          ? tokenMaximum
+          : Math.min(grantMaximum, tokenMaximum);
+
     return {
       allowed: true,
       props: {
@@ -308,7 +322,14 @@ export function createCloudflareAgentAccessTokenAuthenticator<
                 }
               : {}),
           },
-          grant: { ...grant, scopes: tokenScopes as AgentScope[] },
+          grant: {
+            ...grant,
+            scopes: tokenScopes as AgentScope[],
+            resolvedScopeConstraints: {
+              ...grant.resolvedScopeConstraints,
+              ...(effectiveMaximum === undefined ? {} : { maxPerCall: effectiveMaximum }),
+            },
+          },
           resource: { tenantId: tenant.tenantId },
           issuerOrigin: origin,
           correlationId: request.headers.get('x-correlation-id') ?? `mcp_${crypto.randomUUID()}`,

@@ -32,6 +32,16 @@ function createMockDB(
       admin_user_id: string;
       expires_at: number;
       mfa_verified: number;
+      parent_session_id?: string | null;
+      derived_target_tenant_id?: string | null;
+    } | null;
+    parentSession?: {
+      id: string;
+      tenant_id: string;
+      admin_user_id: string;
+      expires_at: number;
+      mfa_verified: number;
+      parent_session_id?: string | null;
     } | null;
     adminUser?: {
       id: string;
@@ -60,6 +70,7 @@ function createMockDB(
 ): D1Database {
   const {
     session = null,
+    parentSession = null,
     adminUser = null,
     roles = [],
     machinePrincipal = null,
@@ -80,10 +91,15 @@ function createMockDB(
 
   return {
     prepare: vi.fn().mockImplementation((sql: string) => ({
-      bind: vi.fn().mockReturnValue({
+      bind: vi.fn().mockImplementation((...params: unknown[]) => ({
         first: vi.fn().mockImplementation(async () => {
           if (shouldThrow) throw new Error('DB connection failed');
-          if (sql.includes('admin_sessions')) return session;
+          if (sql.includes('admin_sessions')) {
+            if (session?.parent_session_id && params[0] === session.parent_session_id) {
+              return parentSession;
+            }
+            return session;
+          }
           if (sql.includes('admin_users')) return adminUser;
           if (sql.includes('admin_machine_principals')) return machinePrincipal;
           if (sql.includes('admin_machine_credentials')) return machineCredential;
@@ -116,7 +132,7 @@ function createMockDB(
           return { results: [], success: true };
         }),
         run: vi.fn().mockResolvedValue({ success: true }),
-      }),
+      })),
     })),
   } as unknown as D1Database;
 }
@@ -149,6 +165,12 @@ function createTestApp(env: Env, options: Parameters<typeof adminAuthMiddleware>
   });
 
   app.get('/api/admin/me/session', (c) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adminAuth = (c as any).get('adminAuth');
+    return c.json({ success: true, adminAuth });
+  });
+
+  app.post(`/api/admin/agent-login-handoffs/alh_${'a'.repeat(32)}/approve`, (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adminAuth = (c as any).get('adminAuth');
     return c.json({ success: true, adminAuth });
@@ -1496,6 +1518,106 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(401);
     });
 
+    it('accepts a derived Admin session only while its parent remains valid', async () => {
+      const userId = 'admin-user-derived';
+      const parentSessionId = 'admin-session-parent';
+      const childSession = {
+        ...createValidSession(userId),
+        id: 'admin-session-child',
+        parent_session_id: parentSessionId,
+        derived_target_tenant_id: 'default',
+      };
+      const db = createMockDB({
+        session: childSession,
+        parentSession: {
+          ...createValidSession(userId),
+          id: parentSessionId,
+          parent_session_id: null,
+        },
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+      const app = createTestApp(createMockEnv({ DB: db }));
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${childSession.id}` },
+        })
+      );
+      expect(response.status).toBe(200);
+    });
+
+    it('binds a derived Admin session to exactly one target tenant issuer', async () => {
+      const userId = 'admin-user-derived-target';
+      const parentSessionId = 'admin-session-parent-target';
+      const childSession = {
+        ...createValidSession(userId),
+        id: 'admin-session-child-target',
+        parent_session_id: parentSessionId,
+        derived_target_tenant_id: 'acme',
+      };
+      const db = createMockDB({
+        session: childSession,
+        parentSession: {
+          ...createValidSession(userId),
+          id: parentSessionId,
+          parent_session_id: null,
+        },
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test', DEFAULT_TENANT_ID: 'default' })
+      );
+
+      const accepted = await app.fetch(
+        new Request('https://acme.authrim.test/api/admin/test', {
+          headers: {
+            Host: 'acme.authrim.test',
+            Cookie: `authrim_admin_session=${childSession.id}`,
+          },
+        })
+      );
+      expect(accepted.status).toBe(200);
+      await expect(accepted.json()).resolves.toMatchObject({
+        adminAuth: { tenantId: 'acme', tenantScope: ['acme'] },
+      });
+
+      const replayedElsewhere = await app.fetch(
+        new Request('https://other.authrim.test/api/admin/test', {
+          headers: {
+            Host: 'other.authrim.test',
+            Cookie: `authrim_admin_session=${childSession.id}`,
+          },
+        })
+      );
+      expect(replayedElsewhere.status).toBe(401);
+    });
+
+    it('rejects a derived Admin session after its parent is revoked', async () => {
+      const userId = 'admin-user-derived-revoked';
+      const childSession = {
+        ...createValidSession(userId),
+        id: 'admin-session-child-revoked',
+        parent_session_id: 'admin-session-parent-revoked',
+        derived_target_tenant_id: 'default',
+      };
+      const db = createMockDB({
+        session: childSession,
+        parentSession: null,
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+      const app = createTestApp(createMockEnv({ DB: db }));
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${childSession.id}` },
+        })
+      );
+      expect(response.status).toBe(401);
+    });
+
     it('should reject session without admin role', async () => {
       const userId = 'admin-user-norole';
       const db = createMockDB({
@@ -1771,6 +1893,43 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(200);
     });
 
+    it('treats only a bounded central login-handoff approval path as platform-scoped', async () => {
+      const userId = 'admin-user-handoff';
+      const db = createMockDB({
+        session: createValidSession(userId),
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['admin']),
+      });
+      const app = createTestApp(
+        createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test', DEFAULT_TENANT_ID: 'default' })
+      );
+
+      const response = await app.fetch(
+        new Request(
+          `https://admin.example.com/api/admin/agent-login-handoffs/alh_${'a'.repeat(32)}/approve`,
+          {
+            method: 'POST',
+            headers: {
+              Host: 'admin.example.com',
+              Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+            },
+          }
+        )
+      );
+      expect(response.status).toBe(200);
+
+      const malformed = await app.fetch(
+        new Request('https://admin.example.com/api/admin/agent-login-handoffs/alh_short/approve', {
+          method: 'POST',
+          headers: {
+            Host: 'admin.example.com',
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+          },
+        })
+      );
+      expect(malformed.status).not.toBe(200);
+    });
+
     it('should allow session tenant mismatch on platform admin routes', async () => {
       const userId = 'admin-user-platform';
       const db = createMockDB({
@@ -1877,6 +2036,20 @@ describe('adminAuthMiddleware', () => {
 
       expect(response.status).toBe(302);
       expect(response.headers.get('location')).toBe('/admin/login?return_to=%2Foauth%2Fauthorize');
+    });
+
+    it('awaits an async browser login redirect builder', async () => {
+      const app = createTestApp(mockEnv, {
+        unauthenticatedRedirect: async () => {
+          await Promise.resolve();
+          return '/admin/login?agent_handoff=alh_test';
+        },
+      });
+
+      const response = await app.fetch(new Request('http://localhost/api/admin/test'));
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toBe('/admin/login?agent_handoff=alh_test');
     });
   });
 

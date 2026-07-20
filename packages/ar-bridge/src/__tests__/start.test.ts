@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { classifyExternalStartDiagnosticFailure } from '../handlers/start';
 
 // Mock implementations for testing rate limiting logic
 // These mirror the implementation in start.ts
@@ -424,6 +425,27 @@ describe('max_age parameter validation', () => {
     // parseInt truncates to integer
     expect(maxAge).toBe(3);
     expect(Number.isInteger(maxAge)).toBe(true);
+  });
+});
+
+describe('external start diagnostic failure classification', () => {
+  it.each([
+    'Discovery document issuer mismatch',
+    'Failed to fetch OIDC discovery document: 500',
+    'Discovery document missing required jwks_uri',
+  ])(
+    'classifies metadata validation errors without exposing them as generic failures: %s',
+    (message) => {
+      expect(classifyExternalStartDiagnosticFailure(new Error(message))).toBe(
+        'discovery_validation_failed'
+      );
+    }
+  );
+
+  it('keeps unrelated authorization construction failures distinct', () => {
+    expect(classifyExternalStartDiagnosticFailure(new Error('Invalid redirect URI'))).toBe(
+      'authorization_request_failed'
+    );
   });
 });
 

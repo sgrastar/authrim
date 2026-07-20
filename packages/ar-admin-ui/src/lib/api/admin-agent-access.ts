@@ -1,7 +1,21 @@
 import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 
+/** Builds the MCP resource URL from the selected tenant's canonical issuer, not the Admin UI host. */
+export function buildAgentAccessMcpUrl(issuer: string): string {
+	const url = new URL(issuer);
+	url.pathname = `${url.pathname.replace(/\/+$/u, '')}/mcp`;
+	url.search = '';
+	url.hash = '';
+	return url.toString();
+}
+
 export type AgentGrantStatus = 'active' | 'suspended' | 'revoked';
-export type AgentScope = 'agent:read' | 'agent:write' | 'agent:execute' | 'agent:admin';
+export type AgentScope =
+	| 'agent:read'
+	| 'agent:user-data:read'
+	| 'agent:write'
+	| 'agent:execute'
+	| 'agent:admin';
 export type AgentElevationMode = 'self_reauth' | 'approval' | 'both';
 export type AgentDelegationMode = 'user_consent' | 'admin_pre_authorized' | 'task_approved';
 
@@ -17,6 +31,7 @@ export interface AdminAgentGrant {
 	authorization_details: Record<string, unknown>[] | null;
 	resolved_scope_constraints: Record<string, unknown>;
 	purpose: string | null;
+	management_mode: 'managed' | 'system_managed';
 	consent_version: number;
 	generation: number;
 	status: AgentGrantStatus;
@@ -318,10 +333,14 @@ async function parseError(response: Response, fallback: string): Promise<Error> 
 	return new Error(body.error_description || body.message || body.error || fallback);
 }
 
-async function postTransition(id: string, transition: 'suspend' | 'resume' | 'revoke') {
+async function postTransition(
+	id: string,
+	transition: 'suspend' | 'resume' | 'revoke',
+	tenantId?: string
+) {
 	const response = await adminFetch(
 		`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/${transition}`,
-		{ method: 'POST' }
+		{ method: 'POST', tenantId }
 	);
 	if (!response.ok) throw await parseError(response, `Failed to ${transition} Agent Grant`);
 	return response.json() as Promise<{
@@ -657,7 +676,7 @@ export const adminAgentAccessAPI = {
 	},
 
 	async listGrants(
-		params: { status?: AgentGrantStatus; limit?: number; offset?: number } = {}
+		params: { status?: AgentGrantStatus; limit?: number; offset?: number; tenantId?: string } = {}
 	): Promise<{
 		grants: AdminAgentGrant[];
 		pagination: { total: number; limit: number; offset: number };
@@ -667,15 +686,17 @@ export const adminAgentAccessAPI = {
 		if (params.limit) query.set('limit', String(params.limit));
 		if (params.offset !== undefined) query.set('offset', String(params.offset));
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/agent-grants${query.size ? `?${query}` : ''}`
+			`${API_BASE_URL}/api/admin/agent-grants${query.size ? `?${query}` : ''}`,
+			{ tenantId: params.tenantId }
 		);
 		if (!response.ok) throw await parseError(response, 'Failed to load Agent Grants');
 		return response.json();
 	},
 
-	async getGrant(id: string): Promise<AdminAgentGrant> {
+	async getGrant(id: string, tenantId?: string): Promise<AdminAgentGrant> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}`
+			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}`,
+			{ tenantId }
 		);
 		if (!response.ok) throw await parseError(response, 'Failed to load Agent Grant');
 		const body = await response.json();
@@ -692,19 +713,24 @@ export const adminAgentAccessAPI = {
 		return response.json();
 	},
 
-	async preauthorizeGrant(id: string): Promise<void> {
+	async preauthorizeGrant(id: string, tenantId?: string): Promise<void> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/preauthorize`,
-			{ method: 'POST' }
+			{ method: 'POST', tenantId }
 		);
 		if (!response.ok) throw await parseError(response, 'Failed to preauthorize Agent Grant');
 	},
 
-	async updateGrant(id: string, input: UpdateAdminAgentGrantInput): Promise<void> {
+	async updateGrant(
+		id: string,
+		input: UpdateAdminAgentGrantInput,
+		tenantId?: string
+	): Promise<void> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}`,
 			{
 				method: 'PATCH',
+				tenantId,
 				includeJsonContentType: true,
 				body: JSON.stringify(input)
 			}
@@ -712,21 +738,40 @@ export const adminAgentAccessAPI = {
 		if (!response.ok) throw await parseError(response, 'Failed to update Agent Grant');
 	},
 
-	suspendGrant(id: string) {
-		return postTransition(id, 'suspend');
-	},
-
-	resumeGrant(id: string) {
-		return postTransition(id, 'resume');
-	},
-
-	revokeGrant(id: string) {
-		return postTransition(id, 'revoke');
-	},
-
-	async listGrantAudit(id: string): Promise<AdminAgentGrantAuditEvent[]> {
+	async updateSelfServiceScopes(
+		id: string,
+		scopes: AgentScope[],
+		tenantId?: string
+	): Promise<{ grant: AdminAgentGrant; changed: boolean }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/audit?limit=100`
+			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/self-service-scopes`,
+			{
+				method: 'PUT',
+				tenantId,
+				includeJsonContentType: true,
+				body: JSON.stringify({ scopes })
+			}
+		);
+		if (!response.ok) throw await parseError(response, 'Failed to update connection permissions');
+		return response.json();
+	},
+
+	suspendGrant(id: string, tenantId?: string) {
+		return postTransition(id, 'suspend', tenantId);
+	},
+
+	resumeGrant(id: string, tenantId?: string) {
+		return postTransition(id, 'resume', tenantId);
+	},
+
+	revokeGrant(id: string, tenantId?: string) {
+		return postTransition(id, 'revoke', tenantId);
+	},
+
+	async listGrantAudit(id: string, tenantId?: string): Promise<AdminAgentGrantAuditEvent[]> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/audit?limit=100`,
+			{ tenantId }
 		);
 		if (!response.ok) throw await parseError(response, 'Failed to load Agent Grant audit');
 		const body = await response.json();
@@ -757,16 +802,20 @@ export const adminAgentAccessAPI = {
 		return response.json();
 	},
 
-	async getSettings(): Promise<AgentAccessSettings> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/agent`);
+	async getSettings(tenantId?: string): Promise<AgentAccessSettings> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/agent`, { tenantId });
 		if (!response.ok) throw await parseError(response, 'Failed to load Agent Access settings');
 		const body = await response.json();
 		return body.settings;
 	},
 
-	async updateSettings(settings: AgentAccessSettings): Promise<AgentAccessSettings> {
+	async updateSettings(
+		settings: AgentAccessSettings,
+		tenantId?: string
+	): Promise<AgentAccessSettings> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/agent`, {
 			method: 'PUT',
+			tenantId,
 			includeJsonContentType: true,
 			body: JSON.stringify(settings)
 		});

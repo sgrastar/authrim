@@ -988,11 +988,18 @@ export async function getClient(
     software_id: string | null;
     software_version: string | null;
     requestable_scopes: string | null;
+    agent_access_registration_mode: string | null;
+    agent_access_expires_at: number | null;
+    agent_access_last_used_at: number | null;
+    client_metadata_url: string | null;
+    client_metadata_hash: string | null;
+    client_metadata_fetched_at: number | null;
     // CIBA (Client Initiated Backchannel Authentication) settings
     backchannel_token_delivery_mode: string | null;
     backchannel_client_notification_endpoint: string | null;
     backchannel_authentication_request_signing_alg: string | null;
     backchannel_user_code_parameter: number | null;
+    tls_client_certificate_bound_access_tokens: number | null;
     // Authrim Extension: Custom Redirect URIs
     allowed_redirect_origins: string | null;
     // PKCE settings
@@ -1144,13 +1151,30 @@ export async function getClient(
     software_id: result.software_id ?? undefined,
     software_version: result.software_version ?? undefined,
     requestable_scopes: normalizeOptionalStringArray(result.requestable_scopes),
+    agent_access_registration_mode:
+      result.agent_access_registration_mode === 'restricted_dcr' ||
+      result.agent_access_registration_mode === 'cimd'
+        ? result.agent_access_registration_mode
+        : undefined,
+    agent_access_expires_at: result.agent_access_expires_at ?? undefined,
+    agent_access_last_used_at: result.agent_access_last_used_at ?? undefined,
+    client_metadata_url: result.client_metadata_url ?? undefined,
+    client_metadata_hash: result.client_metadata_hash ?? undefined,
+    client_metadata_fetched_at: result.client_metadata_fetched_at ?? undefined,
     // CIBA (Client Initiated Backchannel Authentication) settings
-    backchannel_token_delivery_mode: result.backchannel_token_delivery_mode ?? undefined,
+    backchannel_token_delivery_mode:
+      result.backchannel_token_delivery_mode === 'poll' ||
+      result.backchannel_token_delivery_mode === 'ping' ||
+      result.backchannel_token_delivery_mode === 'push'
+        ? result.backchannel_token_delivery_mode
+        : undefined,
     backchannel_client_notification_endpoint:
       result.backchannel_client_notification_endpoint ?? undefined,
     backchannel_authentication_request_signing_alg:
       result.backchannel_authentication_request_signing_alg ?? undefined,
     backchannel_user_code_parameter: result.backchannel_user_code_parameter === 1,
+    tls_client_certificate_bound_access_tokens:
+      result.tls_client_certificate_bound_access_tokens === 1,
     // Authrim Extension: Custom Redirect URIs
     allowed_redirect_origins: normalizeOptionalStringArray(result.allowed_redirect_origins),
     // PKCE settings

@@ -53,6 +53,9 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/sessions/me', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/me/session', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.post('/api/admin/logout', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.post('/api/admin/agent-login-handoffs/:id/approve', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), handoffId: c.req.param('id') })
+  );
   app.get('/api/admin/tenants', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/runtime-profiles', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/users', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
@@ -306,6 +309,39 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(sessionRes.status).toBe(200);
     expect(newSessionRes.status).toBe(200);
     expect(logoutRes.status).toBe(200);
+  });
+
+  it('allows only an exact Agent login handoff approval path without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+    const validId = `alh_${'A'.repeat(32)}`;
+
+    const approved = await app.request(
+      new Request(`https://admin.pages.dev/api/admin/agent-login-handoffs/${validId}/approve`, {
+        method: 'POST',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+    const malformed = await app.request(
+      new Request('https://admin.pages.dev/api/admin/agent-login-handoffs/alh_short/approve', {
+        method: 'POST',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+
+    expect(approved.status).toBe(200);
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toMatchObject({
+      error_description: 'X-Tenant-Id header is required',
+    });
   });
 
   it('returns 400 when tenant-scoped admin endpoints omit X-Tenant-Id', async () => {

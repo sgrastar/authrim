@@ -6,6 +6,11 @@ import {
   canonicalizeJson,
   getAgentTaskSetWithBuiltins,
   hasCompleteAgentConfigurationSnapshot,
+  normalizeSelfServiceAgentAuthorizationDetails,
+  normalizeSelfServiceAgentScopes,
+  resolveSelfServiceAgentAccessSnapshot,
+  SELF_SERVICE_GRANT_TTL_MS,
+  selfServiceRevocationOutboxId,
   sha256Base64Url,
   validateAgentGrantPermissions,
   type AdminAgentGrantRecord,
@@ -20,6 +25,7 @@ import {
   ADMIN_PERMISSIONS,
   AdminMachineAccessRepository,
   adminAuthMiddleware,
+  createAuthContextFromHono,
   ensureDatabaseAdapter,
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
@@ -48,6 +54,10 @@ interface CreateAgentGrantBody {
   task_set_version?: unknown;
   scope_policy_id?: unknown;
   scope_policy_version?: unknown;
+}
+
+interface UpdateSelfServiceScopesBody {
+  scopes?: unknown;
 }
 
 export const agentGrantsRouter = new Hono<{
@@ -125,6 +135,7 @@ function responseGrant(grant: AdminAgentGrantRecord) {
     authorization_details: grant.authorizationDetails ?? null,
     resolved_scope_constraints: grant.resolvedScopeConstraints,
     purpose: grant.purpose ?? null,
+    management_mode: grant.managementMode,
     consent_version: grant.consentVersion,
     generation: grant.generation,
     status: grant.status,
@@ -395,6 +406,237 @@ agentGrantsRouter.post('/:id/preauthorize', async (c) => {
     consent_version: grant.consentVersion,
     consent_current: true,
   });
+});
+
+agentGrantsRouter.put('/:id/self-service-scopes', async (c) => {
+  const current = auth(c);
+  if (!hasAdminPermission(current.permissions ?? [], ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE)) {
+    return error(c, 403, 'ADMIN_INSUFFICIENT_PERMISSIONS');
+  }
+  if (current.actorType && current.actorType !== 'human') {
+    return error(c, 403, 'AGENT_GRANT_HUMAN_GRANTOR_REQUIRED');
+  }
+  const tenant = tenantId(c);
+  if (!(await isAgentMcpEnabled(c.env, tenant))) return error(c, 404, 'AGENT_MCP_DISABLED');
+
+  let body: UpdateSelfServiceScopesBody;
+  try {
+    body = await c.req.json<UpdateSelfServiceScopesBody>();
+  } catch {
+    return error(c, 400, 'AGENT_GRANT_INVALID_REQUEST');
+  }
+  if (Object.keys(body).some((key) => key !== 'scopes') || !Array.isArray(body.scopes)) {
+    return error(c, 400, 'AGENT_GRANT_INVALID_REQUEST');
+  }
+  let scopes: AgentScope[];
+  try {
+    if (body.scopes.some((scope) => typeof scope !== 'string')) {
+      return error(c, 400, 'AGENT_GRANT_INVALID_REQUEST');
+    }
+    scopes = normalizeSelfServiceAgentScopes(body.scopes as string[]);
+  } catch {
+    return error(c, 400, 'AGENT_GRANT_SELF_SERVICE_SCOPE_INVALID');
+  }
+
+  const repository = new AdminAgentAccessRepository(
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-self-service-scopes')
+  );
+  const grant = await repository.getGrantRecord(tenant, c.req.param('id'));
+  if (!grant) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
+  if (grant.status !== 'active') return error(c, 409, 'AGENT_GRANT_NOT_ACTIVE');
+  if (
+    grant.managementMode !== 'system_managed' ||
+    grant.purpose !== 'interactive_self_service' ||
+    grant.machinePrincipalId
+  ) {
+    return error(c, 409, 'AGENT_GRANT_NOT_SELF_SERVICE');
+  }
+  if (grant.delegatorId !== current.userId || grant.grantorId !== current.userId) {
+    return error(c, 403, 'AGENT_GRANT_SELF_SERVICE_OWNER_REQUIRED');
+  }
+  const client = await createAuthContextFromHono(
+    c as unknown as Context<{ Bindings: Env }>,
+    tenant
+  ).coreAdapter.queryOne<{
+    tenant_id: string;
+    requestable_scopes: string | null;
+  }>(
+    'SELECT tenant_id, requestable_scopes FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    [tenant, grant.clientId]
+  );
+  if (!client) return error(c, 400, 'AGENT_GRANT_CLIENT_NOT_FOUND');
+  if (!clientAllowsScopes(client.requestable_scopes, scopes)) {
+    return error(c, 400, 'AGENT_GRANT_CLIENT_SCOPE_NOT_ALLOWED');
+  }
+
+  const now = Date.now();
+  const livePermissions = await repository.getActiveDelegatorPermissions(
+    tenant,
+    current.userId,
+    now
+  );
+  if (!livePermissions || !hasAdminPermission(livePermissions, ADMIN_PERMISSIONS.AGENT_USE)) {
+    return error(c, 400, 'AGENT_DELEGATOR_NOT_ELIGIBLE');
+  }
+  let resourceConstraintsCurrent = false;
+  try {
+    resourceConstraintsCurrent =
+      normalizeSelfServiceAgentAuthorizationDetails(grant.authorizationDetails)
+        .maxSubjectsPerCall === grant.resolvedScopeConstraints.maxPerCall;
+  } catch {
+    // Continue into snapshot regeneration, which rejects invalid stored RAR fail-closed.
+  }
+  if (
+    scopes.length === grant.scopes.length &&
+    scopes.every((scope, index) => scope === grant.scopes[index]) &&
+    grant.expiresAt !== undefined &&
+    grant.expiresAt > now &&
+    resourceConstraintsCurrent
+  ) {
+    return c.json({ grant: responseGrant(grant), changed: false });
+  }
+
+  const nextConsentVersion = grant.consentVersion + 1;
+  const expiresAt = now + SELF_SERVICE_GRANT_TTL_MS;
+  let snapshot: Awaited<ReturnType<typeof resolveSelfServiceAgentAccessSnapshot>>;
+  try {
+    snapshot = await resolveSelfServiceAgentAccessSnapshot({
+      tenantId: tenant,
+      adminUserId: current.userId,
+      clientId: grant.clientId,
+      grantId: grant.grantId,
+      taskSetId: `system_agent_task_set_${grant.grantId}_cv${nextConsentVersion}`,
+      taskSetVersion: 1,
+      scopePolicyId: `system_agent_scope_policy_${grant.grantId}_cv${nextConsentVersion}`,
+      scopePolicyVersion: 1,
+      approvedScopes: scopes,
+      authorizationDetails: grant.authorizationDetails,
+      adminPermissions: livePermissions,
+      catalog: taskSetCatalog,
+      expiresAt,
+    });
+  } catch (caught) {
+    void caught;
+    return error(c, 400, 'AGENT_GRANT_SELF_SERVICE_SCOPE_UNAVAILABLE');
+  }
+  const nextGrant: CreateAdminAgentGrantInput = {
+    grantId: grant.grantId,
+    tenantId: tenant,
+    clientId: grant.clientId,
+    grantorId: current.userId,
+    delegatorId: current.userId,
+    permissions: snapshot.permissions,
+    scopes: snapshot.scopes,
+    authorizationDetails: grant.authorizationDetails,
+    resolvedScopeConstraints: snapshot.resolvedScopeConstraints,
+    consentVersion: nextConsentVersion,
+    generation: grant.generation + 1,
+    status: 'active',
+    delegationMode: 'user_consent',
+    taskSetId: snapshot.taskSetId,
+    taskSetVersion: snapshot.taskSetVersion,
+    scopePolicyId: snapshot.scopePolicyId,
+    scopePolicyVersion: snapshot.scopePolicyVersion,
+    resolvedTools: snapshot.resolvedTools,
+    accessSnapshotHash: snapshot.accessSnapshotHash,
+    expiresAt,
+    createdAt: now,
+    purpose: 'interactive_self_service',
+    managementMode: 'system_managed',
+  };
+  const consentBase = {
+    tenantId: tenant,
+    grantId: grant.grantId,
+    userId: current.userId,
+    clientId: grant.clientId,
+    consentVersion: nextConsentVersion,
+    scopes: snapshot.scopes,
+    grantedAt: now,
+  };
+  const transitionId = `transition_${crypto.randomUUID()}`;
+  const auditBase = {
+    tenantId: tenant,
+    adminUserId: current.userId,
+    resourceType: 'admin_agent_grant',
+    resourceId: grant.grantId,
+    severity: 'info' as const,
+    result: 'success' as const,
+    requestId: c.req.header('x-request-id'),
+    actorType: 'admin_user' as const,
+    actorSub: `admin_user:${current.userId}`,
+    grantId: grant.grantId,
+    createdAt: now,
+  };
+  try {
+    const result = await repository.replaceSelfServiceAuthorization({
+      grant: nextGrant,
+      expectedGeneration: grant.generation,
+      transitionId,
+      outboxId: selfServiceRevocationOutboxId(transitionId),
+      taskSet: {
+        id: snapshot.taskSetId,
+        version: snapshot.taskSetVersion,
+        digest: snapshot.taskSetDigest,
+        resolved: snapshot.taskSetResolved,
+      },
+      scopePolicy: {
+        id: snapshot.scopePolicyId,
+        version: snapshot.scopePolicyVersion,
+        digest: snapshot.scopePolicyDigest,
+        definition: snapshot.scopePolicyDefinition,
+        selectorCatalogVersion: 'agent-scope-selectors-v1',
+      },
+      delegationConsent: {
+        ...consentBase,
+        id: `agc_${crypto.randomUUID()}`,
+        type: 'delegation',
+      },
+      oauthClientConsent: {
+        ...consentBase,
+        id: `agc_${crypto.randomUUID()}`,
+        type: 'oauth_client',
+      },
+      grantAudit: {
+        ...auditBase,
+        id: transitionId,
+        action: 'agent.grant.updated',
+        metadata: {
+          management_mode: 'system_managed',
+          source: 'connected_agents_ui',
+          previous_scopes: grant.scopes,
+          scopes: snapshot.scopes,
+          max_subjects_per_call: snapshot.resolvedScopeConstraints.maxPerCall ?? null,
+          previous_generation: grant.generation,
+        },
+      },
+      consentAudit: {
+        ...auditBase,
+        id: `audit_${crypto.randomUUID()}`,
+        action: 'agent.consent.granted',
+        metadata: {
+          source: 'connected_agents_ui',
+          consent_version: nextConsentVersion,
+          scopes: snapshot.scopes,
+          max_subjects_per_call: snapshot.resolvedScopeConstraints.maxPerCall ?? null,
+        },
+      },
+    });
+    return c.json({
+      grant: responseGrant({
+        ...grant,
+        ...nextGrant,
+        managementMode: 'system_managed',
+        updatedAt: now,
+      }),
+      changed: true,
+      token_families_pending_revocation: result.familyCount,
+    });
+  } catch (caught) {
+    if (String(caught).includes('changed before replacement')) {
+      return error(c, 409, 'AGENT_GRANT_CONCURRENT_MUTATION');
+    }
+    throw caught;
+  }
 });
 
 agentGrantsRouter.patch('/:id', async (c) => {

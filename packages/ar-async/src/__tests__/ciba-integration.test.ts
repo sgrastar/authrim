@@ -223,12 +223,80 @@ describe('CIBA Integration', () => {
 
       expect(response.status).toBe(200);
       expect(body.auth_req_id).toBeDefined();
-      expect(body.auth_req_id).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-      );
+      // CIBA Core recommends at least 160 bits of entropy. Authrim issues 256-bit,
+      // unpadded Base64URL request identifiers rather than UUID-shaped identifiers.
+      expect(body.auth_req_id).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(body.expires_in).toBeGreaterThan(0);
       expect(body.interval).toBeGreaterThan(0); // Poll interval is calculated based on expires_in
     });
+
+    it.each([{ requested_expiry: 5 }, { requested_expiry: '5' }])(
+      'should accept a short requested_expiry in number or string form',
+      async ({ requested_expiry }) => {
+        mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+        const ctx = createMockContext(
+          withCIBAClientSecret({
+            client_id: 'ciba-client',
+            scope: 'openid',
+            login_hint: 'user@example.com',
+            requested_expiry,
+          })
+        );
+
+        const response = await cibaAuthorizationHandler(ctx);
+        const body = (await response.json()) as { expires_in: number; interval: number };
+
+        expect(response.status).toBe(200);
+        expect(body.expires_in).toBe(60);
+        expect(body.interval).toBe(5);
+        expect([...storedCIBARequests.values()][0]?.expires_at).toBeLessThanOrEqual(
+          Date.now() + 60_000
+        );
+      }
+    );
+
+    it('should cap a requested expiry above the server maximum', async () => {
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+          requested_expiry: 86_400,
+        })
+      );
+
+      const response = await cibaAuthorizationHandler(ctx);
+      const body = (await response.json()) as { expires_in: number };
+
+      expect(response.status).toBe(200);
+      expect(body.expires_in).toBe(600);
+      expect([...storedCIBARequests.values()][0]?.expires_at).toBeLessThanOrEqual(
+        Date.now() + 600_000
+      );
+    });
+
+    it.each(['5seconds', '1.5', '', -1, 0, 1.5])(
+      'should reject malformed requested_expiry %s',
+      async (requested_expiry) => {
+        mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+        const ctx = createMockContext(
+          withCIBAClientSecret({
+            client_id: 'ciba-client',
+            scope: 'openid',
+            login_hint: 'user@example.com',
+            requested_expiry,
+          })
+        );
+
+        const response = await cibaAuthorizationHandler(ctx);
+        const body = (await response.json()) as { error: string };
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_request');
+        expect(storedCIBARequests.size).toBe(0);
+      }
+    );
 
     it('should reject a registered CIBA client without client authentication', async () => {
       mockGetClient.mockResolvedValue(createCIBAClientMetadata());
@@ -244,6 +312,7 @@ describe('CIBA Integration', () => {
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');
+      expect(Object.keys(body).sort()).toEqual(['error', 'error_description']);
       expect(storedCIBARequests.size).toBe(0);
     });
 
@@ -278,6 +347,7 @@ describe('CIBA Integration', () => {
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');
       expect(body.error_description).toContain('Client authentication failed');
+      expect(Object.keys(body).sort()).toEqual(['error', 'error_description']);
     });
 
     it('should reject client not authorized for CIBA', async () => {
@@ -347,11 +417,13 @@ describe('CIBA Integration', () => {
     it('should reject request without any login hint', async () => {
       mockGetClient.mockResolvedValue(createCIBAClientMetadata());
 
-      const ctx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        // No login_hint, login_hint_token, or id_token_hint
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          // No login_hint, login_hint_token, or id_token_hint
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
@@ -359,7 +431,7 @@ describe('CIBA Integration', () => {
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_request');
       // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
-      expect(body.error_description).toContain('invalid');
+      expect(body.error_description).toContain('Exactly one');
     });
 
     it('should reject client that does not support poll mode when falling back to poll', async () => {
@@ -393,30 +465,26 @@ describe('CIBA Integration', () => {
     });
 
     it('should validate binding_message length', async () => {
-      mockGetClient.mockResolvedValue({
-        client_id: 'ciba-client',
-        grant_types: ['urn:openid:params:grant-type:ciba'],
-        backchannel_token_delivery_mode: 'poll',
-      });
+      mockGetClient.mockResolvedValue(createCIBAClientMetadata());
 
       // Binding message exceeds 140 characters
       const longMessage = 'a'.repeat(200);
 
-      const ctx = createMockContext({
-        client_id: 'ciba-client',
-        scope: 'openid',
-        login_hint: 'user@example.com',
-        binding_message: longMessage,
-      });
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid',
+          login_hint: 'user@example.com',
+          binding_message: longMessage,
+        })
+      );
 
       const response = await cibaAuthorizationHandler(ctx);
       const body = (await response.json()) as any;
 
       expect(response.status).toBe(400);
-      // TODO: CIBA spec uses invalid_binding_message, but current implementation uses invalid_request
-      // Should be updated to use AR_ERROR_CODES.CIBA_INVALID_BINDING_MESSAGE for RFC compliance
-      expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('invalid');
+      expect(body.error).toBe('invalid_binding_message');
+      expect(body.error_description).toContain('too long');
     });
   });
 

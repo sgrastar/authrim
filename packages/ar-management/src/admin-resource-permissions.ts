@@ -65,8 +65,15 @@ function requireSessionManagementPermission(): AdminPermissionMiddleware {
 function requireSettingsManagementPermission(): AdminPermissionMiddleware {
   return async (c, next) => {
     const method = c.req.method.toUpperCase();
+    const path = new URL(c.req.url).pathname;
     const permission =
-      method === 'GET' ? ADMIN_PERMISSIONS.SETTINGS_READ : ADMIN_PERMISSIONS.SETTINGS_WRITE;
+      path === '/api/admin/settings/agent'
+        ? method === 'GET'
+          ? ADMIN_PERMISSIONS.AGENT_SETTINGS_READ
+          : ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE
+        : method === 'GET'
+          ? ADMIN_PERMISSIONS.SETTINGS_READ
+          : ADMIN_PERMISSIONS.SETTINGS_WRITE;
 
     return requireAdminPermissions([permission])(c, next);
   };

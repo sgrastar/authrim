@@ -9,6 +9,10 @@
  */
 
 import type { Context } from 'hono';
+import {
+  evaluateAgentMcpFeatureFlag,
+  SELF_SERVICE_AGENT_SCOPES,
+} from '@authrim/ar-agent-access/core';
 import type { Env } from '@authrim/ar-lib-core';
 import type {
   ClientRegistrationRequest,
@@ -53,7 +57,8 @@ import {
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
-type ClientRegistrationRequestWithPkce = ClientRegistrationRequest & {
+type ClientRegistrationRequestWithPkce = Omit<ClientRegistrationRequest, 'redirect_uris'> & {
+  redirect_uris: string[];
   require_pkce?: boolean;
   client_credentials_allowed?: boolean;
   allowed_scopes?: string[];
@@ -174,6 +179,12 @@ async function validateSectorIdentifierContent(
 interface RegistrationValidationOptions {
   /** Allow localhost HTTP for webhook URLs (development only) */
   allowLocalhostHttp?: boolean;
+  /** Allow RFC 8252 loopback IP redirects for the dedicated Agent public-client profile. */
+  allowLoopbackHttp?: boolean;
+}
+
+function isLoopbackIp(hostname: string): boolean {
+  return hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
 }
 
 /**
@@ -197,6 +208,16 @@ function validateRegistrationRequest(
 
   const data = body as Partial<ClientRegistrationRequestWithPkce>;
   const rawData = body as Record<string, unknown>;
+  const cibaGrant = 'urn:openid:params:grant-type:ciba';
+  const explicitGrantTypes = Array.isArray(data.grant_types) ? data.grant_types : undefined;
+  const isCibaClient = explicitGrantTypes?.includes(cibaGrant) === true;
+  const usesRedirectBasedGrant =
+    explicitGrantTypes === undefined ||
+    explicitGrantTypes.includes('authorization_code') ||
+    explicitGrantTypes.includes('implicit');
+  if (!usesRedirectBasedGrant && data.redirect_uris === undefined) {
+    data.redirect_uris = [];
+  }
 
   // Public runtime registration does not accept internal trust_group fields.
   // Managed application_group assignment is performed by Admin/setup surfaces.
@@ -221,17 +242,19 @@ function validateRegistrationRequest(
     }
   }
 
-  // Validate redirect_uris (required)
+  // Redirect URIs are only required for grants that use the authorization endpoint.
+  // Non-redirect grants may still be combined with refresh_token.
   if (
-    !data.redirect_uris ||
+    (usesRedirectBasedGrant && !data.redirect_uris) ||
     !Array.isArray(data.redirect_uris) ||
-    data.redirect_uris.length === 0
+    (usesRedirectBasedGrant && data.redirect_uris.length === 0)
   ) {
     return {
       valid: false,
       error: {
         error: 'invalid_redirect_uri',
-        error_description: 'redirect_uris is required and must be a non-empty array',
+        error_description:
+          'redirect_uris is required and must be a non-empty array for redirect-based grants',
       },
     };
   }
@@ -254,7 +277,11 @@ function validateRegistrationRequest(
       // OIDC requires HTTPS for production (allow http://localhost for development)
       if (
         parsed.protocol !== 'https:' &&
-        !(parsed.protocol === 'http:' && parsed.hostname === 'localhost')
+        !(
+          parsed.protocol === 'http:' &&
+          (parsed.hostname === 'localhost' ||
+            (options.allowLoopbackHttp === true && isLoopbackIp(parsed.hostname)))
+        )
       ) {
         return {
           valid: false,
@@ -425,6 +452,7 @@ function validateRegistrationRequest(
       'refresh_token',
       'implicit',
       'client_credentials',
+      'urn:openid:params:grant-type:ciba',
     ];
     for (const grantType of data.grant_types) {
       if (!validGrantTypes.includes(grantType)) {
@@ -460,6 +488,104 @@ function validateRegistrationRequest(
         error_description: 'client_credentials_allowed must be a boolean',
       },
     };
+  }
+
+  if (
+    data.backchannel_token_delivery_mode !== undefined &&
+    !['poll', 'ping', 'push'].includes(data.backchannel_token_delivery_mode)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'backchannel_token_delivery_mode must be one of: poll, ping, push',
+      },
+    };
+  }
+
+  if (
+    data.backchannel_user_code_parameter !== undefined &&
+    typeof data.backchannel_user_code_parameter !== 'boolean'
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'backchannel_user_code_parameter must be a boolean',
+      },
+    };
+  }
+
+  if (
+    data.tls_client_certificate_bound_access_tokens !== undefined &&
+    typeof data.tls_client_certificate_bound_access_tokens !== 'boolean'
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'tls_client_certificate_bound_access_tokens must be a boolean',
+      },
+    };
+  }
+
+  if (
+    data.backchannel_authentication_request_signing_alg !== undefined &&
+    !['RS256', 'ES256', 'PS256'].includes(data.backchannel_authentication_request_signing_alg)
+  ) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description:
+          'backchannel_authentication_request_signing_alg must be one of: RS256, ES256, PS256',
+      },
+    };
+  }
+
+  if (data.backchannel_client_notification_endpoint !== undefined) {
+    if (typeof data.backchannel_client_notification_endpoint !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'backchannel_client_notification_endpoint must be a string',
+        },
+      };
+    }
+    const endpointValidation = validateWebhookUrl(
+      data.backchannel_client_notification_endpoint,
+      options.allowLocalhostHttp === true
+    );
+    if (!endpointValidation.valid) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: formatOutboundCallbackUriError(
+            'backchannel_client_notification_endpoint',
+            endpointValidation.error
+          ),
+        },
+      };
+    }
+  }
+
+  if (isCibaClient) {
+    const mode = data.backchannel_token_delivery_mode ?? 'poll';
+    if ((mode === 'ping' || mode === 'push') && !data.backchannel_client_notification_endpoint) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description:
+            'backchannel_client_notification_endpoint is required for ping and push delivery',
+        },
+      };
+    }
+    if (!usesRedirectBasedGrant) {
+      data.redirect_uris = [];
+    }
   }
 
   if (
@@ -562,7 +688,7 @@ function validateRegistrationRequest(
       valid: false,
       error: {
         error: 'invalid_client_metadata',
-        error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+        error_description: 'id_token_signed_response_alg must be one of: RS256, ES256, PS256',
       },
     };
   }
@@ -605,7 +731,7 @@ function validateRegistrationRequest(
       valid: false,
       error: {
         error: 'invalid_client_metadata',
-        error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+        error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256, PS256',
       },
     };
   }
@@ -618,7 +744,7 @@ function validateRegistrationRequest(
       valid: false,
       error: {
         error: 'invalid_client_metadata',
-        error_description: 'authorization_signed_response_alg must be one of: RS256, ES256',
+        error_description: 'authorization_signed_response_alg must be one of: RS256, ES256, PS256',
       },
     };
   }
@@ -1117,11 +1243,15 @@ async function resolveDefaultAccessTokenTarget(
  * Store client metadata in D1 (source of truth)
  * Cache will be populated via Read-Through pattern on first access
  */
+type StoredClientMetadata = ClientMetadata & {
+  agent_access_registration_slot?: number;
+};
+
 async function storeClient(
   env: Env,
   coreAdapter: ReturnType<typeof createAuthContextFromHono>['coreAdapter'],
   clientId: string,
-  metadata: ClientMetadata
+  metadata: StoredClientMetadata
 ): Promise<void> {
   // Store in auth core relational source of truth.
   const now = Date.now(); // Store in milliseconds
@@ -1150,6 +1280,9 @@ async function storeClient(
       authorization_signed_response_alg,
       authorization_encrypted_response_alg, authorization_encrypted_response_enc,
       post_logout_redirect_uris,
+      backchannel_token_delivery_mode, backchannel_client_notification_endpoint,
+      backchannel_authentication_request_signing_alg, backchannel_user_code_parameter,
+      tls_client_certificate_bound_access_tokens,
       backchannel_logout_uri, backchannel_logout_session_required,
       frontchannel_logout_uri, frontchannel_logout_session_required,
       allowed_redirect_origins,
@@ -1159,8 +1292,20 @@ async function storeClient(
       default_audience, default_resource,
       client_credentials_allowed, allowed_scopes, default_scope,
       require_pkce,
+      agent_access_registration_mode, agent_access_expires_at,
+      agent_access_last_used_at, agent_access_registration_slot,
       tenant_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?
+    )
   `,
     [
       clientId,
@@ -1213,6 +1358,11 @@ async function storeClient(
       metadata.post_logout_redirect_uris
         ? JSON.stringify(metadata.post_logout_redirect_uris)
         : null,
+      metadata.backchannel_token_delivery_mode || null,
+      metadata.backchannel_client_notification_endpoint || null,
+      metadata.backchannel_authentication_request_signing_alg || null,
+      metadata.backchannel_user_code_parameter ? 1 : 0,
+      metadata.tls_client_certificate_bound_access_tokens ? 1 : 0,
       metadata.backchannel_logout_uri || null,
       metadata.backchannel_logout_session_required ? 1 : 0,
       metadata.frontchannel_logout_uri || null,
@@ -1235,6 +1385,10 @@ async function storeClient(
       metadata.allowed_scopes ? JSON.stringify(metadata.allowed_scopes) : null,
       metadata.default_scope || null,
       metadata.require_pkce ? 1 : 0,
+      metadata.agent_access_registration_mode ?? null,
+      metadata.agent_access_expires_at ?? null,
+      metadata.agent_access_last_used_at ?? null,
+      metadata.agent_access_registration_slot ?? null,
       // Tenant ID
       metadataTenantId,
       metadata.created_at || now,
@@ -1275,12 +1429,46 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
-    const dcrEnabled = await getDCRSetting('dcr.enabled', c.env, tenantId);
+    const restrictedAgentRegistration =
+      new URL(c.req.url).pathname === '/oauth/admin-agent/register';
+    let restrictedAgentRegistrationSlot: number | undefined;
+    let agentAccessEnabled = false;
+    if (restrictedAgentRegistration) {
+      try {
+        const settings = c.env.SETTINGS ?? c.env.AUTHRIM_CONFIG;
+        const value = settings
+          ? await settings.get(`settings:tenant:${tenantId}:agent-access`)
+          : undefined;
+        const parsed: unknown = value ? JSON.parse(value) : undefined;
+        const tenantValue =
+          parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)['agent.mcp.enabled']
+            : parsed;
+        agentAccessEnabled = evaluateAgentMcpFeatureFlag({
+          configurationAvailable: true,
+          tenantValue,
+          environmentValue: (c.env as Env & { ENABLE_AGENT_MCP?: string }).ENABLE_AGENT_MCP,
+        }).enabled;
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Agent access configuration unavailable',
+          },
+          503
+        );
+      }
+    }
+    const dcrEnabled = restrictedAgentRegistration
+      ? agentAccessEnabled
+      : await getDCRSetting('dcr.enabled', c.env, tenantId);
     if (!dcrEnabled) {
       return c.json(
         {
           error: 'access_denied',
-          error_description: 'Dynamic Client Registration is disabled for this tenant',
+          error_description: restrictedAgentRegistration
+            ? 'Agent access is disabled for this tenant'
+            : 'Dynamic Client Registration is disabled for this tenant',
         },
         403
       );
@@ -1300,12 +1488,111 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const isDevelopment = c.env.ENVIRONMENT === 'development' || c.env.NODE_ENV === 'development';
     const validation = validateRegistrationRequest(body, {
       allowLocalhostHttp: isDevelopment,
+      allowLoopbackHttp: restrictedAgentRegistration,
     });
     if (!validation.valid) {
       return c.json(validation.error, 400);
     }
 
     const request = validation.data;
+    if (restrictedAgentRegistration) {
+      const unsupported = Object.keys(body ?? {}).filter(
+        (key) =>
+          ![
+            'redirect_uris',
+            'client_name',
+            'client_uri',
+            'logo_uri',
+            'token_endpoint_auth_method',
+            'grant_types',
+            'response_types',
+            'scope',
+            'software_id',
+            'software_version',
+            'application_type',
+            'dpop_bound_access_tokens',
+          ].includes(key)
+      );
+      const requestedScopes = [...new Set((request.scope ?? '').split(/\s+/u).filter(Boolean))];
+      if (
+        unsupported.length > 0 ||
+        (request.token_endpoint_auth_method ?? 'none') !== 'none' ||
+        (request.grant_types ?? ['authorization_code']).some(
+          (grantType) => grantType !== 'authorization_code' && grantType !== 'refresh_token'
+        ) ||
+        (request.response_types ?? ['code']).some((responseType) => responseType !== 'code') ||
+        requestedScopes.some(
+          (scope) =>
+            !SELF_SERVICE_AGENT_SCOPES.includes(scope as (typeof SELF_SERVICE_AGENT_SCOPES)[number])
+        ) ||
+        (requestedScopes.length > 0 && !requestedScopes.includes('agent:read'))
+      ) {
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description: 'Client metadata is outside the restricted Admin Agent profile',
+          },
+          400
+        );
+      }
+      const registered = await authCtx.coreAdapter.queryOne<{ total: number }>(
+        `SELECT COUNT(*) AS total FROM oauth_clients
+         WHERE tenant_id = ? AND agent_access_registration_mode = 'restricted_dcr'
+           AND (agent_access_expires_at IS NULL OR agent_access_expires_at > ?)`,
+        [tenantId, Date.now()]
+      );
+      if ((registered?.total ?? 0) >= 20) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Agent self-service client registration limit reached',
+          },
+          429
+        );
+      }
+      await authCtx.coreAdapter.execute(
+        `UPDATE oauth_clients SET agent_access_registration_slot = NULL
+         WHERE tenant_id = ? AND agent_access_registration_mode = 'restricted_dcr'
+           AND agent_access_expires_at IS NOT NULL AND agent_access_expires_at <= ?
+           AND agent_access_registration_slot IS NOT NULL`,
+        [tenantId, Date.now()]
+      );
+      const occupiedSlots = await authCtx.coreAdapter.query<{
+        agent_access_registration_slot: number | null;
+      }>(
+        `SELECT agent_access_registration_slot FROM oauth_clients
+         WHERE tenant_id = ? AND agent_access_registration_mode = 'restricted_dcr'
+           AND (agent_access_expires_at IS NULL OR agent_access_expires_at > ?)
+           AND agent_access_registration_slot IS NOT NULL`,
+        [tenantId, Date.now()]
+      );
+      const occupied = new Set(
+        occupiedSlots
+          .map((row) => row.agent_access_registration_slot)
+          .filter((slot): slot is number => slot !== null)
+      );
+      restrictedAgentRegistrationSlot = Array.from({ length: 20 }, (_, slot) => slot).find(
+        (slot) => !occupied.has(slot)
+      );
+      if (restrictedAgentRegistrationSlot === undefined) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Agent self-service client registration limit reached',
+          },
+          429
+        );
+      }
+      request.token_endpoint_auth_method = 'none';
+      request.grant_types = ['authorization_code', 'refresh_token'];
+      request.response_types = ['code'];
+      request.require_pkce = true;
+      request.scope =
+        requestedScopes.length > 0
+          ? SELF_SERVICE_AGENT_SCOPES.filter((scope) => requestedScopes.includes(scope)).join(' ')
+          : SELF_SERVICE_AGENT_SCOPES.join(' ');
+      request.application_type = request.application_type ?? 'native';
+    }
     const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
       failOnError: true,
     })) as {
@@ -1319,6 +1606,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       };
     } | null;
     if (
+      !restrictedAgentRegistration &&
       systemSettings?.fapi?.enabled === true &&
       (request.token_endpoint_auth_method ?? 'client_secret_basic') !== 'private_key_jwt'
     ) {
@@ -1332,6 +1620,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
     if (
+      !restrictedAgentRegistration &&
       systemSettings?.fapi?.enabled === true &&
       request.token_endpoint_auth_signing_alg &&
       !FAPI2_MESSAGE_SIGNING_ALGS.includes(
@@ -1467,11 +1756,15 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Determine if client is trusted based on redirect_uri domain
     // Trusted clients can skip consent screens (First-Party clients)
-    const redirectDomain = new URL(request.redirect_uris[0]).hostname;
+    const redirectDomain = request.redirect_uris[0]
+      ? new URL(request.redirect_uris[0]).hostname
+      : 'ciba-no-redirect';
     const issuerDomain = new URL(issuerUrl).hostname;
     const trustedDomains = c.env.TRUSTED_DOMAINS?.split(',').map((d) => d.trim()) || [];
 
-    const isTrusted = redirectDomain === issuerDomain || trustedDomains.includes(redirectDomain);
+    const isTrusted =
+      !restrictedAgentRegistration &&
+      (redirectDomain === issuerDomain || trustedDomains.includes(redirectDomain));
 
     const log = getLogger(c).module('DCR');
     log.info('Client registration', {
@@ -1557,6 +1850,19 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       response.frontchannel_logout_uri = request.frontchannel_logout_uri;
     if (request.frontchannel_logout_session_required !== undefined)
       response.frontchannel_logout_session_required = request.frontchannel_logout_session_required;
+    if (request.backchannel_token_delivery_mode)
+      response.backchannel_token_delivery_mode = request.backchannel_token_delivery_mode;
+    if (request.backchannel_client_notification_endpoint)
+      response.backchannel_client_notification_endpoint =
+        request.backchannel_client_notification_endpoint;
+    if (request.backchannel_authentication_request_signing_alg)
+      response.backchannel_authentication_request_signing_alg =
+        request.backchannel_authentication_request_signing_alg;
+    if (request.backchannel_user_code_parameter !== undefined)
+      response.backchannel_user_code_parameter = request.backchannel_user_code_parameter;
+    if (request.tls_client_certificate_bound_access_tokens !== undefined)
+      response.tls_client_certificate_bound_access_tokens =
+        request.tls_client_certificate_bound_access_tokens;
 
     // ==========================================================================
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
@@ -1571,20 +1877,21 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Generate registration_access_token for client self-management
     // https://www.rfc-editor.org/rfc/rfc7592.html
     // ==========================================================================
-    const registrationAccessToken = generateSecureRandomString(32);
+    let registrationAccessTokenHash: string | undefined;
+    if (!restrictedAgentRegistration) {
+      const registrationAccessToken = generateSecureRandomString(32);
 
-    // Hash the token for secure storage (SHA-256)
-    const encoder = new TextEncoder();
-    const tokenData = encoder.encode(registrationAccessToken);
-    const tokenHashBuffer = await crypto.subtle.digest('SHA-256', tokenData);
-    const registrationAccessTokenHash = arrayBufferToBase64Url(tokenHashBuffer);
+      // Hash the token for secure storage (SHA-256)
+      const encoder = new TextEncoder();
+      const tokenData = encoder.encode(registrationAccessToken);
+      const tokenHashBuffer = await crypto.subtle.digest('SHA-256', tokenData);
+      registrationAccessTokenHash = arrayBufferToBase64Url(tokenHashBuffer);
 
-    // Build registration_client_uri
-    const registrationClientUri = `${issuerUrl}/clients/${clientId}`;
-
-    // Add to response (token is returned only on initial registration)
-    response.registration_access_token = registrationAccessToken;
-    response.registration_client_uri = registrationClientUri;
+      // The restricted Admin Agent profile intentionally has no RFC 7592 self-management
+      // credential. Its lifecycle is controlled by Agent Access consent and revocation APIs.
+      response.registration_access_token = registrationAccessToken;
+      response.registration_client_uri = `${issuerUrl}/clients/${clientId}`;
+    }
 
     // ==========================================================================
     // Simple Logout Webhook (Authrim Extension)
@@ -1632,7 +1939,13 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // OIDC Conformance Test: Detect certification.openid.net
-    const isCertificationTest = request.redirect_uris.some((uri) => {
+    const certificationUrls = [
+      ...request.redirect_uris,
+      ...(request.backchannel_client_notification_endpoint
+        ? [request.backchannel_client_notification_endpoint]
+        : []),
+    ];
+    const isCertificationTest = certificationUrls.some((uri) => {
       try {
         const parsed = new URL(uri);
         const host = parsed.hostname.toLowerCase();
@@ -1694,11 +2007,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // When dcr.scope_restriction_enabled is true, store the scope parameter as
     // requestable_scopes whitelist. Client can only request scopes from this list.
     // ==========================================================================
-    const scopeRestrictionEnabled = await getDCRSetting(
-      'dcr.scope_restriction_enabled',
-      c.env,
-      tenantId
-    );
+    const scopeRestrictionEnabled =
+      restrictedAgentRegistration ||
+      (await getDCRSetting('dcr.scope_restriction_enabled', c.env, tenantId));
     if (scopeRestrictionEnabled && request.scope) {
       // Parse space-separated scope string into array
       const scopeArray = request.scope.split(' ').filter((s) => s.length > 0);
@@ -1715,7 +2026,39 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Store tenant_id in metadata
     metadata.tenant_id = tenantId;
 
-    await storeClient(c.env, authCtx.coreAdapter, clientId, metadata);
+    if (restrictedAgentRegistration) {
+      const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+      metadata.agent_access_registration_mode = 'restricted_dcr';
+      metadata.agent_access_expires_at = expiresAt;
+      (metadata as StoredClientMetadata).agent_access_registration_slot =
+        restrictedAgentRegistrationSlot;
+      delete response.client_secret;
+      delete (response as ClientRegistrationResponse & { client_secret_expires_at?: number })
+        .client_secret_expires_at;
+    }
+    try {
+      await storeClient(c.env, authCtx.coreAdapter, clientId, metadata);
+    } catch (error) {
+      if (restrictedAgentRegistration && restrictedAgentRegistrationSlot !== undefined) {
+        const occupied = await authCtx.coreAdapter.queryOne<{ total: number }>(
+          `SELECT COUNT(*) AS total FROM oauth_clients
+           WHERE tenant_id = ? AND agent_access_registration_mode = 'restricted_dcr'
+             AND agent_access_registration_slot = ?`,
+          [tenantId, restrictedAgentRegistrationSlot]
+        );
+        if ((occupied?.total ?? 0) > 0) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description:
+                'Agent self-service registration changed concurrently; retry registration',
+            },
+            429
+          );
+        }
+      }
+      throw error;
+    }
 
     // Log client registration for debugging/auditing
     log.info('Client registered', { action: 'register', clientId });

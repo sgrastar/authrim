@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('agents/mcp', () => ({ McpAgent: class {} }));
 import type { CloudflareAgentAccessMcpProps } from '../mcp-props';
 import { sanitizeCloudflareAgentAccessMcpPropsForStorage } from '../mcp-props';
+import {
+  AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS,
+  AGENT_ACCESS_MCP_SESSION_IDLE_MS,
+  evaluateCloudflareAgentAccessMcpSession,
+  toCloudflareAgentAccessSessionBinding,
+  validateCloudflareAgentAccessMcpSession,
+} from '../mcp-agent';
 
 const props: CloudflareAgentAccessMcpProps = {
   sourceAccessToken: 'raw-bearer-token',
@@ -39,4 +48,111 @@ describe('Cloudflare McpAgent props persistence boundary', () => {
     expect(stored).not.toHaveProperty('sourceAccessToken');
     expect(JSON.stringify(stored)).not.toContain('raw-bearer-token');
   });
+
+  it('enforces idle and absolute session deadlines at their exact boundaries', () => {
+    const initializedAt = 1_000_000;
+    const state = {
+      initializedAt,
+      lastActivityAt: initializedAt + 5_000,
+      contextBinding: toCloudflareAgentAccessSessionBinding(props.context),
+    };
+    expect(
+      evaluateCloudflareAgentAccessMcpSession({
+        state,
+        context: props.context,
+        now: initializedAt + 5_000 + AGENT_ACCESS_MCP_SESSION_IDLE_MS - 1,
+      })
+    ).toBe('active');
+    expect(
+      evaluateCloudflareAgentAccessMcpSession({
+        state,
+        context: props.context,
+        now: initializedAt + 5_000 + AGENT_ACCESS_MCP_SESSION_IDLE_MS,
+      })
+    ).toBe('expired');
+    expect(
+      evaluateCloudflareAgentAccessMcpSession({
+        state: {
+          ...state,
+          lastActivityAt: initializedAt + AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS - 1,
+        },
+        context: props.context,
+        now: initializedAt + AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS,
+      })
+    ).toBe('expired');
+  });
+
+  it('rejects a different Grant context and malformed or rolled-back clocks', () => {
+    const initializedAt = 1_000_000;
+    const state = {
+      initializedAt,
+      lastActivityAt: initializedAt,
+      contextBinding: toCloudflareAgentAccessSessionBinding(props.context),
+    };
+    expect(
+      evaluateCloudflareAgentAccessMcpSession({
+        state,
+        context: {
+          ...props.context,
+          grant: { ...props.context.grant, grantId: 'grant-other' },
+        },
+        now: initializedAt + 1,
+      })
+    ).toBe('context_mismatch');
+    expect(
+      evaluateCloudflareAgentAccessMcpSession({
+        state,
+        context: props.context,
+        now: initializedAt - 1,
+      })
+    ).toBe('expired');
+    expect(
+      evaluateCloudflareAgentAccessMcpSession({
+        state: {},
+        context: props.context,
+        now: initializedAt,
+      })
+    ).toBe('not_found');
+  });
+
+  it.each([
+    { initialized: false, validation: 'active', expected: 'not_found', destroys: true },
+    { initialized: true, validation: 'expired', expected: 'expired', destroys: true },
+    {
+      initialized: true,
+      validation: 'context_mismatch',
+      expected: 'context_mismatch',
+      destroys: false,
+    },
+  ] as const)(
+    'validates the named DO before forwarding: $expected',
+    async ({ initialized, validation, expected, destroys }) => {
+      const stub = {
+        setName: vi.fn(async () => undefined),
+        getInitializeRequest: vi.fn(async () =>
+          initialized ? { method: 'initialize' } : undefined
+        ),
+        validateSessionContextRpc: vi.fn(async () => validation),
+        _cf_scheduleDestroy: vi.fn(async () => undefined),
+      };
+      const namespace = {
+        idFromName: vi.fn(() => ({ toString: () => 'do-id' })),
+        get: vi.fn(() => stub),
+      } as unknown as DurableObjectNamespace;
+
+      await expect(
+        validateCloudflareAgentAccessMcpSession({
+          namespace,
+          sessionId: 'session-1',
+          context: props.context,
+          now: 1_000_001,
+        })
+      ).resolves.toBe(expected);
+      expect(namespace.idFromName).toHaveBeenCalledWith('streamable-http:session-1');
+      expect(stub.setName).toHaveBeenCalledWith('streamable-http:session-1');
+      expect(stub.setName.mock.calls[0]).toHaveLength(1);
+      expect(stub._cf_scheduleDestroy).toHaveBeenCalledTimes(destroys ? 1 : 0);
+      expect(stub.validateSessionContextRpc).toHaveBeenCalledTimes(initialized ? 1 : 0);
+    }
+  );
 });

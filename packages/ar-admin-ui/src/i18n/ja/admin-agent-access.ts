@@ -14,13 +14,50 @@ export default {
 	admin_agent_access_tab_templates: 'Template',
 	admin_agent_access_tab_secrets: 'Secret参照',
 	admin_agent_access_tab_settings: '設定',
+	admin_agent_access_tab_advanced: '詳細設定',
+	admin_agent_access_connected_title: '接続済みAgent',
+	admin_agent_access_connected_description:
+		'このtenantで許可された対話接続と自動化接続を管理します。',
+	admin_agent_access_connected_empty:
+		'接続済みAgentはありません。Agent Accessを有効にし、下のURLをMCPホストへ追加してください。',
+	admin_agent_access_connection_url: 'MCP接続URL',
+	admin_agent_access_connection_url_help:
+		'Codex、Claude Codeなど標準対応MCPホストへ、このURLを登録します。接続元の登録と権限選択はサインイン時に行われます。',
+	admin_agent_access_copy_url: 'URLをコピー',
+	admin_agent_access_copied: 'コピーしました',
+	admin_agent_access_interactive_connection: '対話接続',
+	admin_agent_access_automation_connection: '自動化接続',
+	admin_agent_access_toggle_on: 'このtenantで有効化',
+	admin_agent_access_toggle_off: 'このtenantで無効化',
+	admin_agent_access_toggle_help:
+		'現在のtenantだけのAgent Access入口を開閉します。特定のAdminユーザーだけを有効にする設定ではありません。',
+	admin_agent_access_suspend_connection: '接続を停止',
+	admin_agent_access_revoke_connection: '接続を失効',
+	admin_agent_access_edit_permissions: '権限を変更',
+	admin_agent_access_save_permissions: '権限を保存',
+	admin_agent_access_scope_read: '設定を読み取る',
+	admin_agent_access_scope_read_help:
+		'必須です。ユーザーデータを除くAuthrim設定と診断情報を確認できます。',
+	admin_agent_access_scope_user_data: 'マスク済みユーザーデータを読み取る',
+	admin_agent_access_scope_user_data_help:
+		'任意です。ユーザー検索結果がAIホストのコンテキストへ入る可能性があります。出力のマスクは維持されます。',
+	admin_agent_access_scope_write: '設定変更を提案・適用する',
+	admin_agent_access_scope_write_help:
+		'任意です。Plan、サーバー側検証、操作単位の確認またはElevationを経て変更します。',
+	admin_agent_access_scope_change_help:
+		'保存すると新しい不変の認可スナップショットを作成し、変更前の権限で発行されたトークンファミリーを失効させます。',
+	admin_agent_access_scope_updated_notice:
+		'接続権限を更新しました。MCPホストで再認証が必要になる場合があります。',
+	admin_agent_access_scope_unchanged_notice: '接続権限に変更はありません。',
+	admin_agent_access_advanced_help:
+		'手動Client、Grant、Task Set、Scope Policyは、自動化接続、独自policy、相互運用の調査に使用します。',
 	admin_agent_access_loading: 'Agent Accessを読み込んでいます…',
 	admin_agent_access_load_error: 'Agent Accessの読み込みに失敗しました。',
 	admin_agent_access_enabled: '有効',
 	admin_agent_access_disabled: '無効',
-	admin_agent_access_active_grants: '有効なGrant',
-	admin_agent_access_suspended_grants: '停止中のGrant',
-	admin_agent_access_revoked_grants: '失効済みGrant',
+	admin_agent_access_active_grants: '有効な接続',
+	admin_agent_access_suspended_grants: '停止中の接続',
+	admin_agent_access_revoked_grants: '失効済み接続',
 	admin_agent_access_open_grants: 'Agent Grantを管理',
 	admin_agent_access_open_settings: 'ポリシー設定を確認',
 	admin_agent_access_grants_title: 'Agent Grant',

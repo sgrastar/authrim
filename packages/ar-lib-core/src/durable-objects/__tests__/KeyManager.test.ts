@@ -141,6 +141,7 @@ describe('KeyManager Durable Object', () => {
     it('publishes a dedicated ES256 key without reusing VC EC state', async () => {
       const keys = await keyManager.getAllOIDCPublicKeysRpc();
       const oidcECKey = keys.find((key) => key.alg === 'ES256');
+      const oidcPS256Key = keys.find((key) => key.alg === 'PS256');
 
       expect(oidcECKey).toMatchObject({
         kty: 'EC',
@@ -149,11 +150,15 @@ describe('KeyManager Durable Object', () => {
         crv: 'P-256',
       });
       expect(oidcECKey?.kid).toMatch(/^oidc-es256-/);
+      expect(oidcPS256Key).toMatchObject({ kty: 'RSA', use: 'sig', alg: 'PS256' });
+      expect(oidcPS256Key?.kid).toMatch(/^oidc-ps256-/);
 
       const vcState = state.storage.map.get('ecState') as { keys: unknown[] };
       const oidcState = state.storage.map.get('oidcECState') as { keys: unknown[] };
+      const oidcPS256State = state.storage.map.get('oidcPS256State') as { keys: unknown[] };
       expect(vcState.keys).toHaveLength(0);
       expect(oidcState.keys).toHaveLength(1);
+      expect(oidcPS256State.keys).toHaveLength(1);
     });
   });
 

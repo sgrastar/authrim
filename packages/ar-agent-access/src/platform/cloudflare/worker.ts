@@ -39,7 +39,10 @@ import { CloudflareAgentRuntimeDiagnostics } from './runtime-diagnostics';
 import { CLOUDFLARE_ADMIN_READ_ROUTES } from './admin-read-routes';
 import { CLOUDFLARE_ADMIN_WRITE_ROUTES } from './admin-write-routes';
 import { createCloudflareAgentAccessMcpWorker } from './mcp-admission';
-import { createCloudflareAgentAccessMcpAgent } from './mcp-agent';
+import {
+  createCloudflareAgentAccessMcpAgent,
+  validateCloudflareAgentAccessMcpSession,
+} from './mcp-agent';
 import {
   CloudflareServiceBindingManagementApi,
   CloudflareServiceBindingBulkChildExecutor,
@@ -57,6 +60,7 @@ export interface CloudflareAgentAccessWorkerEnv extends CoreEnv {
   OP_MANAGEMENT: CloudflareFetcherBinding;
   OP_DISCOVERY: CloudflareFetcherBinding;
   AGENT_DOWNSCOPE: CloudflareAgentDownscopeExchangeBinding;
+  AGENT_ACCESS_MCP: DurableObjectNamespace;
   ENABLE_AGENT_MCP?: string;
   AGENT_ELEVATION_ENCRYPTION_KEY?: string;
   AGENT_ELEVATION_KEY_VERSION?: string;
@@ -226,6 +230,13 @@ const mcp = createCloudflareAgentAccessMcpWorker<CloudflareAgentAccessWorkerEnv>
   {
     binding: 'AGENT_ACCESS_MCP',
     authenticate: createCloudflareAgentAccessTokenAuthenticator<CloudflareAgentAccessWorkerEnv>(),
+    validateSession(sessionId, env, verifiedProps) {
+      return validateCloudflareAgentAccessMcpSession({
+        namespace: env.AGENT_ACCESS_MCP,
+        sessionId,
+        context: verifiedProps.context,
+      });
+    },
     resolveAllowedOrigin(request, env) {
       const origin = request.headers.get('origin');
       if (!origin) return null;
@@ -267,6 +278,24 @@ function baselineRemediationCoordinator(
   );
 }
 
+export async function runAgentAccessScheduledTasks(input: {
+  evaluateBaselines(): Promise<unknown>;
+  runBaselineRemediation(): Promise<unknown>;
+  runBulkPlans(): Promise<unknown>;
+}): Promise<void> {
+  const failures: unknown[] = [];
+  for (const task of [input.evaluateBaselines, input.runBaselineRemediation, input.runBulkPlans]) {
+    try {
+      await task();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'One or more Agent Access scheduled tasks failed');
+  }
+}
+
 const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
   async fetch(request, env, context) {
     const path = new URL(request.url).pathname;
@@ -278,9 +307,12 @@ const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
   },
   async scheduled(_controller, env, _context) {
     const baseline = baselineRemediationCoordinator(env);
-    await baseline.evaluateScheduled().catch(() => []);
-    await baseline.runScheduled().catch(() => []);
-    await bulkCoordinator(env).runScheduled();
+    const bulk = bulkCoordinator(env);
+    await runAgentAccessScheduledTasks({
+      evaluateBaselines: () => baseline.evaluateScheduled(),
+      runBaselineRemediation: () => baseline.runScheduled(),
+      runBulkPlans: () => bulk.runScheduled(),
+    });
   },
 };
 

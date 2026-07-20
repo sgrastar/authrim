@@ -18,4 +18,6 @@ export * from './downscope';
 export * from './audit';
 export * from './feature-flags';
 export * from './settings';
+export * from './self-service';
+export * from './login-handoff';
 export * from './repositories';

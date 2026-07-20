@@ -11,6 +11,8 @@ const SETTINGS_PLATFORM_PATH =
 const RUNTIME_PROFILE_PLATFORM_PATH = /^\/api\/admin\/runtime-profiles(?:\/.*)?\/?$/;
 const ADMIN_PLATFORM_AUTH_PATH =
   /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;
+const ADMIN_AGENT_LOGIN_HANDOFF_APPROVAL_PATH =
+  /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 export type TenantRequestClass =
@@ -47,6 +49,13 @@ export function classifyTenantRequestPath(path?: string | null): TenantRequestCl
   }
 
   if (ADMIN_PLATFORM_AUTH_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  // The central Admin UI cannot send a tenant header before it has resolved the opaque
+  // handoff. The approval handler derives and validates the target tenant from DB_ADMIN.
+  // Keep this exemption exact so malformed or adjacent Agent routes remain tenant-scoped.
+  if (ADMIN_AGENT_LOGIN_HANDOFF_APPROVAL_PATH.test(normalizedPath)) {
     return 'platform_admin';
   }
 

@@ -1,6 +1,12 @@
 import { hasAdminPermission } from '@authrim/ar-lib-core/types/admin-user';
 import { canonicalizeJson, sha256Base64Url } from './canonical-json';
-import type { AgentRiskLevel, AgentToolDefinition, JsonObject, JsonValue } from './types';
+import type {
+  AgentRiskLevel,
+  AgentScope,
+  AgentToolDefinition,
+  JsonObject,
+  JsonValue,
+} from './types';
 import type { AgentToolCatalog } from './tool-catalog';
 
 const SAFE_ID = /^[A-Za-z0-9._~-]{1,128}$/u;
@@ -14,7 +20,7 @@ export interface AgentTaskSetToolEntry {
   contractVersion: string;
   schemaDigest: string;
   permissions: readonly string[];
-  requiredScope: 'agent:read' | 'agent:write' | 'agent:execute' | 'agent:admin';
+  requiredScope: AgentScope;
   riskLevel: AgentRiskLevel;
   requiresElevation: boolean;
 }

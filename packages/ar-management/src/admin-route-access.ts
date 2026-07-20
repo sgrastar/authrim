@@ -407,6 +407,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'tenant settings'
   ),
   ...byMethod(
+    '/api/admin/settings/agent',
+    ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
+    ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE,
+    'Agent Access settings'
+  ),
+  ...byMethod(
     '/api/admin/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
@@ -1324,13 +1331,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.AGENT_GRANTS_REVOKE,
     'Agent Access grants'
   ),
-  ...byMethod(
-    '/api/admin/settings/agent',
-    ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
-    ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE,
-    'Agent Access settings'
-  ),
+  rule({
+    pattern: '/api/admin/agent-login-handoffs/:id/approve',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.AGENT_USE],
+    description: 'Approve an Admin Agent login handoff on the central Admin origin',
+  }),
   ...byMethod(
     '/api/admin/agent-elevations/*',
     ADMIN_PERMISSIONS.AGENT_USE,
@@ -1482,6 +1488,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     '/api/admin/agent-read/clients/*',
     ADMIN_PERMISSIONS.CLIENTS_READ,
     'Agent-safe client detail'
+  ),
+  readOnly(
+    '/api/admin/agent-read/session-posture',
+    ADMIN_PERMISSIONS.SESSIONS_READ,
+    'Agent-safe aggregate session posture'
   ),
   rule({
     pattern: '/api/admin/agent-write/users/:id/suspend',

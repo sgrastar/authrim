@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
 	import {
 		adminAgentAccessAPI,
 		type AdminAgentGrant,
@@ -14,6 +13,7 @@
 		AgentAccessNav
 	} from '$lib/components/admin';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let grant: AdminAgentGrant | null = $state(null);
@@ -24,6 +24,8 @@
 	let saving = $state(false);
 	let error = $state('');
 	let notice = $state('');
+	let loadedTenantId = $state('');
+	let loadGeneration = 0;
 	const canWrite = $derived(adminAuth.hasPermission('admin:agent_grants:write'));
 	const canRevoke = $derived(adminAuth.hasPermission('admin:agent_grants:revoke'));
 
@@ -43,52 +45,82 @@
 		expiresOn = value.expires_at ? new Date(value.expires_at).toISOString().slice(0, 10) : '';
 	}
 
-	async function load() {
+	async function load(tenantId: string) {
+		const generation = ++loadGeneration;
 		loading = true;
+		saving = false;
 		error = '';
+		grant = null;
+		events = [];
+		loadedTenantId = '';
 		try {
 			const id = $page.params.id;
 			if (!id) throw new Error($LL.admin_agent_access_load_error());
 			const [loadedGrant, loadedEvents] = await Promise.all([
-				adminAgentAccessAPI.getGrant(id),
-				adminAgentAccessAPI.listGrantAudit(id)
+				adminAgentAccessAPI.getGrant(id, tenantId),
+				adminAgentAccessAPI.listGrantAudit(id, tenantId)
 			]);
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			setGrant(loadedGrant);
 			events = loadedEvents;
+			loadedTenantId = tenantId;
 			notice =
 				$page.url.searchParams.get('created') === '1' ? $LL.admin_agent_access_grant_created() : '';
 		} catch (caught) {
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
 		} finally {
-			loading = false;
+			if (generation === loadGeneration) loading = false;
 		}
+	}
+
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId) return;
+		void load(tenantId);
+	});
+
+	function mutationTenantId(): string | null {
+		return loadedTenantId && loadedTenantId === settingsContext.tenantId ? loadedTenantId : null;
 	}
 
 	async function save() {
 		if (!grant) return;
+		const tenantId = mutationTenantId();
+		if (!tenantId) return;
+		const generation = loadGeneration;
 		saving = true;
 		error = '';
 		try {
-			await adminAgentAccessAPI.updateGrant(grant.id, {
-				purpose: purpose.trim() || null,
-				expires_at: expiresOn ? new Date(`${expiresOn}T23:59:59.999`).getTime() : null
-			});
-			notice = $LL.admin_agent_access_updated_notice();
+			await adminAgentAccessAPI.updateGrant(
+				grant.id,
+				{
+					purpose: purpose.trim() || null,
+					expires_at: expiresOn ? new Date(`${expiresOn}T23:59:59.999`).getTime() : null
+				},
+				tenantId
+			);
 			const [updated, updatedEvents] = await Promise.all([
-				adminAgentAccessAPI.getGrant(grant.id),
-				adminAgentAccessAPI.listGrantAudit(grant.id)
+				adminAgentAccessAPI.getGrant(grant.id, tenantId),
+				adminAgentAccessAPI.listGrantAudit(grant.id, tenantId)
 			]);
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
+			notice = $LL.admin_agent_access_updated_notice();
 			setGrant(updated);
 			events = updatedEvents;
 		} catch (caught) {
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
 		} finally {
-			saving = false;
+			if (generation === loadGeneration && tenantId === settingsContext.tenantId) saving = false;
 		}
 	}
 
 	async function transition(kind: 'suspend' | 'resume' | 'revoke') {
 		if (!grant) return;
+		const tenantId = mutationTenantId();
+		if (!tenantId) return;
+		const generation = loadGeneration;
 		const message =
 			kind === 'suspend'
 				? $LL.admin_agent_access_suspend_confirm()
@@ -99,44 +131,49 @@
 		saving = true;
 		error = '';
 		try {
-			if (kind === 'suspend') await adminAgentAccessAPI.suspendGrant(grant.id);
-			else if (kind === 'resume') await adminAgentAccessAPI.resumeGrant(grant.id);
-			else await adminAgentAccessAPI.revokeGrant(grant.id);
-			notice = $LL.admin_agent_access_transition_notice();
+			if (kind === 'suspend') await adminAgentAccessAPI.suspendGrant(grant.id, tenantId);
+			else if (kind === 'resume') await adminAgentAccessAPI.resumeGrant(grant.id, tenantId);
+			else await adminAgentAccessAPI.revokeGrant(grant.id, tenantId);
 			const [updated, updatedEvents] = await Promise.all([
-				adminAgentAccessAPI.getGrant(grant.id),
-				adminAgentAccessAPI.listGrantAudit(grant.id)
+				adminAgentAccessAPI.getGrant(grant.id, tenantId),
+				adminAgentAccessAPI.listGrantAudit(grant.id, tenantId)
 			]);
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
+			notice = $LL.admin_agent_access_transition_notice();
 			setGrant(updated);
 			events = updatedEvents;
 		} catch (caught) {
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
 		} finally {
-			saving = false;
+			if (generation === loadGeneration && tenantId === settingsContext.tenantId) saving = false;
 		}
 	}
 
 	async function preauthorize() {
 		if (!grant || !window.confirm($LL.admin_agent_access_preauthorize_confirm())) return;
+		const tenantId = mutationTenantId();
+		if (!tenantId) return;
+		const generation = loadGeneration;
 		saving = true;
 		error = '';
 		try {
-			await adminAgentAccessAPI.preauthorizeGrant(grant.id);
-			notice = $LL.admin_agent_access_preauthorized_notice();
+			await adminAgentAccessAPI.preauthorizeGrant(grant.id, tenantId);
 			const [updated, updatedEvents] = await Promise.all([
-				adminAgentAccessAPI.getGrant(grant.id),
-				adminAgentAccessAPI.listGrantAudit(grant.id)
+				adminAgentAccessAPI.getGrant(grant.id, tenantId),
+				adminAgentAccessAPI.listGrantAudit(grant.id, tenantId)
 			]);
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
+			notice = $LL.admin_agent_access_preauthorized_notice();
 			setGrant(updated);
 			events = updatedEvents;
 		} catch (caught) {
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
 		} finally {
-			saving = false;
+			if (generation === loadGeneration && tenantId === settingsContext.tenantId) saving = false;
 		}
 	}
-
-	onMount(load);
 </script>
 
 <svelte:head><title>{$LL.admin_agent_access_grant_detail_title()}</title></svelte:head>

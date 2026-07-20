@@ -96,8 +96,8 @@ export interface CachedSystemSettings {
       requireSignedRequestObject?: boolean;
       requireJarm?: boolean;
       requestObjectSigningAlgorithms?: string[];
-      authorizationSigningAlgorithms?: Array<'RS256' | 'ES256'>;
-      defaultAuthorizationSigningAlgorithm?: 'RS256' | 'ES256';
+      authorizationSigningAlgorithms?: Array<'RS256' | 'ES256' | 'PS256'>;
+      defaultAuthorizationSigningAlgorithm?: 'RS256' | 'ES256' | 'PS256';
       maxRequestObjectAgeSeconds?: number;
       maxRequestObjectLifetimeSeconds?: number;
       clockSkewSeconds?: number;

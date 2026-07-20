@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
+  createAuthContextFromHono,
   hasAdminPermission,
   type AdminAuthContext,
   type Env,
@@ -123,6 +124,12 @@ function authorized(c: AgentReadContext, permission: string): Response | null {
 function currentTenant(c: AgentReadContext): string {
   const auth = c.get('adminAuth') as AdminAuthContext;
   return auth.tenantId ?? c.env.DEFAULT_TENANT_ID ?? 'default';
+}
+
+function epochSecondsToIso(value: unknown): string | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? new Date(value * 1000).toISOString()
+    : null;
 }
 
 function allowedQuery(c: AgentReadContext, fields: readonly string[]): boolean {
@@ -257,6 +264,71 @@ agentReadOperationsRouter.get('/clients/:id', async (c) => {
   });
 });
 
+agentReadOperationsRouter.get('/session-posture', async (c) => {
+  const denied = authorized(c, ADMIN_PERMISSIONS.SESSIONS_READ);
+  if (denied) return denied;
+  if (!allowedQuery(c, [])) return c.json({ error: 'AGENT_READ_INVALID_QUERY' }, 400);
+
+  const tenantId = currentTenant(c);
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const row = await createAuthContextFromHono(ownerContext(c), tenantId).coreAdapter.queryOne<{
+      total_sessions: number;
+      active_sessions: number | null;
+      expired_sessions: number | null;
+      oldest_created_at: number | null;
+      newest_last_accessed_at: number | null;
+      next_expiration_at: number | null;
+      latest_expiration_at: number | null;
+    }>(
+      `SELECT
+         COUNT(*) AS total_sessions,
+         SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) AS active_sessions,
+         SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) AS expired_sessions,
+         MIN(created_at) AS oldest_created_at,
+         MAX(COALESCE(last_accessed_at, created_at)) AS newest_last_accessed_at,
+         MIN(CASE WHEN expires_at > ? THEN expires_at END) AS next_expiration_at,
+         MAX(expires_at) AS latest_expiration_at
+       FROM sessions
+       WHERE tenant_id = ?`,
+      [now, now, now, tenantId]
+    );
+    if (!row || !Number.isSafeInteger(row.total_sessions) || row.total_sessions < 0) {
+      return c.json({ error: 'AGENT_READ_INVALID_OWNER_RESPONSE' }, 502);
+    }
+    const activeSessions = row.active_sessions ?? 0;
+    const expiredSessions = row.expired_sessions ?? 0;
+    if (
+      !Number.isSafeInteger(activeSessions) ||
+      activeSessions < 0 ||
+      !Number.isSafeInteger(expiredSessions) ||
+      expiredSessions < 0 ||
+      activeSessions + expiredSessions !== row.total_sessions
+    ) {
+      return c.json({ error: 'AGENT_READ_INVALID_OWNER_RESPONSE' }, 502);
+    }
+    return c.json(
+      {
+        snapshot: {
+          total_sessions: row.total_sessions,
+          active_sessions: activeSessions,
+          expired_sessions: expiredSessions,
+          window: {
+            oldest_created_at: epochSecondsToIso(row.oldest_created_at),
+            newest_last_accessed_at: epochSecondsToIso(row.newest_last_accessed_at),
+            next_expiration_at: epochSecondsToIso(row.next_expiration_at),
+            latest_expiration_at: epochSecondsToIso(row.latest_expiration_at),
+          },
+        },
+      },
+      200,
+      { 'cache-control': 'no-store' }
+    );
+  } catch {
+    return c.json({ error: 'AGENT_READ_OWNER_UNAVAILABLE' }, 503);
+  }
+});
+
 agentReadOperationsRouter.get('/admin-audit-log', async (c) => {
   const denied = authorized(c, ADMIN_PERMISSIONS.ADMIN_AUDIT_READ);
   if (denied) return denied;
@@ -291,11 +363,9 @@ agentReadOperationsRouter.get('/admin-audit-log', async (c) => {
         id: item.id ?? null,
         action: item.action ?? null,
         resource_type: item.resource_type ?? null,
-        resource_id: item.resource_id ?? null,
         result: item.result ?? null,
         severity: item.severity ?? null,
         actor_type: item.actor_type ?? null,
-        actor_id: item.actor_id ?? null,
         actor_display_name_masked: maskedName(item.actor_display_name ?? item.admin_email),
         request_id: item.request_id ?? null,
         created_at: item.created_at ?? null,

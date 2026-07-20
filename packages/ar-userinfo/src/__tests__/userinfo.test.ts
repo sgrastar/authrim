@@ -271,7 +271,10 @@ describe('UserInfo Endpoint', () => {
   describe('Token Validation', () => {
     it('should return 401 when token is invalid', async () => {
       const c = createMockContext({
-        headers: { Authorization: 'Bearer invalid-token' },
+        headers: {
+          Authorization: 'Bearer invalid-token',
+          'x-fapi-interaction-id': 'fapi-interaction-123',
+        },
       });
 
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
@@ -285,6 +288,11 @@ describe('UserInfo Endpoint', () => {
       });
 
       await userinfoHandler(c);
+
+      expect(introspectTokenFromContext).toHaveBeenCalledWith(c, {
+        audience: ['https://op.example.com', 'https://op.example.com/userinfo'],
+      });
+      expect(c.header).toHaveBeenCalledWith('x-fapi-interaction-id', 'fapi-interaction-123');
 
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({

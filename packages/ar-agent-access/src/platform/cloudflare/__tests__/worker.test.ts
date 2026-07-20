@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('agents/mcp', () => ({
   McpAgent: class {
@@ -8,8 +8,7 @@ vi.mock('agents/mcp', () => ({
   },
 }));
 
-let worker: (typeof import('../worker'))['default'];
-let AgentAccessMcpAgent: (typeof import('../worker'))['AgentAccessMcpAgent'];
+import worker, { AgentAccessMcpAgent, runAgentAccessScheduledTasks } from '../worker';
 
 const context = {
   waitUntil() {},
@@ -18,10 +17,6 @@ const context = {
 } as unknown as ExecutionContext;
 
 describe('Agent Access Cloudflare composition root', () => {
-  beforeAll(async () => {
-    ({ default: worker, AgentAccessMcpAgent } = await import('../worker'));
-  });
-
   it('exports the McpAgent Durable Object class expected by wrangler', () => {
     expect(AgentAccessMcpAgent).toBeTypeOf('function');
   });
@@ -43,5 +38,25 @@ describe('Agent Access Cloudflare composition root', () => {
       context
     );
     expect(response.status).toBe(404);
+  });
+
+  it('runs every scheduled coordinator and surfaces all failures to Workers observability', async () => {
+    const evaluate = vi.fn().mockRejectedValue(new Error('evaluation failed'));
+    const remediation = vi.fn().mockResolvedValue([]);
+    const bulk = vi.fn().mockRejectedValue(new Error('bulk failed'));
+
+    await expect(
+      runAgentAccessScheduledTasks({
+        evaluateBaselines: evaluate,
+        runBaselineRemediation: remediation,
+        runBulkPlans: bulk,
+      })
+    ).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: [expect.any(Error), expect.any(Error)],
+    });
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(remediation).toHaveBeenCalledOnce();
+    expect(bulk).toHaveBeenCalledOnce();
   });
 });

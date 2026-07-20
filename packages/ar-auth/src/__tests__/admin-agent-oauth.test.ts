@@ -10,7 +10,14 @@ const mocks = vi.hoisted(() => ({
   getRequestRpc: vi.fn(),
   consumeRequestRpc: vi.fn(),
   findActiveGrantForDelegatorClient: vi.fn(),
+  getGrantRecord: vi.fn(),
   grantConsentPair: vi.fn(),
+  createSelfServiceAuthorization: vi.fn(),
+  replaceSelfServiceAuthorization: vi.fn(),
+  suspendForClientMetadataChange: vi.fn(),
+  safeFetchJson: vi.fn(),
+  clientCreate: vi.fn(),
+  coreExecute: vi.fn(),
   storeCodeRpc: vi.fn(),
 }));
 
@@ -20,7 +27,11 @@ vi.mock('@authrim/ar-agent-access/core', async (importOriginal) => {
     ...actual,
     AdminAgentAccessRepository: class {
       findActiveGrantForDelegatorClient = mocks.findActiveGrantForDelegatorClient;
+      getGrantRecord = mocks.getGrantRecord;
       grantConsentPair = mocks.grantConsentPair;
+      createSelfServiceAuthorization = mocks.createSelfServiceAuthorization;
+      replaceSelfServiceAuthorization = mocks.replaceSelfServiceAuthorization;
+      suspendForClientMetadataChange = mocks.suspendForClientMetadataChange;
     },
   };
 });
@@ -34,13 +45,24 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getPARRequestStoreByUri: mocks.getPARRequestStoreByUri,
     getPARRequestStoreForNewRequest: mocks.getPARRequestStoreForNewRequest,
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
+    safeFetchJson: mocks.safeFetchJson,
+    createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: { execute: mocks.coreExecute },
+    })),
+    ClientRepository: class {
+      create = mocks.clientCreate;
+    },
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({})),
   };
 });
 
 import { adminAgentAuthorizeHandler, adminAgentParHandler } from '../admin-agent-oauth';
+import { canonicalizeJson, sha256Base64Url } from '@authrim/ar-agent-access/core';
 
-function createApp(env: Partial<Env> & { ENABLE_AGENT_MCP?: string }) {
+function createApp(
+  env: Partial<Env> & { ENABLE_AGENT_MCP?: string },
+  permissions = ['admin:agent_grants:write', 'admin:users:read']
+) {
   const app = new Hono<{
     Bindings: Env;
     Variables: { tenantId: string; adminAuth: Record<string, unknown> };
@@ -51,7 +73,7 @@ function createApp(env: Partial<Env> & { ENABLE_AGENT_MCP?: string }) {
       userId: 'admin-1',
       authMethod: 'session',
       tenantId: 'tenant-1',
-      permissions: ['admin:agent_grants:write', 'admin:users:read'],
+      permissions,
     });
     await next();
   });
@@ -84,6 +106,8 @@ describe('Admin Agent PAR', () => {
       token_endpoint_auth_method: 'none',
       requestable_scopes: ['agent:read'],
     });
+    mocks.clientCreate.mockResolvedValue({ client_id: 'created' });
+    mocks.coreExecute.mockResolvedValue({ success: true, rows: [], rowsAffected: 1 });
     mocks.getPARRequestStoreForNewRequest.mockResolvedValue({
       stub: { storeRequestRpc: mocks.storeRequestRpc },
       requestUri: 'urn:ietf:params:oauth:request_uri:g1:apac:0:par_test',
@@ -117,11 +141,13 @@ describe('Admin Agent PAR', () => {
       delegatorId: 'admin-1',
       permissions: ['admin:users:read'],
       scopes: ['agent:read'],
+      resolvedScopeConstraints: { tenantIds: ['tenant-1'], maxPerCall: 50 },
       consentVersion: 2,
       generation: 3,
       status: 'active',
       delegationMode: 'user_consent',
     });
+    mocks.getGrantRecord.mockResolvedValue({ purpose: 'managed_test_fixture' });
   });
 
   it('stores a journey- and resource-bound single-use request', async () => {
@@ -239,6 +265,22 @@ describe('Admin Agent PAR', () => {
             { type: 'authrim_admin_agent', arbitrary_selector: 'admin:*' },
           ]),
         }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_authorization_details' });
+    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects authorization_details larger than the RFC 9396 storage boundary', async () => {
+    const { app, env } = createApp({ ENABLE_AGENT_MCP: 'true', PAR_REQUEST_STORE: {} as never });
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/par', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: body({ authorization_details: ` ${' '.repeat(16 * 1024)}` }),
       }),
       env
     );
@@ -373,6 +415,252 @@ describe('Admin Agent PAR', () => {
     expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
   });
 
+  it('resolves an HTTPS client_id metadata document before creating the PAR request', async () => {
+    const clientId = 'https://client.example.com/.well-known/oauth-client.json';
+    mocks.getClientCached.mockResolvedValue(null);
+    mocks.safeFetchJson.mockResolvedValue({
+      client_id: clientId,
+      client_name: 'Metadata client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      scope: 'agent:read',
+    });
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.safeFetchJson).toHaveBeenCalledWith(
+      clientId,
+      expect.objectContaining({ requireHttps: true, maxResponseSize: 64 * 1024 })
+    );
+    expect(mocks.clientCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client_id: clientId,
+        token_endpoint_auth_method: 'none',
+        require_pkce: true,
+        requestable_scopes: ['agent:read'],
+      })
+    );
+    expect(mocks.coreExecute).toHaveBeenCalledWith(
+      expect.stringContaining("agent_access_registration_mode = 'cimd'"),
+      expect.arrayContaining([clientId, 'tenant-1'])
+    );
+  });
+
+  it('rejects CIMD metadata containing an unsafe redirect URI', async () => {
+    const clientId = 'https://client.example.com/.well-known/oauth-client.json';
+    mocks.getClientCached.mockResolvedValue(null);
+    mocks.safeFetchJson.mockResolvedValue({
+      client_id: clientId,
+      client_name: 'Unsafe metadata client',
+      redirect_uris: ['javascript:alert(1)'],
+      token_endpoint_auth_method: 'none',
+      scope: 'agent:read',
+    });
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'unauthorized_client' });
+    expect(mocks.clientCreate).not.toHaveBeenCalled();
+    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { client_uri: 'javascript:alert(1)' },
+    { logo_uri: 'http://client.example.com/logo.png' },
+    { client_uri: `https://client.example.com/${'a'.repeat(2049)}` },
+  ])('rejects CIMD metadata containing an unsafe presentation URI: %o', async (metadata) => {
+    const clientId = 'https://client.example.com/.well-known/oauth-client.json';
+    mocks.getClientCached.mockResolvedValue(null);
+    mocks.safeFetchJson.mockResolvedValue({
+      client_id: clientId,
+      client_name: 'Unsafe presentation metadata client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      scope: 'agent:read',
+      ...metadata,
+    });
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'unauthorized_client' });
+    expect(mocks.clientCreate).not.toHaveBeenCalled();
+    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'https://client.example.com/a/../oauth-client.json',
+    'https://client.example.com/a/%2e%2e/oauth-client.json',
+  ])('rejects a CIMD client_id containing a dot segment: %s', async (clientId) => {
+    mocks.getClientCached.mockResolvedValue(null);
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    expect(mocks.safeFetchJson).not.toHaveBeenCalled();
+    expect(mocks.clientCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects CIMD metadata that omits the required agent:read scope', async () => {
+    const clientId = 'https://client.example.com/.well-known/oauth-client.json';
+    mocks.getClientCached.mockResolvedValue(null);
+    mocks.safeFetchJson.mockResolvedValue({
+      client_id: clientId,
+      client_name: 'Write-only metadata client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      scope: 'agent:write',
+    });
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId, scope: 'agent:write' });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'unauthorized_client' });
+    expect(mocks.clientCreate).not.toHaveBeenCalled();
+    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+  });
+
+  it('reactivates an expired CIMD registration only after unchanged metadata is revalidated', async () => {
+    const clientId = 'https://client.example.com/.well-known/oauth-client.json';
+    const normalizedMetadata = {
+      client_id: clientId,
+      client_name: 'Metadata client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      scope: 'agent:read',
+      dpop_bound_access_tokens: false,
+    };
+    const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata as never));
+    mocks.getClientCached.mockResolvedValue({
+      ...normalizedMetadata,
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'cimd',
+      agent_access_expires_at: Date.now() - 1,
+      client_metadata_hash: metadataHash,
+    });
+    mocks.safeFetchJson.mockResolvedValue(normalizedMetadata);
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.coreExecute).toHaveBeenCalledWith(
+      expect.stringContaining("agent_access_registration_mode = 'cimd'"),
+      expect.arrayContaining(['tenant-1', clientId, metadataHash])
+    );
+    expect(mocks.suspendForClientMetadataChange).not.toHaveBeenCalled();
+    expect(mocks.storeRequestRpc).toHaveBeenCalled();
+  });
+
+  it('suspends the Grant and rejects authorization when CIMD metadata changes', async () => {
+    const clientId = 'https://client.example.com/.well-known/oauth-client.json';
+    mocks.getClientCached.mockResolvedValue({
+      client_id: clientId,
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read'],
+      agent_access_registration_mode: 'cimd',
+      agent_access_expires_at: Date.now() + 60_000,
+      client_metadata_hash: 'old-metadata-hash',
+    });
+    mocks.safeFetchJson.mockResolvedValue({
+      client_id: clientId,
+      client_name: 'Changed metadata client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      scope: 'agent:read',
+    });
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      PAR_REQUEST_STORE: {} as never,
+    });
+    const parameters = body({ client_id: clientId });
+    const response = await app.fetch(
+      new Request(
+        `https://tenant.example.com/oauth/admin-agent/authorize?${parameters.toString()}`
+      ),
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'unauthorized_client' });
+    expect(mocks.suspendForClientMetadataChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        clientId,
+        oldHash: 'old-metadata-hash',
+        newHash: expect.not.stringMatching(/^old-metadata-hash$/u),
+      })
+    );
+    expect(mocks.coreExecute).toHaveBeenCalledWith(
+      expect.stringContaining('agent_access_expires_at = 0'),
+      expect.arrayContaining(['tenant-1', clientId])
+    );
+    expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('renders consent without consuming the PAR request', async () => {
     const { app, env } = createApp({ ENABLE_AGENT_MCP: 'true', DB_ADMIN: {} as never });
     const response = await app.fetch(
@@ -383,7 +671,10 @@ describe('Admin Agent PAR', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain('Agentアクセスの確認');
+    const html = await response.text();
+    expect(html).toContain('Agentアクセスの確認');
+    expect(html).toContain('1回あたりの対象上限');
+    expect(html).toContain('50件');
     expect(mocks.consumeRequestRpc).not.toHaveBeenCalled();
     expect(mocks.findActiveGrantForDelegatorClient).toHaveBeenCalledWith(
       'tenant-1',
@@ -421,14 +712,17 @@ describe('Admin Agent PAR', () => {
 
   it('rechecks, consumes, records both consents, and issues an admin-bound code on approval', async () => {
     const authCodeStore = { storeCodeRpc: mocks.storeCodeRpc };
-    const { app, env } = createApp({
-      ENABLE_AGENT_MCP: 'true',
-      DB_ADMIN: {} as never,
-      AUTH_CODE_STORE: {
-        idFromName: vi.fn(() => ({}) as never),
-        get: vi.fn(() => authCodeStore),
-      } as never,
-    });
+    const { app, env } = createApp(
+      {
+        ENABLE_AGENT_MCP: 'true',
+        DB_ADMIN: {} as never,
+        AUTH_CODE_STORE: {
+          idFromName: vi.fn(() => ({}) as never),
+          get: vi.fn(() => authCodeStore),
+        } as never,
+      },
+      ['admin:*']
+    );
     const response = await app.fetch(
       new Request('https://tenant.example.com/oauth/admin-agent/authorize', {
         method: 'POST',
@@ -473,6 +767,307 @@ describe('Admin Agent PAR', () => {
         agentConsentVersion: 2,
       })
     );
+  });
+
+  it('preserves advanced managed Grant scopes instead of forcing the self-service profile', async () => {
+    mocks.getClientCached.mockResolvedValue({
+      client_id: 'mcp-client',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:execute'],
+    });
+    const par = {
+      authorization_server: 'admin_agent',
+      tenant_id: 'tenant-1',
+      client_id: 'mcp-client',
+      redirect_uri: 'https://client.example.com/callback',
+      response_type: 'code',
+      scope: 'agent:execute',
+      state: 'opaque-state',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: 'https://tenant.example.com/mcp',
+      consumed: false,
+    };
+    mocks.getRequestRpc.mockResolvedValue(par);
+    mocks.consumeRequestRpc.mockResolvedValue(par);
+    mocks.findActiveGrantForDelegatorClient.mockResolvedValue({
+      grantId: 'grant-advanced',
+      tenantId: 'tenant-1',
+      clientId: 'mcp-client',
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:users:read'],
+      scopes: ['agent:execute'],
+      consentVersion: 4,
+      generation: 5,
+      status: 'active',
+      delegationMode: 'user_consent',
+    });
+    mocks.getGrantRecord.mockResolvedValue({ purpose: 'managed_advanced' });
+    const authCodeStore = { storeCodeRpc: mocks.storeCodeRpc };
+    const { app, env } = createApp({
+      ENABLE_AGENT_MCP: 'true',
+      DB_ADMIN: {} as never,
+      AUTH_CODE_STORE: {
+        idFromName: vi.fn(() => ({}) as never),
+        get: vi.fn(() => authCodeStore),
+      } as never,
+    });
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/authorize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          request_uri: 'urn:ietf:params:oauth:request_uri:g1:apac:0:par_test',
+          client_id: 'mcp-client',
+          decision: 'approve',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.grantConsentPair).toHaveBeenCalledWith(
+      expect.objectContaining({
+        delegation: expect.objectContaining({ scopes: ['agent:execute'], consentVersion: 4 }),
+        oauthClient: expect.objectContaining({ scopes: ['agent:execute'], consentVersion: 4 }),
+      })
+    );
+    expect(mocks.replaceSelfServiceAuthorization).not.toHaveBeenCalled();
+    expect(mocks.storeCodeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'agent:execute', agentGrantId: 'grant-advanced' })
+    );
+  });
+
+  it('creates a system-managed Grant from only the scopes selected by the Admin', async () => {
+    mocks.findActiveGrantForDelegatorClient.mockResolvedValue(null);
+    mocks.getGrantRecord.mockResolvedValue(null);
+    mocks.getClientCached.mockResolvedValue({
+      client_id: 'mcp-client',
+      client_name: 'Codex',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'none',
+      requestable_scopes: ['agent:read', 'agent:user-data:read', 'agent:write'],
+    });
+    const par = {
+      authorization_server: 'admin_agent',
+      tenant_id: 'tenant-1',
+      client_id: 'mcp-client',
+      redirect_uri: 'https://client.example.com/callback',
+      response_type: 'code',
+      scope: 'agent:read agent:user-data:read agent:write',
+      state: 'opaque-state',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: 'https://tenant.example.com/mcp',
+      authorization_details: JSON.stringify([
+        { type: 'authrim_admin_agent', max_subjects_per_call: 1 },
+      ]),
+      consumed: false,
+    };
+    mocks.getRequestRpc.mockResolvedValue(par);
+    mocks.consumeRequestRpc.mockResolvedValue(par);
+    const authCodeStore = { storeCodeRpc: mocks.storeCodeRpc };
+    const { app, env } = createApp(
+      {
+        ENABLE_AGENT_MCP: 'true',
+        DB_ADMIN: {} as never,
+        AUTH_CODE_STORE: {
+          idFromName: vi.fn(() => ({}) as never),
+          get: vi.fn(() => authCodeStore),
+        } as never,
+      },
+      ['admin:*']
+    );
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/authorize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          request_uri: 'urn:ietf:params:oauth:request_uri:g1:apac:0:par_test',
+          client_id: 'mcp-client',
+          decision: 'approve',
+          scope_user_data_read: 'agent:user-data:read',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.createSelfServiceAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grant: expect.objectContaining({
+          purpose: 'interactive_self_service',
+          delegationMode: 'user_consent',
+          scopes: ['agent:read', 'agent:user-data:read'],
+          authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 1 }],
+          resolvedScopeConstraints: expect.objectContaining({ maxPerCall: 1 }),
+        }),
+        delegationConsent: expect.objectContaining({
+          scopes: ['agent:read', 'agent:user-data:read'],
+        }),
+        audit: expect.objectContaining({
+          metadata: expect.objectContaining({ max_subjects_per_call: 1 }),
+        }),
+      })
+    );
+    expect(mocks.storeCodeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'agent:read agent:user-data:read',
+        authorizationDetails: JSON.stringify([
+          { type: 'authrim_admin_agent', max_subjects_per_call: 1 },
+        ]),
+      })
+    );
+  });
+
+  it('replaces an active self-service snapshot when RAR narrows the per-call limit', async () => {
+    const currentGrant = {
+      grantId: 'grant-1',
+      tenantId: 'tenant-1',
+      clientId: 'mcp-client',
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:users:read'],
+      scopes: ['agent:read'] as const,
+      authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 50 }],
+      resolvedScopeConstraints: {
+        tenantIds: ['tenant-1'],
+        piiMode: 'masked' as const,
+        maxPerCall: 50,
+      },
+      consentVersion: 2,
+      generation: 3,
+      status: 'active' as const,
+      delegationMode: 'user_consent' as const,
+      expiresAt: Date.now() + 60_000,
+    };
+    mocks.findActiveGrantForDelegatorClient.mockResolvedValue(currentGrant);
+    mocks.getGrantRecord.mockResolvedValue({
+      ...currentGrant,
+      purpose: 'interactive_self_service',
+      managementMode: 'system_managed',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const par = {
+      authorization_server: 'admin_agent',
+      tenant_id: 'tenant-1',
+      client_id: 'mcp-client',
+      redirect_uri: 'https://client.example.com/callback',
+      response_type: 'code',
+      scope: 'agent:read',
+      state: 'opaque-state',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: 'https://tenant.example.com/mcp',
+      authorization_details: JSON.stringify([
+        { type: 'authrim_admin_agent', max_subjects_per_call: 1 },
+      ]),
+      consumed: false,
+    };
+    mocks.getRequestRpc.mockResolvedValue(par);
+    mocks.consumeRequestRpc.mockResolvedValue(par);
+    const authCodeStore = { storeCodeRpc: mocks.storeCodeRpc };
+    const { app, env } = createApp(
+      {
+        ENABLE_AGENT_MCP: 'true',
+        DB_ADMIN: {} as never,
+        AUTH_CODE_STORE: {
+          idFromName: vi.fn(() => ({}) as never),
+          get: vi.fn(() => authCodeStore),
+        } as never,
+      },
+      ['admin:*']
+    );
+
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/authorize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          request_uri: 'urn:ietf:params:oauth:request_uri:g1:apac:0:par_test',
+          client_id: 'mcp-client',
+          decision: 'approve',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.replaceSelfServiceAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 3,
+        grant: expect.objectContaining({
+          generation: 4,
+          consentVersion: 3,
+          authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 1 }],
+          resolvedScopeConstraints: expect.objectContaining({ maxPerCall: 1 }),
+        }),
+        consentAudit: expect.objectContaining({
+          metadata: expect.objectContaining({ max_subjects_per_call: 1 }),
+        }),
+      })
+    );
+    expect(mocks.grantConsentPair).not.toHaveBeenCalled();
+  });
+
+  it('renews an expired self-service Grant even when the selected scopes are unchanged', async () => {
+    mocks.findActiveGrantForDelegatorClient.mockResolvedValue({
+      grantId: 'grant-1',
+      tenantId: 'tenant-1',
+      clientId: 'mcp-client',
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:users:read'],
+      scopes: ['agent:read'],
+      consentVersion: 2,
+      generation: 3,
+      status: 'active',
+      delegationMode: 'user_consent',
+      expiresAt: Date.now() - 1,
+    });
+    mocks.getGrantRecord.mockResolvedValue({ purpose: 'interactive_self_service' });
+    const authCodeStore = { storeCodeRpc: mocks.storeCodeRpc };
+    const { app, env } = createApp(
+      {
+        ENABLE_AGENT_MCP: 'true',
+        DB_ADMIN: {} as never,
+        AUTH_CODE_STORE: {
+          idFromName: vi.fn(() => ({}) as never),
+          get: vi.fn(() => authCodeStore),
+        } as never,
+      },
+      ['admin:*']
+    );
+    const response = await app.fetch(
+      new Request('https://tenant.example.com/oauth/admin-agent/authorize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          request_uri: 'urn:ietf:params:oauth:request_uri:g1:apac:0:par_test',
+          client_id: 'mcp-client',
+          decision: 'approve',
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.replaceSelfServiceAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 3,
+        grant: expect.objectContaining({
+          generation: 4,
+          consentVersion: 3,
+          scopes: ['agent:read'],
+          managementMode: 'system_managed',
+          expiresAt: expect.any(Number),
+        }),
+      })
+    );
+    expect(mocks.grantConsentPair).not.toHaveBeenCalled();
   });
 
   it('consumes a denied request without creating consent or a code', async () => {

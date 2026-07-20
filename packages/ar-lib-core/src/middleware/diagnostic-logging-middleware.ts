@@ -45,6 +45,7 @@ export interface DiagnosticLoggingMiddlewareConfig {
  * Context variable name for diagnostic session ID
  */
 const DIAGNOSTIC_SESSION_ID_VAR = 'diagnosticSessionId';
+export const DIAGNOSTIC_FLOW_ID_HEADER = 'X-Authrim-Diagnostic-Flow-Id';
 
 function getContextTenantId(c: Context<any>): string | undefined {
   try {
@@ -80,7 +81,11 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
     }
 
     // Get diagnostic session ID from header (if provided by SDK)
-    const diagnosticSessionId = c.req.header('X-Diagnostic-Session-Id');
+    const rawDiagnosticSessionId = c.req.header('X-Diagnostic-Session-Id');
+    const diagnosticSessionId =
+      rawDiagnosticSessionId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(rawDiagnosticSessionId)
+        ? rawDiagnosticSessionId
+        : undefined;
     if (diagnosticSessionId) {
       c.set(DIAGNOSTIC_SESSION_ID_VAR as any, diagnosticSessionId);
     }
@@ -139,6 +144,7 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
         response: c.res,
         requestId,
         durationMs,
+        flowId: c.res.headers.get(DIAGNOSTIC_FLOW_ID_HEADER) || undefined,
       });
     } catch (error) {
       log.warn('Failed to log HTTP response', { error: String(error) });
@@ -217,7 +223,7 @@ async function loadDiagnosticSettings(
   try {
     const manager = createSettingsManager({
       env: env as unknown as Record<string, string | undefined>,
-      kv: env.AUTHRIM_CONFIG ?? null,
+      kv: env.SETTINGS ?? null,
       cacheTTL: 5000,
     });
 

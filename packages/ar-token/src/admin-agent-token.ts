@@ -3,7 +3,10 @@ import {
   AGENT_ACCESS_SETTING_KEYS,
   AdminAgentAccessRepository,
   evaluateAgentMcpFeatureFlag,
+  isSelfServiceClientMetadataDocumentId,
+  normalizeSelfServiceAgentAuthorizationDetails,
   parseAgentAccessSettings,
+  type JsonObject,
 } from '@authrim/ar-agent-access/core';
 import type { AccessTokenClaims, ClientMetadata, Env } from '@authrim/ar-lib-core';
 import {
@@ -11,6 +14,7 @@ import {
   authenticateConfidentialOAuthClient,
   buildDOInstanceName,
   createAccessToken,
+  createAuthContextFromHono,
   createRefreshToken,
   createRefreshTokenFamily,
   generateSecureRandomString,
@@ -44,6 +48,33 @@ const PUBLIC_REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 const CONFIDENTIAL_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const PUBLIC_REFRESH_IDLE_SECONDS = 12 * 60 * 60;
 const CONFIDENTIAL_REFRESH_IDLE_SECONDS = 24 * 60 * 60;
+
+function selfServiceClientIsActive(client: ClientMetadata, now = Date.now()): boolean {
+  return (
+    client.agent_access_registration_mode === undefined ||
+    (client.agent_access_expires_at !== undefined && client.agent_access_expires_at > now)
+  );
+}
+
+async function touchSelfServiceClient(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  client: ClientMetadata
+): Promise<void> {
+  if (client.agent_access_registration_mode === undefined) return;
+  const now = Date.now();
+  try {
+    await createAuthContextFromHono(c, tenantId).coreAdapter.execute(
+      `UPDATE oauth_clients SET agent_access_last_used_at = ?, agent_access_expires_at = ?,
+         updated_at = ? WHERE tenant_id = ? AND client_id = ?
+         AND agent_access_registration_mode IS NOT NULL`,
+      [now, now + 30 * 24 * 60 * 60 * 1000, now, tenantId, client.client_id]
+    );
+  } catch {
+    // The inactivity marker is lifecycle metadata. Never turn an already-rotated or already-issued
+    // token response into an ambiguous failure when this best-effort extension cannot be stored.
+  }
+}
 
 function errorResponse(
   c: Context<{ Bindings: Env }>,
@@ -98,6 +129,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringClaim(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function parseAdminAgentAuthorizationDetails(value: unknown): JsonObject[] | undefined {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  return normalizeSelfServiceAgentAuthorizationDetails(parsed).authorizationDetails;
 }
 
 function scopeSubset(requested: string, allowed: string): boolean {
@@ -269,6 +305,7 @@ async function issueInitialRefreshToken(input: {
   grantGeneration: number;
   consentVersion: number;
   scope: string;
+  authorizationDetails?: JsonObject[];
   publicClient: boolean;
   dpopJkt?: string;
   privateKey: CryptoKey;
@@ -318,6 +355,9 @@ async function issueInitialRefreshToken(input: {
         consent_version: input.consentVersion,
         actor_mode: 'mode_a',
         actor_assurance: input.publicClient ? 'public_client_transaction' : 'confidential_client',
+        ...(input.authorizationDetails
+          ? { authorization_details: input.authorizationDetails }
+          : {}),
         ...(input.dpopJkt ? { cnf: { jkt: input.dpopJkt } } : {}),
       },
       input.privateKey,
@@ -391,7 +431,7 @@ async function handleAdminAgentRefresh(
     );
   }
   const clientIdValidation = validateClientId(form.client_id);
-  if (!clientIdValidation.valid) {
+  if (!clientIdValidation.valid && !isSelfServiceClientMetadataDocumentId(form.client_id)) {
     return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
   }
   const tenantId = getTenantIdFromContext(c);
@@ -402,7 +442,9 @@ async function handleAdminAgentRefresh(
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
   const client = (await getClientCached(c, c.env, form.client_id)) as ClientMetadata | null;
-  if (!client) return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
+  if (!client || !selfServiceClientIsActive(client)) {
+    return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
+  }
   const credentials = parseOAuthClientAuthenticationParams({
     clientId: form.client_id,
     clientSecret: form.client_secret,
@@ -468,6 +510,12 @@ async function handleAdminAgentRefresh(
   ) {
     return errorResponse(c, 'invalid_grant', 'Refresh token binding is invalid');
   }
+  let authorizationDetails: JsonObject[] | undefined;
+  try {
+    authorizationDetails = parseAdminAgentAuthorizationDetails(payload.authorization_details);
+  } catch {
+    return errorResponse(c, 'invalid_grant', 'Refresh token authorization_details is invalid');
+  }
   const delegatorId = subject.slice('admin_user:'.length);
   const requestedScope = form.scope || tokenScope;
   if (!scopeSubset(requestedScope, tokenScope)) {
@@ -526,6 +574,7 @@ async function handleAdminAgentRefresh(
     !grant ||
     !familyUsable ||
     grant.status !== 'active' ||
+    (grant.expiresAt !== undefined && grant.expiresAt <= now) ||
     grant.clientId !== form.client_id ||
     grant.delegatorId !== delegatorId ||
     grant.generation !== grantGeneration ||
@@ -592,6 +641,7 @@ async function handleAdminAgentRefresh(
     actor_assurance: assurance,
     token_binding: dpopJkt ? 'dpop' : 'bearer',
     act: { sub: `client:${form.client_id}` },
+    ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
     ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
   } satisfies Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'>;
   const access = await createAccessToken(
@@ -616,6 +666,7 @@ async function handleAdminAgentRefresh(
       consent_version: grant.consentVersion,
       actor_mode: 'mode_a',
       actor_assurance: assurance,
+      ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
       ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
     },
     key.privateKey,
@@ -644,6 +695,7 @@ async function handleAdminAgentRefresh(
     metadata: { family_id: familyId, grant_generation: grant.generation },
     createdAt: Date.now(),
   });
+  await touchSelfServiceClient(c, tenantId, client);
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   return c.json({
@@ -652,6 +704,7 @@ async function handleAdminAgentRefresh(
     token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: agentSettings.maxTokenTtlSeconds,
     scope: requestedScope,
+    ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
   });
 }
 
@@ -910,6 +963,7 @@ async function handleAdminAgentModeBExchange(
   if (
     !grant ||
     grant.status !== 'active' ||
+    (grant.expiresAt !== undefined && grant.expiresAt <= Date.now()) ||
     grant.delegatorId !== delegatorId ||
     grant.clientId !== actor.clientId ||
     grant.machinePrincipalId !== actor.principalId ||
@@ -1051,7 +1105,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     return errorResponse(c, 'invalid_request', 'Required token parameter is missing');
   }
   const clientIdValidation = validateClientId(form.client_id);
-  if (!clientIdValidation.valid) {
+  if (!clientIdValidation.valid && !isSelfServiceClientMetadataDocumentId(form.client_id)) {
     return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
   }
 
@@ -1063,7 +1117,9 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
   const client = (await getClientCached(c, c.env, form.client_id)) as ClientMetadata | null;
-  if (!client) return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
+  if (!client || !selfServiceClientIsActive(client)) {
+    return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
+  }
   const credentials = parseOAuthClientAuthenticationParams({
     clientId: form.client_id,
     clientSecret: form.client_secret,
@@ -1212,6 +1268,13 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     return errorResponse(c, 'invalid_grant', 'Agent Grant is no longer valid');
   }
 
+  let authorizationDetails: JsonObject[] | undefined;
+  try {
+    authorizationDetails = parseAdminAgentAuthorizationDetails(codeData.authorizationDetails);
+  } catch {
+    return errorResponse(c, 'invalid_grant', 'authorization_details is invalid');
+  }
+
   const assurance = publicClient ? 'public_client_transaction' : 'confidential_client';
   const claims = {
     iss: issuer,
@@ -1224,7 +1287,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     grant_id: grant.grantId,
     grant_generation: grant.generation,
     consent_version: grant.consentVersion,
-    authorization_details: codeData.authorizationDetails,
+    ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
     actor_mode: 'mode_a',
     actor_assurance: assurance,
     token_binding: dpopJkt ? 'dpop' : 'bearer',
@@ -1254,6 +1317,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     grantGeneration: grant.generation,
     consentVersion: grant.consentVersion,
     scope: codeData.scope,
+    authorizationDetails,
     publicClient,
     dpopJkt,
     privateKey: key.privateKey,
@@ -1286,6 +1350,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     },
     createdAt: Date.now(),
   });
+  await touchSelfServiceClient(c, tenantId, client);
 
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
@@ -1295,5 +1360,6 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: agentSettings.maxTokenTtlSeconds,
     scope: codeData.scope,
+    ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
   });
 }

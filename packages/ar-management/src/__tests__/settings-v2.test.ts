@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import type {
+  AdminAuthContext,
   Env,
   SettingsGetResult,
   SettingsPatchResult,
@@ -105,16 +106,7 @@ function createTestApp(
     db?: D1Database;
     tenantId?: string;
     env?: Record<string, string>;
-    adminAuth?: {
-      userId: string;
-      authMethod: 'bearer' | 'session';
-      roles: string[];
-      org_id?: string;
-      actorType?: 'human' | 'agent';
-      tenantId?: string;
-      tenantScope?: string[];
-      permissions?: string[];
-    };
+    adminAuth?: AdminAuthContext;
   } = {}
 ) {
   const mockKV = options.kv ?? createMockKV();
@@ -128,16 +120,7 @@ function createTestApp(
   const app = new Hono<{
     Bindings: Env;
     Variables: {
-      adminAuth?: {
-        userId: string;
-        authMethod: 'bearer' | 'session';
-        roles: string[];
-        org_id?: string;
-        actorType?: 'human' | 'agent';
-        tenantId?: string;
-        tenantScope?: string[];
-        permissions?: string[];
-      };
+      adminAuth?: AdminAuthContext;
       tenantId?: string;
     };
   }>();
@@ -1707,6 +1690,63 @@ describe('Settings API v2', () => {
         mockEnv
       );
       expect(writeWithoutPermission.status).toBe(403);
+    });
+
+    it('authorizes Machine Access tokens from permissions instead of human roles', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'setup-machine',
+          authMethod: 'machine_access_token',
+          actorType: 'machine',
+          roles: [],
+          tenantId: 'tenant_123',
+          tenantScope: ['tenant_123'],
+          permissions: ['admin:settings:read', 'admin:settings:write'],
+        },
+      });
+
+      const getResponse = await app.request(
+        '/api/admin/tenants/tenant_123/settings/diagnostic-logging',
+        { method: 'GET' },
+        mockEnv
+      );
+      expect(getResponse.status).toBe(200);
+      const current = (await getResponse.json()) as SettingsGetResult;
+
+      const patchResponse = await app.request(
+        '/api/admin/tenants/tenant_123/settings/diagnostic-logging',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ifMatch: current.version,
+            set: { 'diagnostic-logging.enabled': true },
+          }),
+        },
+        mockEnv
+      );
+      expect(patchResponse.status).toBe(200);
+    });
+
+    it('rejects a Machine Access token without the required settings permission', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: {
+          userId: 'read-other-machine',
+          authMethod: 'machine_access_token',
+          actorType: 'machine',
+          roles: ['super_admin'],
+          tenantId: 'tenant_123',
+          tenantScope: ['tenant_123'],
+          permissions: ['admin:clients:read'],
+        },
+      });
+
+      const response = await app.request(
+        '/api/admin/tenants/tenant_123/settings/diagnostic-logging',
+        { method: 'GET' },
+        mockEnv
+      );
+      expect(response.status).toBe(403);
     });
 
     it('requires the category-specific Agent permission for tenant settings writes', async () => {

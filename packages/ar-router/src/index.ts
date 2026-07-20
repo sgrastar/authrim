@@ -487,6 +487,7 @@ app.use('*', async (c, next) => {
     path.startsWith('/flow/') ||
     path === '/session/check' ||
     path === '/logout' ||
+    path.endsWith('/frontchannel-logout') ||
     path === '/logged-out' ||
     path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
@@ -664,6 +665,11 @@ app.use('*', async (c, next) => {
   return next();
 });
 
+function isExternalProviderProtocolPost(method: string, pathname: string): boolean {
+  if (method !== 'POST') return false;
+  return /^\/(?:api|auth)\/external\/[^/]+\/(?:callback|backchannel-logout)$/.test(pathname);
+}
+
 // CSRF protection (defense-in-depth at the router level)
 // Validates Origin/Referer on state-changing requests before forwarding to workers.
 // Each worker also has its own CSRF protection for additional security.
@@ -689,6 +695,9 @@ app.use(
       '/device_authorization', // Device flow (client auth)
       '/device', // Device verification page (form submission, CSRF handled by device code)
       '/bc-authorize', // CIBA (client auth)
+      // Short-lived capability-authenticated OIDF automation endpoint. Keep the regular
+      // browser/user CIBA approval routes behind CSRF validation.
+      '/api/ciba/conformance-action',
       '/api/auth/discovery', // Public discovery + discovery-grant endpoints used by Login UI server-side fetches
       '/auth/step-up', // Step-up orchestration (Bearer/receipt/idempotency-key based)
       '/me', // Self-service API (Bearer token auth, not cookie CSRF)
@@ -703,6 +712,17 @@ app.use(
       '/.well-known', // Discovery endpoints (read-only, GET only)
       '/jwks.json', // JWKS endpoint (read-only)
     ],
+    // OIDC response_mode=form_post originates at the external OP, not at an
+    // Authrim UI origin. The callback validates a one-time, browser-bound state
+    // value. Back-channel logout independently validates its signed logout token.
+    // Keep link, unlink, handoff, and Admin mutations behind normal CSRF checks.
+    excludeRequest: (request) => {
+      const pathname = new URL(request.url).pathname;
+      return (
+        (request.method === 'POST' && pathname === '/oauth/admin-agent/register') ||
+        isExternalProviderProtocolPost(request.method, pathname)
+      );
+    },
   })
 );
 
@@ -835,9 +855,19 @@ app.post('/oauth/admin-agent/authorize', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+app.get('/oauth/admin-agent/login-handoff/consume', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 app.post('/oauth/admin-agent/par', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/oauth/admin-agent/register', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
 });
 
 /**

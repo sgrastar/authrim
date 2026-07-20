@@ -258,13 +258,14 @@ export class CIBARequestStore {
 
       // Approve CIBA request (user approved the request)
       if (path === '/approve' && request.method === 'POST') {
-        const { auth_req_id, user_id, sub, nonce } = (await request.json()) as {
+        const { auth_req_id, user_id, sub, nonce, authenticated_acr } = (await request.json()) as {
           auth_req_id: string;
           user_id: string;
           sub: string;
           nonce?: string;
+          authenticated_acr?: string;
         };
-        await this.approveCIBARequest(auth_req_id, user_id, sub, nonce);
+        await this.approveCIBARequest(auth_req_id, user_id, sub, nonce, authenticated_acr);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -570,7 +571,8 @@ export class CIBARequestStore {
     authReqId: string,
     userId: string,
     sub: string,
-    nonce?: string
+    nonce?: string,
+    authenticatedAcr?: string
   ): Promise<void> {
     const metadata = await this.getByAuthReqId(authReqId);
 
@@ -592,6 +594,9 @@ export class CIBARequestStore {
     metadata.sub = sub;
     if (nonce) {
       metadata.nonce = nonce;
+    }
+    if (authenticatedAcr) {
+      metadata.authenticated_acr = authenticatedAcr;
     }
 
     // Update in memory

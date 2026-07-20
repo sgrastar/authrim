@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getGrant: vi.fn(),
   invalidateGrant: vi.fn(),
   updateGrant: vi.fn(),
+  replaceSelfServiceAuthorization: vi.fn(),
   findPrincipalById: vi.fn(),
   getPrincipalPermissions: vi.fn(),
   getPrincipalTenantScopes: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('@authrim/ar-agent-access/core', async (importOriginal) => {
       getGrant = mocks.getGrant;
       invalidateGrantAndQueueTokenRevocation = mocks.invalidateGrant;
       updateGrantAndQueueTokenRevocation = mocks.updateGrant;
+      replaceSelfServiceAuthorization = mocks.replaceSelfServiceAuthorization;
     },
     AgentConfigurationRepository: class {
       getTaskSetVersion = mocks.getTaskSetVersion;
@@ -71,6 +73,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       await next();
     },
     ensureDatabaseAdapter: () => ({ queryOne: mocks.queryOne }),
+    createAuthContextFromHono: () => ({ coreAdapter: { queryOne: mocks.queryOne } }),
     requireDedicatedAdminDatabaseAdapter: () => ({}),
     AdminMachineAccessRepository: class {
       findPrincipalById = mocks.findPrincipalById;
@@ -171,6 +174,7 @@ describe('Agent Grant management router', () => {
       nextGeneration: 2,
       nextConsentVersion: 2,
     });
+    mocks.replaceSelfServiceAuthorization.mockResolvedValue({ familyCount: 2 });
     mocks.getTaskSetVersion.mockResolvedValue(activeTaskSet);
     mocks.getScopePolicyVersion.mockResolvedValue(activeScopePolicy);
   });
@@ -491,5 +495,120 @@ describe('Agent Grant management router', () => {
       consent_version: 2,
       consent_required: true,
     });
+  });
+
+  it('atomically replaces a system-managed connection when its owner changes scopes', async () => {
+    mocks.getGrantRecord.mockResolvedValue({
+      grantId: 'grant-self-service',
+      tenantId: 'tenant-a',
+      clientId: 'mcp-client',
+      grantorId: 'admin-1',
+      delegatorId: 'admin-1',
+      permissions: ['admin:clients:read'],
+      scopes: ['agent:read'],
+      authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+      resolvedScopeConstraints: { tenantIds: ['tenant-a'], piiMode: 'masked', maxPerCall: 2 },
+      consentVersion: 1,
+      generation: 1,
+      status: 'active',
+      delegationMode: 'user_consent',
+      taskSetId: 'system-task-1',
+      taskSetVersion: 1,
+      scopePolicyId: 'system-policy-1',
+      scopePolicyVersion: 1,
+      resolvedTools: activeTaskSet.version.tools,
+      accessSnapshotHash: 'a'.repeat(43),
+      purpose: 'interactive_self_service',
+      managementMode: 'system_managed',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    mocks.queryOne.mockResolvedValue({
+      tenant_id: 'tenant-a',
+      requestable_scopes: JSON.stringify(['agent:read', 'agent:user-data:read', 'agent:write']),
+    });
+    mocks.getDelegatorPermissions.mockResolvedValue(['*']);
+    const response = await app().request(
+      '/api/admin/agent-grants/grant-self-service/self-service-scopes',
+      {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          'x-test-permissions': '*',
+        },
+        body: JSON.stringify({ scopes: ['agent:read', 'agent:user-data:read'] }),
+      },
+      { DB: {}, DB_ADMIN: {}, DEFAULT_TENANT_ID: 'default' } as Env
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.replaceSelfServiceAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 1,
+        grant: expect.objectContaining({
+          managementMode: 'system_managed',
+          generation: 2,
+          consentVersion: 2,
+          scopes: ['agent:read', 'agent:user-data:read'],
+          authorizationDetails: [{ type: 'authrim_admin_agent', max_subjects_per_call: 2 }],
+          resolvedScopeConstraints: expect.objectContaining({ maxPerCall: 2 }),
+        }),
+        grantAudit: expect.objectContaining({
+          action: 'agent.grant.updated',
+          metadata: expect.objectContaining({
+            source: 'connected_agents_ui',
+            max_subjects_per_call: 2,
+          }),
+        }),
+      })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      changed: true,
+      token_families_pending_revocation: 2,
+      grant: {
+        id: 'grant-self-service',
+        management_mode: 'system_managed',
+        generation: 2,
+        consent_version: 2,
+      },
+    });
+  });
+
+  it('does not let another Admin edit self-service connection consent', async () => {
+    mocks.getGrantRecord.mockResolvedValue({
+      grantId: 'grant-other-owner',
+      tenantId: 'tenant-a',
+      clientId: 'mcp-client',
+      grantorId: 'admin-2',
+      delegatorId: 'admin-2',
+      permissions: [],
+      scopes: ['agent:read'],
+      resolvedScopeConstraints: { tenantIds: ['tenant-a'], piiMode: 'masked' },
+      consentVersion: 1,
+      generation: 1,
+      status: 'active',
+      delegationMode: 'user_consent',
+      taskSetId: 'system-task-other',
+      taskSetVersion: 1,
+      scopePolicyId: 'system-policy-other',
+      scopePolicyVersion: 1,
+      resolvedTools: activeTaskSet.version.tools,
+      accessSnapshotHash: 'a'.repeat(43),
+      purpose: 'interactive_self_service',
+      managementMode: 'system_managed',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const response = await app().request(
+      '/api/admin/agent-grants/grant-other-owner/self-service-scopes',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-test-permissions': '*' },
+        body: JSON.stringify({ scopes: ['agent:read'] }),
+      },
+      { DB: {}, DB_ADMIN: {}, DEFAULT_TENANT_ID: 'default' } as Env
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.replaceSelfServiceAuthorization).not.toHaveBeenCalled();
   });
 });

@@ -141,7 +141,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('resolves only current permissions for an active delegator', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    adapter.queryOneResults.push({ id: 'admin-2' });
+    adapter.queryOneResults.push({ id: 'admin-2', tenant_id: 'home-tenant' });
     adapter.queryResults.push([
       { permissions_json: '["admin:users:read"]' },
       { permissions_json: '["admin:clients:read","admin:users:read"]' },
@@ -154,12 +154,16 @@ describe('AdminAgentAccessRepository', () => {
     expect(adapter.calls[1].sql).toContain('WITH RECURSIVE effective_roles');
     expect(adapter.calls[1].params).toEqual([
       'admin-2',
-      'tenant-1',
+      'home-tenant',
+      'home-tenant',
       'tenant-1',
       'tenant-1',
       100,
-      'tenant-1',
+      'home-tenant',
     ]);
+    expect(adapter.calls[0].params).toEqual(['admin-2']);
+    expect(adapter.calls[1].sql).toContain("ra.scope_type = 'global'");
+    expect(adapter.calls[1].sql).toContain('ra.scope_id = ?');
   });
 
   it('requires both current consent records', async () => {

@@ -16,6 +16,15 @@ interface ErrorResponse {
   error_description?: string;
 }
 
+function getRedirectedOAuthError(response: Response): URLSearchParams {
+  expect(response.status).toBe(302);
+  const locationHeader = response.headers.get('location');
+  expect(locationHeader).not.toBeNull();
+  const location = new URL(locationHeader!);
+  expect(location.origin + location.pathname).toBe('https://example.com/callback');
+  return location.searchParams;
+}
+
 // Mock getClient at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -205,11 +214,56 @@ describe('HTTPS Request URI Security', () => {
         mockEnv
       );
 
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('request_uri_not_supported');
+      expect(error.get('error_description')).toContain('HTTPS request_uri is disabled');
+      expect(error.get('error_description')).toContain('PAR');
+    });
+
+    it('should preserve state when returning a request_uri error to a validated client', async () => {
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=state-123&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('request_uri_not_supported');
+      expect(error.get('state')).toBe('state-123');
+    });
+
+    it('should not redirect a request_uri error to an unregistered redirect URI', async () => {
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://attacker.example/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        mockEnv
+      );
+
       expect(response.status).toBe(400);
+      expect(response.headers.get('location')).toBeNull();
       const body = (await response.json()) as ErrorResponse;
       expect(body.error).toBe('request_uri_not_supported');
-      expect(body.error_description).toContain('HTTPS request_uri is disabled');
-      expect(body.error_description).toContain('PAR');
+    });
+
+    it('should not redirect a request_uri error for a client from another tenant', async () => {
+      mockGetClient.mockResolvedValueOnce({
+        client_id: 'test-client',
+        tenant_id: 'other-tenant',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('location')).toBeNull();
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('request_uri_not_supported');
     });
 
     it('should accept PAR URN even when HTTPS is disabled', async () => {
@@ -273,10 +327,9 @@ describe('HTTPS Request URI Security', () => {
         envWithFeature
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
-      expect(body.error_description).toContain('internal addresses');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('internal addresses');
     });
   });
 
@@ -294,10 +347,9 @@ describe('HTTPS Request URI Security', () => {
         envWithAllowlist
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
-      expect(body.error_description).toContain('not in the allowed list');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('not in the allowed list');
     });
 
     it('should accept domain in allowlist', async () => {
@@ -388,10 +440,9 @@ describe('HTTPS Request URI Security', () => {
         envWithFeature
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
-      expect(body.error_description).toContain('too large');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('too large');
     });
 
     it('should allow custom size limit via environment variable', async () => {
@@ -415,8 +466,8 @@ describe('HTTPS Request URI Security', () => {
 
       // Response should not be rejected for size (150KB < 200KB limit)
       // It will fail for other reasons (null body), but not for size
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error_description).not.toContain('too large');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error_description')).not.toContain('too large');
     });
   });
 
@@ -441,10 +492,9 @@ describe('HTTPS Request URI Security', () => {
         envWithAllowlist
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
-      expect(body.error_description).toContain('Redirected request_uri domain');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('Redirected request_uri domain');
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -467,10 +517,9 @@ describe('HTTPS Request URI Security', () => {
         envWithFeature
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
-      expect(body.error_description).toContain('redirect to internal addresses');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('redirect to internal addresses');
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -887,10 +936,9 @@ describe('HTTPS Request URI Security', () => {
         envWithFeature
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
-      expect(body.error_description).toContain('timed out');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('timed out');
     });
   });
 
@@ -907,9 +955,8 @@ describe('HTTPS Request URI Security', () => {
         envWithFeature
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request_uri');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
     });
 
     it('should reject non-HTTPS/URN request_uri', async () => {
@@ -919,10 +966,9 @@ describe('HTTPS Request URI Security', () => {
         mockEnv
       );
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('urn:ietf:params:oauth:request_uri:');
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request');
+      expect(error.get('error_description')).toContain('urn:ietf:params:oauth:request_uri:');
     });
   });
 });

@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim OAuth Management API
-  version: 0.3.3
+  version: 0.4.0
   summary: Dynamic client registration, token introspection, revocation, and self-service devices.
   description: >
     Initial OpenAPI contract for OAuth-adjacent management endpoints owned by
@@ -32,14 +32,40 @@ paths:
       security:
         - initialAccessToken: []
       requestBody:
-        $ref: "#/components/requestBodies/ClientRegistration"
+        $ref: '#/components/requestBodies/ClientRegistration'
       responses:
-        "201":
-          $ref: "#/components/responses/ClientRegistration"
-        "400":
-          $ref: "#/components/responses/OAuthError"
-        "401":
-          $ref: "#/components/responses/OAuthError"
+        '201':
+          $ref: '#/components/responses/ClientRegistration'
+        '400':
+          $ref: '#/components/responses/OAuthError'
+        '401':
+          $ref: '#/components/responses/OAuthError'
+  /oauth/admin-agent/register:
+    post:
+      tags:
+        - Dynamic Client Registration
+      operationId: registerRestrictedAdminAgentClient
+      summary: Register a short-lived public OAuth client for interactive Admin MCP access.
+      description: >-
+        Restricted RFC 7591 profile used by MCP hosts. No Initial Access Token is required.
+        The endpoint accepts only public Authorization Code clients with PKCE, exact redirect URIs,
+        and the three interactive Agent scopes. It never returns a client secret, cannot request
+        trusted or skip-consent behavior, and does not issue an RFC 7592 registration management
+        token. It is tenant scoped, rate limited, and expires after 30 days of inactivity.
+      security: []
+      requestBody:
+        $ref: '#/components/requestBodies/AdminAgentClientRegistration'
+      responses:
+        '201':
+          $ref: '#/components/responses/AdminAgentClientRegistration'
+        '400':
+          $ref: '#/components/responses/OAuthError'
+        '403':
+          $ref: '#/components/responses/OAuthError'
+        '429':
+          $ref: '#/components/responses/OAuthError'
+        '503':
+          $ref: '#/components/responses/OAuthError'
   /clients/{client_id}:
     get:
       tags:
@@ -48,12 +74,12 @@ paths:
       security:
         - registrationAccessToken: []
       parameters:
-        - $ref: "#/components/parameters/ClientId"
+        - $ref: '#/components/parameters/ClientId'
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
-        "401":
-          $ref: "#/components/responses/OAuthError"
+        '200':
+          $ref: '#/components/responses/Json'
+        '401':
+          $ref: '#/components/responses/OAuthError'
     put:
       tags:
         - Dynamic Client Registration
@@ -61,14 +87,14 @@ paths:
       security:
         - registrationAccessToken: []
       parameters:
-        - $ref: "#/components/parameters/ClientId"
+        - $ref: '#/components/parameters/ClientId'
       requestBody:
-        $ref: "#/components/requestBodies/ClientRegistration"
+        $ref: '#/components/requestBodies/ClientRegistration'
       responses:
-        "200":
-          $ref: "#/components/responses/ClientRegistration"
-        "400":
-          $ref: "#/components/responses/OAuthError"
+        '200':
+          $ref: '#/components/responses/ClientRegistration'
+        '400':
+          $ref: '#/components/responses/OAuthError'
     delete:
       tags:
         - Dynamic Client Registration
@@ -76,12 +102,12 @@ paths:
       security:
         - registrationAccessToken: []
       parameters:
-        - $ref: "#/components/parameters/ClientId"
+        - $ref: '#/components/parameters/ClientId'
       responses:
-        "204":
+        '204':
           description: Client deleted.
-        "401":
-          $ref: "#/components/responses/OAuthError"
+        '401':
+          $ref: '#/components/responses/OAuthError'
   /introspect:
     post:
       tags:
@@ -102,10 +128,10 @@ paths:
                 token_type_hint:
                   type: string
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
-        "401":
-          $ref: "#/components/responses/OAuthError"
+        '200':
+          $ref: '#/components/responses/Json'
+        '401':
+          $ref: '#/components/responses/OAuthError'
   /revoke:
     post:
       tags:
@@ -126,10 +152,10 @@ paths:
                 token_type_hint:
                   type: string
       responses:
-        "200":
+        '200':
           description: Token revocation request accepted.
-        "401":
-          $ref: "#/components/responses/OAuthError"
+        '401':
+          $ref: '#/components/responses/OAuthError'
   /revoke/batch:
     post:
       tags:
@@ -138,10 +164,10 @@ paths:
       security:
         - clientAuth: []
       requestBody:
-        $ref: "#/components/requestBodies/BatchRevoke"
+        $ref: '#/components/requestBodies/BatchRevoke'
       responses:
-        "200":
-          $ref: "#/components/responses/BatchRevoke"
+        '200':
+          $ref: '#/components/responses/BatchRevoke'
   /me/devices:
     get:
       tags:
@@ -150,8 +176,8 @@ paths:
       security:
         - sessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
   /me/devices/{id}:
     patch:
       tags:
@@ -160,12 +186,12 @@ paths:
       security:
         - sessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       requestBody:
-        $ref: "#/components/requestBodies/MyDeviceUpdate"
+        $ref: '#/components/requestBodies/MyDeviceUpdate'
       responses:
-        "200":
-          $ref: "#/components/responses/MyDevice"
+        '200':
+          $ref: '#/components/responses/MyDevice'
     delete:
       tags:
         - Devices
@@ -173,10 +199,10 @@ paths:
       security:
         - sessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
   /clients/{client_id}/config:
     get:
       tags:
@@ -186,10 +212,10 @@ paths:
       description: Returns non-sensitive public client metadata for SDK initialization before
         authentication. Client secrets and private registration metadata are never returned.
       responses:
-        "200":
-          $ref: "#/components/responses/PublicClientConfig"
-        "404":
-          $ref: "#/components/responses/OAuthError"
+        '200':
+          $ref: '#/components/responses/PublicClientConfig'
+        '404':
+          $ref: '#/components/responses/OAuthError'
       parameters:
         - name: client_id
           in: path
@@ -241,7 +267,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ClientRegistrationRequest"
+            $ref: '#/components/schemas/ClientRegistrationRequest'
           example:
             redirect_uris:
               - https://app.example.com/callback
@@ -253,12 +279,26 @@ components:
               - code
             scope: openid profile email
             require_pkce: true
+    AdminAgentClientRegistration:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminAgentClientRegistrationRequest'
+          example:
+            redirect_uris:
+              - http://127.0.0.1:49152/callback/random-id
+            client_name: Codex
+            grant_types: [authorization_code, refresh_token]
+            response_types: [code]
+            token_endpoint_auth_method: none
+            scope: 'agent:read agent:user-data:read agent:write'
     BatchRevoke:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/BatchRevokeRequest"
+            $ref: '#/components/schemas/BatchRevokeRequest'
           example:
             tokens:
               - token: eyJhbGciOiJSUzI1NiJ9...
@@ -268,7 +308,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/MyDeviceUpdateRequest"
+            $ref: '#/components/schemas/MyDeviceUpdateRequest'
           example:
             display_name: Work MacBook
   responses:
@@ -296,7 +336,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ClientRegistrationResponse"
+            $ref: '#/components/schemas/ClientRegistrationResponse'
           example:
             client_id: client_123
             client_secret: secret_123
@@ -307,12 +347,18 @@ components:
             redirect_uris:
               - https://app.example.com/callback
             require_pkce: true
+    AdminAgentClientRegistration:
+      description: Restricted public Agent client registration without any secret.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminAgentClientRegistrationResponse'
     BatchRevoke:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/BatchRevokeResponse"
+            $ref: '#/components/schemas/BatchRevokeResponse'
           example:
             results:
               - token_hint: eyJhbGci...abcd
@@ -326,7 +372,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/MyDeviceResponse"
+            $ref: '#/components/schemas/MyDeviceResponse'
           example:
             device:
               id: inst_123
@@ -338,8 +384,78 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PublicClientConfig"
+            $ref: '#/components/schemas/PublicClientConfig'
   schemas:
+    AdminAgentClientRegistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [redirect_uris]
+      properties:
+        redirect_uris:
+          type: array
+          description: Required and non-empty for redirect-based grants; omitted or empty for CIBA-only clients.
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            format: uri
+            description: Exact HTTPS URI or RFC 8252 loopback-IP HTTP URI.
+        client_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        grant_types:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [authorization_code, refresh_token]
+        response_types:
+          type: array
+          uniqueItems: true
+          items: { type: string, const: code }
+        token_endpoint_auth_method:
+          type: string
+          const: none
+        scope:
+          type: string
+          description: >-
+            Space-separated subset of agent:read, agent:user-data:read, and agent:write. If present,
+            agent:read is required. If omitted, the server registers all three as requestable
+            ceilings; the Admin still selects the granted subset on the consent screen.
+        dpop_bound_access_tokens:
+          type: boolean
+          description: Optional request for sender-constrained tokens when the MCP host supports DPoP.
+    AdminAgentClientRegistrationResponse:
+      type: object
+      additionalProperties: true
+      required:
+        [
+          client_id,
+          client_id_issued_at,
+          redirect_uris,
+          grant_types,
+          response_types,
+          token_endpoint_auth_method,
+          scope,
+          require_pkce,
+        ]
+      properties:
+        client_id: { type: string }
+        client_id_issued_at: { type: integer }
+        redirect_uris:
+          type: array
+          items: { type: string, format: uri }
+        grant_types:
+          type: array
+          items: { type: string }
+        response_types:
+          type: array
+          items: { type: string }
+        token_endpoint_auth_method: { type: string, const: none }
+        scope: { type: string }
+        require_pkce: { type: boolean, const: true }
+        dpop_bound_access_tokens: { type: boolean }
     ClientRegistrationRequest:
       type: object
       properties:
@@ -368,12 +484,14 @@ components:
           enum:
             - RS256
             - ES256
+            - PS256
         id_token_signed_response_alg:
           type: string
           default: RS256
           enum:
             - RS256
             - ES256
+            - PS256
         userinfo_signed_response_alg:
           type: string
           default: none
@@ -381,12 +499,27 @@ components:
             - none
             - RS256
             - ES256
+            - PS256
         request_object_signing_alg:
           type: string
           enum:
             - none
             - RS256
             - ES256
+            - PS256
+        backchannel_token_delivery_mode:
+          type: string
+          enum: [poll, ping, push]
+        backchannel_client_notification_endpoint:
+          type: string
+          format: uri
+        backchannel_authentication_request_signing_alg:
+          type: string
+          enum: [RS256, ES256, PS256]
+        backchannel_user_code_parameter:
+          type: boolean
+        tls_client_certificate_bound_access_tokens:
+          type: boolean
             - PS256
             - EdDSA
         authorization_signed_response_alg:
@@ -490,23 +623,40 @@ components:
           enum:
             - RS256
             - ES256
+            - PS256
         id_token_signed_response_alg:
           type: string
           enum:
             - RS256
             - ES256
+            - PS256
         userinfo_signed_response_alg:
           type: string
           enum:
             - none
             - RS256
             - ES256
+            - PS256
         request_object_signing_alg:
           type: string
           enum:
             - none
             - RS256
             - ES256
+            - PS256
+        backchannel_token_delivery_mode:
+          type: string
+          enum: [poll, ping, push]
+        backchannel_client_notification_endpoint:
+          type: string
+          format: uri
+        backchannel_authentication_request_signing_alg:
+          type: string
+          enum: [RS256, ES256, PS256]
+        backchannel_user_code_parameter:
+          type: boolean
+        tls_client_certificate_bound_access_tokens:
+          type: boolean
             - PS256
             - EdDSA
         authorization_signed_response_alg:
@@ -620,7 +770,7 @@ components:
         - device
       properties:
         device:
-          $ref: "#/components/schemas/MyDeviceItem"
+          $ref: '#/components/schemas/MyDeviceItem'
     PublicClientConfig:
       type: object
       required:

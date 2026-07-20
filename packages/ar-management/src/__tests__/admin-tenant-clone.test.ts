@@ -62,6 +62,7 @@ import {
   CLIENT_CREDENTIAL_COLUMNS,
   CLIENT_NON_CREDENTIAL_COLUMNS,
   OAUTH_CLIENT_CLONE_COLUMNS,
+  OAUTH_CLIENT_NON_CLONE_COLUMNS,
   sanitizeClientJwks,
   sanitizeCopiedSettingsValue,
 } from '../admin-tenant-clone';
@@ -201,7 +202,12 @@ describe('admin tenant clone', () => {
       }
     }
 
-    expect(new Set(OAUTH_CLIENT_CLONE_COLUMNS)).toEqual(new Set(schemaColumns));
+    expect(new Set([...OAUTH_CLIENT_CLONE_COLUMNS, ...OAUTH_CLIENT_NON_CLONE_COLUMNS])).toEqual(
+      new Set(schemaColumns)
+    );
+    expect(
+      OAUTH_CLIENT_CLONE_COLUMNS.filter((column) => OAUTH_CLIENT_NON_CLONE_COLUMNS.has(column))
+    ).toEqual([]);
   });
 
   it('classifies every OAuth client column explicitly as credential or non-credential', () => {
@@ -670,6 +676,7 @@ describe('admin tenant clone', () => {
     expect(clientRead?.[0]).toContain('NULL AS client_secret_hash');
     expect(clientRead?.[0]).toContain('NULL AS registration_access_token_hash');
     expect(clientRead?.[0]).toContain('NULL AS logout_webhook_secret_encrypted');
+    expect(clientRead?.[0]).toContain('agent_access_registration_mode IS NULL');
     expect(webhookRead?.[0]).toContain('NULL AS secret_encrypted, NULL AS headers');
   });
 

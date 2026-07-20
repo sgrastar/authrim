@@ -191,6 +191,7 @@ import {
   adminExternalProvidersCreateHandler,
   adminExternalProvidersGetHandler,
   adminExternalProvidersUpdateHandler,
+  adminExternalProvidersRegisterHandler,
   adminExternalProvidersDeleteHandler,
   adminExternalProvidersDiscoverOidcHandler,
   adminExternalTokenRefreshConfigGetHandler,
@@ -1066,6 +1067,16 @@ app.use('/register', async (c, next) => {
 // Can be disabled by setting ENABLE_OPEN_REGISTRATION=true in environment variables
 app.use('/register', initialAccessTokenMiddleware());
 
+// Dedicated restricted public-client registration for interactive Admin Agent connections.
+// It is gated by the tenant Agent Access flag and never accepts an Initial Access Token bypass.
+app.use('/oauth/admin-agent/register', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/register'],
+  })(c, next);
+});
+
 // Rate limiting for introspect endpoint
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
 app.use('/introspect', async (c, next) => {
@@ -1196,6 +1207,7 @@ app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
 // Dynamic Client Registration endpoint - RFC 7591
 app.post('/register', registerHandler);
+app.post('/oauth/admin-agent/register', registerHandler);
 
 // Client Configuration Endpoint - RFC 7592
 // Rate limit: moderate (sensitive but not auth-critical)
@@ -2084,6 +2096,7 @@ app.use('/api/admin/external-providers/discover-oidc', async (c, next) => {
 
 // OIDC Discovery proxy (must be before :id route to avoid conflict)
 app.post('/api/admin/external-providers/discover-oidc', adminExternalProvidersDiscoverOidcHandler);
+app.post('/api/admin/external-providers/:id/register', adminExternalProvidersRegisterHandler);
 app.get('/api/admin/external-providers/:id', adminExternalProvidersGetHandler);
 app.put('/api/admin/external-providers/:id', adminExternalProvidersUpdateHandler);
 app.delete('/api/admin/external-providers/:id', adminExternalProvidersDeleteHandler);

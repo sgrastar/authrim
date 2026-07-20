@@ -17,6 +17,8 @@ import type {
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+const ADMIN_AGENT_HANDOFF_ID = /^alh_[A-Za-z0-9_-]{32}$/;
+const ADMIN_AGENT_HANDOFF_CODE = /^ahc_[A-Za-z0-9_-]{43}$/;
 
 function buildHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
 	return {
@@ -74,6 +76,60 @@ export interface LoginResult {
  * Admin Authentication API
  */
 export const adminAuthAPI = {
+	/**
+	 * Approve a tenant login handoff while the host-only central Admin cookie is same-origin.
+	 * Only the returned one-time code URL crosses to the tenant issuer.
+	 */
+	async approveAgentLoginHandoff(handoffId: string): Promise<string> {
+		if (!ADMIN_AGENT_HANDOFF_ID.test(handoffId)) {
+			throw new AuthError('invalid_request', 'Invalid login handoff identifier');
+		}
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/agent-login-handoffs/${encodeURIComponent(handoffId)}/approve`,
+			{
+				method: 'POST',
+				skipTenantHeader: true,
+				credentials: 'include',
+				headers: buildHeaders(),
+				body: '{}'
+			}
+		);
+		const body: unknown = await response.json().catch(() => null);
+		if (!response.ok) {
+			const error = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+			throw new AuthError(
+				typeof error.error === 'string' ? error.error : 'login_handoff_failed',
+				typeof error.error_description === 'string'
+					? error.error_description
+					: 'Failed to approve login handoff'
+			);
+		}
+		const consumeUrlValue =
+			body && typeof body === 'object' ? (body as Record<string, unknown>).consume_url : undefined;
+		if (typeof consumeUrlValue !== 'string') {
+			throw new AuthError('invalid_response', 'Login handoff response is invalid');
+		}
+		try {
+			const consumeUrl = new URL(consumeUrlValue);
+			const code = consumeUrl.searchParams.get('code');
+			if (
+				consumeUrl.protocol !== 'https:' ||
+				consumeUrl.username ||
+				consumeUrl.password ||
+				consumeUrl.pathname !== '/oauth/admin-agent/login-handoff/consume' ||
+				consumeUrl.hash ||
+				[...consumeUrl.searchParams.keys()].some((key) => key !== 'code') ||
+				!code ||
+				!ADMIN_AGENT_HANDOFF_CODE.test(code)
+			) {
+				throw new TypeError('invalid_consume_url');
+			}
+			return consumeUrl.toString();
+		} catch {
+			throw new AuthError('invalid_response', 'Login handoff response is invalid');
+		}
+	},
+
 	/**
 	 * Get Admin Passkey login options (WebAuthn challenge)
 	 * POST /api/admin/auth/passkey/options

@@ -929,7 +929,7 @@ describe('Client Authentication Tests', () => {
 
       const { response, body } = await requestCIBAToken(client);
 
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(400);
       expect(body).toMatchObject({
         error: 'access_denied',
         error_description: 'User denied the authentication request',
@@ -1027,7 +1027,7 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
 
-    it('issues tokens once for an approved request and deletes the consumed request', async () => {
+    it('issues tokens once, records authenticated ACR, and retains a replay tombstone', async () => {
       const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
       const fetch = configureCIBARequest(
         client,
@@ -1035,6 +1035,7 @@ describe('Client Authentication Tests', () => {
           status: 'approved',
           sub: 'user-123',
           nonce: 'nonce-123',
+          authenticated_acr: 'urn:mace:incommon:iap:silver',
         })
       );
 
@@ -1051,9 +1052,16 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
       expect(mocks.mockCreateIDToken).toHaveBeenCalledTimes(1);
       expect(mocks.mockCreateRefreshToken).toHaveBeenCalledTimes(1);
+      expect(mocks.mockCreateIDToken).toHaveBeenCalledWith(
+        expect.objectContaining({ acr: 'urn:mace:incommon:iap:silver' }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        'RS256'
+      );
       const paths = fetch.mock.calls.map(([request]) => new URL((request as Request).url).pathname);
       expect(paths).toContain('/mark-token-issued');
-      expect(paths).toContain('/delete');
+      expect(paths).not.toContain('/delete');
     });
   });
 
@@ -3438,6 +3446,60 @@ describe('Client Authentication Tests', () => {
           allowedAlgorithms: ['ES256', 'PS256', 'EdDSA'],
           clockSkewSeconds: 60,
         }
+      );
+    });
+
+    it('should accept endpoint or issuer audience for a registered CIBA client', async () => {
+      const client = createPrivateKeyJwtClient();
+      client.grant_types = ['authorization_code', 'urn:openid:params:grant-type:ciba'];
+      const authCodeData = createAuthCodeData();
+      const clientAssertion = createTestJWT(
+        { alg: 'ES256', kid: 'client-key-001' },
+        {
+          iss: client.client_id,
+          sub: client.client_id,
+          aud: 'https://auth.example.com/token',
+          exp: Math.floor(Date.now() / 1000) + 300,
+        }
+      );
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+        fapi: { enabled: true, requireDpop: true },
+      });
+      mocks.mockParseToken.mockReturnValue({ iss: client.client_id, sub: client.client_id });
+      mocks.mockValidateClientAssertion.mockResolvedValue({
+        valid: true,
+        client_id: client.client_id,
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+      mocks.mockParseBasicAuth.mockReturnValue({ success: false });
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: clientAssertion,
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockValidateClientAssertion).toHaveBeenCalledWith(
+        clientAssertion,
+        'https://auth.example.com/token',
+        expect.anything(),
+        expect.objectContaining({ audiencePolicy: 'endpoint-or-issuer' })
       );
     });
 

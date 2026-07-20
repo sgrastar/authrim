@@ -34,7 +34,12 @@ export async function applyOIDCIdentityMapping(
 ): Promise<ApplyOIDCIdentityMappingResult> {
   let binding: RuntimeIdentityMappingBinding | null;
   try {
-    binding = await resolveRuntimeIdentityMappingBinding(input.adapter, {
+    // Identity mapping catalogs, activations, and compiled snapshots are control-plane data in
+    // DB_ADMIN. Keep the supplied adapter only as a single-database compatibility fallback.
+    const mappingAdapter = input.env?.DB_ADMIN
+      ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-identity-mapping')
+      : input.adapter;
+    binding = await resolveRuntimeIdentityMappingBinding(mappingAdapter, {
       tenantId: input.tenantId,
       protocol: 'oidc',
       role: 'op',

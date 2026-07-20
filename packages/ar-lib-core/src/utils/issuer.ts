@@ -32,6 +32,7 @@ export interface IssuerEnvLike {
   NAKED_DOMAIN_AS_ISSUER?: string;
   PRIMARY_TENANT_ID?: string;
   DEFAULT_TENANT_ID?: string;
+  AUTHRIM_TRUST_FORWARDED_HOST?: string;
 }
 
 /**
@@ -198,12 +199,20 @@ export function buildRequestIssuerUrl(
   env: Partial<IssuerEnvLike>,
   tenantId: string
 ): string {
+  const trustAuthrimForwardedHost = ['true', '1', 'yes'].includes(
+    env.AUTHRIM_TRUST_FORWARDED_HOST?.trim().toLowerCase() ?? ''
+  );
+  const trustedForwardedHost =
+    request && trustAuthrimForwardedHost
+      ? normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host'))
+      : null;
   const explicitHost =
     request &&
-    (normalizeHostCandidate(request.headers.get('Host')) ||
+    (trustedForwardedHost ||
+      normalizeHostCandidate(request.headers.get('Host')) ||
       normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host')) ||
       normalizeHostCandidate(request.headers.get('X-Forwarded-Host')));
-  const requestHost = getRequestHost(request);
+  const requestHost = trustedForwardedHost || getRequestHost(request);
   const requestHostname = requestHost?.split(':')[0];
   const shouldIgnoreImplicitLocalhost =
     !explicitHost &&
