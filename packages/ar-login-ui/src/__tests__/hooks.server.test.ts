@@ -123,7 +123,7 @@ describe('Login UI proxy hooks', () => {
 					}
 				}
 			},
-			cookies: { get: () => undefined }
+			cookies: { get: () => undefined, set: vi.fn() }
 		};
 		let renderedHtml = '';
 
@@ -143,6 +143,11 @@ describe('Login UI proxy hooks', () => {
 		expect(renderedHtml).toContain('<html lang="zh-TW"');
 		expect(renderedHtml).toContain('background: #112233; color-scheme: dark');
 		expect(renderedHtml).not.toContain('__AUTHRIM_INITIAL_');
+		expect(event.cookies.set).toHaveBeenCalledWith(
+			'authrim_theme_hint',
+			'dark',
+			expect.objectContaining({ path: '/', maxAge: 3600, sameSite: 'lax' })
+		);
 	});
 
 	it('honors Accept-Language quality values and ignores excluded languages', async () => {
@@ -154,7 +159,7 @@ describe('Login UI proxy hooks', () => {
 			}),
 			url,
 			locals: {},
-			cookies: { get: () => undefined }
+			cookies: { get: () => undefined, set: vi.fn() }
 		};
 
 		await localeHandle({
@@ -479,6 +484,24 @@ describe('Login UI proxy hooks', () => {
 		).toEqual({ background: '#112233', colorScheme: 'dark' });
 		expect(resolveInitialLoginUIAppearance(null)).toEqual({
 			background: '#eeeae3',
+			colorScheme: 'light'
+		});
+		expect(
+			resolveInitialLoginUIAppearance(null, {
+				theme: 'dark',
+				darkVariant: 'navy'
+			})
+		).toEqual({
+			background: '#0a0e14',
+			colorScheme: 'dark'
+		});
+		expect(
+			resolveInitialLoginUIAppearance(null, {
+				theme: 'light',
+				lightVariant: 'green'
+			})
+		).toEqual({
+			background: '#e8f2e8',
 			colorScheme: 'light'
 		});
 	});

@@ -29,6 +29,16 @@ import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonica
 import { normalizeLoginUILocale, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
 import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
 import { sanitizeColor } from '$lib/utils/url-validation';
+import {
+	LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
+	LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
+	LOGIN_UI_THEME_HINT_COOKIE,
+	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
+	normalizeLoginUIDarkVariant,
+	normalizeLoginUILightVariant,
+	normalizeLoginUIThemeMode,
+	resolveLoginUIThemeBackground
+} from '$lib/theme-bootstrap';
 
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 
@@ -490,20 +500,20 @@ export function shouldBootstrapLoginUIThemeForRequest(
 }
 
 export function resolveInitialLoginUIAppearance(
-	authenticationMethods: AuthenticationMethodsResponse | null | undefined
+	authenticationMethods: AuthenticationMethodsResponse | null | undefined,
+	themeHint?: {
+		theme?: string | null;
+		lightVariant?: string | null;
+		darkVariant?: string | null;
+	}
 ): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
 	const ui = authenticationMethods?.ui;
 	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
 	const theme = ui?.theme?.trim().toLowerCase();
 	if (theme === 'dark') {
-		const darkVariantBackgrounds: Record<string, string> = {
-			brown: '#0f0d0c',
-			navy: '#0a0e14',
-			slate: '#0f1419'
-		};
 		const variant = ui?.variant?.trim().toLowerCase() || 'brown';
 		return {
-			background: configuredBackground || darkVariantBackgrounds[variant] || '#0f0d0c',
+			background: resolveLoginUIThemeBackground('dark', variant, configuredBackground),
 			colorScheme: 'dark'
 		};
 	}
@@ -513,10 +523,79 @@ export function resolveInitialLoginUIAppearance(
 			colorScheme: 'light dark'
 		};
 	}
+	if (theme === 'light') {
+		const variant = ui?.variant?.trim().toLowerCase() || 'beige';
+		return {
+			background: resolveLoginUIThemeBackground('light', variant, configuredBackground),
+			colorScheme: 'light'
+		};
+	}
+
+	const hintedTheme = normalizeLoginUIThemeMode(themeHint?.theme);
+	if (hintedTheme === 'dark') {
+		return {
+			background: resolveLoginUIThemeBackground('dark', themeHint?.darkVariant),
+			colorScheme: 'dark'
+		};
+	}
+	if (hintedTheme === 'light') {
+		return {
+			background: resolveLoginUIThemeBackground('light', themeHint?.lightVariant),
+			colorScheme: 'light'
+		};
+	}
+
 	return {
 		background: configuredBackground || '#eeeae3',
 		colorScheme: 'light'
 	};
+}
+
+function getInitialLoginUIThemeHint(event: RequestEvent): {
+	theme?: string | null;
+	lightVariant?: string | null;
+	darkVariant?: string | null;
+} {
+	return {
+		theme: event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE),
+		lightVariant: event.cookies.get(LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE),
+		darkVariant: event.cookies.get(LOGIN_UI_DARK_VARIANT_HINT_COOKIE)
+	};
+}
+
+function setInitialLoginUIThemeHint(
+	event: RequestEvent,
+	authenticationMethods: AuthenticationMethodsResponse | null | undefined
+): void {
+	const ui = authenticationMethods?.ui;
+	const theme = normalizeLoginUIThemeMode(ui?.theme);
+	if (!theme) return;
+
+	const cookieOptions = {
+		path: '/',
+		maxAge: LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
+		httpOnly: false,
+		sameSite: 'lax' as const,
+		secure: event.url.protocol === 'https:'
+	};
+
+	event.cookies.set(LOGIN_UI_THEME_HINT_COOKIE, theme, cookieOptions);
+
+	const variant = ui?.variant?.trim().toLowerCase();
+	if (theme === 'light') {
+		event.cookies.set(
+			LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
+			normalizeLoginUILightVariant(variant) ?? 'beige',
+			cookieOptions
+		);
+	}
+	if (theme === 'dark') {
+		event.cookies.set(
+			LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
+			normalizeLoginUIDarkVariant(variant) ?? 'brown',
+			cookieOptions
+		);
+	}
 }
 
 function parseHumanVerificationProviderForCsp(
@@ -1041,7 +1120,11 @@ export const emailVerificationOriginTrialHandle: Handle = async ({ event, resolv
 export const localeHandle: Handle = async ({ event, resolve }) => {
 	const resolveWithLocale = (locale: LoginUILocale) => {
 		event.locals.locale = locale;
-		const initialAppearance = resolveInitialLoginUIAppearance(event.locals.authenticationMethods);
+		const initialAppearance = resolveInitialLoginUIAppearance(
+			event.locals.authenticationMethods,
+			getInitialLoginUIThemeHint(event)
+		);
+		setInitialLoginUIThemeHint(event, event.locals.authenticationMethods);
 		return resolve(event, {
 			transformPageChunk: ({ html }) =>
 				html
