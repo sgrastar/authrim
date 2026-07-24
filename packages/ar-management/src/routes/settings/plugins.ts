@@ -913,12 +913,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   // Save to KV
   await kv.put(configKey, JSON.stringify(configToStore));
   invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
-  await invalidateAuthenticationMethodsCacheForPluginChange(
-    c,
-    pluginId,
-    tenantId,
-    'plugin:config'
-  );
+  await invalidateAuthenticationMethodsCacheForPluginChange(c, pluginId, tenantId, 'plugin:config');
 
   // Log the change (with masked values for audit)
   log.info(
@@ -991,12 +986,7 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
 
   await kv.put(enableKey, 'true');
   invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
-  await invalidateAuthenticationMethodsCacheForPluginChange(
-    c,
-    pluginId,
-    tenantId,
-    'plugin:enable'
-  );
+  await invalidateAuthenticationMethodsCacheForPluginChange(c, pluginId, tenantId, 'plugin:enable');
 
   log.info(
     'Plugin enabled',

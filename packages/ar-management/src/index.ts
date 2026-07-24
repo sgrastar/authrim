@@ -102,9 +102,7 @@ interface MiddlewareDiagnosticState {
 function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
-  return trimmed
-    .replace(/[^A-Za-z0-9._:-]/g, '_')
-    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
 function isDiagnosticTimingEnabled(env: Env): boolean {
@@ -141,9 +139,7 @@ function appendMiddlewareDiagnosticServerTiming(
   spans: MiddlewareDiagnosticSpan[]
 ): void {
   if (spans.length === 0) return;
-  const value = spans
-    .map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`)
-    .join(', ');
+  const value = spans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ');
   const existing = c.res.headers.get('Server-Timing');
   c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
 }
@@ -208,13 +204,15 @@ function authenticationMethodsDiagnosticStartMiddleware() {
       });
       appendMiddlewareDiagnosticServerTiming(c, state.spans);
       c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
-      getLogger(c).module('LOGIN-METHODS').info('Authentication methods middleware diagnostics', {
-        diagnosticSessionId: state.sessionId,
-        method: c.req.method,
-        path: c.req.path,
-        status: c.res.status,
-        timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
-      });
+      getLogger(c)
+        .module('LOGIN-METHODS')
+        .info('Authentication methods middleware diagnostics', {
+          diagnosticSessionId: state.sessionId,
+          method: c.req.method,
+          path: c.req.path,
+          status: c.res.status,
+          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+        });
     }
   };
 }

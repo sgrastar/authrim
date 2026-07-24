@@ -245,14 +245,13 @@ async function invalidateAuthenticationMethodsCacheForDirectoryConnectors(
   try {
     await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
   } catch (error) {
-    getLogger(c).module('DIRECTORY-CONNECTORS').warn(
-      'Failed to bump authentication methods cache revision',
-      {
+    getLogger(c)
+      .module('DIRECTORY-CONNECTORS')
+      .warn('Failed to bump authentication methods cache revision', {
         tenantId,
         reason,
         error: error instanceof Error ? error.message : 'unknown_error',
-      }
-    );
+      });
   }
 }
 

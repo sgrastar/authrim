@@ -108,9 +108,7 @@ const runtimeUserStoreSourcesCache = new WeakMap<
 function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
-  return trimmed
-    .replace(/[^A-Za-z0-9._:-]/g, '_')
-    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
 function isFlowRuntimeTimingEnabled(env: Env, path: string, request: Request): boolean {

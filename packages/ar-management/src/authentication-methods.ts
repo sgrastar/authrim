@@ -626,9 +626,7 @@ function roundDurationMs(durationMs: number): number {
 function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
-  return trimmed
-    .replace(/[^A-Za-z0-9._:-]/g, '_')
-    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
 function createAuthenticationMethodsDiagnosticTiming(
@@ -784,9 +782,11 @@ function buildAuthenticationMethodsJsonResponse(
 }
 
 function getDefaultEdgeCache(): AuthenticationMethodsEdgeCache | null {
-  const candidate = (globalThis as unknown as {
-    caches?: { default?: AuthenticationMethodsEdgeCache };
-  }).caches?.default;
+  const candidate = (
+    globalThis as unknown as {
+      caches?: { default?: AuthenticationMethodsEdgeCache };
+    }
+  ).caches?.default;
   return candidate ?? null;
 }
 
@@ -810,11 +810,9 @@ async function putAuthenticationMethodsEdgeCache(
   const cacheable = new Response(response.body, response);
   cacheable.headers.set('Cache-Control', `public, max-age=${edgeCacheTTL}`);
   const put = cache.put(request, cacheable).catch((error) => {
-    getLogger(c).module('LOGIN-METHODS').warn(
-      'Failed to store authentication methods edge cache',
-      {},
-      error as Error
-    );
+    getLogger(c)
+      .module('LOGIN-METHODS')
+      .warn('Failed to store authentication methods edge cache', {}, error as Error);
   });
   const executionCtx = getWaitUntilExecutionContext(c);
   if (executionCtx) {
@@ -2205,10 +2203,8 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
 
     if (edgeCache) {
       try {
-        const revision = await measureAuthenticationMethodsTiming(
-          timing,
-          'revision_read',
-          () => readAuthenticationMethodsCacheRevision(env, tenantId)
+        const revision = await measureAuthenticationMethodsTiming(timing, 'revision_read', () =>
+          readAuthenticationMethodsCacheRevision(env, tenantId)
         );
         edgeCacheRequest = buildAuthenticationMethodsEdgeCacheRequest({
           tenantId,
@@ -2274,8 +2270,10 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       externalProviderUsage
     );
 
-    const builtInMethods = await measureAuthenticationMethodsTiming(timing, 'built_in_methods', () =>
-      resolveBuiltInAuthenticationMethods(env, tenantId, settings)
+    const builtInMethods = await measureAuthenticationMethodsTiming(
+      timing,
+      'built_in_methods',
+      () => resolveBuiltInAuthenticationMethods(env, tenantId, settings)
     );
     const passkeyLoginEnabled = builtInMethods.passkeyLoginEnabled;
     const passkeySignupEnabled = builtInMethods.passkeySignupEnabled;

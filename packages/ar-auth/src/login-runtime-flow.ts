@@ -505,9 +505,7 @@ function runtimeError(
 function sanitizeRuntimeStartDiagnosticSessionId(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
-  return trimmed
-    .replace(/[^A-Za-z0-9._:-]/g, '_')
-    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
 function isRuntimeStartTimingEnabled(env: FlowRuntimeEnv, request?: Request): boolean {
@@ -534,7 +532,10 @@ function roundRuntimeStartDurationMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function createRuntimeStartTiming(env: FlowRuntimeEnv, request?: Request): RuntimeStartTiming | null {
+function createRuntimeStartTiming(
+  env: FlowRuntimeEnv,
+  request?: Request
+): RuntimeStartTiming | null {
   const diagnosticSessionId = sanitizeRuntimeStartDiagnosticSessionId(
     request?.headers.get(DIAGNOSTIC_SESSION_ID_HEADER)
   );

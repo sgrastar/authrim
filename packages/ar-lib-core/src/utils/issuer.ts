@@ -37,9 +37,9 @@ export async function putTenantExistsCache(
   tenantId: string,
   ttlSeconds: number = TENANT_EXISTS_CACHE_TTL_SECONDS
 ): Promise<void> {
-  await kv?.put(getTenantExistsCacheKey(tenantId), 'true', { expirationTtl: ttlSeconds }).catch(
-    () => {}
-  );
+  await kv
+    ?.put(getTenantExistsCacheKey(tenantId), 'true', { expirationTtl: ttlSeconds })
+    .catch(() => {});
 }
 
 export async function deleteTenantExistsCache(

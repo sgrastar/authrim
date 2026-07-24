@@ -1445,11 +1445,7 @@ describe('tenant D1 pool tenant management', () => {
     expect(provisioned.tenant.lifecycle_state).toBe('provisioning');
     expect(config.delete).toHaveBeenCalledWith('v1:tenant-exists:copy');
     expect(config.delete).toHaveBeenCalledTimes(1);
-    expect(config.put).not.toHaveBeenCalledWith(
-      'v1:tenant-exists:copy',
-      'true',
-      expect.anything()
-    );
+    expect(config.put).not.toHaveBeenCalledWith('v1:tenant-exists:copy', 'true', expect.anything());
 
     const activated = await activateProvisionedTenant(context, 'copy');
     expect(activated.lifecycle_state).toBe('active');

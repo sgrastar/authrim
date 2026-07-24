@@ -80,9 +80,7 @@ const DIAGNOSTIC_TIMING_PATHS = new Set([
 function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
-  return trimmed
-    .replace(/[^A-Za-z0-9._:-]/g, '_')
-    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
 function isRateLimitTimingEnabled(env: Env, path: string, request: Request): boolean {
@@ -488,7 +486,10 @@ export function getClientIP(c: Context, provider: CloudProvider): string {
 }
 
 function normalizeEndpointClass(value: string | undefined): string | null {
-  const normalized = value?.trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+  const normalized = value
+    ?.trim()
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .slice(0, 64);
   return normalized || null;
 }
 
