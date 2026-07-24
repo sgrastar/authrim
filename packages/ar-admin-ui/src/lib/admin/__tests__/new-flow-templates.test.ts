@@ -16,6 +16,7 @@ function requireTemplate(
 		| 'default-registration'
 		| 'default-registration-no-consent'
 		| 'academic-saml-login'
+		| 'saml-sp-oidc-rp'
 ): NewFlowTemplate {
 	const template = getNewFlowTemplate(id);
 	if (!template) {
@@ -85,10 +86,11 @@ describe('new flow templates', () => {
 				flow_id: 'preview:default-login',
 				flow_kind: 'login',
 				runtime_bindings: {
-					authentication_method_profile: 'default'
+					authentication_method_profile: 'default',
+					consent_policy_ref: 'Login and authorization consent policy'
 				},
 				protocol_context: {
-					protocol: 'custom:shared'
+					protocol: 'oidc'
 				}
 			},
 			preview: {
@@ -96,7 +98,7 @@ describe('new flow templates', () => {
 				flow: {
 					id: 'default-login',
 					kind: 'login',
-					protocol: 'custom:shared'
+					protocol: 'oidc'
 				}
 			}
 		});
@@ -105,15 +107,8 @@ describe('new flow templates', () => {
 			'session_check',
 			'authentication_method_selector',
 			'consent_policy',
-			'condition',
-			'completion',
-			'consent_policy',
-			'completion',
-			'consent_policy',
 			'completion'
 		]);
-		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_policy_ref');
-		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_statement_ref');
 		expect(
 			contract.runtime.ui.steps.find((step) => step.source_node_id === 'authentication')?.config
 				.outputs
@@ -125,34 +120,6 @@ describe('new flow templates', () => {
 		).toBe(true);
 		expect(contract.runtime.capabilities).toHaveLength(2);
 		expect(contract.editor.nodes.map((node) => node.id)).toContain('authentication');
-		expect(contract.editor.nodes.find((node) => node.id === 'legal-consent')?.config).toMatchObject(
-			{
-				consent_gate_kind: 'legal_document',
-				policy_resolution: 'target_binding',
-				policy_required: false
-			}
-		);
-		expect(
-			contract.editor.nodes.find((node) => node.id === 'protocol-condition')?.config
-		).toMatchObject({
-			conditions: {
-				rows: [
-					{ condition: { type: 'protocol', value: 'direct' }, output_handle: 'direct' },
-					{ condition: { type: 'protocol', value: 'oidc' }, output_handle: 'oidc' },
-					{ condition: { type: 'protocol', value: 'saml' }, output_handle: 'saml' }
-				]
-			}
-		});
-		expect(
-			contract.editor.nodes.find((node) => node.id === 'direct-complete')?.config
-		).toMatchObject({
-			completion_block: {
-				id: 'direct-login-completion',
-				protocol: 'direct',
-				purpose: 'login',
-				role: 'output'
-			}
-		});
 		expect(
 			contract.editor.nodes.find((node) => node.id === 'oidc-authorization-consent')?.config
 		).toMatchObject({
@@ -312,6 +279,75 @@ describe('new flow templates', () => {
 				purpose: 'registration',
 				role: 'output'
 			}
+		});
+	});
+
+	it('creates the SAML SP/OIDC RP preset with one protocol branch and no consent', () => {
+		const template = requireTemplate('saml-sp-oidc-rp');
+
+		const contract = createLoginUiRuntimeContractPreview(template);
+		const condition = contract.editor.nodes.find((node) => node.id === 'protocol-condition');
+
+		expect(contract).toMatchObject({
+			runtime: {
+				flow_kind: 'login',
+				runtime_bindings: { authentication_method_profile: 'default' },
+				protocol_context: { protocol: 'custom:saml-oidc' }
+			},
+			preview: {
+				flow: {
+					id: 'saml-sp-oidc-rp',
+					title: 'SAML SP/OIDC RP Flow'
+				}
+			}
+		});
+		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_policy_ref');
+		expect(contract.runtime.runtime_bindings).not.toHaveProperty('consent_statement_ref');
+		expect(contract.editor.nodes.some((node) => node.type === 'consent')).toBe(false);
+		expect(
+			contract.runtime.ui.steps.find((step) => step.source_node_id === 'protocol-condition')
+		).toMatchObject({ component: 'condition', render: false });
+		expect(condition).toMatchObject({
+			type: 'condition',
+			config: {
+				conditions: {
+					rows: [
+						{ condition: { type: 'protocol', value: 'saml' }, output_handle: 'saml' },
+						{ condition: { type: 'protocol', value: 'oidc' }, output_handle: 'oidc' }
+					]
+				}
+			}
+		});
+		expect(contract.editor.edges.filter((edge) => edge.target === 'protocol-condition')).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ source: 'session-check', source_handle: 'continue' }),
+				expect.objectContaining({ source: 'authentication', source_handle: 'mail_otp' }),
+				expect.objectContaining({ source: 'authentication', source_handle: 'totp' }),
+				expect.objectContaining({ source: 'authentication', source_handle: 'passkey' }),
+				expect.objectContaining({ source: 'authentication', source_handle: 'facebook' })
+			])
+		);
+		expect(contract.editor.edges).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					source: 'protocol-condition',
+					source_handle: 'saml',
+					target: 'saml-complete'
+				}),
+				expect.objectContaining({
+					source: 'protocol-condition',
+					source_handle: 'oidc',
+					target: 'oidc-complete'
+				})
+			])
+		);
+		expect(contract.editor.nodes.find((node) => node.id === 'saml-complete')).toMatchObject({
+			title: 'SAML End',
+			config: { completion_block: { protocol: 'saml', role: 'output' } }
+		});
+		expect(contract.editor.nodes.find((node) => node.id === 'oidc-complete')).toMatchObject({
+			title: 'OIDC End',
+			config: { completion_block: { protocol: 'oidc', role: 'output' } }
 		});
 	});
 

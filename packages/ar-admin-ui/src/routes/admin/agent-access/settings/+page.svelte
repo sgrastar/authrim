@@ -61,6 +61,13 @@
 			value.maxTokenTtlSeconds <= 900 &&
 			value.elevationTtlSeconds >= 60 &&
 			value.elevationTtlSeconds <= 300 &&
+			value.requestRateLimitPerMinute >= 10 &&
+			value.requestRateLimitPerMinute <= 10000 &&
+			value.sessionInitializationRateLimitPerMinute >= 1 &&
+			value.sessionInitializationRateLimitPerMinute <= 1000 &&
+			value.sessionInitializationRateLimitPerMinute <= value.requestRateLimitPerMinute &&
+			value.maxConcurrentSessions >= 1 &&
+			value.maxConcurrentSessions <= 1000 &&
 			value.rateLimitPerMinute >= 1 &&
 			value.rateLimitPerMinute <= 1000 &&
 			value.publicClientStandardRateLimitPerMinute >= 1 &&
@@ -163,6 +170,39 @@
 							step="1"
 							bind:value={settings.elevationTtlSeconds}
 						/>
+					</label>
+					<label class="field">
+						<span>{$LL.admin_agent_access_setting_request_rate_limit()}</span>
+						<input
+							type="number"
+							min="10"
+							max="10000"
+							step="1"
+							bind:value={settings.requestRateLimitPerMinute}
+						/>
+						<small>{$LL.admin_agent_access_setting_request_rate_limit_help()}</small>
+					</label>
+					<label class="field">
+						<span>{$LL.admin_agent_access_setting_session_initialization_rate_limit()}</span>
+						<input
+							type="number"
+							min="1"
+							max="1000"
+							step="1"
+							bind:value={settings.sessionInitializationRateLimitPerMinute}
+						/>
+						<small>{$LL.admin_agent_access_setting_session_initialization_rate_limit_help()}</small>
+					</label>
+					<label class="field">
+						<span>{$LL.admin_agent_access_setting_max_concurrent_sessions()}</span>
+						<input
+							type="number"
+							min="1"
+							max="1000"
+							step="1"
+							bind:value={settings.maxConcurrentSessions}
+						/>
+						<small>{$LL.admin_agent_access_setting_max_concurrent_sessions_help()}</small>
 					</label>
 					<label class="field">
 						<span>{$LL.admin_agent_access_setting_rate_limit()}</span>

@@ -4,7 +4,6 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   CanonicalRuntimeUserStore,
-  ConsentGateDecisionReceiptRepository,
   validateResponseType,
   validateClientId,
   validateRedirectUri,
@@ -69,11 +68,9 @@ import {
   hasSAORulesForTarget,
   normalizeAttributeReleaseConsentPolicy,
   getTenantSystemSettings,
-  isTenantFlowProtocolConsentGatesEnabled,
   resolveAuthorizationResponseSigningAlgorithm,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
-  type FlowRuntimeJsonObject,
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
@@ -121,10 +118,6 @@ import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
-import {
-  isLoginRuntimeFlowEnabled,
-  preflightOidcPromptNoneConsentGates,
-} from './login-runtime-flow';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -145,33 +138,6 @@ function collectRequestedClaimNames(
   return Array.from(
     new Set([...Object.keys(request.userinfo ?? {}), ...Object.keys(request.id_token ?? {})])
   );
-}
-
-function collectRequiredClaimNames(
-  request: ReturnType<typeof parseClaimsRequest>['request']
-): string[] {
-  if (!request) return [];
-  const required = new Set<string>();
-  for (const target of [request.userinfo, request.id_token]) {
-    for (const [name, options] of Object.entries(target ?? {})) {
-      if (options && typeof options === 'object' && options.essential === true) {
-        required.add(name);
-      }
-    }
-  }
-  return [...required];
-}
-
-async function hashOidcSelectedRelease(scopes: string[], claims: string[]): Promise<string> {
-  const canonical = JSON.stringify({
-    scopes: [...scopes].sort((left, right) => left.localeCompare(right)),
-    claims: [...claims].sort((left, right) => left.localeCompare(right)),
-  });
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/gu, '-')
-    .replace(/\//gu, '_')
-    .replace(/=+$/gu, '');
 }
 
 function getClientAllowedScopes(clientMetadata: {
@@ -691,7 +657,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let client_id: string | undefined;
   let redirect_uri: string | undefined;
   let scope: string | undefined;
-  let resource: string | undefined;
   let state: string | undefined;
   let nonce: string | undefined;
   let code_challenge: string | undefined;
@@ -720,8 +685,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let _confirmation_challenge: string | undefined;
   let _consent_confirmation_challenge: string | undefined;
   let confirmedConsentUserId: string | undefined;
-  let confirmedConsentReceiptId: string | undefined;
-  let confirmedConsentProtocolRequestId: string | undefined;
   // Phase 2-B RBAC extensions
   let org_id: string | undefined; // Target organization ID
   let acting_as: string | undefined; // Acting on behalf of user ID
@@ -740,7 +703,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       client_id = typeof body.client_id === 'string' ? body.client_id : undefined;
       redirect_uri = typeof body.redirect_uri === 'string' ? body.redirect_uri : undefined;
       scope = typeof body.scope === 'string' ? body.scope : undefined;
-      resource = typeof body.resource === 'string' ? body.resource : undefined;
       state = typeof body.state === 'string' ? body.state : undefined;
       nonce = typeof body.nonce === 'string' ? body.nonce : undefined;
       code_challenge = typeof body.code_challenge === 'string' ? body.code_challenge : undefined;
@@ -787,7 +749,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     client_id = c.req.query('client_id');
     redirect_uri = c.req.query('redirect_uri');
     scope = c.req.query('scope');
-    resource = c.req.query('resource');
     state = c.req.query('state');
     nonce = c.req.query('nonce');
     code_challenge = c.req.query('code_challenge');
@@ -892,8 +853,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       metadata?: {
         purpose?: string;
         authorization_request?: unknown;
-        consent_gate_receipt_id?: string;
-        consent_gate_protocol_request_id?: string;
       };
     };
 
@@ -926,8 +885,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     _consent_confirmed = 'true';
     confirmedConsentUserId = confirmationData.userId;
-    confirmedConsentReceiptId = confirmationData.metadata.consent_gate_receipt_id;
-    confirmedConsentProtocolRequestId = confirmationData.metadata.consent_gate_protocol_request_id;
     if (confirmationData.metadata.authorization_request !== undefined) {
       const parsed = parseAuthorizationRequestContinuation(
         confirmationData.metadata.authorization_request
@@ -950,7 +907,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     client_id = restoredAuthorizationRequest.client_id;
     redirect_uri = restoredAuthorizationRequest.redirect_uri;
     scope = restoredAuthorizationRequest.scope;
-    resource = restoredAuthorizationRequest.resource;
     state = restoredAuthorizationRequest.state;
     nonce = restoredAuthorizationRequest.nonce;
     code_challenge = restoredAuthorizationRequest.code_challenge;
@@ -1333,7 +1289,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         response_type: string;
         redirect_uri: string;
         scope: string;
-        resource?: string;
         state?: string;
         nonce?: string;
         code_challenge?: string;
@@ -1478,7 +1433,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         response_type: string;
         redirect_uri: string;
         scope: string;
-        resource?: string;
         state?: string;
         nonce?: string;
         code_challenge?: string;
@@ -1513,7 +1467,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         client_id = parData.client_id;
         redirect_uri = parData.redirect_uri;
         scope = parData.scope;
-        resource = parData.resource;
         state = parData.state;
         nonce = parData.nonce;
         code_challenge = parData.code_challenge;
@@ -1827,9 +1780,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
         redirect_uri = requestObjectRedirectUri;
         if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
-        if (typeof requestObjectClaims.resource === 'string') {
-          resource = requestObjectClaims.resource;
-        }
         if (requestObjectClaims.state) state = requestObjectClaims.state as string;
         if (requestObjectClaims.nonce) nonce = requestObjectClaims.nonce as string;
         if (requestObjectClaims.code_challenge)
@@ -2594,7 +2544,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (!parsedClaimsRequest.ok) {
     return sendError(parsedClaimsRequest.error, parsedClaimsRequest.error_description);
   }
-  let effectiveClaimsRequest = parsedClaimsRequest.request;
 
   // Validate PKCE parameters if provided
   if (code_challenge) {
@@ -3092,16 +3041,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       metadata: {
         response_type,
         client_id,
-        identity_mapping: clientMetadata?.identity_mapping,
-        attribute_release_consent: clientMetadata?.attribute_release_consent,
         redirect_uri,
         scope,
-        resource,
         state,
         nonce,
         code_challenge,
         code_challenge_method,
-        claims: effectiveClaimsRequest ? JSON.stringify(effectiveClaimsRequest) : undefined,
+        claims,
         dpop_jkt,
         par_request_uri,
         response_mode,
@@ -3187,11 +3133,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       metadata: {
         response_type,
         client_id,
-        identity_mapping: clientMetadata?.identity_mapping,
-        attribute_release_consent: clientMetadata?.attribute_release_consent,
         redirect_uri,
         scope,
-        resource,
         state,
         nonce,
         code_challenge,
@@ -3275,144 +3218,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const sub = sessionUserId;
   if (_consent_confirmed === 'true' && confirmedConsentUserId && confirmedConsentUserId !== sub) {
     return sendError('invalid_request', 'Consent confirmation does not match the active session');
-  }
-  if (confirmedConsentReceiptId) {
-    if (!confirmedConsentProtocolRequestId) {
-      return sendError(
-        'invalid_request',
-        'Consent receipt is missing its protocol request binding'
-      );
-    }
-    if (!(await isTenantFlowProtocolConsentGatesEnabled(c.env, tenantId))) {
-      log.warn('Consent Gate receipt processing is disabled', {
-        action: 'consent_gate_metric',
-        metric: 'receipt_validation_failure',
-        gate_kind: 'oidc_authorization',
-        clientId: validClientId,
-        reason_code: 'enforcement_disabled',
-      });
-      return sendError(
-        'temporarily_unavailable',
-        'Consent processing was disabled; restart authorization'
-      );
-    }
-    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const repository = new ConsentGateDecisionReceiptRepository(adapter);
-    const receipt = await repository
-      .findById(tenantId, confirmedConsentReceiptId)
-      .catch(() => null);
-    const release = receipt?.decision.release;
-    const requestedScopes = splitScopes(scope).sort((left, right) => left.localeCompare(right));
-    const requestedClaims = collectRequestedClaimNames(parsedClaimsRequest.request).sort(
-      (left, right) => left.localeCompare(right)
-    );
-    const requiredScopes = requestedScopes.filter((requested) => requested === 'openid');
-    const requiredClaims = collectRequiredClaimNames(parsedClaimsRequest.request).sort(
-      (left, right) => left.localeCompare(right)
-    );
-    if (
-      !receipt ||
-      receipt.gate_kind !== 'oidc_authorization' ||
-      receipt.subject_user_id !== sub ||
-      receipt.target_type !== 'oidc_client' ||
-      receipt.target_id !== validClientId ||
-      receipt.protocol_request_id !== confirmedConsentProtocolRequestId ||
-      !release ||
-      release.protocol !== 'oidc' ||
-      JSON.stringify([...release.requested_scopes].sort()) !== JSON.stringify(requestedScopes) ||
-      JSON.stringify([...release.requested_claims].sort()) !== JSON.stringify(requestedClaims) ||
-      JSON.stringify([...release.required_scopes].sort()) !== JSON.stringify(requiredScopes) ||
-      JSON.stringify([...release.required_claims].sort()) !== JSON.stringify(requiredClaims) ||
-      release.selected_scopes.some((selected) => !requestedScopes.includes(selected)) ||
-      release.selected_claims.some((selected) => !requestedClaims.includes(selected)) ||
-      release.required_scopes.some((required) => !release.selected_scopes.includes(required)) ||
-      release.required_claims.some((required) => !release.selected_claims.includes(required))
-    ) {
-      log.warn('Consent Gate receipt validation failed', {
-        action: 'consent_gate_metric',
-        metric: 'receipt_validation_failure',
-        gate_kind: 'oidc_authorization',
-        clientId: validClientId,
-        reason_code: 'binding_mismatch',
-      });
-      return sendError(
-        'invalid_request',
-        'Consent receipt does not match this authorization request'
-      );
-    }
-    const selectedHash = await hashOidcSelectedRelease(
-      release.selected_scopes,
-      release.selected_claims
-    );
-    if (selectedHash !== receipt.release_set_hash) {
-      log.warn('Consent Gate receipt validation failed', {
-        action: 'consent_gate_metric',
-        metric: 'receipt_validation_failure',
-        gate_kind: 'oidc_authorization',
-        clientId: validClientId,
-        reason_code: 'release_hash_mismatch',
-      });
-      return sendError('invalid_request', 'Consent receipt release set is invalid');
-    }
-    try {
-      await repository.consume({
-        tenant_id: tenantId,
-        id: receipt.id,
-        interaction_id: receipt.interaction_id,
-        flow_id: receipt.flow_id,
-        flow_version_id: receipt.flow_version_id,
-        flow_node_id: receipt.flow_node_id,
-        gate_kind: 'oidc_authorization',
-        subject_user_id: sub,
-        target_type: 'oidc_client',
-        target_id: validClientId,
-        protocol_request_id: confirmedConsentProtocolRequestId,
-        statement_version_set_hash: receipt.statement_version_set_hash,
-        release_set_hash: selectedHash,
-      });
-    } catch {
-      log.warn('Consent Gate receipt validation failed', {
-        action: 'consent_gate_metric',
-        metric: 'receipt_validation_failure',
-        gate_kind: 'oidc_authorization',
-        clientId: validClientId,
-        reason_code: 'consume_failed',
-      });
-      return sendError('invalid_request', 'Consent receipt is invalid or expired');
-    }
-    log.info('Flow Consent Gate replaced the legacy authorization challenge', {
-      action: 'consent_gate_metric',
-      metric: 'double_challenge_avoided',
-      gate_kind: 'oidc_authorization',
-      clientId: validClientId,
-      flow_version_id: receipt.flow_version_id,
-      receipt_id: receipt.id,
-    });
-    scope = release.selected_scopes.join(' ');
-    if (effectiveClaimsRequest) {
-      const selectedClaims = new Set(release.selected_claims);
-      effectiveClaimsRequest = {
-        ...effectiveClaimsRequest,
-        userinfo: effectiveClaimsRequest.userinfo
-          ? Object.fromEntries(
-              Object.entries(effectiveClaimsRequest.userinfo).filter(([name]) =>
-                selectedClaims.has(name)
-              )
-            )
-          : {},
-        id_token: effectiveClaimsRequest.id_token
-          ? Object.fromEntries(
-              Object.entries(effectiveClaimsRequest.id_token).filter(([name]) =>
-                selectedClaims.has(name)
-              )
-            )
-          : {},
-      };
-      // The receipt-selected claim subset is authoritative for every downstream grant and
-      // token path. Keeping the original serialized claims parameter here would allow a
-      // deselected claim to reappear when the authorization code is redeemed.
-      claims = JSON.stringify(effectiveClaimsRequest);
-    }
   }
 
   // Enforce PAR request_uri one-time use only after the request has reached an authenticated
@@ -3714,11 +3519,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           metadata: {
             response_type,
             client_id,
-            identity_mapping: clientMetadata?.identity_mapping,
-            attribute_release_consent: clientMetadata?.attribute_release_consent,
             redirect_uri,
             scope,
-            resource,
             state,
             nonce,
             code_challenge,
@@ -3755,13 +3557,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Client-specific UI: use client's login_ui_url
         // Global UI configured: redirect to external UI
         // Neither: return configuration error
-        const useRuntimeConsentFlow =
-          !useCertificationBuiltinForms &&
-          !(await shouldUseBuiltinForms(c.env)) &&
-          (await isLoginRuntimeFlowEnabled(c.env, tenantId));
         const consentTarget = await getUIRedirectTarget(
           c.env,
-          useRuntimeConsentFlow ? 'login' : 'consent',
+          'consent',
           getTenantAwareUiQueryParams(c, {
             challenge_id: challengeId,
           }),
@@ -3877,11 +3675,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               metadata: {
                 response_type,
                 client_id,
-                identity_mapping: clientMetadata?.identity_mapping,
-                attribute_release_consent: clientMetadata?.attribute_release_consent,
                 redirect_uri,
                 scope,
-                resource,
                 state,
                 nonce,
                 code_challenge,
@@ -3914,13 +3709,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               },
             });
 
-            const useRuntimeConsentFlow =
-              !useCertificationBuiltinForms &&
-              !(await shouldUseBuiltinForms(c.env)) &&
-              (await isLoginRuntimeFlowEnabled(c.env, tenantId));
+            const clientMetadata = await getClientCached(c, c.env, validClientId);
             const consentTarget = await getUIRedirectTarget(
               c.env,
-              useRuntimeConsentFlow ? 'login' : 'consent',
+              'consent',
               getTenantAwareUiQueryParams(c, { challenge_id: challengeId }),
               tenantId,
               clientMetadata?.login_ui_url,
@@ -3947,27 +3739,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         error as Error
       );
       // Non-blocking: continue if consent management check fails
-    }
-  }
-
-  if (prompt?.split(' ').includes('none') && sessionUserId && validClientId) {
-    const flowPreflightError = await preflightOidcPromptNoneConsentGates({
-      c,
-      db: createAuthContextFromHono(c, tenantId).coreAdapter,
-      tenantId,
-      clientId: validClientId,
-      subjectUserId: sessionUserId,
-      requestedScope: splitScopes(scope),
-      resources: resource ? [resource] : [],
-      claims: parsedClaimsRequest.request
-        ? (JSON.parse(JSON.stringify(parsedClaimsRequest.request)) as FlowRuntimeJsonObject)
-        : null,
-      redirectUri: redirect_uri ?? null,
-      authorizationRequestSource,
-      authorizationRequestIntegrityProtected: claimsRequestIntegrityProtected,
-    });
-    if (flowPreflightError) {
-      return sendError(flowPreflightError.error, flowPreflightError.description);
     }
   }
 
@@ -4248,9 +4019,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           scope: validScope,
           client_id: validClientId,
           claims,
-          ...(effectiveClaimsRequest
-            ? { claims_request_protected: claimsRequestIntegrityProtected === true }
-            : {}),
+          ...(claims ? { claims_request_protected: claimsRequestIntegrityProtected === true } : {}),
         },
         privateKey,
         signingKeyId,
@@ -4330,8 +4099,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const isIdTokenOnly = includesIdToken && !includesToken && !includesCode;
       const scopes = validScope.split(' ');
       const hasRequestedIdTokenClaims =
-        Object.keys(effectiveClaimsRequest?.id_token ?? {}).length > 0;
-      const hasIdTokenSAORules = hasSAORulesForTarget(effectiveClaimsRequest, 'id_token');
+        Object.keys(parsedClaimsRequest.request?.id_token ?? {}).length > 0;
+      const hasIdTokenSAORules = hasSAORulesForTarget(parsedClaimsRequest.request, 'id_token');
 
       if (isIdTokenOnly || hasRequestedIdTokenClaims || hasIdTokenSAORules) {
         // Fetch user data from cache (Read-Through Cache) or D1
@@ -4348,7 +4117,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         const requestedClaims = evaluateClaimsForTarget({
           target: 'id_token',
-          claimsRequest: effectiveClaimsRequest,
+          claimsRequest: parsedClaimsRequest.request,
           initialClaims: idTokenClaims,
           availableClaims: userData,
           grantedScopes: scopes,

@@ -19,6 +19,7 @@ import {
 import { getSecretNamesForWorker } from './secrets.js';
 import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
 import { isTenantDatabaseBinding } from './tenant-database.js';
+import { resolveRegisteredSchemaReferences } from './release-migrations.js';
 
 // =============================================================================
 // Types
@@ -29,9 +30,10 @@ export interface ResourceIds {
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
   r2?: Record<string, { name: string }>;
+  registeredSchemaReferences?: string[];
 }
 
-export function buildResourceIdsFromLock(lock: AuthrimLock): ResourceIds {
+export function buildResourceIdsFromLock(lock: AuthrimLock, config?: AuthrimConfig): ResourceIds {
   return {
     d1: Object.fromEntries(
       Object.entries(lock.d1 || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
@@ -48,6 +50,9 @@ export function buildResourceIdsFromLock(lock: AuthrimLock): ResourceIds {
         )
       : undefined,
     r2: lock.r2 ? Object.fromEntries(Object.entries(lock.r2)) : undefined,
+    ...(config
+      ? { registeredSchemaReferences: resolveRegisteredSchemaReferences({ lock, config }) }
+      : {}),
   };
 }
 
@@ -503,6 +508,13 @@ export function generateWranglerConfig(
     workers_dev: !config.urls?.api?.custom,
     vars: generateEnvVars(component, config, workersSubdomain),
   };
+  if (component === 'ar-management') {
+    const registeredSchemaReferences = JSON.stringify(resourceIds.registeredSchemaReferences ?? []);
+    if (Buffer.byteLength(registeredSchemaReferences, 'utf-8') > 5 * 1024) {
+      throw new Error('registered_schema_references_exceed_cloudflare_variable_limit');
+    }
+    wranglerConfig.vars['AUTHRIM_REGISTERED_SCHEMA_REFS'] = registeredSchemaReferences;
+  }
 
   // Placement (off for better performance with sharded DOs)
   wranglerConfig.placement = { mode: 'off' };
@@ -860,6 +872,10 @@ export function generateEnvVars(
   const multiTenantEnabled = !!multiTenantBaseDomain;
   const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true;
   const loginUiRunsOnIssuer = loginUiUsesApiDomain || multiTenantEnabled;
+
+  if (component === 'ar-discovery' || component === 'ar-agent-access') {
+    vars['AUTHRIM_ENVIRONMENT_NAME'] = config.environment.prefix;
+  }
 
   // Determine issuer URL
   // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
@@ -1433,7 +1449,7 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       lines.push(`[env.${envName}.vars]`);
       for (const [key, value] of Object.entries(config.vars)) {
         if (value) {
-          lines.push(`${key} = "${value}"`);
+          lines.push(`${key} = ${JSON.stringify(value)}`);
         }
       }
       lines.push('');
@@ -1618,7 +1634,7 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       lines.push('[vars]');
       for (const [key, value] of Object.entries(config.vars)) {
         if (value) {
-          lines.push(`${key} = "${value}"`);
+          lines.push(`${key} = ${JSON.stringify(value)}`);
         }
       }
       lines.push('');

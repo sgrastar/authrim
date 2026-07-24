@@ -33,7 +33,12 @@
 	let eligibilityError = $state('');
 	let eligibilityRequest = 0;
 	let purpose = $state('');
-	let expiresOn = $state('');
+	const grantExpiryMaximum = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+		.toISOString()
+		.slice(0, 10);
+	let expiresOn = $state(
+		new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+	);
 	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state('');
@@ -172,6 +177,7 @@
 			!delegatorId ||
 			!taskSetId ||
 			!scopePolicyId ||
+			!expiresOn ||
 			(delegationMode === 'admin_pre_authorized' && !principalId)
 		) {
 			error = $LL.admin_agent_access_required_selection();
@@ -362,6 +368,8 @@
 						type="date"
 						bind:value={expiresOn}
 						min={new Date().toISOString().slice(0, 10)}
+						max={grantExpiryMaximum}
+						required
 					/>
 				</div>
 			</AdminSection>

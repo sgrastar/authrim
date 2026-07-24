@@ -5,6 +5,12 @@ export interface AgentAccessSettings {
   maxTokenTtlSeconds: number;
   elevationMode: AgentElevationMode;
   elevationTtlSeconds: number;
+  /** Authenticated Streamable HTTP requests admitted per Grant/client each minute. */
+  requestRateLimitPerMinute: number;
+  /** New MCP initialize requests admitted per Grant/client each minute. */
+  sessionInitializationRateLimitPerMinute: number;
+  /** Active stateful MCP sessions allowed per Grant/client. */
+  maxConcurrentSessions: number;
   rateLimitPerMinute: number;
   /** Stricter per-Tool limit used only for opted-in standard-risk public Mode A calls. */
   publicClientStandardRateLimitPerMinute: number;
@@ -19,7 +25,10 @@ export const AGENT_ACCESS_SETTINGS_DEFAULTS: Readonly<AgentAccessSettings> = {
   maxTokenTtlSeconds: 900,
   elevationMode: 'self_reauth',
   elevationTtlSeconds: 300,
-  rateLimitPerMinute: 60,
+  requestRateLimitPerMinute: 600,
+  sessionInitializationRateLimitPerMinute: 30,
+  maxConcurrentSessions: 20,
+  rateLimitPerMinute: 120,
   publicClientStandardRateLimitPerMinute: 10,
   highRiskPermissionsAdditional: [],
   publicClientStandardToolIds: [],
@@ -31,6 +40,9 @@ export const AGENT_ACCESS_SETTING_KEYS = {
   maxTokenTtlSeconds: 'agent.mcp.max_token_ttl_seconds',
   elevationMode: 'agent.mcp.elevation_mode',
   elevationTtlSeconds: 'agent.mcp.elevation_ttl_seconds',
+  requestRateLimitPerMinute: 'agent.mcp.request_rate_limit_per_minute',
+  sessionInitializationRateLimitPerMinute: 'agent.mcp.session_initialization_rate_limit_per_minute',
+  maxConcurrentSessions: 'agent.mcp.max_concurrent_sessions',
   rateLimitPerMinute: 'agent.mcp.rate_limit_per_minute',
   publicClientStandardRateLimitPerMinute: 'agent.mcp.public_client_standard_rate_limit_per_minute',
   highRiskPermissionsAdditional: 'agent.mcp.high_risk_permissions_additional',
@@ -83,6 +95,24 @@ export function parseAgentAccessSettings(value: unknown): AgentAccessSettings {
       AGENT_ACCESS_SETTINGS_DEFAULTS.elevationTtlSeconds,
       60,
       300
+    ),
+    requestRateLimitPerMinute: boundedInteger(
+      record[AGENT_ACCESS_SETTING_KEYS.requestRateLimitPerMinute],
+      AGENT_ACCESS_SETTINGS_DEFAULTS.requestRateLimitPerMinute,
+      10,
+      10_000
+    ),
+    sessionInitializationRateLimitPerMinute: boundedInteger(
+      record[AGENT_ACCESS_SETTING_KEYS.sessionInitializationRateLimitPerMinute],
+      AGENT_ACCESS_SETTINGS_DEFAULTS.sessionInitializationRateLimitPerMinute,
+      1,
+      1_000
+    ),
+    maxConcurrentSessions: boundedInteger(
+      record[AGENT_ACCESS_SETTING_KEYS.maxConcurrentSessions],
+      AGENT_ACCESS_SETTINGS_DEFAULTS.maxConcurrentSessions,
+      1,
+      1_000
     ),
     rateLimitPerMinute: boundedInteger(
       record[AGENT_ACCESS_SETTING_KEYS.rateLimitPerMinute],

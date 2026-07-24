@@ -6,6 +6,7 @@ import {
   parseWranglerToml,
   toToml,
 } from '../core/wrangler.js';
+import { createDefaultConfig } from '../core/config.js';
 import type { AuthrimConfig } from '../core/config.js';
 import type { AuthrimLock } from '../core/lock.js';
 
@@ -247,6 +248,8 @@ describe('generateRoutes', () => {
     );
     expect(tokenConfig.send_email).toBeUndefined();
     expect(agentAccessConfig.main).toBe('src/platform/cloudflare/worker.ts');
+    expect(agentAccessConfig.vars.AUTHRIM_ENVIRONMENT_NAME).toBe('emailtest');
+    expect(discoveryConfig.vars.AUTHRIM_ENVIRONMENT_NAME).toBe('emailtest');
     expect(agentAccessConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -459,6 +462,28 @@ describe('generateRoutes', () => {
     expect(toml).toContain('[[env.prod.send_email]]');
     expect(toml).not.toContain('[[send_email]]');
     expect(toml).not.toContain('env.undefined.send_email');
+  });
+
+  it('escapes JSON strings in environment variables for valid TOML', () => {
+    const registeredSchemas = JSON.stringify(['binding:DB:d1-core', 'binding:DB_ADMIN:d1-admin']);
+    const config = {
+      main: 'src/index.ts',
+      compatibility_date: '2026-07-21',
+      compatibility_flags: ['nodejs_compat'],
+      name: 'authrim-management',
+      workers_dev: false,
+      vars: { AUTHRIM_REGISTERED_SCHEMA_REFS: registeredSchemas },
+    };
+
+    const scopedToml = toToml(config, 'test');
+    const legacyToml = toToml(config);
+
+    expect(scopedToml).toContain(
+      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:d1-core\\",\\"binding:DB_ADMIN:d1-admin\\"]"'
+    );
+    expect(legacyToml).toContain(
+      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:d1-core\\",\\"binding:DB_ADMIN:d1-admin\\"]"'
+    );
   });
 
   it('serializes send_email bindings once in legacy wrangler.toml output', () => {
@@ -1702,5 +1727,37 @@ id = "kv-id"
         expect.objectContaining({ binding: 'SENSITIVE_DETAILS' }),
       ])
     );
+  });
+});
+
+describe('registered schema references', () => {
+  it('rejects a management Worker variable larger than Cloudflare allows', () => {
+    const config = createDefaultConfig('prod');
+    config.urls = {
+      api: { custom: null, auto: 'https://prod-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://prod-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://prod-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const references = Array.from(
+      { length: 200 },
+      (_, index) =>
+        `connection:external-${index.toString().padStart(3, '0')}-${'x'.repeat(30)}:d1-core`
+    );
+
+    expect(() =>
+      generateWranglerConfig('ar-management', config, {
+        d1: {},
+        kv: {},
+        registeredSchemaReferences: references,
+      })
+    ).toThrow('registered_schema_references_exceed_cloudflare_variable_limit');
   });
 });

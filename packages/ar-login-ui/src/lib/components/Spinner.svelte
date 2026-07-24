@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -23,7 +24,12 @@
 	};
 </script>
 
-<div class={`inline-block ${className}`} role="status" aria-label="Loading" {...restProps}>
+<div
+	class={`inline-block ${className}`}
+	role="status"
+	aria-label={$LL.common_loading()}
+	{...restProps}
+>
 	<svg
 		class={`animate-spin ${sizeClasses[size]} ${colorClasses[color]}`}
 		xmlns="http://www.w3.org/2000/svg"
@@ -38,5 +44,5 @@
 			d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
 		></path>
 	</svg>
-	<span class="sr-only">Loading...</span>
+	<span class="sr-only">{$LL.common_loading()}</span>
 </div>

@@ -35,12 +35,12 @@ export function normalizeTimestampToMillis(value: number | null | undefined): nu
 /**
  * Format a numeric timestamp that may be Unix seconds or milliseconds.
  */
-export function formatTimestamp(value: number | null | undefined): string {
+export function formatTimestamp(value: number | null | undefined, locale?: string): string {
 	const millis = normalizeTimestampToMillis(value);
 	if (millis === null) return '-';
 	const date = new Date(millis);
 	if (!isValidDate(date)) return '-';
-	return date.toLocaleString();
+	return date.toLocaleString(locale?.replace('_', '-'));
 }
 
 /**

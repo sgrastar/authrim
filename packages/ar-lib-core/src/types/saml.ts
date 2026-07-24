@@ -746,15 +746,6 @@ export interface SAMLRequestData {
 }
 
 export interface SAMLRequestContext {
-  /** Immutable protocol input used by Login Flow consent gates. */
-  loginFlowProtocol?: {
-    tenantId: string;
-    requestId: string;
-    spEntityId: string;
-    acsUrl?: string;
-    requestedAttributes: SAMLMetadataRequestedAttribute[];
-    identityMapping?: SAMLIdentityMappingFieldMappingSelector;
-  };
   attributeReleaseConsentChallenge?: {
     challengeId: string;
     subjectId: string;
@@ -763,16 +754,6 @@ export interface SAMLRequestContext {
     attributeSetHash: string;
     consentMode: AttributeReleaseConsentPolicy['mode'];
     createdAt: number;
-    attributeSummaries?: Array<{
-      name: string;
-      friendlyName?: string;
-      nameFormat?: string;
-      valueCount: number;
-      required: boolean;
-      description?: string;
-      valueDisplay?: SAMLAttributeReleaseConfirmationValueDisplay;
-      displayValues?: string[];
-    }>;
   };
   attributeReleaseConsentConfirmed?: {
     subjectId: string;

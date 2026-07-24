@@ -835,7 +835,7 @@ async function validateDeployWranglers(
   const validation = await validateWranglerConfigs(
     baseDir,
     env,
-    buildResourceIdsFromLock(lock),
+    buildResourceIdsFromLock(lock, config),
     enabledComponents
   );
 

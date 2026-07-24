@@ -331,47 +331,9 @@ describe('admin consent statement lifecycle', () => {
   });
 
   it('lists user records/history and withdraws only granted withdrawable consent', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'record-1' }]).mockResolvedValueOnce([
-      {
-        id: 'evidence-1',
-        protocol: 'oidc',
-        consent_kind: 'scope_claim_release',
-        recipient_type: 'oidc_client',
-        recipient_id: 'client-a',
-        statement_id: 'oidc-release:client-a',
-        statement_version: 'hash-a',
-        policy_id: 'policy-a',
-        flow_id: 'flow-a',
-        flow_version_id: 'flow-version-a',
-        flow_node_id: 'consent-a',
-        status: 'active',
-        evidence_json: JSON.stringify({
-          consent_gate_receipt_id: 'cgr_0123456789abcdef0123456789abcdef',
-        }),
-        created_at: 100,
-      },
-    ]);
+    mocks.adapter.query.mockResolvedValueOnce([{ id: 'record-1' }]);
     await expect((await adminUserConsentRecordsListHandler(context())).json()).resolves.toEqual({
       records: [{ id: 'record-1' }],
-      evidence: [
-        {
-          id: 'evidence-1',
-          gate_kind: 'oidc_authorization',
-          protocol: 'oidc',
-          consent_kind: 'scope_claim_release',
-          target_type: 'oidc_client',
-          target_id: 'client-a',
-          statement_id: 'oidc-release:client-a',
-          statement_version: 'hash-a',
-          policy_id: 'policy-a',
-          flow_id: 'flow-a',
-          flow_version_id: 'flow-version-a',
-          flow_node_id: 'consent-a',
-          receipt_id: 'cgr_0123456789abcdef0123456789abcdef',
-          status: 'active',
-          created_at: 100,
-        },
-      ],
     });
     mocks.adapter.query.mockResolvedValueOnce([{ id: 'history-1' }]);
     await expect((await adminUserConsentHistoryHandler(context())).json()).resolves.toEqual({

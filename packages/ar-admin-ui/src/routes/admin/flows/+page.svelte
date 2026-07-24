@@ -16,6 +16,7 @@
 	const MAX_IMPORT_JSON_BYTES = 512 * 1024;
 
 	let flows = $state<AdminFlow[]>([]);
+	let activeAssignmentCounts = $state<Record<string, number>>({});
 	let flowsLoading = $state(true);
 	let flowsError = $state('');
 	let importModalOpen = $state(false);
@@ -33,8 +34,20 @@
 		flowsLoading = true;
 		flowsError = '';
 		try {
-			const response = await adminFlowsAPI.list();
-			flows = response.flows;
+			const [flowResponse, assignmentResponse] = await Promise.all([
+				adminFlowsAPI.list(),
+				adminFlowsAPI.listAssignments()
+			]);
+			flows = flowResponse.flows;
+			activeAssignmentCounts = assignmentResponse.assignments.reduce<Record<string, number>>(
+				(counts, assignment) => {
+					if (assignment.enabled) {
+						counts[assignment.flow_id] = (counts[assignment.flow_id] ?? 0) + 1;
+					}
+					return counts;
+				},
+				{}
+			);
 		} catch (error) {
 			flowsError = error instanceof Error ? error.message : $LL.admin_flows_load_error();
 		} finally {
@@ -66,6 +79,12 @@
 			default:
 				return kind;
 		}
+	}
+
+	function getActiveAssignmentLabel(flowId: string): string {
+		const count = activeAssignmentCounts[flowId] ?? 0;
+		const label = $LL.admin_flows_assignment_enabled();
+		return count > 1 ? `${label} (${count})` : label;
 	}
 
 	function formatDate(seconds: number): string {
@@ -227,6 +246,11 @@
 									<span class="status-badge" data-state={flow.status}>
 										{getAdminFlowStatusLabel(flow.status)}
 									</span>
+									{#if activeAssignmentCounts[flow.id]}
+										<span class="status-badge" data-state="assigned">
+											{getActiveAssignmentLabel(flow.id)}
+										</span>
+									{/if}
 								</div>
 								<p>{getSavedFlowDescription($LL, flow)}</p>
 							</div>
@@ -628,6 +652,12 @@
 		border-color: color-mix(in srgb, var(--color-success) 55%, transparent);
 		background: color-mix(in srgb, var(--color-success) 12%, transparent);
 		color: var(--color-success);
+	}
+
+	.status-badge[data-state='assigned'] {
+		border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		color: var(--color-accent);
 	}
 
 	.status-badge[data-state='disabled'] {

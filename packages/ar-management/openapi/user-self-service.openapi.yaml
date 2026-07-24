@@ -73,8 +73,8 @@ paths:
         - Account Page
       operationId: getApiAccountCapabilities
       summary: Read Account Page feature capabilities.
-      description: Returns the Account Page sections, available features, planned Phase 4E features,
-        and the initial theme capability contract for the authenticated Account Page user.
+      description: Returns Account Page capabilities together with the published page composition,
+        resolved reusable screens, and theme integration status for the authenticated user.
       responses:
         '200':
           $ref: '#/components/responses/AccountCapabilities'
@@ -282,72 +282,6 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '500':
-          $ref: '#/components/responses/Error'
-      security: *accountSession
-  /api/account/consents/{kind}/{id}:
-    delete:
-      tags:
-        - Account Page
-      operationId: deleteApiAccountConsent
-      summary: Withdraw a document acceptance or service release grant.
-      description:
-        Withdraws the authenticated user's current consent state. Document acceptance withdrawal
-        applies to every Client and SP using the same statement version. A recent Account Page
-        reauthentication is required. The operation appends minimized withdrawal evidence and does
-        not store released claim or attribute values.
-      parameters:
-        - name: kind
-          in: path
-          required: true
-          schema:
-            type: string
-            enum:
-              - document_acceptance
-              - release_grant
-              - oauth_client
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            maxLength: 512
-      responses:
-        '200':
-          description: Consent was withdrawn.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - ok
-                  - consent
-                properties:
-                  ok:
-                    type: boolean
-                    const: true
-                  consent:
-                    type: object
-                    required:
-                      - id
-                      - kind
-                      - status
-                    properties:
-                      id:
-                        type: string
-                      kind:
-                        type: string
-                      status:
-                        type: string
-                        const: withdrawn
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
           $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/return:
@@ -1655,6 +1589,7 @@ components:
         - capabilities
         - sections
         - theme
+        - account_page
       properties:
         capabilities:
           type: array
@@ -1666,6 +1601,118 @@ components:
             $ref: '#/components/schemas/AccountSectionCapability'
         theme:
           $ref: '#/components/schemas/AccountThemeCapabilities'
+        account_page:
+          $ref: '#/components/schemas/PublishedAccountPage'
+    AccountPagePlacement:
+      type: object
+      required:
+        - id
+        - screen_key
+        - width
+        - enabled
+        - condition
+      properties:
+        id:
+          type: string
+        screen_key:
+          type: string
+        width:
+          type: string
+          enum:
+            - full
+            - half
+        enabled:
+          type: boolean
+        condition:
+          type: string
+          enum:
+            - always
+            - hidden
+            - passkey_enabled
+            - totp_enabled
+            - external_idp_enabled
+            - consent_records_available
+            - multiple_sessions
+    AccountPageDefinition:
+      type: object
+      required:
+        - schema_version
+        - screens
+      properties:
+        schema_version:
+          type: string
+          enum:
+            - authrim.account_page.v1
+        title:
+          type: string
+        description:
+          type: string
+        localizations:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              title:
+                type: string
+              description:
+                type: string
+        screens:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AccountPagePlacement'
+    AccountPageScreen:
+      type: object
+      required:
+        - id
+        - screen_key
+        - display_name
+        - fields
+        - localizations
+      properties:
+        id:
+          type: string
+        screen_key:
+          type: string
+        display_name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        fields:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        localizations:
+          type: object
+          additionalProperties: true
+    PublishedAccountPage:
+      type: object
+      required:
+        - definition
+        - screens
+        - version
+        - published_at
+      properties:
+        page_id:
+          type:
+            - string
+            - 'null'
+        name:
+          type: string
+        definition:
+          $ref: '#/components/schemas/AccountPageDefinition'
+        screens:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountPageScreen'
+        version:
+          type: integer
+          minimum: 0
+        published_at:
+          type: string
     AccountOperation:
       type: object
       required:

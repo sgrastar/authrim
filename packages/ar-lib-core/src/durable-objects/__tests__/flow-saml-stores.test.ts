@@ -247,11 +247,7 @@ describe('SAMLRequestStore replay protection', () => {
     expect(
       (await store.fetch(post('/store', { requestId: 'r', expiresAt: Date.now() + 1000 }))).status
     ).toBe(200);
-    const peek = await store.fetch(new Request('https://saml.example/request/r'));
-    expect(peek.status).toBe(200);
-    expect(await peek.json()).toMatchObject({ requestId: 'r' });
     expect((await store.fetch(post('/consume/r', {}))).status).toBe(200);
-    expect((await store.fetch(new Request('https://saml.example/request/r'))).status).toBe(404);
     expect((await store.fetch(post('/consume/r', {}))).status).toBe(404);
     expect((await store.fetch(new Request('https://saml.example/check/r'))).status).toBe(200);
     expect((await store.fetch(post('/assertion/consume', { assertionId: 'a' }))).status).toBe(200);

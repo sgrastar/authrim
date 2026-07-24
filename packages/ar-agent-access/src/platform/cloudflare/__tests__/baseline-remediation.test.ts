@@ -8,6 +8,7 @@ import { CloudflareAgentBaselineRemediationCoordinator } from '../baseline-remed
 
 const profile = {
   schemaVersion: 'authrim-agent-plan-v1' as const,
+  goal: 'Apply an approved Authrim configuration change',
   steps: [
     {
       id: 'client-metadata',

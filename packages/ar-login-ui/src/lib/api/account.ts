@@ -101,7 +101,6 @@ export type AccountOperation = {
 
 export type AccountOAuthClientConsent = {
 	kind: 'oauth_client';
-	recordType: 'release_grant';
 	id: string;
 	clientId: string;
 	clientName?: string;
@@ -119,7 +118,6 @@ export type AccountOAuthClientConsent = {
 
 export type AccountStatementConsent = {
 	kind: 'statement';
-	recordType: 'document_acceptance' | 'release_grant';
 	id: string;
 	statementId: string;
 	versionId: string;
@@ -136,20 +134,76 @@ export type AccountStatementConsent = {
 	receiptId?: string;
 	updatedAt: number;
 	selectedValue?: string;
-	consentKind?: string;
-	protocol?: string;
-	gateKind?: 'legal_document' | 'oidc_authorization' | 'saml_attribute_release';
-	targetType?: string;
-	targetId?: string;
-	flowId?: string;
-	flowVersionId?: string;
-	flowNodeId?: string;
-	releasedScopes?: string[];
-	releasedClaims?: string[];
-	releasedAttributes?: string[];
 };
 
 export type AccountConsent = AccountOAuthClientConsent | AccountStatementConsent;
+
+export type AccountPageScreenField = {
+	field: string;
+	label: string;
+	required: boolean;
+	block_type?:
+		| 'heading'
+		| 'text'
+		| 'link'
+		| 'divider'
+		| 'layout_row'
+		| 'account_profile_widget'
+		| 'account_device_list_widget'
+		| 'account_session_widget'
+		| 'account_passkey_widget'
+		| 'account_totp_widget'
+		| 'account_consent_widget'
+		| 'account_activity_widget'
+		| 'account_social_account_widget';
+	block_id?: string;
+	text?: string | null;
+	help_text?: string | null;
+	href?: string | null;
+	order?: number;
+	layout_columns?: number | null;
+	layout_column?: number | null;
+};
+
+export type AccountPageScreen = {
+	id: string;
+	screen_key: string;
+	display_name: string;
+	description?: string | null;
+	fields: AccountPageScreenField[];
+	localizations: Record<
+		string,
+		{
+			display_name?: string;
+			description?: string;
+			fields?: Record<
+				string,
+				Partial<Pick<AccountPageScreenField, 'label' | 'text' | 'help_text'>>
+			>;
+		}
+	>;
+};
+
+export type AccountPageDefinition = {
+	schema_version: 'authrim.account_page.v1';
+	title?: string;
+	description?: string;
+	localizations?: Record<string, { title?: string; description?: string }>;
+	screens: Array<{
+		id: string;
+		screen_key: string;
+		width: 'full' | 'half';
+		enabled: boolean;
+		condition:
+			| 'always'
+			| 'hidden'
+			| 'passkey_enabled'
+			| 'totp_enabled'
+			| 'external_idp_enabled'
+			| 'consent_records_available'
+			| 'multiple_sessions';
+	}>;
+};
 
 export type AccountCapabilities = {
 	capabilities: Array<{
@@ -169,6 +223,14 @@ export type AccountCapabilities = {
 		source: string;
 		account_page_overrides_supported: boolean;
 		planned_tokens: string[];
+	};
+	account_page?: {
+		page_id?: string | null;
+		name?: string;
+		definition: AccountPageDefinition;
+		screens: AccountPageScreen[];
+		version: number;
+		published_at: string;
 	};
 };
 
@@ -421,14 +483,8 @@ export const accountAPI = {
 	getOperations: () =>
 		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),
 
-	getConsents: () =>
-		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents'),
-
-	withdrawConsent: (kind: 'document_acceptance' | 'release_grant' | 'oauth_client', id: string) =>
-		accountFetch<{
-			ok: boolean;
-			consent: { id: string; kind: string; status: 'withdrawn' };
-		}>(`/api/account/consents/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, {
-			method: 'DELETE'
+	getConsents: (locale?: string) =>
+		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents', {
+			headers: locale ? { 'Accept-Language': locale.replace('_', '-') } : undefined
 		})
 };

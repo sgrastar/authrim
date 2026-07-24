@@ -18,12 +18,34 @@ async function writeTenantD1Config(env: string, preallocatedSlots: number) {
   const envDir = join(tempDir!, '.authrim', env);
   await mkdir(envDir, { recursive: true });
   await writeFile(
+    join(tempDir!, 'package.json'),
+    `${JSON.stringify({ name: 'authrim-test-installation', version: '0.4.0' }, null, 2)}\n`,
+    'utf-8'
+  );
+  await writeFile(
     join(envDir, 'config.json'),
     `${JSON.stringify(
       {
         environment: { prefix: env },
         profiles: { defaults: { storage: 'builtin:storage:tenant-d1' } },
         tenantD1: { preallocatedSlots },
+      },
+      null,
+      2
+    )}\n`,
+    'utf-8'
+  );
+  await writeFile(
+    join(envDir, 'lock.json'),
+    `${JSON.stringify(
+      {
+        version: '1.0.0',
+        productVersion: '0.4.0',
+        env,
+        createdAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+        d1: {},
+        kv: {},
       },
       null,
       2
@@ -67,6 +89,7 @@ describe('tenant-db pool expand command', () => {
       config: join(tempDir!, '.authrim', 'prod', 'config.json'),
       source: tempDir,
       yes: true,
+      operationKind: 'topology_change',
     });
   });
 
@@ -81,5 +104,21 @@ describe('tenant-db pool expand command', () => {
     await expect(readConfig('prod')).resolves.toMatchObject({
       tenantD1: { preallocatedSlots: 5 },
     });
+
+    const pendingLock = JSON.parse(
+      await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8')
+    );
+    expect(pendingLock.topologyUpdate).toMatchObject({
+      kind: 'tenant_d1_pool',
+      phase: 'pending_deploy',
+      targetProductVersion: '0.4.0',
+    });
+
+    deployCommandMock.mockResolvedValueOnce(undefined);
+    await tenantDatabasePoolExpandCommand({ env: 'prod', yes: true });
+    await expect(readConfig('prod')).resolves.toMatchObject({
+      tenantD1: { preallocatedSlots: 5 },
+    });
+    expect(deployCommandMock).toHaveBeenCalledTimes(2);
   });
 });

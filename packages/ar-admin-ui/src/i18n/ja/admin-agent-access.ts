@@ -17,12 +17,12 @@ export default {
 	admin_agent_access_tab_advanced: '詳細設定',
 	admin_agent_access_connected_title: '接続済みAgent',
 	admin_agent_access_connected_description:
-		'このtenantで許可された対話接続と自動化接続を管理します。',
+		'このtenantで許可された対話接続と自動化接続を管理します。MCP sessionは、接続に許可されたGrant内で必要なTool profileだけを読み込みます。',
 	admin_agent_access_connected_empty:
 		'接続済みAgentはありません。Agent Accessを有効にし、下のURLをMCPホストへ追加してください。',
 	admin_agent_access_connection_url: 'MCP接続URL',
 	admin_agent_access_connection_url_help:
-		'Codex、Claude Codeなど標準対応MCPホストへ、このURLを登録します。接続元の登録と権限選択はサインイン時に行われます。',
+		'Codex、Claude Codeなど標準対応MCPホストへ、このURLを登録します。登録名は本番環境では「authrim」、その他の環境では「authrim-<環境名>」を推奨します。対応するMCPホストには、サーバーが「Authrim (<環境名>)」という表示名を通知します。接続元の登録と権限選択はサインイン時に行われます。',
 	admin_agent_access_copy_url: 'URLをコピー',
 	admin_agent_access_copied: 'コピーしました',
 	admin_agent_access_interactive_connection: '対話接続',
@@ -50,7 +50,7 @@ export default {
 		'接続権限を更新しました。MCPホストで再認証が必要になる場合があります。',
 	admin_agent_access_scope_unchanged_notice: '接続権限に変更はありません。',
 	admin_agent_access_advanced_help:
-		'手動Client、Grant、Task Set、Scope Policyは、自動化接続、独自policy、相互運用の調査に使用します。',
+		'手動Client、Grant、Task Set、Scope Policyは、自動化接続、独自policy、相互運用の調査に使う認可上限です。sessionのTool profileを切り替えても、この上限は変わりません。',
 	admin_agent_access_loading: 'Agent Accessを読み込んでいます…',
 	admin_agent_access_load_error: 'Agent Accessの読み込みに失敗しました。',
 	admin_agent_access_enabled: '有効',
@@ -126,7 +126,7 @@ export default {
 	admin_agent_access_permission_settings: 'Agent Access設定の参照',
 	admin_agent_access_purpose: '用途',
 	admin_agent_access_purpose_placeholder: 'このクライアントへ委任が必要な理由を記載します。',
-	admin_agent_access_expiration: '有効期限（任意）',
+	admin_agent_access_expiration: '再認定期限（必須・最長90日）',
 	admin_agent_access_create: 'Grantを作成',
 	admin_agent_access_cancel: 'キャンセル',
 	admin_agent_access_save: '変更を保存',
@@ -150,7 +150,7 @@ export default {
 	admin_agent_access_suspend_confirm:
 		'このAgent Grantを停止しますか？既存token familyは失効キューへ追加されます。',
 	admin_agent_access_resume_confirm:
-		'このAgent Grantを再開しますか？token発行前に委任者の再同意が必要です。',
+		'このAgent Grantを30日間再認定して再開しますか？token発行前に委任者の再同意が必要です。',
 	admin_agent_access_updated_notice: 'Agent Grantを更新しました。再同意が必要です。',
 	admin_agent_access_transition_notice: 'Agent Grantの状態を更新しました。',
 	admin_agent_access_audit_title: 'Grant履歴',
@@ -170,10 +170,20 @@ export default {
 	admin_agent_access_elevation_approval: '承認ワークフロー',
 	admin_agent_access_elevation_both: '再認証または承認',
 	admin_agent_access_setting_elevation_ttl: 'Elevation Capabilityの有効時間（秒）',
-	admin_agent_access_setting_rate_limit: 'Grant・Toolごとの1分間リクエスト数',
+	admin_agent_access_setting_request_rate_limit: 'MCP HTTPリクエスト上限（1分間）',
+	admin_agent_access_setting_request_rate_limit_help:
+		'認証済みのMCP通信をGrant・接続クライアント単位で制限します。Tool一覧やResource取得も含みます。',
+	admin_agent_access_setting_session_initialization_rate_limit:
+		'新規MCPセッション作成上限（1分間）',
+	admin_agent_access_setting_session_initialization_rate_limit_help:
+		'再接続ではなく、新しいinitializeだけをGrant・接続クライアント単位で制限します。',
+	admin_agent_access_setting_max_concurrent_sessions: '同時MCPセッション上限',
+	admin_agent_access_setting_max_concurrent_sessions_help:
+		'Grant・接続クライアントごとに維持できる有効なstatefulセッション数です。',
+	admin_agent_access_setting_rate_limit: 'Grant・Toolごとの1分間実行数',
 	admin_agent_access_setting_public_standard_rate_limit: '公開Mode Aの標準書き込み（1分間）',
 	admin_agent_access_setting_public_standard_rate_limit_help:
-		'Grant・Tool単位で適用され、一般リクエスト上限を超える値にはできません。',
+		'Grant・Tool単位で適用され、一般Tool実行上限を超える値にはできません。',
 	admin_agent_access_setting_high_risk: '追加の高リスク権限',
 	admin_agent_access_setting_high_risk_help:
 		'既知のAdmin権限を1行に1つ入力します。これらの権限は常にelevationを要求します。',

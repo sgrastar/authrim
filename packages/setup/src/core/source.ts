@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, rename, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { Readable, Transform } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import { extract } from 'tar';
 import { fetchWithTimeout, readResponseJsonWithLimit } from './http-limits.js';
@@ -52,6 +53,26 @@ const DEFAULT_REPOSITORY = 'sgrastar/authrim';
 const DEFAULT_BRANCH = 'main';
 const GITHUB_API_BASE = 'https://api.github.com';
 const MAX_SOURCE_TARBALL_BYTES = 250 * 1024 * 1024;
+const MAX_SOURCE_EXTRACTED_BYTES = 1024 * 1024 * 1024;
+const MAX_SOURCE_ARCHIVE_ENTRIES = 100_000;
+
+/** @internal Bounded stream used for both compressed and decompressed source artifacts. */
+export function createSourceByteLimitStream(maximumBytes: number, label: string): Transform {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || !label) {
+    throw new TypeError('Invalid source byte limit');
+  }
+  let received = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.byteLength;
+      if (received > maximumBytes) {
+        callback(new Error(`${label} exceeds maximum size: ${received} > ${maximumBytes} bytes`));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+}
 
 // =============================================================================
 // GitHub API Helpers
@@ -281,25 +302,34 @@ async function extractTarball(
 
     // Use tar to extract
     // Convert web ReadableStream to Node.js Readable
-    const { Readable, Transform } = await import('node:stream');
     const nodeReadable = Readable.fromWeb(body as import('node:stream/web').ReadableStream);
-    let downloadedBytes = 0;
-    const limitStream = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        downloadedBytes += chunk.byteLength;
-        if (downloadedBytes > MAX_SOURCE_TARBALL_BYTES) {
-          callback(
-            new Error(
-              `Source tarball exceeds maximum size: ${downloadedBytes} > ${MAX_SOURCE_TARBALL_BYTES} bytes`
-            )
-          );
-          return;
-        }
-        callback(null, chunk);
-      },
-    });
+    const compressedLimit = createSourceByteLimitStream(MAX_SOURCE_TARBALL_BYTES, 'Source tarball');
+    const extractedLimit = createSourceByteLimitStream(
+      MAX_SOURCE_EXTRACTED_BYTES,
+      'Expanded source archive'
+    );
+    let entryCount = 0;
 
-    await pipeline(nodeReadable, limitStream, createGunzip(), extract({ cwd: tempDir }));
+    await pipeline(
+      nodeReadable,
+      compressedLimit,
+      createGunzip(),
+      extractedLimit,
+      extract({
+        cwd: tempDir,
+        strict: true,
+        preservePaths: false,
+        filter: () => {
+          entryCount += 1;
+          if (entryCount > MAX_SOURCE_ARCHIVE_ENTRIES) {
+            throw new Error(
+              `Source archive exceeds maximum entry count: ${entryCount} > ${MAX_SOURCE_ARCHIVE_ENTRIES}`
+            );
+          }
+          return true;
+        },
+      })
+    );
 
     // Find the extracted directory (GitHub archives have a single root directory)
     const entries = await readdir(tempDir);

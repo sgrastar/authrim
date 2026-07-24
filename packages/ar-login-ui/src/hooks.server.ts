@@ -26,6 +26,9 @@ import {
 	type HumanVerificationProvider
 } from '$lib/server/authentication-methods-cache';
 import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
+import { normalizeLoginUILocale, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
+import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
+import { sanitizeColor } from '$lib/utils/url-validation';
 
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 
@@ -451,6 +454,69 @@ export function shouldPrefetchLoginUITheme(pathname: string): boolean {
 		pathname === '/account' ||
 		pathname.startsWith('/account/')
 	);
+}
+
+export function shouldBootstrapLoginUITheme(pathname: string): boolean {
+	return shouldPrefetchLoginUITheme(pathname);
+}
+
+function hasEmailVerificationOriginTrialConfig(
+	platformEnv: Record<string, unknown> | undefined
+): boolean {
+	const values = [
+		getServerEnvironmentValue(platformEnv, 'EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS'),
+		getServerEnvironmentValue(platformEnv, 'EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN')
+	];
+	return values.some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
+export function shouldBootstrapLoginUIThemeForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): boolean {
+	if (!shouldBootstrapLoginUITheme(event.url.pathname)) {
+		return false;
+	}
+
+	if (
+		event.url.pathname === '/login' &&
+		shouldUseFastPlainLoginShell(event) &&
+		!hasEmailVerificationOriginTrialConfig(platformEnv)
+	) {
+		return false;
+	}
+
+	return true;
+}
+
+export function resolveInitialLoginUIAppearance(
+	authenticationMethods: AuthenticationMethodsResponse | null | undefined
+): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
+	const ui = authenticationMethods?.ui;
+	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
+	const theme = ui?.theme?.trim().toLowerCase();
+	if (theme === 'dark') {
+		const darkVariantBackgrounds: Record<string, string> = {
+			brown: '#0f0d0c',
+			navy: '#0a0e14',
+			slate: '#0f1419'
+		};
+		const variant = ui?.variant?.trim().toLowerCase() || 'brown';
+		return {
+			background: configuredBackground || darkVariantBackgrounds[variant] || '#0f0d0c',
+			colorScheme: 'dark'
+		};
+	}
+	if (theme === 'auto') {
+		return {
+			background: configuredBackground || '#eeeae3',
+			colorScheme: 'light dark'
+		};
+	}
+	return {
+		background: configuredBackground || '#eeeae3',
+		colorScheme: 'light'
+	};
 }
 
 function parseHumanVerificationProviderForCsp(
@@ -935,17 +1001,18 @@ const csrfHandle: Handle = async ({ event, resolve }) => {
 };
 
 const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
-	if (shouldPrefetchLoginUITheme(event.url.pathname)) {
+	const platformEnv = getPlatformEnv(event);
+	if (shouldBootstrapLoginUIThemeForRequest(event, platformEnv)) {
 		const challengeTarget =
 			event.url.pathname === '/login'
-				? await fetchLoginChallengeThemeTargetForPageRequest(event, getPlatformEnv(event))
+				? await fetchLoginChallengeThemeTargetForPageRequest(event, platformEnv)
 				: null;
 		if (challengeTarget) {
 			event.locals.loginChallengeThemeTarget = challengeTarget;
 		}
 		event.locals.authenticationMethods = await fetchAuthenticationMethodsForPageRequest(
 			event,
-			getPlatformEnv(event),
+			platformEnv,
 			challengeTarget?.valid ? challengeTarget.clientId : null
 		);
 	}
@@ -971,30 +1038,57 @@ export const emailVerificationOriginTrialHandle: Handle = async ({ event, resolv
 	return response;
 };
 
-const localeHandle: Handle = async ({ event, resolve }) => {
-	const supportedLocales = ['en', 'ja'];
-	const cookieLocale = event.cookies.get('lang');
-	if (cookieLocale && supportedLocales.includes(cookieLocale)) {
-		event.locals.locale = cookieLocale;
-		return resolve(event);
+export const localeHandle: Handle = async ({ event, resolve }) => {
+	const resolveWithLocale = (locale: LoginUILocale) => {
+		event.locals.locale = locale;
+		const initialAppearance = resolveInitialLoginUIAppearance(event.locals.authenticationMethods);
+		return resolve(event, {
+			transformPageChunk: ({ html }) =>
+				html
+					.replace('__AUTHRIM_DOCUMENT_LANGUAGE__', toDocumentLanguage(locale))
+					.replaceAll('__AUTHRIM_INITIAL_BACKGROUND__', initialAppearance.background)
+					.replaceAll('__AUTHRIM_INITIAL_COLOR_SCHEME__', initialAppearance.colorScheme)
+		});
+	};
+
+	const cookieLocale = normalizeLoginUILocale(
+		event.cookies.get('preferredLanguage') ?? event.cookies.get('lang')
+	);
+	if (cookieLocale) {
+		return resolveWithLocale(cookieLocale);
 	}
 
 	const acceptLanguage = event.request.headers.get('accept-language') || '';
 	const candidates = acceptLanguage
 		.split(',')
-		.map((part) => part.split(';')[0]?.trim().toLowerCase())
-		.filter(Boolean);
+		.map((part, index) => {
+			const [language, ...parameters] = part.split(';');
+			const qualityParameter = parameters.find((parameter) =>
+				parameter.trim().toLowerCase().startsWith('q=')
+			);
+			const parsedQuality = qualityParameter
+				? Number.parseFloat(qualityParameter.trim().slice(2))
+				: 1;
+			return {
+				language: language?.trim().toLowerCase() ?? '',
+				quality: Number.isFinite(parsedQuality) ? Math.min(1, Math.max(0, parsedQuality)) : 0,
+				index
+			};
+		})
+		.filter(
+			(candidate) => candidate.language && candidate.language !== '*' && candidate.quality > 0
+		)
+		.sort((left, right) => right.quality - left.quality || left.index - right.index)
+		.map((candidate) => candidate.language);
 
 	for (const candidate of candidates) {
-		const base = candidate.split('-')[0];
-		if (base && supportedLocales.includes(base)) {
-			event.locals.locale = base;
-			return resolve(event);
+		const locale = normalizeLoginUILocale(candidate);
+		if (locale) {
+			return resolveWithLocale(locale);
 		}
 	}
 
-	event.locals.locale = 'en';
-	return resolve(event);
+	return resolveWithLocale('en');
 };
 
 export const handle = sequence(

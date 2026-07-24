@@ -204,7 +204,7 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
   'ar-saml': ['ar-lib-core'],
   'ar-vc': ['ar-lib-core'],
   'ar-auth': ['ar-lib-core', 'ar-bridge'],
-  'ar-management': ['ar-lib-core', 'ar-bridge', 'ar-auth'],
+  'ar-management': ['ar-lib-core', 'ar-bridge', 'ar-auth', 'ar-vc'],
   'ar-agent-access': ['ar-lib-core', 'ar-token', 'ar-management'],
   'ar-router': CORE_WORKER_COMPONENTS.filter((component) => component !== 'ar-router'),
 };

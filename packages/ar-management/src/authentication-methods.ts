@@ -28,6 +28,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   profileForTotpPreset,
+  readAuthenticationMethodsCacheRevision,
   resolveAuthCorePersistenceAdapterFromEnv,
   SELF_SERVICE_DEFAULTS,
   VALIDATION_LIMITS,
@@ -238,6 +239,33 @@ interface AuthenticationMethodsErrorResponse {
 // =============================================================================
 
 const DEFAULT_CACHE_TTL = 60; // seconds
+const DEFAULT_EDGE_CACHE_TTL = 24 * 60 * 60; // seconds
+const MAX_EDGE_CACHE_TTL = 7 * 24 * 60 * 60; // seconds
+const EDGE_CACHE_KEY_ORIGIN = 'https://authrim.internal';
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+type AuthenticationMethodsEdgeCache = {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+};
+type WaitUntilExecutionContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
+type AuthenticationMethodsCacheStatus = 'hit' | 'miss' | 'bypass';
+type AuthenticationMethodsDiagnosticLogger = {
+  info(message: string, metadata?: Record<string, unknown>): void;
+};
+interface AuthenticationMethodsTimingSpan {
+  name: string;
+  durationMs: number;
+}
+interface AuthenticationMethodsDiagnosticTiming {
+  enabled: boolean;
+  sessionId: string | null;
+  startedAt: number;
+  spans: AuthenticationMethodsTimingSpan[];
+  completed: boolean;
+}
 const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
@@ -333,7 +361,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     footerLinks: [],
     customBlocks: [],
   },
-  supportedLocales: ['en', 'ja'],
+  supportedLocales: ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'],
   selfService: {
     accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
     accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
@@ -571,8 +599,266 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
   }
 }
 
+function readBoundedIntegerEnvValue(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.floor(parsed))) : fallback;
+}
+
+function resolveAuthenticationMethodsEdgeCacheTTL(env: Env): number {
+  return readBoundedIntegerEnvValue(
+    env.AUTHENTICATION_METHODS_EDGE_CACHE_TTL,
+    DEFAULT_EDGE_CACHE_TTL,
+    0,
+    MAX_EDGE_CACHE_TTL
+  );
+}
+
+function roundDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 100) / 100;
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/[^A-Za-z0-9._:-]/g, '_')
+    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function createAuthenticationMethodsDiagnosticTiming(
+  request: Request
+): AuthenticationMethodsDiagnosticTiming {
+  const sessionId = sanitizeDiagnosticSessionId(request.headers.get(DIAGNOSTIC_SESSION_ID_HEADER));
+  return {
+    enabled: Boolean(sessionId),
+    sessionId,
+    startedAt: performance.now(),
+    spans: [],
+    completed: false,
+  };
+}
+
+function recordAuthenticationMethodsTiming(
+  timing: AuthenticationMethodsDiagnosticTiming,
+  name: string,
+  startedAt: number
+): void {
+  if (!timing.enabled) return;
+  timing.spans.push({
+    name,
+    durationMs: roundDurationMs(performance.now() - startedAt),
+  });
+}
+
+async function measureAuthenticationMethodsTiming<T>(
+  timing: AuthenticationMethodsDiagnosticTiming,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    recordAuthenticationMethodsTiming(timing, name, startedAt);
+  }
+}
+
+function finalizeAuthenticationMethodsTiming(
+  timing: AuthenticationMethodsDiagnosticTiming
+): AuthenticationMethodsTimingSpan[] {
+  if (!timing.enabled) return [];
+  if (!timing.completed) {
+    timing.spans.push({
+      name: 'handler_total',
+      durationMs: roundDurationMs(performance.now() - timing.startedAt),
+    });
+    timing.completed = true;
+  }
+  return timing.spans;
+}
+
+function buildServerTimingHeader(spans: AuthenticationMethodsTimingSpan[]): string {
+  return spans.map((span) => `${span.name};dur=${span.durationMs}`).join(', ');
+}
+
+function attachAuthenticationMethodsDiagnosticHeaders(
+  response: Response,
+  timing: AuthenticationMethodsDiagnosticTiming,
+  spans: AuthenticationMethodsTimingSpan[]
+): Response {
+  if (!timing.enabled || spans.length === 0) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Server-Timing', buildServerTimingHeader(spans));
+  if (timing.sessionId) {
+    headers.set('X-Authrim-Diagnostic-Session-Id', timing.sessionId);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function emitAuthenticationMethodsDiagnosticLog(input: {
+  log: AuthenticationMethodsDiagnosticLogger;
+  timing: AuthenticationMethodsDiagnosticTiming;
+  spans: AuthenticationMethodsTimingSpan[];
+  tenantId: string;
+  requestedClientId: string | null;
+  cacheStatus: AuthenticationMethodsCacheStatus;
+  edgeCacheEnabled: boolean;
+  edgeCacheTTL: number;
+}): void {
+  if (!input.timing.enabled) return;
+  input.log.info('Authentication methods diagnostics', {
+    diagnosticSessionId: input.timing.sessionId,
+    tenantId: input.tenantId,
+    clientScoped: Boolean(input.requestedClientId),
+    cacheStatus: input.cacheStatus,
+    edgeCacheEnabled: input.edgeCacheEnabled,
+    edgeCacheTTL: input.edgeCacheTTL,
+    timingMs: Object.fromEntries(input.spans.map((span) => [span.name, span.durationMs])),
+  });
+}
+
+function normalizeCacheKeyPart(value: string | null | undefined, fallback: string): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function buildAuthenticationMethodsEdgeCacheRequest(input: {
+  tenantId: string;
+  forwardedHost: string | null;
+  clientId: string | null;
+  revision: string;
+}): Request {
+  const url = new URL('/cache/authentication-methods/v1', EDGE_CACHE_KEY_ORIGIN);
+  url.searchParams.set('tenant', input.tenantId);
+  url.searchParams.set('host', normalizeCacheKeyPart(input.forwardedHost, '__unknown_host__'));
+  url.searchParams.set('client', input.clientId?.trim() || '__tenant__');
+  url.searchParams.set('revision', input.revision);
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+function getAuthenticationMethodsCacheTag(tenantId: string): string {
+  const safeTenantId = tenantId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 128) || 'unknown';
+  return `authrim-authentication-methods,authrim-authentication-methods-tenant-${safeTenantId}`;
+}
+
+function buildAuthenticationMethodsHeaders(input: {
+  tenantId: string;
+  cacheTTL: number;
+  edgeCacheTTL: number;
+  cacheStatus: AuthenticationMethodsCacheStatus;
+}): Headers {
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    'Cache-Control': `public, max-age=${input.cacheTTL}`,
+    'X-Authrim-Authentication-Methods-Cache': input.cacheStatus,
+    'X-Authrim-Authentication-Methods-Client-TTL': String(input.cacheTTL),
+  });
+  if (input.edgeCacheTTL > 0) {
+    headers.set('Cloudflare-CDN-Cache-Control', `public, max-age=${input.edgeCacheTTL}`);
+    headers.set('Cache-Tag', getAuthenticationMethodsCacheTag(input.tenantId));
+  }
+  return headers;
+}
+
+function buildAuthenticationMethodsJsonResponse(
+  tenantId: string,
+  body: AuthenticationMethodsResponse,
+  cacheTTL: number,
+  edgeCacheTTL: number,
+  cacheStatus: AuthenticationMethodsCacheStatus
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: buildAuthenticationMethodsHeaders({ tenantId, cacheTTL, edgeCacheTTL, cacheStatus }),
+  });
+}
+
+function getDefaultEdgeCache(): AuthenticationMethodsEdgeCache | null {
+  const candidate = (globalThis as unknown as {
+    caches?: { default?: AuthenticationMethodsEdgeCache };
+  }).caches?.default;
+  return candidate ?? null;
+}
+
+function getWaitUntilExecutionContext(
+  c: Context<{ Bindings: Env }>
+): WaitUntilExecutionContext | null {
+  try {
+    return (c as unknown as { executionCtx?: WaitUntilExecutionContext }).executionCtx ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function putAuthenticationMethodsEdgeCache(
+  c: Context<{ Bindings: Env }>,
+  cache: AuthenticationMethodsEdgeCache,
+  request: Request,
+  response: Response,
+  edgeCacheTTL: number
+): Promise<void> {
+  const cacheable = new Response(response.body, response);
+  cacheable.headers.set('Cache-Control', `public, max-age=${edgeCacheTTL}`);
+  const put = cache.put(request, cacheable).catch((error) => {
+    getLogger(c).module('LOGIN-METHODS').warn(
+      'Failed to store authentication methods edge cache',
+      {},
+      error as Error
+    );
+  });
+  const executionCtx = getWaitUntilExecutionContext(c);
+  if (executionCtx) {
+    executionCtx.waitUntil(put);
+    return;
+  }
+  await put;
+}
+
+function cloneCachedAuthenticationMethodsResponse(
+  tenantId: string,
+  cached: Response,
+  edgeCacheTTL: number
+): Response {
+  const cacheTTL = Math.max(
+    0,
+    Math.floor(Number(cached.headers.get('X-Authrim-Authentication-Methods-Client-TTL')) || 60)
+  );
+  return new Response(cached.body, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers: buildAuthenticationMethodsHeaders({
+      tenantId,
+      cacheTTL,
+      edgeCacheTTL,
+      cacheStatus: 'hit',
+    }),
+  });
+}
+
 function readEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+async function readAuthenticationMethodKVSettings(
+  env: Env,
+  tenantId: string
+): Promise<AuthenticationMethodKVSettings | null> {
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    return kvJson ? (JSON.parse(kvJson) as AuthenticationMethodKVSettings) : null;
+  } catch {
+    return null;
+  }
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
@@ -1077,6 +1363,47 @@ function buildExternalIdpProviderHeaders(
     headers['X-Forwarded-Proto'] = getForwardedProto(request);
   }
   return headers;
+}
+
+function parseExternalProviderUsageItems(
+  settings: AuthenticationMethodKVSettings | null
+): ExternalLoginProviderUsageConfig[] | null {
+  if (!settings) return null;
+  const rawUsage = settings['authentication-methods.external_provider_usage'];
+  if (rawUsage === undefined) return null;
+  if (Array.isArray(rawUsage)) return rawUsage;
+  if (typeof rawUsage === 'string') {
+    return safeParseJsonArray<ExternalLoginProviderUsageConfig>(rawUsage);
+  }
+  return null;
+}
+
+function isSAMLExternalProviderUsage(item: ExternalLoginProviderUsageConfig): boolean {
+  const id = typeof item.id === 'string' ? item.id : '';
+  const providerId = typeof item.providerId === 'string' ? item.providerId : '';
+  return id.startsWith('saml:') || providerId.startsWith('saml:');
+}
+
+function externalProviderUsageHasEnabledSurface(item: ExternalLoginProviderUsageConfig): boolean {
+  return (
+    normalizeBoolean(item.loginEnabled, true) ||
+    normalizeBoolean(item.signupEnabled, true) ||
+    normalizeBoolean(item.reauthEnabled, true) ||
+    normalizeBoolean(item.accountLinkEnabled, true)
+  );
+}
+
+function shouldFetchExternalLoginProviders(
+  settings: AuthenticationMethodKVSettings | null
+): boolean {
+  const usageItems = parseExternalProviderUsageItems(settings);
+  if (usageItems === null) {
+    // Legacy tenant: bridge providers may exist even before usage settings were saved.
+    return true;
+  }
+  return usageItems.some(
+    (item) => !isSAMLExternalProviderUsage(item) && externalProviderUsageHasEnabledSurface(item)
+  );
 }
 
 /**
@@ -1842,7 +2169,7 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   }
 
   // 2. Try environment variable
-  const envTTL = (env as unknown as Record<string, unknown>).AUTHENTICATION_METHODS_CACHE_TTL;
+  const envTTL = env.AUTHENTICATION_METHODS_CACHE_TTL;
   if (envTTL !== undefined && envTTL !== null && envTTL !== '') {
     const parsed = Number(envTTL);
     if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3600) {
@@ -1865,11 +2192,62 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
  */
 export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGIN-METHODS');
+  const timing = createAuthenticationMethodsDiagnosticTiming(c.req.raw);
 
   try {
     const env = c.env as Env;
     const tenantId = getTenantIdFromContext(c);
     const requestedClientId = c.req.query('client_id')?.trim() || null;
+    const forwardedHost = getRequestHost(c.req.raw);
+    const edgeCacheTTL = resolveAuthenticationMethodsEdgeCacheTTL(env);
+    const edgeCache = edgeCacheTTL > 0 ? getDefaultEdgeCache() : null;
+    let edgeCacheRequest: Request | null = null;
+
+    if (edgeCache) {
+      try {
+        const revision = await measureAuthenticationMethodsTiming(
+          timing,
+          'revision_read',
+          () => readAuthenticationMethodsCacheRevision(env, tenantId)
+        );
+        edgeCacheRequest = buildAuthenticationMethodsEdgeCacheRequest({
+          tenantId,
+          forwardedHost,
+          clientId: requestedClientId,
+          revision,
+        });
+        const cached = await measureAuthenticationMethodsTiming(timing, 'cache_match', () =>
+          edgeCache.match(edgeCacheRequest as Request)
+        );
+        if (cached) {
+          const response = cloneCachedAuthenticationMethodsResponse(tenantId, cached, edgeCacheTTL);
+          const spans = finalizeAuthenticationMethodsTiming(timing);
+          emitAuthenticationMethodsDiagnosticLog({
+            log,
+            timing,
+            spans,
+            tenantId,
+            requestedClientId,
+            cacheStatus: 'hit',
+            edgeCacheEnabled: true,
+            edgeCacheTTL,
+          });
+          return attachAuthenticationMethodsDiagnosticHeaders(response, timing, spans);
+        }
+      } catch (error) {
+        log.warn('Authentication methods edge cache lookup failed', {}, error as Error);
+        edgeCacheRequest = null;
+      }
+    }
+
+    const authenticationMethodSettings = await measureAuthenticationMethodsTiming(
+      timing,
+      'settings_read',
+      () => readAuthenticationMethodKVSettings(env, tenantId)
+    );
+    const bridgeProvidersPromise = shouldFetchExternalLoginProviders(authenticationMethodSettings)
+      ? fetchExternalLoginProviders(env, tenantId, c.req.raw)
+      : Promise.resolve([]);
 
     // Fetch data in parallel
     const [
@@ -1880,21 +2258,25 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       directoryPassword,
       humanVerification,
       externalProviderUsage,
-    ] = await Promise.all([
-      getSystemSettings(env),
-      fetchExternalLoginProviders(env, tenantId, c.req.raw),
-      fetchSAMLLoginProviders(env, tenantId),
-      fetchConfiguredExternalLoginProviders(env, tenantId),
-      resolveDirectoryPasswordMethod(env, tenantId),
-      resolveHumanVerificationMethod(env, tenantId),
-      resolveExternalProviderUsage(env, tenantId),
-    ]);
+    ] = await measureAuthenticationMethodsTiming(timing, 'fanout', () =>
+      Promise.all([
+        getSystemSettings(env),
+        bridgeProvidersPromise,
+        fetchSAMLLoginProviders(env, tenantId),
+        fetchConfiguredExternalLoginProviders(env, tenantId),
+        resolveDirectoryPasswordMethod(env, tenantId),
+        resolveHumanVerificationMethod(env, tenantId),
+        resolveExternalProviderUsage(env, tenantId),
+      ])
+    );
     const externalProviders = applyExternalProviderUsage(
       mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
       externalProviderUsage
     );
 
-    const builtInMethods = await resolveBuiltInAuthenticationMethods(env, tenantId, settings);
+    const builtInMethods = await measureAuthenticationMethodsTiming(timing, 'built_in_methods', () =>
+      resolveBuiltInAuthenticationMethods(env, tenantId, settings)
+    );
     const passkeyLoginEnabled = builtInMethods.passkeyLoginEnabled;
     const passkeySignupEnabled = builtInMethods.passkeySignupEnabled;
     const passkeyReauthEnabled = builtInMethods.passkeyReauthEnabled;
@@ -1989,11 +2371,16 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
-    const [loginUISettings, selfServiceUI, cacheTTL] = await Promise.all([
-      getLoginUISettings(env, tenantId, settings, requestedClientId),
-      resolveSelfServiceUIConfig(env, tenantId),
-      resolveCacheTTL(env, tenantId),
-    ]);
+    const [loginUISettings, selfServiceUI, cacheTTL] = await measureAuthenticationMethodsTiming(
+      timing,
+      'ui_config',
+      () =>
+        Promise.all([
+          getLoginUISettings(env, tenantId, settings, requestedClientId),
+          resolveSelfServiceUIConfig(env, tenantId),
+          resolveCacheTTL(env, tenantId),
+        ])
+    );
     const ui = {
       ...buildUIConfig(loginUISettings),
       selfService: selfServiceUI,
@@ -2008,9 +2395,38 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       },
     };
 
-    c.header('Cache-Control', `public, max-age=${cacheTTL}`);
+    const httpResponse = buildAuthenticationMethodsJsonResponse(
+      tenantId,
+      response,
+      cacheTTL,
+      edgeCacheTTL,
+      edgeCacheRequest ? 'miss' : 'bypass'
+    );
+    if (edgeCache && edgeCacheRequest && edgeCacheTTL > 0) {
+      await measureAuthenticationMethodsTiming(timing, 'cache_put', () =>
+        putAuthenticationMethodsEdgeCache(
+          c,
+          edgeCache,
+          edgeCacheRequest as Request,
+          httpResponse.clone(),
+          edgeCacheTTL
+        )
+      );
+    }
 
-    return c.json(response);
+    const spans = finalizeAuthenticationMethodsTiming(timing);
+    const cacheStatus: AuthenticationMethodsCacheStatus = edgeCacheRequest ? 'miss' : 'bypass';
+    emitAuthenticationMethodsDiagnosticLog({
+      log,
+      timing,
+      spans,
+      tenantId,
+      requestedClientId,
+      cacheStatus,
+      edgeCacheEnabled: Boolean(edgeCache),
+      edgeCacheTTL,
+    });
+    return attachAuthenticationMethodsDiagnosticHeaders(httpResponse, timing, spans);
   } catch (error) {
     log.error('Failed to get authentication methods', {}, error as Error);
     c.header('Cache-Control', 'no-store');

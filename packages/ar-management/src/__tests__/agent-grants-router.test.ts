@@ -36,6 +36,7 @@ vi.mock('@authrim/ar-agent-access/core', async (importOriginal) => {
       clients: 'admin:clients:read',
       audit: 'admin:admin_audit:read',
       settings: 'admin:agent_settings:read',
+      grants: 'admin:agent_grants:read',
     },
     AdminAgentAccessRepository: class {
       getActiveDelegatorPermissions = mocks.getDelegatorPermissions;

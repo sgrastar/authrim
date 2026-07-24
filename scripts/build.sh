@@ -519,12 +519,13 @@ setup_d1_databases() {
       log_success "  $DB_NAME: Created (ID: $db_id)"
     fi
 
-    # Run consolidated baseline migrations when present.
+    # Run manifest-aware migrations when present.
     if ls migrations/[0-9][0-9][0-9]_*.sql >/dev/null 2>&1; then
       log_info "  Running migrations..."
-      for migration_file in migrations/[0-9][0-9][0-9]_*.sql; do
-        wrangler d1 execute "$DB_NAME" --file="./$migration_file" || true
-      done
+      pnpm exec tsx scripts/run-d1-migrations.ts \
+        --database "$DB_NAME" \
+        --directory migrations \
+        --role core
     fi
 
     # Add to configuration file

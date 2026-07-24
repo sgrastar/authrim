@@ -1,8 +1,14 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  acquireEnvironmentOperationLock,
   createLockFile,
+  getNewLockFilePath,
   reconcileSharedD1ResourcesInLock,
   reconcileSharedKVResourcesInLock,
+  withEnvironmentOperationForEnvironment,
   type AuthrimLock,
 } from '../core/lock.js';
 import { KV_NAMESPACES, getKVNamespaceName } from '../core/naming.js';
@@ -28,6 +34,84 @@ function createTestLock(): AuthrimLock {
   };
   return lock;
 }
+
+describe('environment operation lock', () => {
+  it('allows only one mutating operation and can be reacquired after release', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'authrim-operation-lock-'));
+    const lockPath = join(directory, 'lock.json');
+    try {
+      const first = await acquireEnvironmentOperationLock(lockPath, 'first');
+      await expect(acquireEnvironmentOperationLock(lockPath, 'second')).rejects.toThrow(
+        `environment_operation_in_progress:first:${process.pid}`
+      );
+      await first.release();
+      const second = await acquireEnvironmentOperationLock(lockPath, 'second');
+      await second.release();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers an operation lock whose owning process no longer exists', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'authrim-stale-operation-lock-'));
+    const lockPath = join(directory, 'lock.json');
+    writeFileSync(
+      `${lockPath}.operation-lock`,
+      JSON.stringify({
+        token: 'stale',
+        pid: Number.MAX_SAFE_INTEGER,
+        operation: 'stale-operation',
+        startedAt: '2026-07-21T00:00:00.000Z',
+      })
+    );
+    try {
+      const acquired = await acquireEnvironmentOperationLock(lockPath, 'replacement');
+      await acquired.release();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('allows independent environments to be mutated concurrently', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'authrim-independent-operation-lock-'));
+    try {
+      const first = await acquireEnvironmentOperationLock(
+        getNewLockFilePath(directory, 'first'),
+        'first-operation'
+      );
+      const second = await acquireEnvironmentOperationLock(
+        getNewLockFilePath(directory, 'second'),
+        'second-operation'
+      );
+      await second.release();
+      await first.release();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('releases the environment operation lock when the operation throws', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'authrim-operation-finally-'));
+    try {
+      await expect(
+        withEnvironmentOperationForEnvironment(
+          { baseDir: directory, env: 'test', operation: 'failing-operation' },
+          async () => {
+            throw new Error('expected failure');
+          }
+        )
+      ).rejects.toThrow('expected failure');
+
+      const next = await acquireEnvironmentOperationLock(
+        getNewLockFilePath(directory, 'test'),
+        'next-operation'
+      );
+      await next.release();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('reconcileSharedD1ResourcesInLock', () => {
   it('refreshes stale and missing shared bindings and stale tenant D1 entries', () => {

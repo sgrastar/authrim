@@ -33,7 +33,6 @@ import {
   enforceSAMLAttributeReleaseConsent,
   normalizeAttributeReleaseConsentPolicy,
 } from '../attribute-release-consent';
-import { resolveAuthCorePersistenceAdapterFromEnv } from '@authrim/ar-lib-core';
 
 describe('SAML attribute release consent', () => {
   beforeEach(() => {
@@ -176,11 +175,6 @@ describe('SAML attribute release consent', () => {
     mocks.requirements = [{ is_required: false }, { is_required: true }];
     await enforceSAMLAttributeReleaseConsent(input({ attributeReleaseConsent: undefined }));
     expect(mocks.findLatest).toHaveBeenCalled();
-    expect(resolveAuthCorePersistenceAdapterFromEnv).toHaveBeenCalledWith(
-      expect.anything(),
-      'saml-attribute-release-consent',
-      { tenantId: 'tenant-a' }
-    );
   });
 
   it('accepts transaction confirmation after a protocol-neutral policy enables consent', async () => {
@@ -278,40 +272,6 @@ describe('SAML attribute release consent', () => {
           friendlyName: 'Email',
           nameFormat: 'uri',
           valueCount: 2,
-          valueDisplay: 'names',
-        },
-      ],
-    });
-  });
-
-  it('includes only policy-approved masked values in the challenge summary', async () => {
-    mocks.decision = { action: 'challenge', reasonCodes: ['release.consent_required'] };
-    await expect(
-      enforceSAMLAttributeReleaseConsent(
-        input({ attributeReleaseConfirmation: { valueDisplay: 'masked_values' } })
-      )
-    ).rejects.toMatchObject({
-      attributeSummaries: [
-        {
-          name: 'mail',
-          valueDisplay: 'masked_values',
-          displayValues: ['a***@example.test', 'b***@example.test'],
-        },
-      ],
-    });
-  });
-
-  it('includes full values only when the SP policy explicitly enables them', async () => {
-    mocks.decision = { action: 'challenge', reasonCodes: ['release.consent_required'] };
-    await expect(
-      enforceSAMLAttributeReleaseConsent(
-        input({ attributeReleaseConfirmation: { valueDisplay: 'full_values' } })
-      )
-    ).rejects.toMatchObject({
-      attributeSummaries: [
-        {
-          valueDisplay: 'full_values',
-          displayValues: ['a@example.test', 'b@example.test'],
         },
       ],
     });
@@ -356,9 +316,6 @@ function input(overrides: Record<string, unknown> = {}) {
       ...(Object.prototype.hasOwnProperty.call(overrides, 'attributeReleaseConsent')
         ? { attributeReleaseConsent: overrides.attributeReleaseConsent }
         : { attributeReleaseConsent: { enabled: true, mode: 'once' } }),
-      ...(Object.prototype.hasOwnProperty.call(overrides, 'attributeReleaseConfirmation')
-        ? { attributeReleaseConfirmation: overrides.attributeReleaseConfirmation }
-        : {}),
     },
     attributes: standardAttributes(),
     ...overrides,

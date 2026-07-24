@@ -15,6 +15,8 @@ import {
   readResponseTextWithLimit,
   reactivateDirectoryConnectorInstance,
   safeFetch,
+  getLogger,
+  bumpAuthenticationMethodsCacheRevision,
   type DirectoryConnectorInstanceRow,
   type DirectoryConnectorStatusEpisodeRow,
 } from '@authrim/ar-lib-core';
@@ -233,6 +235,25 @@ function managedSecretRef(connectorId: string): string {
 
 function storage(env: Env): KVNamespace | null {
   return env.SETTINGS ?? null;
+}
+
+async function invalidateAuthenticationMethodsCacheForDirectoryConnectors(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  reason: string
+): Promise<void> {
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
+  } catch (error) {
+    getLogger(c).module('DIRECTORY-CONNECTORS').warn(
+      'Failed to bump authentication methods cache revision',
+      {
+        tenantId,
+        reason,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      }
+    );
+  }
 }
 
 function coreAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
@@ -594,6 +615,11 @@ export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: En
 
   try {
     await writeConfig(c.env, tenantId, config);
+    await invalidateAuthenticationMethodsCacheForDirectoryConnectors(
+      c,
+      tenantId,
+      'directory-connectors:update'
+    );
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

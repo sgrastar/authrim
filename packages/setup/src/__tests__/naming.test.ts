@@ -129,9 +129,9 @@ describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-auth']).toContain('ar-bridge');
   });
 
-  it('should require ar-auth and ar-bridge before ar-management', () => {
+  it('should require every service-binding target before ar-management', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-management']).toEqual(
-      expect.arrayContaining(['ar-auth', 'ar-bridge'])
+      expect.arrayContaining(['ar-auth', 'ar-bridge', 'ar-vc'])
     );
   });
 

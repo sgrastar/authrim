@@ -116,6 +116,28 @@ describe('Agent-safe Management read operations', () => {
     expect(await response.text()).not.toContain('secret');
   });
 
+  it('passes a percent-encoded HTTPS CIMD client ID to the owner handler intact', async () => {
+    const clientId = 'https://claude.ai/oauth/claude-code-client-metadata';
+    mocks.clientGet.mockImplementation(async (context) => {
+      expect(context.req.param('id')).toBe(clientId);
+      return json({
+        client: {
+          client_id: clientId,
+          tenant_id: 'tenant-1',
+          client_name: 'Claude Code',
+          updated_at: 100,
+        },
+      });
+    });
+    const response = await app().request(
+      `/api/admin/agent-read/clients/${encodeURIComponent(clientId)}`,
+      undefined,
+      {} as Env
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ client: { client_id: clientId } });
+  });
+
   it('removes contact PII and secret fields from client lists', async () => {
     mocks.clientsList.mockResolvedValue(
       json({

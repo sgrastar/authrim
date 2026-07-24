@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type HumanVerificationProvider = 'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom';
 	type HumanVerificationMode = 'managed' | 'checkbox' | 'invisible' | 'score';
@@ -15,8 +16,8 @@
 		token = $bindable(''),
 		resetKey = 0,
 		disabled = false,
-		loadingLabel = 'Loading security check...',
-		errorLabel = 'Security check could not be loaded. Reload the page and try again.'
+		loadingLabel = $LL.login_humanVerificationLoading(),
+		errorLabel = $LL.login_humanVerificationLoadFailed()
 	}: {
 		provider?: HumanVerificationProvider;
 		siteKey: string;

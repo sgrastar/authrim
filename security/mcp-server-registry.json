@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "authrim-mcp-server-registry-v1",
+  "owners": ["Authrim Security", "Agent Access"],
+  "servers": [
+    {
+      "id": "authrim-admin-agent-access",
+      "exposure": "production",
+      "transport": "streamable-http",
+      "path": "/mcp",
+      "authentication": "OAuth 2.1 protected resource with PKCE; optional Mode B DPoP",
+      "dataClassification": "admin configuration and explicitly approved masked user data",
+      "sourceFiles": [
+        "packages/ar-agent-access/src/platform/cloudflare/worker.ts",
+        "packages/ar-agent-access/src/platform/cloudflare/mcp-agent.ts",
+        "packages/ar-agent-access/src/platform/cloudflare/mcp-admission.ts",
+        "packages/ar-agent-access/src/protocol/mcp/sdk-server.ts"
+      ]
+    },
+    {
+      "id": "authrim-agent-access-inspector-fixture",
+      "exposure": "local-test-only",
+      "transport": "stdio-or-loopback",
+      "path": null,
+      "authentication": "test fixture",
+      "dataClassification": "synthetic",
+      "sourceFiles": [
+        "packages/ar-agent-access/scripts/inspector-server.ts",
+        "packages/ar-agent-access/scripts/conformance-http-server.ts",
+        "packages/ar-agent-access/scripts/mcp-conformance-fixture.ts"
+      ]
+    }
+  ]
+}

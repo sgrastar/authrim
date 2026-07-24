@@ -89,6 +89,9 @@ export interface AgentAccessSettings {
 	maxTokenTtlSeconds: number;
 	elevationMode: AgentElevationMode;
 	elevationTtlSeconds: number;
+	requestRateLimitPerMinute: number;
+	sessionInitializationRateLimitPerMinute: number;
+	maxConcurrentSessions: number;
 	rateLimitPerMinute: number;
 	publicClientStandardRateLimitPerMinute: number;
 	highRiskPermissionsAdditional: string[];
@@ -325,7 +328,7 @@ export interface AgentBaselineAssignmentRecord {
 
 export interface UpdateAdminAgentGrantInput {
 	purpose?: string | null;
-	expires_at?: number | null;
+	expires_at?: number;
 }
 
 async function parseError(response: Response, fallback: string): Promise<Error> {

@@ -31,6 +31,7 @@ import { tenantDatabasePoolStatusCommand } from './cli/commands/tenant-db-pool-s
 import { tenantDatabaseSlotResetCommand } from './cli/commands/tenant-db-slot-reset.js';
 import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
 import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
+import { externalDatabaseRegisterCommand } from './cli/commands/external-db-register.js';
 import {
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
@@ -94,17 +95,26 @@ program
   .option('--skip-build', 'Skip building packages')
   .option('--skip-ui', 'Skip UI deployment to Cloudflare Workers')
   .option('--skip-migrations', 'Skip D1 database migrations')
+  .option(
+    '--external-schema-ready',
+    'Confirm required external database migrations were applied with operator-managed tooling'
+  )
   .option('--keys-dir <path>', 'Keys directory')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
 
 program
   .command('update')
-  .description('Update workers for an existing environment')
+  .description('Update Authrim schema and workers for an existing environment')
   .option('--env <name>', 'Environment name (required)')
   .option('--all', 'Update all workers regardless of version')
   .option('--dry-run', 'Show what would be updated without deploying')
   .option('--skip-build', 'Skip building packages')
+  .option('--allow-draft-manifest', 'Allow a development draft migration manifest')
+  .option(
+    '--external-schema-ready',
+    'Confirm required external database migrations were applied with operator-managed tooling'
+  )
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(updateCommand);
 
@@ -137,7 +147,7 @@ program
 program
   .command('tenant-db-pool-expand')
   .description('Add preallocated tenant-d1 slots to an existing environment and redeploy workers')
-  .requiredOption('--add-slots <n>', 'Number of tenant slots to add')
+  .option('--add-slots <n>', 'Number of tenant slots to add (not needed when resuming)')
   .option('--env <name>', 'Environment name', 'prod')
   .option('--dry-run', 'Show what would change without updating config or deploying')
   .option('-y, --yes', 'Skip confirmation prompts')
@@ -164,9 +174,21 @@ program
   .description('Create dedicated R2 buckets for an existing environment and deploy bindings')
   .option('--env <name>', 'Environment name', 'prod')
   .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
-  .option('--skip-deploy', 'Create buckets and update config/lock without deploying workers')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(r2ProvisionCommand);
+
+program
+  .command('external-db-register')
+  .description('Register setup-managed external database topology and deploy its bindings')
+  .option('--config <path>', 'Candidate environment config (not needed when resuming)')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option(
+    '--external-schema-ready',
+    'Confirm the installed release schema was applied to every new external database target'
+  )
+  .option('--dry-run', 'Validate and show the registration plan without changing files')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(externalDatabaseRegisterCommand);
 
 program
   .command('upgrade')
@@ -202,7 +224,9 @@ program
       await import('./core/paths.js');
     const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
     const { mergeAndSaveUiEnv } = await import('./core/ui-env.js');
-    const { getPackageVersion } = await import('./core/version.js');
+    const { getPackageVersion, getRootProductVersion } = await import('./core/version.js');
+    const { evaluateReleaseDeploymentGuard, releaseDeploymentGuardMessage } =
+      await import('./core/release-deployment-guard.js');
     const { ensureSupplementalKeyFiles } = await import('./core/keys.js');
     const { prepareAdminUiBffDeployment } = await import('./core/admin-ui-bff-deployment.js');
 
@@ -249,6 +273,20 @@ program
     const baseDir = findAuthrimBaseDir(process.cwd());
     const componentType = isUiWorkerComponent ? 'UI Worker' : 'Worker';
     const { lock: upgradeLock, path: upgradeLockPath } = await loadLockFileAuto(baseDir, env);
+    if (!upgradeLock) {
+      spinner.fail(`Environment "${env}" does not have a lock file`);
+      process.exit(1);
+    }
+    const targetProductVersion = await getRootProductVersion(baseDir);
+    const deploymentGuard = evaluateReleaseDeploymentGuard(
+      upgradeLock,
+      targetProductVersion,
+      'worker_redeploy'
+    );
+    if (!deploymentGuard.allowed) {
+      spinner.fail(releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion));
+      process.exit(1);
+    }
 
     console.log(chalk.cyan(`\nComponent:   ${componentName}`));
     console.log(chalk.cyan(`Type:        ${componentType}`));

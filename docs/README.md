@@ -18,18 +18,18 @@ Documentation for the Authrim OpenID Connect Provider project.
 
 ## 📋 Overview
 
-| Document                                                         | Description                                                                                                                                                 |
-| :--------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Public Specification](./specification/authrim-specification.md) | Public runtime contract covering API endpoints, defaults, session profiles, storage portability, audit, security behavior, and Workers-native UI deployment |
-| [Feature Matrix](./FEATURES.md)                                  | Feature and SDK capability matrix                                                                                                                           |
-| [Vision](./VISION.md)                                            | Long-term vision and strategic goals                                                                                                                        |
-| [Roadmap](./ROADMAP.md)                                          | Product roadmap and feature status                                                                                                                          |
-| [Access Control](./access-control.md)                            | RBAC, ABAC, and ReBAC architecture and usage                                                                                                                |
-| [Admin Jobs](./admin-jobs.md)                                    | Tenant-scoped asynchronous Admin Jobs, result artifacts, retry state, and UI behavior                                                                       |
+| Document                                                                                | Description                                                                                                                                                 |
+| :-------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Public Specification](./specification/authrim-specification.md)                        | Public runtime contract covering API endpoints, defaults, session profiles, storage portability, audit, security behavior, and Workers-native UI deployment |
+| [Feature Matrix](./FEATURES.md)                                                         | Feature and SDK capability matrix                                                                                                                           |
+| [Vision](./VISION.md)                                                                   | Long-term vision and strategic goals                                                                                                                        |
+| [Roadmap](./ROADMAP.md)                                                                 | Product roadmap and feature status                                                                                                                          |
+| [Access Control](./access-control.md)                                                   | RBAC, ABAC, and ReBAC architecture and usage                                                                                                                |
+| [Admin Jobs](./admin-jobs.md)                                                           | Tenant-scoped asynchronous Admin Jobs, result artifacts, retry state, and UI behavior                                                                       |
 | [Directory Authentication Public Summary](./directory-authentication-public-summary.md) | Public summary for Directory Authentication and Authrim Wordwarden security and compliance reviews                                                          |
-| [Testing Documentation](./testing/README.md)                     | Lightweight ISO/IEC/IEEE 29119-aligned testing profile, regression bank, and release confidence checklist                                                   |
-| [SAML Production Readiness](./saml-production-readiness.md)      | SAML metadata, signing rollover, attribute presets, SLO fanout observation, and operational limits                                                          |
-| [Security and QA Roadmap](./ROADMAP.md#security-qa-and-validation) | Current security-validation status, remaining hardening tasks, and release-readiness criteria                                                               |
+| [Testing Documentation](./testing/README.md)                                            | Lightweight ISO/IEC/IEEE 29119-aligned testing profile, regression bank, and release confidence checklist                                                   |
+| [SAML Production Readiness](./saml-production-readiness.md)                             | SAML metadata, signing rollover, attribute presets, SLO fanout observation, and operational limits                                                          |
+| [Security and QA Roadmap](./ROADMAP.md#security-qa-and-validation)                      | Current security-validation status, remaining hardening tasks, and release-readiness criteria                                                               |
 
 ---
 
@@ -51,11 +51,12 @@ penetration test before production-stability claims.
 
 Guides for development and deployment.
 
-| Document                                              | Description                                |
-| :---------------------------------------------------- | :----------------------------------------- |
-| [Development Guide](./getting-started/development.md) | Development environment setup and workflow |
-| [Deployment Guide](./getting-started/deployment.md)   | Deploying to Cloudflare Workers            |
-| [Testing Guide](./getting-started/testing.md)         | Testing strategy and test execution        |
+| Document                                                  | Description                                                                       |
+| :-------------------------------------------------------- | :-------------------------------------------------------------------------------- |
+| [Development Guide](./getting-started/development.md)     | Development environment setup and workflow                                        |
+| [Deployment Guide](./getting-started/deployment.md)       | Deploying to Cloudflare Workers                                                   |
+| [Release Procedure](./versioning-and-database-updates.md) | Release preparation, test validation, publishing, production update, and recovery |
+| [Testing Guide](./getting-started/testing.md)             | Testing strategy and test execution                                               |
 
 ---
 

@@ -31,6 +31,17 @@ const createMockKV = (data: Record<string, string> = {}) => ({
   getWithMetadata: vi.fn(),
 });
 
+const createMockCache = () => {
+  const store = new Map<string, Response>();
+  return {
+    store,
+    match: vi.fn(async (request: Request) => store.get(request.url)?.clone()),
+    put: vi.fn(async (request: Request, response: Response) => {
+      store.set(request.url, response.clone());
+    }),
+  };
+};
+
 // Create mock environment with service bindings
 const createMockEnv = () => ({
   OP_DISCOVERY: createMockFetcher('OP_DISCOVERY'),
@@ -47,14 +58,22 @@ const createMockEnv = () => ({
 
 describe('Router Worker', () => {
   let mockEnv: ReturnType<typeof createMockEnv>;
+  let originalCaches: unknown;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    originalCaches = (globalThis as { caches?: unknown }).caches;
+    delete (globalThis as { caches?: unknown }).caches;
     mockEnv = createMockEnv();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (originalCaches === undefined) {
+      delete (globalThis as { caches?: unknown }).caches;
+    } else {
+      (globalThis as { caches?: unknown }).caches = originalCaches;
+    }
   });
 
   describe('Health Check', () => {
@@ -773,6 +792,22 @@ describe('Router Worker', () => {
       expect(res.headers.get('Content-Security-Policy')).toBeNull();
     });
 
+    it('should NOT replace the Admin Agent authorize CSP used by its localized consent page', async () => {
+      const upstreamCsp = "default-src 'none'; style-src 'nonce-test'";
+      mockEnv.OP_AUTH.fetch.mockResolvedValueOnce(
+        new Response('consent', {
+          headers: { 'Content-Security-Policy': upstreamCsp },
+        })
+      );
+      const req = new Request(
+        'https://example.com/oauth/admin-agent/authorize?request_uri=test&client_id=test'
+      );
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.headers.get('Content-Security-Policy')).toBe(upstreamCsp);
+      expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledOnce();
+    });
+
     it('should NOT apply CSP to /flow/* paths', async () => {
       const req = new Request('https://example.com/flow/confirm');
       const res = await app.fetch(req, mockEnv);
@@ -1462,6 +1497,223 @@ describe('Router Worker', () => {
       const proxiedRequest = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
       expect(new URL(proxiedRequest.url).pathname).toBe('/api/auth/authentication-methods');
       expect(proxiedRequest.headers.get('Host')).toBe('example.com');
+    });
+
+    it('should cache authentication methods by tenant host, client query, and revision', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const settingsData: Record<string, string> = {};
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(settingsData),
+      };
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+      const second = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+      const otherClient = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=b'),
+        envWithCache
+      );
+      const otherTenant = await app.fetch(
+        new Request('https://second.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(otherClient.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(otherTenant.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(3);
+
+      settingsData['cache:authentication-methods:v1:revision:tenant:first'] = 'rev-2';
+      const afterRevision = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+
+      expect(afterRevision.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe(
+        'miss'
+      );
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(4);
+      expect(cache.put).toHaveBeenCalledTimes(4);
+    });
+
+    it('should cache cross-origin authentication methods without reusing stale CORS headers', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+      mockEnv.OP_MANAGEMENT.fetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ worker: 'OP_MANAGEMENT', path: '/api/auth/authentication-methods' }),
+          {
+            status: 200,
+            headers: {
+              'Access-Control-Allow-Origin': 'https://rp-a.example.com',
+              'Content-Type': 'application/json',
+              'Server-Timing': 'management_cache;dur=12.3',
+              Vary: 'Origin',
+              'X-Authrim-Authentication-Methods-Cache': 'hit',
+              'X-Authrim-Diagnostic-Session-Id': 'test-diagnostic',
+            },
+          }
+        )
+      );
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods', {
+          headers: { Origin: 'https://rp-a.example.com' },
+        }),
+        envWithCache
+      );
+      const second = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods', {
+          headers: { Origin: 'https://rp-b.example.com' },
+        }),
+        envWithCache
+      );
+      const stored = [...cache.store.values()][0];
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(first.headers.get('Access-Control-Allow-Origin')).toBe('https://rp-a.example.com');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(second.headers.get('Access-Control-Allow-Origin')).toBe('https://rp-b.example.com');
+      expect(stored?.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect(stored?.headers.get('Vary')).toBeNull();
+      expect(stored?.headers.get('Server-Timing')).toBeNull();
+      expect(stored?.headers.get('X-Authrim-Authentication-Methods-Cache')).toBeNull();
+      expect(stored?.headers.get('X-Authrim-Diagnostic-Session-Id')).toBeNull();
+      expect(second.headers.get('Server-Timing')).toBeNull();
+      expect(second.headers.get('X-Authrim-Authentication-Methods-Cache')).toBeNull();
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      expect(cache.match).toHaveBeenCalledTimes(2);
+      expect(cache.put).toHaveBeenCalledTimes(1);
+    });
+
+    it('should bypass the authentication methods cache for authorized requests', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+
+      const authorized = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods', {
+          headers: { Authorization: 'Bearer token' },
+        }),
+        envWithCache
+      );
+
+      expect(authorized.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe(
+        'bypass'
+      );
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      expect(cache.match).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('should not store authentication methods responses that set cookies', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+      mockEnv.OP_MANAGEMENT.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=60',
+            'Set-Cookie': 'sid=test; HttpOnly; Secure',
+          },
+        })
+      );
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods'),
+        envWithCache
+      );
+      const second = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods'),
+        envWithCache
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('bypass');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('bypass');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(2);
+      expect(cache.match).toHaveBeenCalledTimes(2);
+      expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('should cache Login UI backend proxy requests by forwarded tenant host', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        LOGIN_UI_URL: 'https://login.example.com',
+        LOGIN_UI_HOST_MODE: 'dedicated',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: createMockFetcher('LOGIN_UI_WORKER'),
+        SETTINGS: createMockKV(),
+      };
+      const request = () =>
+        new Request('https://login.example.com/api/auth/authentication-methods?client_id=a', {
+          headers: {
+            'X-Authrim-Ui-Proxy': 'login-ui',
+            'X-Authrim-Forwarded-Host': 'first.example.com',
+          },
+        });
+
+      const first = await app.fetch(request(), envWithCache);
+      const second = await app.fetch(request(), envWithCache);
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      const proxiedRequest = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).host).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('Host')).toBe('first.example.com');
+    });
+
+    it('should cache authentication methods on the naked issuer domain when enabled', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithNakedIssuer = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        PRIMARY_TENANT_ID: 'primary',
+        SETTINGS: createMockKV(),
+      };
+
+      const first = await app.fetch(
+        new Request('https://example.com/api/auth/authentication-methods'),
+        envWithNakedIssuer
+      );
+      const second = await app.fetch(
+        new Request('https://example.com/api/auth/authentication-methods'),
+        envWithNakedIssuer
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('should keep protocol routes on a shared Login UI host routed to auth workers', async () => {

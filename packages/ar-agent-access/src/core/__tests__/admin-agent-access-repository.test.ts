@@ -139,6 +139,32 @@ describe('AdminAgentAccessRepository', () => {
     expect(adapter.calls[0].sql).toContain("active_uniqueness_key = 'active'");
   });
 
+  it('resolves only an active system-managed Task Set catalog version in the same tenant', async () => {
+    const adapter = new RecordingDatabaseAdapter();
+    adapter.queryOneResults.push({ catalog_version: 'admin-agent-access-v9' });
+    const repository = new AdminAgentAccessRepository(adapter);
+
+    await expect(
+      repository.getSystemManagedTaskSetCatalogVersion('tenant-1', 'task-set-1', 1)
+    ).resolves.toBe('admin-agent-access-v9');
+    expect(adapter.calls[0]).toMatchObject({
+      kind: 'queryOne',
+      params: ['tenant-1', 'task-set-1', 1],
+    });
+    expect(adapter.calls[0].sql).toContain("s.management_mode = 'system_managed'");
+    expect(adapter.calls[0].sql).toContain("v.status = 'active'");
+  });
+
+  it('rejects an invalid Task Set version before storage access', async () => {
+    const adapter = new RecordingDatabaseAdapter();
+    const repository = new AdminAgentAccessRepository(adapter);
+
+    await expect(
+      repository.getSystemManagedTaskSetCatalogVersion('tenant-1', 'task-set-1', 0)
+    ).resolves.toBeNull();
+    expect(adapter.calls).toHaveLength(0);
+  });
+
   it('resolves only current permissions for an active delegator', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.queryOneResults.push({ id: 'admin-2', tenant_id: 'home-tenant' });

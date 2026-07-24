@@ -98,6 +98,12 @@ vi.mock('@authrim/ar-lib-core', () => ({
   })),
   getPrimaryTenantId: vi.fn(() => 'default'),
   getTenantIdFromContext: vi.fn(() => 'default'),
+  putTenantExistsCache: vi.fn(async (kv: KVNamespace | undefined, tenantId: string) => {
+    await kv?.put(`v1:tenant-exists:${tenantId}`, 'true', { expirationTtl: 3600 });
+  }),
+  deleteTenantExistsCache: vi.fn(async (kv: KVNamespace | undefined, tenantId: string) => {
+    await kv?.delete(`v1:tenant-exists:${tenantId}`);
+  }),
   seedCustomClaimSchemas: vi.fn(async () => {}),
   TENANT_POLICY_PRESETS: [
     {
@@ -1439,11 +1445,18 @@ describe('tenant D1 pool tenant management', () => {
     expect(provisioned.tenant.lifecycle_state).toBe('provisioning');
     expect(config.delete).toHaveBeenCalledWith('v1:tenant-exists:copy');
     expect(config.delete).toHaveBeenCalledTimes(1);
+    expect(config.put).not.toHaveBeenCalledWith(
+      'v1:tenant-exists:copy',
+      'true',
+      expect.anything()
+    );
 
     const activated = await activateProvisionedTenant(context, 'copy');
     expect(activated.lifecycle_state).toBe('active');
-    expect(config.delete).toHaveBeenCalledWith('v1:tenant-exists:copy');
-    expect(config.delete).toHaveBeenCalledTimes(2);
+    expect(config.put).toHaveBeenCalledWith('v1:tenant-exists:copy', 'true', {
+      expirationTtl: 3600,
+    });
+    expect(config.delete).toHaveBeenCalledTimes(1);
   });
 
   it('reports rollback artifacts that could not be removed', async () => {

@@ -1,6 +1,14 @@
-import { buildAgentToolResourceContext, canonicalizeJson, sha256Base64Url } from '../../core';
+import {
+  AGENT_DISCOVERY_PROFILE_CONTROL_TOOL_ID,
+  agentGrantPinsToolContract,
+  buildAgentToolResourceContext,
+  canonicalizeJson,
+  resolveAgentDiscoveryProfiles,
+  sha256Base64Url,
+} from '../../core';
 import type {
   AgentActorContext,
+  AgentAuthorizationDecision,
   AgentGrantContract,
   AgentResourceRequestContext,
   AgentToolCatalog,
@@ -14,6 +22,7 @@ import type {
   AgentBulkPlanPort,
   AgentClockPort,
   AgentConfigurationPlanPort,
+  AgentDiscoveryProfileStorePort,
   AgentElevationPort,
   AgentElevationCompletion,
   AgentJsonSchemaValidatorPort,
@@ -36,6 +45,10 @@ export interface AgentAccessMcpToolResult {
   structuredContent?: JsonObject;
   content: readonly { type: 'text'; text: string }[];
   isError?: boolean;
+  /** Client-visible provenance and handling labels; never an authorization input. */
+  metadata?: JsonObject;
+  /** Internal SDK bridge signal; never serialized as a Tool result field. */
+  toolListChanged?: boolean;
   urlElicitation?: {
     elicitationId: string;
     url: string;
@@ -64,6 +77,7 @@ export interface AgentAccessMcpResourceContents {
   mimeType?: string;
   text?: string;
   blob?: string;
+  metadata?: JsonObject;
 }
 
 export interface AgentAccessMcpResourceTemplateDefinition {
@@ -94,6 +108,7 @@ export interface AgentAccessMcpPromptDefinition {
 
 export interface AgentAccessMcpPromptResult {
   description?: string;
+  metadata?: JsonObject;
   messages: readonly {
     role: 'user' | 'assistant';
     content: { type: 'text'; text: string };
@@ -113,9 +128,104 @@ export interface AgentAccessMcpServerDependencies {
   configurationPlans?: AgentConfigurationPlanPort;
   bulkPlans?: AgentBulkPlanPort;
   runtimeDiagnostics?: AgentRuntimeDiagnosticsPort;
+  discoveryProfiles?: AgentDiscoveryProfileStorePort;
   resources?: readonly AgentAccessMcpResourceDefinition[];
   resourceTemplates?: readonly AgentAccessMcpResourceTemplateDefinition[];
   prompts?: readonly AgentAccessMcpPromptDefinition[];
+}
+
+function grantSupportsDiscoveryProfiles(
+  dependencies: AgentAccessMcpServerDependencies,
+  context: AgentAccessMcpRequestContext
+): boolean {
+  if (!dependencies.discoveryProfiles) return false;
+  const control = dependencies.toolCatalog
+    .list()
+    .find((tool) => tool.id === AGENT_DISCOVERY_PROFILE_CONTROL_TOOL_ID);
+  return Boolean(control && agentGrantPinsToolContract(context.grant, control));
+}
+
+async function readDiscoveryProfileIds(
+  dependencies: AgentAccessMcpServerDependencies
+): Promise<{ profileIds?: readonly string[]; readFailed: boolean }> {
+  try {
+    return {
+      profileIds: (await dependencies.discoveryProfiles?.get())?.profileIds,
+      readFailed: false,
+    };
+  } catch {
+    return { readFailed: true };
+  }
+}
+
+async function resolveStoredDiscoveryProfiles(
+  dependencies: AgentAccessMcpServerDependencies,
+  context: AgentAccessMcpRequestContext,
+  grantedToolIds: readonly string[]
+): Promise<ReturnType<typeof resolveAgentDiscoveryProfiles>> {
+  const fallback = resolveAgentDiscoveryProfiles({ grantedToolIds });
+  const stored = await readDiscoveryProfileIds(dependencies);
+  if (stored.readFailed) {
+    try {
+      await writeToolAudit(dependencies, context, 'agent.mcp.discovery_profile.reset', 'failed', {
+        reason: 'state_read_failed',
+        selected_profile_ids: [...fallback.selectedProfileIds],
+      });
+    } catch {
+      // Discovery state is not an authorization boundary. Keep the minimal fallback even when
+      // best-effort recovery telemetry is unavailable.
+    }
+    return fallback;
+  }
+  if (!stored.profileIds) return fallback;
+  try {
+    return resolveAgentDiscoveryProfiles({
+      grantedToolIds,
+      selectedProfileIds: stored.profileIds,
+    });
+  } catch {
+    let resetPersisted = false;
+    try {
+      await dependencies.discoveryProfiles?.put({
+        profileIds: [...fallback.selectedProfileIds],
+        updatedAt: dependencies.clock.now(),
+      });
+      resetPersisted = true;
+    } catch {
+      // The current request still uses the minimal fallback. A later request retries repair.
+    }
+    try {
+      await writeToolAudit(
+        dependencies,
+        context,
+        'agent.mcp.discovery_profile.reset',
+        resetPersisted ? 'success' : 'failed',
+        {
+          reason: 'invalid_persisted_selection',
+          selected_profile_ids: [...fallback.selectedProfileIds],
+          reset_persisted: resetPersisted,
+        }
+      );
+    } catch {
+      // Recovery remains fail-safe even when non-authoritative telemetry cannot be written.
+    }
+    return fallback;
+  }
+}
+
+async function toolIsActiveInDiscoveryProfile(
+  dependencies: AgentAccessMcpServerDependencies,
+  context: AgentAccessMcpRequestContext,
+  tool: AgentToolDefinition
+): Promise<boolean> {
+  if (!grantSupportsDiscoveryProfiles(dependencies, context)) return true;
+  if (tool.id === AGENT_DISCOVERY_PROFILE_CONTROL_TOOL_ID) return true;
+  const resolved = await resolveStoredDiscoveryProfiles(
+    dependencies,
+    context,
+    context.grant.resolvedTools?.map((item) => item.toolId) ?? []
+  );
+  return resolved.visibleToolIds.has(tool.id);
 }
 
 export interface AgentAccessMcpServer {
@@ -178,6 +288,11 @@ async function writeToolAudit(
   outcome: 'success' | 'denied' | 'failed' | 'indeterminate',
   details: JsonObject
 ): Promise<void> {
+  const toolId = typeof details.tool_id === 'string' ? details.tool_id : undefined;
+  const tool = toolId
+    ? dependencies.toolCatalog.list().find((candidate) => candidate.id === toolId)
+    : undefined;
+  const principalId = context.actor.machinePrincipalId ?? context.grant.machinePrincipalId;
   await dependencies.audit.write({
     eventType,
     tenantId: context.grant.tenantId,
@@ -189,13 +304,43 @@ async function writeToolAudit(
       actorAssurance: context.actor.assurance,
       tokenBinding: context.actor.tokenBinding,
       clientId: context.actor.clientId,
-      principalId: context.actor.machinePrincipalId ?? context.grant.machinePrincipalId,
+      ...(principalId === undefined ? {} : { principalId }),
       delegatorId: context.grant.delegatorId,
       grantId: context.grant.grantId,
     },
     outcome,
-    details,
+    details: {
+      catalog_version: dependencies.toolCatalog.version,
+      grant_generation: context.grant.generation,
+      consent_version: context.grant.consentVersion,
+      task_set_id: context.grant.taskSetId ?? null,
+      task_set_version: context.grant.taskSetVersion ?? null,
+      access_snapshot_hash: context.grant.accessSnapshotHash ?? null,
+      tool_contract_digest: tool?.schemaDigest ?? null,
+      ...details,
+    },
   });
+}
+
+function dataProvenance(
+  dependencies: AgentAccessMcpServerDependencies,
+  context: AgentAccessMcpRequestContext,
+  source: 'management_api' | 'resource' | 'server_prompt',
+  toolId: string,
+  sensitivity: 'configuration' | 'personal_data' | 'guidance'
+): JsonObject {
+  return {
+    'com.authrim/dataProvenance': {
+      source,
+      trust_level: source === 'server_prompt' ? 'server_authored' : 'tenant_data_untrusted',
+      sensitivity,
+      tenant_id: context.grant.tenantId,
+      grant_id: context.grant.grantId,
+      tool_id: toolId,
+      correlation_id: context.correlationId,
+      observed_at: dependencies.clock.now(),
+    },
+  };
 }
 
 async function completeElevationSafely(
@@ -222,25 +367,40 @@ export function createAgentAccessMcpServer(
   const resourceTemplates = Object.freeze([...(dependencies.resourceTemplates ?? [])]);
   const prompts = Object.freeze([...(dependencies.prompts ?? [])]);
 
+  async function listAuthorizedTools(context: AgentAccessMcpRequestContext) {
+    const visible = [];
+    for (const tool of dependencies.toolCatalog.list()) {
+      const resource = buildAgentToolResourceContext({
+        base: context.resource,
+        toolId: tool.id,
+        arguments: {},
+      });
+      const decision = await dependencies.authorization.authorize({
+        actor: context.actor,
+        grant: context.grant,
+        tool,
+        resource,
+      });
+      if (decision.allowed || decision.requiresElevation) visible.push(tool);
+    }
+    return visible;
+  }
+
+  async function listProfiledTools(context: AgentAccessMcpRequestContext) {
+    const authorized = await listAuthorizedTools(context);
+    if (!grantSupportsDiscoveryProfiles(dependencies, context)) return authorized;
+    const resolved = await resolveStoredDiscoveryProfiles(
+      dependencies,
+      context,
+      authorized.map((tool) => tool.id)
+    );
+    return authorized.filter((tool) => resolved.visibleToolIds.has(tool.id));
+  }
+
   return {
     protocolRevision: '2025-11-25',
     async listTools(context) {
-      const visible = [];
-      for (const tool of dependencies.toolCatalog.list()) {
-        const resource = buildAgentToolResourceContext({
-          base: context.resource,
-          toolId: tool.id,
-          arguments: {},
-        });
-        const decision = await dependencies.authorization.authorize({
-          actor: context.actor,
-          grant: context.grant,
-          tool,
-          resource,
-        });
-        if (decision.allowed || decision.requiresElevation) visible.push(tool);
-      }
-      return visible;
+      return listProfiledTools(context);
     },
     async callTool(context, name, input, metadata = {}) {
       const tool = dependencies.toolCatalog.get(name);
@@ -262,6 +422,34 @@ export function createAgentAccessMcpServer(
           isError: true,
         };
       }
+      if (!(await toolIsActiveInDiscoveryProfile(dependencies, context, tool))) {
+        await writeToolAudit(dependencies, context, 'agent.mcp.tool.denied', 'denied', {
+          tool_id: tool.id,
+          denied_axis: 'discovery_profile',
+          code: 'AGENT_TOOL_PROFILE_INACTIVE',
+        });
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'AGENT_TOOL_PROFILE_INACTIVE: Tool is outside the active discovery profiles. Use set_active_tool_profiles first.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      const requestDigest = await sha256Base64Url(
+        canonicalizeJson({
+          purpose: 'authrim-agent-tool-request-v1',
+          tenant_id: context.grant.tenantId,
+          grant_id: context.grant.grantId,
+          grant_generation: context.grant.generation,
+          actor_sub: context.actor.sub,
+          tool_id: tool.id,
+          tool_contract_digest: tool.schemaDigest,
+          input,
+        })
+      );
       const resource = buildAgentToolResourceContext({
         base: context.resource,
         toolId: tool.id,
@@ -341,6 +529,225 @@ export function createAgentAccessMcpServer(
           reset_at: rate.resetAt,
         });
         return { content: [{ type: 'text', text: 'Rate limit exceeded' }], isError: true };
+      }
+      if (tool.executionTarget === 'access_introspection') {
+        const decisions: Array<{
+          tool: AgentToolDefinition;
+          decision: AgentAuthorizationDecision;
+        }> = [];
+        for (const candidate of dependencies.toolCatalog.list()) {
+          if (!agentGrantPinsToolContract(context.grant, candidate)) {
+            decisions.push({
+              tool: candidate,
+              decision: {
+                allowed: false,
+                requiresElevation: false,
+                deniedAxis: 'grant',
+                code: 'AGENT_TOOL_NOT_IN_TASK_SET',
+              },
+            });
+            continue;
+          }
+          const candidateResource = buildAgentToolResourceContext({
+            base: context.resource,
+            toolId: candidate.id,
+            arguments: {},
+          });
+          const candidateDecision = await dependencies.authorization.authorize({
+            actor: context.actor,
+            grant: context.grant,
+            tool: candidate,
+            resource: candidateResource,
+          });
+          decisions.push({ tool: candidate, decision: candidateDecision });
+        }
+        const toolSummary = (entry: (typeof decisions)[number]): JsonObject => ({
+          id: entry.tool.id,
+          name: entry.tool.name,
+          required_scope: entry.tool.requiredScope,
+          required_permissions: [...entry.tool.requiredPermissions],
+          risk_level: entry.tool.riskLevel,
+        });
+        const allowed = decisions.filter((entry) => entry.decision.allowed);
+        const elevationRequired = decisions.filter(
+          (entry) => !entry.decision.allowed && entry.decision.requiresElevation
+        );
+        const denied = decisions.filter(
+          (entry) => !entry.decision.allowed && !entry.decision.requiresElevation
+        );
+        const deniedByAxis: JsonObject = {};
+        for (const entry of denied) {
+          const axis = entry.decision.deniedAxis ?? 'unknown';
+          const current = deniedByAxis[axis];
+          deniedByAxis[axis] = typeof current === 'number' ? current + 1 : 1;
+        }
+        const includeDenied = input.include_denied === true;
+        const body: JsonObject = {
+          subject: {
+            current_agent_only: true,
+            tenant_id: context.grant.tenantId,
+            grant_id: context.grant.grantId,
+            client_id: context.grant.clientId,
+            machine_principal_id: context.grant.machinePrincipalId ?? null,
+            actor_mode: context.actor.mode,
+            actor_assurance: context.actor.assurance,
+            token_binding: context.actor.tokenBinding,
+            grant_status: context.grant.status,
+            expires_at: context.grant.expiresAt ?? null,
+            scopes: [...context.grant.scopes],
+            permissions: [...context.grant.permissions],
+            task_set: {
+              id: context.grant.taskSetId ?? null,
+              version: context.grant.taskSetVersion ?? null,
+            },
+            scope_policy: {
+              id: context.grant.scopePolicyId ?? null,
+              version: context.grant.scopePolicyVersion ?? null,
+            },
+          },
+          summary: {
+            authority_source: 'live_agent_grant_evaluation',
+            oauth_client_scope_is_not_effective_authority: true,
+            catalog_tool_count: decisions.length,
+            configured_tool_count: context.grant.resolvedTools?.length ?? 0,
+            allowed_tool_count: allowed.length,
+            elevation_required_tool_count: elevationRequired.length,
+            denied_tool_count: denied.length,
+          },
+          allowed_tools: allowed.map(toolSummary),
+          elevation_required_tools: elevationRequired.map((entry) => ({
+            ...toolSummary(entry),
+            denied_axis: entry.decision.deniedAxis ?? 'risk',
+            code: entry.decision.code ?? 'AGENT_ELEVATION_REQUIRED',
+          })),
+          denied_by_axis: deniedByAxis,
+          denied_tools: includeDenied
+            ? denied.map((entry) => ({
+                ...toolSummary(entry),
+                denied_axis: entry.decision.deniedAxis ?? 'unknown',
+                code: entry.decision.code ?? 'AGENT_ACCESS_DENIED',
+              }))
+            : [],
+        };
+        await writeToolAudit(dependencies, context, 'agent.mcp.tool.executed', 'success', {
+          tool_id: tool.id,
+          include_denied: includeDenied,
+          allowed_tool_count: allowed.length,
+          elevation_required_tool_count: elevationRequired.length,
+          denied_tool_count: denied.length,
+        });
+        return {
+          structuredContent: body,
+          content: [{ type: 'text', text: JSON.stringify(body) }],
+        };
+      }
+      if (tool.executionTarget === 'session_control') {
+        if (!dependencies.discoveryProfiles) {
+          await writeToolAudit(dependencies, context, 'agent.mcp.tool.failed', 'failed', {
+            tool_id: tool.id,
+            code: 'AGENT_DISCOVERY_PROFILE_STATE_UNAVAILABLE',
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'AGENT_DISCOVERY_PROFILE_STATE_UNAVAILABLE: Discovery profile state unavailable',
+              },
+            ],
+            isError: true,
+          };
+        }
+        const profileIds = Array.isArray(input.profile_ids)
+          ? input.profile_ids.filter((value): value is string => typeof value === 'string')
+          : [];
+        let resolved;
+        try {
+          const authorizedTools = await listAuthorizedTools(context);
+          resolved = resolveAgentDiscoveryProfiles({
+            grantedToolIds: authorizedTools.map((item) => item.id),
+            selectedProfileIds: profileIds,
+          });
+        } catch {
+          await writeToolAudit(dependencies, context, 'agent.mcp.tool.denied', 'denied', {
+            tool_id: tool.id,
+            denied_axis: 'discovery_profile',
+            code: 'AGENT_DISCOVERY_PROFILE_INVALID_SELECTION',
+            requested_profile_ids: profileIds,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'AGENT_DISCOVERY_PROFILE_INVALID_SELECTION: Invalid discovery profile selection',
+              },
+            ],
+            isError: true,
+          };
+        }
+        const availableIds = new Set(resolved.availableProfiles.map((profile) => profile.id));
+        if (profileIds.some((profileId) => !availableIds.has(profileId))) {
+          await writeToolAudit(dependencies, context, 'agent.mcp.tool.denied', 'denied', {
+            tool_id: tool.id,
+            denied_axis: 'grant',
+            code: 'AGENT_DISCOVERY_PROFILE_NOT_GRANTED',
+            requested_profile_ids: profileIds,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'AGENT_DISCOVERY_PROFILE_NOT_GRANTED: One or more discovery profiles contain no granted tools',
+              },
+            ],
+            isError: true,
+          };
+        }
+        try {
+          await dependencies.discoveryProfiles.put({
+            profileIds: [...resolved.selectedProfileIds],
+            updatedAt: dependencies.clock.now(),
+          });
+        } catch {
+          await writeToolAudit(dependencies, context, 'agent.mcp.tool.failed', 'failed', {
+            tool_id: tool.id,
+            code: 'AGENT_DISCOVERY_PROFILE_STATE_UNAVAILABLE',
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'AGENT_DISCOVERY_PROFILE_STATE_UNAVAILABLE: Discovery profile state unavailable',
+              },
+            ],
+            isError: true,
+          };
+        }
+        const body: JsonObject = {
+          selected_profile_ids: [...resolved.selectedProfileIds],
+          visible_tool_count: resolved.visibleToolIds.size,
+          available_profiles: resolved.availableProfiles.map((profile) => ({
+            id: profile.id,
+            title: profile.title,
+            description: profile.description,
+            granted_tool_count: profile.grantedToolCount,
+          })),
+        };
+        await writeToolAudit(
+          dependencies,
+          context,
+          'agent.mcp.discovery_profile.changed',
+          'success',
+          {
+            tool_id: tool.id,
+            selected_profile_ids: [...resolved.selectedProfileIds],
+            visible_tool_count: resolved.visibleToolIds.size,
+          }
+        );
+        return {
+          structuredContent: body,
+          content: [{ type: 'text', text: JSON.stringify(body) }],
+          toolListChanged: true,
+        };
       }
       if (!decision.allowed && decision.requiresElevation) {
         if (!dependencies.elevation) {
@@ -600,12 +1007,19 @@ export function createAgentAccessMcpServer(
         context,
         'agent.mcp.tool.executed',
         result.status >= 200 && result.status < 300 ? 'success' : 'failed',
-        { tool_id: tool.id, management_status: result.status }
+        { tool_id: tool.id, request_digest: requestDigest, management_status: result.status }
       );
       return {
         structuredContent: toStructuredContent(result.body),
         content: [{ type: 'text', text: JSON.stringify(result.body) }],
         isError: result.status < 200 || result.status >= 300,
+        metadata: dataProvenance(
+          dependencies,
+          context,
+          'management_api',
+          tool.id,
+          tool.requiredScope === 'agent:user-data:read' ? 'personal_data' : 'configuration'
+        ),
       };
     },
     async listResources(context) {
@@ -663,7 +1077,16 @@ export function createAgentAccessMcpServer(
         tool_id: selected.authorizationTool.id,
         resource_name: selected.name,
       });
-      return contents;
+      return {
+        ...contents,
+        metadata: dataProvenance(
+          dependencies,
+          context,
+          'resource',
+          selected.authorizationTool.id,
+          'configuration'
+        ),
+      };
     },
     async listResourceTemplates(context) {
       const visible = [];
@@ -727,7 +1150,16 @@ export function createAgentAccessMcpServer(
         tool_id: definition.authorizationTool.id,
         prompt_name: definition.name,
       });
-      return result;
+      return {
+        ...result,
+        metadata: dataProvenance(
+          dependencies,
+          context,
+          'server_prompt',
+          definition.authorizationTool.id,
+          'guidance'
+        ),
+      };
     },
   };
 }

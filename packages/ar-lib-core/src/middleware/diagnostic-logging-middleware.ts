@@ -26,6 +26,17 @@ import { readRequestTextWithLimit } from '../utils/body-limits';
 
 const log = createLogger().module('DiagnosticLoggingMiddleware');
 const DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES = 64 * 1024;
+const DIAGNOSTIC_SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+type HonoExecutionContext = Context<{ Bindings: Env }>['executionCtx'];
+
+interface CachedDiagnosticSettings {
+  settings: DiagnosticLoggingSettings;
+  cachedAt: number;
+  source: 'default' | 'kv';
+}
+
+const diagnosticSettingsCache = new WeakMap<object, Map<string, CachedDiagnosticSettings>>();
+const diagnosticSettingsRefreshPromises = new WeakMap<object, Map<string, Promise<void>>>();
 
 /**
  * Diagnostic logging middleware configuration
@@ -96,15 +107,14 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
       return next();
     }
 
-    const clientId = config.clientId ?? (await resolveClientIdFromRequest(c));
-
-    // Load diagnostic logging settings
-    const settings = await loadDiagnosticSettings(c.env, tenantId);
+    const settings = getDiagnosticSettingsForMiddleware(c.env, tenantId, c.executionCtx);
 
     // Check if diagnostic logging is enabled
     if (!settings['diagnostic-logging.enabled']) {
       return next();
     }
+
+    const clientId = config.clientId ?? (await resolveClientIdFromRequest(c));
 
     // Create diagnostic logger
     const logger = createDiagnosticLogger({
@@ -157,6 +167,117 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
       log.warn('Failed to cleanup diagnostic logger', { error: String(error) });
     }
   };
+}
+
+function getDefaultDiagnosticSettings(): DiagnosticLoggingSettings {
+  return {
+    'diagnostic-logging.enabled': false,
+    'diagnostic-logging.log_level': 'debug',
+    'diagnostic-logging.http_request_enabled': true,
+    'diagnostic-logging.http_response_enabled': true,
+    'diagnostic-logging.token_validation_enabled': true,
+    'diagnostic-logging.auth_decision_enabled': true,
+    'diagnostic-logging.r2_output_enabled': false,
+    'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
+    'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
+    'diagnostic-logging.output_format': 'jsonl',
+    'diagnostic-logging.buffer_strategy': 'queue',
+    'diagnostic-logging.batch_size': 100,
+    'diagnostic-logging.batch_interval_ms': 5000,
+    'diagnostic-logging.filter_pii': true,
+    'diagnostic-logging.filter_tokens': true,
+    'diagnostic-logging.token_hash_prefix_length': 12,
+    'diagnostic-logging.http_safe_headers':
+      'content-type,accept,user-agent,x-correlation-id,x-diagnostic-session-id',
+    'diagnostic-logging.http_body_schema_aware': true,
+    'diagnostic-logging.retention_days': 30,
+    'diagnostic-logging.storage_mode.default': 'masked',
+    'diagnostic-logging.storage_mode.by_client': '{}',
+    'diagnostic-logging.sdk_ingest_enabled': true,
+    'diagnostic-logging.merged_output_enabled': false,
+  };
+}
+
+function getDiagnosticSettingsCache(env: Env): Map<string, CachedDiagnosticSettings> {
+  const key = env as object;
+  let cache = diagnosticSettingsCache.get(key);
+  if (!cache) {
+    cache = new Map();
+    diagnosticSettingsCache.set(key, cache);
+  }
+  return cache;
+}
+
+function getDiagnosticSettingsRefreshes(env: Env): Map<string, Promise<void>> {
+  const key = env as object;
+  let refreshes = diagnosticSettingsRefreshPromises.get(key);
+  if (!refreshes) {
+    refreshes = new Map();
+    diagnosticSettingsRefreshPromises.set(key, refreshes);
+  }
+  return refreshes;
+}
+
+function getDiagnosticSettingsForMiddleware(
+  env: Env,
+  tenantId: string,
+  ctx?: HonoExecutionContext
+): DiagnosticLoggingSettings {
+  const now = Date.now();
+  const cache = getDiagnosticSettingsCache(env);
+  const cached = cache.get(tenantId);
+  if (cached && now - cached.cachedAt < DIAGNOSTIC_SETTINGS_CACHE_TTL_MS) {
+    return cached.settings;
+  }
+
+  const defaultSettings = getDefaultDiagnosticSettings();
+  cache.set(tenantId, {
+    settings: defaultSettings,
+    cachedAt: now,
+    source: 'default',
+  });
+  scheduleDiagnosticSettingsRefresh(env, tenantId, ctx);
+  return defaultSettings;
+}
+
+function scheduleDiagnosticSettingsRefresh(
+  env: Env,
+  tenantId: string,
+  ctx?: HonoExecutionContext
+): void {
+  if (!env.SETTINGS) {
+    return;
+  }
+  const refreshes = getDiagnosticSettingsRefreshes(env);
+  const existing = refreshes.get(tenantId);
+  if (existing) {
+    if (ctx) ctx.waitUntil(existing);
+    return;
+  }
+  const refresh = loadDiagnosticSettings(env, tenantId)
+    .then((settings) => {
+      getDiagnosticSettingsCache(env).set(tenantId, {
+        settings,
+        cachedAt: Date.now(),
+        source: 'kv',
+      });
+    })
+    .catch(() => {
+      getDiagnosticSettingsCache(env).set(tenantId, {
+        settings: getDefaultDiagnosticSettings(),
+        cachedAt: Date.now(),
+        source: 'default',
+      });
+    })
+    .finally(() => {
+      refreshes.delete(tenantId);
+    });
+  refreshes.set(tenantId, refresh);
+  if (ctx) {
+    ctx.waitUntil(refresh);
+    return;
+  }
+  void refresh;
 }
 
 async function resolveClientIdFromRequest(c: Context): Promise<string | undefined> {
@@ -241,33 +362,7 @@ async function loadDiagnosticSettings(
       error: String(error),
     });
 
-    // Return default settings (disabled)
-    return {
-      'diagnostic-logging.enabled': false,
-      'diagnostic-logging.log_level': 'debug',
-      'diagnostic-logging.http_request_enabled': true,
-      'diagnostic-logging.http_response_enabled': true,
-      'diagnostic-logging.token_validation_enabled': true,
-      'diagnostic-logging.auth_decision_enabled': true,
-      'diagnostic-logging.r2_output_enabled': false,
-      'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-      'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
-      'diagnostic-logging.output_format': 'jsonl',
-      'diagnostic-logging.buffer_strategy': 'queue',
-      'diagnostic-logging.batch_size': 100,
-      'diagnostic-logging.batch_interval_ms': 5000,
-      'diagnostic-logging.filter_pii': true,
-      'diagnostic-logging.filter_tokens': true,
-      'diagnostic-logging.token_hash_prefix_length': 12,
-      'diagnostic-logging.http_safe_headers':
-        'content-type,accept,user-agent,x-correlation-id,x-diagnostic-session-id',
-      'diagnostic-logging.http_body_schema_aware': true,
-      'diagnostic-logging.retention_days': 30,
-      'diagnostic-logging.storage_mode.default': 'masked',
-      'diagnostic-logging.storage_mode.by_client': '{}',
-      'diagnostic-logging.sdk_ingest_enabled': true,
-      'diagnostic-logging.merged_output_enabled': false,
-    };
+    return getDefaultDiagnosticSettings();
   }
 }
 

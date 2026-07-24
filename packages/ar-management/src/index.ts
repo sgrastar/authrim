@@ -83,6 +83,149 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
   return c.redirect(requestUrl.toString(), 308);
 }
 
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const AUTHENTICATION_METHODS_DIAGNOSTIC_CONTEXT_KEY = 'authrimAuthenticationMethodsDiagnostics';
+
+interface MiddlewareDiagnosticSpan {
+  name: string;
+  durationMs: number;
+}
+
+interface MiddlewareDiagnosticState {
+  sessionId: string;
+  startedAt: number;
+  lastMarkAt: number;
+  spans: MiddlewareDiagnosticSpan[];
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/[^A-Za-z0-9._:-]/g, '_')
+    .slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function roundDiagnosticDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
+}
+
+function getMiddlewareDiagnosticState(
+  c: Context<{ Bindings: Env }>
+): MiddlewareDiagnosticState | null {
+  return (
+    ((c as unknown as { get(key: string): unknown }).get(
+      AUTHENTICATION_METHODS_DIAGNOSTIC_CONTEXT_KEY
+    ) as MiddlewareDiagnosticState | undefined) ?? null
+  );
+}
+
+function setMiddlewareDiagnosticState(
+  c: Context<{ Bindings: Env }>,
+  state: MiddlewareDiagnosticState
+): void {
+  (c as unknown as { set(key: string, value: unknown): void }).set(
+    AUTHENTICATION_METHODS_DIAGNOSTIC_CONTEXT_KEY,
+    state
+  );
+}
+
+function appendMiddlewareDiagnosticServerTiming(
+  c: Context<{ Bindings: Env }>,
+  spans: MiddlewareDiagnosticSpan[]
+): void {
+  if (spans.length === 0) return;
+  const value = spans
+    .map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`)
+    .join(', ');
+  const existing = c.res.headers.get('Server-Timing');
+  c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+function recordMiddlewareDiagnosticSpan(c: Context<{ Bindings: Env }>, name: string): void {
+  const state = getMiddlewareDiagnosticState(c);
+  if (!state) return;
+  const now = performance.now();
+  state.spans.push({
+    name,
+    durationMs: roundDiagnosticDurationMs(now - state.lastMarkAt),
+  });
+  state.lastMarkAt = now;
+}
+
+async function timeMiddlewareDiagnosticOperation<T>(
+  c: Context<{ Bindings: Env }>,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const state = getMiddlewareDiagnosticState(c);
+  if (!state) {
+    return operation();
+  }
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    const now = performance.now();
+    state.spans.push({
+      name,
+      durationMs: roundDiagnosticDurationMs(now - startedAt),
+    });
+    state.lastMarkAt = now;
+  }
+}
+
+function authenticationMethodsDiagnosticStartMiddleware() {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const sessionId = sanitizeDiagnosticSessionId(c.req.header(DIAGNOSTIC_SESSION_ID_HEADER));
+    if (!sessionId || !isDiagnosticTimingEnabled(c.env)) {
+      return next();
+    }
+
+    const startedAt = performance.now();
+    setMiddlewareDiagnosticState(c, {
+      sessionId,
+      startedAt,
+      lastMarkAt: startedAt,
+      spans: [],
+    });
+
+    try {
+      await next();
+    } finally {
+      const state = getMiddlewareDiagnosticState(c);
+      if (!state) return;
+      recordMiddlewareDiagnosticSpan(c, 'mg_handler_downstream');
+      state.spans.push({
+        name: 'mg_total',
+        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
+      });
+      appendMiddlewareDiagnosticServerTiming(c, state.spans);
+      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+      getLogger(c).module('LOGIN-METHODS').info('Authentication methods middleware diagnostics', {
+        diagnosticSessionId: state.sessionId,
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+      });
+    }
+  };
+}
+
+function authenticationMethodsDiagnosticCheckpoint(name: string) {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    recordMiddlewareDiagnosticSpan(c, name);
+    await next();
+  };
+}
+
 // Import handlers
 import { registerHandler } from './register';
 import {
@@ -134,14 +277,6 @@ import {
   adminSignInConfirmationPoliciesListHandler,
   adminSignInConfirmationPolicyUpsertHandler,
 } from './admin-consent-policies';
-import {
-  adminConsentGateBindingCreateHandler,
-  adminConsentGateBindingDeleteHandler,
-  adminConsentGateBindingGetHandler,
-  adminConsentGateBindingPreviewHandler,
-  adminConsentGateBindingsListHandler,
-  adminConsentGateBindingUpdateHandler,
-} from './admin-consent-gate-bindings';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
   serveAvatarHandler,
@@ -718,7 +853,7 @@ import {
   getAccountReauthStatusHandler,
 } from './account-page';
 import { getAccountCapabilitiesHandler } from './account-capabilities';
-import { listAccountConsentsHandler, withdrawAccountConsentHandler } from './account-consents';
+import { listAccountConsentsHandler } from './account-consents';
 import { listAccountOperationsHandler } from './account-operations';
 import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
 import {
@@ -950,10 +1085,24 @@ const notificationPluginContextMiddleware = pluginContextMiddleware({
 });
 
 // Middleware
+app.use('/api/auth/authentication-methods', authenticationMethodsDiagnosticStartMiddleware());
 app.use('*', redirectExternalHttpToHttps);
+app.use(
+  '/api/auth/authentication-methods',
+  authenticationMethodsDiagnosticCheckpoint('mg_redirect_https')
+);
 app.use('*', logger());
+app.use('/api/auth/authentication-methods', authenticationMethodsDiagnosticCheckpoint('mg_logger'));
 app.use('*', requestContextMiddleware());
+app.use(
+  '/api/auth/authentication-methods',
+  authenticationMethodsDiagnosticCheckpoint('mg_request_context')
+);
 app.use('/api/auth/authentication-methods', authBootstrapPluginContextMiddleware);
+app.use(
+  '/api/auth/authentication-methods',
+  authenticationMethodsDiagnosticCheckpoint('mg_auth_bootstrap_plugin')
+);
 app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
 app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
 app.use('/api/account/reauth/email-code/send', notificationPluginContextMiddleware);
@@ -985,6 +1134,10 @@ app.use(
     xContentTypeOptions: 'nosniff',
     referrerPolicy: 'strict-origin-when-cross-origin',
   })
+);
+app.use(
+  '/api/auth/authentication-methods',
+  authenticationMethodsDiagnosticCheckpoint('mg_secure_headers')
 );
 
 /**
@@ -1062,6 +1215,7 @@ app.use('*', async (c, next) => {
     credentials: allowCredentials,
   })(c, next);
 });
+app.use('/api/auth/authentication-methods', authenticationMethodsDiagnosticCheckpoint('mg_cors'));
 
 // Rate limiting for registration endpoint
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
@@ -1179,20 +1333,28 @@ app.get('/health/ready', healthHandlers.readiness);
 // Authentication Methods API - public endpoint for Login UI
 // Returns enabled authentication methods (passkey, emailCode, external providers) and UI config
 app.use('/api/auth/authentication-methods', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  const profile = await timeMiddlewareDiagnosticOperation(c, 'mg_rate_limit_profile', () =>
+    getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx)
+  );
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/authentication-methods'],
+    endpointClass: 'publicRead',
     nonBlockingRead: true,
   })(c, next);
 });
+app.use(
+  '/api/auth/authentication-methods',
+  authenticationMethodsDiagnosticCheckpoint('mg_rate_limit')
+);
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
 app.use('/api/auth/discovery', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  const profile = await getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx);
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/discovery'],
+    endpointClass: 'publicRead',
     nonBlockingRead: true,
   })(c, next);
 });
@@ -1279,7 +1441,6 @@ app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandle
 app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/totp/complete', completeAccountTotpReauthHandler);
 app.get('/api/account/consents', listAccountConsentsHandler);
-app.delete('/api/account/consents/:kind/:id', withdrawAccountConsentHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);
@@ -3394,10 +3555,6 @@ app.use('/api/admin/consent-policies/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
-app.use('/api/admin/consent-gate-policy-bindings/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware(profile)(c, next);
-});
 app.use('/api/admin/client-trust-policies/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
@@ -3444,12 +3601,6 @@ app.get('/api/admin/consent-policies/:id', adminConsentPolicyGetHandler);
 app.put('/api/admin/consent-policies/:id', adminConsentPolicyUpdateHandler);
 app.delete('/api/admin/consent-policies/:id', adminConsentPolicyDeleteHandler);
 app.put('/api/admin/consent-policies/:id/items', adminConsentPolicyItemsReplaceHandler);
-app.get('/api/admin/consent-gate-policy-bindings', adminConsentGateBindingsListHandler);
-app.post('/api/admin/consent-gate-policy-bindings', adminConsentGateBindingCreateHandler);
-app.post('/api/admin/consent-gate-policy-bindings/preview', adminConsentGateBindingPreviewHandler);
-app.get('/api/admin/consent-gate-policy-bindings/:id', adminConsentGateBindingGetHandler);
-app.put('/api/admin/consent-gate-policy-bindings/:id', adminConsentGateBindingUpdateHandler);
-app.delete('/api/admin/consent-gate-policy-bindings/:id', adminConsentGateBindingDeleteHandler);
 app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
 app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
 app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);

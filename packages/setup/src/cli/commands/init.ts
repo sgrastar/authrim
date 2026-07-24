@@ -40,7 +40,17 @@ import {
   extractZoneName,
   type ZoneCheckResult,
 } from '../../core/cloudflare.js';
-import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
+import {
+  acquireEnvironmentOperationForEnvironment,
+  createLockFile,
+  saveLockFile,
+  loadLockFile,
+} from '../../core/lock.js';
+import {
+  environmentOperationBlockMessage,
+  evaluateEnvironmentOperation,
+} from '../../core/environment-operation-policy.js';
+import { hasDatabaseTopologyChange } from '../../core/environment-config-policy.js';
 import {
   getEnvironmentPaths,
   getExternalKeysDir,
@@ -53,6 +63,7 @@ import {
   getLegacyConfigFileName,
   getLegacyLockFileName,
   listEnvironments,
+  findAuthrimBaseDir,
 } from '../../core/paths.js';
 import {
   downloadSource,
@@ -1205,12 +1216,13 @@ async function runLoadConfig(): Promise<boolean> {
       }
 
       if (migrateAction === 'migrate') {
-        const { migrateToNewStructure, validateMigration } = await import('../../core/migrate.js');
+        const { migrateToNewStructureLocked, validateMigration } =
+          await import('../../core/migrate.js');
 
         console.log('');
         const envToMigrate = legacyConfigs[0].env;
 
-        const result = await migrateToNewStructure({
+        const result = await migrateToNewStructureLocked({
           baseDir,
           env: envToMigrate,
           onProgress: (msg) => console.log(msg),
@@ -2714,240 +2726,249 @@ async function executeSetup(
     return;
   }
 
-  // Step 1: Generate keys (external directory: .authrim-keys/{env}/)
-  // Check if keys already exist for this environment
-  const cwdDir = process.cwd();
-  if (keysExistForEnvironment(outputDir, env, cwdDir)) {
-    console.log(chalk.yellow(`⚠️  Warning: Keys already exist for environment "${env}"`));
-    console.log(chalk.yellow('   Existing keys will be overwritten.'));
+  const environmentOperation = await acquireEnvironmentOperationForEnvironment({
+    baseDir: outputDir,
+    env,
+    operation: 'init-provision',
+  });
+  const provisionDecision = evaluateEnvironmentOperation({
+    operation: 'provision',
+    lock: environmentOperation.lock,
+  });
+  if (!provisionDecision.allowed) {
+    await environmentOperation.release();
+    throw new Error(environmentOperationBlockMessage(provisionDecision));
+  }
+
+  try {
+    // Step 1: Generate keys (external directory: .authrim-keys/{env}/)
+    // Check if keys already exist for this environment
+    const cwdDir = process.cwd();
+    if (keysExistForEnvironment(outputDir, env, cwdDir)) {
+      console.log(chalk.yellow(`⚠️  Warning: Keys already exist for environment "${env}"`));
+      console.log(chalk.yellow('   Existing keys will be overwritten.'));
+      console.log('');
+    }
+
+    const keysSpinner = ora('Generating cryptographic keys...').start();
+    try {
+      const keyId = generateKeyId(env);
+      secrets = generateAllSecrets(keyId);
+
+      // Save to external structure: {cwd}/.authrim-keys/{env}/
+      const externalKeysDir = getExternalKeysDir(env, cwdDir);
+      await saveKeysToDirectory(secrets, { keysBaseDir: cwdDir, env });
+
+      config.keys = {
+        keyId: secrets.keyPair.keyId,
+        publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
+        secretsPath: getExternalKeysPathForConfig(env, cwdDir),
+        includeSecrets: false,
+        storageType: 'external',
+      };
+
+      keysSpinner.succeed(`Keys generated (${externalKeysDir})`);
+    } catch (error) {
+      keysSpinner.fail('Failed to generate keys');
+      throw error;
+    }
+
+    // Step 2: Provision Cloudflare resources
     console.log('');
-  }
+    console.log(chalk.blue('⏳ Creating Cloudflare resources...'));
+    console.log('');
 
-  const keysSpinner = ora('Generating cryptographic keys...').start();
-  try {
-    const keyId = generateKeyId(env);
-    secrets = generateAllSecrets(keyId);
-
-    // Save to external structure: {cwd}/.authrim-keys/{env}/
-    const externalKeysDir = getExternalKeysDir(env, cwdDir);
-    await saveKeysToDirectory(secrets, { keysBaseDir: cwdDir, env });
-
-    config.keys = {
-      keyId: secrets.keyPair.keyId,
-      publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
-      secretsPath: getExternalKeysPathForConfig(env, cwdDir),
-      includeSecrets: false,
-      storageType: 'external',
-    };
-
-    keysSpinner.succeed(`Keys generated (${externalKeysDir})`);
-  } catch (error) {
-    keysSpinner.fail('Failed to generate keys');
-    throw error;
-  }
-
-  // Step 2: Provision Cloudflare resources
-  console.log('');
-  console.log(chalk.blue('⏳ Creating Cloudflare resources...'));
-  console.log('');
-
-  let provisionedResources;
-  try {
-    provisionedResources = await provisionResources({
-      env,
-      createD1: true,
-      createKV: true,
-      createQueues: config.features.queue?.enabled,
-      createR2: config.features.r2?.enabled,
-      databaseConfig: config.database,
-      config,
-      onProgress: (msg) => console.log(`  ${msg}`),
-    });
-  } catch (error) {
-    console.log(chalk.red('  ✗ Failed to create resources'));
-    console.error(error);
-
-    // Ask if user wants to continue without provisioning
-    const continueWithoutProvisioning = await confirm({
-      message: 'Continue without provisioning? (you will need to create resources manually)',
-      default: false,
-    });
-
-    if (!continueWithoutProvisioning) {
-      return;
-    }
-
-    // Create empty resources
-    provisionedResources = { d1: [], kv: [], queues: [], r2: [] };
-  }
-
-  // Step 3: Create lock file (save to new structure: .authrim/{env}/lock.json)
-  const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
-  const lockSpinner = ora('Generating lock file...').start();
-  try {
-    const lockFile = createLockFile(env, provisionedResources);
-    await saveLockFile(lockFile, { baseDir: outputDir, env });
-    lockSpinner.succeed(`Lock file saved (${envPaths.lock})`);
-  } catch (error) {
-    lockSpinner.fail('Lock file save failed');
-    console.error(error);
-  }
-
-  // Step 4: Save configuration (save to new structure: .authrim/{env}/config.json)
-  const configSpinner = ora('Saving configuration...').start();
-  try {
-    // Ensure environment directory exists
-    await mkdir(envPaths.root, { recursive: true });
-
-    const configPath = envPaths.config;
-    config.updatedAt = new Date().toISOString();
-    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
-
-    // Also save version.txt
-    const setupVersion = getVersion();
-    await writeFile(envPaths.version, setupVersion, 'utf-8');
-
-    configSpinner.succeed(`Configuration saved (${configPath})`);
-  } catch (error) {
-    configSpinner.fail('Configuration save failed');
-    throw error;
-  }
-
-  // Step 4.5: Generate ui.env for UI builds
-  const uiEnvSpinner = ora('Generating UI environment file...').start();
-  try {
-    const initialUiEnv = buildInitialUiEnvConfig(config);
-    if (initialUiEnv) {
-      await saveUiEnv(envPaths.uiEnv, initialUiEnv);
-      uiEnvSpinner.succeed(`UI env saved (${envPaths.uiEnv})`);
-    } else {
-      uiEnvSpinner.warn('Skipped ui.env generation (no API URL configured)');
-      console.log(chalk.gray('  Tip: ui.env will be created when API URL is configured'));
-    }
-  } catch (error) {
-    uiEnvSpinner.fail('UI env generation failed');
-    console.error(error);
-    // Non-fatal: continue with setup
-  }
-
-  // Step 5: Generate wrangler.toml files
-  const resourceIds = toResourceIds(provisionedResources);
-  const packagesDir = join(outputDir, 'packages');
-  const baseDir = process.cwd();
-
-  // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
-  const wranglerSpinner = ora('Saving wrangler.toml master configs...').start();
-  try {
-    const { saveMasterWranglerConfigs, syncWranglerConfigs } =
-      await import('../../core/wrangler-sync.js');
-
-    const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
-      baseDir,
-      env,
-      dryRun: false,
-      onProgress: (msg) => {
-        wranglerSpinner.text = msg;
-      },
-    });
-
-    if (masterResult.success) {
-      wranglerSpinner.succeed(`Saved ${masterResult.files.length} wrangler.toml master configs`);
-    } else {
-      wranglerSpinner.warn('Some wrangler configs failed to save');
-      for (const error of masterResult.errors) {
-        console.log(chalk.yellow(`  • ${error}`));
-      }
-    }
-
-    // Step 5b: Sync to deployment locations (if packages directory exists)
-    if (existsSync(packagesDir)) {
-      const syncSpinner = ora('Syncing wrangler configs to packages...').start();
-
-      const syncResult = await syncWranglerConfigs(
-        {
-          baseDir,
-          env,
-          packagesDir,
-          force: true, // First time setup, always overwrite
-          dryRun: false,
-          onProgress: (msg) => {
-            syncSpinner.text = msg;
-          },
-        },
-        undefined // No manual edit callback for init
+    let provisionedResources;
+    try {
+      provisionedResources = await provisionResources({
+        env,
+        createD1: true,
+        createKV: true,
+        createQueues: config.features.queue?.enabled,
+        createR2: config.features.r2?.enabled,
+        databaseConfig: config.database,
+        onProgress: (msg) => console.log(`  ${msg}`),
+      });
+    } catch (error) {
+      console.log(chalk.red('  ✗ Failed to create resources'));
+      console.error(error);
+      throw new Error(
+        'Cloudflare provisioning did not complete. No environment lock was created; rerun init to resume safely.',
+        { cause: error }
       );
+    }
 
-      if (syncResult.success) {
-        syncSpinner.succeed(`Synced wrangler configs to ${syncResult.synced.length} components`);
+    // Step 3: Create lock file (save to new structure: .authrim/{env}/lock.json)
+    const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
+    const lockSpinner = ora('Generating lock file...').start();
+    try {
+      const lockFile = createLockFile(env, provisionedResources);
+      await saveLockFile(lockFile, { baseDir: outputDir, env });
+      lockSpinner.succeed(`Lock file saved (${envPaths.lock})`);
+    } catch (error) {
+      lockSpinner.fail('Lock file save failed');
+      console.error(error);
+      throw error;
+    }
+
+    // Step 4: Save configuration (save to new structure: .authrim/{env}/config.json)
+    const configSpinner = ora('Saving configuration...').start();
+    try {
+      // Ensure environment directory exists
+      await mkdir(envPaths.root, { recursive: true });
+
+      const configPath = envPaths.config;
+      config.updatedAt = new Date().toISOString();
+      await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+      // Also save version.txt
+      const setupVersion = getVersion();
+      await writeFile(envPaths.version, setupVersion, 'utf-8');
+
+      configSpinner.succeed(`Configuration saved (${configPath})`);
+    } catch (error) {
+      configSpinner.fail('Configuration save failed');
+      throw error;
+    }
+
+    // Step 4.5: Generate ui.env for UI builds
+    const uiEnvSpinner = ora('Generating UI environment file...').start();
+    try {
+      const initialUiEnv = buildInitialUiEnvConfig(config);
+      if (initialUiEnv) {
+        await saveUiEnv(envPaths.uiEnv, initialUiEnv);
+        uiEnvSpinner.succeed(`UI env saved (${envPaths.uiEnv})`);
       } else {
-        syncSpinner.fail('wrangler config sync failed');
-        for (const error of syncResult.errors) {
-          console.log(chalk.red(`  • ${error}`));
+        uiEnvSpinner.warn('Skipped ui.env generation (no API URL configured)');
+        console.log(chalk.gray('  Tip: ui.env will be created when API URL is configured'));
+      }
+    } catch (error) {
+      uiEnvSpinner.fail('UI env generation failed');
+      console.error(error);
+      // Non-fatal: continue with setup
+    }
+
+    // Step 5: Generate wrangler.toml files
+    const resourceIds = toResourceIds(provisionedResources);
+    const packagesDir = join(outputDir, 'packages');
+    const baseDir = process.cwd();
+
+    // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
+    const wranglerSpinner = ora('Saving wrangler.toml master configs...').start();
+    try {
+      const { saveMasterWranglerConfigs, syncWranglerConfigs } =
+        await import('../../core/wrangler-sync.js');
+
+      const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+        baseDir,
+        env,
+        dryRun: false,
+        onProgress: (msg) => {
+          wranglerSpinner.text = msg;
+        },
+      });
+
+      if (masterResult.success) {
+        wranglerSpinner.succeed(`Saved ${masterResult.files.length} wrangler.toml master configs`);
+      } else {
+        wranglerSpinner.warn('Some wrangler configs failed to save');
+        for (const error of masterResult.errors) {
+          console.log(chalk.yellow(`  • ${error}`));
         }
       }
+
+      // Step 5b: Sync to deployment locations (if packages directory exists)
+      if (existsSync(packagesDir)) {
+        const syncSpinner = ora('Syncing wrangler configs to packages...').start();
+
+        const syncResult = await syncWranglerConfigs(
+          {
+            baseDir,
+            env,
+            packagesDir,
+            force: true, // First time setup, always overwrite
+            dryRun: false,
+            onProgress: (msg) => {
+              syncSpinner.text = msg;
+            },
+          },
+          undefined // No manual edit callback for init
+        );
+
+        if (syncResult.success) {
+          syncSpinner.succeed(`Synced wrangler configs to ${syncResult.synced.length} components`);
+        } else {
+          syncSpinner.fail('wrangler config sync failed');
+          for (const error of syncResult.errors) {
+            console.log(chalk.red(`  • ${error}`));
+          }
+        }
+      }
+    } catch (error) {
+      wranglerSpinner.fail('wrangler.toml generation failed');
+      console.error(error);
     }
-  } catch (error) {
-    wranglerSpinner.fail('wrangler.toml generation failed');
-    console.error(error);
-  }
 
-  // Summary
-  console.log('');
-  console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.bold.green('🎉 Setup Complete！'));
-  console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log('');
-
-  // Show provisioned resources
-  if (provisionedResources.d1.length > 0 || provisionedResources.kv.length > 0) {
-    console.log(chalk.bold('📦 Created Resources:'));
+    // Summary
+    console.log('');
+    console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.bold.green('🎉 Setup Complete！'));
+    console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log('');
 
-    if (provisionedResources.d1.length > 0) {
-      console.log('  D1 Databases:');
-      for (const db of provisionedResources.d1) {
-        console.log(`    ✓ ${db.name} (${db.id.slice(0, 8)}...)`);
+    // Show provisioned resources
+    if (provisionedResources.d1.length > 0 || provisionedResources.kv.length > 0) {
+      console.log(chalk.bold('📦 Created Resources:'));
+      console.log('');
+
+      if (provisionedResources.d1.length > 0) {
+        console.log('  D1 Databases:');
+        for (const db of provisionedResources.d1) {
+          console.log(`    ✓ ${db.name} (${db.id.slice(0, 8)}...)`);
+        }
       }
+
+      if (provisionedResources.kv.length > 0) {
+        console.log('  KV Namespaces:');
+        for (const kv of provisionedResources.kv) {
+          console.log(`    ✓ ${kv.name} (${kv.id.slice(0, 8)}...)`);
+        }
+      }
+
+      console.log('');
     }
 
-    if (provisionedResources.kv.length > 0) {
-      console.log('  KV Namespaces:');
-      for (const kv of provisionedResources.kv) {
-        console.log(`    ✓ ${kv.name} (${kv.id.slice(0, 8)}...)`);
-      }
-    }
-
+    console.log(chalk.bold('📁 Generated Files:'));
+    console.log(`  - ${envPaths.config}`);
+    console.log(`  - ${envPaths.lock}`);
+    console.log(`  - ${envPaths.version}`);
+    console.log(
+      `  - ${envPaths.keys}/ ${chalk.gray('(private keys - add .authrim/ to .gitignore)')}`
+    );
     console.log('');
+
+    // Show URLs
+    console.log(chalk.bold('🌐 Endpoints:'));
+    const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+    const loginUrl = config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || '';
+    const adminUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || '';
+    console.log(`  OIDC Provider: ${chalk.cyan(apiUrl)}`);
+    console.log(`  Login UI:      ${chalk.cyan(loginUrl)}`);
+    console.log(`  Admin UI:      ${chalk.cyan(adminUrl)}`);
+    console.log('');
+
+    // Next steps
+    console.log(chalk.bold('📋 Next Steps:'));
+    console.log('');
+    console.log('  1. Upload secrets to Cloudflare:');
+    console.log(chalk.cyan(`     ${getCommandPrefix()} secrets --env=${env}`));
+    console.log('');
+    console.log('  2. Deploy Workers:');
+    console.log(chalk.cyan(`     pnpm deploy --env=${env}`));
+    console.log('');
+  } finally {
+    await environmentOperation.release();
   }
-
-  console.log(chalk.bold('📁 Generated Files:'));
-  console.log(`  - ${envPaths.config}`);
-  console.log(`  - ${envPaths.lock}`);
-  console.log(`  - ${envPaths.version}`);
-  console.log(
-    `  - ${envPaths.keys}/ ${chalk.gray('(private keys - add .authrim/ to .gitignore)')}`
-  );
-  console.log('');
-
-  // Show URLs
-  console.log(chalk.bold('🌐 Endpoints:'));
-  const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
-  const loginUrl = config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || '';
-  const adminUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || '';
-  console.log(`  OIDC Provider: ${chalk.cyan(apiUrl)}`);
-  console.log(`  Login UI:      ${chalk.cyan(loginUrl)}`);
-  console.log(`  Admin UI:      ${chalk.cyan(adminUrl)}`);
-  console.log('');
-
-  // Next steps
-  console.log(chalk.bold('📋 Next Steps:'));
-  console.log('');
-  console.log('  1. Upload secrets to Cloudflare:');
-  console.log(chalk.cyan(`     ${getCommandPrefix()} secrets --env=${env}`));
-  console.log('');
-  console.log('  2. Deploy Workers:');
-  console.log(chalk.cyan(`     pnpm deploy --env=${env}`));
-  console.log('');
 }
 
 // =============================================================================
@@ -3078,42 +3099,9 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
 
   if (!hasLock) {
     console.log(chalk.yellow(`\n⚠️  Lock file not found (${lockPath})`));
-    const createResources = await confirm({
-      message: 'Create new Cloudflare resources?',
-      default: true,
-    });
-
-    if (!createResources) {
-      console.log(chalk.yellow('Cancelled.'));
-      return;
-    }
-
-    // Provision new resources
-    console.log('');
-    console.log(chalk.blue('⏳ Creating Cloudflare resources...'));
-    console.log('');
-
-    try {
-      const provisionedResources = await provisionResources({
-        env,
-        createD1: true,
-        createKV: true,
-        createQueues: config.features.queue?.enabled,
-        createR2: config.features.r2?.enabled,
-        databaseConfig: config.database,
-        config,
-        onProgress: (msg) => console.log(`  ${msg}`),
-      });
-
-      // Create and save lock file
-      const newLock = createLockFile(env, provisionedResources);
-      await saveLockFile(newLock, lockPath);
-      console.log(chalk.green(`\n✓ Lock file saved (${lockPath})`));
-    } catch (error) {
-      console.log(chalk.red('  ✗ Failed to create resources'));
-      console.error(error);
-      return;
-    }
+    console.log(chalk.red('Redeploy cannot provision a missing environment.'));
+    console.log(chalk.yellow(`Run ${getCommandPrefix()} init to provision it explicitly.`));
+    return;
   } else {
     // Show existing resources summary
     console.log(chalk.bold('\n📦 Existing Resources:'));
@@ -3173,6 +3161,8 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
 // =============================================================================
 
 async function handleEditConfig(config: AuthrimConfig, configPath: string): Promise<void> {
+  const originalConfig = structuredClone(config);
+  const originalConfigText = JSON.stringify(originalConfig);
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.bold('✏️  Edit Configuration'));
@@ -3233,8 +3223,40 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
     });
 
     if (saveChanges) {
-      await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(chalk.green(`\n✓ Configuration saved: ${configPath}`));
+      const env = config.environment.prefix;
+      const baseDir = findAuthrimBaseDir(dirname(resolve(configPath)));
+      const operation = await acquireEnvironmentOperationForEnvironment({
+        baseDir,
+        env,
+        operation: 'init-config-edit',
+      });
+      try {
+        const targetProductVersion = operation.lock ? getVersion() : undefined;
+        const decision = evaluateEnvironmentOperation({
+          operation: 'config_mutation',
+          lock: operation.lock,
+          targetVersion: targetProductVersion,
+        });
+        if (!decision.allowed) {
+          throw new Error(environmentOperationBlockMessage(decision, targetProductVersion));
+        }
+
+        const persistedConfigText = await readFile(configPath, 'utf-8');
+        const persistedConfig = parseConfig(JSON.parse(persistedConfigText));
+        if (JSON.stringify(persistedConfig) !== originalConfigText) {
+          throw new Error('config_changed_while_waiting_for_init_config_lock');
+        }
+        if (operation.lock?.productVersion && hasDatabaseTopologyChange(originalConfig, config)) {
+          throw new Error(
+            'Database topology changes require a dedicated topology command for a deployed environment.'
+          );
+        }
+
+        await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        console.log(chalk.green(`\n✓ Configuration saved: ${configPath}`));
+      } finally {
+        await operation.release();
+      }
 
       const redeploy = await confirm({
         message: 'Redeploy to apply changes?',

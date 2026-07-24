@@ -1600,20 +1600,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'consent policies'
   ),
   ...byMethod(
-    '/api/admin/consent-gate-policy-bindings',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'Consent Gate Policy bindings'
-  ),
-  ...byMethod(
-    '/api/admin/consent-gate-policy-bindings/*',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'Consent Gate Policy bindings'
-  ),
-  ...byMethod(
     '/api/admin/client-trust-policies',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,

@@ -111,7 +111,7 @@
 
 		challengeId = $page.url.searchParams.get('challenge_id') || '';
 		if (!challengeId) {
-			error = 'Missing challenge_id parameter';
+			error = $LL.error_invalid_request();
 			loading = false;
 			return;
 		}
@@ -127,14 +127,14 @@
 		try {
 			const { data, error: apiError } = await loginChallengeAPI.getData(challengeId);
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to load challenge data');
+				throw new Error($LL.error_server_error());
 			}
 			challengeData = data as unknown as ChallengeData;
 			if (challengeData?.user?.email) {
 				email = challengeData.user.email;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load challenge data';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		}
 	}
 
@@ -213,7 +213,7 @@
 				authorizationChallengeId: challengeId || undefined
 			});
 			if (optionsError) {
-				throw new Error(optionsError.error_description || 'Failed to get authentication options');
+				throw new Error($LL.error_server_error());
 			}
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -229,7 +229,7 @@
 				if (shouldSignalUnknownCredentialAfterLoginFailure(verifyError)) {
 					await signalUnknownCredential(credential.id);
 				}
-				throw new Error(verifyError.error_description || 'Authentication failed');
+				throw new Error($LL.error_server_error());
 			}
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -240,7 +240,7 @@
 				window.location.href = '/';
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Re-authentication failed';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			passkeyLoading = false;
 		}
@@ -265,11 +265,11 @@
 				authorizationChallengeId: challengeId || undefined
 			});
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to send verification code');
+				throw new Error($LL.error_server_error());
 			}
 			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}&challenge_id=${encodeURIComponent(challengeId)}`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to send verification code';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			emailCodeLoading = false;
 		}
@@ -282,7 +282,7 @@
 		try {
 			const { data, error: apiError } = await startTotpReauth(totpAPI, challengeId);
 			if (apiError || !data) {
-				throw new Error(apiError?.error_description || $LL.login_totpStartFailed());
+				throw new Error($LL.login_totpStartFailed());
 			}
 			totpChallengeId = data.challenge_id;
 			totpCode = '';
@@ -311,7 +311,7 @@
 				authorizationChallengeId: challengeId
 			});
 			if (apiError || !data?.success) {
-				throw new Error(apiError?.error_description || $LL.login_totpCodeInvalid());
+				throw new Error($LL.login_totpCodeInvalid());
 			}
 			if (data.redirect_url && isValidRedirectUrl(data.redirect_url)) {
 				window.location.href = data.redirect_url;

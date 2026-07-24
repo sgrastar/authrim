@@ -5,6 +5,11 @@ import { webcrypto } from 'node:crypto';
 import type { AuthrimConfig } from './config.js';
 import type { AuthrimLock } from './lock.js';
 import {
+  buildTenantD1ReleaseMigrationTarget,
+  calculateReleaseManifestChecksum,
+  type ReleaseMigrationManifest,
+} from './release-migrations.js';
+import {
   buildInitialTenantBootstrapSql,
   createD1Database,
   executeD1Command,
@@ -23,6 +28,7 @@ import {
   buildTenantDatabaseRegistrySql,
   DEFAULT_TENANT_D1_PREALLOCATED_SLOTS,
   getLatestMigrationVersionFromDirectory,
+  getLatestMigrationVersionFromFilenames,
   signTenantDatabaseRegistryResources,
   type TenantDatabaseRole,
   type TenantDatabaseRegistryResourceInput,
@@ -60,6 +66,12 @@ export interface TenantD1BootstrapResult {
   publishedSnapshot?: boolean;
   updatedSlots?: number;
   error?: string;
+}
+
+export interface TenantD1TopologyIssue {
+  binding: string;
+  reason: 'missing_binding' | 'schema_not_registered';
+  targetId?: string;
 }
 
 type TenantD1DeploymentSlotState = 'pending_binding' | 'unavailable';
@@ -117,6 +129,60 @@ function tenantIdForConfig(config: AuthrimConfig): string {
 
 function preallocatedSlotCountForConfig(config: AuthrimConfig): number {
   return config.tenantD1?.preallocatedSlots ?? DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+}
+
+/**
+ * Report tenant-D1 topology drift without mutating Cloudflare or the lock file.
+ * Worker-only redeploys use this to fail closed instead of implicitly creating
+ * databases or applying migrations.
+ */
+export function inspectTenantD1Topology(input: {
+  env: string;
+  config: AuthrimConfig;
+  lock: AuthrimLock;
+  productVersion: string;
+  manifest: ReleaseMigrationManifest;
+}): TenantD1TopologyIssue[] {
+  if (!isTenantD1Profile(input.config)) return [];
+
+  const manifestChecksum = calculateReleaseManifestChecksum(input.manifest);
+  const slotPlans = buildTenantDatabaseSlotPlans({
+    env: input.env,
+    slots: preallocatedSlotCountForConfig(input.config),
+  });
+  const issues: TenantD1TopologyIssue[] = [];
+
+  for (const slot of slotPlans) {
+    for (const resource of slot.resources) {
+      const locked = input.lock.d1[resource.binding];
+      if (!locked) {
+        issues.push({ binding: resource.binding, reason: 'missing_binding' });
+        continue;
+      }
+
+      const target = buildTenantD1ReleaseMigrationTarget({
+        binding: resource.binding,
+        databaseId: locked.id,
+        databaseName: locked.name,
+        role: resource.role,
+      });
+      const state = input.lock.schemaTargets?.[target.id];
+      if (
+        !state ||
+        state.productVersion !== input.productVersion ||
+        state.manifestChecksum !== manifestChecksum ||
+        state.streamId !== target.streamId
+      ) {
+        issues.push({
+          binding: resource.binding,
+          reason: 'schema_not_registered',
+          targetId: target.id,
+        });
+      }
+    }
+  }
+
+  return issues;
 }
 
 function sqlString(value: string): string {
@@ -558,6 +624,7 @@ export async function ensureInitialTenantD1Resources(input: {
   config: AuthrimConfig;
   lock: AuthrimLock;
   rootDir: string;
+  release?: { manifest: ReleaseMigrationManifest; draft: boolean };
   onProgress?: (message: string) => void;
 }): Promise<TenantD1BootstrapResult> {
   if (!isTenantD1Profile(input.config)) {
@@ -605,7 +672,20 @@ export async function ensureInitialTenantD1Resources(input: {
         }
         const migrationPath =
           resource.role === 'tenant_core' ? migrationsRoot.path : join(migrationsRoot.path, 'pii');
-        const result = await runD1Migrations(locked.name, migrationPath, input.onProgress);
+        const streamId = resource.role === 'tenant_core' ? 'd1-core' : 'd1-pii';
+        const stream = input.release?.manifest.streams.find(
+          (candidate) => candidate.id === streamId
+        );
+        if (input.release && !stream) {
+          throw new Error(`release_migration_stream_not_found:${streamId}`);
+        }
+        const result = stream
+          ? await runD1Migrations(locked.name, migrationPath, input.onProgress, {
+              manifestFiles: stream.files,
+              releaseVersion: input.release?.manifest.productVersion,
+              backfillLegacyChecksums: input.release?.draft === false,
+            })
+          : await runD1Migrations(locked.name, migrationPath, input.onProgress);
         if (!result.success) {
           throw new Error(
             `${resource.role} tenant D1 migration failed for ${resource.binding}: ${result.error}`
@@ -687,6 +767,7 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
   lock: AuthrimLock;
   rootDir: string;
   keysDir: string;
+  release?: ReleaseMigrationManifest;
   onProgress?: (message: string) => void;
 }): Promise<TenantD1BootstrapResult> {
   if (!isTenantD1Profile(input.config)) {
@@ -714,10 +795,14 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
     const migrationsRootPath = migrationsRoot.path;
 
     const assignedSlotNumber = 1;
-    const coreSchemaVersion = getLatestMigrationVersionFromDirectory(migrationsRootPath);
-    const piiSchemaVersion = getLatestMigrationVersionFromDirectory(
-      join(migrationsRootPath, 'pii')
-    );
+    const coreStream = input.release?.streams.find((stream) => stream.id === 'd1-core');
+    const piiStream = input.release?.streams.find((stream) => stream.id === 'd1-pii');
+    const coreSchemaVersion = coreStream
+      ? getLatestMigrationVersionFromFilenames(coreStream.files.map((file) => file.path))
+      : getLatestMigrationVersionFromDirectory(migrationsRootPath);
+    const piiSchemaVersion = piiStream
+      ? getLatestMigrationVersionFromFilenames(piiStream.files.map((file) => file.path))
+      : getLatestMigrationVersionFromDirectory(join(migrationsRootPath, 'pii'));
     const resources: TenantD1BootstrapResource[] = [
       registryResourceFromSlot({
         lock: input.lock,

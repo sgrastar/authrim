@@ -314,7 +314,8 @@ export async function exchangeAgentAccessToken(
     grant.delegatorId !== input.delegatorId ||
     grant.generation !== input.grantGeneration ||
     grant.consentVersion !== input.consentVersion ||
-    (grant.expiresAt !== undefined && grant.expiresAt <= now) ||
+    grant.expiresAt === undefined ||
+    grant.expiresAt <= now ||
     !currentPermissions ||
     !currentConsent ||
     (source.actor_mode === 'mode_b' && grant.machinePrincipalId !== source.act_principal_id) ||
@@ -517,7 +518,8 @@ export async function issueAgentBulkChildToken(
         !agentGrantPinsToolContract(grant, currentTool)
       );
     }) ||
-    (grant.expiresAt !== undefined && grant.expiresAt <= now)
+    grant.expiresAt === undefined ||
+    grant.expiresAt <= now
   ) {
     throw new Error('agent_bulk_child_authorization_changed');
   }

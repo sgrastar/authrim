@@ -92,125 +92,56 @@ describe('RuntimeScreen signup email fields', () => {
 
 		expect(body).toMatch(/class="[^"]*runtime-screen[^"]*is-wide[^"]*"/);
 	});
-});
 
-describe('RuntimeScreen consent status', () => {
-	it('renders accepted documents checked and disabled while pending documents remain editable', () => {
-		setLocale('en');
+	it('renders every screen block using the currently selected locale', () => {
+		setLocale('es');
 		const body = render(RuntimeScreen, {
 			props: {
 				screen: {
 					fields: [
 						{
-							field: 'consent',
-							label: 'Policies',
-							required: true,
-							block_type: 'consent_widget'
-						}
-					]
-				},
-				consentPolicy: {
-					id: 'policy_1',
-					display_name: 'Legal documents',
-					description: null,
-					language: 'en',
-					default_language: 'en',
-					items: [
-						{
-							statement_id: 'terms',
-							slug: 'terms',
-							category: 'terms',
-							title: 'Terms of Service',
-							description: '',
-							document_url: null,
-							inline_content: 'Terms of Service',
-							version: '1',
-							version_id: 'terms_v1',
-							is_required: true,
-							checkbox_mode: 'required',
-							checkbox_default_checked: false,
-							display_order: 0,
-							acceptance_status: 'accepted',
-							action_required: false,
-							accepted_at: 1_700_000_000,
-							accepted_record_id: 'record_1'
+							field: 'heading.login',
+							label: '로그인',
+							block_type: 'heading'
 						},
 						{
-							statement_id: 'privacy',
-							slug: 'privacy',
-							category: 'privacy',
-							title: 'Privacy Policy',
-							description: '',
-							document_url: null,
-							inline_content: 'Privacy Policy',
-							version: '1',
-							version_id: 'privacy_v1',
-							is_required: true,
-							checkbox_mode: 'required',
-							checkbox_default_checked: false,
-							display_order: 1,
-							acceptance_status: 'pending',
-							action_required: true,
-							accepted_at: null,
-							accepted_record_id: null
-						}
-					]
-				},
-				consentDecisions: { terms: true, privacy: false }
-			}
-		}).body;
-
-		expect(body).toContain('Terms of Service');
-		expect(body).toContain('Privacy Policy');
-		expect(body).toContain('Accepted');
-		expect(body).toContain('aria-describedby="runtime-screen-consent-accepted-terms"');
-		expect(body.match(/disabled/g)).toHaveLength(1);
-		expect(body.match(/type="checkbox"/g)).toHaveLength(2);
-	});
-
-	it('renders only the server-provided SAML attribute presentation values', () => {
-		setLocale('en');
-		const body = render(RuntimeScreen, {
-			props: {
-				screen: {
-					fields: [
-						{ field: 'consent', label: 'Attributes', required: true, block_type: 'consent_widget' }
-					]
-				},
-				consentPolicy: {
-					id: 'saml-release',
-					display_name: 'Attributes',
-					description: null,
-					language: 'en',
-					default_language: 'en',
-					items: [
+							field: 'auth.passkey',
+							label: 'Passkey로 로그인',
+							block_type: 'auth_widget',
+							auth_method: 'passkey'
+						},
 						{
-							statement_id: 'saml:attribute:mail',
-							slug: 'mail',
-							category: 'attribute_release',
-							title: 'Email address',
-							description: 'Shared with this service',
-							document_url: null,
-							inline_content: null,
-							version: 'request-v1',
-							version_id: 'saml:attribute:mail',
-							is_required: true,
-							checkbox_mode: 'required',
-							checkbox_default_checked: true,
-							display_order: 1,
-							attribute_value_display: 'masked_values',
-							attribute_display_values: ['u***@example.test'],
-							release_kind: 'attribute',
-							release_name: 'mail',
-							release_locked: true
+							field: 'auth.totp',
+							label: '인증 앱으로 로그인',
+							block_type: 'auth_widget',
+							auth_method: 'totp'
 						}
-					]
+					],
+					localizations: {
+						en: {
+							fields: {
+								'heading.login-0': { label: 'Sign in' },
+								'auth.passkey-1': { label: 'Sign in with Passkey' },
+								'auth.totp-2': { label: 'Sign in with authenticator app' }
+							}
+						},
+						es: {
+							fields: {
+								'heading.login-0': { label: 'Iniciar sesión' },
+								'auth.passkey-1': { label: 'Iniciar sesión con Passkey' },
+								'auth.totp-2': { label: 'Iniciar sesión con la aplicación de autenticación' }
+							}
+						}
+					}
 				},
-				consentDecisions: { 'saml:attribute:mail': true }
+				authMethodMode: 'login',
+				methodAvailability: { passkey: true, totp: true }
 			}
 		}).body;
 
-		expect(body).toContain('u***@example.test');
-		expect(body).toContain('aria-label="Email address values"');
+		expect(body).toContain('Iniciar sesión');
+		expect(body).toContain('Iniciar sesión con Passkey');
+		expect(body).toContain('Iniciar sesión con la aplicación de autenticación');
+		expect(body).not.toContain('로그인');
 	});
 });

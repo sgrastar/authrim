@@ -31,6 +31,7 @@ import {
   getLogger,
   createLogger,
   invalidatePluginRuntimeCaches,
+  bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
@@ -201,6 +202,7 @@ function getPluginKV(env: Env): KVNamespace | undefined {
 type PluginTenantScope = 'tenant' | 'platform';
 
 const PLUGIN_TENANT_SCOPE_KEY = 'pluginTenantScope';
+const AUTHENTICATION_METHODS_PLUGIN_PREFIXES = ['human-verification-'];
 
 export async function platformPluginScopeMiddleware(
   c: Context<{ Bindings: Env }>,
@@ -212,6 +214,32 @@ export async function platformPluginScopeMiddleware(
 
 function getPluginTenantScope(c: Context<{ Bindings: Env }>): PluginTenantScope {
   return ((c as any).get(PLUGIN_TENANT_SCOPE_KEY) as PluginTenantScope | undefined) ?? 'tenant';
+}
+
+function pluginAffectsAuthenticationMethods(pluginId: string): boolean {
+  return AUTHENTICATION_METHODS_PLUGIN_PREFIXES.some((prefix) => pluginId.startsWith(prefix));
+}
+
+async function invalidateAuthenticationMethodsCacheForPluginChange(
+  c: Context<{ Bindings: Env }>,
+  pluginId: string,
+  tenantId: string | undefined,
+  reason: string
+): Promise<void> {
+  if (!pluginAffectsAuthenticationMethods(pluginId)) {
+    return;
+  }
+  const log = getLogger(c).module('PluginAdminAPI');
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId ?? null);
+  } catch (error) {
+    log.warn('Failed to bump authentication methods cache revision', {
+      pluginId,
+      tenantId: tenantId ?? 'global',
+      reason,
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  }
 }
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | undefined {
@@ -885,6 +913,12 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   // Save to KV
   await kv.put(configKey, JSON.stringify(configToStore));
   invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
+  await invalidateAuthenticationMethodsCacheForPluginChange(
+    c,
+    pluginId,
+    tenantId,
+    'plugin:config'
+  );
 
   // Log the change (with masked values for audit)
   log.info(
@@ -957,6 +991,12 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
 
   await kv.put(enableKey, 'true');
   invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
+  await invalidateAuthenticationMethodsCacheForPluginChange(
+    c,
+    pluginId,
+    tenantId,
+    'plugin:enable'
+  );
 
   log.info(
     'Plugin enabled',
@@ -1009,6 +1049,12 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
 
   await kv.put(enableKey, 'false');
   invalidatePluginRuntimeCaches(c.env, tenantId ? { tenantId, pluginId } : { pluginId });
+  await invalidateAuthenticationMethodsCacheForPluginChange(
+    c,
+    pluginId,
+    tenantId,
+    'plugin:disable'
+  );
 
   log.info(
     'Plugin disabled',

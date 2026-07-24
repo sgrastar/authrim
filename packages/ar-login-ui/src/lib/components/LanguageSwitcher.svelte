@@ -3,6 +3,12 @@
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { buildDiagnosticHeaders } from '$lib/api/client';
+	import {
+		LOGIN_UI_LOCALES,
+		LOGIN_UI_LOCALE_LABELS,
+		isLoginUILocale,
+		toDocumentLanguage
+	} from '$lib/i18n/locales';
 
 	const { themeStore } = useLoginUIStores();
 
@@ -11,11 +17,17 @@
 		showLanguageSelect = true
 	}: { showThemeToggle?: boolean; showLanguageSelect?: boolean } = $props();
 
-	const availableLocales: Locales[] = ['en', 'ja'];
+	const availableLocales: Locales[] = [...LOGIN_UI_LOCALES];
 	let currentLang = $state<Locales>(getLocale());
 
 	async function switchLanguage(lang: string) {
-		// Save to server-side cookie via API (not affected by Safari ITP 7-day limit)
+		if (!isLoginUILocale(lang)) return;
+
+		setLocale(lang);
+		currentLang = lang;
+		document.documentElement.lang = toDocumentLanguage(lang);
+		window.dispatchEvent(new CustomEvent('authrim:locale-change', { detail: { locale: lang } }));
+
 		try {
 			await fetch('/api/set-language', {
 				method: 'POST',
@@ -24,18 +36,6 @@
 				}),
 				body: JSON.stringify({ language: lang })
 			});
-
-			// Update client-side language tag
-			setLocale(lang as Locales);
-			currentLang = lang as Locales;
-
-			// Update html lang attribute
-			document.documentElement.lang = lang;
-
-			// Reload page to apply language change across all components
-			if (typeof window !== 'undefined') {
-				window.location.reload();
-			}
 		} catch (error) {
 			console.error('Failed to set language:', error);
 		}
@@ -69,9 +69,7 @@
 				class="auth-lang-select"
 			>
 				{#each availableLocales as lang (lang)}
-					<option value={lang}>
-						{lang === 'en' ? $LL.language_english() : $LL.language_japanese()}
-					</option>
+					<option value={lang}>{LOGIN_UI_LOCALE_LABELS[lang]}</option>
 				{/each}
 			</select>
 		</div>

@@ -15,6 +15,8 @@ import {
   resolveUserStoreRuntimeSourcesFromEnv,
   readR2ObjectTextWithLimit,
   tombstoneObjectCatalogEntryForTenant,
+  putTenantExistsCache,
+  deleteTenantExistsCache,
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
@@ -384,7 +386,11 @@ async function processTenantLifecycleValidationJob(
     [config.target_state, nowTs, job.tenant_id, allowedState]
   );
   if (update.rowsAffected === 0) throw new Error('tenant_lifecycle_validation_activation_conflict');
-  await env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${job.tenant_id}`).catch(() => {});
+  if (config.target_state === 'active') {
+    await putTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
+  } else {
+    await deleteTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
+  }
 
   await writeTenantLifecycleJobAudit(env, adapter, job, {
     action: 'tenant.lifecycle.validation_completed',

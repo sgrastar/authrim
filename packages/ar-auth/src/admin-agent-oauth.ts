@@ -74,6 +74,53 @@ interface ClientIdMetadataDocument {
   dpop_bound_access_tokens?: boolean;
 }
 
+/**
+ * Claude Code and some other native MCP hosts publish a portless localhost callback in their
+ * Client ID Metadata Document, then bind an ephemeral localhost port for each login. Keep this
+ * compatibility rule scoped to CIMD clients: ordinary pre-registered/DCR clients continue to use
+ * the shared exact/RFC 8252 IP-literal comparison.
+ */
+function isCimdPortlessLocalhostRedirectMatch(providedUri: string, registeredUri: string): boolean {
+  const registeredAuthority = /^http:\/\/localhost(?:[/?]|$)/iu;
+  const providedAuthority = /^http:\/\/localhost:([0-9]{1,5})(?:[/?]|$)/iu;
+  const portMatch = providedAuthority.exec(providedUri);
+  if (!registeredAuthority.test(registeredUri) || !portMatch) return false;
+
+  const port = Number(portMatch[1]);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return false;
+
+  try {
+    const provided = new URL(providedUri);
+    const registered = new URL(registeredUri);
+    return (
+      provided.protocol === 'http:' &&
+      registered.protocol === 'http:' &&
+      provided.hostname === 'localhost' &&
+      registered.hostname === 'localhost' &&
+      provided.port === String(port) &&
+      registered.port === '' &&
+      provided.username === '' &&
+      provided.password === '' &&
+      registered.username === '' &&
+      registered.password === '' &&
+      provided.hash === '' &&
+      registered.hash === '' &&
+      provided.pathname === registered.pathname &&
+      provided.search === registered.search
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAdminAgentRedirectUriRegistered(providedUri: string, client: ClientMetadata): boolean {
+  if (isRedirectUriRegistered(providedUri, client.redirect_uris)) return true;
+  if (client.agent_access_registration_mode !== 'cimd') return false;
+  return client.redirect_uris.some((registeredUri) =>
+    isCimdPortlessLocalhostRedirectMatch(providedUri, registeredUri)
+  );
+}
+
 function isValidOptionalClientMetadataUri(value: unknown): boolean {
   if (value === undefined) return true;
   if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return false;
@@ -355,6 +402,7 @@ interface AdminAgentAuthorizationContext {
   par: PARRequestData;
   grant?: AgentGrantContract;
   grantPurpose?: string;
+  grantTaskSetCatalogVersion?: string;
   repository: AdminAgentAccessRepository;
   parStore: ReturnType<typeof getPARRequestStoreByUri>['stub'];
 }
@@ -394,7 +442,7 @@ async function resolveAdminAgentAuthorizationContext(
     !client ||
     (client.agent_access_registration_mode !== undefined &&
       (!client.agent_access_expires_at || client.agent_access_expires_at <= Date.now())) ||
-    !isRedirectUriRegistered(par.redirect_uri, client.redirect_uris) ||
+    !isAdminAgentRedirectUriRegistered(par.redirect_uri, client) ||
     !(client.requestable_scopes ?? []).length
   ) {
     return oauthError(c, 'unauthorized_client', 'Client is not authorized for Agent access');
@@ -408,6 +456,17 @@ async function resolveAdminAgentAuthorizationContext(
     clientId
   );
   const grantRecord = grant ? await repository.getGrantRecord(tenantId, grant.grantId) : null;
+  const grantTaskSetCatalogVersion =
+    grant &&
+    grantRecord?.purpose === 'interactive_self_service' &&
+    grant.taskSetId &&
+    grant.taskSetVersion
+      ? await repository.getSystemManagedTaskSetCatalogVersion(
+          tenantId,
+          grant.taskSetId,
+          grant.taskSetVersion
+        )
+      : undefined;
   if (
     grant &&
     grantRecord?.purpose !== 'interactive_self_service' &&
@@ -444,6 +503,7 @@ async function resolveAdminAgentAuthorizationContext(
         }
       : undefined,
     grantPurpose: grantRecord?.purpose,
+    grantTaskSetCatalogVersion: grantTaskSetCatalogVersion ?? undefined,
     repository,
     parStore,
   };
@@ -583,10 +643,7 @@ async function convertDirectAuthorizationRequestToPar(
   const client = await resolveAdminAgentClient(c, parsed.clientId, canonicalResource);
   if (!client) return oauthError(c, 'unauthorized_client', 'Client is not registered');
   const redirectValidation = validateRedirectUri(parsed.redirectUri, true);
-  if (
-    !redirectValidation.valid ||
-    !isRedirectUriRegistered(parsed.redirectUri, client.redirect_uris)
-  ) {
+  if (!redirectValidation.valid || !isAdminAgentRedirectUriRegistered(parsed.redirectUri, client)) {
     return oauthError(c, 'invalid_request', 'redirect_uri is not registered for this client');
   }
   const requestableScopes = new Set(client.requestable_scopes ?? []);
@@ -684,10 +741,7 @@ export async function adminAgentParHandler(c: Context<{ Bindings: Env }>): Promi
   }
 
   const redirectValidation = validateRedirectUri(parsed.redirectUri, true);
-  if (
-    !redirectValidation.valid ||
-    !isRedirectUriRegistered(parsed.redirectUri, client.redirect_uris)
-  ) {
+  if (!redirectValidation.valid || !isAdminAgentRedirectUriRegistered(parsed.redirectUri, client)) {
     return oauthError(c, 'invalid_request', 'redirect_uri is not registered for this client');
   }
   const requestableScopes = new Set(client.requestable_scopes ?? []);
@@ -739,28 +793,149 @@ function authorizationRedirect(
   return target.toString();
 }
 
-const SELF_SERVICE_SCOPE_PRESENTATION: Record<
-  (typeof SELF_SERVICE_AGENT_SCOPES)[number],
-  { title: string; description: string; optional: boolean }
-> = {
-  'agent:read': {
-    title: '設定と診断情報を読む',
-    description: 'ユーザー個人データを除く、現在の認証設定・構成・監査情報を読み取ります。',
-    optional: false,
+type AdminAgentConsentLocale = 'en' | 'ja';
+
+interface AdminAgentConsentCopy {
+  htmlLang: AdminAgentConsentLocale;
+  pageTitle: string;
+  secureConnection: string;
+  heading: string;
+  introduction: (clientName: string) => string;
+  tenant: string;
+  connection: string;
+  interactiveConnection: string;
+  expires: string;
+  expiryValue: string;
+  maximum: string;
+  maximumValue: (maximum: number) => string;
+  chooseScopes: string;
+  scopeGuidance: string;
+  required: string;
+  optional: string;
+  advancedScope: string;
+  notice: string;
+  approve: string;
+  deny: string;
+  scopes: Record<
+    (typeof SELF_SERVICE_AGENT_SCOPES)[number],
+    { title: string; description: string; optional: boolean }
+  >;
+}
+
+const ADMIN_AGENT_CONSENT_COPY: Record<AdminAgentConsentLocale, AdminAgentConsentCopy> = {
+  en: {
+    htmlLang: 'en',
+    pageTitle: 'Review Agent Access | Authrim',
+    secureConnection: 'Secure agent connection',
+    heading: 'Review Agent Access',
+    introduction: (clientName) =>
+      `${clientName} is requesting permission to perform administrative operations on your behalf.`,
+    tenant: 'Tenant',
+    connection: 'Connection',
+    interactiveConnection: 'Interactive connection',
+    expires: 'Access expires',
+    expiryValue: 'Up to 7 days after approval',
+    maximum: 'Per-operation limit',
+    maximumValue: (maximum) => `${maximum} resources`,
+    chooseScopes: 'Choose what to allow',
+    scopeGuidance:
+      'Basic read access is required. Select access to personal data or changes only when needed.',
+    required: 'Required',
+    optional: 'Optional',
+    advancedScope: 'An advanced Agent scope assigned to this connection by an administrator.',
+    notice: 'You can suspend or revoke this connection at any time from Admin, Agent Access.',
+    approve: 'Allow access',
+    deny: 'Deny',
+    scopes: {
+      'agent:read': {
+        title: 'Read settings and diagnostics',
+        description:
+          'Read current authentication settings, configuration, and audit information. User personal data is excluded.',
+        optional: false,
+      },
+      'agent:user-data:read': {
+        title: 'Read masked user data',
+        description:
+          'Masked user search and detail results may be sent to the connected MCP client and its AI model.',
+        optional: true,
+      },
+      'agent:write': {
+        title: 'Create and apply configuration Plans',
+        description:
+          'Make permitted changes through a Plan, diff review, apply, and verification flow. High-risk operations require separate approval.',
+        optional: true,
+      },
+    },
   },
-  'agent:user-data:read': {
-    title: 'マスク済みユーザーデータを読む',
-    description:
-      'ユーザー検索・詳細のマスク済み結果が、接続先MCPクライアントとAIモデルへ送られる場合があります。',
-    optional: true,
-  },
-  'agent:write': {
-    title: '設定変更Planを作成・適用する',
-    description:
-      '許可された設定変更をPlan、差分確認、適用、検証の順に実行します。高リスク操作は別途確認が必要です。',
-    optional: true,
+  ja: {
+    htmlLang: 'ja',
+    pageTitle: 'Agentアクセスの確認 | Authrim',
+    secureConnection: '安全なAgent接続',
+    heading: 'Agentアクセスの確認',
+    introduction: (clientName) =>
+      `${clientName} が、あなたに代わって管理操作を行うための許可を求めています。`,
+    tenant: '対象テナント',
+    connection: '接続方式',
+    interactiveConnection: '対話接続',
+    expires: '有効期限',
+    expiryValue: '許可から最長7日',
+    maximum: '1回あたりの対象上限',
+    maximumValue: (maximum) => `${maximum}件`,
+    chooseScopes: '許可する操作を選択',
+    scopeGuidance:
+      '基本の読取権限は必須です。個人データと設定変更は、必要な場合だけ選択してください。',
+    required: '必須',
+    optional: '任意',
+    advancedScope: '管理者がこの接続へ割り当てた高度なAgent scopeです。',
+    notice: 'この接続は、管理画面の「Agent Access」からいつでも停止または失効できます。',
+    approve: 'アクセスを許可',
+    deny: '拒否',
+    scopes: {
+      'agent:read': {
+        title: '設定と診断情報を読む',
+        description: 'ユーザー個人データを除く、現在の認証設定・構成・監査情報を読み取ります。',
+        optional: false,
+      },
+      'agent:user-data:read': {
+        title: 'マスク済みユーザーデータを読む',
+        description:
+          'ユーザー検索・詳細のマスク済み結果が、接続先MCPクライアントとAIモデルへ送られる場合があります。',
+        optional: true,
+      },
+      'agent:write': {
+        title: '設定変更Planを作成・適用する',
+        description:
+          '許可された設定変更をPlan、差分確認、適用、検証の順に実行します。高リスク操作は別途確認が必要です。',
+        optional: true,
+      },
+    },
   },
 };
+
+function resolveAdminAgentConsentLocale(
+  acceptLanguage: string | undefined
+): AdminAgentConsentLocale {
+  if (!acceptLanguage) return 'en';
+  const preferences = acceptLanguage
+    .split(',')
+    .map((part, index) => {
+      const [rawTag, ...parameters] = part.trim().split(';');
+      const qualityParameter = parameters.find((parameter) => parameter.trim().startsWith('q='));
+      const parsedQuality = qualityParameter ? Number(qualityParameter.trim().slice(2)) : 1;
+      return {
+        tag: rawTag?.trim().toLowerCase() ?? '',
+        quality: Number.isFinite(parsedQuality) ? parsedQuality : 0,
+        index,
+      };
+    })
+    .filter((preference) => preference.quality > 0)
+    .sort((left, right) => right.quality - left.quality || left.index - right.index);
+  for (const preference of preferences) {
+    const language = preference.tag.split('-')[0];
+    if (language === 'ja' || language === 'en') return language;
+  }
+  return 'en';
+}
 
 function requestedSelfServiceScopes(par: PARRequestData): AgentScope[] {
   return normalizeSelfServiceAgentScopes(par.scope.split(/\s+/u).filter(Boolean));
@@ -863,17 +1038,17 @@ export async function adminAgentAuthorizeHandler(c: Context<{ Bindings: Env }>):
         : grantMaximum === undefined
           ? requestMaximum
           : Math.min(requestMaximum, grantMaximum);
+    const locale = resolveAdminAgentConsentLocale(c.req.header('accept-language'));
+    const copy = ADMIN_AGENT_CONSENT_COPY[locale];
     const maximumSummary =
       effectiveMaximum === undefined
         ? ''
-        : `<dt>1回あたりの対象上限</dt><dd>${effectiveMaximum}件</dd>`;
+        : `<div class="summary-item"><dt>${escapeHtml(copy.maximum)}</dt><dd>${escapeHtml(copy.maximumValue(effectiveMaximum))}</dd></div>`;
     const scopeFields = requestedScopes
-      .map((scope) => {
-        const presentation = SELF_SERVICE_SCOPE_PRESENTATION[
-          scope as keyof typeof SELF_SERVICE_SCOPE_PRESENTATION
-        ] ?? {
+      .map((scope, index) => {
+        const presentation = copy.scopes[scope as keyof typeof copy.scopes] ?? {
           title: scope,
-          description: '詳細設定でこの接続に割り当てられた高度なAgent scopeです。',
+          description: copy.advancedScope,
           optional: false,
         };
         const name =
@@ -887,22 +1062,328 @@ export async function adminAgentAuthorizeHandler(c: Context<{ Bindings: Env }>):
                   ? 'scope_admin'
                   : 'scope_read';
         const required = !selfService || !presentation.optional;
-        return `<label style="display:block;border:1px solid #bbb;border-radius:.5rem;padding:.75rem;margin:.6rem 0">
-<input type="checkbox" name="${name}" value="${escapeHtml(scope)}" ${required ? 'checked disabled' : ''}>
-<strong>${escapeHtml(presentation.title)}</strong><br><small>${escapeHtml(presentation.description)}</small>
+        const inputId = `agent-scope-${index}`;
+        const descriptionId = `${inputId}-description`;
+        return `<label class="scope-option" for="${inputId}">
+  <input class="scope-checkbox" id="${inputId}" type="checkbox" name="${name}" value="${escapeHtml(scope)}" aria-describedby="${descriptionId}" ${required ? 'checked disabled' : ''}>
+  <span class="scope-copy">
+    <span class="scope-heading"><strong>${escapeHtml(presentation.title)}</strong><span class="scope-status">${escapeHtml(required ? copy.required : copy.optional)}</span></span>
+    <span class="scope-description" id="${descriptionId}">${escapeHtml(presentation.description)}</span>
+    <code>${escapeHtml(scope)}</code>
+  </span>
 </label>${required ? `<input type="hidden" name="${name}" value="${escapeHtml(scope)}">` : ''}`;
       })
       .join('');
-    return c.html(`<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authrim Agent access consent</title></head>
-<body><main><h1>Agentアクセスの確認</h1><p>${escapeHtml(clientName)} に、管理操作を委任します。</p>
-<dl><dt>対象テナント</dt><dd>${escapeHtml(resolved.tenantId)}</dd><dt>接続方式</dt><dd>対話接続</dd><dt>有効期限</dt><dd>許可から最長7日</dd>${maximumSummary}</dl>
-<h2>許可する操作を選択</h2><p>最小の読取権限は必須です。個人データと設定変更は必要な場合だけ選択してください。</p>
-<form method="post" action="/oauth/admin-agent/authorize">
-<input type="hidden" name="request_uri" value="${escapeHtml(requestUri)}"><input type="hidden" name="client_id" value="${escapeHtml(clientId)}">
-${scopeFields}
-<button type="submit" name="decision" value="approve">許可</button><button type="submit" name="decision" value="deny">拒否</button>
-</form></main></body></html>`);
+    const styleNonce = generateSecureRandomString(24);
+    const html = `<!doctype html>
+<html lang="${copy.htmlLang}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>${escapeHtml(copy.pageTitle)}</title>
+  <style nonce="${styleNonce}">
+    :root {
+      color-scheme: light dark;
+      --page: #f4f6f8;
+      --surface: #fcfcfd;
+      --surface-muted: #f1f3f5;
+      --text: #17191c;
+      --muted: #626871;
+      --border: #dfe3e8;
+      --accent: #2458c6;
+      --accent-hover: #1d48a4;
+      --accent-soft: #e9effc;
+      --focus: #79a2ff;
+      --shadow: 0 24px 70px rgb(34 45 62 / 14%);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100dvh;
+      margin: 0;
+      padding: 32px 20px;
+      display: grid;
+      place-items: center;
+      background: var(--page);
+      color: var(--text);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      width: min(100%, 680px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      font-weight: 720;
+      letter-spacing: -0.02em;
+    }
+    .brand-mark {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 9px;
+      background: var(--text);
+      color: var(--surface);
+      font-size: 15px;
+      font-weight: 760;
+    }
+    .connection-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .content { padding: 34px 36px 36px; }
+    h1, h2, p { margin-top: 0; }
+    h1 {
+      margin-bottom: 10px;
+      font-size: clamp(27px, 5vw, 36px);
+      line-height: 1.15;
+      letter-spacing: -0.035em;
+    }
+    .introduction {
+      max-width: 58ch;
+      margin-bottom: 26px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      margin: 0 0 34px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--border);
+    }
+    .summary-item {
+      min-width: 0;
+      padding: 15px 17px;
+      background: var(--surface-muted);
+    }
+    dt {
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    h2 {
+      margin-bottom: 7px;
+      font-size: 19px;
+      letter-spacing: -0.02em;
+    }
+    .scope-guidance {
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .scope-list {
+      display: grid;
+      gap: 10px;
+    }
+    .scope-option {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 13px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      cursor: pointer;
+    }
+    .scope-option:has(.scope-checkbox:checked) {
+      border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+      background: var(--accent-soft);
+    }
+    .scope-option:focus-within {
+      outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent);
+      outline-offset: 2px;
+    }
+    .scope-checkbox {
+      width: 19px;
+      height: 19px;
+      margin: 2px 0 0;
+      accent-color: var(--accent);
+    }
+    .scope-checkbox:disabled { opacity: 1; }
+    .scope-copy { min-width: 0; }
+    .scope-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .scope-heading strong { font-size: 15px; }
+    .scope-status {
+      flex: none;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 720;
+    }
+    .scope-description {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    code {
+      display: inline-block;
+      margin-top: 9px;
+      color: var(--muted);
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+    }
+    .notice {
+      margin: 20px 0 0;
+      padding: 13px 15px;
+      border-left: 3px solid var(--accent);
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr;
+      gap: 10px;
+      margin-top: 26px;
+    }
+    button {
+      min-height: 46px;
+      border-radius: 10px;
+      padding: 0 18px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 720;
+      cursor: pointer;
+    }
+    button:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .deny {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+    }
+    .approve {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #f8faff;
+    }
+    .deny:hover { background: var(--surface-muted); }
+    .approve:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
+    button:active { transform: translateY(1px); }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111418;
+        --surface: #191d22;
+        --surface-muted: #22272e;
+        --text: #edf0f4;
+        --muted: #a8b0bb;
+        --border: #343b45;
+        --accent: #83a9ff;
+        --accent-hover: #9bb9ff;
+        --accent-soft: #202c43;
+        --focus: #83a9ff;
+        --shadow: 0 24px 70px rgb(0 0 0 / 38%);
+      }
+      .approve { color: #111826; }
+    }
+    @media (max-width: 560px) {
+      body { padding: 0; place-items: stretch; }
+      main { min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+      .topbar { padding: 18px 20px; }
+      .connection-label { display: none; }
+      .content { padding: 28px 20px 24px; }
+      .summary { grid-template-columns: 1fr; }
+      .actions { grid-template-columns: 1fr; }
+      .approve { grid-row: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">A</span><span>Authrim</span></div>
+      <span class="connection-label">${escapeHtml(copy.secureConnection)}</span>
+    </div>
+    <div class="content">
+      <h1>${escapeHtml(copy.heading)}</h1>
+      <p class="introduction">${escapeHtml(copy.introduction(clientName))}</p>
+      <dl class="summary">
+        <div class="summary-item"><dt>${escapeHtml(copy.tenant)}</dt><dd>${escapeHtml(resolved.tenantId)}</dd></div>
+        <div class="summary-item"><dt>${escapeHtml(copy.connection)}</dt><dd>${escapeHtml(copy.interactiveConnection)}</dd></div>
+        <div class="summary-item"><dt>${escapeHtml(copy.expires)}</dt><dd>${escapeHtml(copy.expiryValue)}</dd></div>
+        ${maximumSummary}
+      </dl>
+      <h2>${escapeHtml(copy.chooseScopes)}</h2>
+      <p class="scope-guidance">${escapeHtml(copy.scopeGuidance)}</p>
+      <form method="post" action="/oauth/admin-agent/authorize">
+        <input type="hidden" name="request_uri" value="${escapeHtml(requestUri)}">
+        <input type="hidden" name="client_id" value="${escapeHtml(clientId)}">
+        <div class="scope-list">${scopeFields}</div>
+        <p class="notice">${escapeHtml(copy.notice)}</p>
+        <div class="actions">
+          <button class="deny" type="submit" name="decision" value="deny">${escapeHtml(copy.deny)}</button>
+          <button class="approve" type="submit" name="decision" value="approve">${escapeHtml(copy.approve)}</button>
+        </div>
+      </form>
+    </div>
+  </main>
+</body>
+</html>`;
+    return c.html(html, 200, {
+      'Cache-Control': 'no-store',
+      'Content-Language': copy.htmlLang,
+      'Content-Security-Policy': [
+        "default-src 'none'",
+        `style-src 'nonce-${styleNonce}'`,
+        "form-action 'self'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+      ].join('; '),
+      'Referrer-Policy': 'no-referrer',
+      'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Origin-Agent-Cluster': '?1',
+      'X-DNS-Prefetch-Control': 'off',
+      'X-Download-Options': 'noopen',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'X-Permitted-Cross-Domain-Policies': 'none',
+      Vary: 'Accept-Language',
+    });
   }
 
   const decision = typeof input.decision === 'string' ? input.decision : '';
@@ -955,6 +1436,10 @@ ${scopeFields}
       'Stored authorization_details is outside the Admin Agent contract'
     );
   }
+  const toolCatalog = createAdminToolCatalog();
+  const selfServiceSnapshotIsStale =
+    resolved.grantPurpose === 'interactive_self_service' &&
+    resolved.grantTaskSetCatalogVersion !== toolCatalog.version;
   let authorizedGrant = resolved.grant;
   if (!authorizedGrant) {
     const grantId = `aag_${crypto.randomUUID()}`;
@@ -969,7 +1454,7 @@ ${scopeFields}
         approvedScopes,
         authorizationDetails: requestedAuthorizationDetails.authorizationDetails,
         adminPermissions: resolved.actor.permissions ?? [],
-        catalog: createAdminToolCatalog(),
+        catalog: toolCatalog,
         expiresAt,
       });
     } catch (error) {
@@ -1081,7 +1566,8 @@ ${scopeFields}
     let consentPersisted = false;
     if (
       resolved.grantPurpose === 'interactive_self_service' &&
-      (!sameScopes(authorizedGrant.scopes, approvedScopes) ||
+      (selfServiceSnapshotIsStale ||
+        !sameScopes(authorizedGrant.scopes, approvedScopes) ||
         !sameAuthorizationDetails(
           authorizedGrant.authorizationDetails,
           requestedAuthorizationDetails.authorizationDetails
@@ -1105,7 +1591,7 @@ ${scopeFields}
           approvedScopes,
           authorizationDetails: requestedAuthorizationDetails.authorizationDetails,
           adminPermissions: resolved.actor.permissions ?? [],
-          catalog: createAdminToolCatalog(),
+          catalog: toolCatalog,
           expiresAt,
         });
       } catch (error) {
@@ -1196,6 +1682,8 @@ ${scopeFields}
             scopes: approvedScopes,
             max_subjects_per_call: requestedAuthorizationDetails.maxSubjectsPerCall,
             previous_generation: authorizedGrant.generation,
+            previous_catalog_version: resolved.grantTaskSetCatalogVersion ?? null,
+            catalog_version: toolCatalog.version,
           },
         },
         consentAudit: {

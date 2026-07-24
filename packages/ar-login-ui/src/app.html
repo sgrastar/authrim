@@ -1,11 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html
+	lang="__AUTHRIM_DOCUMENT_LANGUAGE__"
+	style="
+		background-color: __AUTHRIM_INITIAL_BACKGROUND__;
+		color-scheme: __AUTHRIM_INITIAL_COLOR_SCHEME__;
+	"
+>
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="theme-color" content="__AUTHRIM_INITIAL_BACKGROUND__" />
+		<style>
+			html,
+			body {
+				min-height: 100%;
+				background-color: __AUTHRIM_INITIAL_BACKGROUND__;
+			}
+		</style>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<body
+		data-sveltekit-preload-data="hover"
+		style="background-color: __AUTHRIM_INITIAL_BACKGROUND__; color-scheme: __AUTHRIM_INITIAL_COLOR_SCHEME__;"
+	>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

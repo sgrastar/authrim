@@ -76,7 +76,7 @@ describe('MCP Resource and Prompt authorization', () => {
       prompts: ADMIN_CONFIGURATION_PROMPTS,
     });
 
-    await expect(server.listResources(context)).resolves.toHaveLength(2);
+    await expect(server.listResources(context)).resolves.toHaveLength(4);
     await expect(server.listPrompts(context)).resolves.toHaveLength(4);
     await expect(server.listResourceTemplates(context)).resolves.toHaveLength(4);
     await expect(server.readResource(context, 'authrim://capabilities/v1')).resolves.toMatchObject({
@@ -100,9 +100,9 @@ describe('MCP Resource and Prompt authorization', () => {
     await expect(server.readResource(context, 'authrim://plans/plan-other/v1')).rejects.toThrow(
       'resource unavailable'
     );
-    await expect(server.readResource(context, 'authrim://task-sets/v1')).rejects.toThrow(
-      'access denied'
-    );
+    await expect(server.readResource(context, 'authrim://task-sets/v1')).resolves.toMatchObject({
+      uri: 'authrim://task-sets/v1',
+    });
 
     const deniedContext = { ...context, grant: { ...grant, permissions: [] } };
     await expect(server.listPrompts(deniedContext)).resolves.toEqual([]);

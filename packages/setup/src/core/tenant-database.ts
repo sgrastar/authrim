@@ -580,6 +580,14 @@ export function getLatestMigrationVersionFromDirectory(migrationsDir: string): n
     }, 0);
 }
 
+export function getLatestMigrationVersionFromFilenames(filenames: readonly string[]): number {
+  return filenames.reduce((latest, filename) => {
+    const basename = filename.split('/').at(-1) ?? filename;
+    const match = basename.match(/^(\d+)_/u);
+    return match ? Math.max(latest, Number.parseInt(match[1], 10)) : latest;
+  }, 0);
+}
+
 const _SIGNED_TENANT_DATABASE_REGISTRY_FIELDS = [
   'tenant_id',
   'role',

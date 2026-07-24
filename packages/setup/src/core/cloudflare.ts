@@ -22,6 +22,11 @@ import {
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
 import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
 import {
+  discoverReleaseMigrationStream,
+  loadTargetReleaseMigrationManifest,
+  type ReleaseMigrationManifest,
+} from './release-migrations.js';
+import {
   buildAdminUiBffMachineAccessBootstrapSql,
   buildSetupMachineAccessCleanupSql,
   buildSetupMachineAccessBootstrapSql,
@@ -30,7 +35,6 @@ import {
   loadAdminUiBffPublicJwk,
   loadSetupMachinePublicJwk,
 } from './admin-machine-access.js';
-
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
 const QUEUE_PROVISIONING_DEFINITIONS = [
@@ -118,6 +122,12 @@ export interface D1MigrationEnvironmentStatus {
   databases: D1MigrationDatabaseStatus[];
 }
 
+export interface EnvironmentReleaseMigrationOptions {
+  productVersion: string;
+  allowDraft?: boolean;
+  backfillLegacyChecksums?: boolean;
+}
+
 export interface ProvisionedResources {
   d1: D1DatabaseInfo[];
   kv: KVNamespaceInfo[];
@@ -142,17 +152,13 @@ export interface DatabaseProvisionConfig {
 
 export interface ProvisionOptions {
   env: string;
-  rootDir?: string;
   createD1?: boolean;
   createKV?: boolean;
   createQueues?: boolean;
   createR2?: boolean;
-  runMigrations?: boolean;
   onProgress?: (message: string) => void;
   /** Database location configuration */
   databaseConfig?: DatabaseProvisionConfig;
-  /** Runtime profile defaults used for migration layout decisions */
-  config?: MigrationProfileConfig;
 }
 
 export interface MigrationProfileConfig {
@@ -2093,7 +2099,11 @@ export async function getD1Info(name: string): Promise<D1Info> {
 export async function executeD1Migration(
   dbName: string,
   sqlFilePath: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: {
+    transactionSuffixSql?: string;
+    verifyCommitted?: () => Promise<boolean>;
+  } = {}
 ): Promise<{ success: boolean; error?: string }> {
   const isTransientD1MigrationError = (message: string): boolean => {
     const normalized = message.toLowerCase();
@@ -2124,11 +2134,14 @@ export async function executeD1Migration(
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
     const { readFileSync } = await import('node:fs');
     const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+    const transactionSql = options.transactionSuffixSql
+      ? `${renderedSql.trimEnd()}\n\n${options.transactionSuffixSql}\n`
+      : renderedSql;
     const tempSqlPath = pathJoin(
       tmpdir(),
       `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`
     );
-    await writeFile(tempSqlPath, renderedSql, 'utf-8');
+    await writeFile(tempSqlPath, transactionSql, 'utf-8');
     try {
       for (let attempt = 1; attempt <= D1_MIGRATION_MAX_ATTEMPTS; attempt++) {
         try {
@@ -2138,6 +2151,20 @@ export async function executeD1Migration(
           return { success: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          if (options.verifyCommitted) {
+            try {
+              if (await options.verifyCommitted()) return { success: true };
+            } catch (verificationError) {
+              return {
+                success: false,
+                error:
+                  `${message}; could not determine whether the migration committed: ` +
+                  (verificationError instanceof Error
+                    ? verificationError.message
+                    : String(verificationError)),
+              };
+            }
+          }
           const canRetry =
             attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
           if (!canRetry) {
@@ -2454,6 +2481,68 @@ function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+export function buildLegacyMigrationChecksumBackfillSql(
+  files: ReadonlyArray<{ path: string; checksum: string }>
+): string {
+  return files
+    .map(
+      (file) =>
+        `UPDATE authrim_migrations SET checksum = '${escapeSqlString(file.checksum)}' ` +
+        `WHERE filename = '${escapeSqlString(file.path)}' AND (checksum IS NULL OR checksum = '');`
+    )
+    .join('\n');
+}
+
+export function collectManifestMigrationChecksumEvidence(
+  files: ReadonlyArray<{
+    path: string;
+    checksum: string;
+    supersedes?: ReadonlyArray<{ path: string; checksum: string }>;
+  }>
+): Array<{ path: string; checksum: string }> {
+  const evidence = new Map<string, string>();
+  for (const file of files) {
+    for (const candidate of [file, ...(file.supersedes ?? [])]) {
+      const existing = evidence.get(candidate.path);
+      if (existing && existing !== candidate.checksum) {
+        throw new Error(`Conflicting release manifest checksums: ${candidate.path}`);
+      }
+      evidence.set(candidate.path, candidate.checksum);
+    }
+  }
+  return [...evidence].map(([path, checksum]) => ({ path, checksum }));
+}
+
+async function backfillLegacyMigrationChecksums(
+  dbName: string,
+  manifestFiles: ReadonlyArray<{
+    path: string;
+    checksum: string;
+    supersedes?: ReadonlyArray<{ path: string; checksum: string }>;
+  }>
+): Promise<number> {
+  const rows = await getAppliedMigrationRows(dbName);
+  const legacyFilenames = new Set(
+    rows
+      .filter((row) => row.checksum === null || row.checksum === undefined || row.checksum === '')
+      .map((row) => row.filename)
+  );
+  const backfills = collectManifestMigrationChecksumEvidence(manifestFiles).filter((file) =>
+    legacyFilenames.has(file.path)
+  );
+  if (backfills.length === 0) return 0;
+  await wrangler([
+    'd1',
+    'execute',
+    dbName,
+    '--remote',
+    '--yes',
+    '--command',
+    buildLegacyMigrationChecksumBackfillSql(backfills),
+  ]);
+  return backfills.length;
+}
+
 function buildRecordMigrationWithChecksumSql(input: {
   filename: string;
   checksum: string;
@@ -2462,7 +2551,10 @@ function buildRecordMigrationWithChecksumSql(input: {
   setupVersion?: string | null;
   toolVersion?: string | null;
 }): string {
-  const appliedAt = input.appliedAt ?? Date.now();
+  const appliedAt =
+    input.appliedAt === undefined
+      ? "CAST(strftime('%s', 'now') AS INTEGER) * 1000"
+      : String(input.appliedAt);
   const executionTimeMs = Number.isFinite(input.executionTimeMs ?? Number.NaN)
     ? String(Math.max(0, Math.round(input.executionTimeMs ?? 0)))
     : 'NULL';
@@ -2484,13 +2576,23 @@ export function calculateD1MigrationChecksum(sqlFilePath: string): string {
 
 const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
 
-interface ListD1MigrationOptions {
+export interface ListD1MigrationOptions {
   excludeTopLevelDirectories?: ReadonlySet<string>;
+  manifestFiles?: ReadonlyArray<{
+    path: string;
+    checksum: string;
+    supersedes?: ReadonlyArray<{ path: string; checksum: string }>;
+  }>;
+  /** Show a consolidated release bundle as applied when every superseded draft is applied. */
+  materializeSuperseded?: boolean;
 }
 
-interface RunD1MigrationOptions extends ListD1MigrationOptions {
+export interface RunD1MigrationOptions extends ListD1MigrationOptions {
   logSummaryLimit?: number;
   onlyFiles?: ReadonlySet<string>;
+  releaseVersion?: string;
+  /** Backfill pre-checksum history only when files came from a published release manifest. */
+  backfillLegacyChecksums?: boolean;
 }
 
 export function listD1MigrationSqlFiles(
@@ -2545,15 +2647,53 @@ export function getBlockingChangedMigrationFiles(
     .map((item) => item.filename);
 }
 
+export type SupersededMigrationState = 'none_applied' | 'fully_applied' | 'partially_applied';
+
+export function evaluateSupersededMigrationState(
+  supersedes: ReadonlyArray<{ path: string; checksum: string }>,
+  migrations: ReadonlyArray<D1MigrationFileState>
+): { state: SupersededMigrationState; error?: string } {
+  const migrationByFilename = new Map(
+    migrations.map((migration) => [migration.filename, migration])
+  );
+  const present = supersedes.flatMap((expected) => {
+    const actual = migrationByFilename.get(expected.path);
+    return actual?.status === 'orphaned' ? [{ expected, actual }] : [];
+  });
+  if (present.length === 0) return { state: 'none_applied' };
+  const checksumMismatch = present.find(
+    ({ expected, actual }) => actual.appliedChecksum !== expected.checksum
+  );
+  if (checksumMismatch) {
+    return {
+      state: 'partially_applied',
+      error: `Superseded migration checksum mismatch: ${checksumMismatch.expected.path}`,
+    };
+  }
+  if (present.length !== supersedes.length) return { state: 'partially_applied' };
+  return { state: 'fully_applied' };
+}
+
 async function recordMigration(
   dbName: string,
-  input: { filename: string; checksum: string; executionTimeMs?: number | null }
-): Promise<void> {
-  const sql = buildRecordMigrationWithChecksumSql(input);
+  input: {
+    filename: string;
+    checksum: string;
+    executionTimeMs?: number | null;
+    releaseVersion?: string;
+  }
+): Promise<boolean> {
+  const sql = buildRecordMigrationWithChecksumSql({
+    filename: input.filename,
+    checksum: input.checksum,
+    executionTimeMs: input.executionTimeMs,
+    setupVersion: input.releaseVersion,
+  });
   try {
     await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+    return true;
   } catch {
-    // Non-fatal: tracking failure should not abort the migration run
+    return false;
   }
 }
 
@@ -2590,7 +2730,22 @@ export async function getD1MigrationStatus(
   }
 
   try {
-    const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+    const discoveredManifest =
+      options.materializeSuperseded && !options.manifestFiles
+        ? discoverReleaseMigrationStream(migrationsDir)
+        : null;
+    const manifestFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
+    const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+    const allSqlFileSet = new Set(allSqlFiles);
+    const sqlFiles = manifestFiles
+      ? manifestFiles.map((file) => file.path).sort((a, b) => a.localeCompare(b))
+      : allSqlFiles;
+    const missingFiles = sqlFiles.filter((filename) => !allSqlFileSet.has(filename));
+    if (missingFiles.length > 0) {
+      throw new Error(
+        `Release manifest references missing migration files: ${formatMigrationFileSummary(missingFiles)}`
+      );
+    }
     const appliedRows = await getAppliedMigrationRows(dbName);
     const appliedByFilename = new Map(appliedRows.map((row) => [row.filename, row]));
     const localFilenames = new Set(sqlFiles);
@@ -2598,6 +2753,10 @@ export async function getD1MigrationStatus(
 
     for (const filename of sqlFiles) {
       const checksum = calculateD1MigrationChecksum(join(migrationsDir, filename));
+      const manifestFile = manifestFiles?.find((file) => file.path === filename);
+      if (manifestFile && manifestFile.checksum !== checksum) {
+        throw new Error(`Release manifest checksum mismatch: ${filename}`);
+      }
       const applied = appliedByFilename.get(filename);
       const appliedChecksum = applied?.checksum ?? null;
       const status: D1MigrationFileStatus = !applied
@@ -2624,6 +2783,47 @@ export async function getD1MigrationStatus(
           appliedAt: applied.applied_at ?? null,
           executionTimeMs: applied.execution_time_ms ?? null,
         });
+      }
+    }
+
+    if (options.materializeSuperseded && manifestFiles) {
+      const migrationByFilename = new Map(
+        migrations.map((migration) => [migration.filename, migration])
+      );
+      const consumedSupersededFiles = new Set<string>();
+      for (const manifestFile of manifestFiles) {
+        if (!manifestFile.supersedes?.length) continue;
+        const target = migrationByFilename.get(manifestFile.path);
+        if (!target || (target.status !== 'pending' && target.status !== 'applied')) continue;
+        const supersededState = evaluateSupersededMigrationState(
+          manifestFile.supersedes,
+          migrations
+        );
+        if (supersededState.state !== 'fully_applied') continue;
+
+        const supersededRows = manifestFile.supersedes
+          .map((source) => migrationByFilename.get(source.path))
+          .filter((source): source is D1MigrationFileState => source !== undefined);
+        if (target.status === 'pending') {
+          target.status = 'applied';
+          target.appliedChecksum = target.checksum ?? manifestFile.checksum;
+          target.appliedAt = Math.max(...supersededRows.map((source) => source.appliedAt ?? 0));
+          target.executionTimeMs = supersededRows.reduce(
+            (total, source) => total + (source.executionTimeMs ?? 0),
+            0
+          );
+        }
+        for (const source of manifestFile.supersedes) {
+          consumedSupersededFiles.add(source.path);
+        }
+      }
+      if (consumedSupersededFiles.size > 0) {
+        for (let index = migrations.length - 1; index >= 0; index--) {
+          const migration = migrations[index];
+          if (migration?.status === 'orphaned' && consumedSupersededFiles.has(migration.filename)) {
+            migrations.splice(index, 1);
+          }
+        }
       }
     }
 
@@ -2675,10 +2875,72 @@ export async function runD1Migrations(
     };
   }
 
+  const discoveredManifest = options.manifestFiles
+    ? null
+    : discoverReleaseMigrationStream(migrationsDir);
+  const manifestFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
+  const releaseVersion = options.releaseVersion ?? discoveredManifest?.manifest.productVersion;
   const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
-  const sqlFiles = options.onlyFiles
-    ? allSqlFiles.filter((file) => options.onlyFiles?.has(file))
+  const manifestFileSet = manifestFiles
+    ? new Set(manifestFiles.map((file) => file.path))
+    : undefined;
+  if (options.onlyFiles && manifestFileSet) {
+    const outsideManifest = [...options.onlyFiles].filter((file) => !manifestFileSet.has(file));
+    if (outsideManifest.length > 0) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Requested migration files are not part of the selected release manifest: ${formatMigrationFileSummary(outsideManifest.sort())}`,
+      };
+    }
+  }
+  const selectedFiles = options.onlyFiles ?? manifestFileSet;
+  const sqlFiles = selectedFiles
+    ? allSqlFiles.filter((file) => selectedFiles.has(file))
     : allSqlFiles;
+
+  if (manifestFileSet) {
+    const missingFiles = [...manifestFileSet].filter((file) => !allSqlFiles.includes(file));
+    if (missingFiles.length > 0) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Release manifest references missing migration files: ${formatMigrationFileSummary(missingFiles)}`,
+      };
+    }
+    for (const manifestFile of manifestFiles ?? []) {
+      const actualChecksum = calculateD1MigrationChecksum(join(migrationsDir, manifestFile.path));
+      if (actualChecksum !== manifestFile.checksum) {
+        return {
+          success: false,
+          appliedCount: 0,
+          skippedCount: 0,
+          error: `Release manifest checksum mismatch: ${manifestFile.path}`,
+        };
+      }
+    }
+  }
+
+  if (manifestFiles && options.backfillLegacyChecksums) {
+    try {
+      const backfilledCount = await backfillLegacyMigrationChecksums(dbName, manifestFiles);
+      if (backfilledCount > 0) {
+        onProgress?.(`  Upgraded ${backfilledCount} legacy migration checksum record(s)`);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Could not upgrade legacy migration checksum history: ${describeInventoryError(
+          error,
+          'unknown error'
+        )}`,
+      };
+    }
+  }
 
   if (allSqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
@@ -2687,7 +2949,11 @@ export async function runD1Migrations(
 
   onProgress?.(`  Found ${allSqlFiles.length} migration files`);
 
-  const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', options);
+  const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', {
+    ...options,
+    ...(manifestFiles ? { manifestFiles } : {}),
+    materializeSuperseded: false,
+  });
   if (!status.success) {
     return {
       success: false,
@@ -2698,7 +2964,7 @@ export async function runD1Migrations(
         'Refusing to run migrations without a trustworthy applied-migration history.',
     };
   }
-  const changedFiles = getBlockingChangedMigrationFiles(status.migrations, options.onlyFiles);
+  const changedFiles = getBlockingChangedMigrationFiles(status.migrations, selectedFiles);
   if (changedFiles.length > 0) {
     return {
       success: false,
@@ -2712,6 +2978,39 @@ export async function runD1Migrations(
   const applied = new Set(
     status.migrations.filter((item) => item.status === 'applied').map((item) => item.filename)
   );
+  for (const manifestFile of manifestFiles ?? []) {
+    if (applied.has(manifestFile.path) || !manifestFile.supersedes?.length) continue;
+    const supersededState = evaluateSupersededMigrationState(
+      manifestFile.supersedes,
+      status.migrations
+    );
+    if (supersededState.state === 'none_applied') continue;
+    if (supersededState.state === 'partially_applied') {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: applied.size,
+        error:
+          `${supersededState.error ?? `Release migration ${manifestFile.path} only partially supersedes applied draft migrations.`} ` +
+          'Apply every draft migration from the previous checkout or recreate the pre-release database.',
+      };
+    }
+    const recorded = await recordMigration(dbName, {
+      filename: manifestFile.path,
+      checksum: manifestFile.checksum,
+      executionTimeMs: 0,
+      releaseVersion,
+    });
+    if (!recorded) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: applied.size,
+        error: `Could not record consolidated release migration ${manifestFile.path}`,
+      };
+    }
+    applied.add(manifestFile.path);
+  }
   onProgress?.(`  ${applied.size} migration(s) already recorded as applied`);
 
   let appliedCount = 0;
@@ -2728,8 +3027,19 @@ export async function runD1Migrations(
 
     const sqlFilePath = join(migrationsDir, sqlFile);
     const checksum = calculateD1MigrationChecksum(sqlFilePath);
-    const startedAt = Date.now();
-    const result = await executeD1Migration(dbName, sqlFilePath, onProgress);
+    const trackingSql = buildRecordMigrationWithChecksumSql({
+      filename: sqlFile,
+      checksum,
+      executionTimeMs: null,
+      setupVersion: releaseVersion,
+    });
+    const result = await executeD1Migration(dbName, sqlFilePath, onProgress, {
+      transactionSuffixSql: trackingSql,
+      verifyCommitted: async () => {
+        const rows = await getAppliedMigrationRows(dbName);
+        return rows.some((row) => row.filename === sqlFile && row.checksum === checksum);
+      },
+    });
     if (!result.success) {
       return {
         success: false,
@@ -2739,11 +3049,6 @@ export async function runD1Migrations(
       };
     }
 
-    await recordMigration(dbName, {
-      filename: sqlFile,
-      checksum,
-      executionTimeMs: Date.now() - startedAt,
-    });
     appliedCount++;
   }
 
@@ -3864,7 +4169,8 @@ export async function runMigrationsForEnvironment(
   env: string,
   rootDir: string,
   onProgress?: (message: string) => void,
-  config?: MigrationProfileConfig
+  config?: MigrationProfileConfig,
+  release?: EnvironmentReleaseMigrationOptions
 ): Promise<{
   success: boolean;
   core: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -3893,9 +4199,43 @@ export async function runMigrationsForEnvironment(
     };
   }
 
+  let releaseManifest: { manifest: ReleaseMigrationManifest; draft: boolean } | undefined;
+  if (release) {
+    try {
+      releaseManifest = loadTargetReleaseMigrationManifest({
+        migrationsRoot,
+        productVersion: release.productVersion,
+        allowDraft: release.allowDraft === true,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      onProgress?.(`  ❌ ${errorMsg}`);
+      return {
+        success: false,
+        core: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+        pii: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+        admin: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+      };
+    }
+  }
+
+  const releaseOptionsFor = (streamId: string): RunD1MigrationOptions => {
+    if (!releaseManifest || !release) return {};
+    const stream = releaseManifest.manifest.streams.find((candidate) => candidate.id === streamId);
+    if (!stream) {
+      throw new Error(`release_migration_stream_not_found:${streamId}`);
+    }
+    return {
+      manifestFiles: stream.files,
+      releaseVersion: release.productVersion,
+      backfillLegacyChecksums: release.backfillLegacyChecksums ?? releaseManifest.draft === false,
+    };
+  };
+
   // Run core database migrations
   onProgress?.(`📜 Running migrations for ${coreDbName}...`);
   const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress, {
+    ...releaseOptionsFor('d1-core'),
     excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
   });
   if (!coreResult.success) {
@@ -3915,7 +4255,9 @@ export async function runMigrationsForEnvironment(
     onProgress?.(`  ⚠️ PII migrations directory not found: ${piiMigrationsDir}`);
     piiResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
-    piiResult = await runD1Migrations(piiDbName, piiMigrationsDir, onProgress);
+    piiResult = await runD1Migrations(piiDbName, piiMigrationsDir, onProgress, {
+      ...releaseOptionsFor('d1-pii'),
+    });
     if (!piiResult.success) {
       onProgress?.(`  ❌ PII migration failed: ${piiResult.error}`);
     } else {
@@ -3934,7 +4276,9 @@ export async function runMigrationsForEnvironment(
 
   if (shouldMirrorPiiMigrationsToCore(config) && existsSync(piiMigrationsDir)) {
     onProgress?.(`📜 Mirroring PII migrations into ${coreDbName} for single-db profile...`);
-    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress);
+    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress, {
+      ...releaseOptionsFor('d1-pii'),
+    });
     if (!coreMirrorResult.success) {
       onProgress?.(`  ❌ Core mirror migration failed: ${coreMirrorResult.error}`);
     } else {
@@ -3955,7 +4299,9 @@ export async function runMigrationsForEnvironment(
     onProgress?.(`  ⚠️ Admin migrations directory not found: ${adminMigrationsDir}`);
     adminResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
-    adminResult = await runD1Migrations(adminDbName, adminMigrationsDir, onProgress);
+    adminResult = await runD1Migrations(adminDbName, adminMigrationsDir, onProgress, {
+      ...releaseOptionsFor('d1-admin'),
+    });
     if (!adminResult.success) {
       onProgress?.(`  ❌ Admin migration failed: ${adminResult.error}`);
     } else {
@@ -3998,23 +4344,47 @@ async function resolveMigrationRootOrError(
 export async function getD1MigrationStatusForEnvironment(
   env: string,
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  release?: EnvironmentReleaseMigrationOptions
 ): Promise<D1MigrationEnvironmentStatus> {
   const { join } = await import('node:path');
   const root = await resolveMigrationRootOrError(rootDir, onProgress);
   if (!root.success) {
     return { env, success: false, databases: [] };
   }
+  const manifest = release
+    ? loadTargetReleaseMigrationManifest({
+        migrationsRoot: root.migrationsRoot,
+        productVersion: release.productVersion,
+        allowDraft: release.allowDraft === true,
+      }).manifest
+    : undefined;
+  const manifestFilesFor = (streamId: string) => {
+    const stream = manifest?.streams.find((candidate) => candidate.id === streamId);
+    if (manifest && !stream) throw new Error(`release_migration_stream_not_found:${streamId}`);
+    return stream?.files;
+  };
 
   const databases = await Promise.all([
     getD1MigrationStatus(getD1DatabaseName(env, 'core-db'), root.migrationsRoot, 'core', {
       excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+      materializeSuperseded: true,
+      manifestFiles: manifestFilesFor('d1-core'),
     }),
-    getD1MigrationStatus(getD1DatabaseName(env, 'pii-db'), join(root.migrationsRoot, 'pii'), 'pii'),
+    getD1MigrationStatus(
+      getD1DatabaseName(env, 'pii-db'),
+      join(root.migrationsRoot, 'pii'),
+      'pii',
+      {
+        materializeSuperseded: true,
+        manifestFiles: manifestFilesFor('d1-pii'),
+      }
+    ),
     getD1MigrationStatus(
       getD1DatabaseName(env, 'admin-db'),
       join(root.migrationsRoot, 'admin'),
-      'admin'
+      'admin',
+      { materializeSuperseded: true, manifestFiles: manifestFilesFor('d1-admin') }
     ),
   ]);
 
@@ -4032,6 +4402,7 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   filenames?: string[];
   onProgress?: (message: string) => void;
   config?: MigrationProfileConfig;
+  release?: EnvironmentReleaseMigrationOptions;
 }): Promise<{
   success: boolean;
   core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -4044,7 +4415,13 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   const onlyFiles = input.filenames?.length ? new Set(input.filenames) : undefined;
 
   if (!input.role && !onlyFiles) {
-    return runMigrationsForEnvironment(input.env, input.rootDir, input.onProgress, input.config);
+    return runMigrationsForEnvironment(
+      input.env,
+      input.rootDir,
+      input.onProgress,
+      input.config,
+      input.release
+    );
   }
 
   const root = await resolveMigrationRootOrError(input.rootDir, input.onProgress);
@@ -4053,6 +4430,17 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   }
 
   const roles: D1MigrationDatabaseRole[] = input.role ? [input.role] : ['core', 'pii', 'admin'];
+  let exactManifest: ReleaseMigrationManifest | undefined;
+  let exactManifestIsDraft = false;
+  if (input.release) {
+    const target = loadTargetReleaseMigrationManifest({
+      migrationsRoot: root.migrationsRoot,
+      productVersion: input.release.productVersion,
+      allowDraft: input.release.allowDraft === true,
+    });
+    exactManifest = target.manifest;
+    exactManifestIsDraft = target.draft;
+  }
   const results: {
     core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
     pii?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -4066,6 +4454,17 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
       onlyFiles,
       ...(role === 'core' ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS } : {}),
     };
+    if (exactManifest && input.release) {
+      const streamId = role === 'core' ? 'd1-core' : role === 'pii' ? 'd1-pii' : 'd1-admin';
+      const stream = exactManifest.streams.find((candidate) => candidate.id === streamId);
+      if (!stream) {
+        return { success: false, error: `release_migration_stream_not_found:${streamId}` };
+      }
+      options.manifestFiles = stream.files;
+      options.releaseVersion = input.release.productVersion;
+      options.backfillLegacyChecksums =
+        input.release.backfillLegacyChecksums ?? !exactManifestIsDraft;
+    }
 
     if (!existsSync(migrationsDir)) {
       results[role] = { success: true, appliedCount: 0, skippedCount: 0 };
@@ -4720,29 +5119,6 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     }
     onProgress(`📊 D1 Databases (${d1Count}/${d1Count}) ✓`);
     onProgress('');
-
-    // Run migrations if rootDir is provided
-    // Use runMigrationsForEnvironment which supports searching multiple paths
-    if (options.runMigrations !== false && options.rootDir) {
-      onProgress('📜 Running database migrations...');
-
-      const migrationsResult = await runMigrationsForEnvironment(
-        env,
-        options.rootDir,
-        onProgress,
-        options.config
-      );
-
-      if (!migrationsResult.success) {
-        const errors = [];
-        if (!migrationsResult.core.success) errors.push(`core: ${migrationsResult.core.error}`);
-        if (!migrationsResult.pii.success) errors.push(`pii: ${migrationsResult.pii.error}`);
-        if (!migrationsResult.admin.success) errors.push(`admin: ${migrationsResult.admin.error}`);
-        throw new Error(`Failed to run migrations: ${errors.join(', ')}`);
-      }
-
-      onProgress('');
-    }
   }
 
   // Provision KV namespaces

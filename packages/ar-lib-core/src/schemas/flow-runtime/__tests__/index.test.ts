@@ -353,9 +353,9 @@ describe('flow runtime schema helpers', () => {
     });
   });
 
-  it('evaluates explicit direct, OIDC, and SAML protocol branches', async () => {
+  it('evaluates explicit OIDC and SAML protocol branches', async () => {
     const config: FlowConditionConfig = {
-      rows: ['direct', 'oidc', 'saml'].map((protocol) => ({
+      rows: ['oidc', 'saml'].map((protocol) => ({
         id: protocol,
         condition: { type: 'protocol', value: protocol },
         output_handle: protocol,
@@ -363,7 +363,7 @@ describe('flow runtime schema helpers', () => {
       otherwise: { terminal_error: { error: 'unsupported_protocol' } },
     };
 
-    for (const protocol of ['direct', 'oidc', 'saml'] as const) {
+    for (const protocol of ['oidc', 'saml'] as const) {
       await expect(evaluateFlowConditionRows(config, { protocol })).resolves.toMatchObject({
         matched: true,
         output_handle: protocol,
@@ -371,7 +371,7 @@ describe('flow runtime schema helpers', () => {
     }
   });
 
-  it('requires a protocol condition to define every shared Login Flow branch', () => {
+  it('allows a protocol condition to define only the supported Flow branches', () => {
     const issues = validateFlowEditorState(
       {
         nodes: [
@@ -392,7 +392,11 @@ describe('flow runtime schema helpers', () => {
               },
             },
           },
-          { id: 'complete', type: 'complete' },
+          {
+            id: 'complete',
+            type: 'complete',
+            config: { completion_block: { id: 'oidc', protocol: 'oidc' } },
+          },
         ],
         edges: [
           { id: 'entry-protocol', source: 'entry', target: 'protocol' },
@@ -407,13 +411,58 @@ describe('flow runtime schema helpers', () => {
       { for_publish: true }
     );
 
-    expect(
-      issues.filter((issue) => issue.code === 'missing_protocol_condition_branch')
-    ).toHaveLength(2);
+    expect(issues).toEqual([]);
+  });
+
+  it('rejects a Direct Auth branch in an SAML/OIDC protocol condition', () => {
+    const issues = validateFlowEditorState(
+      {
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          {
+            id: 'protocol',
+            type: 'condition',
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'direct',
+                    condition: { type: 'protocol', value: 'direct' },
+                    output_handle: 'direct',
+                  },
+                ],
+                otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+              },
+            },
+          },
+          {
+            id: 'complete',
+            type: 'complete',
+            config: { completion_block: { id: 'direct', protocol: 'direct' } },
+          },
+        ],
+        edges: [
+          { id: 'entry-protocol', source: 'entry', target: 'protocol' },
+          {
+            id: 'protocol-complete',
+            source: 'protocol',
+            source_handle: 'direct',
+            target: 'complete',
+          },
+        ],
+      },
+      { for_publish: true }
+    );
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'invalid_protocol_condition_value' }),
+      ])
+    );
   });
 
   it('rejects a protocol branch that reaches another protocol completion', () => {
-    const protocolRows = ['direct', 'oidc', 'saml'].map((protocol) => ({
+    const protocolRows = ['oidc', 'saml'].map((protocol) => ({
       id: protocol,
       condition: { type: 'protocol', value: protocol },
       output_handle: protocol,
@@ -433,11 +482,6 @@ describe('flow runtime schema helpers', () => {
             },
           },
           {
-            id: 'direct-complete',
-            type: 'complete',
-            config: { completion_block: { id: 'direct', protocol: 'direct' } },
-          },
-          {
             id: 'oidc-complete',
             type: 'complete',
             config: { completion_block: { id: 'oidc', protocol: 'oidc' } },
@@ -450,12 +494,6 @@ describe('flow runtime schema helpers', () => {
         ],
         edges: [
           { id: 'entry-protocol', source: 'entry', target: 'protocol' },
-          {
-            id: 'protocol-direct',
-            source: 'protocol',
-            source_handle: 'direct',
-            target: 'direct-complete',
-          },
           {
             id: 'protocol-oidc',
             source: 'protocol',
@@ -479,78 +517,6 @@ describe('flow runtime schema helpers', () => {
           code: 'protocol_condition_completion_mismatch',
           node_id: 'saml-complete',
         }),
-      ])
-    );
-  });
-
-  it('allows target-bound Consent Gate nodes without a fixed policy reference', () => {
-    const issues = validateFlowEditorState(
-      {
-        nodes: [
-          { id: 'entry', type: 'entry' },
-          {
-            id: 'legal',
-            type: 'consent',
-            config: {
-              consent_gate_kind: 'legal_document',
-              policy_resolution: 'target_binding',
-              policy_required: false,
-            },
-          },
-          { id: 'complete', type: 'complete' },
-        ],
-        edges: [
-          { id: 'entry-legal', source: 'entry', target: 'legal' },
-          { id: 'legal-complete', source: 'legal', source_handle: 'accepted', target: 'complete' },
-        ],
-      },
-      { for_publish: true }
-    );
-
-    expect(issues.map((issue) => issue.code)).not.toContain('missing_required_node_config');
-  });
-
-  it('rejects malformed Consent Gate configuration and protocol mismatches at publish time', () => {
-    const issues = validateFlowEditorState(
-      {
-        nodes: [
-          { id: 'entry', type: 'entry' },
-          {
-            id: 'oidc-consent-on-saml-branch',
-            type: 'consent',
-            config: {
-              consent_gate_kind: 'oidc_authorization',
-              policy_resolution: 'browser_supplied',
-              policy_required: 'yes',
-              consent_policy_ref: 'policy-a',
-              completion_block: {
-                id: 'saml-attribute-release',
-                protocol: 'saml',
-                purpose: 'attribute_release',
-                role: 'consent',
-              },
-            },
-          },
-          { id: 'complete', type: 'complete' },
-        ],
-        edges: [
-          { id: 'entry-consent', source: 'entry', target: 'oidc-consent-on-saml-branch' },
-          {
-            id: 'consent-complete',
-            source: 'oidc-consent-on-saml-branch',
-            source_handle: 'accepted',
-            target: 'complete',
-          },
-        ],
-      },
-      { for_publish: true }
-    );
-
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'consent_gate_protocol_mismatch' }),
-        expect.objectContaining({ code: 'invalid_consent_policy_resolution' }),
-        expect.objectContaining({ code: 'invalid_consent_policy_required' }),
       ])
     );
   });

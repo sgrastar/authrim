@@ -254,9 +254,6 @@ export async function fetchAuthenticationMethodsForClient(clientId?: string | nu
 			const response = await authrimFetch(path, {
 				method: 'GET',
 				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				// A full page reload must pick up newly applied tenant/client UI settings.
-				// The module-level cache below still deduplicates requests within the page lifetime.
-				cache: 'reload',
 				signal: controller.signal
 			});
 

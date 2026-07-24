@@ -175,7 +175,6 @@ export interface ConsentChallengeMetadata {
   response_type?: string;
   client_id?: string;
   redirect_uri?: string;
-  resource?: string | string[];
   scope?: string;
   state?: string;
   nonce?: string;
@@ -188,8 +187,6 @@ export interface ConsentChallengeMetadata {
   prompt?: string;
   acr_values?: string;
   ui_locales?: string;
-  authorization_request_source?: 'frontchannel' | 'par';
-  authorization_request_integrity_protected?: boolean;
 
   // RBAC extensions (Phase 2-B)
   /** Target organization ID for org-scoped authorization */

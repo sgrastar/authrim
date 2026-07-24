@@ -11,12 +11,21 @@ import {
   type CloudflareAgentAccessMcpProps,
 } from './mcp-props';
 import type { CloudflareMcpAgentServeFactory } from './mcp-admission';
+import type { AgentDiscoveryProfileStorePort } from '../ports';
 import {
   AGENT_ACCESS_INTERNAL_CONTEXT_HEADER,
   decodeCloudflareAgentAccessRequestContext,
   getCloudflareAgentAccessCurrentRequest,
   runWithCloudflareAgentAccessRequest,
 } from './mcp-request-context';
+export {
+  AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS,
+  AGENT_ACCESS_MCP_SESSION_IDLE_MS,
+} from './mcp-session-policy';
+import {
+  AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS,
+  AGENT_ACCESS_MCP_SESSION_IDLE_MS,
+} from './mcp-session-policy';
 
 export type { CloudflareAgentAccessMcpProps, CloudflareAgentAccessStoredProps } from './mcp-props';
 export { sanitizeCloudflareAgentAccessMcpPropsForStorage } from './mcp-props';
@@ -25,10 +34,9 @@ export interface CloudflareAgentAccessMcpState {
   initializedAt?: number;
   lastActivityAt?: number;
   contextBinding?: CloudflareAgentAccessSessionBinding;
+  discoveryProfileIds?: string[];
+  discoveryProfileUpdatedAt?: number;
 }
-
-export const AGENT_ACCESS_MCP_SESSION_IDLE_MS = 30 * 60 * 1000;
-export const AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1000;
 
 export type CloudflareAgentAccessMcpSessionStatus =
   | 'active'
@@ -102,10 +110,37 @@ export function evaluateCloudflareAgentAccessMcpSession(input: {
 }
 
 export interface CloudflareAgentAccessMcpAgentOptions<Env extends Cloudflare.Env> {
+  getEnvironmentName?(env: Env): string | undefined;
   createDependencies(
     env: Env,
-    getCurrentRequest: typeof getCloudflareAgentAccessCurrentRequest
+    getCurrentRequest: typeof getCloudflareAgentAccessCurrentRequest,
+    discoveryProfiles: AgentDiscoveryProfileStorePort
   ): AgentAccessMcpServerDependencies;
+}
+
+/** Creates one profile store for one McpAgent session without exposing Cloudflare state to core. */
+export function createCloudflareAgentDiscoveryProfileStore(input: {
+  getState(): CloudflareAgentAccessMcpState;
+  setState(state: CloudflareAgentAccessMcpState): void;
+}): AgentDiscoveryProfileStorePort {
+  return {
+    get: async () => {
+      const state = input.getState();
+      return state.discoveryProfileIds
+        ? {
+            profileIds: [...state.discoveryProfileIds],
+            updatedAt: state.discoveryProfileUpdatedAt ?? 0,
+          }
+        : null;
+    },
+    put: async (selection) => {
+      input.setState({
+        ...input.getState(),
+        discoveryProfileIds: [...selection.profileIds],
+        discoveryProfileUpdatedAt: selection.updatedAt,
+      });
+    },
+  };
 }
 
 /** Public constructor surface; Agents SDK private class members must not leak into declarations. */
@@ -167,6 +202,18 @@ export async function validateCloudflareAgentAccessMcpSession(input: {
   }
 }
 
+/** Schedules destruction of one exact named McpAgent session without creating application state. */
+export async function destroyCloudflareAgentAccessMcpSession(input: {
+  namespace: DurableObjectNamespace;
+  sessionId: string;
+}): Promise<void> {
+  const name = `streamable-http:${input.sessionId}`;
+  const id = input.namespace.idFromName(name);
+  const agent = input.namespace.get(id) as unknown as CloudflareAgentAccessMcpSessionStub;
+  await agent.setName(name);
+  await agent._cf_scheduleDestroy();
+}
+
 /**
  * Creates the Cloudflare runtime shell around the platform-neutral MCP application. Tool,
  * Resource, and Prompt definitions remain in protocol/mcp and are never declared in this class.
@@ -183,14 +230,22 @@ export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env>(
 
     server: Server = createAgentAccessMcpSdkServer(
       createAgentAccessMcpServer(
-        options.createDependencies(this.env, getCloudflareAgentAccessCurrentRequest)
+        options.createDependencies(
+          this.env,
+          getCloudflareAgentAccessCurrentRequest,
+          createCloudflareAgentDiscoveryProfileStore({
+            getState: () => this.state,
+            setState: (state) => this.setState(state),
+          })
+        )
       ),
       () => {
         const context = getCloudflareAgentAccessCurrentRequest()?.context;
         if (!context) throw new Error('Agent Access MCP authentication context is unavailable');
         assertSessionBinding(this.state.contextBinding, context);
         return context;
-      }
+      },
+      { environmentName: options.getEnvironmentName?.(this.env) }
     );
 
     /**

@@ -93,7 +93,7 @@
 		brandPanelTitle?: string;
 		brandPanelText?: string;
 	};
-	type ThemePreviewSurface = 'login' | 'registration' | 'code' | 'consent' | 'error';
+	type ThemePreviewSurface = 'login' | 'registration' | 'code' | 'consent' | 'account' | 'error';
 	type ThemePreviewColorMode = 'light' | 'dark';
 	type ThemePreviewViewport = 'desktop' | 'mobile';
 	type FooterLinkPreview = {
@@ -168,6 +168,7 @@
 		created_at: number;
 		updated_at: number;
 		values: Record<string, unknown>;
+		account_page_id?: string | null;
 	};
 	type CustomThemesDoc = { themes: CustomTheme[]; active: string | null };
 	type AssetUrlKey =
@@ -351,6 +352,7 @@
 	let previewSurface = $state<ThemePreviewSurface>('login');
 	let previewColorMode = $state<ThemePreviewColorMode>('light');
 	let previewViewport = $state<ThemePreviewViewport>('desktop');
+	let editorAccountPageId = $state('');
 
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let currentLevel = $derived(settingsContext.currentLevel);
@@ -363,6 +365,16 @@
 		) ?? themeTemplateOptions[0]
 	);
 	let customThemesDoc = $derived(parseCustomThemesDoc(getLiveString('login-ui.custom_themes', '')));
+	let publishedAccountPages = $derived.by(() => {
+		try {
+			const document = JSON.parse(getLiveString('login-ui.account_pages', '')) as {
+				pages?: Array<{ id: string; name: string; published?: unknown }>;
+			};
+			return (document.pages ?? []).filter((page) => Boolean(page.published));
+		} catch {
+			return [];
+		}
+	});
 	let customThemes = $derived(customThemesDoc.themes);
 	let activeCustomThemeId = $derived(
 		customThemesDoc.active && customThemesDoc.themes.some((t) => t.id === customThemesDoc.active)
@@ -767,6 +779,7 @@
 						base,
 						created_at: typeof item.created_at === 'number' ? item.created_at : 0,
 						updated_at: typeof item.updated_at === 'number' ? item.updated_at : 0,
+						account_page_id: typeof item.account_page_id === 'string' ? item.account_page_id : null,
 						values
 					};
 				})
@@ -809,6 +822,7 @@
 		if (surface === 'registration') return $LL.admin_theme_preview_surface_registration();
 		if (surface === 'code') return $LL.admin_theme_preview_surface_code();
 		if (surface === 'consent') return $LL.admin_theme_preview_surface_consent();
+		if (surface === 'account') return $LL.admin_theme_preview_surface_account();
 		if (surface === 'error') return $LL.admin_theme_preview_surface_error();
 		return $LL.admin_theme_preview_surface_login();
 	}
@@ -906,6 +920,7 @@
 					base: custom!.base,
 					created_at: now,
 					updated_at: now,
+					account_page_id: custom!.account_page_id ?? null,
 					values: { ...custom!.values }
 				};
 		const doc: CustomThemesDoc = {
@@ -938,6 +953,7 @@
 		editingThemeId = id;
 		editorValues = custom ? { ...custom.values } : {};
 		editorName = custom ? custom.name : (builtin?.name ?? '');
+		editorAccountPageId = custom?.account_page_id ?? '';
 		editorDirty = false;
 		previewSurface = 'login';
 		previewViewport = 'desktop';
@@ -1072,6 +1088,7 @@
 			...editingCustomTheme,
 			name: name.slice(0, 80),
 			values: { ...editorValues },
+			account_page_id: editorAccountPageId || null,
 			updated_at: Date.now()
 		};
 		const doc: CustomThemesDoc = {
@@ -1571,6 +1588,19 @@
 							<span class="theme-template-description"
 								>{$LL.admin_theme_based_on({ name: previewTemplate.name })}</span
 							>
+							<label class="account-page-association">
+								<span>Account page</span>
+								<select
+									bind:value={editorAccountPageId}
+									onchange={() => (editorDirty = true)}
+									disabled={!canEditLoginUiSettings}
+								>
+									<option value="">Use tenant default</option>
+									{#each publishedAccountPages as page (page.id)}<option value={page.id}
+											>{page.name}</option
+										>{/each}
+								</select>
+							</label>
 						{:else}
 							<strong class="editor-builtin-name">{previewTemplate.name}</strong>
 							<span class="theme-badge">{$LL.admin_theme_badge_builtin()}</span>
@@ -1612,7 +1642,7 @@
 						</div>
 						<div class="theme-preview-controls" aria-label={$LL.admin_theme_preview_controls()}>
 							<div class="segmented-control" aria-label={$LL.admin_theme_preview_screen()}>
-								{#each ['login', 'registration', 'code', 'consent', 'error'] as surface (surface)}
+								{#each ['login', 'registration', 'code', 'consent', 'account', 'error'] as surface (surface)}
 									<button
 										type="button"
 										class:active={previewSurface === surface}
@@ -1737,7 +1767,7 @@
 
 											<section
 												class="preview-auth-container"
-												class:wide={previewSurface === 'consent'}
+												class:wide={previewSurface === 'consent' || previewSurface === 'account'}
 											>
 												{#if previewHeaderEnabled}
 													<header class="preview-auth-header">
@@ -1816,6 +1846,26 @@
 																<div class="preview-actions">
 																	<button class="preview-btn secondary" type="button">Deny</button>
 																	<button class="preview-btn primary" type="button">Allow</button>
+																</div>
+															</div>
+														{:else if previewSurface === 'account'}
+															<div class="runtime-screen">
+																<div class="runtime-screen-heading">
+																	<h2>Account</h2>
+																	<p>Profile and security settings use the same theme tokens.</p>
+																</div>
+																<div class="consent-item">
+																	<strong>User profile</strong>
+																	<span>Name, verified email address, and save states.</span>
+																</div>
+																<label class="runtime-screen-field">
+																	<span>Display name</span>
+																	<input value="Aoi Tanaka" readonly tabindex="-1" />
+																</label>
+																<div class="preview-actions">
+																	<button class="preview-btn secondary" type="button">Cancel</button
+																	>
+																	<button class="preview-btn primary" type="button">Save</button>
 																</div>
 															</div>
 														{:else if previewSurface === 'error'}

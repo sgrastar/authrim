@@ -10,11 +10,22 @@ import {
   UrlElicitationRequiredError,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonObject } from '../../core';
+import { getAgentAccessDisplayName } from '../../core/branding';
 import type { AgentAccessMcpRequestContext, AgentAccessMcpServer } from './server';
 
 export type AgentAccessMcpContextProvider = () =>
   | AgentAccessMcpRequestContext
   | Promise<AgentAccessMcpRequestContext>;
+
+export interface AgentAccessMcpSdkServerOptions {
+  environmentName?: string;
+}
+
+function compactPublicSchema(schema: JsonObject | undefined): JsonObject | undefined {
+  if (!schema) return undefined;
+  const { $schema: _schemaDialect, ...publicSchema } = schema;
+  return publicSchema;
+}
 
 /**
  * Adapts the platform-neutral Agent Access MCP definition to the official MCP TypeScript SDK.
@@ -23,10 +34,17 @@ export type AgentAccessMcpContextProvider = () =>
  */
 export function createAgentAccessMcpSdkServer(
   application: AgentAccessMcpServer,
-  contextProvider: AgentAccessMcpContextProvider
+  contextProvider: AgentAccessMcpContextProvider,
+  options: AgentAccessMcpSdkServerOptions = {}
 ): Server {
   const server = new Server(
-    { name: 'authrim-agent-access', version: '1.0.0' },
+    {
+      name: 'authrim-agent-access',
+      title: getAgentAccessDisplayName(options.environmentName),
+      version: '0.4.0',
+      description: 'Authrim administration and configuration through delegated Agent Access.',
+      websiteUrl: 'https://authrim.com',
+    },
     {
       capabilities: {
         tools: { listChanged: true },
@@ -34,7 +52,7 @@ export function createAgentAccessMcpSdkServer(
         prompts: { listChanged: true },
       },
       instructions:
-        'Use Authrim Agent Access tools only within the delegated tenant and approved plan.',
+        'Use Authrim Agent Access tools only within the delegated tenant and approved plan. Start with the essential Tool profile and call set_active_tool_profiles when another granted domain is needed; profiles never add authority.',
     }
   );
 
@@ -77,21 +95,20 @@ export function createAgentAccessMcpSdkServer(
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const { tools } = await contextWithListChangeNotifications();
     return {
-      tools: tools.map((tool) => ({
-        name: tool.name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-        annotations: tool.annotations,
-        execution: { taskSupport: tool.taskSupport ?? 'forbidden' },
-        _meta: {
+      tools: tools.map((tool) => {
+        const metadata = {
           ...tool.protocolMetadata,
-          'com.authrim/toolId': tool.id,
-          'com.authrim/contractVersion': tool.contractVersion,
-          'com.authrim/requiresElevation': tool.riskLevel === 'high',
-        },
-      })),
+          ...(tool.riskLevel === 'high' ? { 'com.authrim/requiresElevation': true } : {}),
+        };
+        return {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: compactPublicSchema(tool.inputSchema)!,
+          ...(tool.outputSchema ? { outputSchema: compactPublicSchema(tool.outputSchema) } : {}),
+          ...(tool.annotations ? { annotations: tool.annotations } : {}),
+          ...(Object.keys(metadata).length > 0 ? { _meta: metadata } : {}),
+        };
+      }),
     };
   });
 
@@ -103,7 +120,10 @@ export function createAgentAccessMcpSdkServer(
       };
     }
     const input = (request.params.arguments ?? {}) as JsonObject;
-    const { context } = await contextWithListChangeNotifications();
+    // Tool calls do not need to enumerate every Tool/Resource/Prompt first. Keeping validation and
+    // execution on the direct request path prevents an unrelated discovery-state read from
+    // turning an immediate invalid-argument response into a transport timeout.
+    const context = await contextProvider();
     const result = await application.callTool(context, request.params.name, input, {
       idempotencyKey:
         typeof request.params._meta?.['com.authrim/idempotencyKey'] === 'string'
@@ -114,6 +134,7 @@ export function createAgentAccessMcpSdkServer(
           ? request.params._meta['com.authrim/elevationChallengeId']
           : undefined,
     });
+    if (result.toolListChanged) await contextWithListChangeNotifications();
     if (result.urlElicitation) {
       throw new UrlElicitationRequiredError([
         {
@@ -128,6 +149,7 @@ export function createAgentAccessMcpSdkServer(
       content: [...result.content],
       structuredContent: result.structuredContent,
       isError: result.isError,
+      _meta: result.metadata,
     };
   });
 
@@ -152,7 +174,8 @@ export function createAgentAccessMcpSdkServer(
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { context } = await contextWithListChangeNotifications();
-    return { contents: [await application.readResource(context, request.params.uri)] };
+    const { metadata, ...contents } = await application.readResource(context, request.params.uri);
+    return { contents: [{ ...contents, _meta: metadata }] };
   });
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
@@ -176,6 +199,7 @@ export function createAgentAccessMcpSdkServer(
     );
     return {
       description: result.description,
+      _meta: result.metadata,
       messages: result.messages.map((message) => ({
         role: message.role,
         content: { ...message.content },

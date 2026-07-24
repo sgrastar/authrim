@@ -18,7 +18,6 @@ export * from './types/approval';
 export * from './types/screens';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
-export * from './types/consent-gates';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -142,8 +141,6 @@ export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
-export * from './services/consent-gate-decision';
-export * from './services/consent-gate-persistence';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
@@ -220,6 +217,7 @@ export * from './utils/setup-session';
 export * from './utils/system-init';
 export * from './utils/contract-loader';
 export * from './utils/cache-config';
+export * from './utils/authentication-methods-cache';
 export * from './utils/request-cache';
 export * from './utils/health-check';
 export * from './utils/dns-verification';
@@ -585,6 +583,16 @@ export type {
   ScreenResponse,
   ScreenSettings,
   ScreenValueType,
+  AccountPageDefinition,
+  AccountPageLocalization,
+  AccountPageRecord,
+  AccountPageScreenPlacement,
+  AccountPagePlacementWidth,
+  AccountPageVisibilityCondition,
+  AccountPagesDocument,
+  PublishedAccountPageDefinition,
 } from './types/screens';
+
+export { ACCOUNT_PAGE_PRESET_VERSION, DEFAULT_ACCOUNT_PAGE_DEFINITION } from './types/screens';
 
 export { setBoundedMapEntry } from './utils/bounded-cache';

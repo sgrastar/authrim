@@ -4,11 +4,7 @@
 	import { getFlowTemplateText } from '$lib/admin/flow-i18n';
 	import { adminFlowsAPI, type AdminFlowKind, type FlowEditorState } from '$lib/api/admin-flows';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import {
-		createLoginUiRuntimeContractPreview,
-		newFlowTemplates,
-		type NewFlowTemplate
-	} from '$lib/admin/new-flow-templates';
+	import { newFlowTemplates, type NewFlowTemplate } from '$lib/admin/new-flow-templates';
 
 	let creatingTemplateId = $state('');
 	let createError = $state('');
@@ -34,10 +30,6 @@
 	}
 
 	function createTemplateEditorState(flow: NewFlowTemplate): FlowEditorState {
-		if (flow.id === 'default-login') {
-			return createLoginUiRuntimeContractPreview(flow).editor;
-		}
-
 		if (flow.id === 'default-registration') {
 			return {
 				nodes: [
@@ -342,6 +334,196 @@
 						source: 'saml-attribute-release-consent',
 						source_handle: 'accepted',
 						target: 'saml-attribute-release-complete'
+					}
+				],
+				viewport: { x: 36, y: 36, zoom: 1 }
+			};
+		}
+
+		if (flow.id === 'default-login') {
+			return {
+				nodes: [
+					{
+						id: 'request',
+						type: 'entry',
+						title: $LL.admin_flows_node_login_request(),
+						position: { x: 360, y: 0 },
+						config: { ui_kind: 'start' }
+					},
+					{
+						id: 'session-check',
+						type: 'session_check',
+						title: $LL.admin_flows_node_session_check(),
+						position: { x: 360, y: 144 },
+						config: { ui_kind: 'session' }
+					},
+					{
+						id: 'authentication',
+						type: 'authentication',
+						title: $LL.admin_flows_node_authentication_method(),
+						position: { x: 522, y: 288 },
+						config: {
+							ui_kind: 'authentication',
+							authentication_profile_ref: 'default',
+							outputs: [
+								{ id: 'mail_otp', label: $LL.admin_flows_setting_email_otp() },
+								{ id: 'totp', label: $LL.admin_flows_setting_totp() },
+								{ id: 'passkey', label: $LL.admin_flows_setting_passkey() },
+								{ id: 'facebook', label: 'Facebook' }
+							]
+						}
+					},
+					{
+						id: 'saml-attribute-release-consent',
+						type: 'consent',
+						title: $LL.admin_flows_node_consent(),
+						position: { x: 108, y: 468 },
+						config: {
+							ui_kind: 'consent',
+							consent_policy_ref: 'saml_attribute_release_policy',
+							completion_block: {
+								id: 'saml-attribute_release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'consent'
+							}
+						}
+					},
+					{
+						id: 'saml-attribute-release-complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: { x: 108, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'saml-attribute_release-completion',
+								label: $LL.admin_flows_completion_block_saml_attribute_release(),
+								protocol: 'saml',
+								purpose: 'attribute_release',
+								role: 'output'
+							}
+						}
+					},
+					{
+						id: 'oidc-authorization-consent',
+						type: 'consent',
+						title: $LL.admin_flows_node_consent(),
+						position: { x: 594, y: 468 },
+						config: {
+							ui_kind: 'consent',
+							consent_policy_ref: 'oidc_authorization_consent_policy',
+							completion_block: {
+								id: 'oidc-authorization-completion',
+								label: $LL.admin_flows_completion_block_oidc_authorization(),
+								protocol: 'oidc',
+								purpose: 'authorization',
+								role: 'consent'
+							}
+						}
+					},
+					{
+						id: 'oidc-authorization-complete',
+						type: 'complete',
+						title: $LL.admin_flows_palette_end_label(),
+						position: { x: 594, y: 612 },
+						config: {
+							ui_kind: 'end',
+							completion_block: {
+								id: 'oidc-authorization-completion',
+								label: $LL.admin_flows_completion_block_oidc_authorization(),
+								protocol: 'oidc',
+								purpose: 'authorization',
+								role: 'output'
+							}
+						}
+					}
+				],
+				edges: [
+					{
+						id: 'request:next->session-check',
+						source: 'request',
+						source_handle: 'next',
+						target: 'session-check'
+					},
+					{
+						id: 'session-check:continue->saml-attribute-release-consent',
+						source: 'session-check',
+						source_handle: 'continue',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'session-check:continue->oidc-authorization-consent',
+						source: 'session-check',
+						source_handle: 'continue',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'session-check:authenticate->authentication',
+						source: 'session-check',
+						source_handle: 'authenticate',
+						target: 'authentication'
+					},
+					{
+						id: 'authentication:mail_otp->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'mail_otp',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'authentication:totp->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'totp',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'authentication:mail_otp->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'mail_otp',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'authentication:totp->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'totp',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'authentication:passkey->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'passkey',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'authentication:passkey->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'passkey',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'authentication:facebook->saml-attribute-release-consent',
+						source: 'authentication',
+						source_handle: 'facebook',
+						target: 'saml-attribute-release-consent'
+					},
+					{
+						id: 'authentication:facebook->oidc-authorization-consent',
+						source: 'authentication',
+						source_handle: 'facebook',
+						target: 'oidc-authorization-consent'
+					},
+					{
+						id: 'saml-attribute-release-consent:accepted->saml-attribute-release-complete',
+						source: 'saml-attribute-release-consent',
+						source_handle: 'accepted',
+						target: 'saml-attribute-release-complete'
+					},
+					{
+						id: 'oidc-authorization-consent:accepted->oidc-authorization-complete',
+						source: 'oidc-authorization-consent',
+						source_handle: 'accepted',
+						target: 'oidc-authorization-complete'
 					}
 				],
 				viewport: { x: 36, y: 36, zoom: 1 }

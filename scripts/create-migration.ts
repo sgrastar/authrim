@@ -7,8 +7,12 @@
  * Example: pnpm migrate:create add_user_preferences
  */
 
-import { writeFileSync, readdirSync } from 'fs';
+import { writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
+import {
+  assertProductVersionOpenForNewMigrations,
+  syncDraftReleaseMigrationManifest,
+} from '../packages/setup/src/core/release-migrations.js';
 
 function main() {
   const description = process.argv[2];
@@ -30,6 +34,10 @@ function main() {
   }
 
   const migrationsDir = join(process.cwd(), 'migrations');
+  const rootPackage = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as {
+    version: string;
+  };
+  assertProductVersionOpenForNewMigrations(migrationsDir, rootPackage.version);
 
   // Find next version number
   const files = readdirSync(migrationsDir)
@@ -90,15 +98,19 @@ function main() {
 
   try {
     writeFileSync(filepath, template, 'utf-8');
+    syncDraftReleaseMigrationManifest({
+      migrationsRoot: migrationsDir,
+      productVersion: rootPackage.version,
+    });
     console.log(`✅ Created migration: ${filename}\n`);
-    console.log("📝 Next steps:");
+    console.log('📝 Next steps:');
     console.log(`   1. Edit: ${filepath}`);
     console.log('   2. Add SQL statements in "Up Migration" section');
     console.log('   3. Document rollback in "Down Migration" section');
-    console.log("   4. Test: pnpm migrate:dry-run");
-    console.log("   5. Apply: pnpm migrate:up\n");
+    console.log('   4. The draft release manifest was updated automatically');
+    console.log('   5. Run: pnpm migrate:manifest:check\n');
   } catch (error) {
-    console.error("❌ Failed to create migration:", error);
+    console.error('❌ Failed to create migration:', error);
     process.exit(1);
   }
 }

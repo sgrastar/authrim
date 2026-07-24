@@ -8,6 +8,7 @@ import {
 	type DiscoveryConfigResponse
 } from '../../lib/discovery-entry';
 import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discovery-session';
+import { normalizeLoginUILocale } from '$lib/i18n/locales';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const MAX_DISCOVERY_RESPONSE_BYTES = 256 * 1024;
 
@@ -47,7 +48,8 @@ function readDiscoveryGrantContext(formData: FormData | URLSearchParams) {
 function buildSignupUrl(
 	candidate: DiscoveryCandidate,
 	inviteToken: string,
-	invitedEmail?: string | null
+	invitedEmail?: string | null,
+	preferredLanguage?: string | null
 ): string {
 	const signupUrl = new URL(candidate.login_url);
 	signupUrl.pathname = '/signup';
@@ -56,7 +58,19 @@ function buildSignupUrl(
 	if (invitedEmail) {
 		signupUrl.searchParams.set('email', invitedEmail);
 	}
+	if (preferredLanguage) signupUrl.searchParams.set('lang', preferredLanguage);
 	return signupUrl.toString();
+}
+
+function withPreferredLanguage(
+	targetUrl: string,
+	cookies: Parameters<PageServerLoad>[0]['cookies']
+): string {
+	const language = normalizeLoginUILocale(cookies.get('preferredLanguage'));
+	if (!language) return targetUrl;
+	const target = new URL(targetUrl);
+	target.searchParams.set('lang', language);
+	return target.toString();
 }
 
 async function resolveDiscovery(
@@ -192,10 +206,10 @@ async function redirectResolvedCandidate(
 			},
 			getDiscoveryRequestHeaders(event)
 		);
-		throw redirect(303, grant.login_url);
+		throw redirect(303, withPreferredLanguage(grant.login_url, event.cookies));
 	}
 
-	throw redirect(303, candidate.login_url);
+	throw redirect(303, withPreferredLanguage(candidate.login_url, event.cookies));
 }
 
 export const load: PageServerLoad = async (event) => {
@@ -225,7 +239,10 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (effectiveConfig.single_tenant_mode && effectiveConfig.default_candidate && !inviteToken) {
-		throw redirect(303, effectiveConfig.default_candidate.login_url);
+		throw redirect(
+			303,
+			withPreferredLanguage(effectiveConfig.default_candidate.login_url, event.cookies)
+		);
 	}
 
 	if (
@@ -246,7 +263,7 @@ export const load: PageServerLoad = async (event) => {
 			},
 			discoveryHeaders
 		);
-		throw redirect(303, grant.login_url);
+		throw redirect(303, withPreferredLanguage(grant.login_url, event.cookies));
 	}
 
 	if (
@@ -295,7 +312,12 @@ export const load: PageServerLoad = async (event) => {
 			}
 			throw redirect(
 				303,
-				buildSignupUrl(result.candidate, inviteToken, result.invited_email || undefined)
+				buildSignupUrl(
+					result.candidate,
+					inviteToken,
+					result.invited_email || undefined,
+					normalizeLoginUILocale(event.cookies.get('preferredLanguage'))
+				)
 			);
 		}
 
@@ -317,7 +339,7 @@ export const load: PageServerLoad = async (event) => {
 			if (effectiveConfig.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
 			}
-			throw redirect(303, result.candidate.login_url);
+			throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
 		}
 	}
 
@@ -382,7 +404,8 @@ export const actions: Actions = {
 						buildSignupUrl(
 							result.candidate,
 							inviteToken || value,
-							result.invited_email || undefined
+							result.invited_email || undefined,
+							normalizeLoginUILocale(event.cookies.get('preferredLanguage'))
 						)
 					);
 				}
@@ -404,7 +427,7 @@ export const actions: Actions = {
 					};
 				}
 
-				throw redirect(303, result.candidate.login_url);
+				throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
 			}
 
 			if (result.result === 'multiple') {

@@ -91,10 +91,22 @@ export interface AgentToolDefinition {
   /** Phase 0-2 tools execute synchronously; MCP Tasks are deliberately not advertised. */
   taskSupport?: 'forbidden';
   /** Internal execution owner. This value is not emitted as MCP Tool metadata. */
-  executionTarget?: 'management_api' | 'configuration_plan' | 'bulk_plan' | 'runtime_diagnostics';
+  executionTarget?:
+    | 'management_api'
+    | 'configuration_plan'
+    | 'bulk_plan'
+    | 'runtime_diagnostics'
+    | 'access_introspection'
+    | 'session_control';
   /** Public protocol metadata only. Security decisions must use the fields above. */
   protocolMetadata?: JsonObject;
 }
+
+/** Unsealed Tool declaration. The catalog derives schemaDigest from the complete contract. */
+export type AgentToolDefinitionSource = Omit<AgentToolDefinition, 'schemaDigest'> & {
+  /** Legacy declarations may carry this field, but sealing always recomputes and replaces it. */
+  schemaDigest?: string;
+};
 
 export interface AgentCatalogSelector {
   kind: 'catalog';

@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
+import { acquireEnvironmentOperationLock } from '../core/lock.js';
 import { createApiRoutes, generateSessionToken, getSessionToken } from '../web/api.js';
 
 const originalCwd = process.cwd();
@@ -17,6 +18,32 @@ function post(path: string, body: unknown, token?: string): globalThis.RequestIn
     },
     body: JSON.stringify(body),
   };
+}
+
+async function writeDeployedLock(env: string): Promise<void> {
+  const envDir = join(root, '.authrim', env);
+  await mkdir(envDir, { recursive: true });
+  await writeFile(
+    join(root, 'package.json'),
+    `${JSON.stringify({ name: 'authrim-test', version: '0.4.0' }, null, 2)}\n`
+  );
+  await writeFile(
+    join(envDir, 'lock.json'),
+    `${JSON.stringify(
+      {
+        version: '1.0.0',
+        productVersion: '0.4.0',
+        env,
+        createdAt: '2026-07-21T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:00:00.000Z',
+        d1: {},
+        kv: {},
+        workers: {},
+      },
+      null,
+      2
+    )}\n`
+  );
 }
 
 describe('setup web basic API contracts', () => {
@@ -52,12 +79,52 @@ describe('setup web basic API contracts', () => {
       ['/cloudflare/check-zone', {}],
       ['/tenant-d1/pool/prod/expand', {}],
       ['/r2/prod/provision', {}],
+      ['/environments/prod/delete', {}],
       ['/migrations/apply', {}],
     ] as const) {
       const missing = await app.request(path, post(path, body));
       expect(missing.status, path).toBe(401);
       const stale = await app.request(path, post(path, body, first));
       expect(stale.status, path).toBe(401);
+    }
+  });
+
+  it('rejects deletion when the environment has no lock file', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request(
+      '/environments/missing/delete',
+      post('/environments/missing/delete', {}, token)
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: 'The environment has not been provisioned.',
+    });
+  });
+
+  it('does not let deletion race another environment mutation', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env);
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const heldOperation = await acquireEnvironmentOperationLock(lockPath, 'test-held-operation');
+    try {
+      const token = generateSessionToken();
+      const app = createApiRoutes();
+      const response = await app.request(
+        `/environments/${env}/delete`,
+        post(`/environments/${env}/delete`, {}, token)
+      );
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        error: expect.stringContaining('environment_operation_in_progress'),
+      });
+      await expect(readFile(lockPath, 'utf-8')).resolves.toContain('"env": "prod"');
+    } finally {
+      await heldOperation.release();
     }
   });
 
@@ -175,6 +242,86 @@ describe('setup web basic API contracts', () => {
       valid: true,
       structure: 'new',
       config: { environment: { prefix: 'prod' } },
+    });
+  });
+
+  it('rejects provisioning an existing environment without changing its files', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const config = createDefaultConfig('prod');
+    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
+    await writeDeployedLock('prod');
+    const lockPath = join(root, '.authrim', 'prod', 'lock.json');
+    const configPath = join(root, '.authrim', 'prod', 'config.json');
+    const lockBefore = await readFile(lockPath, 'utf-8');
+    const configBefore = await readFile(configPath, 'utf-8');
+
+    const response = await app.request(
+      '/provision',
+      post('/provision', { env: 'prod', createQueues: true, createR2: true }, token)
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('already exists'),
+    });
+    expect(await readFile(lockPath, 'utf-8')).toBe(lockBefore);
+    expect(await readFile(configPath, 'utf-8')).toBe(configBefore);
+  });
+
+  it('allows ordinary deployed config changes but rejects database topology changes', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const config = createDefaultConfig('prod');
+    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
+    await writeDeployedLock('prod');
+
+    const ordinaryChange = structuredClone(config);
+    ordinaryChange.components.saml = !ordinaryChange.components.saml;
+    expect((await app.request('/config', post('/config', ordinaryChange, token))).status).toBe(200);
+
+    const topologyChange = structuredClone(ordinaryChange);
+    topologyChange.profiles.defaults.storage = 'builtin:storage:tenant-d1';
+    const rejected = await app.request('/config', post('/config', topologyChange, token));
+    expect(rejected.status).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('dedicated topology operation'),
+    });
+    const persisted = JSON.parse(
+      await readFile(join(root, '.authrim', 'prod', 'config.json'), 'utf-8')
+    );
+    expect(persisted.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
+  });
+
+  it('rejects config mutation while a release update is incomplete', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const config = createDefaultConfig('prod');
+    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
+    await writeDeployedLock('prod');
+    const lockPath = join(root, '.authrim', 'prod', 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.releaseUpdate = {
+      targetVersion: '0.5.0',
+      previousProductVersion: '0.4.0',
+      phase: 'schema_applied',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-07-21T00:01:00.000Z',
+      updatedAt: '2026-07-21T00:02:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    config.components.saml = !config.components.saml;
+    const response = await app.request('/config', post('/config', config, token));
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('release update is incomplete'),
+      requiredCommand: 'authrim-setup update --env prod',
     });
   });
 
@@ -458,22 +605,49 @@ describe('setup web basic API contracts', () => {
     config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
     config.tenantD1 = { preallocatedSlots: 3 };
     expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
+    await writeDeployedLock('prod');
 
     const expanded = await app.request(
       '/tenant-d1/pool/prod/expand',
       post('/tenant-d1/pool/prod/expand', { addSlots: '2' }, token)
     );
     expect(expanded.status).toBe(200);
-    await expect(expanded.json()).resolves.toMatchObject({
+    const expandedBody = (await expanded.json()) as { topologyDeploymentToken: string };
+    expect(expandedBody).toMatchObject({
       success: true,
       currentSlots: 3,
       addSlots: 2,
       nextSlots: 5,
       deployRequired: true,
+      topologyDeploymentToken: expect.any(String),
     });
 
+    const blockedConfigMutation = await app.request('/config', post('/config', config, token));
+    expect(blockedConfigMutation.status).toBe(409);
+
+    const resumed = await app.request(
+      '/tenant-d1/pool/prod/expand',
+      post('/tenant-d1/pool/prod/expand', { addSlots: 2 }, token)
+    );
+    expect(resumed.status).toBe(200);
+    const resumedBody = (await resumed.json()) as { topologyDeploymentToken: string };
+    expect(resumedBody).toMatchObject({
+      currentSlots: 5,
+      addSlots: 0,
+      nextSlots: 5,
+      topologyDeploymentToken: expect.any(String),
+    });
+    expect(resumedBody.topologyDeploymentToken).not.toBe(expandedBody.topologyDeploymentToken);
+
+    const lockPath = join(root, '.authrim', 'prod', 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.topologyUpdate;
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
     config.tenantD1.preallocatedSlots = 500;
-    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
+    await writeFile(
+      join(root, '.authrim', 'prod', 'config.json'),
+      `${JSON.stringify(config, null, 2)}\n`
+    );
     const overLimit = await app.request(
       '/tenant-d1/pool/prod/expand',
       post('/tenant-d1/pool/prod/expand', { addSlots: 1 }, token)

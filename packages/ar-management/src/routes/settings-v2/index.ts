@@ -71,13 +71,21 @@ import {
   validatePostLoginRedirectUrl,
   validateLoginUICustomCss,
   validateTrustedRedirectOrigins,
+  bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
 import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
+import { describeRuntimeProfileActivationStatus } from '../../runtime-profile-reference-status';
 
 // Module-level logger for settings audit
 const log = createLogger().module('SETTINGS_AUDIT');
+const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryName>([
+  'authentication-methods',
+  'login-ui',
+  'self-service',
+]);
+const AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES = new Set<CategoryName>(['login-ui']);
 
 function settingValue(body: JsonObject, key: string): JsonValue | undefined {
   const set = body.set;
@@ -371,21 +379,203 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
   details?: Record<string, unknown>;
 } {
   const customCss = body.set?.['login-ui.custom_css'];
-  if (customCss === undefined) {
-    return { ok: true };
-  }
-
-  const validation = validateLoginUICustomCss(customCss);
-  if (validation.valid) {
+  if (customCss !== undefined) {
+    const validation = validateLoginUICustomCss(customCss);
+    if (!validation.valid) {
+      return {
+        ok: false,
+        message: validation.errors.join(' '),
+        details: { errors: validation.errors },
+      };
+    }
     body.set!['login-ui.custom_css'] = validation.sanitizedCss ?? '';
-    return { ok: true };
   }
 
-  return {
-    ok: false,
-    message: validation.errors.join(' '),
-    details: { errors: validation.errors },
-  };
+  const accountPages = body.set?.['login-ui.account_pages'];
+  if (accountPages !== undefined) {
+    if (typeof accountPages !== 'string' || accountPages.length > 2_000_000) {
+      return { ok: false, message: 'login-ui.account_pages must be a JSON string under 2 MB' };
+    }
+    try {
+      const document = JSON.parse(accountPages) as Record<string, unknown>;
+      if (
+        document.schema_version !== 'authrim.account_pages.v1' ||
+        !Array.isArray(document.pages)
+      ) {
+        throw new Error('Invalid account pages schema');
+      }
+      if (document.pages.length > 24) throw new Error('At most 24 account pages are allowed');
+      const pageIds = new Set<string>();
+      for (const rawPage of document.pages) {
+        if (!rawPage || typeof rawPage !== 'object' || Array.isArray(rawPage))
+          throw new Error('Invalid account page');
+        const page = rawPage as Record<string, unknown>;
+        if (
+          typeof page.id !== 'string' ||
+          !/^[a-z0-9_-]{1,96}$/u.test(page.id) ||
+          pageIds.has(page.id)
+        ) {
+          throw new Error('Account page IDs must be unique safe identifiers');
+        }
+        if (typeof page.name !== 'string' || !page.name.trim() || page.name.length > 80) {
+          throw new Error('Account page names must contain 1 to 80 characters');
+        }
+        if (
+          page.base_preset_id !== 'authrim-default' ||
+          typeof page.base_preset_version !== 'number' ||
+          !Number.isInteger(page.base_preset_version) ||
+          page.base_preset_version < 1
+        ) {
+          throw new Error('Invalid account page base preset');
+        }
+        if (
+          typeof page.published_version !== 'number' ||
+          !Number.isInteger(page.published_version) ||
+          page.published_version < 0 ||
+          typeof page.published_at !== 'string'
+        ) {
+          throw new Error('Invalid account page publication metadata');
+        }
+        pageIds.add(page.id);
+        for (const rawDefinition of [page.draft, page.published, page.rollback].filter(Boolean)) {
+          if (!rawDefinition || typeof rawDefinition !== 'object' || Array.isArray(rawDefinition))
+            throw new Error('Invalid account page definition');
+          const definition = rawDefinition as Record<string, unknown>;
+          if (!Array.isArray(definition.screens) || definition.screens.length > 32)
+            throw new Error('An account page may contain at most 32 screens');
+          const placementIds = new Set<string>();
+          const screenKeys = new Set<string>();
+          const snapshots = definition.screen_snapshots;
+          const stableTargets = new Set(
+            definition.screens
+              .filter(
+                (placement) =>
+                  Boolean(placement) &&
+                  typeof placement === 'object' &&
+                  !Array.isArray(placement) &&
+                  (placement as Record<string, unknown>).enabled !== false &&
+                  ((placement as Record<string, unknown>).condition === undefined ||
+                    (placement as Record<string, unknown>).condition === 'always')
+              )
+              .map((placement) => String((placement as Record<string, unknown>).id))
+          );
+          for (const rawPlacement of definition.screens) {
+            if (!rawPlacement || typeof rawPlacement !== 'object' || Array.isArray(rawPlacement))
+              throw new Error('Invalid screen placement');
+            const placement = rawPlacement as Record<string, unknown>;
+            if (
+              typeof placement.id !== 'string' ||
+              !/^[a-zA-Z0-9_-]{1,96}$/u.test(placement.id) ||
+              placementIds.has(placement.id)
+            )
+              throw new Error('Placement IDs must be unique');
+            if (
+              typeof placement.screen_key !== 'string' ||
+              !/^[a-z0-9_-]{1,96}$/u.test(placement.screen_key) ||
+              screenKeys.has(placement.screen_key)
+            )
+              throw new Error('Screen keys must be unique safe identifiers');
+            placementIds.add(placement.id);
+            screenKeys.add(placement.screen_key);
+            if (
+              placement.condition !== undefined &&
+              ![
+                'always',
+                'hidden',
+                'passkey_enabled',
+                'totp_enabled',
+                'external_idp_enabled',
+                'consent_records_available',
+                'multiple_sessions',
+              ].includes(String(placement.condition))
+            ) {
+              throw new Error('Invalid account page visibility condition');
+            }
+            if (placement.enabled !== false && snapshots !== undefined) {
+              if (!snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots))
+                throw new Error('Published definitions require screen snapshots');
+              const snapshot = (snapshots as Record<string, unknown>)[placement.screen_key];
+              if (
+                !snapshot ||
+                typeof snapshot !== 'object' ||
+                Array.isArray(snapshot) ||
+                (snapshot as Record<string, unknown>).screen_kind !== 'account'
+              )
+                throw new Error(`Missing account screen snapshot for ${placement.screen_key}`);
+              const fields = (snapshot as Record<string, unknown>).fields;
+              if (!Array.isArray(fields)) throw new Error('Invalid account screen fields');
+              for (const rawField of fields) {
+                if (!rawField || typeof rawField !== 'object' || Array.isArray(rawField)) continue;
+                const field = rawField as Record<string, unknown>;
+                if (
+                  ![
+                    'layout_row',
+                    'heading',
+                    'text',
+                    'link',
+                    'divider',
+                    'account_profile_widget',
+                    'account_device_list_widget',
+                    'account_session_widget',
+                    'account_passkey_widget',
+                    'account_totp_widget',
+                    'account_consent_widget',
+                    'account_activity_widget',
+                    'account_social_account_widget',
+                  ].includes(String(field.block_type))
+                ) {
+                  throw new Error('Account screen snapshots contain an unsupported block type');
+                }
+                if (field.block_type !== 'link') continue;
+                if (typeof field.href !== 'string' || field.href.length > 2048) {
+                  throw new Error('Account screen links require a safe URL');
+                }
+                const href = field.href.trim();
+                let safe = /^#[a-zA-Z][\w-]*$/u.test(href) || /^\/(?!\/)/u.test(href);
+                if (!safe) {
+                  try {
+                    safe = new URL(href).protocol === 'https:';
+                  } catch {
+                    safe = false;
+                  }
+                }
+                if (!safe)
+                  throw new Error(
+                    'Account screen links only allow anchors, relative paths, or HTTPS'
+                  );
+                if (href.startsWith('#') && !stableTargets.has(href.slice(1))) {
+                  throw new Error(
+                    'Account screen anchor links must target an always-visible placement'
+                  );
+                }
+              }
+              const widgetCount = fields.filter(
+                (field) =>
+                  Boolean(field) &&
+                  typeof field === 'object' &&
+                  typeof (field as Record<string, unknown>).block_type === 'string' &&
+                  String((field as Record<string, unknown>).block_type).startsWith('account_')
+              ).length;
+              if (widgetCount > 1)
+                throw new Error('Account screens may contain at most one primary widget');
+            }
+          }
+        }
+      }
+      if (
+        document.default_page_id !== null &&
+        (typeof document.default_page_id !== 'string' || !pageIds.has(document.default_page_id))
+      )
+        throw new Error('The default account page must reference an existing page');
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Invalid account pages JSON',
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 // Create the settings-v2 app with typed variables
@@ -561,21 +751,33 @@ async function validateTenantRuntimeProfilePatch(
   }
 
   const violation = validateTenantStorageProfileOverride(defaultProfile, candidateProfile);
-  if (!violation) {
-    return { ok: true };
+  if (violation) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: violation.message,
+      details: {
+        code: violation.code,
+        defaultStorageProfileId: defaultProfile.id,
+        candidateStorageProfileId: candidateProfile.id,
+      },
+    };
   }
 
-  return {
-    ok: false,
-    status: 400,
-    error: 'bad_request',
-    message: violation.message,
-    details: {
-      code: violation.code,
-      defaultStorageProfileId: defaultProfile.id,
-      candidateStorageProfileId: candidateProfile.id,
-    },
-  };
+  const activation = describeRuntimeProfileActivationStatus(env, candidateProfile);
+  return activation.activatable
+    ? { ok: true }
+    : {
+        ok: false,
+        status: 400,
+        error: 'bad_request',
+        message: activation.blockingReasons.join(' '),
+        details: {
+          code: 'runtime_profile_not_activatable',
+          candidateStorageProfileId: candidateProfile.id,
+        },
+      };
 }
 
 function settingsKVKey(category: string, scope: SettingScope): string {
@@ -586,6 +788,22 @@ function settingsKVKey(category: string, scope: SettingScope): string {
     return `settings:client:${scope.tenantId}:${scope.id}:${category}`;
   }
   return `settings:${scope.type}:${scope.id}:${category}`;
+}
+
+async function invalidateAuthenticationMethodsCacheRevision(
+  c: { env: Env },
+  tenantId: string | null,
+  reason: string
+): Promise<void> {
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
+  } catch (error) {
+    log.warn('Failed to bump authentication methods cache revision', {
+      tenantId: tenantId ?? 'global',
+      reason,
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  }
 }
 
 async function readScopedSettingsRecord(
@@ -1237,6 +1455,10 @@ settingsV2.patch(
         );
       }
 
+      if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
+        await invalidateAuthenticationMethodsCacheRevision(c, tenantId, `tenant:${category}`);
+      }
+
       return c.json(result);
     } catch (error) {
       // Handle JSON parse errors
@@ -1487,6 +1709,10 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
       );
     }
 
+    if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
+      await invalidateAuthenticationMethodsCacheRevision(c, clientTenantId, `client:${category}`);
+    }
+
     return c.json(result);
   } catch (error) {
     // Handle JSON parse errors
@@ -1645,6 +1871,10 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
         },
         400
       );
+    }
+
+    if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
+      await invalidateAuthenticationMethodsCacheRevision(c, clientTenantId, `client:${category}`);
     }
 
     return c.json(result);
@@ -1820,6 +2050,10 @@ settingsV2.patch('/platform/settings/:category', (c) => {
           },
           400
         );
+      }
+
+      if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
+        await invalidateAuthenticationMethodsCacheRevision(c, null, `platform:${category}`);
       }
 
       return c.json(result);

@@ -8,8 +8,7 @@
 	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
 	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
-	import { formatRuntimeConsentAcceptedLabel } from '$lib/consent/runtime-consent-state';
-	import { isValidLinkUrl } from '$lib/utils/url-validation';
+	import { localizeRuntimeScreen } from '$lib/i18n/runtime-screen-localization';
 
 	type RuntimeField = {
 		field: string;
@@ -124,8 +123,8 @@
 		humanVerificationToken = $bindable(''),
 		humanVerificationResetKey = 0,
 		humanVerificationVisible = false,
-		humanVerificationLoadingLabel = 'Loading security check...',
-		humanVerificationErrorLabel = 'Security check could not be loaded. Reload the page and try again.',
+		humanVerificationLoadingLabel = $LL.login_humanVerificationLoading(),
+		humanVerificationErrorLabel = $LL.login_humanVerificationLoadFailed(),
 		emailVerificationProtocolEnabled = false,
 		onFieldValueChange,
 		onAuthAction,
@@ -230,7 +229,13 @@
 		return fieldName === 'email' || fieldName.endsWith('.email');
 	}
 
-	const normalizedScreen = $derived(normalizeScreen(screen));
+	const activeLocale = $derived.by(() => {
+		// Reading the store value makes this derived state update whenever typesafe-i18n changes locale.
+		void $LL;
+		return getLocale();
+	});
+	const localizedScreen = $derived(localizeRuntimeScreen(screen, activeLocale));
+	const normalizedScreen = $derived(normalizeScreen(localizedScreen));
 	const renderedFields = $derived(normalizedScreen?.fields ?? []);
 	const renderedSections = $derived(buildLayoutSections(renderedFields));
 	const hasStandaloneSignupEmailField = $derived(
@@ -426,13 +431,13 @@
 				}
 			}
 			if (method === 'external_idp' && defaultAuthWidgetLabels.externalIdp.has(field.label)) {
-				return 'Ext. IdP';
+				return $LL.common_externalIdentityProvider();
 			}
 			if (
 				method === 'directory_password' &&
 				defaultAuthWidgetLabels.directoryPassword.has(field.label)
 			) {
-				return $LL.login_signInWithDirectory({ label: 'Directory Password' });
+				return $LL.login_signInWithDirectory({ label: $LL.common_directoryPassword() });
 			}
 			return field.label;
 		}
@@ -448,9 +453,9 @@
 					? $LL.register_createWithTotp()
 					: $LL.login_totpContinue();
 			case 'external_idp':
-				return 'Ext. IdP';
+				return $LL.common_externalIdentityProvider();
 			case 'directory_password':
-				return $LL.login_signInWithDirectory({ label: 'Directory Password' });
+				return $LL.login_signInWithDirectory({ label: $LL.common_directoryPassword() });
 			case 'passkey':
 			default:
 				return $LL.login_signInWithPasskey();
@@ -496,10 +501,6 @@
 	function consentOptionHtml(option: FlowRuntimeConsentPolicyOption): string {
 		const body = option.description || option.label || option.value;
 		return sanitizeRuntimeConsentHtml(body);
-	}
-
-	function consentAcceptedLabel(acceptedAt: number | null | undefined): string {
-		return formatRuntimeConsentAcceptedLabel(acceptedAt, getLocale());
 	}
 
 	function authButtonDisabled(method: AuthMethod): boolean {
@@ -566,7 +567,7 @@
 		for (const prefix of ['Continue with ', 'Sign in with ', 'Login with ']) {
 			if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length).trim();
 		}
-		return trimmed || 'Ext. IdP';
+		return trimmed || $LL.common_externalIdentityProvider();
 	}
 
 	function externalProviderButtonLabel(
@@ -575,7 +576,9 @@
 		stripActionText = false
 	): string {
 		const trimmed = label.trim();
-		const baseLabel = stripActionText ? externalProviderBaseLabel(trimmed) : trimmed || 'Ext. IdP';
+		const baseLabel = stripActionText
+			? externalProviderBaseLabel(trimmed)
+			: trimmed || $LL.common_externalIdentityProvider();
 		return showExternalProviderActionText(field)
 			? $LL.login_continueWith({ provider: baseLabel })
 			: baseLabel;
@@ -641,27 +644,7 @@
 				<div class="runtime-consent-items">
 					{#each consentPolicy.items as item (item.statement_id)}
 						<div class="runtime-consent-item">
-							{#if item.acceptance_status === 'accepted'}
-								<label class="runtime-consent-choice runtime-consent-choice--accepted">
-									<input
-										type="checkbox"
-										checked
-										disabled
-										aria-describedby={`runtime-screen-consent-accepted-${item.statement_id}`}
-									/>
-									<SanitizedHtml
-										class="runtime-consent-content"
-										sanitizedHtml={consentItemHtml(item)}
-									/>
-								</label>
-								<p
-									id={`runtime-screen-consent-accepted-${item.statement_id}`}
-									class="runtime-consent-accepted"
-									role="status"
-								>
-									{consentAcceptedLabel(item.accepted_at)}
-								</p>
-							{:else if item.content_mode === 'radio' && item.options?.length}
+							{#if item.content_mode === 'radio' && item.options?.length}
 								<fieldset class="runtime-consent-options">
 									<legend class="sr-only">{item.title}</legend>
 									{#each item.options as option (option.id)}
@@ -695,7 +678,7 @@
 										type="checkbox"
 										checked={consentDecisions[item.statement_id] === true}
 										required={item.is_required || item.checkbox_mode === 'required'}
-										disabled={disabled || item.release_locked === true}
+										{disabled}
 										onchange={(event) =>
 											onConsentDecisionChange?.(
 												item.statement_id,
@@ -708,14 +691,7 @@
 									/>
 								</label>
 							{/if}
-							{#if item.attribute_value_display !== 'names' && item.attribute_display_values?.length}
-								<ul class="runtime-consent-attribute-values" aria-label={`${item.title} values`}>
-									{#each item.attribute_display_values as value, valueIndex (valueIndex)}
-										<li>{value}</li>
-									{/each}
-								</ul>
-							{/if}
-							{#if item.document_url && isValidLinkUrl(item.document_url)}
+							{#if item.document_url}
 								<a
 									class="runtime-consent-link"
 									href={item.document_url}
@@ -840,7 +816,7 @@
 							<input
 								value={String(fieldValues.email ?? '')}
 								disabled={disabled || authMethodBusy(method)}
-								placeholder="you@example.com"
+								placeholder={$LL.common_emailPlaceholder()}
 								type="email"
 								name="email"
 								autocomplete="email"
@@ -1285,25 +1261,6 @@
 	.runtime-consent-choice input {
 		margin-top: 0.1875rem;
 		flex: 0 0 auto;
-	}
-
-	.runtime-consent-choice--accepted {
-		opacity: 0.82;
-	}
-
-	.runtime-consent-accepted {
-		margin: 0 0 0 1.625rem;
-		color: var(--text-secondary);
-		font-size: 0.8rem;
-		font-weight: 600;
-	}
-
-	.runtime-consent-attribute-values {
-		margin: 0 0 0 1.625rem;
-		padding-left: 1rem;
-		color: var(--text-secondary);
-		font-size: 0.82rem;
-		line-height: 1.45;
 	}
 
 	.runtime-consent-content {

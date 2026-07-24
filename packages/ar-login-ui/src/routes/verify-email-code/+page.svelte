@@ -257,7 +257,7 @@
 			signature: storedRuntime.signature
 		});
 		if (resumeError || !resumedFlow) {
-			throw new Error(resumeError?.error_description || $LL.error_invalid_request());
+			throw new Error($LL.error_invalid_request());
 		}
 
 		let flow: FlowRuntimeStartResponse = resumedFlow;
@@ -294,7 +294,7 @@
 				}
 			);
 			if (submitError || !submittedFlow) {
-				throw new Error(submitError?.error_description || $LL.error_invalid_request());
+				throw new Error($LL.error_invalid_request());
 			}
 
 			flow = {
@@ -351,7 +351,7 @@
 				}
 			}, 3000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to resend code';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			resendLoading = false;
 		}

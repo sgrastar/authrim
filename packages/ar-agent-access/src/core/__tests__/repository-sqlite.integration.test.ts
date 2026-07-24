@@ -361,9 +361,9 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
   async function seedCurrentGrant(): Promise<void> {
     await adapter.execute(
       `INSERT INTO admin_agent_grants
-        (id, tenant_id, client_id, delegator_id, generation, consent_version, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-      ['grant-1', 'tenant-1', 'client-1', 'admin-1', 3, 4]
+        (id, tenant_id, client_id, delegator_id, generation, consent_version, status, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+      ['grant-1', 'tenant-1', 'client-1', 'admin-1', 3, 4, 1_000]
     );
     for (const [id, type] of [
       ['consent-1', 'delegation'],
@@ -1229,6 +1229,7 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
       clientId: 'client-1',
       expectedGeneration: 4,
       transitionId: 'audit-resume',
+      expiresAt: 2_592_000_300,
       now: 300,
       audit: {
         id: 'audit-resume',
@@ -1251,6 +1252,7 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
       status: 'active',
       generation: 4,
       consentVersion: 5,
+      expiresAt: 2_592_000_300,
     });
     await expect(
       adapter.queryOne<{ active: number }>(
@@ -1774,8 +1776,8 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         resolved_scope_constraints, scopes, delegation_mode, generation,
 				consent_version, status, active_uniqueness_key, created_at, updated_at,
 				task_set_id, task_set_version, scope_policy_id, scope_policy_version,
-				resolved_tools, access_snapshot_hash
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				resolved_tools, access_snapshot_hash, expires_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         'grant-1',
         'platform',
@@ -1798,6 +1800,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         1,
         '[{"toolId":"admin.write.clients.metadata"}]',
         'a'.repeat(43),
+        3_600_001,
       ]
     );
     const resolved = await resolveAgentBulkPlan({
@@ -1806,6 +1809,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
       canaryTenantIds: ['tenant-1'],
       plan: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-1',
@@ -2034,8 +2038,8 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         resolved_scope_constraints, scopes, delegation_mode, generation,
 				consent_version, status, active_uniqueness_key, created_at, updated_at,
 				task_set_id, task_set_version, scope_policy_id, scope_policy_version,
-				resolved_tools, access_snapshot_hash
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				resolved_tools, access_snapshot_hash, expires_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         'grant-template',
         'platform',
@@ -2058,6 +2062,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         1,
         '[{"toolId":"admin.write.clients.metadata"}]',
         'b'.repeat(43),
+        3_600_001,
       ]
     );
     const resolved = await resolveAgentBulkPlan({
@@ -2066,6 +2071,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
       canaryTenantIds: ['tenant-1'],
       plan: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-1',

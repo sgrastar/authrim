@@ -13,9 +13,24 @@ import {
   runD1Migrations,
 } from '../../core/cloudflare.js';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
-import { loadLockFileAuto } from '../../core/lock.js';
+import {
+  acquireEnvironmentOperationLock,
+  loadLockFileAuto,
+  saveLockFile,
+} from '../../core/lock.js';
 import { getD1DatabaseName } from '../../core/naming.js';
 import { findAuthrimBaseDir, getEnvironmentPaths } from '../../core/paths.js';
+import { getRootProductVersion } from '../../core/version.js';
+import {
+  evaluateReleaseDeploymentGuard,
+  releaseDeploymentGuardMessage,
+} from '../../core/release-deployment-guard.js';
+import {
+  buildTenantD1ReleaseMigrationTarget,
+  calculateReleaseManifestChecksum,
+  loadInstalledReleaseMigrationManifest,
+} from '../../core/release-migrations.js';
+import { withRecordedReleaseSchemaTargets } from '../../core/release-state.js';
 import { buildTenantDatabaseSlotPlan } from '../../core/tenant-database.js';
 
 interface TenantDatabaseSlotResetOptions {
@@ -216,6 +231,10 @@ export async function tenantDatabaseSlotResetCommand(
   const env = options.env ?? 'prod';
   const slotNumber = parseSlotNumber(options.slot);
   const baseDir = findAuthrimBaseDir(process.cwd());
+  const envPaths = getEnvironmentPaths({ baseDir, env });
+  const plannedConfigText = existsSync(envPaths.config)
+    ? await readFile(envPaths.config, 'utf-8')
+    : null;
   const config = await loadEnvironmentConfig(baseDir, env);
   if (config && config.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
     console.error(
@@ -228,9 +247,20 @@ export async function tenantDatabaseSlotResetCommand(
     process.exit(1);
   }
 
-  const { lock } = await loadLockFileAuto(baseDir, env);
+  const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);
   if (!lock) {
     console.error(chalk.red(`No Authrim lock file found for environment "${env}".`));
+    process.exit(1);
+  }
+  const targetProductVersion = await getRootProductVersion(baseDir);
+  const deploymentGuard = evaluateReleaseDeploymentGuard(
+    lock,
+    targetProductVersion,
+    'manual_migration'
+  );
+  if (!deploymentGuard.allowed) {
+    console.error(chalk.red(releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion)));
+    console.log(chalk.yellow(`Run authrim-setup update --env ${env} before resetting a D1 slot.`));
     process.exit(1);
   }
 
@@ -276,9 +306,19 @@ export async function tenantDatabaseSlotResetCommand(
       `Migrations directory not found. Searched: ${migrationsRoot.searchPaths.join(', ')}`
     );
   }
+  const release = loadInstalledReleaseMigrationManifest({
+    migrationsRoot: migrationsRoot.path,
+    productVersion: targetProductVersion,
+    lock,
+  });
+  const coreStream = release.manifest.streams.find((stream) => stream.id === 'd1-core');
+  const piiStream = release.manifest.streams.find((stream) => stream.id === 'd1-pii');
+  if (!coreStream || !piiStream) {
+    throw new Error('Tenant D1 release migration streams are incomplete.');
+  }
 
-  const coreObjects = await listUserSchemaObjects(coreLock.name);
-  const piiObjects = await listUserSchemaObjects(piiLock.name);
+  let coreObjects = await listUserSchemaObjects(coreLock.name);
+  let piiObjects = await listUserSchemaObjects(piiLock.name);
 
   console.log(chalk.bold('\nTenant D1 slot reset\n'));
   console.log(`Environment: ${chalk.cyan(env)}`);
@@ -309,22 +349,79 @@ export async function tenantDatabaseSlotResetCommand(
     }
   }
 
+  const operationLock = await acquireEnvironmentOperationLock(lockPath, 'tenant-db-slot-reset');
+
   const spinner = ora('Resetting tenant D1 slot schemas...').start();
   try {
+    const lockedEnvironment = await loadLockFileAuto(baseDir, env);
+    const lockedConfigText = existsSync(envPaths.config)
+      ? await readFile(envPaths.config, 'utf-8')
+      : null;
+    if (
+      !lockedEnvironment.lock ||
+      JSON.stringify(lockedEnvironment.lock) !== JSON.stringify(lock) ||
+      lockedConfigText !== plannedConfigText
+    ) {
+      throw new Error('environment_changed_while_waiting_for_tenant_slot_reset_lock');
+    }
+    const [lockedSlot] = await queryD1Rows<TenantDatabaseSlotRow>(
+      adminDbName,
+      `SELECT slot_id, slot_number, state, assigned_tenant_id, core_binding_ref, pii_binding_ref,
+              core_database_name, pii_database_name
+         FROM tenant_database_slots
+        WHERE slot_number = ${slotNumber}
+        LIMIT 1;`
+    );
+    if (!lockedSlot || JSON.stringify(lockedSlot) !== JSON.stringify(slot)) {
+      throw new Error('tenant_slot_changed_while_waiting_for_reset_lock');
+    }
+    const lockedCoreObjects = await listUserSchemaObjects(coreLock.name);
+    const lockedPiiObjects = await listUserSchemaObjects(piiLock.name);
+    if (
+      JSON.stringify(lockedCoreObjects) !== JSON.stringify(coreObjects) ||
+      JSON.stringify(lockedPiiObjects) !== JSON.stringify(piiObjects)
+    ) {
+      throw new Error('tenant_slot_schema_changed_while_waiting_for_reset_lock');
+    }
+    coreObjects = lockedCoreObjects;
+    piiObjects = lockedPiiObjects;
+    const lockedRelease = loadInstalledReleaseMigrationManifest({
+      migrationsRoot: migrationsRoot.path,
+      productVersion: targetProductVersion,
+      lock: lockedEnvironment.lock,
+    });
+    if (
+      calculateReleaseManifestChecksum(lockedRelease.manifest) !==
+      calculateReleaseManifestChecksum(release.manifest)
+    ) {
+      throw new Error('release_manifest_changed_while_waiting_for_tenant_slot_reset_lock');
+    }
     await executeSchemaReset(coreLock.name, coreObjects);
     await executeSchemaReset(piiLock.name, piiObjects);
 
     spinner.text = 'Running tenant D1 migrations...';
     const coreMigration = await runD1Migrations(
       coreLock.name,
-      migrationDirForRole(migrationsRoot.path, 'tenant_core')
+      migrationDirForRole(migrationsRoot.path, 'tenant_core'),
+      undefined,
+      {
+        manifestFiles: coreStream.files,
+        releaseVersion: targetProductVersion,
+        backfillLegacyChecksums: true,
+      }
     );
     if (!coreMigration.success) {
       throw new Error(`Core migration failed: ${coreMigration.error}`);
     }
     const piiMigration = await runD1Migrations(
       piiLock.name,
-      migrationDirForRole(migrationsRoot.path, 'tenant_pii')
+      migrationDirForRole(migrationsRoot.path, 'tenant_pii'),
+      undefined,
+      {
+        manifestFiles: piiStream.files,
+        releaseVersion: targetProductVersion,
+        backfillLegacyChecksums: true,
+      }
     );
     if (!piiMigration.success) {
       throw new Error(`PII migration failed: ${piiMigration.error}`);
@@ -341,11 +438,33 @@ export async function tenantDatabaseSlotResetCommand(
       throw new Error(`${message}; slot ${slot.slot_id} was retired and will not be reused`);
     }
 
+    const recordedLock = withRecordedReleaseSchemaTargets(lock, {
+      productVersion: targetProductVersion,
+      manifest: release.manifest,
+      targets: [
+        buildTenantD1ReleaseMigrationTarget({
+          binding: coreBinding.binding,
+          databaseId: coreLock.id,
+          databaseName: coreLock.name,
+          role: 'tenant_core',
+        }),
+        buildTenantD1ReleaseMigrationTarget({
+          binding: piiBinding.binding,
+          databaseId: piiLock.id,
+          databaseName: piiLock.name,
+          role: 'tenant_pii',
+        }),
+      ],
+    });
+    await saveLockFile(recordedLock, { path: lockPath });
+
     spinner.text = 'Marking slot available...';
     await executeD1Command(adminDbName, buildSlotCleanupSql(slot));
     spinner.succeed(`Tenant D1 slot ${slot.slot_id} reset and marked available.`);
   } catch (error) {
     spinner.fail('Tenant D1 slot reset failed.');
     throw error;
+  } finally {
+    await operationLock.release();
   }
 }

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -11,6 +11,7 @@ import {
   getEnvironmentsToMigrate,
   createBackup,
   migrateToNewStructure,
+  migrateToNewStructureLocked,
   validateMigration,
   getMigrationStatus,
 } from '../core/migrate.js';
@@ -20,6 +21,7 @@ import {
   LEGACY_KEYS_DIR,
   AUTHRIM_DIR,
 } from '../core/paths.js';
+import { acquireEnvironmentOperationForEnvironment } from '../core/lock.js';
 
 // =============================================================================
 // Test Helpers
@@ -96,6 +98,11 @@ function createLegacyStructure(baseDir: string, env: string = 'dev'): void {
     JSON.stringify({ kty: 'RSA', n: 'test', e: 'AQAB' })
   );
   writeFileSync(join(keysDir, 'admin_api_secret.txt'), 'secret-123');
+}
+
+function nameLegacyMetadataForEnvironment(baseDir: string, env: string): void {
+  renameSync(join(baseDir, LEGACY_CONFIG_FILE), join(baseDir, `authrim-${env}-config.json`));
+  renameSync(join(baseDir, LEGACY_LOCK_FILE), join(baseDir, `authrim-${env}-lock.json`));
 }
 
 function createNewStructure(baseDir: string, env: string = 'dev'): void {
@@ -199,6 +206,15 @@ describe('migrate.ts', () => {
       const envs = getEnvironmentsToMigrate(tempDir);
       expect(envs).toEqual([]);
     });
+
+    it('detects every environment-specific legacy config and lock pair', () => {
+      createLegacyStructure(tempDir, 'dev');
+      nameLegacyMetadataForEnvironment(tempDir, 'dev');
+      createLegacyStructure(tempDir, 'staging');
+      nameLegacyMetadataForEnvironment(tempDir, 'staging');
+
+      expect(getEnvironmentsToMigrate(tempDir)).toEqual(['dev', 'staging']);
+    });
   });
 
   describe('createBackup', () => {
@@ -220,6 +236,17 @@ describe('migrate.ts', () => {
 
       expect(result.success).toBe(true);
       expect(result.files).toEqual([]);
+    });
+
+    it('backs up environment-specific metadata files', async () => {
+      createLegacyStructure(tempDir, 'prod');
+      nameLegacyMetadataForEnvironment(tempDir, 'prod');
+
+      const result = await createBackup(tempDir);
+
+      expect(result.success).toBe(true);
+      expect(existsSync(join(result.backupPath, 'authrim-prod-config.json'))).toBe(true);
+      expect(existsSync(join(result.backupPath, 'authrim-prod-lock.json'))).toBe(true);
     });
   });
 
@@ -248,6 +275,103 @@ describe('migrate.ts', () => {
       expect(existsSync(newKeysDir)).toBe(true);
       expect(existsSync(join(newKeysDir, 'private.pem'))).toBe(true);
     }, 30000);
+
+    it('resumes an environment-specific migration beside an existing new environment', async () => {
+      createNewStructure(tempDir, 'dev');
+      createLegacyStructure(tempDir, 'staging');
+      nameLegacyMetadataForEnvironment(tempDir, 'staging');
+
+      const result = await migrateToNewStructure({
+        baseDir: tempDir,
+        env: 'staging',
+        noBackup: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.migratedEnvs).toEqual(['staging']);
+      expect(existsSync(join(tempDir, AUTHRIM_DIR, 'dev', 'config.json'))).toBe(true);
+      expect(existsSync(join(tempDir, AUTHRIM_DIR, 'staging', 'config.json'))).toBe(true);
+    });
+
+    it('preserves unknown config and lock metadata during a structure-only migration', async () => {
+      createLegacyStructure(tempDir, 'dev');
+      const configPath = join(tempDir, LEGACY_CONFIG_FILE);
+      const lockPath = join(tempDir, LEGACY_LOCK_FILE);
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      config.futureSection = { enabled: true };
+      config.keys.futureKeyMetadata = 'keep-config-metadata';
+      writeFileSync(configPath, JSON.stringify(config, null, 2));
+      const lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      lock.futureReleaseEvidence = { format: 2 };
+      writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+
+      const result = await migrateToNewStructure({ baseDir: tempDir, noBackup: true });
+
+      expect(result.success).toBe(true);
+      const migratedConfig = JSON.parse(
+        readFileSync(join(tempDir, AUTHRIM_DIR, 'dev', 'config.json'), 'utf-8')
+      );
+      const migratedLock = JSON.parse(
+        readFileSync(join(tempDir, AUTHRIM_DIR, 'dev', 'lock.json'), 'utf-8')
+      );
+      expect(migratedConfig.futureSection).toEqual({ enabled: true });
+      expect(migratedConfig.keys.futureKeyMetadata).toBe('keep-config-metadata');
+      expect(migratedConfig.keys.secretsPath).toBe('./keys/');
+      expect(migratedLock.futureReleaseEvidence).toEqual({ format: 2 });
+    });
+
+    it('uses the shared operation lock when structural migration is invoked outside the CLI command', async () => {
+      createLegacyStructure(tempDir, 'dev');
+      const held = await acquireEnvironmentOperationForEnvironment({
+        baseDir: tempDir,
+        env: 'dev',
+        operation: 'held-by-update',
+      });
+      try {
+        await expect(
+          migrateToNewStructureLocked({ baseDir: tempDir, env: 'dev', noBackup: true })
+        ).rejects.toThrow('environment_operation_in_progress:held-by-update');
+      } finally {
+        await held.release();
+      }
+      expect(existsSync(join(tempDir, AUTHRIM_DIR, 'dev', 'config.json'))).toBe(false);
+    });
+
+    it('rejects a filename whose embedded environment does not match', async () => {
+      createLegacyStructure(tempDir, 'staging');
+      nameLegacyMetadataForEnvironment(tempDir, 'prod');
+
+      const result = await migrateToNewStructure({
+        baseDir: tempDir,
+        env: 'prod',
+        noBackup: true,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors.join('\n')).toContain('did not match');
+      expect(existsSync(join(tempDir, AUTHRIM_DIR, 'prod', 'config.json'))).toBe(false);
+    });
+
+    it('deletes only the successfully migrated environment legacy files and keys', async () => {
+      createLegacyStructure(tempDir, 'dev');
+      nameLegacyMetadataForEnvironment(tempDir, 'dev');
+      createLegacyStructure(tempDir, 'staging');
+      nameLegacyMetadataForEnvironment(tempDir, 'staging');
+
+      const result = await migrateToNewStructure({
+        baseDir: tempDir,
+        env: 'dev',
+        noBackup: true,
+        deleteLegacy: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(existsSync(join(tempDir, 'authrim-dev-config.json'))).toBe(false);
+      expect(existsSync(join(tempDir, LEGACY_KEYS_DIR, 'dev'))).toBe(false);
+      expect(existsSync(join(tempDir, 'authrim-staging-config.json'))).toBe(true);
+      expect(existsSync(join(tempDir, 'authrim-staging-lock.json'))).toBe(true);
+      expect(existsSync(join(tempDir, LEGACY_KEYS_DIR, 'staging'))).toBe(true);
+    });
 
     it('should create backup by default', async () => {
       createLegacyStructure(tempDir, 'dev');

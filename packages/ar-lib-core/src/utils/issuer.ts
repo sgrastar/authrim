@@ -26,6 +26,29 @@ import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
+export const TENANT_EXISTS_CACHE_TTL_SECONDS = 60 * 60;
+
+export function getTenantExistsCacheKey(tenantId: string): string {
+  return `v1:tenant-exists:${tenantId}`;
+}
+
+export async function putTenantExistsCache(
+  kv: KVNamespace | undefined,
+  tenantId: string,
+  ttlSeconds: number = TENANT_EXISTS_CACHE_TTL_SECONDS
+): Promise<void> {
+  await kv?.put(getTenantExistsCacheKey(tenantId), 'true', { expirationTtl: ttlSeconds }).catch(
+    () => {}
+  );
+}
+
+export async function deleteTenantExistsCache(
+  kv: KVNamespace | undefined,
+  tenantId: string
+): Promise<void> {
+  await kv?.delete(getTenantExistsCacheKey(tenantId)).catch(() => {});
+}
+
 export interface IssuerEnvLike {
   ISSUER_URL?: string;
   BASE_DOMAIN?: string;
@@ -38,7 +61,7 @@ export interface IssuerEnvLike {
 /**
  * Validate that a tenant exists and is runtime-active using D1 + KV positive cache.
  *
- * - Positive cache TTL: 300s (negative results are NOT cached to allow immediate
+ * - Positive cache TTL: 1 hour (negative results are NOT cached to allow immediate
  *   recognition after tenant creation)
  * - DB absence/error → fail-closed unless a positive cache entry already proved the tenant active
  *
@@ -52,7 +75,7 @@ export async function validateTenantExistsAsync(
   kv: KVNamespace | undefined,
   tenantId: string
 ): Promise<boolean> {
-  const cacheKey = `v1:tenant-exists:${tenantId}`;
+  const cacheKey = getTenantExistsCacheKey(tenantId);
 
   // Check KV positive cache first
   if (kv) {
@@ -80,7 +103,7 @@ export async function validateTenantExistsAsync(
 
     // Write positive cache only (never cache negative to ensure immediate visibility)
     if (kv) {
-      await kv.put(cacheKey, 'true', { expirationTtl: 300 }).catch(() => {});
+      await putTenantExistsCache(kv, tenantId);
     }
     return true;
   } catch {

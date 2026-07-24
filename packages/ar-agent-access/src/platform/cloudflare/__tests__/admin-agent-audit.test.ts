@@ -17,6 +17,8 @@ describe('CloudflareAdminAgentAuditAdapter', () => {
         actorAssurance: 'public_client_transaction',
         tokenBinding: 'bearer',
         clientId: 'client-1',
+        // The MCP Tool path previously materialized the optional Mode A field as `undefined`.
+        principalId: undefined,
         delegatorId: 'admin-1',
         grantId: 'grant-1',
       },
@@ -36,6 +38,10 @@ describe('CloudflareAdminAgentAuditAdapter', () => {
         mcpTool: 'authrim.admin.users.list.v1',
         requestId: 'request-1',
         result: 'success',
+        metadata: expect.objectContaining({
+          event_digest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+          integrity_profile: 'authrim-agent-audit-event-v1',
+        }),
       })
     );
   });

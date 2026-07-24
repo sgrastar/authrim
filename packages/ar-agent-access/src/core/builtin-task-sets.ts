@@ -17,18 +17,23 @@ export interface BuiltinAgentTaskSetPreset {
   id: string;
   name: BuiltinAgentTaskSetName;
   description: string;
-  version: 4;
-  catalogVersion: 'admin-agent-access-v5';
+  version: 8;
+  catalogVersion: 'admin-agent-access-v9';
   expectedDigest: string;
   toolIds: readonly string[];
 }
 
+const DISCOVERY_CONTROL_TOOLS = ['admin.session.discovery-profiles.select'] as const;
+
 const GENERAL_READ_TOOLS = [
+  ...DISCOVERY_CONTROL_TOOLS,
   'admin.read.runtime.diagnostics',
   'admin.read.clients.list',
   'admin.read.clients.get',
   'admin.read.audit.search',
   'admin.read.agent-settings.get',
+  'admin.read.agent-grants.list',
+  'admin.read.agent-access.explain',
   'admin.read.identity-providers.inspect',
   'admin.read.authorization.organizations',
   'admin.read.authorization.roles',
@@ -50,7 +55,11 @@ const GENERAL_READ_TOOLS = [
   'admin.read.clients.profile-validate',
 ] as const;
 
-const USER_DATA_READ_TOOLS = ['admin.read.users.search', 'admin.read.users.get'] as const;
+const USER_DATA_READ_TOOLS = [
+  ...DISCOVERY_CONTROL_TOOLS,
+  'admin.read.users.search',
+  'admin.read.users.get',
+] as const;
 
 const CONFIGURATION_READ_TOOLS = [
   'admin.read.configuration.capabilities',
@@ -87,8 +96,8 @@ function preset(
     id: `builtin_agent_task_set_${name}`,
     name,
     description,
-    version: 4 as const,
-    catalogVersion: 'admin-agent-access-v5' as const,
+    version: 8 as const,
+    catalogVersion: 'admin-agent-access-v9' as const,
     expectedDigest,
     toolIds: Object.freeze([...new Set(toolIds)]),
   });
@@ -99,25 +108,25 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
     'read_only_inspector',
     'Inspect clients, identity configuration, authorization, protocol security, sessions, integrations, audit, and Agent Access configuration without user data.',
     GENERAL_READ_TOOLS,
-    '_e6Y6YcUQviBgNcpT1ppMCfCNvQyQl45DGcpemKLX7I'
+    'u49bs50zVMDoRNR_D2zRJ9OWBb_HEReUTdViarG08Uc'
   ),
   preset(
     'user_data_reader',
     'Search and inspect masked tenant user data. Assign only when the MCP host and model data policy are approved.',
     USER_DATA_READ_TOOLS,
-    'onKFOlvthyskYe6Crii2rqGC_S8dtxa2J7F_h1ssO7k'
+    'JET784ODvcv_ZBZO7Yfb59-NqSslyqqgEbfHiTCyoSo'
   ),
   preset(
     'diagnostics_operator',
     'Inspect tenant state and configuration Plan evidence for diagnosis and verification.',
     [...GENERAL_READ_TOOLS, ...CONFIGURATION_READ_TOOLS],
-    'Ij3ISoppD4aP8M1PK0VoI4U2ViMXhwCUk8q8XRVipi8'
+    'L5PMVYmQNcv1TvqUgMY7P75Pvs02tq4Kze1zHrZL4Zc'
   ),
   preset(
     'configuration_designer',
     'Inspect configuration and create, validate, review, and verify immutable Plans without apply.',
     [...GENERAL_READ_TOOLS, ...CONFIGURATION_READ_TOOLS, ...CONFIGURATION_DESIGN_TOOLS],
-    '8yAjD04TtXK-8yxYvb5hbgUKrUapSbd3b9KqxZmKP8k'
+    'JQ_DD8EaPb2bV_KvOd0BM1wrQRH7Pe6RckXIf0321YQ'
   ),
   preset(
     'configuration_operator',
@@ -128,7 +137,7 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
       ...CONFIGURATION_DESIGN_TOOLS,
       ...CONFIGURATION_APPLY_TOOLS,
     ],
-    '02Rg4I8B6DhjhRDOgDr9NTESVDIQY7NC9jT3GG5WKSE'
+    'IKzJzvGZY056MZMpHd3RloaZH4joF49ANVoDHntY-P4'
   ),
   preset(
     'bulk_configuration_operator',
@@ -140,7 +149,7 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
       ...CONFIGURATION_APPLY_TOOLS,
       ...BULK_TOOLS,
     ],
-    'w1IpPDBANiGKKbpd_a2_-yv3GZ1XBpnuk0N3hYDRCug'
+    'SOMb-b3fNef_nyGvvt4FHn-z0XBTsaj9hZw42UNNC1U'
   ),
 ]);
 

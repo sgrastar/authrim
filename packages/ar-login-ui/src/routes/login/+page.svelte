@@ -3,6 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import { normalizeLoginUILocale } from '$lib/i18n/locales';
 	import {
 		passkeyAPI,
 		emailCodeAPI,
@@ -45,12 +46,6 @@
 		type RuntimeAuthMethod
 	} from '$lib/authrim/runtime-auth-handles';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
-	import {
-		buildRuntimeConsentDecisionPayload,
-		canSubmitRuntimeConsentPolicy,
-		formatRuntimeConsentAcceptedLabel,
-		initializeRuntimeConsentDecisions
-	} from '$lib/consent/runtime-consent-state';
 	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
@@ -123,7 +118,7 @@
 			totpEnabled: data.methods.totp.loginEnabled ?? data.methods.totp.enabled,
 			totpDigits: normalizeSixOrEightDigits(data.methods.totp.digits),
 			directoryPasswordEnabled: data.methods.directoryPassword.enabled,
-			directoryPasswordLabel: data.methods.directoryPassword.label || 'Organization ID',
+			directoryPasswordLabel: data.methods.directoryPassword.label || $LL.login_organizationId(),
 			externalEnabled: data.methods.external.enabled && externalProviders.length > 0,
 			externalProviders,
 			turnstileSiteKey: turnstileRequired ? data.methods.humanVerification.siteKey : null,
@@ -241,7 +236,7 @@
 		authenticationMethodsState?.directoryPasswordEnabled ?? false
 	);
 	const directoryPasswordLabel = $derived(
-		authenticationMethodsState?.directoryPasswordLabel ?? 'Organization ID'
+		authenticationMethodsState?.directoryPasswordLabel ?? $LL.login_organizationId()
 	);
 	const externalEnabled = $derived(authenticationMethodsState?.externalEnabled ?? false);
 	const externalProviders = $derived(authenticationMethodsState?.externalProviders ?? []);
@@ -263,16 +258,18 @@
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
 		const key =
 			runtimeFlowStep?.id && policy
-				? `${runtimeFlowStep.id}:${policy.items
-						.map(
-							(item) =>
-								`${item.statement_id}:${item.version}:${item.acceptance_status ?? 'pending'}`
-						)
-						.join(',')}`
+				? `${runtimeFlowStep.id}:${policy.items.map((item) => item.statement_id).join(',')}`
 				: '';
 		if (key === runtimeConsentDecisionKey) return;
 		runtimeConsentDecisionKey = key;
-		runtimeConsentDecisions = initializeRuntimeConsentDecisions(policy);
+		runtimeConsentDecisions = policy
+			? Object.fromEntries(
+					policy.items.map((item) => [
+						item.statement_id,
+						item.checkbox_mode === 'none' || item.checkbox_default_checked
+					])
+				)
+			: {};
 		runtimeConsentSelectedValues = {};
 	});
 
@@ -384,6 +381,16 @@
 	const runtimeInitialLoading = $derived(
 		runtimeFlowLoading && !runtimeFlow && !runtimeFlowStep && !runtimeFlowError
 	);
+	let entryMotionEnabled = $state(true);
+
+	$effect(() => {
+		if (methodsLoading || runtimeInitialLoading) return;
+
+		const timeout = window.setTimeout(() => {
+			entryMotionEnabled = false;
+		}, 1600);
+		return () => window.clearTimeout(timeout);
+	});
 	const runtimeAuthFormMissing = $derived(
 		Boolean(
 			runtimeFlowStep &&
@@ -487,10 +494,9 @@
 			if (errorInfo) {
 				externalIdpError = errorInfo;
 			} else {
-				const errorDescription = $page.url.searchParams.get('error_description');
 				externalIdpError = {
 					title: $LL.login_extError_default_title(),
-					message: errorDescription || $LL.login_extError_default_message()
+					message: $LL.login_extError_default_message()
 				};
 			}
 			const newUrl = new URL(window.location.href);
@@ -533,6 +539,15 @@
 		stopMailOtpResendTimer();
 	});
 
+	onMount(() => {
+		const handleLocaleChange = (event: Event) => {
+			const locale = (event as CustomEvent<{ locale?: string }>).detail?.locale;
+			if (locale) void refreshRuntimeLocale(locale);
+		};
+		window.addEventListener('authrim:locale-change', handleLocaleChange);
+		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);
+	});
+
 	// ---------------------------------------------------------------------------
 	// Data fetchers
 	// ---------------------------------------------------------------------------
@@ -554,7 +569,7 @@
 				fetchedAuthenticationMethodsState = resolveAuthenticationMethodsViewState(data);
 			}
 		} catch {
-			methodsError = 'Failed to load authentication methods';
+			methodsError = $LL.login_methodsLoadFailed();
 		} finally {
 			clientMethodsLoading = false;
 			clientMethodsLoadAttempted = true;
@@ -722,7 +737,7 @@
 					signature: storedRuntime.signature
 				});
 				if (apiError) {
-					failRuntimeStart(apiError.error_description || apiError.error, {
+					failRuntimeStart(getApiErrorMessage(apiError), {
 						blockAuthorizationChallenge: isAuthorizationChallengeRuntimeError(apiError)
 					});
 					return;
@@ -758,7 +773,7 @@
 				...getRuntimeTarget()
 			});
 			if (apiError) {
-				failRuntimeStart(apiError.error_description || apiError.error, {
+				failRuntimeStart(getApiErrorMessage(apiError), {
 					blockAuthorizationChallenge: isAuthorizationChallengeRuntimeError(apiError)
 				});
 				return;
@@ -784,6 +799,23 @@
 		}
 	}
 
+	async function refreshRuntimeLocale(locale: string) {
+		const flow = runtimeFlow;
+		if (!flow || flow.interaction.state === 'completed') return;
+		const normalizedLocale = normalizeLoginUILocale(locale);
+		if (!normalizedLocale) return;
+		const { data } = await flowRuntimeAPI.start({
+			resume_interaction_id: flow.interaction.id,
+			contract_hash: flow.contract_hash,
+			signature: flow.signature,
+			locale: normalizedLocale
+		});
+		if (!data) return;
+		runtimeFlow = data;
+		runtimeFlowStep = getRuntimeCurrentStep(data);
+		persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect });
+	}
+
 	async function submitRuntimeStep(selectedHandle?: string, input?: unknown): Promise<boolean> {
 		const flow = runtimeFlow;
 		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
@@ -800,19 +832,7 @@
 			input
 		});
 		if (apiError) {
-			runtimeFlowError = apiError.error_description || apiError.error;
-			if (apiError.error === 'consent_state_changed') {
-				const { data: refreshed } = await flowRuntimeAPI.start({
-					resume_interaction_id: flow.interaction.id,
-					contract_hash: flow.contract_hash,
-					signature: flow.signature
-				});
-				if (refreshed) {
-					runtimeFlow = refreshed;
-					runtimeFlowStep = getRuntimeCurrentStep(refreshed);
-					persistFlowRuntimeState(refreshed, { postAuthRedirect: pendingPostAuthRedirect });
-				}
-			}
+			runtimeFlowError = getApiErrorMessage(apiError);
 			return false;
 		}
 		if (!data) return false;
@@ -1094,8 +1114,6 @@
 					saml_sp_entity_id: spEntityId,
 					return_to: 'saml_sso'
 				});
-				const receiptId = readRuntimeContinuationString(continuation, 'consent_gate_receipt_id');
-				if (receiptId) params.set('consent_gate_receipt_id', receiptId);
 				return `/saml/idp/sso?${params.toString()}`;
 			}
 		}
@@ -1106,16 +1124,13 @@
 	}
 
 	function getPasskeyProgressMessage(phase: PasskeyProgressPhase): string {
-		const isJapanese = getLocale() === 'ja';
 		switch (phase) {
 			case 'preparing':
-				return isJapanese ? 'Passkey認証を準備しています。' : 'Preparing passkey authentication.';
+				return $LL.login_passkeyPreparing();
 			case 'waiting':
-				return isJapanese
-					? 'ブラウザまたは端末のPasskey確認を完了してください。'
-					: 'Complete the passkey prompt in your browser or on your device.';
+				return $LL.login_passkeyPrompt();
 			case 'finishing':
-				return isJapanese ? '認証結果を確認しています。' : 'Verifying the authentication result.';
+				return $LL.login_passkeyVerifying();
 			default:
 				return '';
 		}
@@ -1139,7 +1154,7 @@
 				throw new Error(getApiErrorMessage(optionsError));
 			}
 			if (!optionsData?.options) {
-				throw new Error('Invalid response from server: missing options');
+				throw new Error($LL.error_server_error());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
@@ -1171,8 +1186,7 @@
 			if (!continueRedirect) return;
 			window.location.href = await buildCompletedAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
-			error =
-				err instanceof Error ? err.message : 'An error occurred during passkey authentication';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			passkeyLoading = false;
 			passkeyProgress = 'idle';
@@ -1283,8 +1297,7 @@
 			}
 			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {
-			error =
-				err instanceof Error ? err.message : 'An error occurred while sending verification code';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			emailCodeLoading = false;
 		}
@@ -1496,7 +1509,7 @@
 									: undefined
 							}
 						: null;
-				directoryMigrationNotice = 'Passkey registration is required before completing this login.';
+				directoryMigrationNotice = $LL.login_directoryMigrationPasskeyRequired();
 				return;
 			}
 			if (data && 'recovery' in data && data.recovery?.required) {
@@ -1509,8 +1522,7 @@
 					transactionToken: data.recovery.transaction_token,
 					maskedEmail: data.recovery.masked_email
 				};
-				directoryMigrationNotice =
-					'Directory is temporarily unavailable. Use Email Code recovery to continue.';
+				directoryMigrationNotice = $LL.login_directoryRecoveryRequired();
 				return;
 			}
 
@@ -1550,7 +1562,7 @@
 				transactionToken: directoryMigrationTransaction.transactionToken,
 				challengeId: optionsData.challenge_id,
 				credential,
-				deviceName: 'Directory Migration Passkey'
+				deviceName: $LL.login_directoryMigrationPasskeyName()
 			});
 			if (verifyError || !data) {
 				throw new Error(verifyError ? getApiErrorMessage(verifyError) : $LL.error_unknown());
@@ -1563,7 +1575,7 @@
 			const redirectUrl = 'redirect_url' in data ? data.redirect_url : undefined;
 			window.location.href = await buildPostAuthRedirect(redirectUrl);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Passkey registration failed';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			directoryMigrationPasskeyLoading = false;
 		}
@@ -1584,9 +1596,11 @@
 			}
 			directoryMigrationEmailChallengeId = data.challenge_id;
 			directoryMigrationEmailCode = '';
-			directoryMigrationNotice = `Verification code sent to ${data.masked_email}.`;
+			directoryMigrationNotice = $LL.login_directoryVerificationCodeSent({
+				email: data.masked_email
+			});
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to send verification code';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			directoryMigrationEmailLoading = false;
 		}
@@ -1682,7 +1696,7 @@
 			);
 
 			if (!isValidRedirectUrl(url)) {
-				throw new Error('Invalid redirect URL from identity provider');
+				throw new Error($LL.error_invalid_request());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
@@ -1696,7 +1710,7 @@
 			// Redirect to external IdP
 			window.location.href = url;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to start external login';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 			externalIdpLoading = null;
 		}
 	}
@@ -1748,11 +1762,26 @@
 
 	function getRuntimeConsentItemDecisionPayload() {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		return buildRuntimeConsentDecisionPayload(
-			policy,
-			runtimeConsentDecisions,
-			runtimeConsentSelectedValues
-		);
+		if (!policy) return { consent_item_decisions: {} };
+		return {
+			consent_item_decisions: Object.fromEntries(
+				policy.items.map((item) => [
+					item.statement_id,
+					item.content_mode === 'radio'
+						? runtimeConsentSelectedValues[item.statement_id]
+							? 'selected'
+							: 'denied'
+						: item.checkbox_mode === 'none' || runtimeConsentDecisions[item.statement_id]
+							? 'granted'
+							: 'denied'
+				])
+			),
+			consent_item_selected_values: Object.fromEntries(
+				policy.items
+					.filter((item) => item.content_mode === 'radio')
+					.map((item) => [item.statement_id, runtimeConsentSelectedValues[item.statement_id] || ''])
+			)
+		};
 	}
 
 	function getRuntimeStepSubmitInputForAuthenticatedAction() {
@@ -1780,15 +1809,15 @@
 
 	function canSubmitRuntimeConsent(): boolean {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		return canSubmitRuntimeConsentPolicy(
-			policy,
-			runtimeConsentDecisions,
-			runtimeConsentSelectedValues
+		if (!policy) return true;
+		return policy.items.every(
+			(item) =>
+				!item.is_required ||
+				(item.content_mode === 'radio' &&
+					Boolean(runtimeConsentSelectedValues[item.statement_id])) ||
+				item.checkbox_mode === 'none' ||
+				runtimeConsentDecisions[item.statement_id] === true
 		);
-	}
-
-	function runtimeConsentAcceptedLabel(acceptedAt: number | null | undefined): string {
-		return formatRuntimeConsentAcceptedLabel(acceptedAt, getLocale());
 	}
 
 	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
@@ -1921,13 +1950,14 @@
 
 <svelte:head>
 	<title>{$LL.login_title()} - {brandingStore.brandName || $LL.app_title()}</title>
-	<meta
-		name="description"
-		content="Sign in to your account using passkey or email code authentication."
-	/>
+	<meta name="description" content={$LL.login_metaDescription()} />
 </svelte:head>
 
-<div class="auth-page">
+<div
+	class="auth-page"
+	class:auth-page--entry-motion={entryMotionEnabled}
+	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
+>
 	<div class="auth-main">
 		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card'}
 			<LanguageSwitcher
@@ -1968,7 +1998,7 @@
 					{#if showBrandLogo && brandingStore.logoUrl}
 						<img
 							src={brandingStore.logoUrl}
-							alt={brandingStore.brandName || 'Logo'}
+							alt={brandingStore.brandName || $LL.common_logoAlt()}
 							class="auth-header__logo"
 							onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
 						/>
@@ -2067,15 +2097,10 @@
 
 			<!-- Loading State -->
 			{#if methodsLoading || runtimeInitialLoading}
-				<Card class="mb-6">
-					<div class="flex flex-col items-center justify-center py-8 gap-3">
-						<div
-							class="h-8 w-8 border-3 rounded-full animate-spin"
-							style="border-color: var(--border); border-top-color: var(--primary);"
-						></div>
-						<p style="color: var(--text-muted); font-size: 0.875rem;">{$LL.common_loading()}</p>
-					</div>
-				</Card>
+				<div class="auth-initial-loading" role="status">
+					<span class="auth-initial-loading__spinner" aria-hidden="true"></span>
+					<span class="sr-only">{$LL.common_loading()}</span>
+				</div>
 			{:else if methodsError}
 				<!-- Methods Error -->
 				<Card class="mb-6">
@@ -2085,7 +2110,7 @@
 				</Card>
 			{:else}
 				<!-- Login Card -->
-				<form onsubmit={handleEmailVerificationProtocolSubmit}>
+				<form class="auth-entry-form" onsubmit={handleEmailVerificationProtocolSubmit}>
 					{#if emailVerificationChallenge?.nonce}
 						<input
 							type="hidden"
@@ -2146,9 +2171,7 @@
 
 						{#if runtimeAuthFormMissing}
 							<Alert variant="error" class="mb-4">
-								{getLocale() === 'ja'
-									? 'このFlowノードにスクリーンが設定されていません。管理者に問い合わせてください。'
-									: 'This Flow node does not have a screen. Contact your administrator.'}
+								{$LL.runtime_screenUnavailable()}
 							</Alert>
 						{/if}
 
@@ -2226,29 +2249,7 @@
 												<div class="space-y-3">
 													{#each consentPolicy.items as item (item.statement_id)}
 														<div class="runtime-consent-item">
-															{#if item.acceptance_status === 'accepted'}
-																<label
-																	class="runtime-consent-choice runtime-consent-choice--accepted"
-																>
-																	<input
-																		type="checkbox"
-																		checked
-																		disabled
-																		aria-describedby={`runtime-consent-accepted-${item.statement_id}`}
-																	/>
-																	<SanitizedHtml
-																		class="runtime-consent-content"
-																		sanitizedHtml={getRuntimeConsentItemHtml(item)}
-																	/>
-																</label>
-																<p
-																	id={`runtime-consent-accepted-${item.statement_id}`}
-																	class="runtime-consent-accepted"
-																	role="status"
-																>
-																	{runtimeConsentAcceptedLabel(item.accepted_at)}
-																</p>
-															{:else if item.content_mode === 'radio' && item.options?.length}
+															{#if item.content_mode === 'radio' && item.options?.length}
 																<fieldset class="runtime-consent-options">
 																	<legend class="sr-only">{item.title}</legend>
 																	{#each item.options as option (option.id)}
@@ -2367,7 +2368,7 @@
 											onclick={handleDirectoryMigrationPasskeyRegistration}
 										>
 											<div class="i-heroicons-key h-5 w-5"></div>
-											Register Passkey and Continue
+											{$LL.register_createWithPasskey()}
 										</Button>
 									{/if}
 									{#if directoryMigrationTransaction?.emailFallback || directoryRecoveryTransaction}
@@ -2385,7 +2386,7 @@
 												onclick={handleDirectoryMigrationEmailCodeSend}
 											>
 												<div class="i-heroicons-envelope h-5 w-5"></div>
-												Continue with Email Code
+												{$LL.login_sendCode()}
 											</Button>
 											{#if directoryMigrationEmailChallengeId}
 												<div class="space-y-2">
@@ -2394,7 +2395,7 @@
 														inputmode="numeric"
 														autocomplete="one-time-code"
 														maxlength={6}
-														placeholder="Verification code"
+														placeholder={$LL.account_reauthEmailCodePlaceholder()}
 														bind:value={directoryMigrationEmailCode}
 														class="input w-full"
 													/>
@@ -2411,7 +2412,7 @@
 														onclick={handleDirectoryMigrationEmailCodeVerify}
 													>
 														<div class="i-heroicons-check h-5 w-5"></div>
-														Verify Code and Continue
+														{$LL.emailCode_verifyButton()}
 													</Button>
 												</div>
 											{/if}
@@ -2643,7 +2644,7 @@
 								<div class="auth-divider__line"></div>
 							</div>
 
-							<div class="space-y-3">
+							<div class="auth-provider-stack space-y-3">
 								{#each visibleExternalProviders as provider (provider.id)}
 									{@const safeColor =
 										isDarkMode && provider.buttonColorDark
@@ -2709,7 +2710,7 @@
 				<p>{loginUIPageStore.footerText}</p>
 			{/if}
 			{#if loginUIPageStore.footerLinks.length > 0}
-				<nav class="auth-footer__links" aria-label="Footer links">
+				<nav class="auth-footer__links" aria-label={$LL.common_footerLinks()}>
 					{#each loginUIPageStore.footerLinks as link (link.url)}
 						<a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
 					{/each}
@@ -2742,6 +2743,22 @@
 		flex: 0 0 16px;
 		border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
 		border-top-color: currentColor;
+		border-radius: 999px;
+		animation: auth-progress-spin 0.8s linear infinite;
+	}
+
+	.auth-initial-loading {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		min-height: 190px;
+	}
+
+	.auth-initial-loading__spinner {
+		width: 30px;
+		height: 30px;
+		border: 3px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+		border-top-color: var(--accent-color, var(--primary));
 		border-radius: 999px;
 		animation: auth-progress-spin 0.8s linear infinite;
 	}
@@ -2780,17 +2797,6 @@
 	.runtime-consent-choice input {
 		margin-top: 3px;
 		flex: 0 0 auto;
-	}
-
-	.runtime-consent-choice--accepted {
-		opacity: 0.82;
-	}
-
-	.runtime-consent-accepted {
-		margin: 0 0 0 1.625rem;
-		color: var(--text-secondary, var(--text-muted));
-		font-size: 0.8rem;
-		font-weight: 600;
 	}
 
 	.runtime-consent-content {

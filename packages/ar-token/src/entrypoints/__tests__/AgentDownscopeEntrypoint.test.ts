@@ -21,6 +21,7 @@ const grant: AgentGrantContract = {
   generation: 3,
   status: 'active',
   delegationMode: 'user_consent',
+  expiresAt: 1_000,
   taskSetId: 'ats-read-only',
   taskSetVersion: 1,
   scopePolicyId: 'asp-tenant-1',
@@ -160,6 +161,20 @@ describe('AgentDownscopeEntrypoint', () => {
     expect(deps.signToken).not.toHaveBeenCalled();
   });
 
+  it('rejects an active Grant without a recertification deadline', async () => {
+    const deps = dependencies({
+      createRepository: () => ({
+        getGrant: vi.fn().mockResolvedValue({ ...grant, expiresAt: undefined }),
+        getActiveDelegatorPermissions: vi.fn().mockResolvedValue(['admin:*']),
+        hasCurrentConsent: vi.fn().mockResolvedValue(true),
+      }),
+    });
+    await expect(exchangeAgentAccessToken(env, input, deps)).rejects.toThrow(
+      'authorization_changed'
+    );
+    expect(deps.signToken).not.toHaveBeenCalled();
+  });
+
   it('rechecks a Mode A linked principal without changing the client actor claim', async () => {
     const limit = vi.fn().mockResolvedValue(['admin:users:read']);
     const deps = dependencies({
@@ -200,6 +215,7 @@ describe('AgentDownscopeEntrypoint', () => {
     const modeBGrant: AgentGrantContract = {
       ...grant,
       delegationMode: 'admin_pre_authorized',
+      expiresAt: 2_000,
       machinePrincipalId: 'amp-1',
     };
     const deps = dependencies({
@@ -344,6 +360,7 @@ describe('AgentDownscopeEntrypoint', () => {
       clientId: 'client-agent',
       machinePrincipalId: 'principal-1',
       delegationMode: 'admin_pre_authorized',
+      expiresAt: 2_000,
       permissions: [ADMIN_PERMISSIONS.BULK_PLANS_APPLY, ADMIN_PERMISSIONS.CLIENTS_WRITE],
       scopes: ['agent:read', 'agent:write'],
       resolvedScopeConstraints: { tenantIds: ['platform', 'tenant-1'] },
@@ -357,7 +374,7 @@ describe('AgentDownscopeEntrypoint', () => {
           toolId: 'admin.write.clients.metadata',
           toolName: 'update_client_metadata',
           contractVersion: '1',
-          schemaDigest: 'sha256:855fae1148b9949986c9cad7e1f63bc17e14ae20beb5128437f35d90c6d811c5',
+          schemaDigest: 'sha256:e506bc18b22e8552baf0df310c16d215730f532817e58debfcd7b53fc5324cbb',
           permissions: [ADMIN_PERMISSIONS.CLIENTS_WRITE],
           requiredScope: 'agent:write',
           riskLevel: 'standard',
@@ -488,7 +505,7 @@ describe('AgentDownscopeEntrypoint', () => {
           toolId: 'admin.write.login-ui.update',
           toolName: 'update_login_ui_branding',
           contractVersion: '1',
-          schemaDigest: 'sha256:2597c9387616264fe4dc7df2a9c80fa2de14d05a92cb8fe1edb9715123318675',
+          schemaDigest: 'sha256:e06411b389025a45c7a9e07ff398a8c98ff3c7e43d641385e089b6481e27817d',
           permissions: [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE],
           requiredScope: 'agent:write',
           riskLevel: 'standard',

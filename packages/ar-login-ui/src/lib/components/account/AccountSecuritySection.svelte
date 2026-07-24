@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Card, Input } from '$lib/components';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { isTotpDeleteProofReady } from '$lib/account/totp-proof';
 	import type {
 		AccountDevice,
@@ -23,6 +23,9 @@
 		reauthNeeded = false,
 		passkeySupported = false,
 		totpManagementEnabled = false,
+		areas = ['devices', 'sessions', 'passkeys', 'totp', 'social'],
+		title = '',
+		showSectionHeadings = true,
 		onRefresh,
 		onRevokeSession,
 		onAddPasskey,
@@ -51,6 +54,9 @@
 		reauthNeeded?: boolean;
 		passkeySupported?: boolean;
 		totpManagementEnabled?: boolean;
+		areas?: Array<'devices' | 'sessions' | 'passkeys' | 'totp' | 'social'>;
+		title?: string;
+		showSectionHeadings?: boolean;
 		onRefresh: () => void;
 		onRevokeSession: (id: string) => void;
 		onAddPasskey: (deviceName: string) => void;
@@ -62,6 +68,10 @@
 		onClearTotpEnrollment: () => void;
 		onReauth: () => void;
 	}>();
+
+	function shows(area: 'devices' | 'sessions' | 'passkeys' | 'totp' | 'social'): boolean {
+		return areas.includes(area);
+	}
 
 	let newPasskeyName = $state('');
 	let newTotpLabel = $state('');
@@ -127,7 +137,7 @@
 <Card>
 	<div class="account-panel">
 		<div class="panel-heading">
-			<h2>{$LL.account_securityTitle()}</h2>
+			<h2>{title || $LL.account_securityTitle()}</h2>
 			<Button variant="ghost" size="sm" {loading} onclick={onRefresh}>
 				{$LL.account_refresh()}
 			</Button>
@@ -140,118 +150,134 @@
 			{/if}
 		{/if}
 
-		<section class="security-block">
-			<h3>{$LL.account_devices()}</h3>
-			{#if devices.length === 0}
-				<p class="empty-text">{$LL.account_empty()}</p>
-			{:else}
-				<ul class="item-list">
-					{#each devices as device (device.id)}
-						<li>
-							<div>
-								<strong>
-									{device.display_name || device.fallback_display_name || device.id}
-									{#if device.current}
-										<span class="inline-tag">{$LL.account_currentDevice()}</span>
-									{/if}
-								</strong>
-								<span>{device.platform} / {formatTimestamp(device.last_seen_at_unix)}</span>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
-
-		<section class="security-block">
-			<h3>{$LL.account_sessions()}</h3>
-			{#if sessions.length === 0}
-				<p class="empty-text">{$LL.account_empty()}</p>
-			{:else}
-				<ul class="item-list">
-					{#each sessions as session (session.id)}
-						<li>
-							<div>
-								<strong>{session.current ? $LL.account_currentSession() : session.id}</strong>
-								<span>{formatTimestamp(session.created_at)}</span>
-							</div>
-							<Button
-								variant={session.current ? 'danger' : 'secondary'}
-								size="sm"
-								loading={actionLoading === `session:${session.id}`}
-								onclick={() => onRevokeSession(session.id)}
-							>
-								{session.current ? $LL.header_logout() : $LL.account_logoutSession()}
-							</Button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
-
-		<section class="security-block">
-			<h3>{$LL.account_passkeys()}</h3>
-			<form
-				class="add-passkey"
-				onsubmit={(event) => {
-					event.preventDefault();
-					addPasskey();
-				}}
-			>
-				<Input
-					label={$LL.account_passkeyName()}
-					bind:value={newPasskeyName}
-					disabled={!passkeySupported || actionLoading === 'passkey:add'}
-					maxlength={100}
-				/>
-				<Button
-					variant="primary"
-					type="submit"
-					loading={actionLoading === 'passkey:add'}
-					disabled={!passkeySupported}
-				>
-					{$LL.account_addPasskey()}
-				</Button>
-			</form>
-			{#if !passkeySupported}
-				<p class="muted">{$LL.account_passkeyUnsupported()}</p>
-			{/if}
-
-			{#if passkeys.length === 0}
-				<p class="empty-text">{$LL.account_empty()}</p>
-			{:else}
-				<ul class="item-list">
-					{#each passkeys as passkey (passkey.id)}
-						<li>
-							<div>
-								<strong>{passkey.device_name ?? passkey.id}</strong>
-								{#if passkey.provider?.name || passkey.aaguid}
-									<span class="passkey-provider">
-										{#if passkey.provider?.icon_light}
-											<img src={passkey.provider.icon_light} alt="" loading="lazy" />
-										{/if}
-										{passkey.provider?.name ?? passkey.aaguid}
-									</span>
-								{/if}
-								<span>{formatTimestamp(passkey.last_used_at ?? passkey.created_at)}</span>
-							</div>
-							<Button
-								variant="danger"
-								size="sm"
-								loading={actionLoading === `passkey:${passkey.id}`}
-								onclick={() => onDeletePasskey(passkey.id)}
-							>
-								{$LL.account_delete()}
-							</Button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
-
-		{#if totpManagementEnabled || totpCredentials.length > 0 || totpEnrollment}
+		{#if shows('devices')}
 			<section class="security-block">
-				<h3>{$LL.account_totp()}</h3>
+				{#if showSectionHeadings}<h3>{$LL.account_devices()}</h3>{/if}
+				{#if devices.length === 0}
+					<p class="empty-text">{$LL.account_empty()}</p>
+				{:else}
+					<ul class="item-list">
+						{#each devices as device (device.id)}
+							<li>
+								<div>
+									<strong>
+										{device.display_name || device.fallback_display_name || device.id}
+										{#if device.current}
+											<span class="inline-tag">{$LL.account_currentDevice()}</span>
+										{/if}
+									</strong>
+									<span
+										>{device.platform} / {formatTimestamp(
+											device.last_seen_at_unix,
+											getLocale()
+										)}</span
+									>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		{/if}
+
+		{#if shows('sessions')}
+			<section class="security-block">
+				{#if showSectionHeadings}<h3>{$LL.account_sessions()}</h3>{/if}
+				{#if sessions.length === 0}
+					<p class="empty-text">{$LL.account_empty()}</p>
+				{:else}
+					<ul class="item-list">
+						{#each sessions as session (session.id)}
+							<li>
+								<div>
+									<strong>{session.current ? $LL.account_currentSession() : session.id}</strong>
+									<span>{formatTimestamp(session.created_at, getLocale())}</span>
+								</div>
+								<Button
+									variant={session.current ? 'danger' : 'secondary'}
+									size="sm"
+									loading={actionLoading === `session:${session.id}`}
+									onclick={() => onRevokeSession(session.id)}
+								>
+									{session.current ? $LL.header_logout() : $LL.account_logoutSession()}
+								</Button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		{/if}
+
+		{#if shows('passkeys')}
+			<section class="security-block">
+				{#if showSectionHeadings}<h3>{$LL.account_passkeys()}</h3>{/if}
+				<form
+					class="add-passkey"
+					onsubmit={(event) => {
+						event.preventDefault();
+						addPasskey();
+					}}
+				>
+					<Input
+						label={$LL.account_passkeyName()}
+						bind:value={newPasskeyName}
+						disabled={!passkeySupported || actionLoading === 'passkey:add'}
+						maxlength={100}
+					/>
+					<Button
+						variant="primary"
+						type="submit"
+						loading={actionLoading === 'passkey:add'}
+						disabled={!passkeySupported}
+					>
+						{$LL.account_addPasskey()}
+					</Button>
+				</form>
+				{#if !passkeySupported}
+					<p class="muted">{$LL.account_passkeyUnsupported()}</p>
+				{/if}
+
+				{#if passkeys.length === 0}
+					<p class="empty-text">{$LL.account_empty()}</p>
+				{:else}
+					<ul class="item-list">
+						{#each passkeys as passkey (passkey.id)}
+							<li>
+								<div>
+									<strong>{passkey.device_name ?? passkey.id}</strong>
+									{#if passkey.provider?.name || passkey.aaguid}
+										<span class="passkey-provider">
+											{#if passkey.provider?.icon_light}
+												<img src={passkey.provider.icon_light} alt="" loading="lazy" />
+											{/if}
+											{passkey.provider?.name ?? passkey.aaguid}
+										</span>
+									{/if}
+									<span
+										>{formatTimestamp(
+											passkey.last_used_at ?? passkey.created_at,
+											getLocale()
+										)}</span
+									>
+								</div>
+								<Button
+									variant="danger"
+									size="sm"
+									loading={actionLoading === `passkey:${passkey.id}`}
+									onclick={() => onDeletePasskey(passkey.id)}
+								>
+									{$LL.account_delete()}
+								</Button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		{/if}
+
+		{#if shows('totp') && (totpManagementEnabled || totpCredentials.length > 0 || totpEnrollment)}
+			<section class="security-block">
+				{#if showSectionHeadings}<h3>{$LL.account_totp()}</h3>{/if}
 				{#if totpManagementEnabled}
 					<form
 						class="add-passkey"
@@ -364,9 +390,9 @@
 									<span>
 										{credential.last_used_at
 											? $LL.account_totpLastUsed({
-													time: formatTimestamp(credential.last_used_at)
+													time: formatTimestamp(credential.last_used_at, getLocale())
 												})
-											: formatTimestamp(credential.created_at)}
+											: formatTimestamp(credential.created_at, getLocale())}
 									</span>
 								</div>
 								<div class="totp-delete">
@@ -396,10 +422,12 @@
 			</section>
 		{/if}
 
-		<section class="security-block planned">
-			<h3>{$LL.account_socialAccounts()}</h3>
-			<p class="muted">{$LL.account_planned()}</p>
-		</section>
+		{#if shows('social')}
+			<section class="security-block planned">
+				{#if showSectionHeadings}<h3>{$LL.account_socialAccounts()}</h3>{/if}
+				<p class="muted">{$LL.account_planned()}</p>
+			</section>
+		{/if}
 	</div>
 </Card>
 

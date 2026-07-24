@@ -160,6 +160,7 @@ export function getFlowTemplateText(
 				recordedState: LL.admin_flows_template_oidc_login_recorded_state()
 			};
 		case 'default-login-no-consent':
+		case 'saml-sp-oidc-rp':
 			return getTemplateDefaultText(flow);
 	}
 }

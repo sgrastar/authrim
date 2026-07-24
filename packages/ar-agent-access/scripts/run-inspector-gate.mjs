@@ -27,7 +27,7 @@ function assert(condition, message) {
 }
 
 const tools = inspect(['--method', 'tools/list']).tools;
-assert(Array.isArray(tools) && tools.length === 47, `Expected 47 Tools, received ${tools?.length}`);
+assert(Array.isArray(tools) && tools.length === 50, `Expected 50 Tools, received ${tools?.length}`);
 for (const name of [
   'get_agent_settings',
   'create_public_oauth_client',

@@ -32,6 +32,11 @@ async function writeEnvironment(env: string) {
   const envDir = join(tempDir!, '.authrim', env);
   await mkdir(envDir, { recursive: true });
   await writeFile(
+    join(tempDir!, 'package.json'),
+    `${JSON.stringify({ name: 'authrim-test-installation', version: '0.4.0' }, null, 2)}\n`,
+    'utf-8'
+  );
+  await writeFile(
     join(envDir, 'config.json'),
     `${JSON.stringify(
       {
@@ -48,6 +53,7 @@ async function writeEnvironment(env: string) {
     `${JSON.stringify(
       {
         version: '1.0.0',
+        productVersion: '0.4.0',
         env,
         createdAt: '2026-05-18T00:00:00.000Z',
         updatedAt: '2026-05-18T00:00:00.000Z',
@@ -131,15 +137,16 @@ describe('r2-provision command', () => {
       config: join(tempDir!, '.authrim', 'prod', 'config.json'),
       source: tempDir,
       yes: true,
+      operationKind: 'topology_change',
     });
   });
 
-  it('can update bucket bindings without deploying when requested', async () => {
+  it('always deploys the new bucket topology after updating local bindings', async () => {
     await writeEnvironment('prod');
 
-    await r2ProvisionCommand({ env: 'prod', yes: true, skipDeploy: true });
+    await r2ProvisionCommand({ env: 'prod', yes: true });
 
-    expect(deployCommandMock).not.toHaveBeenCalled();
+    expect(deployCommandMock).toHaveBeenCalledOnce();
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
     expect(Object.keys(lock.r2)).toHaveLength(7);
@@ -159,5 +166,22 @@ describe('r2-provision command', () => {
     expect(config.features.r2.enabled).toBe(false);
     expect(lock.r2).toBeUndefined();
     expect(deployCommandMock).not.toHaveBeenCalled();
+  });
+
+  it('persists a deployment journal so a failed Worker deploy can be retried', async () => {
+    await writeEnvironment('prod');
+    deployCommandMock.mockRejectedValueOnce(new Error('worker deploy failed'));
+
+    await expect(r2ProvisionCommand({ env: 'prod', yes: true })).rejects.toThrow(
+      'worker deploy failed'
+    );
+    const pendingLock = JSON.parse(
+      await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8')
+    );
+    expect(pendingLock.topologyUpdate).toMatchObject({ kind: 'r2', phase: 'pending_deploy' });
+
+    deployCommandMock.mockResolvedValueOnce(undefined);
+    await r2ProvisionCommand({ env: 'prod', yes: true });
+    expect(deployCommandMock).toHaveBeenCalledTimes(2);
   });
 });

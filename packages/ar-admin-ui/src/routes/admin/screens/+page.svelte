@@ -85,6 +85,7 @@
 		'login',
 		'consent',
 		'code_input',
+		'account',
 		'custom'
 	];
 	const screenParts: ScreenPart[] = [
@@ -145,6 +146,14 @@
 			icon: 'i-ph-text-align-left'
 		},
 		{
+			type: 'link',
+			labelJa: 'リンク',
+			labelEn: 'Link',
+			descriptionJa: '安全なページ内、相対、HTTPSリンクを配置します。',
+			descriptionEn: 'Add a safe anchor, relative, or HTTPS link.',
+			icon: 'i-ph-link-simple'
+		},
+		{
 			type: 'security_verification',
 			labelJa: 'セキュリティ確認',
 			labelEn: 'Security check',
@@ -159,8 +168,82 @@
 			descriptionJa: 'スクリーン内の区切りを配置します。',
 			descriptionEn: 'Add a visual divider.',
 			icon: 'i-ph-line-segment'
+		},
+		{
+			type: 'account_profile_widget',
+			labelJa: 'ユーザー情報Widget',
+			labelEn: 'User profile widget',
+			descriptionJa: '表示、編集、保存、検証、成功・エラーをまとめて配置します。',
+			descriptionEn: 'Profile display, editing, save, validation, success, and error states.',
+			icon: 'i-ph-user-circle'
+		},
+		{
+			type: 'account_device_list_widget',
+			labelJa: 'デバイス一覧Widget',
+			labelEn: 'Device list widget',
+			descriptionJa: '登録デバイス、現在のデバイス、空・エラー状態を表示します。',
+			descriptionEn: 'Devices, current-device state, empty state, and errors.',
+			icon: 'i-ph-devices'
+		},
+		{
+			type: 'account_session_widget',
+			labelJa: 'セッション管理Widget',
+			labelEn: 'Session management widget',
+			descriptionJa: 'セッション一覧、個別ログアウト、確認・エラーをまとめます。',
+			descriptionEn: 'Session list, revocation actions, confirmation, and errors.',
+			icon: 'i-ph-monitor'
+		},
+		{
+			type: 'account_passkey_widget',
+			labelJa: 'Passkey管理Widget',
+			labelEn: 'Passkey management widget',
+			descriptionJa: 'Passkey一覧、登録、削除、再認証、各状態表示をまとめます。',
+			descriptionEn: 'Passkey list, registration, removal, reauthentication, and states.',
+			icon: 'i-ph-key'
+		},
+		{
+			type: 'account_totp_widget',
+			labelJa: '認証アプリWidget',
+			labelEn: 'Authenticator app widget',
+			descriptionJa: 'TOTP登録・削除、QRコード、バックアップコードをまとめます。',
+			descriptionEn: 'TOTP enrollment, removal, QR setup, and backup codes.',
+			icon: 'i-ph-device-mobile'
+		},
+		{
+			type: 'account_consent_widget',
+			labelJa: '同意管理Widget',
+			labelEn: 'Consent management widget',
+			descriptionJa: '同意一覧・詳細、取り下げ、確認・処理結果をまとめます。',
+			descriptionEn: 'Consent list, details, withdrawal, confirmation, and results.',
+			icon: 'i-ph-clipboard-text'
+		},
+		{
+			type: 'account_activity_widget',
+			labelJa: '操作履歴Widget',
+			labelEn: 'Account activity widget',
+			descriptionJa: 'アカウント操作の日時と内容、空・エラー状態を表示します。',
+			descriptionEn: 'Account operation history with empty and error states.',
+			icon: 'i-ph-clock-counter-clockwise'
+		},
+		{
+			type: 'account_social_account_widget',
+			labelJa: '外部アカウントWidget',
+			labelEn: 'Connected account widget',
+			descriptionJa: '外部アカウントの連携一覧と連携・解除状態を表示します。',
+			descriptionEn: 'Connected external accounts and link or unlink states.',
+			icon: 'i-ph-link'
 		}
 	];
+	const accountWidgetTypes = new Set<ScreenBlockType>([
+		'account_profile_widget',
+		'account_device_list_widget',
+		'account_session_widget',
+		'account_passkey_widget',
+		'account_totp_widget',
+		'account_consent_widget',
+		'account_activity_widget',
+		'account_social_account_widget'
+	]);
 	const authMethodOptions: AuthMethodOption[] = [
 		{ value: 'passkey', label: 'Passkey' },
 		{ value: 'mail_otp', label: 'Mail OTP' },
@@ -204,8 +287,8 @@
 	> = {
 		en: { labelJa: '英語 (en)', labelEn: 'English (en)' },
 		ja: { labelJa: '日本語 (ja)', labelEn: 'Japanese (ja)' },
-		zh_CN: { labelJa: '中国語 簡体字 (zh_CN)', labelEn: 'Chinese PRC (zh_CN)' },
-		zh_TW: { labelJa: '中国語 繁体字 (zh_TW)', labelEn: 'Chinese Taiwan (zh_TW)' },
+		'zh-CN': { labelJa: '中国語 簡体字 (zh-CN)', labelEn: 'Chinese PRC (zh-CN)' },
+		'zh-TW': { labelJa: '中国語 繁体字 (zh-TW)', labelEn: 'Chinese Taiwan (zh-TW)' },
 		es: { labelJa: 'スペイン語 (es)', labelEn: 'Spanish (es)' },
 		pt: { labelJa: 'ポルトガル語 (pt)', labelEn: 'Portuguese (pt)' },
 		fr: { labelJa: 'フランス語 (fr)', labelEn: 'French (fr)' },
@@ -246,6 +329,9 @@
 	let saving = $state(false);
 	let error = $state('');
 	let message = $state('');
+	let screenPreviewViewport = $state<'desktop' | 'mobile'>('desktop');
+	let screenPreviewMode = $state<'light' | 'dark'>('light');
+	let screenPreviewState = $state<'normal' | 'empty' | 'loading' | 'success' | 'error'>('normal');
 
 	const selectedScreen = $derived(screens.find((screen) => screen.id === selectedId) ?? null);
 	const previewFields = $derived(
@@ -337,6 +423,30 @@
 		return block.block_type ?? 'identity_field';
 	}
 
+	function isAccountWidgetType(type: ScreenBlockType): boolean {
+		return accountWidgetTypes.has(type);
+	}
+
+	function accountWidgetPart(type: ScreenBlockType): ScreenPart | undefined {
+		return screenParts.find((part) => part.type === type);
+	}
+
+	function screenPartAvailable(part: ScreenPart): boolean {
+		if (draft.screen_kind === 'account') {
+			if (isAccountWidgetType(part.type)) {
+				return !draft.fields.some((field) => isAccountWidgetType(getBlockType(field)));
+			}
+			return (
+				part.type === 'layout_row' ||
+				part.type === 'heading' ||
+				part.type === 'text' ||
+				part.type === 'divider' ||
+				part.type === 'link'
+			);
+		}
+		return !isAccountWidgetType(part.type);
+	}
+
 	function normalizeValueType(value: unknown): ScreenValueType {
 		return value === 'boolean' ? 'boolean' : 'text';
 	}
@@ -347,8 +457,36 @@
 
 	function normalizeSettings(settings: ScreenSettings | null | undefined): ScreenSettings {
 		return {
-			canvas_layout: normalizeCanvasLayout(settings?.canvas_layout)
+			canvas_layout: normalizeCanvasLayout(settings?.canvas_layout),
+			...(settings?.base_preset_key ? { base_preset_key: settings.base_preset_key } : {}),
+			...(settings?.base_preset_version
+				? { base_preset_version: settings.base_preset_version }
+				: {})
 		};
+	}
+
+	function safePreviewHref(value: string | null | undefined): string {
+		if (!value) return '#';
+		if (/^#[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(value) || /^\/(?!\/)/u.test(value)) {
+			return value;
+		}
+		try {
+			const parsed = new URL(value);
+			return parsed.protocol === 'https:' ? parsed.toString() : '#';
+		} catch {
+			return '#';
+		}
+	}
+
+	function accountWidgetPreviewState(): string {
+		const labels = {
+			normal: t('通常状態: 操作フォームと現在の情報', 'Normal: actions and current information'),
+			empty: t('空状態: 登録情報がない場合の案内', 'Empty: guidance when no records exist'),
+			loading: t('読み込み状態: 操作を一時的に無効化', 'Loading: actions temporarily disabled'),
+			success: t('成功状態: 完了メッセージを通知', 'Success: completion message announced'),
+			error: t('エラー状態: 復旧可能なエラーを表示', 'Error: recoverable error shown')
+		};
+		return labels[screenPreviewState];
 	}
 
 	function normalizeAuthMethod(value: unknown): string {
@@ -728,6 +866,18 @@
 				...patch
 			};
 		}
+		if (isAccountWidgetType(type)) {
+			const part = accountWidgetPart(type);
+			return {
+				field: patch.field ?? `account.${type.replace(/^account_|_widget$/gu, '')}`,
+				label: patch.label ?? (part ? t(part.labelJa, part.labelEn) : 'Account widget'),
+				required: false,
+				block_type: type,
+				block_id: blockId,
+				order,
+				...patch
+			};
+		}
 		if (type === 'heading') {
 			return {
 				field: patch.field ?? `heading.${blockId}`,
@@ -748,6 +898,18 @@
 				block_type: type,
 				block_id: blockId,
 				text: patch.text ?? 'Add helper text here.',
+				order,
+				...patch
+			};
+		}
+		if (type === 'link') {
+			return {
+				field: patch.field ?? `link.${blockId}`,
+				label: patch.label ?? t('詳細を見る', 'Learn more'),
+				required: false,
+				block_type: type,
+				block_id: blockId,
+				href: patch.href ?? '#profile',
 				order,
 				...patch
 			};
@@ -825,6 +987,7 @@
 		if (type === 'consent_widget') return block.label || t('同意確認', 'Consent confirmation');
 		if (type === 'heading') return block.label || t('見出し', 'Heading');
 		if (type === 'text') return block.label || 'Text';
+		if (type === 'link') return block.label || t('リンク', 'Link');
 		if (type === 'security_verification')
 			return block.label || t('セキュリティ確認', 'Security check');
 		if (type === 'layout_row') return block.label || 'Layout row';
@@ -850,6 +1013,7 @@
 		if (type === 'consent_widget') return block.text ?? t('同意ポリシー', 'Consent policy');
 		if (type === 'heading') return withCondition(block.text ?? '');
 		if (type === 'text') return withCondition(block.text ?? '');
+		if (type === 'link') return block.href ?? '';
 		if (type === 'security_verification')
 			return humanVerificationTimingLabel(block.human_verification_timing);
 		if (type === 'layout_row') {
@@ -1072,6 +1236,8 @@
 				return $LL.admin_screens_kind_consent();
 			case 'code_input':
 				return $LL.admin_screens_kind_code_input();
+			case 'account':
+				return t('アカウント', 'Account');
 			case 'custom':
 			default:
 				return $LL.admin_screens_kind_custom();
@@ -1109,8 +1275,42 @@
 	function editScreen() {
 		if (!selectedScreen) return;
 		selectScreen(selectedScreen);
+		if (selectedScreen.is_system) {
+			const baseKey = selectedScreen.screen_key;
+			draft = {
+				...draft,
+				id: null,
+				screen_key: `${baseKey}_custom_${Date.now().toString(36)}`.slice(0, 96),
+				display_name: `${selectedScreen.display_name} copy`,
+				is_system: false,
+				settings: { ...draft.settings, base_preset_key: baseKey, base_preset_version: 1 }
+			};
+			selectedId = null;
+		}
 		viewMode = 'edit';
 		editorTab = 'items';
+	}
+
+	function resetScreenPreset() {
+		const baseKey = draft.settings.base_preset_key;
+		const preset = screens.find((screen) => screen.is_system && screen.screen_key === baseKey);
+		if (
+			!preset ||
+			!confirm(
+				t('元のプリセット内容に戻しますか？', 'Reset this custom screen to its base preset?')
+			)
+		)
+			return;
+		draft = {
+			...draft,
+			fields: normalizeBlocks(preset.fields),
+			localizations: preset.localizations ?? {},
+			settings: {
+				...normalizeSettings(preset.settings),
+				base_preset_key: preset.screen_key,
+				base_preset_version: 1
+			}
+		};
 	}
 
 	async function loadScreens() {
@@ -1366,8 +1566,8 @@
 									class="screen-row"
 									onclick={() => selectScreen(screen)}
 								>
-									<span>{kindLabel(screen.screen_kind)}</span>
-									<small>{screen.display_name}</small>
+									<span>{screen.display_name}</span>
+									<small>{kindLabel(screen.screen_kind)}</small>
 								</button>
 							{/each}
 						{/if}
@@ -1565,6 +1765,18 @@
 																	>
 																</label>
 															</div>
+														{:else if isAccountWidgetType(blockType)}
+															{@const part = accountWidgetPart(blockType)}
+															<div class="preview-account-widget">
+																<span class={part?.icon ?? 'i-ph-squares-four'}></span>
+																<div>
+																	<strong
+																		>{field.label ||
+																			(part ? t(part.labelJa, part.labelEn) : '')}</strong
+																	>
+																	<small>{accountWidgetPreviewState()}</small>
+																</div>
+															</div>
 														{:else if blockType === 'heading'}
 															<div class="preview-heading-block">
 																<h2>{field.label}</h2>
@@ -1574,6 +1786,10 @@
 															</div>
 														{:else if blockType === 'text'}
 															<p class="preview-static-text">{field.text || field.label}</p>
+														{:else if blockType === 'link'}
+															<a class="preview-static-link" href={safePreviewHref(field.href)}
+																>{field.label}</a
+															>
 														{:else if blockType === 'security_verification'}
 															<div class="preview-security-box">
 																<span class="i-ph-shield-check"></span>
@@ -1685,7 +1901,7 @@
 
 								<div class="screen-builder">
 									<aside class="parts-panel" aria-label={t('スクリーンパーツ', 'Screen parts')}>
-										{#each screenParts as part (part.type)}
+										{#each screenParts.filter(screenPartAvailable) as part (part.type)}
 											<button
 												type="button"
 												class="part-card"
@@ -2010,6 +2226,13 @@
 													/>
 													<span>{$LL.admin_screens_field_required()}</span>
 												</label>
+											{:else if isAccountWidgetType(blockType)}
+												<p class="muted">
+													{t(
+														'このWidgetはフォーム、操作ボタン、検証、ローディング、成功・エラーを自動的に管理します。',
+														'This widget owns its form, actions, validation, loading, success, and error states.'
+													)}
+												</p>
 											{:else if blockType === 'heading'}
 												<label>
 													<span>{t('補足テキスト（任意）', 'Supporting text (optional)')}</span>
@@ -2029,6 +2252,16 @@
 														oninput={(event) =>
 															updateField(selectedBlockIndex, { text: event.currentTarget.value })}
 													></textarea>
+												</label>
+											{:else if blockType === 'link'}
+												<label>
+													<span>{t('リンク先', 'Link destination')}</span>
+													<input
+														value={selectedBlock.href ?? ''}
+														placeholder="#profile or https://example.com/help"
+														oninput={(event) =>
+															updateField(selectedBlockIndex, { href: event.currentTarget.value })}
+													/>
 												</label>
 											{:else if blockType === 'security_verification'}
 												<label>
@@ -2080,12 +2313,31 @@
 									</aside>
 								</div>
 							{:else if editorTab === 'preview'}
+								<div class="screen-preview-toolbar">
+									<select bind:value={screenPreviewViewport}
+										><option value="desktop">Desktop</option><option value="mobile">Mobile</option
+										></select
+									>
+									<select bind:value={screenPreviewMode}
+										><option value="light">Light</option><option value="dark">Dark</option></select
+									>
+									<select bind:value={screenPreviewState}
+										><option value="normal">Normal</option><option value="empty">Empty</option
+										><option value="loading">Loading</option><option value="success">Success</option
+										><option value="error">Error</option></select
+									>
+								</div>
 								<div
 									class:wide-canvas={normalizeSettings(draft.settings).canvas_layout === 'wide'}
+									class:mobile-preview={screenPreviewViewport === 'mobile'}
+									class:dark-preview={screenPreviewMode === 'dark'}
 									class="screen-preview draft-preview"
 									id="screen-editor-preview"
 									aria-label={$LL.admin_screens_preview()}
 								>
+									<p class="preview-state-label">
+										{t('Widget状態', 'Widget state')}: {screenPreviewState}
+									</p>
 									{#if draftLayoutSections.every((section) => section.items.length === 0)}
 										<p class="muted">{$LL.admin_screens_no_fields()}</p>
 									{:else}
@@ -2254,6 +2506,18 @@
 																		>
 																	</label>
 																</div>
+															{:else if isAccountWidgetType(blockType)}
+																{@const part = accountWidgetPart(blockType)}
+																<div class="preview-account-widget">
+																	<span class={part?.icon ?? 'i-ph-squares-four'}></span>
+																	<div>
+																		<strong
+																			>{field.label ||
+																				(part ? t(part.labelJa, part.labelEn) : '')}</strong
+																		>
+																		<small>{accountWidgetPreviewState()}</small>
+																	</div>
+																</div>
 															{:else if blockType === 'heading'}
 																<div class="preview-heading-block">
 																	<h2>{field.label}</h2>
@@ -2263,6 +2527,10 @@
 																</div>
 															{:else if blockType === 'text'}
 																<p class="preview-static-text">{field.text || field.label}</p>
+															{:else if blockType === 'link'}
+																<a class="preview-static-link" href={safePreviewHref(field.href)}
+																	>{field.label}</a
+																>
 															{:else if blockType === 'security_verification'}
 																<div class="preview-security-box">
 																	<span class="i-ph-shield-check"></span>
@@ -2339,6 +2607,16 @@
 							{/if}
 
 							<div class="actions">
+								{#if draft.settings.base_preset_key}
+									<button
+										class="btn-secondary"
+										type="button"
+										onclick={resetScreenPreset}
+										disabled={saving}
+									>
+										{t('プリセットに戻す', 'Reset preset')}
+									</button>
+								{/if}
 								<button
 									class="btn-danger"
 									type="button"
@@ -2424,6 +2702,7 @@
 	.editor {
 		display: grid;
 		gap: 1rem;
+		align-content: start;
 	}
 	.editor-head,
 	.fields-head,
@@ -2532,6 +2811,55 @@
 	.preview-auth-widget {
 		display: grid;
 		gap: 0.75rem;
+	}
+	.preview-account-widget {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		min-height: 5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: var(--color-surface-muted);
+		padding: 1rem;
+	}
+	.preview-account-widget > span {
+		font-size: 1.5rem;
+		color: var(--color-primary);
+	}
+	.preview-account-widget div {
+		display: grid;
+		gap: 0.25rem;
+	}
+	.preview-account-widget small {
+		color: var(--color-text-muted);
+	}
+	.screen-preview-toolbar {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 0.75rem;
+	}
+	.screen-preview-toolbar select {
+		min-width: 0;
+	}
+	.screen-preview.mobile-preview {
+		max-width: 24rem;
+		margin-inline: auto;
+	}
+	.screen-preview.mobile-preview .preview-layout-row {
+		grid-template-columns: 1fr !important;
+	}
+	.screen-preview.dark-preview {
+		--color-surface: #172033;
+		--color-surface-muted: #0f172a;
+		--color-text: #f8fafc;
+		--color-text-muted: #aab5c5;
+		--color-border: #334155;
+		color: var(--color-text);
+	}
+	.preview-state-label {
+		margin: 0 0 0.75rem;
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
 	}
 	.preview-code-input-widget {
 		display: grid;

@@ -7,8 +7,9 @@
  * Supports both legacy (authrim-lock.json) and new (.authrim/{env}/lock.json) structures.
  */
 
-import { writeFile, readFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { open, writeFile, readFile, mkdir, rename, rm, link } from 'node:fs/promises';
+import { existsSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import type { ProvisionedResources } from './cloudflare.js';
@@ -41,8 +42,57 @@ const WorkerEntrySchema = z.object({
   version: z.string().optional(),
 });
 
+const ReleaseUpdateStateSchema = z.object({
+  targetVersion: z.string().min(1),
+  previousProductVersion: z.string().min(1).optional(),
+  phase: z.enum(['planned', 'schema_applied', 'workers_deployed', 'verified']),
+  manifestChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+  startedAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  appliedTargets: z.array(z.string()).default([]),
+  manualTargets: z.array(z.string()).default([]),
+});
+
+const SchemaTargetStateSchema = z.object({
+  productVersion: z.string().min(1),
+  manifestChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+  streamId: z.string().min(1).optional(),
+  files: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        checksum: z.string().regex(/^[a-f0-9]{64}$/u),
+      })
+    )
+    .optional(),
+  appliedBy: z.enum(['automatic', 'operator']),
+  updatedAt: z.string().datetime(),
+});
+
+export const TopologyUpdateKindSchema = z.enum([
+  'tenant_d1_pool',
+  'tenant_database',
+  'r2',
+  'external_database',
+]);
+
+const TopologyUpdateStateSchema = z.object({
+  kind: TopologyUpdateKindSchema,
+  phase: z.enum(['config_staged', 'preparing', 'pending_deploy']),
+  targetProductVersion: z.string().min(1),
+  subject: z.string().min(1).optional(),
+  configChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+  authorizationTokenHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  startedAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
 export const AuthrimLockSchema = z.object({
   version: z.string().default('1.0.0'),
+  productVersion: z.string().optional(),
+  releaseUpdate: ReleaseUpdateStateSchema.optional(),
+  schemaTargets: z.record(z.string(), SchemaTargetStateSchema).optional(),
+  topologyUpdate: TopologyUpdateStateSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime().optional(),
   env: z.string(),
@@ -58,6 +108,8 @@ export type AuthrimLock = z.infer<typeof AuthrimLockSchema>;
 export type ResourceEntry = z.infer<typeof ResourceEntrySchema>;
 export type KVResourceEntry = z.infer<typeof KVResourceEntrySchema>;
 export type WorkerEntry = z.infer<typeof WorkerEntrySchema>;
+export type TopologyUpdateKind = z.infer<typeof TopologyUpdateKindSchema>;
+export type TopologyUpdateState = z.infer<typeof TopologyUpdateStateSchema>;
 
 export interface SharedD1LockReconciliationResult {
   lock: AuthrimLock;
@@ -245,7 +297,157 @@ export async function saveLockFile(
   }
 
   lock.updatedAt = new Date().toISOString();
-  await writeFile(path, JSON.stringify(lock, null, 2), 'utf-8');
+  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(temporaryPath, 'wx', 0o600);
+    await handle.writeFile(JSON.stringify(lock, null, 2), 'utf-8');
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporaryPath, path);
+    const directoryHandle = await open(dir, 'r').catch(() => undefined);
+    if (directoryHandle) {
+      try {
+        await directoryHandle.sync();
+      } finally {
+        await directoryHandle.close();
+      }
+    }
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+export interface EnvironmentOperationLock {
+  path: string;
+  release: () => Promise<void>;
+}
+
+export interface LockedEnvironmentOperation extends EnvironmentOperationLock {
+  lock: AuthrimLock | null;
+  lockFilePath: string;
+}
+
+interface EnvironmentOperationLockOwner {
+  token: string;
+  pid: number;
+  operation: string;
+  startedAt: string;
+}
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export async function acquireEnvironmentOperationLock(
+  lockFilePath: string,
+  operation: string
+): Promise<EnvironmentOperationLock> {
+  const operationLockPath = `${lockFilePath}.operation-lock`;
+  const token = randomUUID();
+  const candidatePath = `${operationLockPath}.candidate-${token}`;
+  const owner: EnvironmentOperationLockOwner = {
+    token,
+    pid: process.pid,
+    operation,
+    startedAt: new Date().toISOString(),
+  };
+
+  await mkdir(dirname(operationLockPath), { recursive: true });
+  await writeFile(candidatePath, JSON.stringify(owner, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600,
+    flag: 'wx',
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await link(candidatePath, operationLockPath);
+      await rm(candidatePath, { force: true });
+      const cleanupOnExit = (): void => {
+        rmSync(operationLockPath, { force: true });
+      };
+      process.once('exit', cleanupOnExit);
+      let released = false;
+      return {
+        path: operationLockPath,
+        release: async () => {
+          if (released) return;
+          released = true;
+          process.off('exit', cleanupOnExit);
+          const currentOwner = await readFile(operationLockPath, 'utf-8')
+            .then((content) => JSON.parse(content) as Partial<EnvironmentOperationLockOwner>)
+            .catch(() => undefined);
+          if (currentOwner?.token === token) {
+            await rm(operationLockPath, { force: true });
+          }
+        },
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw error;
+      const existing = await readFile(operationLockPath, 'utf-8')
+        .then((content) => JSON.parse(content) as Partial<EnvironmentOperationLockOwner>)
+        .catch(() => undefined);
+      if (existing?.pid && processIsAlive(existing.pid)) {
+        await rm(candidatePath, { force: true });
+        throw new Error(
+          `environment_operation_in_progress:${existing.operation ?? 'unknown'}:${existing.pid}`
+        );
+      }
+      await rm(operationLockPath, { force: true });
+    }
+  }
+  await rm(candidatePath, { force: true });
+  throw new Error(`environment_operation_lock_unavailable:${operationLockPath}`);
+}
+
+export async function acquireEnvironmentOperationForEnvironment(input: {
+  baseDir: string;
+  env: string;
+  operation: string;
+  requireExisting?: boolean;
+}): Promise<LockedEnvironmentOperation> {
+  const before = await loadLockFileAuto(input.baseDir, input.env);
+  const lockFilePath =
+    before.path ?? getEnvironmentPaths({ baseDir: input.baseDir, env: input.env }).lock;
+  const operationLock = await acquireEnvironmentOperationLock(lockFilePath, input.operation);
+  try {
+    const after = await loadLockFileAuto(input.baseDir, input.env);
+    if (JSON.stringify(after.lock) !== JSON.stringify(before.lock)) {
+      throw new Error(`environment_changed_while_waiting_for_operation_lock:${input.operation}`);
+    }
+    if (input.requireExisting && !after.lock) {
+      throw new Error(`environment_not_found:${input.env}`);
+    }
+    return {
+      ...operationLock,
+      lock: after.lock,
+      lockFilePath: after.path ?? lockFilePath,
+    };
+  } catch (error) {
+    await operationLock.release();
+    throw error;
+  }
+}
+
+export async function withEnvironmentOperationForEnvironment<T>(
+  input: Parameters<typeof acquireEnvironmentOperationForEnvironment>[0],
+  callback: (operation: LockedEnvironmentOperation) => Promise<T>
+): Promise<T> {
+  const operation = await acquireEnvironmentOperationForEnvironment(input);
+  try {
+    return await callback(operation);
+  } finally {
+    await operation.release();
+  }
 }
 
 /** Error class for lock file operations */

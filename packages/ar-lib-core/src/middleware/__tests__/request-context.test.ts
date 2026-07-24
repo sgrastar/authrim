@@ -65,7 +65,13 @@ function buildApp(env: TestEnv, requireTenant = true) {
   });
   app.get('/api/auth/authentication-methods', (c) => {
     const tenantId = getTenantIdFromContext(c);
-    return c.json({ tenantId });
+    return c.json({
+      tenantId,
+      hasRuntimeUserStoreSources: Boolean(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c as any).get('runtimeUserStoreSources')
+      ),
+    });
   });
   app.post('/api/auth/discovery/grant', (c) => {
     const tenantId = getTenantIdFromContext(c);
@@ -453,7 +459,41 @@ describe('requestContextMiddleware – tenant existence check', () => {
       );
 
       expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'first',
+        hasRuntimeUserStoreSources: false,
+      });
+    });
+
+    it('skips runtime user-store source resolution for the public authentication methods endpoint', async () => {
+      const db = createMockDB({ tenantRow: { id: 'first' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:first': null,
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`first.${BASE_DOMAIN}`, '/api/auth/authentication-methods'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'first',
+        hasRuntimeUserStoreSources: false,
+      });
+      expect(kv.get).not.toHaveBeenCalledWith('settings:tenant:first:tenant-database');
     });
 
     it('keeps tenant inventory admin requests on the control-plane database', async () => {

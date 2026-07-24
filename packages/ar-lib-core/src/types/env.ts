@@ -188,8 +188,6 @@ export interface Env {
   ENABLE_CLIENT_CREDENTIALS?: string; // "true" to enable RFC 6749 Section 4.4 Client Credentials Grant
   ENABLE_RAR?: string; // "true" to enable RFC 9396 Rich Authorization Requests
   ENABLE_LOGIN_RUNTIME_FLOW?: string; // "true" to enable new LoginUI runtime Flow interactions
-  ENABLE_FLOW_PROTOCOL_CONSENT_GATES?: string; // "true" to route OIDC/SAML consent through Flow receipts
-  ENABLE_FLOW_PROTOCOL_CONSENT_SHADOW?: string; // "true" to log privacy-safe legacy/new decision comparisons
   FLOW_RUNTIME_HMAC_SECRET?: string; // HMAC secret for Flow runtime contract signatures
 
   // AI Ephemeral Auth Features
@@ -256,6 +254,7 @@ export interface Env {
   DEFAULT_STORAGE_PROFILE_ID?: string; // Environment default storage profile pointer
   DEFAULT_AUDIT_PROFILE_ID?: string; // Environment default audit profile pointer
   DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
+  AUTHRIM_REGISTERED_SCHEMA_REFS?: string; // JSON list of setup-managed binding/connection release-stream registrations
 
   // Mock/Anonymous Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
@@ -297,6 +296,9 @@ export interface Env {
   CONSENT_CACHE_TTL?: string; // Consent cache TTL in seconds (default: 86400 = 24 hours)
   CONFIG_CACHE_TTL?: string; // Config in-memory cache TTL in seconds (default: 180 = 3 minutes)
   SETTINGS_CACHE_TTL?: string; // Settings/config in-memory cache TTL in seconds (default: 300 = 5 minutes)
+  AUTHENTICATION_METHODS_CACHE_TTL?: string; // Browser/client TTL for public authentication methods (default: 60)
+  AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string; // Edge Cache API TTL for public authentication methods (default: 86400)
+  AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string; // Router Cache API TTL for public authentication methods (default: edge TTL)
 
   // Unified Identity Mapping runtime cutover guard
   ENABLE_CANONICAL_IDENTITY_RUNTIME?: string; // "true" to read SCIM user runtime projection from canonical identity tables
@@ -383,12 +385,14 @@ export interface Env {
   LOG_LEVEL?: string; // "debug", "info", "warn", "error" (default: "info")
   LOG_FORMAT?: string; // "json" (structured), "pretty" (human-readable) (default: "json")
   ENABLE_LOG_HASH_USER_ID?: string; // "true" to hash user IDs in logs for privacy
+  AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?: string; // "true" to allow header-gated Server-Timing diagnostics
   AUTHRIM_FLOW_RUNTIME_TIMING?: string; // Temporary: "true" to emit Flow runtime timing diagnostics
 
   // ============================================================
   // Environment Detection & Version Management
   // ============================================================
   ENVIRONMENT?: string; // "production", "staging", "development"
+  AUTHRIM_ENVIRONMENT_NAME?: string; // Stable deployment label for public product metadata
   NODE_ENV?: string; // "production", "development" (fallback for ENVIRONMENT)
   CODE_VERSION_UUID?: string; // UUID v4 identifying this deployed bundle (set by deploy script)
   DEPLOY_TIME_UTC?: string; // ISO 8601 timestamp of deployment (set by deploy script)

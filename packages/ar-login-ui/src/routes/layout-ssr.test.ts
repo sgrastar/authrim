@@ -3,6 +3,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
 import Layout from './+layout.svelte';
+import { getLocale, setLocale } from '$i18n/i18n-svelte';
 
 function authenticationMethods(): AuthenticationMethodsResponse {
 	return {
@@ -68,6 +69,25 @@ function authenticationMethods(): AuthenticationMethodsResponse {
 const children = createRawSnippet(() => ({ render: () => '<main data-test-child></main>' }));
 
 describe('Login UI layout SSR theme bootstrap', () => {
+	it('applies the server-selected locale before rendering child content', () => {
+		setLocale('en');
+		const localizedChildren = createRawSnippet(() => ({
+			render: () => `<span data-locale>${getLocale()}</span>`
+		}));
+		const { body } = render(Layout, {
+			props: {
+				children: localizedChildren,
+				data: {
+					preferredLanguage: 'fr',
+					shouldLoadTenantBranding: false,
+					authenticationMethods: null
+				} as never
+			}
+		});
+
+		expect(body).toContain('<span data-locale>fr</span>');
+	});
+
 	it('renders the configured tenant theme into the initial HTML', () => {
 		const { body } = render(Layout, {
 			props: {

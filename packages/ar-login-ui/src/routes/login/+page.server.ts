@@ -10,8 +10,7 @@ import { fetchCachedLoginDiscoveryConfig } from '../../lib/login-discovery-confi
 import { shouldUseFastPlainLoginShell } from '../../lib/server/login-entry-fast-path';
 
 const DISCOVERY_GRANT_VERIFIED_COOKIE = 'authrim_discovery_grant_verified';
-const INVALID_CHALLENGE_ERROR_URL =
-	'/error?error=invalid_request&error_description=Authorization%20challenge%20is%20invalid%20or%20expired';
+const INVALID_CHALLENGE_ERROR_URL = '/error?error=invalid_request';
 
 function buildPublicUrl(url: URL, request: Request): URL {
 	const nextUrl = new URL(url);

@@ -4,15 +4,9 @@ import type { DatabaseAdapter, Env, FlowRuntimeContract } from '@authrim/ar-lib-
 import {
   cleanupExpiredFlowInteractions,
   clearLoginRuntimeFlowVersionCacheForTests,
-  evaluateConsentGateShadowComparison,
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
   loginRuntimeInteractionSubmitHandler,
-  persistOidcAuthorizationConsentGate,
-  persistSamlAttributeReleaseConsentGate,
-  preflightOidcPromptNoneConsentGates,
-  resolveOidcReleasePolicyContent,
-  resolveSamlReleasePolicyContent,
 } from '../login-runtime-flow';
 
 const mocks = vi.hoisted(() => {
@@ -33,9 +27,6 @@ const mocks = vi.hoisted(() => {
     getChallengeRpc: vi.fn(),
     storeChallengeRpc: vi.fn(),
   };
-  const samlRequestStore = {
-    fetch: vi.fn(),
-  };
   const runtimeUsers = {
     findById: vi.fn(),
   };
@@ -45,12 +36,10 @@ const mocks = vi.hoisted(() => {
     coreAdapter,
     sessionStore,
     challengeStore,
-    samlRequestStore,
     runtimeUsers,
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
     getFeatureFlag: vi.fn(),
-    resolveRuntimeIdentityMappingBinding: vi.fn(async () => null),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -73,8 +62,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     generateId: vi.fn(() => mocks.idQueue.shift() ?? `generated_${mocks.idQueue.length}`),
     getChallengeStoreByChallengeId: vi.fn(() => mocks.challengeStore),
     getFeatureFlag: mocks.getFeatureFlag,
-    resolveRuntimeIdentityMappingBinding: mocks.resolveRuntimeIdentityMappingBinding,
-    requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.coreAdapter),
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mocks.sessionStore })),
     isShardedSessionId: vi.fn((id: string) => id.startsWith('sess_')),
     getLogger: vi.fn(() => ({
@@ -195,28 +182,6 @@ const oidcCompletionRuntime: FlowRuntimeContract = {
             id: 'oidc-authorization-completion',
             protocol: 'oidc',
             purpose: 'authorization',
-            role: 'output',
-          },
-        },
-      },
-    ],
-  },
-};
-
-const samlCompletionRuntime: FlowRuntimeContract = {
-  flow_kind: 'login',
-  ui: {
-    steps: [
-      {
-        id: 'saml-complete:step',
-        source_node_id: 'saml-complete',
-        component: 'completion',
-        render: true,
-        config: {
-          completion_block: {
-            id: 'saml-attribute-release-completion',
-            protocol: 'saml',
-            purpose: 'attribute_release',
             role: 'output',
           },
         },
@@ -397,120 +362,6 @@ const acceptedConsentEditor = {
     { id: 'edge_consent_complete', source: 'consent', target: 'complete' },
   ],
 };
-
-const legalConsentRuntime: FlowRuntimeContract = {
-  flow_kind: 'login',
-  ui: {
-    steps: [
-      {
-        id: 'auth:step',
-        source_node_id: 'auth',
-        component: 'authentication_method_selector',
-        render: true,
-      },
-      {
-        id: 'legal:step',
-        source_node_id: 'legal',
-        component: 'consent_policy',
-        render: true,
-        config: {
-          consent_gate_kind: 'legal_document',
-          policy_resolution: 'fixed',
-          consent_policy_ref: 'policy_legal',
-          policy_required: true,
-        },
-      },
-      {
-        id: 'complete:step',
-        source_node_id: 'complete',
-        component: 'completion',
-        render: true,
-      },
-    ],
-  },
-};
-
-const oidcAuthorizationConsentRuntime: FlowRuntimeContract = {
-  flow_kind: 'login',
-  ui: {
-    steps: [
-      {
-        id: 'oidc-consent:step',
-        source_node_id: 'oidc-consent',
-        component: 'consent_policy',
-        render: true,
-        config: {
-          consent_gate_kind: 'oidc_authorization',
-          policy_resolution: 'target_binding',
-          policy_required: false,
-        },
-      },
-      {
-        id: 'complete:step',
-        source_node_id: 'complete',
-        component: 'completion',
-        render: true,
-        config: {
-          completion_block: {
-            id: 'oidc-authorization-completion',
-            protocol: 'oidc',
-            purpose: 'authorization',
-            role: 'output',
-          },
-        },
-      },
-    ],
-  },
-};
-
-const legalConsentEditor = {
-  nodes: [
-    { id: 'auth', type: 'authentication' },
-    { id: 'legal', type: 'consent' },
-    { id: 'complete', type: 'complete' },
-  ],
-  edges: [
-    { id: 'edge_auth_legal', source: 'auth', target: 'legal', source_handle: 'passkey' },
-    { id: 'edge_legal_complete', source: 'legal', target: 'complete' },
-  ],
-};
-
-const legalPolicyItems = [
-  {
-    statement_id: 'statement_terms',
-    requirement: 'required',
-    version_mode: 'latest',
-    version_id: null,
-    checkbox_mode: 'required',
-    checkbox_default_checked: 0,
-    binding_type: 'subject',
-    binding_value: null,
-    evidence_profile: null,
-    language_fallback: null,
-    display_order: 0,
-    slug: 'terms_of_service',
-    category: 'terms',
-    conditional_rules_json: null,
-    created_at: 1,
-  },
-  {
-    statement_id: 'statement_privacy',
-    requirement: 'required',
-    version_mode: 'latest',
-    version_id: null,
-    checkbox_mode: 'required',
-    checkbox_default_checked: 0,
-    binding_type: 'subject',
-    binding_value: null,
-    evidence_profile: null,
-    language_fallback: null,
-    display_order: 1,
-    slug: 'privacy_policy',
-    category: 'privacy',
-    conditional_rules_json: null,
-    created_at: 2,
-  },
-];
 
 const sessionCheckRuntime: FlowRuntimeContract = {
   flow_kind: 'login',
@@ -706,6 +557,75 @@ const mixedProtocolCompletionEditor = {
   ],
 };
 
+const protocolBranchRuntime: FlowRuntimeContract = {
+  flow_kind: 'login',
+  ui: {
+    steps: [
+      {
+        id: 'entry:step',
+        source_node_id: 'entry',
+        component: 'interaction_context',
+        render: false,
+      },
+      {
+        id: 'protocol-condition:step',
+        source_node_id: 'protocol-condition',
+        component: 'condition',
+        render: false,
+        config: {
+          conditions: {
+            rows: [
+              {
+                id: 'saml',
+                condition: { type: 'protocol', value: 'saml' },
+                output_handle: 'saml',
+              },
+              {
+                id: 'oidc',
+                condition: { type: 'protocol', value: 'oidc' },
+                output_handle: 'oidc',
+              },
+            ],
+            otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+          },
+        },
+      },
+      ...mixedProtocolCompletionRuntime.ui.steps.filter(
+        (step) => step.source_node_id !== 'session-check'
+      ),
+    ],
+  },
+};
+
+const protocolBranchEditor = {
+  nodes: [
+    { id: 'entry', type: 'entry' },
+    { id: 'protocol-condition', type: 'condition' },
+    { id: 'saml-complete', type: 'complete' },
+    { id: 'oidc-complete', type: 'complete' },
+  ],
+  edges: [
+    {
+      id: 'entry-condition',
+      source: 'entry',
+      source_handle: 'next',
+      target: 'protocol-condition',
+    },
+    {
+      id: 'condition-saml',
+      source: 'protocol-condition',
+      source_handle: 'saml',
+      target: 'saml-complete',
+    },
+    {
+      id: 'condition-oidc',
+      source: 'protocol-condition',
+      source_handle: 'oidc',
+      target: 'oidc-complete',
+    },
+  ],
+};
+
 const conditionRuntime: FlowRuntimeContract = {
   flow_kind: 'login',
   ui: {
@@ -798,12 +718,7 @@ function createContext(input: {
     req: request,
     env: {
       ENABLE_LOGIN_RUNTIME_FLOW: 'true',
-      ENABLE_FLOW_PROTOCOL_CONSENT_GATES: 'true',
       FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
-      SAML_REQUEST_STORE: {
-        idFromName: vi.fn((name: string) => name),
-        get: vi.fn(() => mocks.samlRequestStore),
-      },
       ...input.env,
     } as Env,
     json: (payload: unknown, status = 200) =>
@@ -835,7 +750,6 @@ function resetAdapter() {
   mocks.sessionStore.getSessionRpc.mockReset();
   mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.challengeStore.storeChallengeRpc.mockReset();
-  mocks.samlRequestStore.fetch.mockReset();
   mocks.runtimeUsers.findById.mockReset();
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
   clearLoginRuntimeFlowVersionCacheForTests();
@@ -889,61 +803,6 @@ function mockStartQueries(
     });
 }
 
-function enqueueLegalPolicyHydration() {
-  mocks.coreAdapter.queryOne
-    .mockResolvedValueOnce({ id: 'policy_legal' })
-    .mockResolvedValueOnce({
-      id: 'policy_legal',
-      display_name: 'Legal documents',
-      description: null,
-      is_active: 1,
-    })
-    .mockResolvedValueOnce({ id: 'version_terms_current', version: '1' })
-    .mockResolvedValueOnce({ id: 'version_privacy_current', version: '1' });
-  enqueueLegalPolicyContentQueries();
-}
-
-function enqueueLegalPolicyContent(
-  privacyVersion: { id: string; version: string } = {
-    id: 'version_privacy_current',
-    version: '1',
-  }
-) {
-  mocks.coreAdapter.queryOne
-    .mockResolvedValueOnce({
-      id: 'policy_legal',
-      display_name: 'Legal documents',
-      description: null,
-      is_active: 1,
-    })
-    .mockResolvedValueOnce({ id: 'version_terms_current', version: '1' })
-    .mockResolvedValueOnce(privacyVersion);
-  enqueueLegalPolicyContentQueries();
-}
-
-function enqueueLegalPolicyContentQueries() {
-  mocks.coreAdapter.query
-    .mockResolvedValueOnce(legalPolicyItems)
-    .mockResolvedValueOnce([
-      {
-        language: 'en',
-        title: 'Terms of Service',
-        description: '',
-        document_url: 'https://example.test/terms',
-        inline_content: 'Terms',
-      },
-    ])
-    .mockResolvedValueOnce([
-      {
-        language: 'en',
-        title: 'Privacy Policy',
-        description: '',
-        document_url: 'https://example.test/privacy',
-        inline_content: 'Privacy',
-      },
-    ]);
-}
-
 function mockSubmitQueries(input: {
   state?: string;
   expiresAt?: number;
@@ -957,7 +816,6 @@ function mockSubmitQueries(input: {
   context?: Record<string, unknown>;
   clientId?: string | null;
   samlSpId?: string | null;
-  stepStateJson?: string | null;
 }) {
   const currentNodeId = input.currentNodeId ?? 'entry';
   const currentStepId = input.currentStepId ?? 'entry:step';
@@ -992,7 +850,7 @@ function mockSubmitQueries(input: {
       step_id: currentStepId,
       state: input.stepState ?? 'pending',
       selected_handle: null,
-      state_json: input.stepStateJson ?? null,
+      state_json: null,
     })
     .mockResolvedValueOnce({
       id: 'fv_1',
@@ -1025,38 +883,6 @@ async function startInteraction(
       consumed: false,
     });
   }
-  if (typeof body.saml_request_id === 'string' && typeof body.saml_sp_entity_id === 'string') {
-    mocks.samlRequestStore.fetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          requestId: body.saml_request_id,
-          issuer: body.saml_sp_entity_id,
-          destination: 'https://first.test.authrim.com/saml/idp/sso',
-          acsUrl: 'https://sp.example.test/acs',
-          binding: 'post',
-          used: false,
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 300_000,
-          type: 'authn_request',
-          data: {
-            id: body.saml_request_id,
-            issuer: body.saml_sp_entity_id,
-            issueInstant: new Date().toISOString(),
-            assertionConsumerServiceURL: 'https://sp.example.test/acs',
-          },
-          context: {
-            loginFlowProtocol: {
-              tenantId: 'tenant_test',
-              requestId: body.saml_request_id,
-              spEntityId: body.saml_sp_entity_id,
-              acsUrl: 'https://sp.example.test/acs',
-              requestedAttributes: [],
-            },
-          },
-        })
-      )
-    );
-  }
   mockStartQueries(runtimeSnapshot, editorSnapshot);
   const response = await loginRuntimeInteractionStartHandler(createContext({ body }));
   const data = await readJson(response);
@@ -1066,17 +892,6 @@ async function startInteraction(
 describe('LoginUI runtime Flow handlers', () => {
   beforeEach(() => {
     resetAdapter();
-  });
-
-  it('does not compare incompatible OIDC requested and selected hashes in shadow mode', () => {
-    expect(
-      evaluateConsentGateShadowComparison('oidc_authorization', {
-        force_interaction: false,
-        release_current_state: 'granted',
-        release_existing_set_hash: 'selected-set-hash',
-        release_set_hash: 'requested-set-hash',
-      } as never)
-    ).toEqual({ legacyWouldChallenge: false, reasonCode: 'current_grant_reusable' });
   });
 
   it('never coerces VC server-side flow kinds into a login flow', async () => {
@@ -1105,19 +920,33 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(2);
   });
 
-  it('resolves a target-specific Flow assignment before the tenant default', async () => {
-    const { response } = await startInteraction({
-      flow_kind: 'login',
-      client_id: 'client_1',
-      authorization_challenge_id: 'login_challenge_1',
-    });
+  it.each([
+    {
+      protocol: 'oidc',
+      body: { flow_kind: 'login', client_id: 'client_1' },
+      expectedStep: 'oidc-complete',
+    },
+    {
+      protocol: 'saml',
+      body: { flow_kind: 'login', saml_sp_id: 'saml_sp_1' },
+      expectedStep: 'saml-complete',
+    },
+  ])(
+    'routes a $protocol request through the matching protocol branch',
+    async ({ body, expectedStep }) => {
+      const { response, data } = await startInteraction(
+        body,
+        protocolBranchRuntime,
+        protocolBranchEditor
+      );
 
-    expect(response.status).toBe(200);
-    const assignmentCall = mocks.coreAdapter.queryOne.mock.calls[0];
-    expect(assignmentCall?.[0]).toContain('a.target_type = ?');
-    expect(assignmentCall?.[1]).toEqual(['tenant_test', 'oidc_client', 'client_1', 'login']);
-    expect(mocks.coreAdapter.queryOne).toHaveBeenCalledTimes(2);
-  });
+      expect(response.status).toBe(200);
+      expect(data.interaction).toMatchObject({
+        current_node_id: expectedStep,
+        current_step_id: `${expectedStep}:step`,
+      });
+    }
+  );
 
   it('rejects an authorization challenge bound to a different OIDC client', async () => {
     mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
@@ -1171,401 +1000,6 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.error_code).toBe('AR_FLOW_AUTH_CHALLENGE_INVALID');
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
     expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('restores OIDC scope, claims, redirect URI, and prompt only from challenge metadata', async () => {
-    mocks.resolveRuntimeIdentityMappingBinding.mockResolvedValueOnce({
-      mappingSnapshotHash: 'mapping-snapshot-1',
-      destinationNamespace: 'oidc.claim',
-      edges: [
-        {
-          targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'department' },
-        },
-      ],
-      transforms: [],
-      fieldMappingSet: { rules: [] },
-    } as never);
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      id: 'login_challenge_1',
-      tenantId: 'tenant_test',
-      type: 'login',
-      userId: 'anonymous',
-      challenge: 'login_challenge_1',
-      metadata: {
-        tenant_id: 'tenant_test',
-        client_id: 'client_1',
-        redirect_uri: 'https://client.example.test/callback',
-        scope: 'openid profile',
-        claims: JSON.stringify({ id_token: { email: null } }),
-        identity_mapping: { fieldMappingSetId: 'mapping-set-1' },
-        attribute_release_consent: { enabled: true, mode: 'until_attributes_change' },
-        prompt: 'login',
-        authorization_request_source: 'par',
-        authorization_request_integrity_protected: true,
-      },
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 600_000,
-      consumed: false,
-    });
-    mockStartQueries(oidcCompletionRuntime, null);
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: {
-          flow_kind: 'login',
-          target_type: 'oidc_client',
-          target_id: 'attacker_selected_client',
-          client_id: 'client_1',
-          authorization_challenge_id: 'login_challenge_1',
-          requested_scope: 'openid admin:all',
-        },
-      })
-    );
-    const data = await readJson(response);
-    const protocolContext = (data.contract as FlowRuntimeContract)
-      .protocol_context as unknown as Record<string, unknown>;
-    const oidc = protocolContext.oidc as Record<string, unknown>;
-
-    expect(response.status).toBe(200);
-    expect(oidc).toMatchObject({
-      client_id: 'client_1',
-      redirect_uri: 'https://client.example.test/callback',
-      requested_scope: ['openid', 'profile'],
-      mapping_claims: ['department'],
-      mapping_snapshot_hash: 'mapping-snapshot-1',
-      release_mode: 'until_attributes_change',
-      claims: { id_token: { email: null } },
-      prompt: 'login',
-      prompt_values: ['login'],
-      authorization_request_source: 'par',
-      authorization_request_integrity_protected: true,
-    });
-    expect(JSON.stringify(protocolContext)).not.toContain('admin:all');
-    const assignmentParams = mocks.coreAdapter.queryOne.mock.calls[0]?.[1] as unknown[];
-    expect(assignmentParams).toContain('client_1');
-    expect(assignmentParams).not.toContain('attacker_selected_client');
-  });
-
-  it('rejects a consent challenge whose subject differs from the active session', async () => {
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      id: 'consent_challenge_1',
-      tenantId: 'tenant_test',
-      type: 'consent',
-      userId: 'user_1',
-      challenge: 'consent_challenge_1',
-      metadata: { client_id: 'client_1', sessionUserId: 'user_1', scope: 'openid' },
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 600_000,
-      consumed: false,
-    });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_2',
-      expiresAt: Date.now() + 60_000,
-      createdAt: Date.now(),
-    });
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-        body: {
-          flow_kind: 'login',
-          client_id: 'client_1',
-          authorization_challenge_id: 'consent_challenge_1',
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(403);
-    expect(data.error).toBe('authorization_challenge_subject_mismatch');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects invalid prompt combinations before creating an interaction', async () => {
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      id: 'login_challenge_1',
-      tenantId: 'tenant_test',
-      type: 'login',
-      userId: 'anonymous',
-      challenge: 'login_challenge_1',
-      metadata: { client_id: 'client_1', scope: 'openid', prompt: 'none consent' },
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 600_000,
-      consumed: false,
-    });
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: {
-          flow_kind: 'login',
-          client_id: 'client_1',
-          authorization_challenge_id: 'login_challenge_1',
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_authorization_challenge');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects an expired authorization challenge before creating an interaction', async () => {
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      id: 'login_challenge_1',
-      tenantId: 'tenant_test',
-      type: 'login',
-      userId: 'anonymous',
-      challenge: 'login_challenge_1',
-      metadata: { client_id: 'client_1', scope: 'openid' },
-      createdAt: Date.now() - 700_000,
-      expiresAt: Date.now() - 1,
-      consumed: false,
-    });
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: {
-          flow_kind: 'login',
-          client_id: 'client_1',
-          authorization_challenge_id: 'login_challenge_1',
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_authorization_challenge');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('preflights prompt=none Legal Consent without creating a Flow interaction', async () => {
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      id: 'consent_challenge_1',
-      tenantId: 'tenant_test',
-      type: 'consent',
-      userId: 'user_1',
-      challenge: 'consent_challenge_1',
-      metadata: {
-        client_id: 'client_1',
-        sessionUserId: 'user_1',
-        scope: 'openid',
-        prompt: 'none',
-      },
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 600_000,
-      consumed: false,
-    });
-    mocks.sessionStore.getSessionRpc
-      .mockResolvedValueOnce({
-        userId: 'user_1',
-        expiresAt: Date.now() + 60_000,
-        createdAt: Date.now(),
-      })
-      .mockResolvedValueOnce({
-        userId: 'user_1',
-        expiresAt: Date.now() + 60_000,
-        createdAt: Date.now(),
-      });
-    mockStartQueries(legalConsentRuntime, legalConsentEditor);
-    enqueueLegalPolicyHydration();
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-        body: {
-          flow_kind: 'login',
-          client_id: 'client_1',
-          authorization_challenge_id: 'consent_challenge_1',
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('consent_required');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('exposes the same prompt=none preflight to the authorize endpoint before redirect', async () => {
-    mockStartQueries(legalConsentRuntime, legalConsentEditor);
-    enqueueLegalPolicyHydration();
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
-
-    const result = await preflightOidcPromptNoneConsentGates({
-      c: createContext({ body: {} }),
-      db: mocks.coreAdapter as never,
-      tenantId: 'tenant_test',
-      clientId: 'client_1',
-      subjectUserId: 'user_1',
-      requestedScope: ['openid'],
-      resources: [],
-      claims: null,
-      redirectUri: 'https://client.example.test/callback',
-      authorizationRequestSource: 'par',
-      authorizationRequestIntegrityProtected: true,
-    });
-
-    expect(result).toEqual({
-      error: 'consent_required',
-      description: 'Consent is required but prompt=none forbids user interaction',
-    });
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('preflights prompt=none OIDC release consent without creating a Flow interaction', async () => {
-    mockStartQueries(oidcAuthorizationConsentRuntime, null);
-
-    const result = await preflightOidcPromptNoneConsentGates({
-      c: createContext({ body: {} }),
-      db: mocks.coreAdapter as never,
-      tenantId: 'tenant_test',
-      clientId: 'client_1',
-      subjectUserId: 'user_1',
-      requestedScope: ['openid', 'profile'],
-      resources: [],
-      claims: {
-        id_token: {
-          email: { essential: true },
-        },
-      },
-      redirectUri: 'https://client.example.test/callback',
-      authorizationRequestSource: 'par',
-      authorizationRequestIntegrityProtected: true,
-    });
-
-    expect(result).toEqual({
-      error: 'consent_required',
-      description: 'Consent is required but prompt=none forbids user interaction',
-    });
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects a stored SAML request when the browser SP hint does not match its issuer', async () => {
-    mocks.samlRequestStore.fetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          requestId: 'saml_request_1',
-          issuer: 'https://other-sp.example.test/metadata',
-          acsUrl: 'https://other-sp.example.test/acs',
-          binding: 'post',
-          used: false,
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 300_000,
-          type: 'authn_request',
-          data: {
-            id: 'saml_request_1',
-            issuer: 'https://other-sp.example.test/metadata',
-            issueInstant: new Date().toISOString(),
-            assertionConsumerServiceURL: 'https://other-sp.example.test/acs',
-          },
-        })
-      )
-    );
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: {
-          flow_kind: 'login',
-          saml_sp_id: 'sp_config_1',
-          saml_request_id: 'saml_request_1',
-          saml_sp_entity_id: 'https://sp.example.test/metadata',
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_saml_request');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-  });
-
-  it('restores SAML ACS, RequestedAttributes, and mapping only from the stored request', async () => {
-    mocks.samlRequestStore.fetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          requestId: 'saml_request_1',
-          issuer: 'https://sp.example.test/metadata',
-          acsUrl: 'https://sp.example.test/acs',
-          binding: 'post',
-          used: false,
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 300_000,
-          type: 'authn_request',
-          data: {
-            id: 'saml_request_1',
-            issuer: 'https://sp.example.test/metadata',
-            issueInstant: new Date().toISOString(),
-            assertionConsumerServiceURL: 'https://sp.example.test/acs',
-          },
-          context: {
-            loginFlowProtocol: {
-              tenantId: 'tenant_test',
-              requestId: 'saml_request_1',
-              spEntityId: 'https://sp.example.test/metadata',
-              acsUrl: 'https://sp.example.test/acs',
-              requestedAttributes: [
-                { name: 'urn:oid:0.9.2342.19200300.100.1.3', isRequired: true },
-              ],
-              identityMapping: { bindingId: 'mapping_1', versionId: 'mapping_version_1' },
-            },
-            attributeReleaseConsentChallenge: {
-              challengeId: 'challenge_1',
-              subjectId: 'user_1',
-              destinationType: 'saml_sp',
-              destinationId: 'https://sp.example.test/metadata',
-              attributeSetHash: 'attribute_hash_1',
-              consentMode: 'until_attributes_change',
-              createdAt: Date.now(),
-              attributeSummaries: [
-                {
-                  name: 'urn:oid:0.9.2342.19200300.100.1.3',
-                  friendlyName: 'mail',
-                  valueCount: 1,
-                  required: true,
-                },
-              ],
-            },
-          },
-        })
-      )
-    );
-    mockStartQueries(runtime, null);
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: {
-          flow_kind: 'login',
-          saml_sp_id: 'sp_config_1',
-          saml_request_id: 'saml_request_1',
-          saml_sp_entity_id: 'https://sp.example.test/metadata',
-        },
-      })
-    );
-    const data = await readJson(response);
-    const protocolContext = (data.contract as FlowRuntimeContract)
-      .protocol_context as unknown as Record<string, unknown>;
-    const saml = protocolContext.saml as Record<string, unknown>;
-
-    expect(response.status).toBe(200);
-    expect(saml).toMatchObject({
-      saml_sp_id: 'https://sp.example.test/metadata',
-      saml_sp_entity_id: 'https://sp.example.test/metadata',
-      acs_url: 'https://sp.example.test/acs',
-      requested_attributes: [{ name: 'urn:oid:0.9.2342.19200300.100.1.3', isRequired: true }],
-      identity_mapping: { bindingId: 'mapping_1', versionId: 'mapping_version_1' },
-      release_attributes: [
-        {
-          name: 'urn:oid:0.9.2342.19200300.100.1.3',
-          friendlyName: 'mail',
-          valueCount: 1,
-          required: true,
-        },
-      ],
-      release_set_hash: 'attribute_hash_1',
-      release_mode: 'until_attributes_change',
-    });
   });
 
   it('includes bridge external IdP providers in authentication runtime handles', async () => {
@@ -1662,50 +1096,6 @@ describe('LoginUI runtime Flow handlers', () => {
       current_step_id: 'complete:step',
     });
     expect(mocks.sessionStore.getSessionRpc).toHaveBeenCalledWith('sess_runtime_1');
-  });
-
-  it('forces authentication for prompt=login even when an active session exists', async () => {
-    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-      id: 'reauth_challenge_1',
-      tenantId: 'tenant_test',
-      type: 'reauth',
-      userId: 'user_1',
-      challenge: 'reauth_challenge_1',
-      metadata: {
-        client_id: 'client_1',
-        sessionUserId: 'user_1',
-        scope: 'openid',
-        prompt: 'login',
-      },
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 600_000,
-      consumed: false,
-    });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-    mockStartQueries(sessionCheckRuntime, sessionCheckEditor);
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: {
-          flow_kind: 'login',
-          client_id: 'client_1',
-          authorization_challenge_id: 'reauth_challenge_1',
-        },
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(200);
-    expect(data.interaction).toMatchObject({
-      current_node_id: 'auth',
-      current_step_id: 'auth:step',
-    });
   });
 
   it('evaluates hidden condition steps during interaction start', async () => {
@@ -2030,6 +1420,67 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(response.status).toBe(403);
     expect(data.error).toBe('invalid_runtime_signature');
     expect(data.category).toBe('security_error');
+  });
+
+  it('rebuilds and persists a resumed interaction contract for the requested locale', async () => {
+    const { data: started } = await startInteraction({ flow_kind: 'login', locale: 'en' });
+    const startedInteraction = started.interaction as {
+      id: string;
+      flow_id: string;
+      flow_version_id: string;
+      current_node_id: string;
+      current_step_id: string;
+      expires_at: number;
+    };
+    const startedContractHash = String(started.contract_hash);
+    const startedSignature = String(started.signature);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        id: startedInteraction.id,
+        flow_id: startedInteraction.flow_id,
+        flow_version_id: startedInteraction.flow_version_id,
+        client_id: null,
+        saml_sp_id: null,
+        state: 'active',
+        current_node_id: startedInteraction.current_node_id,
+        current_step_id: startedInteraction.current_step_id,
+        context_json: JSON.stringify({
+          protocol: 'direct',
+          target_type: 'tenant',
+          target_id: null,
+          locale: 'en',
+        }),
+        contract_hash: startedContractHash,
+        signature: startedSignature,
+        expires_at: startedInteraction.expires_at,
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_login',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify(runtime),
+        editor_snapshot_json: null,
+        published_at: 1782770000,
+      });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: {
+          resume_interaction_id: startedInteraction.id,
+          contract_hash: startedContractHash,
+          signature: startedSignature,
+          locale: 'ko',
+        },
+      })
+    );
+    const resumed = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(resumed.resumed).toBe(true);
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('SET context_json = ?'),
+      expect.arrayContaining([expect.stringContaining('"locale":"ko"')])
+    );
   });
 
   it('hydrates screen steps with the active screen snapshot', async () => {
@@ -3002,710 +2453,6 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
-  it('keeps accepted Legal Consent items on a mixed screen and reuses them across clients', async () => {
-    mockStartQueries(legalConsentRuntime, legalConsentEditor);
-    enqueueLegalPolicyHydration();
-    const startResponse = await loginRuntimeInteractionStartHandler(
-      createContext({
-        body: { flow_kind: 'login', client_id: 'client_2' },
-      })
-    );
-    const startData = await readJson(startResponse);
-    expect(startResponse.status).toBe(200);
-
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'auth',
-      currentStepId: 'auth:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: legalConsentRuntime,
-      editorSnapshot: legalConsentEditor,
-      clientId: 'client_2',
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_2',
-        client_id: 'client_2',
-        oidc_prompt: 'consent',
-        oidc_prompt_values: ['consent'],
-      },
-    });
-    enqueueLegalPolicyHydration();
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        tenant_id: 'tenant_test',
-        subject_user_id: 'user_1',
-        consent_kind: 'terms',
-        statement_id: 'statement_terms',
-        statement_version: '1',
-        status: 'accepted',
-        accepted_at: 1_700_000_000,
-        expires_at: null,
-        withdrawn_at: null,
-        latest_evidence_record_id: 'terms_evidence_client_1',
-        updated_at: 1_700_000_000,
-      })
-      .mockResolvedValueOnce(null);
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-        body: {
-          step_id: 'auth:step',
-          node_id: 'auth',
-          selected_handle: 'passkey',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
-    const step = data.step as Record<string, unknown>;
-    const content = step.content as Record<string, unknown>;
-    const policy = content.consent_policy as Record<string, unknown>;
-    const items = policy.items as Array<Record<string, unknown>>;
-
-    expect(response.status).toBe(200);
-    expect(data.completed).toBe(false);
-    expect(policy.force_interaction).toBe(false);
-    expect(items).toMatchObject([
-      {
-        statement_id: 'statement_terms',
-        acceptance_status: 'accepted',
-        action_required: false,
-        accepted_record_id: 'terms_evidence_client_1',
-      },
-      {
-        statement_id: 'statement_privacy',
-        acceptance_status: 'pending',
-        action_required: true,
-        accepted_record_id: null,
-      },
-    ]);
-    const acknowledgmentCall = mocks.coreAdapter.queryOne.mock.calls.find(([sql]) =>
-      String(sql).includes('FROM document_acknowledgments_current')
-    );
-    expect(acknowledgmentCall?.[1]).not.toContain('client_2');
-  });
-
-  it('auto-advances a Legal Consent gate when all required documents are accepted', async () => {
-    mockStartQueries(legalConsentRuntime, legalConsentEditor);
-    enqueueLegalPolicyHydration();
-    const startResponse = await loginRuntimeInteractionStartHandler(
-      createContext({ body: { flow_kind: 'login', client_id: 'client_2' } })
-    );
-    const startData = await readJson(startResponse);
-
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'auth',
-      currentStepId: 'auth:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: legalConsentRuntime,
-      editorSnapshot: legalConsentEditor,
-      clientId: 'client_2',
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_2',
-        client_id: 'client_2',
-      },
-    });
-    enqueueLegalPolicyHydration();
-    for (const [kind, statementId, recordId] of [
-      ['terms', 'statement_terms', 'terms_evidence'],
-      ['privacy', 'statement_privacy', 'privacy_evidence'],
-    ]) {
-      mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-        tenant_id: 'tenant_test',
-        subject_user_id: 'user_1',
-        consent_kind: kind,
-        statement_id: statementId,
-        statement_version: '1',
-        status: 'accepted',
-        accepted_at: 1_700_000_000,
-        expires_at: null,
-        withdrawn_at: null,
-        latest_evidence_record_id: recordId,
-        updated_at: 1_700_000_000,
-      });
-    }
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-        body: {
-          step_id: 'auth:step',
-          node_id: 'auth',
-          selected_handle: 'passkey',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(200);
-    expect(data.completed).toBe(true);
-    expect(data.step).toBeNull();
-    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO consent_records'),
-      expect.anything()
-    );
-  });
-
-  it('persists only pending Legal Consent evidence, current state, and a receipt atomically', async () => {
-    mockStartQueries(legalConsentRuntime, legalConsentEditor);
-    enqueueLegalPolicyHydration();
-    const startResponse = await loginRuntimeInteractionStartHandler(
-      createContext({ body: { flow_kind: 'login', client_id: 'client_2' } })
-    );
-    const startData = await readJson(startResponse);
-    const expiresAt = Math.floor(Date.now() / 1000) + 600;
-
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'legal',
-      currentStepId: 'legal:step',
-      stepState: 'waiting_input',
-      stepStateJson: JSON.stringify({
-        consent_render_snapshot: {
-          policy_id: 'policy_legal',
-          gate_kind: 'legal_document',
-          items: [
-            { statement_id: 'statement_terms', version: '1', acceptance_status: 'accepted' },
-            { statement_id: 'statement_privacy', version: '1', acceptance_status: 'pending' },
-          ],
-        },
-      }),
-      runtimeSnapshot: legalConsentRuntime,
-      editorSnapshot: legalConsentEditor,
-      clientId: 'client_2',
-      expiresAt,
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_2',
-        client_id: 'client_2',
-        authorization_challenge_id: 'challenge_2',
-      },
-    });
-    enqueueLegalPolicyHydration();
-    enqueueLegalPolicyContent();
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      id: 'interaction_1',
-      flow_id: 'flow_login',
-      flow_version_id: 'fv_1',
-      user_id: 'user_1',
-      client_id: 'client_2',
-      saml_sp_id: null,
-      state: 'active',
-      current_node_id: 'legal',
-      current_step_id: 'legal:step',
-      context_json: JSON.stringify({
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_2',
-        client_id: 'client_2',
-        authorization_challenge_id: 'challenge_2',
-        requested_scope: [],
-      }),
-      contract_hash: startData.contract_hash,
-      signature: startData.signature,
-      expires_at: expiresAt,
-    });
-    enqueueLegalPolicyContent();
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        tenant_id: 'tenant_test',
-        subject_user_id: 'user_1',
-        consent_kind: 'terms',
-        statement_id: 'statement_terms',
-        statement_version: '1',
-        status: 'accepted',
-        accepted_at: 1_700_000_000,
-        expires_at: null,
-        withdrawn_at: null,
-        latest_evidence_record_id: 'terms_evidence_client_1',
-        updated_at: 1_700_000_000,
-      })
-      .mockResolvedValueOnce(null);
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-    mocks.coreAdapter.batch.mockImplementation(
-      async (statements: Array<{ sql: string; params?: unknown[] }>) => {
-        for (const statement of statements) {
-          expect(statement.sql.match(/\?/gu) ?? []).toHaveLength(statement.params?.length ?? 0);
-        }
-        return statements.map(() => ({ success: true, rowsAffected: 1 }));
-      }
-    );
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
-        body: {
-          step_id: 'legal:step',
-          node_id: 'legal',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-          input: {
-            consent_item_decisions: {
-              statement_privacy: 'granted',
-              statement_terms: 'denied',
-            },
-          },
-        },
-      })
-    );
-
-    const responseData = await readJson(response);
-    expect(response.status, JSON.stringify(responseData)).toBe(200);
-    const statements = mocks.coreAdapter.batch.mock.calls[0]?.[0] as Array<{
-      sql: string;
-      params: unknown[];
-    }>;
-    const evidenceCalls = statements.filter(({ sql }) =>
-      sql.includes('INSERT INTO consent_records')
-    );
-    expect(statements[0]?.sql).toContain('consent_statement_versions');
-    expect(statements[0]?.sql).toContain('document_acknowledgments_current');
-    expect(statements[0]?.sql).toContain("state IN ('pending', 'waiting_input')");
-    expect(evidenceCalls).toHaveLength(1);
-    expect(evidenceCalls[0]?.params).toEqual(
-      expect.arrayContaining(['statement_privacy', 'privacy', 'accepted'])
-    );
-    expect(evidenceCalls[0]?.params).not.toContain('statement_terms');
-    expect(
-      statements.some(({ sql }) => sql.includes('INSERT INTO document_acknowledgments_current'))
-    ).toBe(true);
-    expect(
-      statements.some(({ sql }) => sql.includes('INSERT INTO consent_gate_decision_receipts'))
-    ).toBe(true);
-  });
-
-  it('rejects a stale Legal Consent screen after the current statement version changes', async () => {
-    mockStartQueries(legalConsentRuntime, legalConsentEditor);
-    enqueueLegalPolicyHydration();
-    const startResponse = await loginRuntimeInteractionStartHandler(
-      createContext({ body: { flow_kind: 'login', client_id: 'client_2' } })
-    );
-    const startData = await readJson(startResponse);
-    const expiresAt = Math.floor(Date.now() / 1000) + 600;
-
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'legal',
-      currentStepId: 'legal:step',
-      stepState: 'waiting_input',
-      stepStateJson: JSON.stringify({
-        consent_render_snapshot: {
-          policy_id: 'policy_legal',
-          gate_kind: 'legal_document',
-          items: [
-            { statement_id: 'statement_terms', version: '1', acceptance_status: 'accepted' },
-            { statement_id: 'statement_privacy', version: '1', acceptance_status: 'pending' },
-          ],
-        },
-      }),
-      runtimeSnapshot: legalConsentRuntime,
-      editorSnapshot: legalConsentEditor,
-      clientId: 'client_2',
-      expiresAt,
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_2',
-        client_id: 'client_2',
-        authorization_challenge_id: 'challenge_2',
-      },
-    });
-    enqueueLegalPolicyHydration();
-    enqueueLegalPolicyContent();
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      id: 'interaction_1',
-      flow_id: 'flow_login',
-      flow_version_id: 'fv_1',
-      user_id: 'user_1',
-      client_id: 'client_2',
-      saml_sp_id: null,
-      state: 'active',
-      current_node_id: 'legal',
-      current_step_id: 'legal:step',
-      context_json: JSON.stringify({
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_2',
-        client_id: 'client_2',
-        authorization_challenge_id: 'challenge_2',
-        requested_scope: [],
-      }),
-      contract_hash: startData.contract_hash,
-      signature: startData.signature,
-      expires_at: expiresAt,
-    });
-    enqueueLegalPolicyContent({ id: 'version_privacy_v2', version: '2' });
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        tenant_id: 'tenant_test',
-        subject_user_id: 'user_1',
-        consent_kind: 'terms',
-        statement_id: 'statement_terms',
-        statement_version: '1',
-        status: 'accepted',
-        accepted_at: 1_700_000_000,
-        expires_at: null,
-        withdrawn_at: null,
-        latest_evidence_record_id: 'terms_evidence_client_1',
-        updated_at: 1_700_000_000,
-      })
-      .mockResolvedValueOnce(null);
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-        body: {
-          step_id: 'legal:step',
-          node_id: 'legal',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-          input: { consent_item_decisions: { statement_privacy: 'granted' } },
-        },
-      })
-    );
-
-    const responseData = await readJson(response);
-    expect(response.status, JSON.stringify(responseData)).toBe(409);
-    expect(
-      responseData,
-      JSON.stringify({
-        responseData,
-        queries: mocks.coreAdapter.queryOne.mock.calls.map(([sql]) => String(sql)),
-      })
-    ).toMatchObject({
-      error: 'consent_state_changed',
-    });
-    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
-  });
-
-  it('atomically persists the selected OIDC scope and claim subsets with a bound receipt', async () => {
-    const expiresAt = Math.floor(Date.now() / 1000) + 600;
-    const requestContext = {
-      protocol: 'oidc',
-      target_type: 'oidc_client',
-      target_id: 'client_1',
-      client_id: 'client_1',
-      saml_sp_id: null,
-      authorization_challenge_id: 'challenge_1',
-      saml_request_id: null,
-      saml_sp_entity_id: null,
-      return_to: null,
-      requested_scope: ['openid', 'profile'],
-      locale: 'en',
-      oidc_redirect_uri: 'https://client.example.test/callback',
-      oidc_resources: [],
-      oidc_claims: { id_token: { email: { essential: true } } },
-      oidc_identity_mapping: { fieldMappingSetId: 'mapping-set-1' },
-      oidc_mapping_claims: ['department'],
-      oidc_mapping_snapshot_hash: 'mapping-snapshot-1',
-      oidc_release_mode: 'until_attributes_change',
-      oidc_prompt: null,
-      oidc_prompt_values: [],
-      oidc_authorization_request_source: 'par',
-      oidc_authorization_request_integrity_protected: true,
-      oidc_challenge_type: 'consent',
-      saml_acs_url: null,
-      saml_requested_attributes: [],
-      saml_identity_mapping: null,
-      saml_release_attributes: [],
-      saml_release_set_hash: null,
-      saml_release_mode: null,
-    };
-    const interaction = {
-      id: 'interaction_1',
-      flow_id: 'flow_login',
-      flow_version_id: 'fv_1',
-      user_id: 'user_1',
-      client_id: 'client_1',
-      saml_sp_id: null,
-      state: 'active',
-      current_node_id: 'oidc-consent',
-      current_step_id: 'oidc-consent:step',
-      context_json: JSON.stringify(requestContext),
-      contract_hash: 'hash',
-      signature: 'signature',
-      expires_at: expiresAt,
-    };
-    mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) =>
-      sql.includes('FROM flow_interactions') ? interaction : null
-    );
-    mocks.coreAdapter.query.mockResolvedValue([]);
-    const policy = await resolveOidcReleasePolicyContent({
-      db: mocks.coreAdapter as never,
-      tenantId: 'tenant_test',
-      requestContext,
-      policy: null,
-      userId: 'user_1',
-    } as never);
-    expect(policy).not.toBeNull();
-    expect(policy?.release_mode).toBe('until_attributes_change');
-    expect(policy?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          release_kind: 'claim',
-          release_name: 'department',
-          release_locked: true,
-        }),
-      ])
-    );
-    const step = {
-      id: 'oidc-consent:step',
-      source_node_id: 'oidc-consent',
-      component: 'consent_policy',
-      render: true,
-      config: { consent_gate_kind: 'oidc_authorization' },
-      content: { consent_policy: policy },
-    };
-    const stateJson = JSON.stringify({
-      consent_render_snapshot: {
-        policy_id: policy!.id,
-        gate_kind: policy!.gate_kind,
-        release_set_hash: policy!.release_set_hash,
-        release_current_state: policy!.release_current_state,
-        release_existing_set_hash: policy!.release_existing_set_hash,
-        items: policy!.items.map((item) => ({
-          statement_id: item.statement_id,
-          version: item.version,
-          acceptance_status: item.acceptance_status,
-        })),
-      },
-    });
-    let statements: Array<{ sql: string; params: unknown[] }> = [];
-    mocks.coreAdapter.batch.mockImplementation(async (input) => {
-      statements = input as Array<{ sql: string; params: unknown[] }>;
-      for (const statement of statements) {
-        expect(statement.sql.match(/\?/gu) ?? []).toHaveLength(statement.params.length);
-      }
-      return statements.map(() => ({ success: true, rowsAffected: 1 }));
-    });
-
-    const result = await persistOidcAuthorizationConsentGate({
-      db: mocks.coreAdapter as never,
-      tenantId: 'tenant_test',
-      interaction,
-      stepState: {
-        id: 'step_1',
-        interaction_id: 'interaction_1',
-        node_id: 'oidc-consent',
-        step_id: 'oidc-consent:step',
-        state: 'waiting_input',
-        selected_handle: null,
-        state_json: stateJson,
-      },
-      step,
-      policy,
-      requestContext,
-      userId: 'user_1',
-      decisions: {
-        'oidc:scope:openid': { decision: 'accepted', selectedValue: null },
-        'oidc:scope:profile': { decision: 'rejected', selectedValue: null },
-        'oidc:claim:email': { decision: 'accepted', selectedValue: null },
-      },
-    } as never);
-
-    expect(result).toEqual({ ok: true });
-    const grant = statements.find(({ sql }) => sql.includes('INSERT INTO oauth_client_consents'));
-    expect(grant?.params).toEqual(
-      expect.arrayContaining([
-        'openid',
-        JSON.stringify(['openid']),
-        JSON.stringify(['department', 'email']),
-      ])
-    );
-    const receipt = statements.find(({ sql }) =>
-      sql.includes('INSERT INTO consent_gate_decision_receipts')
-    );
-    const receiptDecision = receipt?.params.find(
-      (value): value is string => typeof value === 'string' && value.includes('"requested_scopes"')
-    );
-    expect(JSON.parse(receiptDecision!)).toMatchObject({
-      release: {
-        requested_scopes: ['openid', 'profile'],
-        selected_scopes: ['openid'],
-        requested_claims: ['department', 'email'],
-        selected_claims: ['department', 'email'],
-        required_claims: ['department', 'email'],
-      },
-    });
-  });
-
-  it('atomically persists only selected SAML attributes without raw values', async () => {
-    const expiresAt = Math.floor(Date.now() / 1000) + 600;
-    const requestContext = {
-      protocol: 'saml',
-      target_type: 'saml_sp',
-      target_id: 'https://sp.example.test/entity',
-      client_id: null,
-      saml_sp_id: 'https://sp.example.test/entity',
-      authorization_challenge_id: null,
-      saml_request_id: 'saml_request_1',
-      saml_sp_entity_id: 'https://sp.example.test/entity',
-      return_to: 'saml_sso',
-      requested_scope: [],
-      locale: 'en',
-      oidc_redirect_uri: null,
-      oidc_resources: [],
-      oidc_claims: null,
-      oidc_prompt: null,
-      oidc_prompt_values: [],
-      oidc_authorization_request_source: null,
-      oidc_authorization_request_integrity_protected: false,
-      oidc_challenge_type: null,
-      saml_acs_url: 'https://sp.example.test/acs',
-      saml_requested_attributes: [],
-      saml_identity_mapping: null,
-      saml_release_attributes: [
-        { name: 'uid', friendlyName: 'User ID', required: true },
-        { name: 'mail', friendlyName: 'Email', required: false },
-      ],
-      saml_release_set_hash: 'source_attribute_hash',
-      saml_release_mode: 'until_attributes_change',
-    };
-    const interaction = {
-      id: 'interaction_1',
-      flow_id: 'flow_login',
-      flow_version_id: 'fv_1',
-      user_id: 'user_1',
-      client_id: null,
-      saml_sp_id: 'https://sp.example.test/entity',
-      state: 'active',
-      current_node_id: 'saml-consent',
-      current_step_id: 'saml-consent:step',
-      context_json: JSON.stringify(requestContext),
-      contract_hash: 'hash',
-      signature: 'signature',
-      expires_at: expiresAt,
-    };
-    mocks.coreAdapter.queryOne.mockResolvedValue(null);
-    mocks.coreAdapter.query.mockResolvedValue([]);
-    const policy = await resolveSamlReleasePolicyContent({
-      db: mocks.coreAdapter as never,
-      tenantId: 'tenant_test',
-      requestContext,
-      policy: null,
-      userId: 'user_1',
-    } as never);
-    expect(policy).not.toBeNull();
-    const step = {
-      id: 'saml-consent:step',
-      source_node_id: 'saml-consent',
-      component: 'consent_policy',
-      render: true,
-      config: { consent_gate_kind: 'saml_attribute_release' },
-      content: { consent_policy: policy },
-    };
-    const stateJson = JSON.stringify({
-      consent_render_snapshot: {
-        policy_id: policy!.id,
-        gate_kind: policy!.gate_kind,
-        release_set_hash: policy!.release_set_hash,
-        release_current_state: policy!.release_current_state,
-        release_existing_set_hash: policy!.release_existing_set_hash,
-        items: policy!.items.map((item) => ({
-          statement_id: item.statement_id,
-          version: item.version,
-          acceptance_status: item.acceptance_status,
-        })),
-      },
-    });
-    let statements: Array<{ sql: string; params: unknown[] }> = [];
-    mocks.coreAdapter.batch.mockImplementation(async (input) => {
-      statements = input as Array<{ sql: string; params: unknown[] }>;
-      for (const statement of statements) {
-        expect(statement.sql.match(/\?/gu) ?? []).toHaveLength(statement.params.length);
-      }
-      return statements.map(() => ({ success: true, rowsAffected: 1 }));
-    });
-
-    const result = await persistSamlAttributeReleaseConsentGate({
-      db: mocks.coreAdapter as never,
-      tenantId: 'tenant_test',
-      interaction,
-      stepState: {
-        id: 'step_1',
-        interaction_id: 'interaction_1',
-        node_id: 'saml-consent',
-        step_id: 'saml-consent:step',
-        state: 'waiting_input',
-        selected_handle: null,
-        state_json: stateJson,
-      },
-      step,
-      policy,
-      requestContext,
-      userId: 'user_1',
-      decisions: {
-        'saml:attribute:uid': { decision: 'accepted', selectedValue: null },
-        'saml:attribute:mail': { decision: 'rejected', selectedValue: null },
-      },
-    } as never);
-
-    expect(result).toEqual({ ok: true });
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-    expect(
-      statements.find(({ sql }) => sql.includes('INSERT INTO attribute_release_consents'))?.params
-    ).toEqual(expect.arrayContaining(['source_attribute_hash', 'until_attributes_change']));
-    const receipt = statements.find(({ sql }) =>
-      sql.includes('INSERT INTO consent_gate_decision_receipts')
-    );
-    const receiptDecision = receipt?.params.find(
-      (value): value is string =>
-        typeof value === 'string' && value.includes('"requested_attributes"')
-    );
-    expect(JSON.parse(receiptDecision!)).toMatchObject({
-      release: {
-        requested_attributes: ['mail', 'uid'],
-        selected_attributes: ['uid'],
-        required_attributes: ['uid'],
-      },
-    });
-    expect(JSON.stringify(statements)).not.toContain('user@example.test');
-  });
-
   it('rejects an unknown selected edge handle instead of falling back to the default branch', async () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
@@ -3790,48 +2537,6 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
-  it('rejects completion metadata for a different trusted protocol before consuming continuation', async () => {
-    const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'saml-complete',
-      currentStepId: 'saml-complete:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: mixedProtocolCompletionRuntime,
-      editorSnapshot: mixedProtocolCompletionEditor,
-      clientId: 'client_1',
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_1',
-        client_id: 'client_1',
-        authorization_challenge_id: 'challenge_1',
-      },
-    });
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        body: {
-          step_id: 'saml-complete:step',
-          node_id: 'saml-complete',
-          selected_handle: 'completed',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(409);
-    expect(data.error).toBe('invalid_protocol_step');
-    expect(data.error_code).toBe('AR_FLOW_STEP_PROTOCOL_MISMATCH');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
-    expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
-  });
-
   it('returns an OIDC continuation redirect when completion uses an existing session', async () => {
     const { data: startData } = await startInteraction(
       {
@@ -3858,9 +2563,7 @@ describe('LoginUI runtime Flow handlers', () => {
         authorization_challenge_id: 'login_challenge_1',
       },
     });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      id: 'cgr_0123456789abcdef0123456789abcdef',
-    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
     mocks.coreAdapter.query.mockResolvedValueOnce([
       { step_id: 'complete:step', selected_handle: 'completed' },
     ]);
@@ -3905,7 +2608,6 @@ describe('LoginUI runtime Flow handlers', () => {
       protocol_continuation: {
         protocol: 'oidc',
         authorization_challenge_id: 'login_challenge_1',
-        consent_gate_receipt_id: 'cgr_0123456789abcdef0123456789abcdef',
       },
     });
     expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledWith(
@@ -3914,80 +2616,8 @@ describe('LoginUI runtime Flow handlers', () => {
       'login_challenge_1',
       'user_1',
       1_700_000_123,
-      'https://first.test.authrim.com',
-      'cgr_0123456789abcdef0123456789abcdef'
+      'https://first.test.authrim.com'
     );
-  });
-
-  it('returns the bound SAML receipt from the SAML completion branch', async () => {
-    const spEntityId = 'https://sp.example.test/entity';
-    const { data: startData } = await startInteraction(
-      {
-        flow_kind: 'login',
-        saml_sp_id: spEntityId,
-        saml_sp_entity_id: spEntityId,
-        saml_request_id: 'saml_request_1',
-      },
-      samlCompletionRuntime
-    );
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'saml-complete',
-      currentStepId: 'saml-complete:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: samlCompletionRuntime,
-      editorSnapshot: null,
-      samlSpId: spEntityId,
-      context: {
-        protocol: 'saml',
-        target_type: 'saml_sp',
-        target_id: spEntityId,
-        client_id: null,
-        saml_sp_id: spEntityId,
-        saml_sp_entity_id: spEntityId,
-        saml_request_id: 'saml_request_1',
-        return_to: 'saml_sso',
-        requested_scope: [],
-      },
-    });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      id: 'cgr_0123456789abcdef0123456789abcdef',
-    });
-    mocks.coreAdapter.query.mockResolvedValueOnce([
-      { step_id: 'saml-complete:step', selected_handle: 'completed' },
-    ]);
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        body: {
-          step_id: 'saml-complete:step',
-          node_id: 'saml-complete',
-          selected_handle: 'completed',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(200);
-    expect(data.output).toMatchObject({
-      action: 'continue_protocol',
-      protocol_continuation: {
-        protocol: 'saml',
-        saml_request_id: 'saml_request_1',
-        saml_sp_id: spEntityId,
-        consent_gate_receipt_id: 'cgr_0123456789abcdef0123456789abcdef',
-        completion_block: {
-          id: 'saml-attribute-release-completion',
-          protocol: 'saml',
-          purpose: 'attribute_release',
-        },
-      },
-    });
   });
 
   it('returns an OIDC continuation redirect after an authentication method step completes', async () => {

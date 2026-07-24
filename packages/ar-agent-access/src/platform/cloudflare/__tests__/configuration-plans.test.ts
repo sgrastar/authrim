@@ -11,6 +11,7 @@ import { CloudflareAgentConfigurationPlanAdapter } from '../configuration-plans'
 const now = 1_800_000_000_000;
 const definition = {
   schemaVersion: 'authrim-agent-plan-v1' as const,
+  goal: 'Apply an approved Authrim configuration change',
   steps: [
     {
       id: 'step-1',
@@ -158,6 +159,7 @@ describe('Cloudflare Agent configuration Plan adapter', () => {
     incoming.input = {
       definition: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-1',
@@ -180,6 +182,7 @@ describe('Cloudflare Agent configuration Plan adapter', () => {
     incoming.input = {
       definition: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-1',
@@ -258,6 +261,7 @@ describe('Cloudflare Agent configuration Plan adapter', () => {
     createRequest.input = {
       definition: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-1',
@@ -356,6 +360,7 @@ describe('Cloudflare Agent configuration Plan adapter', () => {
       actorSub: 'machine:amp-1',
       definition: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-brand',
@@ -405,6 +410,7 @@ describe('Cloudflare Agent configuration Plan adapter', () => {
       appliedStepCount: 1,
       definition: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-brand',

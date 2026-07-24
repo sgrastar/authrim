@@ -3,7 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 
 	const { themeStore } = useLoginUIStores();
@@ -155,7 +155,10 @@
 	}
 
 	function candidateHref(candidate: DiscoveryCandidate): string | null {
-		return isValidLinkUrl(candidate.login_url) ? candidate.login_url : null;
+		if (!isValidLinkUrl(candidate.login_url)) return null;
+		const target = new URL(candidate.login_url);
+		target.searchParams.set('lang', getLocale());
+		return target.toString();
 	}
 
 	function shouldPostCandidateSelection(): boolean {
